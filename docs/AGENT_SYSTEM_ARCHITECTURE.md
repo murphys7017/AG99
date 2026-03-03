@@ -1,7 +1,7 @@
 # AG99 Agent 系统架构文档
 
-**基线时间**: 2026-03-03  
-**版本**: Phase 0 - Phase 1.1 MVP
+**基线时间**: 2026-03-04  
+**版本**: Phase 0 - Phase 1.2 (进行中)
 
 ---
 
@@ -325,7 +325,7 @@ class Pool(Protocol):
 
 **ChatPool** ([src/agent/pools/chat_pool.py](../src/agent/pools/chat_pool.py))
 
-现状：最小 stub，无 LLM 调用
+现状：默认仍是最小可用 draft 逻辑；已接入 PromptEngine 调试分支（`DEBUG_PROMPT_ENGINE=1`）
 
 ```python
 class ChatPool:
@@ -333,28 +333,24 @@ class ChatPool:
     name = "chat_pool"
     
     async def run(self, req, plan, ctx) -> Dict[str, Any]:
-        # 从 ctx.slots 读取 current_input
-        current_slot = ctx.slots.get("current_input")
-        text = current_slot.value.get("text") if current_slot else ""
-        
-        # 根据 task_type 生成简单响应
-        if plan.task_type == "code":
-            draft = f"我看到了代码: {text}"
-        else:
-            draft = f"我收到消息: {text}"
-        
+        if os.getenv("DEBUG_PROMPT_ENGINE") == "1":
+            engine = PromptEngine()
+            messages, manifest = engine.render("chat.single_pass", plan, ctx)
+            return {"draft": "...", "prompt_engine_manifest": manifest.to_dict()}
+
+        # 默认路径：稳定 fallback 文本
+        draft = _build_fallback_draft(plan.task_type, ctx)
         return {
             "draft": draft,
             "task_type": plan.task_type,
             "pool_id": self.pool_id,
-            "context_recent_count": len(ctx.recent_obs),
         }
 ```
 
-**期望升级** (Phase 1.2+):
-- 接入 LLMProvider，实现 `PromptRenderer → MessageComposer → LLM.call → draft`
-- 返回 `{"draft": ..., "meta": {...}}`（含 trace 信息）
-- 在 `_safe_pool_run` 中汇总 trace
+**下一步升级** (Phase 1.2+):
+- 在默认路径接入 LLMProvider（当前仅调试分支可观测 PromptEngine 结果）
+- 返回 `{"draft": ..., "meta": {...}}`（补齐模型/时延/token 等 trace）
+- 在 `_safe_pool_run` 与 aggregator 汇总 pool 级元数据
 
 #### 3.4.3 Pool 返回值契约
 
@@ -776,25 +772,22 @@ queen = AgentQueen(pool_router=router)
 ## 9. 演进路线图（Phase 规划）
 
 ### Phase 1.2: ChatPool 升级 (single_pass LLM)
-- ✓ 实现 PromptRenderer（槽位 → 文本）
-- ✓ 实现 MessageComposer（文本 → LLM messages）
-- ✓ 改造 ChatPool 接入 LLMProvider
-- ✓ 完整 trace 记录（latency, tokens, model, etc）
+- 进行中：PromptEngine（view/layout/budget/template/composer）已落地
+- 待完成：ChatPool 默认路径接入 LLMProvider
+- 待完成：回包 `meta` 与 trace 字段标准化
 
 ### Phase 1.3: 多 Pool 与蜂群
-- ✓ 实现 code_pool, plan_pool, creative_pool（不再 stub）
-- ✓ Aggregator 升级：多池评估 → 选优
-- ✓ 支持并发调用多 Pool（若 plan 允许）
+- 待完成：code_pool / plan_pool / creative_pool 从 stub 升级为可执行
+- 待完成：Aggregator 升级为多池评估选优
+- 待完成：按 plan 策略启用并发多池执行
 
 ### Phase 2: Context 完善
-- ✓ 导入真实 Memory 提供者（历史、知识库）
-- ✓ 导入 Persona 提供者（用户画像、偏好）
-- ✓ 导入 Tool 结果提供者（工具调用反馈）
+- 待完成：Persona / Memory / Knowledge / ToolResults 提供者从 stub 转实装
+- 待完成：derived/future item 计算链路与缓存策略
 
 ### Phase 3: 可观测性与自适应
-- ✓ 完整的 span 级 tracing（集成 OpenTelemetry）
-- ✓ SystemReflex 与 Agent 的动态配置更新
-- ✓ 基于 trace 的性能自适应（token 预算、模型选择）
+- 待完成：跨层 trace_id 与 span 级跟踪
+- 待完成：基于指标的预算与模型动态策略
 
 ---
 

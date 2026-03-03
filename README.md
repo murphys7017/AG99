@@ -14,6 +14,18 @@ AG99 是项目的技术代号，**青鸟**是项目的中文名。
 
 如果你希望它最终成为一个“作品”，而不只是“能跑起来的脚本”，那这个名字很合适。
 
+
+
+## Vision：让它像“有神经反射 + 大脑结构”的系统
+
+AG99 追求的不是把一个聊天模型包装成 Demo，而是构建一个**长期运行**的智能体生命体征：
+- **反射弧（快、确定性）**：在进入 Agent 之前完成快速决策与自我保护
+- **大脑皮层（慢、可推理）**：在可控边界内做规划、整合、多步思考
+- **记忆系统（可积累）**：把事件与轮次沉淀为可复用的长期结构
+- **行动系统（可扩展）**：输出与工具调用走异步通路，不拖垮核心循环
+
+最终目标（长期）：逐步实现 **自组织 / 自发现 / 自编程**，但始终以“可控、可观测、可回滚”为前置条件。
+
 ---
 
 ## 项目定位
@@ -26,6 +38,19 @@ AG99 是一个 **事件驱动 Agent Runtime**，强调以下能力：
 - **系统自调节**：通过 System Reflex 对系统痛觉信号与 tuning suggestion 做受控处理（白名单、TTL、冷却）
 - **Memory 持久化（fail-open）**：事件与轮次写入失败不阻断主链路
 - **异步 Egress**：输出走后台队列，不阻塞 worker 主循环
+
+---
+
+## 类脑结构映射（帮助理解整体架构）
+
+  | 工程模块                                              | 类比                  | 作用                                        |
+  | ----------------------------------------------------- | --------------------- | ------------------------------------------- |
+  | Adapters / Observation / InputBus                     | 感觉系统 + 编码       | 把外界输入统一成事件协议                    |
+  | Gate（DROP/SINK/DELIVER）                             | 脊髓反射 / 脑干快通路 | 快速、同步、确定性决策；优先保护系统        |
+  | SystemReflex                                          | 内稳态 / 痛觉与调参   | 对“系统信号”做受控调节（白名单、TTL、冷却） |
+  | AgentQueen（planner/context/pool/aggregator/speaker） | 前额叶/执行功能       | 负责规划、整合上下文、调度子能力            |
+  | Memory（fail-open）                                   | 海马体 / 长期记忆     | 记忆失败不阻断生存主链路                    |
+  | Egress（异步）                                        | 运动输出通路          | 把输出/外部 IO 放到后台，避免阻塞核心循环   |
 
 ---
 
@@ -166,6 +191,7 @@ uv run pytest -m integration -q
 - `docs/README.md`：文档总览（Active / Reference / Experimental / Archive）
 - `docs/DEPLOYMENT.md`：部署与运行
 - `docs/TESTING.md`：测试分层与命令
+- `docs/AGENT_SYSTEM_ARCHITECTURE.md`：Agent 子系统架构与链路说明
 - `docs/MEMORY.md`：Memory 当前实现
 - `docs/PROJECT_MODULE_DEEP_DIVE.md`：模块深潜（维护/排障入口）
 - `docs/DESIGN_DECISIONS.md`：仍有效的 ADR
@@ -176,6 +202,7 @@ uv run pytest -m integration -q
 ### Reference（开发参考）
 - `docs/AGENT_REQUEST_STRUCTURE.md`
 - `docs/AGENT_REQUEST_QUICK_REFERENCE.md`
+- `docs/CONTEXT_CATALOG_PROFILE_SUMMARY.md`：Context Catalog / Prompt Profile / Presets 配置规范与验证快照
 
 ### Experimental（实验链路）
 - `tools/demo_e2e.py`
@@ -209,6 +236,25 @@ uv run pytest -m integration -q
 - 拆分 `core.py`
 - 收敛实验脚本与主干接口，减少双轨漂移
 
+
+
+### Self-*（长期目标，分阶段落地）
+
+#### Self-Discovery（自发现）
+- 能力扫描：发现本机硬件/服务/API/工具能力 → 注册为 capability
+- 权限与沙箱：每个 capability 都有可审计权限边界
+- 可观测：发现过程可追踪（trace_id / 结构化日志）
+
+#### Self-Organization（自组织）
+- pool 动态路由：根据指标与策略选择最合适的执行链路
+- 受控自调节：SystemReflex 基于“痛觉信号”进行白名单内的策略更新
+- 稳定性红线：超过阈值自动降级、隔离、熔断
+
+#### Self-Programming（自编程）
+- 代码改动走“提案 → 补丁 → 测试 → 门禁 → 合并”的闭环
+- 默认沙箱执行与回放验证，禁止直接在生产链路自修改
+- 所有自编程产物可追溯、可回滚、可冻结
+
 ---
 
 ## 开发建议
@@ -241,4 +287,6 @@ See [LICENSE](./LICENSE) for details.
 
 ## TODO
 
-- [ ] 为planner添加更详细的信息规划，而不是粗略的使用哪一类信息，具体到内容
+- [ ] 为 planner 增加更细粒度的信息规划（从“类型级”提升到“item 级/字段级”）
+- [ ] 预算控制补充摘要与压缩策略，减少简单硬截断
+- [ ] 优化 prompt render 的 Lost-in-the-middle 问题

@@ -8,17 +8,19 @@
 2. `README-EN.md`：项目英文入口
 3. `docs/DEPLOYMENT.md`：部署与运行
 4. `docs/TESTING.md`：测试分层与执行方式
-5. `docs/MEMORY.md`：Memory 当前实现
-6. `docs/PROJECT_MODULE_DEEP_DIVE.md`：代码对齐的模块深潜
-7. `docs/DESIGN_DECISIONS.md`：仍有效的 ADR
-8. `docs/GATE_COMPLETE_SPECIFICATION.md`：Gate 规范
-9. `docs/SYSTEM_REFLEX_SPECIFICATION.md`：System Reflex 规范
-10. `docs/ROADMAP.md`：阶段计划
+5. `docs/AGENT_SYSTEM_ARCHITECTURE.md`：Agent 子系统架构与链路说明
+6. `docs/MEMORY.md`：Memory 当前实现
+7. `docs/PROJECT_MODULE_DEEP_DIVE.md`：代码对齐的模块深潜
+8. `docs/DESIGN_DECISIONS.md`：仍有效的 ADR
+9. `docs/GATE_COMPLETE_SPECIFICATION.md`：Gate 规范
+10. `docs/SYSTEM_REFLEX_SPECIFICATION.md`：System Reflex 规范
+11. `docs/ROADMAP.md`：阶段计划
 
 ## Reference（参考文档）
 
 1. `docs/AGENT_REQUEST_STRUCTURE.md`：AgentRequest 契约说明
 2. `docs/AGENT_REQUEST_QUICK_REFERENCE.md`：AgentRequest 速查
+3. `docs/CONTEXT_CATALOG_PROFILE_SUMMARY.md`：Context Catalog / PromptProfile / Presets 配置规范与阶段总结
 
 这两份文档用于开发调试参考，不作为“架构规范”的唯一来源。
 

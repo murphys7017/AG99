@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
+
+from loguru import logger
 
 from ..types import AgentRequest, ContextPack, TaskPlan
 
@@ -14,6 +17,37 @@ class ChatPool:
     name = "chat_pool"
 
     async def run(self, req: AgentRequest, plan: TaskPlan, ctx: ContextPack) -> Dict[str, Any]:
+        # ============================================================
+        # Phase 1.2 集成点：PromptEngine 调试模式
+        # 通过环境变量 DEBUG_PROMPT_ENGINE=1 启用
+        # ============================================================
+        if os.getenv("DEBUG_PROMPT_ENGINE") == "1":
+            try:
+                from ..prompt_engine import PromptEngine
+                logger.info("DEBUG_PROMPT_ENGINE enabled, invoking PromptEngine")
+                
+                engine = PromptEngine()
+                messages, manifest = engine.render("chat.single_pass", plan, ctx)
+                
+                logger.info(f"PromptEngine manifest: {manifest.summary()}")
+                logger.debug(f"PromptEngine messages: {len(messages)} messages")
+                
+                # 在调试模式下，返回 manifest 摘要而不是实际 draft
+                return {
+                    "draft": f"[DEBUG] PromptEngine rendered {len(messages)} messages. See manifest for details.",
+                    "task_type": plan.task_type,
+                    "pool_id": self.pool_id,
+                    "context_recent_count": len(ctx.recent_obs),
+                    "prompt_engine_manifest": manifest.to_dict(),
+                    "prompt_engine_messages": messages,
+                }
+            except Exception as e:
+                logger.error(f"PromptEngine debug mode failed: {e}", exc_info=True)
+                # Fail-open: 继续正常流程
+        
+        # ============================================================
+        # Phase 0 原有逻辑（保持不变）
+        # ============================================================
         current_slot = ctx.slots.get("current_input") if hasattr(ctx, "slots") else None
         slot_value = current_slot.value if current_slot else {}
         slot_text = slot_value.get("text") if isinstance(slot_value, dict) else None

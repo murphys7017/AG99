@@ -2,7 +2,8 @@
 
 **实施日期**: 2026-03-04  
 **版本**: Phase 1.1 骨架版  
-**状态**: ✅ 全部验证通过
+**状态**: ✅ 全部验证通过  
+**最后校验**: 2026-03-04
 
 ---
 
@@ -47,7 +48,7 @@
 | 文件路径 | 说明 |
 |---------|------|
 | `tools/test_context_config.py` | 配置加载验证脚本 |
-| `tests/test_context_catalog_and_profile.py` | pytest 测试套件（11 tests） |
+| `tests/test_context_catalog_and_profile.py` | pytest 测试套件（14 tests） |
 
 ---
 
@@ -177,28 +178,36 @@ class BudgetConfig:
 
 ---
 
-## 6. 如何在后续 Prompt Engine 中使用
+## 6. 如何在 Prompt Engine 中使用
 
-### Phase 1.2: Prompt 渲染引擎（待实现）
+### Phase 1.2: Prompt 渲染引擎（骨架已接入，LLM 调用待接入）
 
 ```python
 # 伪代码示例
-from src.agent.context import load_catalog, load_profiles
+from src.agent.context import (
+    load_catalog,
+    load_presets,
+    load_profiles,
+    validate_profiles,
+    resolve_profile_items,
+)
 
 # 1. 加载配置
 catalog = load_catalog()
+presets = load_presets()
 profiles = load_profiles()
+validate_profiles(profiles, catalog, presets=presets)
 
 # 2. 选择 profile
 profile = profiles["chat.single_pass"]
+item_ids = resolve_profile_items(profile, presets=presets)
 
 # 3. 获取 ContextPack（已有）
 ctx = await context_builder.build(req, plan)
 
-# 4. 根据 profile 渲染 prompt
-renderer = PromptRenderer(catalog, profile)
-messages = renderer.render(ctx)
-# messages 结构：[{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
+# 4. 渲染（当前最小链路）
+engine = PromptEngine(catalog=catalog, presets=presets, profiles=profiles)
+messages, manifest = engine.render("chat.single_pass", plan, ctx)
 
 # 5. 调用 LLM
 llm_response = await llm_provider.call(messages)
@@ -207,16 +216,17 @@ llm_response = await llm_provider.call(messages)
 ### 渲染流程（Phase 1.2 设计）
 
 ```
-1. 从 ctx.slots 提取 profile.include 中的 items
-2. 根据 placement_overrides 排序（按 prefix/middle/suffix 分组）
-3. 根据 render_mode_overrides 选择渲染方式
+1. 用 `resolve_profile_items` 展开 include（required/optional/use_presets）
+2. 从 ctx.slots 提取 item 对应值，并应用 llm_exposure
+3. 根据 placement_overrides 排序（按 prefix/middle/suffix 分组）
+4. 根据 render_mode_overrides 选择渲染方式
    - raw: 原样输出
    - summary: 调用摘要函数
    - pinned: 高亮显示
    - structured: JSON/key-value 格式
-4. 应用 budget.per_item_max 截断
-5. 填充 templates（支持 Jinja2 变量替换）
-6. 返回 messages
+5. 应用 budget.per_item_max 截断
+6. 填充 templates（支持 Jinja2 变量替换）
+7. 返回 messages + manifest
 ```
 
 ### 扩展点
@@ -244,7 +254,7 @@ llm_response = await llm_provider.call(messages)
 ✓ All tests passed!
 ```
 
-### ✅ pytest 测试套件（11 tests, 100% pass）
+### ✅ pytest 测试套件（14 tests, 100% pass）
 
 | 测试用例 | 状态 |
 |---------|------|
@@ -257,6 +267,9 @@ llm_response = await llm_provider.call(messages)
 | test_profile_fields_complete | ✅ PASSED |
 | test_profile_validation_fails_on_unknown_item | ✅ PASSED |
 | test_profile_validation_fails_on_placement_override_not_included | ✅ PASSED |
+| test_profile_validation_fails_on_unknown_preset | ✅ PASSED |
+| test_profile_resolves_items_from_presets | ✅ PASSED |
+| test_load_profile_fails_on_invalid_render_mode | ✅ PASSED |
 | test_catalog_has_future_items | ✅ PASSED |
 | test_tool_results_raw_has_llm_exposure_never | ✅ PASSED |
 
@@ -279,30 +292,40 @@ class AgentQueen:
     def __init__(self, ..., enable_catalog_loading: bool = True):
         # ...现有代码...
         
-        # Phase 1.1: 加载 catalog & profiles（可选）
+        # Phase 1.1: 加载 catalog / presets / profiles（可选）
         self._catalog: Optional[ContextCatalog] = None
+        self._presets: Optional[ContextPresetsCollection] = None
         self._profiles: Dict[str, Any] = {}
         if enable_catalog_loading:
             self._load_catalog_and_profiles()
     
     def _load_catalog_and_profiles(self) -> None:
-        """加载 catalog 和 profiles（Phase 1.1 最小集成）。"""
+        """加载 catalog、presets、profiles 并做联动校验。"""
         try:
             self._catalog = load_catalog("config/context_catalog.yaml")
             logger.debug(f"AgentQueen loaded context catalog: {len(self._catalog.items)} items")
         except Exception as e:
             logger.warning(f"AgentQueen catalog loading failed (non-blocking): {e}")
-        
+
+        try:
+            self._presets = load_presets("config/context_presets.yaml")
+            logger.debug(f"AgentQueen loaded context presets: {len(self._presets.presets)} presets")
+        except Exception as e:
+            logger.warning(f"AgentQueen presets loading failed (non-blocking): {e}")
+
         try:
             self._profiles = load_profiles("config/agent/prompt_profiles")
             logger.debug(f"AgentQueen loaded prompt profiles: {len(self._profiles)} profiles")
+            if self._catalog is not None:
+                validate_profiles(self._profiles, self._catalog, presets=self._presets)
         except Exception as e:
             logger.warning(f"AgentQueen profiles loading failed (non-blocking): {e}")
 ```
 
 **特点**:
 - fail-open: 加载失败只输出 warning，不影响主流程
-- 可观测: 输出 debug 日志，包含条目数与 profile 数量
+- 可观测: 输出 debug 日志，包含 catalog/presets/profiles 条目数
+- 一致性: 启动时执行 profile + preset + catalog 联动校验
 - 可选: 通过 `enable_catalog_loading=False` 关闭（用于测试或降级）
 
 ---
