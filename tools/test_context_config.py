@@ -29,7 +29,7 @@ logger.remove()
 logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
 
 
-def test_load_catalog():
+def check_load_catalog():
     """测试 catalog 加载。"""
     logger.info("=" * 60)
     logger.info("Testing catalog loading...")
@@ -63,7 +63,7 @@ def test_load_catalog():
         raise
 
 
-def test_load_presets(catalog: ContextCatalog):
+def check_load_presets(catalog: ContextCatalog):
     """测试 presets 加载。"""
     logger.info("=" * 60)
     logger.info("Testing presets loading...")
@@ -93,7 +93,7 @@ def test_load_presets(catalog: ContextCatalog):
         raise
 
 
-def test_load_profiles(catalog: ContextCatalog, presets: ContextPresetsCollection):
+def check_load_profiles(catalog: ContextCatalog, presets: ContextPresetsCollection):
     """测试 profiles 加载。"""
     logger.info("=" * 60)
     logger.info("Testing profiles loading...")
@@ -117,7 +117,7 @@ def test_load_profiles(catalog: ContextCatalog, presets: ContextPresetsCollectio
         raise
 
 
-def test_profile_details(
+def check_profile_details(
     profiles: dict,
     catalog: ContextCatalog,
     presets: ContextPresetsCollection,
@@ -186,7 +186,7 @@ def test_profile_details(
     logger.info(f"\n  Notes: {profile.notes}")
 
 
-def test_validation_failures():
+def check_validation_failures():
     """测试校验失败场景。"""
     logger.info("=" * 60)
     logger.info("Testing validation failures...")
@@ -225,19 +225,19 @@ def main():
     
     try:
         # 1. 加载 catalog
-        catalog = test_load_catalog()
+        catalog = check_load_catalog()
         
         # 2. 加载 presets
-        presets = test_load_presets(catalog)
+        presets = check_load_presets(catalog)
         
         # 3. 加载 profiles
-        profiles = test_load_profiles(catalog, presets)
+        profiles = check_load_profiles(catalog, presets)
         
         # 4. 显示 profile 详情
-        test_profile_details(profiles, catalog, presets)
+        check_profile_details(profiles, catalog, presets)
         
         # 5. 测试校验失败
-        test_validation_failures()
+        check_validation_failures()
         
         logger.info("=" * 60)
         logger.info("✓ All tests passed!")

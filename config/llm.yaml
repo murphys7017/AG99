@@ -2,9 +2,14 @@ version: 1
 
 default:
   provider:
-    bailian:
-      - qwen-max
-      - qwen-long-latest
+    ollama:
+      - "qwen3.5:9b"
+  
+# default:
+#   provider:
+#     bailian:
+#       - qwen-max
+#       - qwen-long-latest
 
 providers:
   bailian:
@@ -23,4 +28,7 @@ providers:
     models:
       "qwen3:1.7b":
         temperature: 0.2
+        num_ctx: 32768
+      "qwen3.5:9b":
+        temperature: 0.7
         num_ctx: 32768
