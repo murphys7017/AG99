@@ -14,7 +14,17 @@ from ..schemas.observation import (
     ObservationType,
     SourceKind,
 )
-from .context import ContextBuilder, RecentObsContextBuilder, SlotContextBuilder
+from .context import (
+    ContextBuilder, 
+    RecentObsContextBuilder, 
+    SlotContextBuilder,
+    load_catalog,
+    load_profiles,
+    load_presets,
+    validate_profiles,
+    ContextCatalog,
+    ContextPresetsCollection,
+)
 from .context.types import ContextSlot
 from .planner import HybridPlanner, LLMPlanner, Planner, RulePlanner
 from .planner.validator import normalize_task_plan
@@ -45,6 +55,7 @@ class AgentQueen:
         aggregator: Optional[Aggregator] = None,
         speaker: Optional[Speaker] = None,
         registry: Optional[AgentConfigRegistry] = None,
+        enable_catalog_loading: bool = True,
     ) -> None:
         self.registry = registry or AgentConfigRegistry()
         self._config = self.registry.load()
@@ -54,6 +65,53 @@ class AgentQueen:
         self.aggregator: Aggregator = aggregator or DraftAggregator()
         self.speaker: Speaker = speaker or AgentSpeaker()
         self._builtin_chat_pool = ChatPool()
+        
+        # Phase 1.1: 加载 catalog & profiles（可选，不影响主流程）
+        self._catalog: Optional[ContextCatalog] = None
+        self._presets: Optional[ContextPresetsCollection] = None
+        self._profiles: Dict[str, Any] = {}
+        if enable_catalog_loading:
+            self._load_catalog_and_profiles()
+
+    def _load_catalog_and_profiles(self) -> None:
+        """加载 catalog 和 profiles（Phase 1.1 最小集成）。"""
+        try:
+            self._catalog = load_catalog("config/context_catalog.yaml")
+            logger.debug(
+                f"AgentQueen loaded context catalog: {len(self._catalog.items)} items"
+            )
+        except Exception as e:
+            logger.warning(f"AgentQueen catalog loading failed (non-blocking): {e}")
+
+        try:
+            self._presets = load_presets("config/context_presets.yaml")
+            logger.debug(
+                f"AgentQueen loaded context presets: {len(self._presets.presets)} presets"
+            )
+        except Exception as e:
+            logger.warning(f"AgentQueen presets loading failed (non-blocking): {e}")
+        
+        try:
+            self._profiles = load_profiles("config/agent/prompt_profiles")
+            logger.debug(
+                f"AgentQueen loaded prompt profiles: {len(self._profiles)} profiles"
+            )
+
+            if self._catalog is not None:
+                validate_profiles(self._profiles, self._catalog, presets=self._presets)
+                logger.debug("AgentQueen prompt profile validation passed")
+            
+            # 打印 chat.single_pass profile 摘要（验证用）
+            if "chat.single_pass" in self._profiles:
+                profile = self._profiles["chat.single_pass"]
+                logger.debug(
+                    f"Profile 'chat.single_pass' loaded: "
+                    f"required={len(profile.include.required_items)}, "
+                    f"optional={len(profile.include.optional_items)}, "
+                    f"max_tokens={profile.budget.max_tokens}"
+                )
+        except Exception as e:
+            logger.warning(f"AgentQueen profiles loading failed (non-blocking): {e}")
 
     def _build_planner(self) -> Planner:
         planner_cfg = self.registry.get_planner_config()

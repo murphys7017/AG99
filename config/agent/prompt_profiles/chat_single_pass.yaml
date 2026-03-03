@@ -1,0 +1,87 @@
+# Prompt Profile: chat_single_pass
+# 用于聊天场景的单通道 LLM 调用配置
+# Version: 0.1-phase1
+
+version: "0.1"
+id: chat.single_pass
+role: chat_assistant
+pool: chat
+purpose: "单轮对话场景，使用 single_pass 策略调用 LLM"
+
+# ========== 包含的信息单元 ==========
+include:
+  # 必需项（缺失时报错）
+  required_items:
+    - current_input.text
+    - conversation.recent_raw
+    - plan.task_type
+
+  # 可选项（缺失时跳过）
+  optional_items:
+    - plan.strategy
+    - plan.complexity
+    - identity.core
+    - persona.style
+    - session.metadata
+
+# ========== 布局配置 ==========
+layout:
+  # 布局策略 ID（可扩展为复杂策略，当前仅作标识）
+  layout_policy_id: "linear_prefix_middle_suffix"
+
+  # 位置覆盖：显式指定某些 item 的 placement
+  placement_overrides:
+    prefix:
+      - identity.core           # 身份放最前（如果存在）
+      - persona.style           # 风格紧随其后
+      - plan.task_type          # 任务类型
+      - conversation.recent_raw # 对话历史
+    middle:
+      - current_input.text      # 当前输入放中间
+    suffix:
+      - plan.strategy           # 策略提示放最后（如果存在）
+
+  # 渲染模式覆盖：某些 item 强制使用特定 render_mode
+  render_mode_overrides:
+    conversation.recent_raw: raw        # 对话历史用原始模式
+    plan.task_type: structured          # 任务类型用结构化
+    identity.core: pinned               # 身份用 pinned 模式（突出显示）
+    session.metadata: summary           # 会话元数据用摘要（节省 token）
+
+# ========== 模板配置 ==========
+templates:
+  # System prompt 模板（支持变量替换，Phase 1.2 实现）
+  system_template: |
+    You are a helpful assistant. Your task is {{ plan.task_type }}.
+    {% if identity.core %}{{ identity.core }}{% endif %}
+    {% if persona.style %}Respond in a {{ persona.style }} style.{% endif %}
+
+  # User prompt 模板（支持变量替换，Phase 1.2 实现）
+  user_template: |
+    {% if conversation.recent_raw %}
+    Previous conversation:
+    {{ conversation.recent_raw }}
+    {% endif %}
+
+    Current user input:
+    {{ current_input.text }}
+
+    {% if plan.strategy %}
+    Execution strategy: {{ plan.strategy }}
+    {% endif %}
+
+# ========== 输出配置 ==========
+output:
+  format: text                          # text/json/markdown
+  schema_id: null                       # 若为 json，可指定 schema（future）
+
+# ========== 预算配置 ==========
+budget:
+  max_tokens: 2048                      # 最大 token 数
+  truncate_policy: priority_then_window # 截断策略：优先级 + 时间窗口
+  per_item_max:                         # 单个 item 的最大长度
+    conversation.recent_raw: 1000       # 对话历史最多 1000 chars
+    current_input.text: 500             # 当前输入最多 500 chars
+
+# ========== 备注 ==========
+notes: "Phase 1 最小可用 profile，用于验证 catalog + profile 加载与校验"

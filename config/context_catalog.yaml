@@ -1,0 +1,223 @@
+# Context Catalog - 上下文信息单元目录
+# Version: 0.1-phase1
+# 定义所有可用的上下文信息单元，包括来源、优先级、渲染方式、LLM 暴露策略等
+
+version: "0.1"
+
+# 信息单元列表
+items:
+  # ========== Input 类 ==========
+  - id: current_input.text
+    category: input
+    source: "slot:current_input"
+    default_priority: 100
+    default_placement: middle
+    default_render_mode: raw
+    llm_exposure: allowed
+    notes: "当前用户输入的文本内容"
+
+  - id: current_input.attachments
+    category: input
+    source: "slot:current_input"
+    default_priority: 98
+    default_placement: middle
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "当前输入的附件列表（图片/文件等）"
+
+  # ========== Conversation 类 ==========
+  - id: conversation.recent_raw
+    category: conversation
+    source: "slot:recent_obs"
+    default_priority: 90
+    default_placement: prefix
+    default_render_mode: raw
+    llm_exposure: allowed
+    notes: "最近的对话历史（原始形式）"
+
+  - id: conversation.recent_pinned
+    category: conversation
+    source: "derived:recent_obs_pinned"
+    default_priority: 92
+    default_placement: prefix
+    default_render_mode: pinned
+    llm_exposure: allowed
+    notes: "最近对话中被 pin 的关键信息（future）"
+
+  - id: conversation.recent_summary
+    category: conversation
+    source: "derived:recent_obs_summary"
+    default_priority: 85
+    default_placement: prefix
+    default_render_mode: summary
+    llm_exposure: allowed
+    notes: "最近对话的摘要（用于节省 token，future）"
+
+  # ========== Plan 类 ==========
+  - id: plan.task_type
+    category: plan
+    source: "slot:plan_meta"
+    default_priority: 80
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "任务类型（chat/code/plan/creative）"
+
+  - id: plan.pool_id
+    category: plan
+    source: "slot:plan_meta"
+    default_priority: 79
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "目标 pool ID"
+
+  - id: plan.strategy
+    category: plan
+    source: "slot:plan_meta"
+    default_priority: 78
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "执行策略（single_pass/multi_step 等）"
+
+  - id: plan.complexity
+    category: plan
+    source: "slot:plan_meta"
+    default_priority: 77
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "任务复杂度（low/medium/high）"
+
+  # ========== Identity & Persona 类（future）==========
+  - id: identity.core
+    category: identity
+    source: "future:identity_core"
+    default_priority: 95
+    default_placement: prefix
+    default_render_mode: pinned
+    llm_exposure: allowed
+    notes: "核心身份定义（who am I，持久且稳定）"
+
+  - id: persona.style
+    category: persona
+    source: "slot:persona"
+    default_priority: 88
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "回复风格与语气（活泼/专业/严肃等）"
+
+  - id: persona.do_dont
+    category: persona
+    source: "slot:persona"
+    default_priority: 87
+    default_placement: prefix
+    default_render_mode: pinned
+    llm_exposure: allowed
+    notes: "行为准则与禁止事项"
+
+  # ========== Runtime Policy 类（future）==========
+  - id: policy.runtime_constraints
+    category: policy
+    source: "slot:runtime_policy"
+    default_priority: 75
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "运行时约束（token 限制、时间限制、安全策略等）"
+
+  - id: policy.response_policy
+    category: policy
+    source: "slot:runtime_policy"
+    default_priority: 74
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "响应策略（respond_now/respond_later/clarify_first）"
+
+  # ========== Memory 类（future）==========
+  - id: memory.pinned_facts
+    category: memory
+    source: "slot:memory"
+    default_priority: 70
+    default_placement: prefix
+    default_render_mode: pinned
+    llm_exposure: allowed
+    notes: "被 pin 的关键事实（用户偏好、约定等）"
+
+  - id: memory.recent_turns
+    category: memory
+    source: "slot:memory"
+    default_priority: 68
+    default_placement: prefix
+    default_render_mode: summary
+    llm_exposure: allowed
+    notes: "最近轮次的记忆摘要"
+
+  # ========== Knowledge 类（future）==========
+  - id: knowledge.snippets_raw
+    category: knowledge
+    source: "slot:knowledge"
+    default_priority: 65
+    default_placement: middle
+    default_render_mode: raw
+    llm_exposure: allowed
+    notes: "检索到的知识片段（原始形式）"
+
+  - id: knowledge.snippets_pinned
+    category: knowledge
+    source: "slot:knowledge"
+    default_priority: 67
+    default_placement: middle
+    default_render_mode: pinned
+    llm_exposure: allowed
+    notes: "检索到的知识片段（精选/去重后）"
+
+  # ========== Tool Results 类（future）==========
+  - id: tool_results.raw
+    category: tool
+    source: "slot:tool_results"
+    default_priority: 60
+    default_placement: middle
+    default_render_mode: raw
+    llm_exposure: never
+    notes: "工具调用的原始返回（可能包含敏感信息，不直接暴露给 LLM）"
+
+  - id: tool_results.llm_view
+    category: tool
+    source: "derived:tool_results_filtered"
+    default_priority: 62
+    default_placement: middle
+    default_render_mode: structured
+    llm_exposure: allowed
+    notes: "工具结果的 LLM 可见视图（过滤敏感信息后）"
+
+  - id: tool_results.pinned
+    category: tool
+    source: "derived:tool_results_pinned"
+    default_priority: 63
+    default_placement: middle
+    default_render_mode: pinned
+    llm_exposure: allowed
+    notes: "被 pin 的关键工具结果（如确认/成功消息）"
+
+  # ========== Session State 类 ==========
+  - id: session.metadata
+    category: session
+    source: "slot:session_state"
+    default_priority: 50
+    default_placement: prefix
+    default_render_mode: structured
+    llm_exposure: redacted
+    notes: "会话元数据（处理次数、错误计数等，部分字段 redact）"
+
+# 校验规则说明：
+# - id 必须唯一
+# - category 枚举: input/conversation/plan/identity/persona/policy/memory/knowledge/tool/session
+# - source 格式: slot:xxx / derived:xxx / future:xxx
+# - default_priority: 整数，越大越优先
+# - default_placement 枚举: prefix/middle/suffix
+# - default_render_mode 枚举: raw/summary/pinned/structured
+# - llm_exposure 枚举: allowed/redacted/never

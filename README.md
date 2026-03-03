@@ -239,3 +239,6 @@ See [LICENSE](./LICENSE) for details.
 
 这个项目希望做的，也不只是“能回答问题”的程序，而是一套能够长期运行、持续演进、逐步形成自己秩序的 Agent Runtime。
 
+## TODO
+
+- [ ] 为planner添加更详细的信息规划，而不是粗略的使用哪一类信息，具体到内容

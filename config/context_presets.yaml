@@ -1,0 +1,59 @@
+# Context Presets - 上下文信息单元预设组合
+# Version: 0.1-phase1
+# 定义常用的信息单元组合，可被 PromptProfile 引用
+
+version: "0.1"
+
+presets:
+  # ========== 聊天基础预设 ==========
+  - id: chat_base
+    items:
+      - current_input.text
+      - conversation.recent_raw
+      - plan.task_type
+    notes: "聊天场景的最小必需项"
+
+  # ========== 规划基础预设 ==========
+  - id: planner_base
+    items:
+      - current_input.text
+      - conversation.recent_raw
+      - plan.task_type
+      - plan.strategy
+      - plan.complexity
+    notes: "Planner 输入的基础信息单元"
+
+  # ========== 代码场景预设 ==========
+  - id: code_base
+    items:
+      - current_input.text
+      - conversation.recent_raw
+      - plan.task_type
+      - tool_results.llm_view
+      - knowledge.snippets_pinned
+    notes: "代码生成/调试场景的基础信息"
+
+  # ========== 完整身份预设 ==========
+  - id: full_identity
+    items:
+      - identity.core
+      - persona.style
+      - persona.do_dont
+      - policy.runtime_constraints
+    notes: "包含身份、风格、约束的完整预设"
+
+  # ========== 记忆增强预设 ==========
+  - id: memory_enhanced
+    items:
+      - memory.pinned_facts
+      - memory.recent_turns
+      - knowledge.snippets_pinned
+    notes: "包含持久记忆与知识检索的增强预设"
+
+# 使用示例（在 PromptProfile 中）：
+# include:
+#   use_presets:
+#     - chat_base
+#     - full_identity
+#   required_items:
+#     - session.metadata
