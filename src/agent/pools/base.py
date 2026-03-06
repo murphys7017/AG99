@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Protocol
 
-from ..types import AgentRequest, ContextPack, TaskPlan
+from ..types import AgentRequest, ContextPack, RoutingPlan
 
 
 class Pool(Protocol):
@@ -13,14 +13,14 @@ class Pool(Protocol):
     pool_id: str
     name: str
 
-    async def run(self, req: AgentRequest, plan: TaskPlan, ctx: ContextPack) -> Dict[str, Any]:
+    async def run(self, req: AgentRequest, plan: RoutingPlan, ctx: ContextPack) -> Dict[str, Any]:
         ...
 
 
 class PoolRouter(Protocol):
     """Pool 路由接口。"""
 
-    def pick(self, req: AgentRequest, plan: TaskPlan) -> Pool:
+    def pick(self, req: AgentRequest, plan: RoutingPlan) -> Pool:
         ...
 
     def fallback_pool(self) -> Pool:
@@ -33,7 +33,7 @@ class Aggregator(Protocol):
     async def aggregate(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         ctx: ContextPack,
         raw: Dict[str, Any],
     ) -> str:

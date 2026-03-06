@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from ..types import AgentRequest, TaskPlan
+from ..types import AgentRequest, RoutingPlan
 from .base import Pool
 from .chat_pool import ChatPool
 
@@ -18,7 +18,7 @@ class AgentPoolRouter:
         if pools:
             self._pools.update(pools)
 
-    def pick(self, req: AgentRequest, plan: TaskPlan) -> Pool:
+    def pick(self, req: AgentRequest, plan: RoutingPlan) -> Pool:
         requested_id = (plan.pool_id or "").strip()
         if requested_id and requested_id in self._pools:
             return self._pools[requested_id]

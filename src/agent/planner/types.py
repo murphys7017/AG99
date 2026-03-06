@@ -1,4 +1,4 @@
-"""Planner 相关类型。"""
+"""PoolSelector 相关类型。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from ...gate.types import GateHint
 
 
 @dataclass
-class PlannerSignals:
-    """从输入文本抽取的规则信号。"""
+class PoolSelectorSignals:
+    """从输入文本抽取的规则路由信号。"""
 
     text: str = ""
     has_code_signal: bool = False
@@ -22,8 +22,8 @@ class PlannerSignals:
 
 
 @dataclass
-class PlannerInputView:
-    """Lightweight planner input view (not a ContextPack)."""
+class PoolSelectorInputView:
+    """Lightweight pool selector input view (not a ContextPack)."""
 
     current_input_text: str = ""
     recent_obs_view: List[Dict[str, str]] = field(default_factory=list)
@@ -32,13 +32,13 @@ class PlannerInputView:
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
-def build_planner_input_view(
+def build_pool_selector_input_view(
     req: AgentRequest,
     *,
     recent_limit: int = 6,
     max_chars: int = 160,
-) -> PlannerInputView:
-    """Build a lightweight view for planner decisions."""
+) -> PoolSelectorInputView:
+    """Build a lightweight view for pool selector decisions."""
     payload = getattr(req.obs, "payload", None)
     text = getattr(payload, "text", None)
     text = text.strip() if isinstance(text, str) else ""
@@ -59,13 +59,19 @@ def build_planner_input_view(
 
     gate_hint_view = _extract_gate_hint_view(req.gate_hint)
 
-    return PlannerInputView(
+    return PoolSelectorInputView(
         current_input_text=text,
         recent_obs_view=recent_obs_view,
         session_state_view=session_state_view,
         gate_hint_view=gate_hint_view,
         meta={"recent_obs_count": len(req.session_state.recent_obs or [])},
     )
+
+
+# Deprecated aliases
+PlannerSignals = PoolSelectorSignals
+PlannerInputView = PoolSelectorInputView
+build_planner_input_view = build_pool_selector_input_view
 
 
 def _extract_recent_obs_view(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from loguru import logger
 
@@ -26,16 +26,16 @@ from .context import (
     ContextPresetsCollection,
 )
 from .context.types import ContextSlot
-from .planner import HybridPlanner, LLMPlanner, Planner, RulePlanner
-from .planner.validator import normalize_task_plan
-from .planner.types import build_planner_input_view
+from .planner import HybridPoolSelector, LLMPoolSelector, PoolSelector, RulePoolSelector
+from .planner.validator import normalize_routing_plan
+from .planner.types import build_pool_selector_input_view
 from .pools import AgentPoolRouter, Aggregator, ChatPool, DraftAggregator, Pool, PoolRouter
 from .registry import AgentConfigRegistry
 from .speaker import AgentSpeaker, Speaker
-from .types import AgentOutcome, AgentRequest, ContextPack, TaskPlan
+from .types import AgentOutcome, AgentRequest, ContextPack, RoutingPlan
 
 # Deprecated alias: 旧代码可能从 queen 导入 Plan
-Plan = TaskPlan
+Plan = RoutingPlan
 
 
 class AgentQueen:
@@ -43,13 +43,14 @@ class AgentQueen:
     Agent 总编排器（Phase 0）。
 
     固定流程：
-    planner -> context_builder -> pool_router.pick -> pool.run -> aggregator -> speaker
+    pool_selector -> context_builder -> pool_router.pick -> pool.run -> aggregator -> speaker
     """
 
     def __init__(
         self,
         *,
-        planner: Optional[Planner] = None,
+        pool_selector: Optional[PoolSelector] = None,
+        planner: Optional[PoolSelector] = None,
         context_builder: Optional[ContextBuilder] = None,
         pool_router: Optional[PoolRouter] = None,
         aggregator: Optional[Aggregator] = None,
@@ -59,7 +60,8 @@ class AgentQueen:
     ) -> None:
         self.registry = registry or AgentConfigRegistry()
         self._config = self.registry.load()
-        self.planner: Planner = planner or self._build_planner()
+        self.pool_selector: PoolSelector = pool_selector or planner or self._build_pool_selector()
+        self.planner: PoolSelector = self.pool_selector
         self.context_builder: ContextBuilder = context_builder or SlotContextBuilder()
         self.pool_router: PoolRouter = pool_router or AgentPoolRouter()
         self.aggregator: Aggregator = aggregator or DraftAggregator()
@@ -113,21 +115,25 @@ class AgentQueen:
         except Exception as e:
             logger.warning(f"AgentQueen profiles loading failed (non-blocking): {e}")
 
-    def _build_planner(self) -> Planner:
-        planner_cfg = self.registry.get_planner_config()
+    def _build_pool_selector(self) -> PoolSelector:
+        planner_cfg = self.registry.get_pool_selector_config()
         kind = str(planner_cfg.get("kind", "rule")).lower()
         if kind in {"hybrid", "hybrid_stub"}:
-            return HybridPlanner(config=planner_cfg)
+            return HybridPoolSelector(config=planner_cfg)
         if kind in {"llm", "llm_stub"}:
-            return LLMPlanner(config=planner_cfg)
-        return RulePlanner()
+            return LLMPoolSelector(config=planner_cfg)
+        return RulePoolSelector()
+
+    def _build_planner(self) -> PoolSelector:
+        """Deprecated alias: _build_planner() -> _build_pool_selector()."""
+        return self._build_pool_selector()
 
     async def handle(self, req: AgentRequest) -> AgentOutcome:
         """执行 Agent 主流程并返回可回灌 Observation。"""
         started = time.perf_counter()
         trace: Dict[str, Any] = {
-            "planner_input_summary": {},
-            "planner_summary": {},
+            "pool_selector_input_summary": {},
+            "pool_selector_summary": {},
             "context_build_summary": {},
             "pool": {},
             "aggregation": {},
@@ -136,7 +142,7 @@ class AgentQueen:
         }
         errors: list[str] = []
 
-        plan = await self._safe_plan(req, trace, errors)
+        plan = await self._safe_select(req, trace, errors)
         ctx = await self._safe_context(req, plan, trace, errors)
         pool = self._safe_pick_pool(req, plan, trace, errors)
         raw = await self._safe_pool_run(req, plan, ctx, pool, trace, errors)
@@ -147,7 +153,7 @@ class AgentQueen:
         trace["fallback_triggered"] = fallback_triggered
         if errors:
             trace["error"] = "; ".join(errors)
-        trace["planner_kind"] = str(plan.meta.get("planner_kind", "rule"))
+        trace["pool_selector_kind"] = str(plan.meta.get("pool_selector_kind", "rule"))
         trace["task_type"] = plan.task_type
         trace["pool_id"] = pool.pool_id
         trace["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
@@ -160,31 +166,31 @@ class AgentQueen:
             error=trace.get("error"),
         )
 
-    async def _safe_plan(
+    async def _safe_select(
         self,
         req: AgentRequest,
         trace: Dict[str, Any],
         errors: list[str],
-    ) -> TaskPlan:
+    ) -> RoutingPlan:
         try:
-            planner_input_view = build_planner_input_view(req)
-            trace["planner_input_summary"] = {
-                "current_input_len": len(planner_input_view.current_input_text or ""),
-                "recent_obs_count": planner_input_view.meta.get("recent_obs_count"),
-                "recent_obs_preview_count": len(planner_input_view.recent_obs_view or []),
-                "gate_hint_present": bool(planner_input_view.gate_hint_view),
+            selector_input_view = build_pool_selector_input_view(req)
+            trace["pool_selector_input_summary"] = {
+                "current_input_len": len(selector_input_view.current_input_text or ""),
+                "recent_obs_count": selector_input_view.meta.get("recent_obs_count"),
+                "recent_obs_preview_count": len(selector_input_view.recent_obs_view or []),
+                "gate_hint_present": bool(selector_input_view.gate_hint_view),
             }
-            plan = await self.planner.plan(req, view=planner_input_view)
-            plan = normalize_task_plan(plan, planner_kind=getattr(self.planner, "kind", "unknown"))
-            planner_summary = {
-                "planner_kind": plan.meta.get("planner_kind"),
-                "planner_stage": plan.meta.get("planner_stage"),
-                "final_plan_source": plan.meta.get("final_plan_source"),
+            plan = await self.pool_selector.select(req, view=selector_input_view)
+            plan = normalize_routing_plan(plan, pool_selector_kind=getattr(self.pool_selector, "kind", "unknown"))
+            selector_summary = {
+                "pool_selector_kind": plan.meta.get("pool_selector_kind"),
+                "selector_stage": plan.meta.get("selector_stage"),
+                "final_routing_source": plan.meta.get("final_routing_source"),
                 "task_type": plan.task_type,
                 "pool_id": plan.pool_id,
                 "rule_guess": plan.meta.get("rule_guess"),
-                "planner_llm_called": plan.meta.get("planner_llm_called"),
-                "planner_llm_parse_ok": plan.meta.get("planner_llm_parse_ok"),
+                "selector_llm_called": plan.meta.get("selector_llm_called"),
+                "selector_llm_parse_ok": plan.meta.get("selector_llm_parse_ok"),
                 "small_llm_called": plan.meta.get("small_llm_called"),
                 "big_llm_called": plan.meta.get("big_llm_called"),
                 "escalated_to_big": plan.meta.get("escalated_to_big"),
@@ -194,20 +200,20 @@ class AgentQueen:
                 "confidence": plan.meta.get("confidence"),
                 "reason": plan.meta.get("reason"),
             }
-            trace["planner_summary"] = planner_summary
+            trace["pool_selector_summary"] = selector_summary
             logger.debug(
-                "Agent planner summary: kind=%s source=%s task=%s pool=%s",
-                planner_summary.get("planner_kind"),
-                planner_summary.get("final_plan_source"),
-                planner_summary.get("task_type"),
-                planner_summary.get("pool_id"),
+                "Agent pool selector summary: kind=%s source=%s task=%s pool=%s",
+                selector_summary.get("pool_selector_kind"),
+                selector_summary.get("final_routing_source"),
+                selector_summary.get("task_type"),
+                selector_summary.get("pool_id"),
             )
             return plan
         except Exception as exc:
-            logger.exception(f"Agent planner failed: {exc}")
-            errors.append(f"planner:{exc}")
-            fallback = normalize_task_plan(
-                TaskPlan(
+            logger.exception(f"Agent pool selector failed: {exc}")
+            errors.append(f"pool_selector:{exc}")
+            fallback = normalize_routing_plan(
+                RoutingPlan(
                     task_type="chat",
                     pool_id="chat",
                     required_context=("recent_obs",),
@@ -215,15 +221,15 @@ class AgentQueen:
                         "strategy": "single_pass",
                         "complexity": "low",
                         "confidence": 0.3,
-                        "reason": "planner_exception_fallback",
+                        "reason": "pool_selector_exception_fallback",
                     },
                 ),
-                planner_kind="rule_fallback",
+                pool_selector_kind="rule_fallback",
             )
-            trace["planner_summary"] = {
-                "planner_kind": fallback.meta.get("planner_kind"),
-                "planner_stage": fallback.meta.get("planner_stage"),
-                "final_plan_source": fallback.meta.get("final_plan_source"),
+            trace["pool_selector_summary"] = {
+                "pool_selector_kind": fallback.meta.get("pool_selector_kind"),
+                "selector_stage": fallback.meta.get("selector_stage"),
+                "final_routing_source": fallback.meta.get("final_routing_source"),
                 "task_type": fallback.task_type,
                 "pool_id": fallback.pool_id,
                 "fallback": True,
@@ -234,7 +240,7 @@ class AgentQueen:
     async def _safe_context(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         trace: Dict[str, Any],
         errors: list[str],
     ) -> ContextPack:
@@ -293,7 +299,7 @@ class AgentQueen:
     def _safe_pick_pool(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         trace: Dict[str, Any],
         errors: list[str],
     ) -> Pool:
@@ -326,7 +332,7 @@ class AgentQueen:
     async def _safe_pool_run(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         ctx: ContextPack,
         pool: Pool,
         trace: Dict[str, Any],
@@ -356,13 +362,13 @@ class AgentQueen:
     def _fallback_pool(self) -> Pool:
         router_fallback = getattr(self.pool_router, "fallback_pool", None)
         if callable(router_fallback):
-            return router_fallback()
+            return cast(Pool, router_fallback())
         return self._builtin_chat_pool
 
     async def _safe_aggregate(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         ctx: ContextPack,
         raw: Dict[str, Any],
         trace: Dict[str, Any],
@@ -390,7 +396,7 @@ class AgentQueen:
         self,
         req: AgentRequest,
         final_text: str,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         pool: Pool,
         trace: Dict[str, Any],
         errors: list[str],
@@ -398,7 +404,7 @@ class AgentQueen:
         metadata = {
             "task_type": plan.task_type,
             "pool_id": pool.pool_id,
-            "planner_kind": plan.meta.get("planner_kind"),
+            "pool_selector_kind": plan.meta.get("pool_selector_kind"),
             "fallback": trace.get("fallback_triggered", False),
         }
         try:
@@ -426,7 +432,7 @@ class AgentQueen:
             )
 
 
-def _build_context_summary(plan: TaskPlan, ctx: ContextPack, meta: Dict[str, Any]) -> Dict[str, Any]:
+def _build_context_summary(plan: RoutingPlan, ctx: ContextPack, meta: Dict[str, Any]) -> Dict[str, Any]:
     slots = getattr(ctx, "slots", {}) or {}
     slot_summaries: list[dict[str, Any]] = []
     for name, slot in slots.items():
@@ -480,7 +486,8 @@ def _build_context_summary(plan: TaskPlan, ctx: ContextPack, meta: Dict[str, Any
 
 
 # 兼容导出：旧测试可能直接引用这些名字
-DefaultPlanner = RulePlanner
+DefaultPoolSelector = RulePoolSelector
+DefaultPlanner = RulePoolSelector
 DefaultContextBuilder = RecentObsContextBuilder
 DefaultPoolRouter = AgentPoolRouter
 DefaultAggregator = DraftAggregator

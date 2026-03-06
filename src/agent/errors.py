@@ -7,8 +7,12 @@ class AgentError(Exception):
     """Agent 领域错误基类。"""
 
 
-class PlannerError(AgentError):
-    """Planner 处理失败。"""
+class PoolSelectorError(AgentError):
+    """PoolSelector 处理失败。"""
+
+
+class PlannerError(PoolSelectorError):
+    """Deprecated alias: PlannerError -> PoolSelectorError。"""
 
 
 class PoolError(AgentError):

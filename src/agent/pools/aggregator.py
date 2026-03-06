@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ..types import AgentRequest, ContextPack, TaskPlan
+from ..types import AgentRequest, ContextPack, RoutingPlan
 
 
 class DraftAggregator:
@@ -13,7 +13,7 @@ class DraftAggregator:
     async def aggregate(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         ctx: ContextPack,
         raw: Dict[str, Any],
     ) -> str:

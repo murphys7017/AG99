@@ -13,7 +13,7 @@
 - **Config 根目录**: `config/`
 - **Config 加载方式**: `yaml.safe_load` + dataclass + 手写校验
 - **已有配置提供者**: GateConfigProvider, LLMConfig, AgentConfigRegistry, MemoryConfigProvider
-- **Agent 配置体系**: `config/agent/` 包含 planner/pools/prompts/subagents 子目录
+- **Agent 配置体系**: `config/agent/` 包含 planner（PoolSelector 兼容配置）/pools/prompts/subagents 子目录
 - **校验机制**: dataclass + isinstance + 自定义 validate 方法（不使用 jsonschema/pydantic）
 
 ### 设计决策
@@ -279,7 +279,7 @@ llm_response = await llm_provider.call(messages)
 |---------|------|
 | tests/test_agent_phase0.py (4 tests) | ✅ ALL PASSED |
 | tests/test_agent_context_builder_phase1_1.py (6 tests) | ✅ ALL PASSED |
-| tests/test_agent_hybrid_planner_phase1.py (6 tests) | ✅ ALL PASSED |
+| tests/test_agent_hybrid_planner_phase1.py (6 tests) | ✅ ALL PASSED（兼容别名） |
 
 ---
 

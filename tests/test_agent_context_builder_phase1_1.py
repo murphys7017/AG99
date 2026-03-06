@@ -9,7 +9,7 @@ import pytest
 from src.agent.context.builder import SlotContextBuilder
 from src.agent.context.types import ProviderResult
 from src.agent.queen import AgentQueen
-from src.agent.types import AgentRequest, TaskPlan
+from src.agent.types import AgentRequest, RoutingPlan
 from src.gate.types import GateAction, GateDecision, Scene
 from src.schemas.observation import Actor, MessagePayload, Observation, ObservationType, SourceKind
 from src.session_router import SessionState
@@ -44,7 +44,7 @@ def _make_request(text: str) -> AgentRequest:
 @pytest.mark.asyncio
 async def test_context_builder_includes_required_and_base_slots() -> None:
     builder = SlotContextBuilder()
-    plan = TaskPlan(task_type="chat", pool_id="chat", required_context=("recent_obs",))
+    plan = RoutingPlan(task_type="chat", pool_id="chat", required_context=("recent_obs",))
 
     ctx = await builder.build(_make_request("hello"), plan)
 
@@ -65,7 +65,7 @@ async def test_context_builder_includes_required_and_base_slots() -> None:
 @pytest.mark.asyncio
 async def test_context_builder_future_slot_stub() -> None:
     builder = SlotContextBuilder()
-    plan = TaskPlan(task_type="chat", pool_id="chat", required_context=("persona",))
+    plan = RoutingPlan(task_type="chat", pool_id="chat", required_context=("persona",))
 
     ctx = await builder.build(_make_request("hello"), plan)
 
@@ -76,14 +76,14 @@ async def test_context_builder_future_slot_stub() -> None:
 class _BadProvider:
     name = "recent_obs"
 
-    async def provide(self, req: AgentRequest, plan: TaskPlan) -> ProviderResult:
+    async def provide(self, req: AgentRequest, plan: RoutingPlan) -> ProviderResult:
         raise RuntimeError("boom")
 
 
 @pytest.mark.asyncio
 async def test_context_builder_provider_error_soft_fails() -> None:
     builder = SlotContextBuilder(providers={"recent_obs": _BadProvider()})
-    plan = TaskPlan(task_type="chat", pool_id="chat", required_context=("recent_obs",))
+    plan = RoutingPlan(task_type="chat", pool_id="chat", required_context=("recent_obs",))
 
     ctx = await builder.build(_make_request("hello"), plan)
 
@@ -95,7 +95,7 @@ async def test_context_builder_provider_error_soft_fails() -> None:
 @pytest.mark.asyncio
 async def test_context_builder_priority_override() -> None:
     builder = SlotContextBuilder()
-    plan = TaskPlan(
+    plan = RoutingPlan(
         task_type="chat",
         pool_id="chat",
         required_context=("recent_obs",),
@@ -119,9 +119,9 @@ async def test_agent_queen_trace_contains_context_summary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_queen_trace_separates_planner_input_and_context_build() -> None:
+async def test_agent_queen_trace_separates_pool_selector_input_and_context_build() -> None:
     queen = AgentQueen()
     outcome = await queen.handle(_make_request("hello"))
 
-    assert outcome.trace.get("planner_input_summary")
+    assert outcome.trace.get("pool_selector_input_summary")
     assert outcome.trace.get("context_build_summary")

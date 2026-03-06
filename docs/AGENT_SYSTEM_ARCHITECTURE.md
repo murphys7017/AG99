@@ -14,10 +14,12 @@ Gate.DELIVER(MESSAGE)
         ↓
    AgentQueen.handle(req: AgentRequest) -> AgentOutcome
         ↓
-[Planner → Context → Pool → Aggregator → Speaker]
+[PoolSelector → Context → Pool → Aggregator → Speaker]
         ↓
 emit Observation(MESSAGE) → Egress
 ```
+
+Phase 1.26 主链路：`CLI → PoolSelector → ContextBuilder → PoolRouter → ChatPool → PromptEngine → LLM → Speaker`
 
 ---
 
@@ -71,8 +73,8 @@ class AgentOutcome:
 **trace 结构**:
 ```python
 {
-    "planner_input_summary":  {...},      # 输入摘要
-    "planner_summary":        {...},      # 规划执行与结果
+    "pool_selector_input_summary": {...}, # 输入摘要
+    "pool_selector_summary": {...},       # 路由选择执行与结果
     "context_build_summary":  {...},      # 上下文构建统计
     "pool":                   {...},      # Pool 执行信息
     "aggregation":            {...},      # 聚合结果
@@ -93,18 +95,18 @@ class AgentOutcome:
 
 ```python
 async def handle(self, req: AgentRequest) -> AgentOutcome:
-    # 1) 规划
-    plan = await self._safe_plan(req, trace, errors)
+    # 1) 路由选择
+    routing_plan = await self._safe_select(req, trace, errors)
     # 2) 上下文  
-    ctx = await self._safe_context(req, plan, trace, errors)
+    ctx = await self._safe_context(req, routing_plan, trace, errors)
     # 3) 选择 Pool
-    pool = self._safe_pick_pool(req, plan, trace, errors)
+    pool = self._safe_pick_pool(req, routing_plan, trace, errors)
     # 4) 执行 Pool
-    raw = await self._safe_pool_run(req, plan, ctx, pool, trace, errors)
+    raw = await self._safe_pool_run(req, routing_plan, ctx, pool, trace, errors)
     # 5) 聚合
-    final_text = await self._safe_aggregate(req, plan, ctx, raw, trace, errors)
+    final_text = await self._safe_aggregate(req, routing_plan, ctx, raw, trace, errors)
     # 6) 发言
-    out_obs = self._safe_speak(req, final_text, plan, pool, trace, errors)
+    out_obs = self._safe_speak(req, final_text, routing_plan, pool, trace, errors)
     # 7) 打包返回
     return AgentOutcome(emit=[out_obs], trace=trace, error=...)
 ```
@@ -118,72 +120,75 @@ async def handle(self, req: AgentRequest) -> AgentOutcome:
 
 ## 3. 核心组件详解
 
-### 3.1 Planner：任务分类与规划
+### 3.1 PoolSelector：Pool/Strategy/Context/Prompt 路由选择
 
 **文件**: [src/agent/planner/](../src/agent/planner/)  
-**输入**: `AgentRequest + PlannerInputView`  
-**输出**: `TaskPlan`
+**输入**: `AgentRequest + PoolSelectorInputView`  
+**输出**: `RoutingPlan`
 
-#### 3.1.1 TaskPlan 数据结构
+> 语义边界：PoolSelector 只负责 pool 路由、strategy 选择、context selector、prompt policy selector、预算/信心评分；
+> 不负责分步任务分解、执行图构建、子agent协作规划。
+
+#### 3.1.1 RoutingPlan 数据结构
 
 ```python
 @dataclass
-class TaskPlan:
+class RoutingPlan:
     task_type: str              # "chat", "code", "plan", "creative"
     pool_id: str                # "chat", "code", "plan", "creative"
     required_context: tuple[str, ...]  # 需要的上下文槽位
-    meta: Dict[str, Any]        # 规划元数据
+    meta: Dict[str, Any]        # 路由元数据
 ```
 
-#### 3.1.2 Planner 实现体系
+#### 3.1.2 PoolSelector 实现体系
 
-1. **RulePlanner** ([src/agent/planner/rule_planner.py](../src/agent/planner/rule_planner.py))
+1. **RulePoolSelector** ([src/agent/planner/rule_pool_selector.py](../src/agent/planner/rule_pool_selector.py))
    - 基于关键词的快速分类
    - 无 LLM 调用，确定性
    - 默认回退到 `task_type="chat"`
 
-2. **LLMPlanner** ([src/agent/planner/llm_planner.py](../src/agent/planner/llm_planner.py))
+2. **LLMPoolSelector** ([src/agent/planner/llm_pool_selector.py](../src/agent/planner/llm_pool_selector.py))
    - 调用 LLM 进行分类与规划
-   - 配置: `config/agent/agent.yaml > planner.items.llm`
+     - 配置: `config/agent/agent.yaml > pool_selector.items.llm`
    - 使用 `LLMProvider.from_config()` + `asyncio.to_thread()`
-   - 解析 JSON 输出为 TaskPlan
+    - 解析 JSON 输出为 RoutingPlan
 
-3. **HybridPlanner** ([src/agent/planner/hybrid_planner.py](../src/agent/planner/hybrid_planner.py))
+3. **HybridPoolSelector** ([src/agent/planner/hybrid_pool_selector.py](../src/agent/planner/hybrid_pool_selector.py))
    - 两阶段：先 Rule，再可选 LLM 精细化
    - 配置可选参数控制何时升级到 LLM
 
-#### 3.1.3 Planner 配置
+#### 3.1.3 PoolSelector 配置
 
 ```yaml
 # config/agent/agent.yaml
-planner:
-  default: default              # 默认使用 "default" planner
-  items:
-    default:
-      kind: hybrid
-      config_file: config/agent/planner/default.yaml
-    rule:
-      kind: rule
-    llm:
-      kind: llm
-      llm:
-        provider: bailian        # 指定 provider
-        model: qwen-max          # 指定 model
-        timeout_seconds: 6.0
+pool_selector:
+    default: default              # 默认使用 "default" pool selector
+    items:
+        default:
+            kind: hybrid
+            config_file: config/agent/pool_selector/default.yaml
+        rule:
+            kind: rule
+        llm:
+            kind: llm
+            llm:
+                provider: bailian        # 指定 provider
+                model: qwen-max          # 指定 model
+                timeout_seconds: 6.0
 ```
 
-#### 3.1.4 Planner 错误与降级
+#### 3.1.4 PoolSelector 错误与降级
 
-- **LLM 超时/异常** → 若 HybridPlanner，回退 RulePlanner 结果；若仅 LLMPlanner，输出硬编码 fallback plan
+- **LLM 超时/异常** → 若 HybridPoolSelector，回退 RulePoolSelector 结果；若仅 LLMPoolSelector，输出硬编码 fallback plan
 - **JSON 解析失败** → 输出 fallback plan
-- 所有降级都记录 `trace["planner_summary"]["fallback"]`
+- 所有降级都记录 `trace["pool_selector_summary"]["fallback"]`
 
 ---
 
 ### 3.2 Context：上下文供应链
 
 **文件**: [src/agent/context/](../src/agent/context/)  
-**输入**: `AgentRequest + TaskPlan`  
+**输入**: `AgentRequest + RoutingPlan`  
 **输出**: `ContextPack`
 
 #### 3.2.1 ContextPack 与 ContextSlot
@@ -224,7 +229,7 @@ class ContextSlot:
 [src/agent/context/builder.py](../src/agent/context/builder.py)
 
 ```python
-async def build(req: AgentRequest, plan: TaskPlan) -> ContextPack:
+async def build(req: AgentRequest, plan: RoutingPlan) -> ContextPack:
     # 1) 读取 plan.required_context
     requested_by_plan = list(plan.required_context or ())
     
@@ -267,7 +272,7 @@ async def build(req: AgentRequest, plan: TaskPlan) -> ContextPack:
 
 ```python
 class AgentPoolRouter:
-    def pick(self, req: AgentRequest, plan: TaskPlan) -> Pool:
+    def pick(self, req: AgentRequest, plan: RoutingPlan) -> Pool:
         # 1) 优先按 plan.pool_id 
         if plan.pool_id in self._pools:
             return self._pools[plan.pool_id]
@@ -315,7 +320,7 @@ class Pool(Protocol):
     async def run(
         self, 
         req: AgentRequest, 
-        plan: TaskPlan, 
+        plan: RoutingPlan, 
         ctx: ContextPack
     ) -> Dict[str, Any]:                # 原始结果
         ...
@@ -382,7 +387,7 @@ class Aggregator(Protocol):
     async def aggregate(
         self,
         req: AgentRequest,
-        plan: TaskPlan,
+        plan: RoutingPlan,
         ctx: ContextPack,
         raw: Dict[str, Any],
     ) -> str:
@@ -455,7 +460,7 @@ class AgentSpeaker:
 
 | 阶段 | 正常流 | 异常处理 | 输出 |
 |------|--------|---------|------|
-| Planner | 返回 TaskPlan | 捕获异常 → 硬编码 fallback plan (task_type="chat", pool_id="chat") | fallback plan |
+| PoolSelector | 返回 RoutingPlan | 捕获异常 → 硬编码 fallback plan (task_type="chat", pool_id="chat") | fallback plan |
 | Context | 逐槽位不阻塞 | 失败槽位记 status="missing"/"error" | ContextPack (部分槽位可能为空) |
 | Pool | pool.run() ✓ | 异常 → 调用 fallback_pool.run() | raw dict (或最终还是异常则硬编码 `{"draft": "出错..."}`) |
 | Aggregator | raw["draft"] | 异常 → 回退到 raw["draft"] | final_text (或 fallback 文本) |
@@ -470,10 +475,10 @@ Agent 内所有异常都会：
 ```python
 errors = []
 try:
-    plan = await self.planner.plan(req, ...)
+    plan = await self.pool_selector.select(req, ...)
 except Exception as exc:
-    logger.exception(f"Agent planner failed: {exc}")
-    errors.append(f"planner:{exc}")
+    logger.exception(f"Agent pool selector failed: {exc}")
+    errors.append(f"pool_selector:{exc}")
     plan = <fallback_plan>
 
 # ...最后
@@ -504,16 +509,16 @@ if source_name.startswith("agent:") or actor_id == "agent":
 ```yaml
 version: "0.1-phase0"
 
-planner:
-  default: default                    # 默认 planner ID
-  items:
-    default:
-      kind: hybrid                    # 使用 hybrid planner
-      config_file: config/agent/planner/default.yaml
-    rule:
-      kind: rule                      # 规则 planner (快速)
-    llm:
-      kind: llm                       # LLM planner (精准)
+pool_selector:
+    default: default                    # 默认 pool selector ID
+    items:
+        default:
+            kind: hybrid                    # 使用 hybrid pool selector
+            config_file: config/agent/pool_selector/default.yaml
+        rule:
+            kind: rule                      # 规则 pool selector (快速)
+        llm:
+            kind: llm                       # LLM pool selector (精准)
 
 pools:
   default: chat                       # 默认 pool ID
@@ -534,12 +539,12 @@ subagents:
       enabled: true
 
 prompts:
-  default: planner_default
+    default: planner_default  # legacy prompt profile id
 ```
 
-### 5.2 Planner 细化配置
+### 5.2 PoolSelector 细化配置
 
-例如 `config/agent/planner/default.yaml`:
+例如 `config/agent/pool_selector/default.yaml`:
 
 ```yaml
 kind: hybrid
@@ -592,17 +597,17 @@ providers:
 
 ```python
 {
-    # Planner
-    "planner_input_summary": {
+    # Pool selector
+    "pool_selector_input_summary": {
         "current_input_len": 42,
         "recent_obs_count": 5,
         "recent_obs_preview_count": 5,
         "gate_hint_present": True,
     },
-    "planner_summary": {
-        "planner_kind": "hybrid",
-        "planner_stage": "rule",
-        "final_plan_source": "rule",
+    "pool_selector_summary": {
+        "pool_selector_kind": "hybrid",
+        "selector_stage": "rule",
+        "final_routing_source": "rule",
         "task_type": "chat",
         "pool_id": "chat",
         "confidence": 0.95,
@@ -662,7 +667,7 @@ providers:
 ### 6.2 日志示例
 
 ```
-DEBUG: Agent planner summary: kind=hybrid source=rule task=chat pool=chat
+DEBUG: Agent pool selector summary: kind=hybrid source=rule task=chat pool=chat
 DEBUG: Agent context summary: requested=2 auto=1 effective=3 missing=0 errors=0
 DEBUG: Agent pool trace: requested=chat actual=chat fallback=False
 DEBUG: Agent processing completed in 234.5ms, fallback_triggered=False
@@ -707,7 +712,7 @@ queen = AgentQueen()
 
 # 自定义组件
 queen = AgentQueen(
-    planner=HybridPlanner(config={...}),
+    pool_selector=HybridPoolSelector(config={...}),
     context_builder=SlotContextBuilder(),
     pool_router=AgentPoolRouter(pools={...}),
     aggregator=DraftAggregator(),
@@ -795,9 +800,9 @@ queen = AgentQueen(pool_router=router)
 
 | 文件 | 职责 | 关键类/函数 |
 |------|------|-----------|
-| [src/agent/types.py](../src/agent/types.py) | 数据契约 | AgentRequest, TaskPlan, AgentOutcome |
+| [src/agent/types.py](../src/agent/types.py) | 数据契约 | AgentRequest, RoutingPlan, AgentOutcome |
 | [src/agent/queen.py](../src/agent/queen.py) | 总编排器 | AgentQueen.handle(), _safe_* fallbacks |
-| [src/agent/planner/](../src/agent/planner/) | 规划器体系 | RulePlanner, LLMPlanner, HybridPlanner |
+| [src/agent/planner/](../src/agent/planner/) | 池选择器体系 | RulePoolSelector, LLMPoolSelector, HybridPoolSelector |
 | [src/agent/context/builder.py](../src/agent/context/builder.py) | 上下文构建 | SlotContextBuilder.build() |
 | [src/agent/context/types.py](../src/agent/context/types.py) | 上下文类型 | ContextPack, ContextSlot |
 | [src/agent/context/providers/](../src/agent/context/providers/) | 槽位提供者 | CurrentInputProvider, RecentObsProvider, ... |
@@ -807,7 +812,7 @@ queen = AgentQueen(pool_router=router)
 | [src/agent/pools/aggregator.py](../src/agent/pools/aggregator.py) | 聚合器 | DraftAggregator.aggregate() |
 | [src/agent/speaker/speaker.py](../src/agent/speaker/speaker.py) | 发言者 | AgentSpeaker.speak() |
 | [src/agent/registry.py](../src/agent/registry.py) | Agent 配置注册 | AgentConfigRegistry |
-| [config/agent/agent.yaml](../config/agent/agent.yaml) | Agent 配置 | version, planner, pools |
+| [config/agent/agent.yaml](../config/agent/agent.yaml) | Agent 配置 | version, pool_selector, pools |
 
 ---
 
@@ -819,14 +824,14 @@ A: 为了强制所有上下文通过 slots/ContextPack，便于追踪、替换�
 **Q: Pool 能否完全自定义格式？**  
 A: 可以，但必须返回 dict，aggregator 和 speaker 需要能处理你的输出。建议遵循 `{"draft": ...}` 约定。
 
-**Q: Planner 能否返回自定义字段？**  
-A: TaskPlan 只有 4 个字段，额外信息放在 `meta` dict。但记住下游可能只识别标准字段。
+**Q: PoolSelector 能否返回自定义字段？**  
+A: RoutingPlan 只有 4 个字段，额外信息放在 `meta` dict。但记住下游可能只识别标准字段。
 
 **Q: 一个 session 能否并发处理多条消息？**  
 A: 不能。设计是单 session 串行。若需并发，应该拆成多 session 或使用不同 session_key。
 
-**Q: 如何调整 Planner 的超时？**  
-A: 修改 `config/agent/planner/default.yaml` 或 `config/agent/agent.yaml` 中的 `timeout_seconds`。
+**Q: 如何调整 PoolSelector 的超时？**  
+A: 修改 `config/agent/pool_selector/default.yaml` 或 `config/agent/agent.yaml` 中的 `timeout_seconds`。
 
 **Q: Aggregator 能否访问 Pool 的完整结果？**  
 A: 能，`raw` 参数是 Pool 返回的整个 dict。

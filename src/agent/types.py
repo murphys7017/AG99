@@ -27,13 +27,17 @@ class AgentRequest:
 
 
 @dataclass
-class TaskPlan:
-    """Queen 内部任务计划（当前主结构，替代旧 Plan 命名冲突）。"""
+class RoutingPlan:
+    """Queen 内部路由选择结果（Pool/Strategy/Context/Prompt 选择契约）。"""
 
     task_type: str = "chat"
     pool_id: str = "chat"
     required_context: tuple[str, ...] = ("recent_obs",)
     meta: Dict[str, Any] = field(default_factory=dict)
+
+
+# Deprecated alias: 保留旧命名，后续版本删除
+TaskPlan = RoutingPlan
 
 
 @dataclass

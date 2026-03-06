@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ...types import AgentRequest, TaskPlan
+from ...types import AgentRequest, RoutingPlan
 from ..types import ProviderResult
 
 
 class CurrentInputProvider:
     name = "current_input"
 
-    async def provide(self, req: AgentRequest, plan: TaskPlan) -> ProviderResult:
+    async def provide(self, req: AgentRequest, plan: RoutingPlan) -> ProviderResult:
         payload = getattr(req.obs, "payload", None)
         text = getattr(payload, "text", None)
         text = text.strip() if isinstance(text, str) else ""

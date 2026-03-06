@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 import pytest
 
 from src.agent.queen import AgentQueen
-from src.agent.planner.rule_planner import RulePlanner
-from src.agent.planner.types import PlannerInputView
+from src.agent.planner.rule_pool_selector import RulePoolSelector
+from src.agent.planner.types import PoolSelectorInputView
 from src.agent.types import AgentOutcome, AgentRequest
 from src.gate.types import GateAction, GateDecision, Scene
 from src.schemas.observation import (
@@ -65,12 +65,12 @@ async def test_agent_queen_handle_returns_agent_outcome_with_message_emit() -> N
 
 
 @pytest.mark.asyncio
-async def test_rule_planner_classifies_chat_code_plan() -> None:
-    planner = RulePlanner()
+async def test_rule_pool_selector_classifies_chat_code_plan() -> None:
+    selector = RulePoolSelector()
 
-    chat_plan = await planner.plan(_make_request("今天天气怎么样？"))
-    code_plan = await planner.plan(_make_request("pytest 失败了，有 Traceback"))
-    design_plan = await planner.plan(_make_request("请给我一份系统架构设计方案"))
+    chat_plan = await selector.select(_make_request("今天天气怎么样？"))
+    code_plan = await selector.select(_make_request("pytest 失败了，有 Traceback"))
+    design_plan = await selector.select(_make_request("请给我一份系统架构设计方案"))
 
     assert chat_plan.task_type == "chat"
     assert code_plan.task_type == "code"
@@ -89,16 +89,16 @@ async def test_code_task_falls_back_to_chat_pool_when_pool_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rule_planner_uses_view_text_override() -> None:
-    planner = RulePlanner()
+async def test_rule_pool_selector_uses_view_text_override() -> None:
+    selector = RulePoolSelector()
     req = _make_request("今天天气怎么样？")
-    view = PlannerInputView(
+    view = PoolSelectorInputView(
         current_input_text="pytest 失败了，有 Traceback",
         recent_obs_view=[],
         session_state_view={},
         gate_hint_view={},
     )
 
-    plan = await planner.plan(req, view=view)
+    plan = await selector.select(req, view=view)
 
     assert plan.task_type == "code"

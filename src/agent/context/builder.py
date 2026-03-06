@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, Mapping, Optional, Protocol
 
-from ..types import AgentRequest, TaskPlan
+from ..types import AgentRequest, RoutingPlan
 from .types import ContextPack, ContextSlot, ProviderResult, SlotSpec
 from .providers import (
     ContextProvider,
@@ -23,13 +23,13 @@ from .providers import (
 class ContextBuilder(Protocol):
     """可插拔上下文构建器接口。"""
 
-    async def build(self, req: AgentRequest, plan: TaskPlan) -> ContextPack:
-        """Build execution context for pools/subagents (not planner input)."""
+    async def build(self, req: AgentRequest, plan: RoutingPlan) -> ContextPack:
+        """Build execution context for pools/subagents (not pool selector input)."""
         ...
 
 
 class SlotContextBuilder:
-    """Context builder for execution context (not planner input)."""
+    """Context builder for execution context (not pool selector input)."""
 
     def __init__(
         self,
@@ -42,10 +42,10 @@ class SlotContextBuilder:
         self._providers = dict(providers or _default_providers())
         self._runtime_priority_overrides = dict(runtime_priority_overrides or {})
 
-    async def build(self, req: AgentRequest, plan: TaskPlan) -> ContextPack:
-        """Build ContextPack based on TaskPlan.required_context.
+    async def build(self, req: AgentRequest, plan: RoutingPlan) -> ContextPack:
+        """Build ContextPack based on RoutingPlan.required_context.
 
-        Note: Planner input is a separate lightweight view.
+        Note: Pool selector input is a separate lightweight view.
         """
         requested_by_plan = list(plan.required_context or ())
         auto_injected = _resolve_auto_injected_slots(requested_by_plan, self._slot_specs)

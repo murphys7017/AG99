@@ -1,4 +1,4 @@
-"""RulePlanner 的文本信号提取。"""
+"""RulePoolSelector 的文本信号提取。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 from typing import Iterable
 
 from ..types import AgentRequest
-from .types import PlannerSignals
+from .types import PoolSelectorSignals
 
 
 _CODE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -39,10 +39,10 @@ _CREATIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
-def extract_signals(req: AgentRequest, *, text_override: str | None = None) -> PlannerSignals:
-    """从请求中抽取 RulePlanner 需要的简单信号。"""
+def extract_signals(req: AgentRequest, *, text_override: str | None = None) -> PoolSelectorSignals:
+    """从请求中抽取 RulePoolSelector 需要的简单信号。"""
     text = text_override if text_override is not None else _extract_text(req)
-    return PlannerSignals(
+    return PoolSelectorSignals(
         text=text,
         has_code_signal=_matches_any(text, _CODE_PATTERNS),
         has_plan_signal=_matches_any(text, _PLAN_PATTERNS),

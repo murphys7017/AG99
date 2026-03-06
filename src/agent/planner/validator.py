@@ -1,10 +1,10 @@
-"""TaskPlan 归一化与解析校验。"""
+"""RoutingPlan 归一化与解析校验。"""
 
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Sequence
 
-from ..types import TaskPlan
+from ..types import RoutingPlan
 
 ALLOWED_TASK_TYPES = {"chat", "code", "plan", "creative"}
 ALLOWED_STRATEGIES = {"single_pass", "draft_critique"}
@@ -26,21 +26,21 @@ ALLOWED_CONTEXT_SLOTS = {
 }
 
 
-def normalize_task_plan(plan: TaskPlan, *, planner_kind: str) -> TaskPlan:
+def normalize_routing_plan(plan: RoutingPlan, *, pool_selector_kind: str) -> RoutingPlan:
     """补齐字段并规整非法值。"""
-    return normalize_task_plan_payload(
+    return normalize_routing_plan_payload(
         {
             "task_type": plan.task_type,
             "pool_id": plan.pool_id,
             "required_context": list(plan.required_context or ()),
             "meta": dict(plan.meta or {}),
         },
-        planner_kind=planner_kind,
+        pool_selector_kind=pool_selector_kind,
     )
 
 
-def normalize_task_plan_payload(payload: Mapping[str, Any], *, planner_kind: str) -> TaskPlan:
-    """从 dict-like payload 归一化出合法 TaskPlan。"""
+def normalize_routing_plan_payload(payload: Mapping[str, Any], *, pool_selector_kind: str) -> RoutingPlan:
+    """从 dict-like payload 归一化出合法 RoutingPlan。"""
     raw_task_type = str(payload.get("task_type", "chat")).strip().lower()
     task_type = raw_task_type if raw_task_type in ALLOWED_TASK_TYPES else "chat"
 
@@ -55,9 +55,9 @@ def normalize_task_plan_payload(payload: Mapping[str, Any], *, planner_kind: str
     # 将顶层透传字段并入 meta（便于调用方塞扩展 trace）
     passthrough = (
         "rule_guess",
-        "planner_stage",
-        "planner_llm_called",
-        "planner_llm_parse_ok",
+        "selector_stage",
+        "selector_llm_called",
+        "selector_llm_parse_ok",
         "small_llm_called",
         "small_llm_parse_ok",
         "big_llm_called",
@@ -65,7 +65,7 @@ def normalize_task_plan_payload(payload: Mapping[str, Any], *, planner_kind: str
         "escalated_to_big",
         "small_gate_decision",
         "small_gate_reason",
-        "final_plan_source",
+        "final_routing_source",
         "fallback_reason",
         "llm_error",
     )
@@ -77,14 +77,24 @@ def normalize_task_plan_payload(payload: Mapping[str, Any], *, planner_kind: str
     meta["complexity"] = _normalize_complexity(meta.get("complexity"))
     meta["confidence"] = _normalize_confidence(meta.get("confidence"))
     meta["reason"] = _normalize_reason(meta.get("reason"))
-    meta["planner_kind"] = planner_kind
+    meta["pool_selector_kind"] = pool_selector_kind
 
-    return TaskPlan(
+    return RoutingPlan(
         task_type=task_type,
         pool_id=pool_id,
         required_context=required_context,
         meta=meta,
     )
+
+
+def normalize_task_plan(plan: RoutingPlan, *, planner_kind: str) -> RoutingPlan:
+    """Deprecated alias: normalize_task_plan -> normalize_routing_plan。"""
+    return normalize_routing_plan(plan, pool_selector_kind=planner_kind)
+
+
+def normalize_task_plan_payload(payload: Mapping[str, Any], *, planner_kind: str) -> RoutingPlan:
+    """Deprecated alias: normalize_task_plan_payload -> normalize_routing_plan_payload。"""
+    return normalize_routing_plan_payload(payload, pool_selector_kind=planner_kind)
 
 
 def _normalize_required_context(raw: Any) -> tuple[str, ...]:

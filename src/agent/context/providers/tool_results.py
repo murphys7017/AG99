@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from ...types import AgentRequest, TaskPlan
+from ...types import AgentRequest, RoutingPlan
 from ..types import ProviderResult
 
 
 class ToolResultsProvider:
     name = "tool_results"
 
-    async def provide(self, req: AgentRequest, plan: TaskPlan) -> ProviderResult:
+    async def provide(self, req: AgentRequest, plan: RoutingPlan) -> ProviderResult:
         return ProviderResult(
             slot_name=self.name,
             value={

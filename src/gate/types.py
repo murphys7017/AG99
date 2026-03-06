@@ -49,7 +49,7 @@ class BudgetSpec:
 
 @dataclass
 class GateHint:
-    """Gate 向 Agent/Planner 输出的预算与风险提示"""
+    """Gate 向 Agent/PoolSelector 输出的预算与风险提示"""
     
     # 平台层决策
     model_tier: Literal["low", "high"] = "low"

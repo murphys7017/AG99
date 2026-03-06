@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ...types import AgentRequest, TaskPlan
+from ...types import AgentRequest, RoutingPlan
 from ..types import ProviderResult
 
 
@@ -13,5 +13,5 @@ class ContextProvider(Protocol):
 
     name: str
 
-    async def provide(self, req: AgentRequest, plan: TaskPlan) -> ProviderResult:
+    async def provide(self, req: AgentRequest, plan: RoutingPlan) -> ProviderResult:
         ...

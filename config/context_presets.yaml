@@ -21,7 +21,7 @@ presets:
       - plan.task_type
       - plan.strategy
       - plan.complexity
-    notes: "Planner 输入的基础信息单元"
+    notes: "Deprecated id: pool selector 输入的基础信息单元"
 
   # ========== 代码场景预设 ==========
   - id: code_base

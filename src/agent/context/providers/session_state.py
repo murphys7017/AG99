@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ...types import AgentRequest, TaskPlan
+from ...types import AgentRequest, RoutingPlan
 from ..types import ProviderResult
 
 
 class SessionStateProvider:
     name = "session_state"
 
-    async def provide(self, req: AgentRequest, plan: TaskPlan) -> ProviderResult:
+    async def provide(self, req: AgentRequest, plan: RoutingPlan) -> ProviderResult:
         state = req.session_state
         value: Dict[str, Any] = {
             "session_key": state.session_key,

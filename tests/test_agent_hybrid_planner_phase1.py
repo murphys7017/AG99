@@ -1,4 +1,4 @@
-"""Agent Phase 1: HybridPlanner 验证。"""
+"""Agent Phase 1: HybridPoolSelector 验证。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.agent.planner.hybrid_planner import HybridPlanner
-from src.agent.planner.llm_planner import LLMPlanner
-from src.agent.planner.types import PlannerInputView
+from src.agent.planner.hybrid_pool_selector import HybridPoolSelector
+from src.agent.planner.llm_pool_selector import LLMPoolSelector
+from src.agent.planner.types import PoolSelectorInputView
 from src.agent.queen import AgentQueen
 from src.agent.types import AgentRequest
 from src.gate.types import GateAction, GateDecision, Scene
@@ -57,7 +57,7 @@ class _SpyProvider:
         return json.dumps(self._payload, ensure_ascii=False)
 
 
-class _CapturePlannerInputProvider:
+class _CaptureSelectorInputProvider:
     def __init__(self) -> None:
         self.last_input = None
 
@@ -107,71 +107,71 @@ def _make_request(text: str) -> AgentRequest:
 
 
 @pytest.mark.asyncio
-async def test_hybrid_planner_falls_back_on_invalid_json() -> None:
-    llm = LLMPlanner(
+async def test_hybrid_pool_selector_falls_back_on_invalid_json() -> None:
+    llm = LLMPoolSelector(
         config={"llm": {"timeout_seconds": 1}},
         llm_provider=_FakeBadLLMProvider(),  # type: ignore[arg-type]
     )
-    planner = HybridPlanner(
+    selector = HybridPoolSelector(
         config={"timeout_seconds": 2},
         llm_planner=llm,
     )
 
-    plan = await planner.plan(_make_request("pytest 失败了，Traceback 如下"))
+    plan = await selector.select(_make_request("pytest 失败了，Traceback 如下"))
     assert plan.task_type == "code"  # 来自 rule fallback
-    assert plan.meta.get("planner_kind") == "hybrid_rule_fallback"
-    assert plan.meta.get("planner_llm_called") is True
-    assert plan.meta.get("planner_llm_parse_ok") is False
+    assert plan.meta.get("pool_selector_kind") == "hybrid_rule_fallback"
+    assert plan.meta.get("selector_llm_called") is True
+    assert plan.meta.get("selector_llm_parse_ok") is False
     assert isinstance(plan.meta.get("fallback_reason"), str)
 
 
 @pytest.mark.asyncio
-async def test_hybrid_planner_parses_llm_json_and_normalizes() -> None:
-    llm = LLMPlanner(
+async def test_hybrid_pool_selector_parses_llm_json_and_normalizes() -> None:
+    llm = LLMPoolSelector(
         config={"llm": {"timeout_seconds": 1}},
         llm_provider=_FakeGoodLLMProvider(),  # type: ignore[arg-type]
     )
-    planner = HybridPlanner(
+    selector = HybridPoolSelector(
         config={"timeout_seconds": 2},
         llm_planner=llm,
     )
 
-    plan = await planner.plan(_make_request("帮我设计一个微服务架构方案"))
+    plan = await selector.select(_make_request("帮我设计一个微服务架构方案"))
     assert plan.task_type == "plan"
     assert plan.pool_id == "plan"
-    assert plan.meta.get("planner_kind") == "hybrid_llm"
-    assert plan.meta.get("planner_llm_parse_ok") is True
-    assert plan.meta.get("planner_llm_called") is True
+    assert plan.meta.get("pool_selector_kind") == "hybrid_llm"
+    assert plan.meta.get("selector_llm_parse_ok") is True
+    assert plan.meta.get("selector_llm_called") is True
     assert plan.meta.get("confidence") == 1.0  # 裁剪到 [0,1]
     assert "unknown_slot" not in plan.required_context
     assert "recent_obs" in plan.required_context
 
 
 @pytest.mark.asyncio
-async def test_agent_queen_trace_contains_hybrid_planner_signals() -> None:
-    llm = LLMPlanner(
+async def test_agent_queen_trace_contains_hybrid_pool_selector_signals() -> None:
+    llm = LLMPoolSelector(
         config={"llm": {"timeout_seconds": 1}},
         llm_provider=_FakeBadLLMProvider(),  # type: ignore[arg-type]
     )
-    hybrid = HybridPlanner(
+    hybrid = HybridPoolSelector(
         config={"timeout_seconds": 2},
         llm_planner=llm,
     )
-    queen = AgentQueen(planner=hybrid)
+    queen = AgentQueen(pool_selector=hybrid)
 
     outcome = await queen.handle(_make_request("pytest 报错了"))
-    planner_trace = outcome.trace.get("planner_summary", {})
+    selector_trace = outcome.trace.get("pool_selector_summary", {})
 
     assert len(outcome.emit) >= 1
     assert outcome.emit[0].obs_type == ObservationType.MESSAGE
     assert isinstance(outcome.emit[0].metadata, dict)
-    assert "planner_kind" in planner_trace
-    assert "planner_llm_called" in planner_trace
-    assert "planner_llm_parse_ok" in planner_trace
+    assert "pool_selector_kind" in selector_trace
+    assert "selector_llm_called" in selector_trace
+    assert "selector_llm_parse_ok" in selector_trace
 
 
 @pytest.mark.asyncio
-async def test_hybrid_planner_uses_small_llm_without_escalation() -> None:
+async def test_hybrid_pool_selector_uses_small_llm_without_escalation() -> None:
     small_provider = _SpyProvider(
         {
             "task_type": "chat",
@@ -200,26 +200,26 @@ async def test_hybrid_planner_uses_small_llm_without_escalation() -> None:
         }
     )
 
-    small = LLMPlanner(config={"llm": {"timeout_seconds": 1}}, llm_provider=small_provider)  # type: ignore[arg-type]
-    big = LLMPlanner(config={"llm": {"timeout_seconds": 1}}, llm_provider=big_provider)  # type: ignore[arg-type]
-    planner = HybridPlanner(
+    small = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=small_provider)  # type: ignore[arg-type]
+    big = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=big_provider)  # type: ignore[arg-type]
+    selector = HybridPoolSelector(
         config={"timeout_seconds": 2, "small_llm": {"enabled": True}},
         llm_planner=big,
         small_llm_planner=small,
     )
 
-    plan = await planner.plan(_make_request("你好，帮我打个招呼就行"))
+    plan = await selector.select(_make_request("你好，帮我打个招呼就行"))
 
-    assert plan.meta.get("planner_kind") == "hybrid_small_llm"
+    assert plan.meta.get("pool_selector_kind") == "hybrid_small_llm"
     assert plan.task_type == "chat"
     assert plan.meta.get("escalated_to_big") is False
-    assert plan.meta.get("final_plan_source") == "small_llm"
+    assert plan.meta.get("final_routing_source") == "small_llm"
     assert small_provider.calls == 1
     assert big_provider.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_hybrid_planner_escalates_to_big_llm_when_small_requires() -> None:
+async def test_hybrid_pool_selector_escalates_to_big_llm_when_small_requires() -> None:
     small_provider = _SpyProvider(
         {
             "task_type": "plan",
@@ -248,37 +248,37 @@ async def test_hybrid_planner_escalates_to_big_llm_when_small_requires() -> None
         }
     )
 
-    small = LLMPlanner(config={"llm": {"timeout_seconds": 1}}, llm_provider=small_provider)  # type: ignore[arg-type]
-    big = LLMPlanner(config={"llm": {"timeout_seconds": 1}}, llm_provider=big_provider)  # type: ignore[arg-type]
-    planner = HybridPlanner(
+    small = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=small_provider)  # type: ignore[arg-type]
+    big = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=big_provider)  # type: ignore[arg-type]
+    selector = HybridPoolSelector(
         config={"timeout_seconds": 2, "small_llm": {"enabled": True}},
         llm_planner=big,
         small_llm_planner=small,
     )
 
-    plan = await planner.plan(_make_request("帮我做一个支付系统与风控系统的架构方案"))
+    plan = await selector.select(_make_request("帮我做一个支付系统与风控系统的架构方案"))
 
-    assert plan.meta.get("planner_kind") == "hybrid_big_llm"
+    assert plan.meta.get("pool_selector_kind") == "hybrid_big_llm"
     assert plan.task_type == "plan"
     assert plan.meta.get("escalated_to_big") is True
-    assert plan.meta.get("final_plan_source") == "big_llm"
+    assert plan.meta.get("final_routing_source") == "big_llm"
     assert small_provider.calls == 1
     assert big_provider.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_llm_planner_uses_view_recent_obs_preview() -> None:
-    provider = _CapturePlannerInputProvider()
-    llm = LLMPlanner(config={"llm": {"timeout_seconds": 1}}, llm_provider=provider)  # type: ignore[arg-type]
+async def test_llm_pool_selector_uses_view_recent_obs_preview() -> None:
+    provider = _CaptureSelectorInputProvider()
+    llm = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=provider)  # type: ignore[arg-type]
 
-    view = PlannerInputView(
+    view = PoolSelectorInputView(
         current_input_text="hello",
         recent_obs_view=[{"actor_id": "u1", "source_name": "test", "text": "from_view"}],
         session_state_view={},
         gate_hint_view={},
     )
 
-    await llm.plan(_make_request("ignored"), view=view)
+    await llm.select(_make_request("ignored"), view=view)
 
     assert provider.last_input is not None
     assert provider.last_input.get("recent_obs_preview")[0]["text"] == "from_view"

@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from loguru import logger
 
-from ..types import AgentRequest, ContextPack, TaskPlan
+from ..types import AgentRequest, ContextPack, RoutingPlan
 
 
 class ChatPool:
@@ -16,7 +16,7 @@ class ChatPool:
     pool_id = "chat"
     name = "chat_pool"
 
-    async def run(self, req: AgentRequest, plan: TaskPlan, ctx: ContextPack) -> Dict[str, Any]:
+    async def run(self, req: AgentRequest, plan: RoutingPlan, ctx: ContextPack) -> Dict[str, Any]:
         # ============================================================
         # Phase 1.2 集成点：PromptEngine 调试模式
         # 通过环境变量 DEBUG_PROMPT_ENGINE=1 启用

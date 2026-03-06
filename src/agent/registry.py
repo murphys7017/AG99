@@ -44,26 +44,41 @@ class AgentConfigRegistry:
         """校验配置结构（Phase 0 最小校验）。"""
         if not isinstance(config, dict):
             raise ValueError("agent config must be a dict")
-        if not isinstance(config.get("planner"), dict):
-            raise ValueError("agent planner config must be a dict")
+        if not isinstance(config.get("pool_selector"), dict) and not isinstance(config.get("planner"), dict):
+            raise ValueError("agent pool selector config(planner key) must be a dict")
         if not isinstance(config.get("pools"), dict):
             raise ValueError("agent pools config must be a dict")
 
+    def get_pool_selector_config(self, selector_id: Optional[str] = None) -> Dict[str, Any]:
+        """获取 PoolSelector 配置（兼容读取 planner 配置节点）。"""
+        return self._get_selector_config(selector_id, prefer_key="pool_selector")
+
     def get_planner_config(self, planner_id: Optional[str] = None) -> Dict[str, Any]:
         """获取 planner 配置。"""
+        return self._get_selector_config(planner_id, prefer_key="planner")
+
+    def _get_selector_config(self, selector_id: Optional[str], *, prefer_key: str) -> Dict[str, Any]:
         cfg = self.load()
-        planner_cfg = dict(cfg.get("planner", {}))
-        default_id = planner_cfg.get("default", "rule")
-        plan_id = planner_id or default_id
-        items = planner_cfg.get("items", {})
-        if isinstance(items, dict) and isinstance(items.get(plan_id), dict):
-            merged = dict(items.get(plan_id, {}))
-            file_cfg = self._load_planner_file(plan_id, merged)
-            if isinstance(file_cfg, dict):
-                merged = self._merge(file_cfg, merged)
-            merged.setdefault("id", plan_id)
-            return merged
-        return {"id": plan_id, "kind": plan_id}
+        primary = cfg.get(prefer_key, {}) if isinstance(cfg.get(prefer_key), dict) else {}
+        fallback_key = "planner" if prefer_key != "planner" else "pool_selector"
+        secondary = cfg.get(fallback_key, {}) if isinstance(cfg.get(fallback_key), dict) else {}
+
+        def resolve(source: Dict[str, Any]) -> Dict[str, Any] | None:
+            default_id = source.get("default", "rule")
+            plan_id = selector_id or default_id
+            items = source.get("items", {})
+            if isinstance(items, dict) and isinstance(items.get(plan_id), dict):
+                merged = dict(items.get(plan_id, {}))
+                file_cfg = self._load_planner_file(plan_id, merged)
+                if isinstance(file_cfg, dict):
+                    merged = self._merge(file_cfg, merged)
+                merged.setdefault("id", plan_id)
+                return merged
+            return {"id": plan_id, "kind": plan_id}
+
+        if primary:
+            return resolve(primary) or {"id": selector_id or "rule", "kind": selector_id or "rule"}
+        return resolve(secondary) or {"id": selector_id or "rule", "kind": selector_id or "rule"}
 
     def get_pool_config(self, pool_id: Optional[str] = None) -> Dict[str, Any]:
         """获取 pool 配置。"""
@@ -82,12 +97,24 @@ class AgentConfigRegistry:
     def _default_config() -> Dict[str, Any]:
         return {
             "version": "0.1-phase0",
+            "pool_selector": {
+                "default": "default",
+                "items": {
+                    "default": {
+                        "kind": "hybrid",
+                        "config_file": "config/agent/pool_selector/default.yaml",
+                    },
+                    "rule": {"kind": "rule"},
+                    "hybrid": {"kind": "hybrid"},
+                    "llm": {"kind": "llm"},
+                },
+            },
             "planner": {
                 "default": "default",
                 "items": {
                     "default": {
                         "kind": "hybrid",
-                        "config_file": "config/agent/planner/default.yaml",
+                        "config_file": "config/agent/pool_selector/default.yaml",
                     },
                     "rule": {"kind": "rule"},
                     "hybrid": {"kind": "hybrid"},
@@ -120,6 +147,7 @@ class AgentConfigRegistry:
         candidates: list[Path] = []
         if isinstance(config_file, str) and config_file.strip():
             candidates.append(Path(config_file.strip()))
+        candidates.append(Path(f"config/agent/pool_selector/{plan_id}.yaml"))
         candidates.append(Path(f"config/agent/planner/{plan_id}.yaml"))
 
         for candidate in candidates:
