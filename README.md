@@ -34,7 +34,7 @@ AG99 是一个 **事件驱动 Agent Runtime**，强调以下能力：
 
 - **多会话隔离**：每个 `session_key` 一个串行 worker，session 内顺序执行、session 间并发
 - **前置 Gate 决策**：在 Agent 前做快速规则决策（`DROP / SINK / DELIVER`）
-- **Agent 编排**：以 `AgentQueen` 为中心组织 planner / context / pool / aggregator / speaker
+- **Agent 编排**：以 `AgentQueen` 为中心组织 pool_selector / context / pool / aggregator / speaker
 - **系统自调节**：通过 System Reflex 对系统痛觉信号与 tuning suggestion 做受控处理（白名单、TTL、冷却）
 - **Memory 持久化（fail-open）**：事件与轮次写入失败不阻断主链路
 - **异步 Egress**：输出走后台队列，不阻塞 worker 主循环
@@ -48,7 +48,7 @@ AG99 是一个 **事件驱动 Agent Runtime**，强调以下能力：
   | Adapters / Observation / InputBus                     | 感觉系统 + 编码       | 把外界输入统一成事件协议                    |
   | Gate（DROP/SINK/DELIVER）                             | 脊髓反射 / 脑干快通路 | 快速、同步、确定性决策；优先保护系统        |
   | SystemReflex                                          | 内稳态 / 痛觉与调参   | 对“系统信号”做受控调节（白名单、TTL、冷却） |
-  | AgentQueen（planner/context/pool/aggregator/speaker） | 前额叶/执行功能       | 负责规划、整合上下文、调度子能力            |
+  | AgentQueen（pool_selector/context/pool/aggregator/speaker） | 前额叶/执行功能       | 负责规划、整合上下文、调度子能力            |
   | Memory（fail-open）                                   | 海马体 / 长期记忆     | 记忆失败不阻断生存主链路                    |
   | Egress（异步）                                        | 运动输出通路          | 把输出/外部 IO 放到后台，避免阻塞核心循环   |
 
@@ -103,7 +103,7 @@ src/
 ├─ input_bus.py            # 异步输入总线
 ├─ session_router.py       # 按 session_key 分流、会话 inbox 与状态
 ├─ gate/                   # 前置决策 pipeline（scene/feature/scoring/policy/...）
-├─ agent/                  # AgentQueen 与 planner/context/pool/aggregator/speaker
+├─ agent/                  # AgentQueen 与 pool_selector/context/pool/aggregator/speaker
 ├─ system_reflex/          # 自调节控制器（白名单、TTL、冷却、回滚）
 ├─ memory/                 # Event/Turn 持久化、vault、失败队列
 ├─ adapters/               # 输入/输出适配器
@@ -170,7 +170,7 @@ uv run pytest -m integration -q
 - Memory 初始化失败默认不阻断主流程（fail-open）
 
 ### `config/agent/`
-- Agent 总配置与 planner 子配置
+- Agent 总配置与 pool_selector 子配置
 - 默认规划路径可使用 rule / llm / hybrid 方案
 
 ---
@@ -287,6 +287,7 @@ See [LICENSE](./LICENSE) for details.
 
 ## TODO
 
-- [ ] 为 planner 增加更细粒度的信息规划（从“类型级”提升到“item 级/字段级”）
+- [ ] 为 pool_selector 增加更细粒度的信息规划（从“类型级”提升到“item 级/字段级”）
 - [ ] 预算控制补充摘要与压缩策略，减少简单硬截断
 - [ ] 优化 prompt render 的 Lost-in-the-middle 问题
+

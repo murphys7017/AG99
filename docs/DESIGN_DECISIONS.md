@@ -83,7 +83,7 @@
 1. provider 客户端当前是同步 HTTP 调用。
 2. 在异步链路中使用 `asyncio.to_thread(...)` 包装调用。
 
-实现锚点：`src/agent/planner/llm_planner.py::LLMPlanner.plan`
+实现锚点：`src/agent/pool_selector/llm_pool_selector.py::LLMPoolSelector.select`
 
 ## ADR-008：系统调节入口统一在 SystemReflex（白名单+TTL）
 
@@ -148,3 +148,5 @@
 2. 是否将 provider 层改为原生 async HTTP 客户端。
 3. 是否拆分 `core.py` 进一步降低单文件复杂度。
 4. 是否落地统一 trace_id 跨 Adapter/Gate/Agent/Memory。
+
+

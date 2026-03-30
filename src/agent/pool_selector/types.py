@@ -67,13 +67,6 @@ def build_pool_selector_input_view(
         meta={"recent_obs_count": len(req.session_state.recent_obs or [])},
     )
 
-
-# Deprecated aliases
-PlannerSignals = PoolSelectorSignals
-PlannerInputView = PoolSelectorInputView
-build_planner_input_view = build_pool_selector_input_view
-
-
 def _extract_recent_obs_view(
     recent: List[Observation],
     *,

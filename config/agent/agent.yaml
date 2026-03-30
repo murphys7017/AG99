@@ -13,20 +13,6 @@ pool_selector:
     llm:
       kind: llm
 
-# Deprecated alias: keep for backward compatibility
-planner:
-  default: default
-  items:
-    default:
-      kind: hybrid
-      config_file: config/agent/pool_selector/default.yaml
-    rule:
-      kind: rule
-    hybrid:
-      kind: hybrid
-    llm:
-      kind: llm
-
 pools:
   default: chat
   items:
@@ -46,4 +32,4 @@ subagents:
       enabled: true
 
 prompts:
-  default: planner_default
+  default: pool_selector_default

@@ -86,17 +86,6 @@ def normalize_routing_plan_payload(payload: Mapping[str, Any], *, pool_selector_
         meta=meta,
     )
 
-
-def normalize_task_plan(plan: RoutingPlan, *, planner_kind: str) -> RoutingPlan:
-    """Deprecated alias: normalize_task_plan -> normalize_routing_plan。"""
-    return normalize_routing_plan(plan, pool_selector_kind=planner_kind)
-
-
-def normalize_task_plan_payload(payload: Mapping[str, Any], *, planner_kind: str) -> RoutingPlan:
-    """Deprecated alias: normalize_task_plan_payload -> normalize_routing_plan_payload。"""
-    return normalize_routing_plan_payload(payload, pool_selector_kind=planner_kind)
-
-
 def _normalize_required_context(raw: Any) -> tuple[str, ...]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         return ("recent_obs",)

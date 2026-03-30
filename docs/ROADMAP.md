@@ -31,7 +31,7 @@
 ### C. Agent Phase0/1
 
 1. AgentQueen 编排主链路
-2. Rule/LLM/Hybrid planner
+2. Rule/LLM/Hybrid pool_selector
 3. ContextBuilder + PoolRouter + Aggregator + Speaker
 4. 失败 fallback 与回流防循环
 
@@ -72,3 +72,4 @@
 1. 每次迭代先保证 `pytest -m "not integration" -q` 通过。
 2. integration 测试独立 Job 执行。
 3. 文档按 Active 单文档策略维护，避免同主题多版本漂移。
+

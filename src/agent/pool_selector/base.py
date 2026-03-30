@@ -20,15 +20,3 @@ class PoolSelector(Protocol):
     ) -> RoutingPlan:
         """基于输入请求生成 RoutingPlan。"""
         ...
-
-    async def plan(
-        self,
-        req: AgentRequest,
-        view: PoolSelectorInputView | None = None,
-    ) -> RoutingPlan:
-        """Deprecated alias: 请迁移到 select()."""
-        ...
-
-
-class Planner(PoolSelector, Protocol):
-    """Deprecated alias: Planner -> PoolSelector。"""

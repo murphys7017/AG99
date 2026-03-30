@@ -70,22 +70,6 @@ class LLMPoolSelector:
 
         return normalize_routing_plan_payload(payload, pool_selector_kind=self.kind)
 
-    async def plan(
-        self,
-        req: AgentRequest,
-        view: PoolSelectorInputView | None = None,
-        *,
-        rule_plan: Optional[RoutingPlan] = None,
-        recent_obs_count: Optional[int] = None,
-    ) -> RoutingPlan:
-        """Deprecated alias: plan() -> select()."""
-        return await self.select(
-            req,
-            rule_plan=rule_plan,
-            recent_obs_count=recent_obs_count,
-            view=view,
-        )
-
     def _get_or_create_provider(self) -> LLMProvider:
         if self._provider is not None:
             return self._provider
@@ -254,7 +238,3 @@ def _default_pool_selector_prompt() -> str:
         "示例3 输入: 设计一个系统方案 -> 输出 task_type=plan。\n"
         "示例4 输入: 写一个脑暴故事点子 -> 输出 task_type=creative。"
     )
-
-
-class LLMPlanner(LLMPoolSelector):
-    """Deprecated alias: LLMPlanner -> LLMPoolSelector。"""

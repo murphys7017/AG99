@@ -21,14 +21,14 @@ class HybridPoolSelector:
         self,
         *,
         config: Optional[Mapping[str, Any]] = None,
-        rule_planner: Optional[RulePoolSelector] = None,
-        llm_planner: Optional[LLMPoolSelector] = None,
-        small_llm_planner: Optional[LLMPoolSelector] = None,
+        rule_pool_selector: Optional[RulePoolSelector] = None,
+        llm_pool_selector: Optional[LLMPoolSelector] = None,
+        small_llm_pool_selector: Optional[LLMPoolSelector] = None,
     ) -> None:
         self._cfg = dict(config or {})
-        self._rule = rule_planner or RulePoolSelector()
-        self._llm = llm_planner or LLMPoolSelector(config=self._cfg)
-        self._small_llm = small_llm_planner or self._build_small_llm_planner()
+        self._rule = rule_pool_selector or RulePoolSelector()
+        self._llm = llm_pool_selector or LLMPoolSelector(config=self._cfg)
+        self._small_llm = small_llm_pool_selector or self._build_small_llm_pool_selector()
         self._timeout_seconds = _to_positive_float(self._cfg.get("timeout_seconds"), default=8.0)
         esc_cfg = self._cfg.get("escalation", {})
         esc_cfg = dict(esc_cfg) if isinstance(esc_cfg, Mapping) else {}
@@ -194,11 +194,7 @@ class HybridPoolSelector:
             )
             return normalize_routing_plan_payload(payload, pool_selector_kind="hybrid_rule_fallback")
 
-    async def plan(self, req: AgentRequest, view: PoolSelectorInputView | None = None) -> RoutingPlan:
-        """Deprecated alias: plan() -> select()."""
-        return await self.select(req, view=view)
-
-    def _build_small_llm_planner(self) -> Optional[LLMPoolSelector]:
+    def _build_small_llm_pool_selector(self) -> Optional[LLMPoolSelector]:
         raw = self._cfg.get("small_llm")
         if not isinstance(raw, Mapping):
             return None
@@ -281,7 +277,3 @@ def _to_payload(plan: RoutingPlan, *, meta_override: Optional[Mapping[str, Any]]
         "fallback_reason": meta.get("fallback_reason"),
         "llm_error": meta.get("llm_error"),
     }
-
-
-class HybridPlanner(HybridPoolSelector):
-    """Deprecated alias: HybridPlanner -> HybridPoolSelector。"""

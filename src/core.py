@@ -53,6 +53,9 @@ class CoreMetrics:
     drops_overload_total: int = 0
     adapters_cooldown_total: int = 0
     fanout_skipped_total: int = 0
+    bus_publish_fail_total: int = 0
+    bus_publish_fail_by_reason: Dict[str, int] = field(default_factory=dict)
+    bus_publish_fail_by_context: Dict[str, int] = field(default_factory=dict)
 
     def inc_processed(self, session_key: str) -> None:
         """增加该 session 的处理计数"""
@@ -68,6 +71,12 @@ class CoreMetrics:
         """增加 GC 计数"""
         self.sessions_gc_total += 1
         self.sessions_gc_by_reason[reason] = self.sessions_gc_by_reason.get(reason, 0) + 1
+
+    def inc_bus_publish_fail(self, reason: str, context: str) -> None:
+        """增加 bus publish 失败计数。"""
+        self.bus_publish_fail_total += 1
+        self.bus_publish_fail_by_reason[reason] = self.bus_publish_fail_by_reason.get(reason, 0) + 1
+        self.bus_publish_fail_by_context[context] = self.bus_publish_fail_by_context.get(context, 0) + 1
 
 
 class Core:
@@ -588,7 +597,7 @@ class Core:
 
                 # 1) emit
                 for emit_obs in outcome.emit:
-                    self.bus.publish_nowait(emit_obs)
+                    self._publish_to_bus(emit_obs, context="gate_emit")
 
                 # 2) ingest
                 for ingest_obs in outcome.ingest:
@@ -630,6 +639,19 @@ class Core:
             logger.warning(f"[{obs.session_key}] Egress queue full, dropped observation")
         except Exception as e:
             logger.warning(f"[{obs.session_key}] Egress enqueue failed: {e}")
+
+    def _publish_to_bus(self, obs: Observation, *, context: str) -> bool:
+        """Publish to bus with failure metrics and warning logs."""
+        result = self.bus.publish_nowait(obs)
+        if result.ok:
+            return True
+
+        reason = str(result.reason or "unknown")
+        self.metrics.inc_bus_publish_fail(reason, context)
+        logger.warning(
+            f"[{obs.session_key}] Bus publish failed context={context} reason={reason}"
+        )
+        return False
 
     async def _egress_loop(self) -> None:
         """Background loop that sends queued observations to output adapters."""
@@ -685,7 +707,7 @@ class Core:
         elif obs.obs_type == ObservationType.CONTROL:
             emits = self.system_reflex.handle_observation(obs, datetime.now(timezone.utc))
             for emit_obs in emits:
-                self.bus.publish_nowait(emit_obs)
+                self._publish_to_bus(emit_obs, context="system_reflex_emit")
         elif obs.obs_type == ObservationType.SCHEDULE:
             await self._on_system_tick(obs)
         else:
@@ -766,7 +788,7 @@ class Core:
                 session_key="system",
                 data_extra={"drops_delta": drops_delta},
             )
-            self.bus.publish_nowait(pain)
+            self._publish_to_bus(pain, context="system_pain_emit")
 
         # fanout 处理
         await self._fanout_tick(obs)
@@ -809,9 +831,7 @@ class Core:
                 ),
             )
 
-            result = self.bus.publish_nowait(tick_obs)
-            if not result.ok:
-                logger.warning(f"Failed to fanout tick to {session_key}: {result.reason}")
+            self._publish_to_bus(tick_obs, context="fanout_tick")
 
     async def _handle_user_observation(
         self, session_key: str, obs: Observation, state: SessionState, decision=None
@@ -878,11 +898,12 @@ class Core:
                 
                 # 将 agent 的 emit 投递回 bus
                 for emit_obs in agent_outcome.emit:
+                    emit_obs.metadata = dict(emit_obs.metadata or {})
                     if memory_turn_id:
                         emit_obs.metadata["memory_turn_id"] = memory_turn_id
                         emit_obs.metadata["memory_direction"] = "outbound"
                     # Speaker 产出先回灌 bus，后续由 worker 统一进入输出池
-                    self.bus.publish_nowait(emit_obs)
+                    self._publish_to_bus(emit_obs, context="agent_emit")
                     logger.debug(f"[{session_key}] Agent emit: {emit_obs.source_name}")
                 
                 if self.memory_service is not None and memory_turn_id is not None:

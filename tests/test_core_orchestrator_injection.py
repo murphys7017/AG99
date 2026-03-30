@@ -51,6 +51,26 @@ class EmitOrchestrator:
         return AgentOutcome(emit=[emit_obs], trace={}, error=None)
 
 
+class EmitOrchestratorWithNoneMetadata:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_emit_obs_id = None
+
+    async def handle(self, req):
+        self.calls += 1
+        emit_obs = Observation(
+            obs_type=ObservationType.MESSAGE,
+            source_name="agent:speaker",
+            source_kind=SourceKind.INTERNAL,
+            session_key=req.obs.session_key,
+            actor=Actor(actor_id="agent", actor_type="system"),
+            payload=MessagePayload(text="ok"),
+            metadata=None,
+        )
+        self.last_emit_obs_id = emit_obs.obs_id
+        return AgentOutcome(emit=[emit_obs], trace={}, error=None)
+
+
 @dataclass
 class _MemoryTurn:
     turn_id: str
@@ -278,5 +298,44 @@ async def test_core_skip_turn_when_append_event_failed():
 
     await core.shutdown()
     assert memory.closed is True
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_core_emit_metadata_none_is_handled_for_memory_tagging():
+    orchestrator = EmitOrchestratorWithNoneMetadata()
+    memory = FakeMemoryService()
+    core = Core(
+        bus_maxsize=100,
+        inbox_maxsize=16,
+        system_session_key="system",
+        message_routing="user",
+        enable_system_fanout=False,
+        enable_session_gc=False,
+        agent_queen=orchestrator,
+        memory_service=memory,
+    )
+
+    task = asyncio.create_task(core.run_forever())
+    await _wait_until(lambda: core._router_task is not None and core._watcher_task is not None)
+
+    core.bus.publish_nowait(
+        Observation(
+            obs_type=ObservationType.MESSAGE,
+            source_name="test_input",
+            session_key="dm:test_metadata_none",
+            actor=Actor(actor_id="u1", actor_type="user"),
+            payload=MessagePayload(text="hello"),
+        )
+    )
+
+    await _wait_until(lambda: len(memory.finished) >= 1)
+
+    assert orchestrator.calls >= 1
+    assert len(memory.turns) == 1
+    assert memory.finished[0]["status"] == "ok"
+    assert memory.finished[0]["final_output_obs_id"] == orchestrator.last_emit_obs_id
+
+    await core.shutdown()
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)

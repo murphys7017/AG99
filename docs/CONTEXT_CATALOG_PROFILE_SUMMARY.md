@@ -1,4 +1,4 @@
-# Context Catalog & PromptProfile 阶段总结报告
+﻿# Context Catalog & PromptProfile 阶段总结报告
 
 **实施日期**: 2026-03-04  
 **版本**: Phase 1.1 骨架版  
@@ -13,7 +13,7 @@
 - **Config 根目录**: `config/`
 - **Config 加载方式**: `yaml.safe_load` + dataclass + 手写校验
 - **已有配置提供者**: GateConfigProvider, LLMConfig, AgentConfigRegistry, MemoryConfigProvider
-- **Agent 配置体系**: `config/agent/` 包含 planner（PoolSelector 兼容配置）/pools/prompts/subagents 子目录
+- **Agent 配置体系**: `config/agent/` 包含 pool_selector/pools/prompts/subagents 子目录
 - **校验机制**: dataclass + isinstance + 自定义 validate 方法（不使用 jsonschema/pydantic）
 
 ### 设计决策
@@ -447,3 +447,4 @@ layout:
 ---
 
 **总结**: Context Catalog & PromptProfile 骨架版已完整实现并验证通过。配置结构清晰、校验完备、集成无侵入、测试全覆盖。为 Phase 1.2 Prompt 渲染引擎奠定了坚实基础。✅
+

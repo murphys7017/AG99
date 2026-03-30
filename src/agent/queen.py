@@ -1,4 +1,4 @@
-"""AgentQueen：Agent Phase 0 编排核心。"""
+﻿"""AgentQueen：Agent Phase 0 编排核心。"""
 
 from __future__ import annotations
 
@@ -26,16 +26,13 @@ from .context import (
     ContextPresetsCollection,
 )
 from .context.types import ContextSlot
-from .planner import HybridPoolSelector, LLMPoolSelector, PoolSelector, RulePoolSelector
-from .planner.validator import normalize_routing_plan
-from .planner.types import build_pool_selector_input_view
+from .pool_selector import HybridPoolSelector, LLMPoolSelector, PoolSelector, RulePoolSelector
+from .pool_selector.validator import normalize_routing_plan
+from .pool_selector.types import build_pool_selector_input_view
 from .pools import AgentPoolRouter, Aggregator, ChatPool, DraftAggregator, Pool, PoolRouter
 from .registry import AgentConfigRegistry
 from .speaker import AgentSpeaker, Speaker
 from .types import AgentOutcome, AgentRequest, ContextPack, RoutingPlan
-
-# Deprecated alias: 旧代码可能从 queen 导入 Plan
-Plan = RoutingPlan
 
 
 class AgentQueen:
@@ -50,7 +47,6 @@ class AgentQueen:
         self,
         *,
         pool_selector: Optional[PoolSelector] = None,
-        planner: Optional[PoolSelector] = None,
         context_builder: Optional[ContextBuilder] = None,
         pool_router: Optional[PoolRouter] = None,
         aggregator: Optional[Aggregator] = None,
@@ -60,8 +56,7 @@ class AgentQueen:
     ) -> None:
         self.registry = registry or AgentConfigRegistry()
         self._config = self.registry.load()
-        self.pool_selector: PoolSelector = pool_selector or planner or self._build_pool_selector()
-        self.planner: PoolSelector = self.pool_selector
+        self.pool_selector: PoolSelector = pool_selector or self._build_pool_selector()
         self.context_builder: ContextBuilder = context_builder or SlotContextBuilder()
         self.pool_router: PoolRouter = pool_router or AgentPoolRouter()
         self.aggregator: Aggregator = aggregator or DraftAggregator()
@@ -116,17 +111,13 @@ class AgentQueen:
             logger.warning(f"AgentQueen profiles loading failed (non-blocking): {e}")
 
     def _build_pool_selector(self) -> PoolSelector:
-        planner_cfg = self.registry.get_pool_selector_config()
-        kind = str(planner_cfg.get("kind", "rule")).lower()
+        selector_cfg = self.registry.get_pool_selector_config()
+        kind = str(selector_cfg.get("kind", "rule")).lower()
         if kind in {"hybrid", "hybrid_stub"}:
-            return HybridPoolSelector(config=planner_cfg)
+            return HybridPoolSelector(config=selector_cfg)
         if kind in {"llm", "llm_stub"}:
-            return LLMPoolSelector(config=planner_cfg)
+            return LLMPoolSelector(config=selector_cfg)
         return RulePoolSelector()
-
-    def _build_planner(self) -> PoolSelector:
-        """Deprecated alias: _build_planner() -> _build_pool_selector()."""
-        return self._build_pool_selector()
 
     async def handle(self, req: AgentRequest) -> AgentOutcome:
         """执行 Agent 主流程并返回可回灌 Observation。"""
@@ -487,8 +478,8 @@ def _build_context_summary(plan: RoutingPlan, ctx: ContextPack, meta: Dict[str, 
 
 # 兼容导出：旧测试可能直接引用这些名字
 DefaultPoolSelector = RulePoolSelector
-DefaultPlanner = RulePoolSelector
 DefaultContextBuilder = RecentObsContextBuilder
 DefaultPoolRouter = AgentPoolRouter
 DefaultAggregator = DraftAggregator
 DefaultSpeaker = AgentSpeaker
+

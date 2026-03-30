@@ -88,7 +88,7 @@
 
 当前编排固定为：
 
-1. Planner（rule / llm / hybrid）
+1. PoolSelector（rule / llm / hybrid）
 2. ContextBuilder（默认 recent_obs）
 3. PoolRouter（默认回退 chat pool）
 4. Aggregator（默认 `DraftAggregator`）
@@ -187,14 +187,14 @@ Core 集成点：
 ### 4.2 Agent
 
 1. 文件：`config/agent/agent.yaml`
-2. Planner 默认项：`default -> hybrid`
-3. planner 细化配置：`config/agent/planner/default.yaml`
+2. PoolSelector 默认项：`default -> hybrid`
+3. pool_selector 细化配置：`config/agent/pool_selector/default.yaml`
 
 ### 4.3 LLM
 
 1. 文件：`config/llm.yaml`
 2. `LLMProvider.call()` 为同步调用
-3. `LLMPlanner.plan()` 通过 `asyncio.to_thread(...)` 调用 provider，避免阻塞事件循环
+3. `LLMPoolSelector.select()` 通过 `asyncio.to_thread(...)` 调用 provider，避免阻塞事件循环
 
 ### 4.4 Memory
 
@@ -208,7 +208,7 @@ Core 集成点：
 1. `Core._session_loop -> await inbox.get()`
 2. `Core._handle_user_observation -> await agent_queen.handle(req)`
 3. `Core._egress_loop -> await egress.dispatch(obs)`
-4. `LLMPlanner.plan -> await asyncio.to_thread(provider.call, ...)`
+4. `LLMPoolSelector.select -> await asyncio.to_thread(provider.call, ...)`
 
 注意：单个 session 是串行语义，慢请求会阻塞该 session 后续消息。
 
@@ -232,3 +232,4 @@ Core 集成点：
 2. 新增 Gate 规则优先通过配置表达，再考虑代码分支。
 3. 新增 provider 时同步补 integration 测试和超时策略。
 4. 任何跨层新字段优先挂到 `Observation.metadata`，避免平行协议。
+

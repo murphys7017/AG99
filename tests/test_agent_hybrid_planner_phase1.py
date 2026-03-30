@@ -1,4 +1,4 @@
-"""Agent Phase 1: HybridPoolSelector 验证。"""
+﻿"""Agent Phase 1: HybridPoolSelector 验证。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.agent.planner.hybrid_pool_selector import HybridPoolSelector
-from src.agent.planner.llm_pool_selector import LLMPoolSelector
-from src.agent.planner.types import PoolSelectorInputView
+from src.agent.pool_selector.hybrid_pool_selector import HybridPoolSelector
+from src.agent.pool_selector.llm_pool_selector import LLMPoolSelector
+from src.agent.pool_selector.types import PoolSelectorInputView
 from src.agent.queen import AgentQueen
 from src.agent.types import AgentRequest
 from src.gate.types import GateAction, GateDecision, Scene
@@ -114,7 +114,7 @@ async def test_hybrid_pool_selector_falls_back_on_invalid_json() -> None:
     )
     selector = HybridPoolSelector(
         config={"timeout_seconds": 2},
-        llm_planner=llm,
+        llm_pool_selector=llm,
     )
 
     plan = await selector.select(_make_request("pytest 失败了，Traceback 如下"))
@@ -133,7 +133,7 @@ async def test_hybrid_pool_selector_parses_llm_json_and_normalizes() -> None:
     )
     selector = HybridPoolSelector(
         config={"timeout_seconds": 2},
-        llm_planner=llm,
+        llm_pool_selector=llm,
     )
 
     plan = await selector.select(_make_request("帮我设计一个微服务架构方案"))
@@ -155,7 +155,7 @@ async def test_agent_queen_trace_contains_hybrid_pool_selector_signals() -> None
     )
     hybrid = HybridPoolSelector(
         config={"timeout_seconds": 2},
-        llm_planner=llm,
+        llm_pool_selector=llm,
     )
     queen = AgentQueen(pool_selector=hybrid)
 
@@ -204,8 +204,8 @@ async def test_hybrid_pool_selector_uses_small_llm_without_escalation() -> None:
     big = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=big_provider)  # type: ignore[arg-type]
     selector = HybridPoolSelector(
         config={"timeout_seconds": 2, "small_llm": {"enabled": True}},
-        llm_planner=big,
-        small_llm_planner=small,
+        llm_pool_selector=big,
+        small_llm_pool_selector=small,
     )
 
     plan = await selector.select(_make_request("你好，帮我打个招呼就行"))
@@ -252,8 +252,8 @@ async def test_hybrid_pool_selector_escalates_to_big_llm_when_small_requires() -
     big = LLMPoolSelector(config={"llm": {"timeout_seconds": 1}}, llm_provider=big_provider)  # type: ignore[arg-type]
     selector = HybridPoolSelector(
         config={"timeout_seconds": 2, "small_llm": {"enabled": True}},
-        llm_planner=big,
-        small_llm_planner=small,
+        llm_pool_selector=big,
+        small_llm_pool_selector=small,
     )
 
     plan = await selector.select(_make_request("帮我做一个支付系统与风控系统的架构方案"))
@@ -283,3 +283,4 @@ async def test_llm_pool_selector_uses_view_recent_obs_preview() -> None:
     assert provider.last_input is not None
     assert provider.last_input.get("recent_obs_preview")[0]["text"] == "from_view"
     assert provider.last_input.get("text") == "hello"
+

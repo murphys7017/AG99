@@ -55,11 +55,3 @@ class RulePoolSelector:
             },
         )
         return normalize_routing_plan(raw, pool_selector_kind=self.kind)
-
-    async def plan(self, req: AgentRequest, view: PoolSelectorInputView | None = None) -> RoutingPlan:
-        """Deprecated alias: plan() -> select()."""
-        return await self.select(req, view=view)
-
-
-class RulePlanner(RulePoolSelector):
-    """Deprecated alias: RulePlanner -> RulePoolSelector。"""

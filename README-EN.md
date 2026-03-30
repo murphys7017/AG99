@@ -1,4 +1,4 @@
-# AG99 Qingniao
+﻿# AG99 Qingniao
 > Ignite your own history
 
 A long-running, event-driven, multi-session Agent runtime.  
@@ -23,7 +23,7 @@ AG99 is an **event-driven Agent runtime**, focused on:
 
 - **Multi-session isolation**: one serial worker per `session_key`; serial within a session, concurrent across sessions
 - **Pre-agent Gate decisions**: fast rule-based routing before Agent (`DROP / SINK / DELIVER`)
-- **Agent orchestration**: `AgentQueen` coordinates planner / context / pool / aggregator / speaker
+- **Agent orchestration**: `AgentQueen` coordinates pool_selector / context / pool / aggregator / speaker
 - **System self-regulation**: System Reflex handles pain signals and tuning suggestions with controls (whitelist, TTL, cooldown)
 - **Memory persistence (fail-open)**: event/turn write failures do not block the main path
 - **Async egress**: outputs go through a background queue so worker loops are not blocked
@@ -79,7 +79,7 @@ src/
 ├─ input_bus.py            # async input bus
 ├─ session_router.py       # session_key routing, inboxes, and session state
 ├─ gate/                   # pre-agent decision pipeline (scene/feature/scoring/policy/...)
-├─ agent/                  # AgentQueen and planner/context/pool/aggregator/speaker
+├─ agent/                  # AgentQueen and pool_selector/context/pool/aggregator/speaker
 ├─ system_reflex/          # self-regulation controller (whitelist, TTL, cooldown, rollback)
 ├─ memory/                 # Event/Turn persistence, vault, failure queue
 ├─ adapters/               # input/output adapters
@@ -146,7 +146,7 @@ Hot reload is supported through config provider snapshot replacement.
 - Memory init failures are fail-open by default
 
 ### `config/agent/`
-- Agent top-level config and planner sub-config
+- Agent top-level config and pool_selector sub-config
 - Default planning path supports rule / llm / hybrid
 
 ---
@@ -240,3 +240,4 @@ Chinese name: **Qingniao**
 The name inspiration comes from **SCP-CN-1559 "Qingniao"**.
 
 The long-term goal is not just to answer questions, but to build an Agent runtime that can run long-term, evolve continuously, and form stable internal order over time.
+

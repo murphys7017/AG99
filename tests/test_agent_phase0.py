@@ -1,4 +1,4 @@
-"""Agent Phase 0 骨架验证。"""
+﻿"""Agent Phase 0 骨架验证。"""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 import pytest
 
 from src.agent.queen import AgentQueen
-from src.agent.planner.rule_pool_selector import RulePoolSelector
-from src.agent.planner.types import PoolSelectorInputView
+from src.agent.pool_selector.rule_pool_selector import RulePoolSelector
+from src.agent.pool_selector.types import PoolSelectorInputView
 from src.agent.types import AgentOutcome, AgentRequest
 from src.gate.types import GateAction, GateDecision, Scene
 from src.schemas.observation import (
@@ -102,3 +102,4 @@ async def test_rule_pool_selector_uses_view_text_override() -> None:
     plan = await selector.select(req, view=view)
 
     assert plan.task_type == "code"
+

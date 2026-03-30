@@ -1,4 +1,4 @@
-"""Phase 1.26: PoolSelector / RoutingPlan 语义重命名验证。"""
+﻿"""Phase 1.26: PoolSelector / RoutingPlan 语义重命名验证。"""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.agent.planner.rule_pool_selector import RulePoolSelector
-from src.agent.planner.validator import normalize_routing_plan_payload
+from src.agent.pool_selector.rule_pool_selector import RulePoolSelector
+from src.agent.pool_selector.validator import normalize_routing_plan_payload
 from src.agent.types import AgentRequest, RoutingPlan
 from src.gate.types import GateAction, GateDecision, Scene
 from src.schemas.observation import (
@@ -84,3 +84,4 @@ def test_routing_plan_field_integrity() -> None:
     assert "confidence" in plan.meta
     assert "reason" in plan.meta
     assert "fallback_pool_id" in plan.meta
+

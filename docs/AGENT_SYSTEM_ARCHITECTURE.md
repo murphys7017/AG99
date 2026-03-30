@@ -1,4 +1,4 @@
-# AG99 Agent 系统架构文档
+﻿# AG99 Agent 系统架构文档
 
 **基线时间**: 2026-03-04  
 **版本**: Phase 0 - Phase 1.2 (进行中)
@@ -122,7 +122,7 @@ async def handle(self, req: AgentRequest) -> AgentOutcome:
 
 ### 3.1 PoolSelector：Pool/Strategy/Context/Prompt 路由选择
 
-**文件**: [src/agent/planner/](../src/agent/planner/)  
+**文件**: [src/agent/pool_selector/](../src/agent/pool_selector/)  
 **输入**: `AgentRequest + PoolSelectorInputView`  
 **输出**: `RoutingPlan`
 
@@ -142,18 +142,18 @@ class RoutingPlan:
 
 #### 3.1.2 PoolSelector 实现体系
 
-1. **RulePoolSelector** ([src/agent/planner/rule_pool_selector.py](../src/agent/planner/rule_pool_selector.py))
+1. **RulePoolSelector** ([src/agent/pool_selector/rule_pool_selector.py](../src/agent/pool_selector/rule_pool_selector.py))
    - 基于关键词的快速分类
    - 无 LLM 调用，确定性
    - 默认回退到 `task_type="chat"`
 
-2. **LLMPoolSelector** ([src/agent/planner/llm_pool_selector.py](../src/agent/planner/llm_pool_selector.py))
+2. **LLMPoolSelector** ([src/agent/pool_selector/llm_pool_selector.py](../src/agent/pool_selector/llm_pool_selector.py))
    - 调用 LLM 进行分类与规划
      - 配置: `config/agent/agent.yaml > pool_selector.items.llm`
    - 使用 `LLMProvider.from_config()` + `asyncio.to_thread()`
     - 解析 JSON 输出为 RoutingPlan
 
-3. **HybridPoolSelector** ([src/agent/planner/hybrid_pool_selector.py](../src/agent/planner/hybrid_pool_selector.py))
+3. **HybridPoolSelector** ([src/agent/pool_selector/hybrid_pool_selector.py](../src/agent/pool_selector/hybrid_pool_selector.py))
    - 两阶段：先 Rule，再可选 LLM 精细化
    - 配置可选参数控制何时升级到 LLM
 
@@ -539,7 +539,7 @@ subagents:
       enabled: true
 
 prompts:
-    default: planner_default  # legacy prompt profile id
+    default: pool_selector_default  # legacy prompt profile id
 ```
 
 ### 5.2 PoolSelector 细化配置
@@ -802,7 +802,7 @@ queen = AgentQueen(pool_router=router)
 |------|------|-----------|
 | [src/agent/types.py](../src/agent/types.py) | 数据契约 | AgentRequest, RoutingPlan, AgentOutcome |
 | [src/agent/queen.py](../src/agent/queen.py) | 总编排器 | AgentQueen.handle(), _safe_* fallbacks |
-| [src/agent/planner/](../src/agent/planner/) | 池选择器体系 | RulePoolSelector, LLMPoolSelector, HybridPoolSelector |
+| [src/agent/pool_selector/](../src/agent/pool_selector/) | 池选择器体系 | RulePoolSelector, LLMPoolSelector, HybridPoolSelector |
 | [src/agent/context/builder.py](../src/agent/context/builder.py) | 上下文构建 | SlotContextBuilder.build() |
 | [src/agent/context/types.py](../src/agent/context/types.py) | 上下文类型 | ContextPack, ContextSlot |
 | [src/agent/context/providers/](../src/agent/context/providers/) | 槽位提供者 | CurrentInputProvider, RecentObsProvider, ... |
@@ -844,3 +844,5 @@ A: 能，`raw` 参数是 Pool 返回的整个 dict。
 - [PROJECT_MODULE_DEEP_DIVE.md](./PROJECT_MODULE_DEEP_DIVE.md) - 全系统深潜
 - [DESIGN_DECISIONS.md](./DESIGN_DECISIONS.md) - ADR 与设计选择
 - [GATE_COMPLETE_SPECIFICATION.md](./GATE_COMPLETE_SPECIFICATION.md) - Gate 详细规范
+
+

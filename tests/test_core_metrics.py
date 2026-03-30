@@ -9,6 +9,7 @@ from src.core import Core
 from src.agent.types import AgentOutcome
 from src.adapters.text_input_adapter import TextInputAdapter
 from src.schemas.observation import Observation, ObservationType, Actor, MessagePayload
+from src.input_bus import PublishResult
 
 
 async def _wait_until(predicate, *, timeout: float = 2.0, interval: float = 0.02):
@@ -131,3 +132,27 @@ async def test_debug_payload_recording():
 if __name__ == "__main__":
     # 简单的本地测试
     asyncio.run(test_core_metrics_and_states())
+
+
+def test_core_bus_publish_fail_metrics():
+    core = Core(
+        bus_maxsize=8,
+        inbox_maxsize=8,
+        enable_memory=False,
+    )
+
+    obs = Observation(
+        obs_type=ObservationType.MESSAGE,
+        source_name="test_input",
+        session_key="dm:metrics",
+        actor=Actor(actor_id="u1", actor_type="user"),
+        payload=MessagePayload(text="hello"),
+    )
+
+    core.bus.publish_nowait = lambda _: PublishResult(ok=False, dropped=True, reason="queue_full")
+    ok = core._publish_to_bus(obs, context="agent_emit")
+
+    assert ok is False
+    assert core.metrics.bus_publish_fail_total == 1
+    assert core.metrics.bus_publish_fail_by_reason["queue_full"] == 1
+    assert core.metrics.bus_publish_fail_by_context["agent_emit"] == 1
