@@ -55,13 +55,6 @@ from ..register import register_provider_adapter
 )
 class ProviderOpenAIOfficial(Provider):
     _ERROR_TEXT_CANDIDATE_MAX_CHARS = 4096
-    _LOG_PREVIEW_MAX_CHARS = 120
-
-    @classmethod
-    def _truncate_log_preview(cls, text: str) -> str:
-        if len(text) <= cls._LOG_PREVIEW_MAX_CHARS:
-            return text
-        return text[: cls._LOG_PREVIEW_MAX_CHARS] + "..."
 
     @classmethod
     def _truncate_error_text_candidate(cls, text: str) -> str:
@@ -154,96 +147,10 @@ class ProviderOpenAIOfficial(Provider):
             for item in content:
                 if isinstance(item, dict) and item.get("type") in {
                     "image_url",
-                    "input_image",
                     "audio_url",
                 }:
                     return True
         return False
-
-    def _summarize_messages(self, messages: list[dict] | None) -> dict[str, Any]:
-        summary: dict[str, Any] = {
-            "message_count": 0,
-            "image_count": 0,
-            "roles": [],
-            "text_preview": "",
-        }
-        if not messages:
-            return summary
-
-        roles: list[str] = []
-        text_parts: list[str] = []
-        image_count = 0
-
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            role = message.get("role")
-            if isinstance(role, str) and role:
-                roles.append(role)
-
-            content = message.get("content")
-            normalized_content = self._normalize_content(content)
-            if normalized_content:
-                text_parts.append(normalized_content)
-
-            if isinstance(content, list):
-                for part in content:
-                    if not isinstance(part, dict):
-                        continue
-                    if part.get("type") in ("image_url", "input_image"):
-                        image_count += 1
-
-        summary["message_count"] = len(messages)
-        summary["image_count"] = image_count
-        summary["roles"] = roles
-        summary["text_preview"] = self._truncate_log_preview(" ".join(text_parts))
-        return summary
-
-    def _summarize_completion(self, completion: ChatCompletion) -> dict[str, Any]:
-        summary: dict[str, Any] = {
-            "id": getattr(completion, "id", None),
-            "model": getattr(completion, "model", None),
-            "choices": len(getattr(completion, "choices", []) or []),
-            "finish_reason": None,
-            "has_content": False,
-            "content_preview": "",
-            "reasoning_preview": "",
-            "tool_call_count": 0,
-            "usage": None,
-        }
-
-        if usage := getattr(completion, "usage", None):
-            try:
-                token_usage = self._extract_usage(usage)
-                summary["usage"] = {
-                    "input_other": token_usage.input_other,
-                    "input_cached": token_usage.input_cached,
-                    "output": token_usage.output,
-                }
-            except Exception:
-                summary["usage"] = None
-
-        if not completion.choices:
-            return summary
-
-        choice = completion.choices[0]
-        summary["finish_reason"] = getattr(choice, "finish_reason", None)
-
-        message = getattr(choice, "message", None)
-        if message is not None:
-            content = self._normalize_content(getattr(message, "content", None))
-            summary["has_content"] = bool(content)
-            summary["content_preview"] = self._truncate_log_preview(content)
-
-            tool_calls = getattr(message, "tool_calls", None)
-            if tool_calls:
-                summary["tool_call_count"] = len(tool_calls)
-
-        reasoning = self._extract_reasoning_content(completion)
-        if reasoning:
-            summary["reasoning_preview"] = self._truncate_log_preview(reasoning)
-
-        return summary
 
     def _is_invalid_attachment_error(self, error: Exception) -> bool:
         body = getattr(error, "body", None)
@@ -320,20 +227,13 @@ class ProviderOpenAIOfficial(Provider):
 
         netloc = unquote(parsed.netloc or "")
         path = unquote(parsed.path or "")
-        if netloc.lower().startswith("localhost") and re.fullmatch(
-            r"localhost[A-Za-z]:",
-            netloc,
-        ):
-            return f"{netloc[len('localhost') :]}{path}"
         if re.fullmatch(r"[A-Za-z]:", netloc):
-            return f"{netloc}{path}"
+            return str(Path(f"{netloc}{path}"))
         if re.match(r"^/[A-Za-z]:/", path):
             path = path[1:]
         if netloc and netloc != "localhost":
-            if not path.startswith("/"):
-                path = f"/{path}"
-            return f"//{netloc}{path}"
-        return path
+            path = f"//{netloc}{path}"
+        return str(Path(path))
 
     async def _image_ref_to_data_url(
         self,
@@ -541,14 +441,7 @@ class ProviderOpenAIOfficial(Provider):
     def _create_http_client(self, provider_config: dict) -> httpx.AsyncClient:
         """创建带代理的 HTTP 客户端"""
         proxy = provider_config.get("proxy", "")
-        httpx_module: Any = httpx
-        try:
-            from openai import _base_client as openai_base_client
-
-            httpx_module = getattr(openai_base_client, "httpx", httpx)
-        except ImportError:
-            pass
-        return create_proxy_client("OpenAI", proxy, httpx_module=httpx_module)
+        return create_proxy_client("OpenAI", proxy)
 
     def __init__(self, provider_config, provider_settings) -> None:
         super().__init__(provider_config, provider_settings)
@@ -594,17 +487,6 @@ class ProviderOpenAIOfficial(Provider):
         self.set_model(model)
 
         self.reasoning_key = "reasoning_content"
-        # 检测是否使用豆包格式（可通过配置或 api_base 自动判断）
-        self.use_doubao_format = bool(provider_config.get("use_doubao_format", False))
-        api_base = provider_config.get("api_base", "")
-        if not self.use_doubao_format and isinstance(api_base, str):
-            # 自动检测豆包 API
-            self.use_doubao_format = (
-                "volces.com" in api_base or "bytedance" in api_base.lower()
-            )
-
-        if self.use_doubao_format:
-            logger.info("检测到豆包 API，将使用豆包图片格式（input_image + 直接 URL）")
 
     def _ollama_disable_thinking_enabled(self) -> bool:
         value = self.provider_config.get("ollama_disable_thinking", False)
@@ -637,36 +519,6 @@ class ProviderOpenAIOfficial(Provider):
         except NotFoundError as e:
             raise Exception(f"获取模型列表失败：{e}")
 
-    @staticmethod
-    def _sanitize_assistant_messages(payloads: dict) -> None:
-        """Normalize empty assistant history before sending OpenAI-compatible requests."""
-        messages = payloads.get("messages")
-        if not isinstance(messages, list):
-            return
-
-        def _is_empty(content: Any) -> bool:
-            return content is None or content == "" or content == []
-
-        cleaned_messages = []
-        for idx, msg in enumerate(messages):
-            if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                cleaned_messages.append(msg)
-                continue
-
-            content = msg.get("content")
-            tool_calls = msg.get("tool_calls")
-
-            if _is_empty(content) and not tool_calls:
-                logger.warning(f"过滤第 {idx} 条空 assistant 消息 (无工具调用)")
-                continue
-
-            if _is_empty(content) and tool_calls:
-                msg["content"] = None
-
-            cleaned_messages.append(msg)
-
-        payloads["messages"] = cleaned_messages
-
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         if tools:
             model = payloads.get("model", "").lower()
@@ -695,17 +547,27 @@ class ProviderOpenAIOfficial(Provider):
         self._apply_provider_specific_extra_body_overrides(extra_body)
 
         model = payloads.get("model", "").lower()
-        message_summary = self._summarize_messages(payloads.get("messages", []))
-        logger.debug(
-            "Querying OpenAI API: model=%s messages=%d images=%d tools=%d extra_body_keys=%s",
-            model,
-            message_summary["message_count"],
-            message_summary["image_count"],
-            len(payloads.get("tools", [])),
-            list(extra_body.keys()),
-        )
 
-        self._sanitize_assistant_messages(payloads)
+        if "messages" in payloads and isinstance(payloads["messages"], list):
+            cleaned_messages = []
+            for idx, msg in enumerate(payloads["messages"]):
+                # 过滤空的 assistant 消息，防止严格 API（如 Moonshot）返回 400 错误
+                if msg.get("role") == "assistant":
+                    content = msg.get("content")
+                    tool_calls = msg.get("tool_calls")
+
+                    # 情况1: 空/null content 且无 tool_calls -> 过滤掉
+                    if not tool_calls and (content == "" or content is None):
+                        logger.warning(f"过滤第 {idx} 条空 assistant 消息 (无工具调用)")
+                        continue
+
+                    # 情况2: 空 content 但有 tool_calls -> 设为 None (符合 OpenAI 规范)
+                    if content == "" and tool_calls:
+                        msg["content"] = None
+
+                cleaned_messages.append(msg)
+
+            payloads["messages"] = cleaned_messages
 
         completion = await self.client.chat.completions.create(
             **payloads,
@@ -718,9 +580,7 @@ class ProviderOpenAIOfficial(Provider):
                 f"API 返回的 completion 类型错误：{type(completion)}: {completion}。",
             )
 
-        logger.debug(
-            "OpenAI completion summary: %s", self._summarize_completion(completion)
-        )
+        logger.debug(f"completion: {completion}")
 
         llm_response = await self._parse_openai_completion(completion, tools)
 
@@ -759,8 +619,6 @@ class ProviderOpenAIOfficial(Provider):
             del payloads[key]
         self._apply_provider_specific_extra_body_overrides(extra_body)
 
-        self._sanitize_assistant_messages(payloads)
-
         stream = await self.client.chat.completions.create(
             **payloads,
             stream=True,
@@ -794,9 +652,9 @@ class ProviderOpenAIOfficial(Provider):
             reasoning = self._extract_reasoning_content(chunk)
             _y = False
             llm_response.id = chunk.id
-            llm_response.reasoning_content = None
+            llm_response.reasoning_content = ""
             llm_response.completion_text = ""
-            if reasoning is not None:
+            if reasoning:
                 llm_response.reasoning_content = reasoning
                 _y = True
             if delta and delta.content:
@@ -824,28 +682,22 @@ class ProviderOpenAIOfficial(Provider):
     def _extract_reasoning_content(
         self,
         completion: ChatCompletion | ChatCompletionChunk,
-    ) -> str | None:
+    ) -> str:
         """Extract reasoning content from OpenAI ChatCompletion if available."""
-
-        def _get_reasoning_attr(obj: Any) -> str | None:
-            fields_set = getattr(obj, "model_fields_set", None)
-            if isinstance(fields_set, set) and self.reasoning_key in fields_set:
-                attr = getattr(obj, self.reasoning_key, "")
-                return "" if attr is None else str(attr)
-            attr = getattr(obj, self.reasoning_key, None)
-            return None if attr is None else str(attr)
-
+        reasoning_text = ""
         if not completion.choices:
-            return None
+            return reasoning_text
         if isinstance(completion, ChatCompletion):
             choice = completion.choices[0]
-            reasoning_attr = _get_reasoning_attr(choice.message)
+            reasoning_attr = getattr(choice.message, self.reasoning_key, None)
+            if reasoning_attr:
+                reasoning_text = str(reasoning_attr)
         elif isinstance(completion, ChatCompletionChunk):
             delta = completion.choices[0].delta
-            reasoning_attr = _get_reasoning_attr(delta)
-        else:
-            return None
-        return reasoning_attr
+            reasoning_attr = getattr(delta, self.reasoning_key, None)
+            if reasoning_attr:
+                reasoning_text = str(reasoning_attr)
+        return reasoning_text
 
     def _extract_usage(self, usage: CompletionUsage | dict) -> TokenUsage:
         ptd = getattr(usage, "prompt_tokens_details", None)
@@ -886,10 +738,7 @@ class ProviderOpenAIOfficial(Provider):
                 text_val = raw_content.get("text", "")
                 return str(text_val) if text_val is not None else ""
             # For other dict formats, return empty string and log
-            logger.warning(
-                "Unexpected dict format content while normalizing: keys=%s",
-                list(raw_content.keys()),
-            )
+            logger.warning(f"Unexpected dict format content: {raw_content}")
             return ""
 
         if isinstance(raw_content, list):
@@ -991,9 +840,7 @@ class ProviderOpenAIOfficial(Provider):
 
         # parse the reasoning content if any
         # the priority is higher than the <think> tag extraction
-        reasoning_content = self._extract_reasoning_content(completion)
-        if reasoning_content is not None:
-            llm_response.reasoning_content = reasoning_content
+        llm_response.reasoning_content = self._extract_reasoning_content(completion)
 
         # parse tool calls if any
         if choice.message.tool_calls and tools is not None:
@@ -1040,7 +887,7 @@ class ProviderOpenAIOfficial(Provider):
                 "API 返回的 completion 由于内容安全过滤被拒绝(非 AstrBot)。",
             )
         has_text_output = bool((llm_response.completion_text or "").strip())
-        has_reasoning_output = bool((llm_response.reasoning_content or "").strip())
+        has_reasoning_output = bool(llm_response.reasoning_content.strip())
         if (
             not has_text_output
             and not has_reasoning_output
@@ -1105,16 +952,6 @@ class ProviderOpenAIOfficial(Provider):
             context_query = await self._materialize_context_image_parts(context_query)
 
         model = model or self.get_model()
-        context_summary = self._summarize_messages(context_query)
-        logger.debug(
-            "Prepared OpenAI chat payload: model=%s messages=%d images=%d roles=%s has_system_prompt=%s extra_user_parts=%d",
-            model,
-            context_summary["message_count"],
-            context_summary["image_count"],
-            context_summary["roles"],
-            bool(system_prompt),
-            len(extra_user_content_parts or []),
-        )
 
         payloads = {"messages": context_query, "model": model}
 
@@ -1126,38 +963,23 @@ class ProviderOpenAIOfficial(Provider):
         """Finally convert the payload. Such as think part conversion, tool inject."""
         model = payloads.get("model", "").lower()
         is_gemini = "gemini" in model
-        deepseek_reasoning_models = {"deepseek-v4-pro", "deepseek-v4-flash"}
-        is_deepseek_v4_reasoning = (
-            model in deepseek_reasoning_models
-            or "api.deepseek.com" in self.client.base_url.host
-        )
+
         for message in payloads.get("messages", []):
             if message.get("role") == "assistant" and isinstance(
                 message.get("content"), list
             ):
                 reasoning_content = ""
-                reasoning_content_present = False
                 new_content = []  # not including think part
                 for part in message["content"]:
                     if part.get("type") == "think":
-                        reasoning_content_present = True
                         reasoning_content += str(part.get("think"))
                     else:
                         new_content.append(part)
                 # Some providers (Grok, etc.) reject empty content lists.
                 # When all parts were think blocks, fall back to None.
                 message["content"] = new_content or None
-                if reasoning_content_present:
+                if reasoning_content:
                     message["reasoning_content"] = reasoning_content
-
-            if (
-                message.get("role") == "assistant"
-                and is_deepseek_v4_reasoning
-                and "reasoning_content" not in message
-            ):
-                # DeepSeek v4 reasoning models require the field on assistant
-                # history messages, even when the reasoning content is empty.
-                message["reasoning_content"] = ""
 
             # Gemini 的 function_response 要求 google.protobuf.Struct（即 JSON 对象），
             # 纯文本会触发 400 Invalid argument，需要包一层 JSON。
@@ -1205,7 +1027,7 @@ class ProviderOpenAIOfficial(Provider):
                     image_fallback_used,
                 )
             raise e
-        if "maximum context length" in str(e) or "context length" in str(e).lower():
+        if "maximum context length" in str(e):
             logger.warning(
                 f"上下文长度超过限制。尝试弹出最早的记录然后重试。当前记录条数: {len(context_query)}",
             )
@@ -1433,7 +1255,7 @@ class ProviderOpenAIOfficial(Provider):
             raise last_exception
 
     async def _remove_image_from_context(self, contexts: list):
-        """从上下文中删除所有带有 image 的记录（支持 OpenAI 和豆包格式）"""
+        """从上下文中删除所有带有 image 的记录"""
         new_contexts = []
 
         for context in contexts:
@@ -1441,11 +1263,7 @@ class ProviderOpenAIOfficial(Provider):
                 # continue
                 new_content = []
                 for item in context["content"]:
-                    # 移除 OpenAI 格式 (type: image_url) 和豆包格式 (type: input_image)
-                    if isinstance(item, dict) and item.get("type") in (
-                        "image_url",
-                        "input_image",
-                    ):
+                    if isinstance(item, dict) and "image_url" in item:
                         continue
                     new_content.append(item)
                 if not new_content:
@@ -1472,13 +1290,6 @@ class ProviderOpenAIOfficial(Provider):
         extra_user_content_parts: list[ContentPart] | None = None,
     ) -> dict:
         """组装成符合 OpenAI 格式的 role 为 user 的消息段"""
-        logger.debug(
-            "Assembling OpenAI context: text_present=%s image_count=%d extra_user_parts=%d doubao_format=%s",
-            bool(text),
-            len(image_urls or []),
-            len(extra_user_content_parts or []),
-            self.use_doubao_format,
-        )
 
         # 构建内容块列表
         content_blocks = []
