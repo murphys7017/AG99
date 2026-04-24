@@ -350,7 +350,11 @@ class ChatRoute(Route):
         else:
             attach_type = "file"
 
-        file_path = Path(self.attachments_dir) / filename
+        attachments_dir = Path(self.attachments_dir).resolve(strict=False)
+        file_path = (attachments_dir / filename).resolve(strict=False)
+        if not file_path.is_relative_to(attachments_dir):
+            return Response().error("Invalid filename").__dict__
+
         await file.save(str(file_path))
 
         # 创建 attachment 记录
