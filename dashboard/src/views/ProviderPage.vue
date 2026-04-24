@@ -131,7 +131,7 @@
                     @toggle-provider-enable="toggleProviderEnable"
                     @test-provider="testProvider"
                     @delete-provider="deleteProvider"
-                    @add-model-provider="openModelAddDialog"
+                    @add-model-provider="addModelProvider"
                   />
                 </section>
               </div>
@@ -271,12 +271,13 @@
     </v-dialog>
 
     <v-dialog v-model="showProviderEditDialog" width="800">
-      <v-card :title="providerEditDialogTitle">
+      <v-card :title="providerEditData?.id || tm('dialogs.config.editTitle')">
         <v-card-text class="py-4">
+          <small style="color: gray;">不建议修改 ID，可能会导致指向该模型的相关配置（如默认模型、插件相关配置等）失效。旧版本 AstrBot 的 “提供商 ID” 是下方的 “ID”。</small>
           <AstrBotConfig
             v-if="providerEditData"
             :iterable="providerEditData"
-            :metadata="providerModelConfigSchema"
+            :metadata="configSchema"
             metadataKey="provider"
             :is-editing="true"
           />
@@ -340,7 +341,6 @@ import ItemCard from '@/components/shared/ItemCard.vue'
 import AddNewProvider from '@/components/provider/AddNewProvider.vue'
 import ProviderModelsPanel from '@/components/provider/ProviderModelsPanel.vue'
 import ProviderSourcesPanel from '@/components/provider/ProviderSourcesPanel.vue'
-import { useProviderModelConfigDialog } from '@/composables/useProviderModelConfigDialog'
 import { useProviderSources } from '@/composables/useProviderSources'
 import { getProviderIcon } from '@/utils/providerUtils'
 
@@ -398,7 +398,7 @@ const {
   deleteProviderSource,
   saveProviderSource,
   fetchAvailableModels,
-  buildModelProviderConfig,
+  addModelProvider,
   deleteProvider,
   modelAlreadyConfigured,
   testProvider,
@@ -418,26 +418,17 @@ const updatingMode = ref(false)
 const loading = ref(false)
 const providerStatuses = ref([])
 const showAgentRunnerDialog = ref(false)
+const showProviderEditDialog = ref(false)
+const providerEditData = ref(null)
+const providerEditOriginalId = ref('')
 const showManualModelDialog = ref(false)
+const savingProviders = ref([])
 
-const {
-  showProviderEditDialog,
-  providerEditData,
-  savingProviders,
-  providerModelConfigSchema,
-  providerEditDialogTitle,
-  openProviderEdit,
-  openModelAddDialog,
-  saveEditedProvider
-} = useProviderModelConfigDialog({
-  selectedProviderSource,
-  configSchema,
-  buildModelProviderConfig,
-  modelAlreadyConfigured,
-  loadConfig,
-  tm,
-  showMessage
-})
+function openProviderEdit(provider) {
+  providerEditData.value = JSON.parse(JSON.stringify(provider))
+  providerEditOriginalId.value = provider.id
+  showProviderEditDialog.value = true
+}
 
 function openManualModelDialog() {
   if (!selectedProviderSource.value) {
@@ -462,8 +453,8 @@ async function confirmManualModel() {
     showMessage(tm('models.manualModelExists'), 'error')
     return
   }
+  await addModelProvider(modelId)
   showManualModelDialog.value = false
-  openModelAddDialog(modelId)
 }
 
 watch(() => props.defaultTab, (val) => {
@@ -575,6 +566,30 @@ async function newProvider() {
   }
 }
 
+async function saveEditedProvider() {
+  if (!providerEditData.value) return
+
+  savingProviders.value.push(providerEditData.value.id)
+  try {
+    const res = await axios.post('/api/config/provider/update', {
+      id: providerEditOriginalId.value || providerEditData.value.id,
+      config: providerEditData.value
+    })
+
+    if (res.data.status === 'error') {
+      throw new Error(res.data.message)
+    }
+
+    showMessage(res.data.message || tm('providerSources.saveSuccess'))
+    showProviderEditDialog.value = false
+    await loadConfig()
+  } catch (err) {
+    showMessage(err.response?.data?.message || err.message || tm('providerSources.saveError'), 'error')
+  } finally {
+    savingProviders.value = savingProviders.value.filter(id => id !== providerEditData.value?.id)
+  }
+}
+
 async function copyProvider(providerToCopy) {
   const newProviderConfig = JSON.parse(JSON.stringify(providerToCopy))
 
@@ -661,29 +676,18 @@ async function testSingleProvider(provider) {
 
     const startTime = performance.now()
     const res = await axios.get(`/api/config/provider/check_one?id=${provider.id}`)
-    if (!res.data || res.data.status !== 'ok') {
+    if (res.data && res.data.status === 'ok') {
+      const index = providerStatuses.value.findIndex(s => s.id === provider.id)
+      if (index !== -1) {
+        providerStatuses.value.splice(index, 1, res.data.data)
+      }
+      const latency = Math.max(0, Math.round(performance.now() - startTime))
+      showMessage(tm('models.testSuccessWithLatency', { id: provider.id, latency }))
+    } else {
       throw new Error(res.data?.message || `Failed to check status for ${provider.id}`)
     }
-
-    const result = res.data.data
-    if (!result) {
-      throw new Error(`Failed to check status for ${provider.id}`)
-    }
-
-    const index = providerStatuses.value.findIndex(s => s.id === provider.id)
-    if (index !== -1) {
-      providerStatuses.value.splice(index, 1, result)
-    }
-
-    const isAvailable = result.status === 'available' && result.error == null
-    if (!isAvailable) {
-      throw new Error(result.error || tm('models.testError'))
-    }
-
-    const latency = Math.max(0, Math.round(performance.now() - startTime))
-    showMessage(tm('models.testSuccessWithLatency', { id: provider.id, latency }))
   } catch (err) {
-    const errorMessage = err.response?.data?.message || err.message || tm('models.testError')
+    const errorMessage = err.response?.data?.message || err.message || 'Unknown error'
     const index = providerStatuses.value.findIndex(s => s.id === provider.id)
     const failedStatus = {
       id: provider.id,
@@ -694,7 +698,6 @@ async function testSingleProvider(provider) {
     if (index !== -1) {
       providerStatuses.value.splice(index, 1, failedStatus)
     }
-    showMessage(errorMessage, 'error')
   } finally {
     const index = testingProviders.value.indexOf(provider.id)
     if (index > -1) {
