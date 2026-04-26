@@ -1148,7 +1148,14 @@ class ProviderOpenAIOfficial(Provider):
                 # Some providers (Grok, etc.) reject empty content lists.
                 # When all parts were think blocks, fall back to None.
                 message["content"] = new_content or None
-                if reasoning_content_present:
+                if is_deepseek_v4_reasoning and not reasoning_content:
+                    logger.info(
+                        "Deepseek v4 model requires non-empty reasoning content, but got empty. Setting to 'none' to satisfy the requirement."
+                    )
+                    # Deepseek models require the field on assistant
+                    # history messages, even when the reasoning content is empty.
+                    message["reasoning_content"] = "none"
+                elif reasoning_content:
                     message["reasoning_content"] = reasoning_content
 
             if (
