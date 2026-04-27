@@ -1131,7 +1131,6 @@ class ProviderOpenAIOfficial(Provider):
             model in deepseek_reasoning_models
             or "api.deepseek.com" in self.client.base_url.host
         )
-
         for message in payloads.get("messages", []):
             if message.get("role") == "assistant" and isinstance(
                 message.get("content"), list
@@ -1148,14 +1147,7 @@ class ProviderOpenAIOfficial(Provider):
                 # Some providers (Grok, etc.) reject empty content lists.
                 # When all parts were think blocks, fall back to None.
                 message["content"] = new_content or None
-                if is_deepseek_v4_reasoning and not reasoning_content:
-                    logger.info(
-                        "Deepseek v4 model requires non-empty reasoning content, but got empty. Setting to 'none' to satisfy the requirement."
-                    )
-                    # Deepseek models require the field on assistant
-                    # history messages, even when the reasoning content is empty.
-                    message["reasoning_content"] = "none"
-                elif reasoning_content:
+                if reasoning_content_present:
                     message["reasoning_content"] = reasoning_content
 
             if (
@@ -1163,6 +1155,8 @@ class ProviderOpenAIOfficial(Provider):
                 and is_deepseek_v4_reasoning
                 and "reasoning_content" not in message
             ):
+                # DeepSeek v4 reasoning models require the field on assistant
+                # history messages, even when the reasoning content is empty.
                 message["reasoning_content"] = ""
 
             # Gemini 的 function_response 要求 google.protobuf.Struct（即 JSON 对象），
