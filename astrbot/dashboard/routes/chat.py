@@ -534,6 +534,57 @@ class ChatRoute(Route):
             message_accumulator = BotMessageAccumulator()
             agent_stats = {}
             refs = {}
+
+            async def flush_pending_bot_message():
+                nonlocal message_accumulator, agent_stats, refs
+                if not (message_accumulator.has_content() or refs or agent_stats):
+                    return None
+
+                message_parts_to_save = message_accumulator.build_message_parts(
+                    include_pending_tool_calls=True
+                )
+                plain_text = collect_plain_text_from_message_parts(
+                    message_parts_to_save
+                )
+
+                try:
+                    extracted_refs = self._extract_web_search_refs(
+                        plain_text,
+                        message_parts_to_save,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        f"Failed to extract web search refs: {e}",
+                        exc_info=True,
+                    )
+                    extracted_refs = refs
+
+                saved_record = await self._save_bot_message(
+                    webchat_conv_id,
+                    message_parts_to_save,
+                    agent_stats,
+                    extracted_refs,
+                    llm_checkpoint_id,
+                    platform_history_id,
+                )
+                message_accumulator = BotMessageAccumulator()
+                agent_stats = {}
+                refs = {}
+                return saved_record
+
+            def build_attachment_saved_event(part: dict | None) -> str | None:
+                if not part or not part.get("attachment_id") or not part.get("type"):
+                    return None
+
+                payload = {
+                    "type": "attachment_saved",
+                    "data": {
+                        "id": part["attachment_id"],
+                        "type": part["type"],
+                    },
+                }
+                return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
             try:
                 # Emit session_id first so clients can bind the stream immediately.
                 session_info = {
@@ -611,12 +662,20 @@ class ChatRoute(Route):
                                 filename, "image"
                             )
                             message_accumulator.add_attachment(part)
+                            if attachment_saved_event := build_attachment_saved_event(
+                                part
+                            ):
+                                yield attachment_saved_event
                         elif msg_type == "record":
                             filename = result_text.replace("[RECORD]", "")
                             part = await self._create_attachment_from_file(
                                 filename, "record"
                             )
                             message_accumulator.add_attachment(part)
+                            if attachment_saved_event := build_attachment_saved_event(
+                                part
+                            ):
+                                yield attachment_saved_event
                         elif msg_type == "file":
                             # 格式: [FILE]filename
                             filename = result_text.replace("[FILE]", "")
@@ -624,12 +683,20 @@ class ChatRoute(Route):
                                 filename, "file"
                             )
                             message_accumulator.add_attachment(part)
+                            if attachment_saved_event := build_attachment_saved_event(
+                                part
+                            ):
+                                yield attachment_saved_event
                         elif msg_type == "video":
                             filename = result_text.replace("[VIDEO]", "")
                             part = await self._create_attachment_from_file(
                                 filename, "video"
                             )
                             message_accumulator.add_attachment(part)
+                            if attachment_saved_event := build_attachment_saved_event(
+                                part
+                            ):
+                                yield attachment_saved_event
 
                         should_save = False
                         if msg_type == "end":
