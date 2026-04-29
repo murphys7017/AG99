@@ -4,7 +4,6 @@ import axios from "axios";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import defaultPluginIcon from "@/assets/images/plugin_icon.png";
-import { usePluginI18n } from "@/utils/pluginI18n";
 
 const props = defineProps({
   plugin: {
@@ -15,10 +14,6 @@ const props = defineProps({
     type: Object,
     default: null,
   },
-  sourceTab: {
-    type: String,
-    default: "installed",
-  },
   state: {
     type: Object,
     required: true,
@@ -26,7 +21,6 @@ const props = defineProps({
 });
 
 const { tm, router } = props.state;
-const { pluginName, pluginDesc: resolvePluginDesc } = usePluginI18n();
 
 const markdown = new MarkdownIt({
   html: true,
@@ -81,13 +75,8 @@ const logoLoadFailed = ref(false);
 const detailPageRef = ref(null);
 const isHeaderStuck = ref(false);
 
-const displayName = computed(() => pluginName(props.plugin));
-const detailSourceTab = computed(() =>
-  props.sourceTab === "market" ? "market" : "installed",
-);
-const isMarketDetail = computed(() => detailSourceTab.value === "market");
-const detailParentTitle = computed(() =>
-  isMarketDetail.value ? tm("tabs.market") : tm("titles.installedAstrBotPlugins"),
+const displayName = computed(() =>
+  props.plugin.display_name?.length ? props.plugin.display_name : props.plugin.name,
 );
 
 const pluginDesc = computed(() => {
@@ -97,7 +86,7 @@ const pluginDesc = computed(() => {
     props.marketPlugin?.desc ||
     props.marketPlugin?.description ||
     "";
-  return String(resolvePluginDesc(props.plugin, desc) || "").trim();
+  return String(desc || "").trim();
 });
 
 const logoSrc = computed(() => {
@@ -154,53 +143,10 @@ const authorWebsite = computed(() => {
 
 const repoUrl = computed(() => props.plugin.repo || props.marketPlugin?.repo || "");
 
-const firstPresentValue = (...values) =>
-  values.find(
-    (value) =>
-      value !== undefined &&
-      value !== null &&
-      value !== "" &&
-      (!Array.isArray(value) || value.length > 0),
-  );
-
-const versionDisplay = computed(() =>
-  String(firstPresentValue(props.plugin.version, props.marketPlugin?.version) || "").trim(),
-);
-
-const starsDisplay = computed(() => {
-  const value = firstPresentValue(props.plugin.stars, props.marketPlugin?.stars);
-  return value === undefined ? "" : String(value);
-});
-
-const tagsDisplay = computed(() => {
-  const tags = firstPresentValue(props.plugin.tags, props.marketPlugin?.tags);
-  if (!Array.isArray(tags)) return [];
-  return tags.filter((tag) => typeof tag === "string" && tag.trim().length > 0);
-});
-
-const astrbotVersionDisplay = computed(() =>
-  String(
-    firstPresentValue(props.plugin.astrbot_version, props.marketPlugin?.astrbot_version) || "",
-  ).trim(),
-);
-
 const infoRows = computed(() => {
   const rows = [
-    { label: tm("detail.info.version"), value: versionDisplay.value, optional: true },
     { label: tm("detail.info.author"), value: authorDisplay.value },
     { label: tm("detail.info.category"), value: categoryDisplay.value, optional: true },
-    { label: tm("detail.info.stars"), value: starsDisplay.value, optional: true },
-    {
-      label: tm("detail.info.tags"),
-      value: tagsDisplay.value,
-      kind: "tags",
-      optional: true,
-    },
-    {
-      label: tm("detail.info.astrbotVersion"),
-      value: astrbotVersionDisplay.value,
-      optional: true,
-    },
     {
       label: tm("detail.info.authorWebsite"),
       value: authorWebsite.value,
@@ -215,38 +161,12 @@ const infoRows = computed(() => {
     },
   ];
 
-  return rows.filter(
-    (row) => !row.optional || (Array.isArray(row.value) ? row.value.length > 0 : row.value),
-  );
+  return rows.filter((row) => !row.optional || row.value);
 });
 
-const normalizeHandlerList = (source) => {
-  if (!source || typeof source !== "object") return [];
-  if (Array.isArray(source.handlers)) {
-    return source.handlers.filter((handler) => handler && typeof handler === "object");
-  }
-  if (Array.isArray(source.command_handlers)) {
-    return source.command_handlers.filter(
-      (handler) => handler && typeof handler === "object",
-    );
-  }
-  if (Array.isArray(source.commands)) {
-    return source.commands
-      .filter((command) => command && (typeof command === "string" || typeof command === "object"))
-      .map((command) =>
-        typeof command === "string"
-          ? { cmd: command, type: "指令" }
-          : { type: command.type || "指令", ...command },
-      );
-  }
-  return [];
-};
-
-const handlers = computed(() => {
-  const pluginHandlers = normalizeHandlerList(props.plugin);
-  if (pluginHandlers.length > 0) return pluginHandlers;
-  return normalizeHandlerList(props.marketPlugin);
-});
+const handlers = computed(() =>
+  Array.isArray(props.plugin.handlers) ? props.plugin.handlers : [],
+);
 
 const handlerGroupOrder = [
   "commands",
@@ -398,7 +318,7 @@ const openExternal = (url) => {
 };
 
 const goBack = () => {
-  router.push({ name: "Extensions", hash: `#${detailSourceTab.value}` });
+  router.push({ name: "Extensions", hash: "#installed" });
 };
 
 const renderMarkdown = (source) => {
@@ -438,28 +358,6 @@ const fetchReadme = async () => {
   readmeEmpty.value = false;
   renderedReadme.value = "";
 
-  if (isMarketDetail.value) {
-    readmeLoading.value = false;
-    return;
-  }
-
-  const inlineReadme =
-    props.plugin.readme ||
-    props.plugin.README ||
-    props.plugin.readme_content ||
-    props.plugin.docs ||
-    props.marketPlugin?.readme ||
-    props.marketPlugin?.README ||
-    props.marketPlugin?.readme_content ||
-    props.marketPlugin?.docs ||
-    "";
-
-  if (inlineReadme) {
-    renderedReadme.value = renderMarkdown(inlineReadme);
-    readmeLoading.value = false;
-    return;
-  }
-
   try {
     const res = await axios.get("/api/plugin/readme", {
       params: { name: props.plugin.name },
@@ -483,8 +381,6 @@ const fetchReadme = async () => {
     readmeLoading.value = false;
   }
 };
-
-const showDocsSection = computed(() => !isMarketDetail.value);
 
 watch(
   () => props.plugin?.name,
@@ -520,7 +416,7 @@ onBeforeUnmount(() => {
     >
       <h2 class="detail-title">
         <button class="detail-title__parent" type="button" @click="goBack">
-          {{ detailParentTitle }}
+          {{ tm("titles.installedAstrBotPlugins") }}
         </button>
         <v-icon icon="mdi-chevron-right" size="24" class="mx-1" />
         <span class="detail-title__current">{{ displayName }}</span>
@@ -542,9 +438,9 @@ onBeforeUnmount(() => {
       </v-card-text>
     </v-card>
 
-    <section v-if="groupedHandlerSections.length" class="detail-section">
+    <section class="detail-section">
       <h3 class="detail-section__title">{{ tm("detail.contents") }}</h3>
-      <div class="handler-groups">
+      <div v-if="groupedHandlerSections.length" class="handler-groups">
         <div
           v-for="group in groupedHandlerSections"
           :key="group.key"
@@ -643,6 +539,11 @@ onBeforeUnmount(() => {
           </v-card>
         </div>
       </div>
+      <v-card v-else class="rounded-lg handler-card" variant="outlined">
+        <v-card-text class="pa-4 text-medium-emphasis">
+          {{ tm("detail.noContents") }}
+        </v-card-text>
+      </v-card>
     </section>
 
     <section class="detail-section">
@@ -663,18 +564,6 @@ onBeforeUnmount(() => {
                 >
                   {{ row.actionText }}
                 </v-btn>
-                <div v-else-if="row.kind === 'tags'" class="detail-tags">
-                  <v-chip
-                    v-for="tag in row.value"
-                    :key="tag"
-                    :color="tag === 'danger' ? 'error' : 'primary'"
-                    label
-                    size="small"
-                    variant="tonal"
-                  >
-                    {{ tag === "danger" ? tm("tags.danger") : tag }}
-                  </v-chip>
-                </div>
                 <button
                   v-else-if="row.href"
                   class="detail-link"
@@ -692,7 +581,7 @@ onBeforeUnmount(() => {
       </v-card>
     </section>
 
-    <section v-if="showDocsSection" class="detail-section">
+    <section class="detail-section">
       <h3 class="detail-section__title">{{ tm("detail.docsTitle") }}</h3>
       <v-card class="rounded-lg docs-card" variant="outlined">
         <v-card-text>
@@ -936,12 +825,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.detail-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .docs-card {

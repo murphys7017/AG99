@@ -1,11 +1,6 @@
 <script setup>
 import ExtensionCard from "@/components/shared/ExtensionCard.vue";
 import { normalizeTextInput } from "@/utils/inputValue";
-import {
-  readPinnedExtensions,
-  writePinnedExtensions,
-} from "./extensionPreferenceStorage.mjs";
-import { computed, ref, watch } from "vue";
 
 const props = defineProps({
   state: {
@@ -116,7 +111,6 @@ const {
   reloadPlugin,
   viewReadme,
   viewChangelog,
-  openInstallDialog,
   handleInstallPlugin,
   confirmDangerInstall,
   cancelDangerInstall,
@@ -153,53 +147,6 @@ const openPluginDetail = (extension) => {
     params: { pluginId: extension.name },
     hash: "#installed",
   });
-};
-
-const pinnedExtensionNames = ref(readPinnedExtensions());
-
-const pinnedExtensionOrder = computed(() => {
-  const order = new Map();
-  pinnedExtensionNames.value.forEach((name, index) => {
-    order.set(name, index);
-  });
-  return order;
-});
-
-const sortedInstalledPlugins = computed(() => {
-  const order = pinnedExtensionOrder.value;
-  return [...filteredPlugins.value].sort((a, b) => {
-    const aIndex = order.has(a?.name) ? order.get(a.name) : Number.POSITIVE_INFINITY;
-    const bIndex = order.has(b?.name) ? order.get(b.name) : Number.POSITIVE_INFINITY;
-
-    if (aIndex !== bIndex) {
-      return aIndex - bIndex;
-    }
-    return 0;
-  });
-});
-
-watch(
-  pinnedExtensionNames,
-  (names) => {
-    writePinnedExtensions(names);
-  },
-  { deep: true },
-);
-
-const isPinnedExtension = (extension) => {
-  const name = extension?.name;
-  return !!name && pinnedExtensionOrder.value.has(name);
-};
-
-const togglePinnedExtension = (extension) => {
-  const name = extension?.name;
-  if (!name) return;
-
-  const next = pinnedExtensionNames.value.filter((item) => item !== name);
-  if (next.length === pinnedExtensionNames.value.length) {
-    next.unshift(name);
-  }
-  pinnedExtensionNames.value = next;
 };
 </script>
 
@@ -305,7 +252,7 @@ const togglePinnedExtension = (extension) => {
 
             <v-fade-transition hide-on-leave>
               <div>
-                <v-row v-if="sortedInstalledPlugins.length === 0" class="text-center">
+                <v-row v-if="filteredPlugins.length === 0" class="text-center">
                   <v-col cols="12" class="pa-2">
                     <v-icon size="64" color="info" class="mb-4"
                       >mdi-puzzle-outline</v-icon
@@ -320,18 +267,15 @@ const togglePinnedExtension = (extension) => {
                 <v-row>
                     <v-col
                       cols="12"
-                      md="6"
                       v-for="extension in filteredPlugins"
                       :key="extension.name"
                       class="pb-2"
                     >
                       <ExtensionCard
                         :extension="extension"
-                        :is-pinned="isPinnedExtension(extension)"
                         class="rounded-lg"
                         style="background-color: rgb(var(--v-theme-mcpCardBg))"
                         @click="openPluginDetail(extension)"
-                        @toggle-pin="togglePinnedExtension(extension)"
                         @configure="openExtensionConfig(extension.name)"
                       @uninstall="
                         (ext, options) => uninstallExtension(ext.name, options)
@@ -366,7 +310,7 @@ const togglePinnedExtension = (extension) => {
                     z-index: 10000;
                     border-radius: 16px;
                   "
-                  @click="openInstallDialog"
+                  @click="dialog = true"
                 >
                   <span class="v-btn__overlay"></span>
                   <span class="v-btn__underlay"></span>
