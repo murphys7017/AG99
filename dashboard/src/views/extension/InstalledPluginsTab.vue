@@ -319,6 +319,7 @@ const togglePinnedExtension = (extension) => {
                 <v-row>
                     <v-col
                       cols="12"
+                      md="6"
                       v-for="extension in filteredPlugins"
                       :key="extension.name"
                       class="pb-2"

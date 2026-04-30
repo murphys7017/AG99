@@ -112,10 +112,6 @@ class SkillsRoute(Route):
                 "Sandbox preset skill cannot be opened from local skill files."
             )
 
-        plugin_skill_dir = skill_mgr._get_plugin_skill_dir(skill_name)
-        if plugin_skill_dir is not None:
-            return plugin_skill_dir.resolve(strict=True)
-
         skills_root = Path(skill_mgr.skills_root).resolve(strict=True)
         skill_dir = (skills_root / skill_name).resolve(strict=True)
         if not skill_dir.is_relative_to(skills_root):
@@ -157,13 +153,7 @@ class SkillsRoute(Route):
             or path.suffix.lower() in _EDITABLE_SKILL_FILE_SUFFIXES
         )
 
-    def _serialize_skill_file_entry(
-        self,
-        skill_dir: Path,
-        path: Path,
-        *,
-        readonly: bool = False,
-    ) -> dict:
+    def _serialize_skill_file_entry(self, skill_dir: Path, path: Path) -> dict:
         stat = path.stat()
         is_dir = path.is_dir()
         return {
@@ -172,8 +162,7 @@ class SkillsRoute(Route):
             "type": "directory" if is_dir else "file",
             "size": 0 if is_dir else stat.st_size,
             "editable": (
-                not readonly
-                and (not is_dir)
+                (not is_dir)
                 and self._is_editable_skill_file(path)
                 and stat.st_size <= _SKILL_FILE_MAX_BYTES
             ),
@@ -489,14 +478,6 @@ class SkillsRoute(Route):
                     )
                     .__dict__
                 )
-            if skill_mgr.is_plugin_skill(name):
-                return (
-                    Response()
-                    .error(
-                        "Plugin-provided skill cannot be downloaded from local skill files."
-                    )
-                    .__dict__
-                )
 
             skill_dir = Path(skill_mgr.skills_root) / name
             skill_md = skill_dir / "SKILL.md"
@@ -531,7 +512,6 @@ class SkillsRoute(Route):
         try:
             name = str(request.args.get("name") or "").strip()
             relative_path = request.args.get("path", "")
-            readonly = SkillManager().is_plugin_skill(name)
             skill_dir = self._resolve_local_skill_dir(name)
             target_dir = self._resolve_skill_relative_path(
                 skill_dir,
@@ -552,13 +532,7 @@ class SkillsRoute(Route):
                     continue
                 if not resolved.is_dir() and not resolved.is_file():
                     continue
-                entries.append(
-                    self._serialize_skill_file_entry(
-                        skill_dir,
-                        resolved,
-                        readonly=readonly,
-                    )
-                )
+                entries.append(self._serialize_skill_file_entry(skill_dir, resolved))
 
             return (
                 Response()
@@ -605,7 +579,7 @@ class SkillsRoute(Route):
                         "path": self._skill_relative_path(skill_dir, target_file),
                         "content": content,
                         "size": size,
-                        "editable": not SkillManager().is_plugin_skill(name),
+                        "editable": True,
                     }
                 )
                 .__dict__
@@ -635,8 +609,6 @@ class SkillsRoute(Route):
                 return Response().error("File content is too large").__dict__
 
             skill_dir = self._resolve_local_skill_dir(name)
-            if SkillManager().is_plugin_skill(name):
-                return Response().error("Plugin-provided skill is read-only.").__dict__
             target_file = self._resolve_skill_relative_path(
                 skill_dir,
                 relative_path,
