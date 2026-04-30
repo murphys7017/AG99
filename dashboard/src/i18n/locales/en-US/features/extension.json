@@ -63,8 +63,7 @@
     "system": "System",
     "loading": "Loading...",
     "installed": "Installed",
-    "unknown": "Unknown",
-    "incompatible": "Incompatible"
+    "unknown": "Unknown"
   },
   "tooltips": {
     "enable": "Click to Enable",
@@ -103,11 +102,6 @@
     "docsTitle": "Documentation",
     "docsEmpty": "No documentation",
     "handlerGroups": {
-      "skill": "Skills",
-      "command": "Commands / Command Groups",
-      "llm_tool": "LLM Tools",
-      "listener": "Event Listeners",
-      "hook": "Hooks",
       "commands": "Commands / Command Groups",
       "hooks": "Hooks",
       "functionTools": "Function Tools",
@@ -121,7 +115,6 @@
       "stars": "Stars",
       "tags": "Tags",
       "astrbotVersion": "AstrBot Version Requirement",
-      "supportPlatforms": "Supported Platforms",
       "authorWebsite": "Author Website",
       "repository": "Repository"
     }
@@ -205,10 +198,7 @@
       "title": "Install Extension",
       "fromFile": "Install from File",
       "fromUrl": "Install from URL",
-      "supportPlatformsCount": "Supports {count} Platforms",
-      "sectionTitle": "Install",
-      "downloadSource": "The plugin package will be installed from:",
-      "githubSecurityWarning": "AstrBot cannot guarantee the safety of plugins downloaded from GitHub. Install only if you trust the plugin source."
+      "supportPlatformsCount": "Supports {count} Platforms"
     },
     "danger_warning": {
       "title": "Dangerous Plugin Warning",
@@ -361,10 +351,8 @@
     "sourceLocalOnly": "Local Skill",
     "sourceSandboxOnly": "Sandbox Preset Skill",
     "sourceBoth": "Local + Sandbox",
-    "sourcePlugin": "Plugin: {plugin}",
     "sandboxDiscoveryPending": "Sandbox preset skills have not been discovered yet. Start at least one sandbox session to populate this list.",
     "sandboxPresetReadonly": "Sandbox preset skills are read-only here. You cannot delete or enable/disable them from Local Skills.",
-    "pluginReadonly": "Plugin-provided skills are managed by their plugin. They cannot be deleted or downloaded from Local Skills.",
     "openEditor": "View/Edit",
     "editorTitle": "Edit Skill",
     "editorLoadFailed": "Failed to load Skill file",
