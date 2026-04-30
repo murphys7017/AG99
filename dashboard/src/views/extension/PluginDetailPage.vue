@@ -1,18 +1,10 @@
 <script setup>
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  watch,
-} from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import axios from "axios";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import defaultPluginIcon from "@/assets/images/plugin_icon.png";
 import { usePluginI18n } from "@/utils/pluginI18n";
-import PluginPlatformChip from "@/components/shared/PluginPlatformChip.vue";
 
 const props = defineProps({
   plugin: {
@@ -22,10 +14,6 @@ const props = defineProps({
   marketPlugin: {
     type: Object,
     default: null,
-  },
-  sourceTab: {
-    type: String,
-    default: "installed",
   },
   state: {
     type: Object,
@@ -88,43 +76,29 @@ const expandedCommandGroups = ref(new Set());
 const logoLoadFailed = ref(false);
 const detailPageRef = ref(null);
 const isHeaderStuck = ref(false);
-const pluginDetail = ref(null);
 
-const pluginData = computed(() => pluginDetail.value || props.plugin);
-const displayName = computed(() => pluginName(pluginData.value));
-const detailSourceTab = computed(() =>
-  props.sourceTab === "market" ? "market" : "installed",
-);
-const isMarketDetail = computed(() => detailSourceTab.value === "market");
-const detailParentTitle = computed(() =>
-  isMarketDetail.value
-    ? tm("tabs.market")
-    : tm("titles.installedAstrBotPlugins"),
-);
+const displayName = computed(() => pluginName(props.plugin));
 
 const pluginDesc = computed(() => {
-  const plugin = pluginData.value || {};
   const desc =
-    plugin.desc ||
-    plugin.description ||
+    props.plugin.desc ||
+    props.plugin.description ||
     props.marketPlugin?.desc ||
     props.marketPlugin?.description ||
     "";
-  return String(resolvePluginDesc(plugin, desc) || "").trim();
+  return String(resolvePluginDesc(props.plugin, desc) || "").trim();
 });
 
 const logoSrc = computed(() => {
-  const logo = pluginData.value?.logo || props.marketPlugin?.logo || "";
+  const logo = props.plugin?.logo || props.marketPlugin?.logo || "";
   if (logoLoadFailed.value) {
     return defaultPluginIcon;
   }
-  return typeof logo === "string" && logo.trim().length
-    ? logo
-    : defaultPluginIcon;
+  return typeof logo === "string" && logo.trim().length ? logo : defaultPluginIcon;
 });
 
 const authorDisplay = computed(() => {
-  const plugin = pluginData.value || {};
+  const plugin = props.plugin || {};
   const marketPlugin = props.marketPlugin || {};
   const author =
     plugin.author ||
@@ -144,8 +118,7 @@ const authorDisplay = computed(() => {
 });
 
 const categoryDisplay = computed(() => {
-  const rawCategory =
-    pluginData.value?.category || props.marketPlugin?.category || "";
+  const rawCategory = props.plugin.category || props.marketPlugin?.category || "";
   const category = String(rawCategory || "").trim();
   if (!category) return "";
 
@@ -155,7 +128,7 @@ const categoryDisplay = computed(() => {
 });
 
 const authorWebsite = computed(() => {
-  const plugin = pluginData.value || {};
+  const plugin = props.plugin || {};
   const marketPlugin = props.marketPlugin || {};
   return (
     plugin.social_link ||
@@ -168,96 +141,12 @@ const authorWebsite = computed(() => {
   );
 });
 
-const repoUrl = computed(
-  () => pluginData.value?.repo || props.marketPlugin?.repo || "",
-);
-
-const firstPresentValue = (...values) =>
-  values.find(
-    (value) =>
-      value !== undefined &&
-      value !== null &&
-      value !== "" &&
-      (!Array.isArray(value) || value.length > 0),
-  );
-
-const versionDisplay = computed(() =>
-  String(
-    firstPresentValue(pluginData.value?.version, props.marketPlugin?.version) ||
-      "",
-  ).trim(),
-);
-
-const starsDisplay = computed(() => {
-  const value = firstPresentValue(
-    pluginData.value?.stars,
-    props.marketPlugin?.stars,
-  );
-  return value === undefined ? "" : String(value);
-});
-
-const tagsDisplay = computed(() => {
-  const tags = firstPresentValue(
-    pluginData.value?.tags,
-    props.marketPlugin?.tags,
-  );
-  if (!Array.isArray(tags)) return [];
-  return tags.filter((tag) => typeof tag === "string" && tag.trim().length > 0);
-});
-
-const astrbotVersionDisplay = computed(() =>
-  String(
-    firstPresentValue(
-      pluginData.value?.astrbot_version,
-      props.marketPlugin?.astrbot_version,
-    ) || "",
-  ).trim(),
-);
-
-const supportPlatformsDisplay = computed(() => {
-  const platforms = firstPresentValue(
-    pluginData.value?.support_platforms,
-    props.marketPlugin?.support_platforms,
-  );
-  if (!Array.isArray(platforms)) return [];
-  return platforms.filter((platform) => typeof platform === "string");
-});
+const repoUrl = computed(() => props.plugin.repo || props.marketPlugin?.repo || "");
 
 const infoRows = computed(() => {
   const rows = [
-    {
-      label: tm("detail.info.version"),
-      value: versionDisplay.value,
-      optional: true,
-    },
     { label: tm("detail.info.author"), value: authorDisplay.value },
-    {
-      label: tm("detail.info.category"),
-      value: categoryDisplay.value,
-      optional: true,
-    },
-    {
-      label: tm("detail.info.stars"),
-      value: starsDisplay.value,
-      optional: true,
-    },
-    {
-      label: tm("detail.info.tags"),
-      value: tagsDisplay.value,
-      kind: "tags",
-      optional: true,
-    },
-    {
-      label: tm("detail.info.astrbotVersion"),
-      value: astrbotVersionDisplay.value,
-      optional: true,
-    },
-    {
-      label: tm("detail.info.supportPlatforms"),
-      value: supportPlatformsDisplay.value,
-      kind: "platforms",
-      optional: true,
-    },
+    { label: tm("detail.info.category"), value: categoryDisplay.value, optional: true },
     {
       label: tm("detail.info.authorWebsite"),
       value: authorWebsite.value,
@@ -272,158 +161,66 @@ const infoRows = computed(() => {
     },
   ];
 
-  return rows.filter(
-    (row) =>
-      !row.optional ||
-      (Array.isArray(row.value) ? row.value.length > 0 : row.value),
-  );
+  return rows.filter((row) => !row.optional || row.value);
 });
 
-const normalizeHandlerList = (source) => {
-  if (!source || typeof source !== "object") return [];
-  if (Array.isArray(source.handlers)) {
-    return source.handlers.filter(
-      (handler) => handler && typeof handler === "object",
-    );
-  }
-  if (Array.isArray(source.command_handlers)) {
-    return source.command_handlers.filter(
-      (handler) => handler && typeof handler === "object",
-    );
-  }
-  if (Array.isArray(source.commands)) {
-    return source.commands
-      .filter(
-        (command) =>
-          command &&
-          (typeof command === "string" || typeof command === "object"),
-      )
-      .map((command) =>
-        typeof command === "string"
-          ? { cmd: command, type: "指令" }
-          : { type: command.type || "指令", ...command },
-      );
-  }
-  return [];
-};
+const handlers = computed(() =>
+  Array.isArray(props.plugin.handlers) ? props.plugin.handlers : [],
+);
 
-const componentGroupOrder = [
-  "skill",
-  "command",
-  "llm_tool",
-  "listener",
-  "hook",
+const handlerGroupOrder = [
+  "commands",
+  "hooks",
+  "functionTools",
+  "eventListeners",
 ];
 
-const componentGroupIcons = {
-  skill: "mdi-lightning-bolt",
-  command: "mdi-console-line",
-  llm_tool: "mdi-tools",
-  listener: "mdi-broadcast",
-  hook: "mdi-hook",
+const handlerGroupIcons = {
+  commands: "mdi-console-line",
+  hooks: "mdi-hook",
+  functionTools: "mdi-tools",
+  eventListeners: "mdi-broadcast",
 };
 
-const getLegacyHandlerGroupKey = (handler) => {
+const getHandlerGroupKey = (handler) => {
   const type = String(handler?.type || "").trim();
   const eventType = String(handler?.event_type || "").trim();
   const eventTypeH = String(handler?.event_type_h || "").trim();
 
   if (["指令", "指令组", "正则匹配"].includes(type)) {
-    return "command";
+    return "commands";
   }
   if (eventType === "OnCallingFuncToolEvent" || eventTypeH === "函数工具") {
-    return "llm_tool";
+    return "functionTools";
   }
   if (type === "事件监听器") {
-    return "listener";
+    return "eventListeners";
   }
-  return "hook";
+  return "hooks";
 };
 
-const getComponentGroupKey = (component) => {
-  const type = String(
-    component?.type || component?.component_type || "",
-  ).trim();
-  if (componentGroupOrder.includes(type)) return type;
-  return getLegacyHandlerGroupKey(component);
-};
+const groupedHandlerSections = computed(() => {
+  const groups = new Map(handlerGroupOrder.map((key) => [key, []]));
 
-const normalizeComponent = (component, fallbackType = "") => {
-  const type = fallbackType || getComponentGroupKey(component);
-  const normalized = { ...component, type };
-  if (component?.type && component.type !== type && !normalized.display_type) {
-    normalized.display_type = component.type;
-  }
-  return normalized;
-};
-
-const normalizeComponentList = (source) => {
-  if (!source || typeof source !== "object") return [];
-  const { components } = source;
-
-  if (
-    components &&
-    typeof components === "object" &&
-    !Array.isArray(components)
-  ) {
-    return componentGroupOrder.flatMap((key) =>
-      Array.isArray(components[key])
-        ? components[key]
-            .filter((component) => component && typeof component === "object")
-            .map((component) => normalizeComponent(component, key))
-        : [],
-    );
-  }
-
-  if (Array.isArray(components)) {
-    return components
-      .filter((component) => component && typeof component === "object")
-      .map((component) => normalizeComponent(component));
-  }
-
-  return normalizeHandlerList(source).map((handler) => ({
-    ...handler,
-    type: getLegacyHandlerGroupKey(handler),
-  }));
-};
-
-const components = computed(() => {
-  const pluginComponents = normalizeComponentList(pluginData.value);
-  if (pluginComponents.length > 0) return pluginComponents;
-  return normalizeComponentList(props.marketPlugin);
-});
-
-const groupedComponentSections = computed(() => {
-  const groups = new Map(componentGroupOrder.map((key) => [key, []]));
-
-  components.value.forEach((component) => {
-    const key = getComponentGroupKey(component);
-    groups.get(key)?.push(component);
+  handlers.value.forEach((handler) => {
+    groups.get(getHandlerGroupKey(handler))?.push(handler);
   });
 
-  return componentGroupOrder
+  return handlerGroupOrder
     .map((key) => ({
       key,
       title: tm(`detail.handlerGroups.${key}`),
-      icon: componentGroupIcons[key],
-      components: groups.get(key) || [],
+      icon: handlerGroupIcons[key],
+      handlers: groups.get(key) || [],
     }))
-    .filter((group) => group.components.length > 0);
+    .filter((group) => group.handlers.length > 0);
 });
 
 const getHandlerCommand = (handler) =>
-  String(
-    handler?.name ||
-      handler?.cmd ||
-      handler?.handler_name ||
-      tm("status.unknown"),
-  ).trim();
+  String(handler?.cmd || handler?.handler_name || tm("status.unknown")).trim();
 
 const getHandlerDisplayName = (handler, groupKey) => {
-  if (handler?.name) {
-    return handler.name;
-  }
-  if (["llm_tool", "listener"].includes(groupKey)) {
+  if (["functionTools", "eventListeners"].includes(groupKey)) {
     return handler?.handler_name || handler?.cmd || tm("status.unknown");
   }
   return handler?.cmd || handler?.handler_name || tm("status.unknown");
@@ -431,6 +228,18 @@ const getHandlerDisplayName = (handler, groupKey) => {
 
 const getHandlerTiming = (handler) =>
   String(handler?.event_type_h || handler?.event_type || "").trim();
+
+const splitCommandPrefix = (handler) => {
+  const command = getHandlerCommand(handler);
+  const parts = command.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) {
+    return { prefix: command, childCommand: command };
+  }
+  return {
+    prefix: parts[0],
+    childCommand: parts.slice(1).join(" "),
+  };
+};
 
 const isCommandGroupExpanded = (key) => expandedCommandGroups.value.has(key);
 
@@ -444,43 +253,63 @@ const toggleCommandGroup = (key) => {
   expandedCommandGroups.value = next;
 };
 
-const getComponentDescription = (component) =>
-  String(
-    component?.description || component?.desc || tm("status.unknown"),
-  ).trim();
+const buildCommandHandlerRows = (commandHandlers) => {
+  const buckets = new Map();
 
-const getCommandRowKey = (component, path) =>
-  component?.handler_full_name || component?.path || path.join(" ");
-
-const buildCommandComponentRows = (commandComponents) => {
-  const rows = [];
-
-  const appendRows = (component, path = [], depth = 0) => {
-    const name = getHandlerCommand(component);
-    const nextPath = [...path, name];
-    const key = getCommandRowKey(component, nextPath);
-    const children = Array.isArray(component?.subcommands)
-      ? component.subcommands.filter(
-          (child) => child && typeof child === "object",
-        )
-      : [];
-
-    rows.push({
-      kind:
-        children.length > 0 ? "group" : depth > 0 ? "subCommand" : "handler",
-      key,
-      component,
-      displayCommand: name,
-      children,
-      depth,
+  commandHandlers.forEach((handler, index) => {
+    const { prefix, childCommand } = splitCommandPrefix(handler);
+    const key = prefix || getHandlerCommand(handler);
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        key,
+        prefix,
+        firstIndex: index,
+        handlers: [],
+      });
+    }
+    buckets.get(key).handlers.push({
+      handler,
+      childCommand,
+      originalIndex: index,
     });
+  });
 
-    if (!children.length || !isCommandGroupExpanded(key)) return;
-    children.forEach((child) => appendRows(child, nextPath, depth + 1));
-  };
+  return Array.from(buckets.values())
+    .sort((left, right) => left.firstIndex - right.firstIndex)
+    .flatMap((bucket) => {
+      if (bucket.handlers.length <= 1) {
+        const only = bucket.handlers[0];
+        return [
+          {
+            kind: "handler",
+            key: only.handler.handler_full_name || only.handler.handler_name || only.handler.cmd,
+            handler: only.handler,
+            displayCommand: getHandlerCommand(only.handler),
+          },
+        ];
+      }
 
-  commandComponents.forEach((component) => appendRows(component));
-  return rows;
+      const groupRow = {
+        kind: "group",
+        key: bucket.key,
+        displayCommand: bucket.prefix,
+        children: bucket.handlers,
+      };
+
+      if (!isCommandGroupExpanded(bucket.key)) {
+        return [groupRow];
+      }
+
+      return [
+        groupRow,
+        ...bucket.handlers.map(({ handler, childCommand }) => ({
+          kind: "subCommand",
+          key: handler.handler_full_name || handler.handler_name || handler.cmd,
+          handler,
+          displayCommand: childCommand,
+        })),
+      ];
+    });
 };
 
 const openExternal = (url) => {
@@ -489,7 +318,7 @@ const openExternal = (url) => {
 };
 
 const goBack = () => {
-  router.push({ name: "Extensions", hash: `#${detailSourceTab.value}` });
+  router.push({ name: "Extensions", hash: "#installed" });
 };
 
 const renderMarkdown = (source) => {
@@ -521,66 +350,17 @@ const updateHeaderStuckState = () => {
   isHeaderStuck.value = scrollTop > 0;
 };
 
-const scrollToHashTarget = async () => {
-  if (window.location.hash !== "#plugin-components") return;
-  await nextTick();
-  document.getElementById("plugin-components")?.scrollIntoView({
-    behavior: "smooth",
-    block: "start",
-  });
-};
-
-const fetchPluginDetail = async () => {
-  pluginDetail.value = null;
-  if (isMarketDetail.value || !props.plugin?.name) return;
-
-  try {
-    const res = await axios.get("/api/plugin/detail", {
-      params: { name: props.plugin.name },
-    });
-    if (res.data.status === "ok" && res.data.data) {
-      pluginDetail.value = res.data.data;
-      await scrollToHashTarget();
-    }
-  } catch (err) {
-    console.debug("Failed to fetch plugin detail:", err);
-  }
-};
-
 const fetchReadme = async () => {
-  const plugin = pluginData.value || {};
-  if (!plugin?.name) return;
+  if (!props.plugin?.name) return;
 
   readmeLoading.value = true;
   readmeError.value = "";
   readmeEmpty.value = false;
   renderedReadme.value = "";
 
-  if (isMarketDetail.value) {
-    readmeLoading.value = false;
-    return;
-  }
-
-  const inlineReadme =
-    plugin.readme ||
-    plugin.README ||
-    plugin.readme_content ||
-    plugin.docs ||
-    props.marketPlugin?.readme ||
-    props.marketPlugin?.README ||
-    props.marketPlugin?.readme_content ||
-    props.marketPlugin?.docs ||
-    "";
-
-  if (inlineReadme) {
-    renderedReadme.value = renderMarkdown(inlineReadme);
-    readmeLoading.value = false;
-    return;
-  }
-
   try {
     const res = await axios.get("/api/plugin/readme", {
-      params: { name: plugin.name },
+      params: { name: props.plugin.name },
     });
 
     if (res.data.status !== "ok") {
@@ -602,22 +382,17 @@ const fetchReadme = async () => {
   }
 };
 
-const showDocsSection = computed(() => !isMarketDetail.value);
-
 watch(
-  () => [props.plugin?.name, props.sourceTab],
-  async () => {
+  () => props.plugin?.name,
+  () => {
     logoLoadFailed.value = false;
-    await fetchPluginDetail();
     fetchReadme();
-    scrollToHashTarget();
   },
   { immediate: true },
 );
 
 onMounted(() => {
   updateHeaderStuckState();
-  scrollToHashTarget();
   window.addEventListener("scroll", updateHeaderStuckState, { passive: true });
   document.addEventListener("scroll", updateHeaderStuckState, {
     capture: true,
@@ -641,7 +416,7 @@ onBeforeUnmount(() => {
     >
       <h2 class="detail-title">
         <button class="detail-title__parent" type="button" @click="goBack">
-          {{ detailParentTitle }}
+          {{ tm("titles.installedAstrBotPlugins") }}
         </button>
         <v-icon icon="mdi-chevron-right" size="24" class="mx-1" />
         <span class="detail-title__current">{{ displayName }}</span>
@@ -663,46 +438,35 @@ onBeforeUnmount(() => {
       </v-card-text>
     </v-card>
 
-    <section
-      v-if="groupedComponentSections.length"
-      id="plugin-components"
-      class="detail-section"
-    >
+    <section class="detail-section">
       <h3 class="detail-section__title">{{ tm("detail.contents") }}</h3>
-      <div class="handler-groups">
+      <div v-if="groupedHandlerSections.length" class="handler-groups">
         <div
-          v-for="group in groupedComponentSections"
+          v-for="group in groupedHandlerSections"
           :key="group.key"
           class="handler-group"
         >
           <div class="handler-group__title">
             <v-icon :icon="group.icon" size="20" />
             {{ group.title }}
-            <span class="handler-group__count">{{
-              group.components.length
-            }}</span>
+            <span class="handler-group__count">{{ group.handlers.length }}</span>
           </div>
           <v-card class="rounded-lg handler-card" variant="outlined">
             <v-table
-              v-if="group.key === 'command'"
+              v-if="group.key === 'commands'"
               class="detail-info-table detail-handler-table"
             >
               <tbody>
                 <tr
-                  v-for="item in buildCommandComponentRows(group.components)"
+                  v-for="item in buildCommandHandlerRows(group.handlers)"
                   :key="item.key"
                   :class="{
                     'command-row--group': item.kind === 'group',
                     'command-row--sub': item.kind === 'subCommand',
                   }"
                 >
-                  <td
-                    class="detail-info-table__label detail-handler-table__name"
-                  >
-                    <div
-                      class="command-cell"
-                      :style="{ paddingLeft: `${item.depth * 18}px` }"
-                    >
+                  <td class="detail-info-table__label detail-handler-table__name">
+                    <div class="command-cell">
                       <v-btn
                         v-if="item.kind === 'group'"
                         icon
@@ -736,19 +500,10 @@ onBeforeUnmount(() => {
                   <td>
                     <div class="handler-row__desc">
                       <template v-if="item.kind === 'group'">
-                        <span>{{
-                          getComponentDescription(item.component)
-                        }}</span>
-                        <span class="handler-row__timing">
-                          {{
-                            tm("detail.subCommandsCount", {
-                              count: item.children.length,
-                            })
-                          }}
-                        </span>
+                        {{ tm("detail.subCommandsCount", { count: item.children.length }) }}
                       </template>
                       <template v-else>
-                        {{ getComponentDescription(item.component) }}
+                        {{ item.handler.desc || tm("status.unknown") }}
                       </template>
                     </div>
                   </td>
@@ -759,33 +514,23 @@ onBeforeUnmount(() => {
             <v-table v-else class="detail-info-table detail-handler-table">
               <tbody>
                 <tr
-                  v-for="component in group.components"
-                  :key="
-                    component.handler_full_name ||
-                    component.path ||
-                    component.name ||
-                    component.handler_name ||
-                    component.cmd
-                  "
+                  v-for="handler in group.handlers"
+                  :key="handler.handler_full_name || handler.handler_name || handler.cmd"
                 >
-                  <td
-                    class="detail-info-table__label detail-handler-table__name"
-                  >
+                  <td class="detail-info-table__label detail-handler-table__name">
                     <div>
-                      {{ getHandlerDisplayName(component, group.key) }}
+                      {{ getHandlerDisplayName(handler, group.key) }}
                     </div>
                   </td>
                   <td>
                     <div class="handler-row__desc">
                       <span
-                        v-if="
-                          group.key === 'hook' && getHandlerTiming(component)
-                        "
+                        v-if="group.key === 'hooks' && getHandlerTiming(handler)"
                         class="handler-row__timing"
                       >
-                        {{ getHandlerTiming(component) }}
+                        {{ getHandlerTiming(handler) }}
                       </span>
-                      <span>{{ getComponentDescription(component) }}</span>
+                      <span>{{ handler.desc || tm("status.unknown") }}</span>
                     </div>
                   </td>
                 </tr>
@@ -794,6 +539,11 @@ onBeforeUnmount(() => {
           </v-card>
         </div>
       </div>
+      <v-card v-else class="rounded-lg handler-card" variant="outlined">
+        <v-card-text class="pa-4 text-medium-emphasis">
+          {{ tm("detail.noContents") }}
+        </v-card-text>
+      </v-card>
     </section>
 
     <section class="detail-section">
@@ -814,21 +564,6 @@ onBeforeUnmount(() => {
                 >
                   {{ row.actionText }}
                 </v-btn>
-                <div v-else-if="row.kind === 'tags'" class="detail-tags">
-                  <v-chip
-                    v-for="tag in row.value"
-                    :key="tag"
-                    :color="tag === 'danger' ? 'error' : 'primary'"
-                    label
-                    size="small"
-                    variant="tonal"
-                  >
-                    {{ tag === "danger" ? tm("tags.danger") : tag }}
-                  </v-chip>
-                </div>
-                <div v-else-if="row.kind === 'platforms'" class="detail-tags">
-                  <PluginPlatformChip :platforms="row.value" />
-                </div>
                 <button
                   v-else-if="row.href"
                   class="detail-link"
@@ -846,7 +581,7 @@ onBeforeUnmount(() => {
       </v-card>
     </section>
 
-    <section v-if="showDocsSection" class="detail-section">
+    <section class="detail-section">
       <h3 class="detail-section__title">{{ tm("detail.docsTitle") }}</h3>
       <v-card class="rounded-lg docs-card" variant="outlined">
         <v-card-text>
@@ -859,7 +594,11 @@ onBeforeUnmount(() => {
           <div v-else-if="readmeEmpty" class="text-medium-emphasis">
             {{ tm("detail.docsEmpty") }}
           </div>
-          <div v-else class="docs-markdown" v-html="renderedReadme"></div>
+          <div
+            v-else
+            class="docs-markdown"
+            v-html="renderedReadme"
+          ></div>
         </v-card-text>
       </v-card>
     </section>
@@ -978,9 +717,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 0px;
   line-height: 1.5;
-  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -1088,12 +825,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.detail-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .docs-card {

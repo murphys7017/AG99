@@ -497,11 +497,6 @@ class PluginManager:
                 name=metadata["name"],
                 author=metadata["author"],
                 desc=metadata["desc"],
-                short_desc=(
-                    metadata["short_desc"]
-                    if isinstance(metadata.get("short_desc"), str)
-                    else None
-                ),
                 version=metadata["version"],
                 repo=metadata["repo"] if "repo" in metadata else None,
                 display_name=metadata.get("display_name", None),
@@ -519,9 +514,6 @@ class PluginManager:
                     if isinstance(metadata.get("astrbot_version"), str)
                     else None
                 ),
-                pages=metadata["pages"]
-                if isinstance(metadata.get("pages"), list)
-                else [],
                 i18n=PluginManager._load_plugin_i18n(plugin_path),
             )
 
@@ -744,7 +736,6 @@ class PluginManager:
                         "name": metadata.name,
                         "author": metadata.author,
                         "desc": metadata.desc,
-                        "short_desc": metadata.short_desc,
                         "version": metadata.version,
                         "repo": metadata.repo,
                         "display_name": metadata.display_name,
@@ -986,13 +977,11 @@ class PluginManager:
                             metadata.name = metadata_yaml.name
                             metadata.author = metadata_yaml.author
                             metadata.desc = metadata_yaml.desc
-                            metadata.short_desc = metadata_yaml.short_desc
                             metadata.version = metadata_yaml.version
                             metadata.repo = metadata_yaml.repo
                             metadata.display_name = metadata_yaml.display_name
                             metadata.support_platforms = metadata_yaml.support_platforms
                             metadata.astrbot_version = metadata_yaml.astrbot_version
-                            metadata.pages = metadata_yaml.pages
                             metadata.i18n = metadata_yaml.i18n
                     except Exception as e:
                         logger.warning(
@@ -1358,11 +1347,7 @@ class PluginManager:
         self._rebuild_failed_plugin_info()
 
     async def install_plugin(
-        self,
-        repo_url: str,
-        proxy: str = "",
-        ignore_version_check: bool = False,
-        download_url: str = "",
+        self, repo_url: str, proxy: str = "", ignore_version_check: bool = False
     ):
         """从仓库 URL 安装插件
 
@@ -1371,7 +1356,6 @@ class PluginManager:
         Args:
             repo_url (str): 要安装的插件仓库 URL
             proxy (str, optional): 用于下载的代理服务器。默认为空字符串。
-            download_url (str, optional): 插件压缩包下载地址。提供时优先从此地址下载安装包。
 
         Returns:
             dict | None: 安装成功时返回包含插件信息的字典:
@@ -1380,7 +1364,7 @@ class PluginManager:
                 如果找不到插件元数据则返回 None。
 
         """
-        # this metric is for displaying plugins installation count in pages
+        # this metric is for displaying plugins installation count in webui
         asyncio.create_task(
             Metric.upload(
                 et="install_star",
@@ -1399,14 +1383,7 @@ class PluginManager:
                     raise Exception(
                         f"安装失败：目录 {os.path.basename(plugin_path)} 已存在。"
                     )
-                if download_url:
-                    plugin_path = await self.updator.install(
-                        repo_url,
-                        proxy,
-                        download_url=download_url,
-                    )
-                else:
-                    plugin_path = await self.updator.install(repo_url, proxy)
+                plugin_path = await self.updator.install(repo_url, proxy)
 
                 # reload the plugin
                 dir_name = os.path.basename(plugin_path)
