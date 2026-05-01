@@ -31,15 +31,11 @@ class PluginUpdator(RepoZipUpdator):
 
         return plugin_path
 
-    async def update(
-        self, plugin: StarMetadata, proxy="", download_url: str = ""
-    ) -> str:
+    async def update(self, plugin: StarMetadata, proxy="") -> str:
         repo_url = plugin.repo
 
-        if not repo_url and not download_url:
-            raise Exception(
-                f"Plugin {plugin.name} does not specify a repository URL or download URL."
-            )
+        if not repo_url:
+            raise Exception(f"Plugin {plugin.name} does not specify a repository URL.")
 
         if not plugin.root_dir_name:
             raise Exception(
@@ -51,13 +47,7 @@ class PluginUpdator(RepoZipUpdator):
         logger.info(
             f"Updating plugin at path: {plugin_path}, repository URL: {repo_url}",
         )
-        if download_url:
-            logger.info(
-                f"Downloading plugin update archive for {plugin.name}: {download_url}"
-            )
-            await self._download_file(download_url, plugin_path + ".zip")
-        else:
-            await self.download_from_repo_url(plugin_path, repo_url, proxy=proxy)
+        await self.download_from_repo_url(plugin_path, repo_url, proxy=proxy)
 
         try:
             remove_dir(plugin_path)

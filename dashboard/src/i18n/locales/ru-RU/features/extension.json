@@ -63,7 +63,8 @@
         "system": "Системный",
         "loading": "Загрузка...",
         "installed": "Установлен",
-        "unknown": "Неизвестно"
+        "unknown": "Неизвестно",
+        "incompatible": "Несовместимо"
     },
     "tooltips": {
         "enable": "Включить",
@@ -101,8 +102,6 @@
         "notFound": "Плагин не найден",
         "docsTitle": "Документация",
         "docsEmpty": "Документация отсутствует",
-        "changelogTitle": "Журнал изменений",
-        "changelogEmpty": "Журнал изменений отсутствует",
         "handlerGroups": {
             "commands": "Команды / группы команд",
             "hooks": "Хуки",
@@ -111,8 +110,13 @@
         },
         "info": {
             "title": "Информация",
+            "version": "Версия",
             "author": "Автор",
             "category": "Категория",
+            "stars": "Звезды",
+            "tags": "Теги",
+            "astrbotVersion": "Требуемая версия AstrBot",
+            "supportPlatforms": "Поддерживаемые платформы",
             "authorWebsite": "Сайт автора",
             "repository": "Репозиторий"
         }
@@ -153,8 +157,6 @@
         "sourceExists": "Этот источник уже есть в списке",
         "installPlugin": "Установить плагин",
         "randomPlugins": "🎲 Случайные плагины",
-        "showRandomPlugins": "Показать случайные",
-        "hideRandomPlugins": "Скрыть случайные",
         "sourceSafetyWarning": "Даже при использовании источников по умолчанию мы не можем гарантировать 100% безопасность и стабильность сторонних плагинов. Пожалуйста, будьте внимательны."
     },
     "sort": {
@@ -197,13 +199,10 @@
             "title": "Установка плагина",
             "fromFile": "Из файла",
             "fromUrl": "По ссылке",
-            "supportPlatformsCount": "Поддерживает платформ: {count}"
-        },
-        "update": {
-            "title": "Обновление плагина",
-            "sectionTitle": "Обновление",
-            "downloadSource": "Пакет обновления будет установлен из:",
-            "confirm": "Подтвердить обновление"
+            "supportPlatformsCount": "Поддерживает платформ: {count}",
+            "sectionTitle": "Установка",
+            "downloadSource": "Пакет плагина будет установлен из:",
+            "githubSecurityWarning": "AstrBot не может гарантировать безопасность плагинов, загруженных с GitHub. Устанавливайте только если доверяете источнику плагина."
         },
         "danger_warning": {
             "title": "Внимание!",
@@ -357,7 +356,17 @@
         "sourceSandboxOnly": "Предустановленный Sandbox навык",
         "sourceBoth": "Локальный + Sandbox",
         "sandboxDiscoveryPending": "Предустановленные Sandbox навыки не найдены. Запустите сессию Sandbox хотя бы один раз.",
-        "sandboxPresetReadonly": "Предустановленные навыки Sandbox доступны только для чтения и не могут быть удалены здесь."
+        "sandboxPresetReadonly": "Предустановленные навыки Sandbox доступны только для чтения и не могут быть удалены здесь.",
+        "openEditor": "Просмотр/правка",
+        "editorTitle": "Редактировать навык",
+        "editorLoadFailed": "Не удалось открыть файл навыка",
+        "editorSaveFailed": "Не удалось сохранить файл навыка",
+        "editorSaveSuccess": "Сохранено",
+        "saveFile": "Сохранить файл",
+        "readonly": "Только чтение",
+        "unsaved": "Не сохранено",
+        "noFileSelected": "Файл не выбран",
+        "discardChanges": "В файле есть несохраненные изменения. Отменить их?"
     },
     "card": {
         "actions": {
