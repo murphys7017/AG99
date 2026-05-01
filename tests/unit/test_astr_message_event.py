@@ -641,6 +641,65 @@ class TestSendStreaming:
         assert astr_message_event._has_send_oper is True
 
 
+class TestOutputControllerRouting:
+    """Tests for middleware output-controller routing helpers."""
+
+    @pytest.mark.asyncio
+    async def test_route_send_returns_false_without_controller(
+        self, astr_message_event
+    ):
+        handled = await astr_message_event._route_send_via_output_controller(
+            MessageEventResult().message("Test")
+        )
+
+        assert handled is False
+        assert astr_message_event._has_send_oper is False
+
+    @pytest.mark.asyncio
+    async def test_route_send_sets_has_send_oper(self, astr_message_event):
+        controller = AsyncMock()
+        message = MessageEventResult().message("Test")
+        astr_message_event.set_extra("_output_controller", controller)
+
+        with patch(
+            "astrbot.core.platform.astr_message_event.Metric.upload",
+            new_callable=AsyncMock,
+        ) as mock_upload:
+            handled = await astr_message_event._route_send_via_output_controller(
+                message
+            )
+
+        assert handled is True
+        assert astr_message_event._has_send_oper is True
+        controller.capture_message_chain.assert_awaited_once_with(
+            message,
+            astr_message_event,
+        )
+        mock_upload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_route_streaming_sets_has_send_oper(self, astr_message_event):
+        controller = AsyncMock()
+        astr_message_event.set_extra("_output_controller", controller)
+
+        async def generator():
+            yield MessageEventResult().message("Test")
+
+        with patch(
+            "astrbot.core.platform.astr_message_event.Metric.upload",
+            new_callable=AsyncMock,
+        ) as mock_upload:
+            handled = await astr_message_event._route_streaming_via_output_controller(
+                generator(),
+                use_fallback=True,
+            )
+
+        assert handled is True
+        assert astr_message_event._has_send_oper is True
+        controller.capture_streaming.assert_awaited_once()
+        mock_upload.assert_called_once()
+
+
 class TestSendTyping:
     """Tests for send_typing method."""
 

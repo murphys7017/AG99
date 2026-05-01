@@ -282,10 +282,59 @@ class AstrMessageEvent(abc.ABC):
         目前仅支持: telegram，qq official 私聊。
         Fallback仅支持 aiocqhttp。
         """
+        await self._record_streaming_send_operation()
+
+    async def _record_streaming_send_operation(self) -> None:
         asyncio.create_task(
             Metric.upload(msg_event_tick=1, adapter_name=self.platform_meta.name),
         )
         self._has_send_oper = True
+
+    async def _record_send_operation(self) -> None:
+        # Leverage BLAKE2 hash function to generate a non-reversible hash of the sender ID for privacy.
+        hash_obj = hashlib.blake2b(self.get_sender_id().encode("utf-8"), digest_size=16)
+        sid = str(uuid.UUID(bytes=hash_obj.digest()))
+        asyncio.create_task(
+            Metric.upload(
+                msg_event_tick=1,
+                adapter_name=self.platform_meta.name,
+                sid=sid,
+            ),
+        )
+        self._has_send_oper = True
+
+    async def _route_send_via_output_controller(self, message) -> bool:
+        controller = self.get_extra("_output_controller")
+        if controller is None:
+            return False
+        logger.debug(
+            "Interaction middleware routing send via output controller: platform_id=%s session_id=%s turn_id=%s",
+            self.get_platform_id(),
+            self.session_id,
+            self.get_extra("_turn_id"),
+        )
+        await controller.capture_message_chain(message, self)
+        await self._record_send_operation()
+        return True
+
+    async def _route_streaming_via_output_controller(
+        self,
+        generator: AsyncGenerator[MessageChain, None],
+        use_fallback: bool = False,
+    ) -> bool:
+        controller = self.get_extra("_output_controller")
+        if controller is None:
+            return False
+        logger.debug(
+            "Interaction middleware routing streaming via output controller: platform_id=%s session_id=%s turn_id=%s use_fallback=%s",
+            self.get_platform_id(),
+            self.session_id,
+            self.get_extra("_turn_id"),
+            use_fallback,
+        )
+        await controller.capture_streaming(generator, self, use_fallback=use_fallback)
+        await self._record_streaming_send_operation()
+        return True
 
     async def send_typing(self) -> None:
         """发送输入中状态。
@@ -472,17 +521,7 @@ class AstrMessageEvent(abc.ABC):
             message (MessageChain): 消息链，具体使用方式请参考文档。
 
         """
-        # Leverage BLAKE2 hash function to generate a non-reversible hash of the sender ID for privacy.
-        hash_obj = hashlib.blake2b(self.get_sender_id().encode("utf-8"), digest_size=16)
-        sid = str(uuid.UUID(bytes=hash_obj.digest()))
-        asyncio.create_task(
-            Metric.upload(
-                msg_event_tick=1,
-                adapter_name=self.platform_meta.name,
-                sid=sid,
-            ),
-        )
-        self._has_send_oper = True
+        await self._record_send_operation()
 
     async def react(self, emoji: str) -> None:
         """对消息添加表情回应。

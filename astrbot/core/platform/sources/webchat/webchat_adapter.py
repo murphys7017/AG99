@@ -87,6 +87,7 @@ class WebChatAdapter(Platform):
         session: MessageSesion,
         message_chain: MessageChain,
     ) -> None:
+        # Proactive sends intentionally bypass middleware in this MVP.
         conversation_id = _extract_conversation_id(session.session_id)
         active_request_ids = self._webchat_queue_mgr.list_back_request_ids(
             conversation_id

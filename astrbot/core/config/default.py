@@ -273,6 +273,11 @@ DEFAULT_CONFIG = {
             "pre_ack_emoji": {"enable": False, "emojis": ["🤔"]},
         },
     },
+    "interaction_middleware": {
+        "enabled": True,
+        "default_enabled_for_platforms": ["webchat"],
+        "platforms": {},
+    },
     "wake_prefix": ["/"],
     "log_level": "INFO",
     "log_file_enable": False,

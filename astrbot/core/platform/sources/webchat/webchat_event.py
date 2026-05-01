@@ -142,16 +142,27 @@ class WebChatMessageEvent(AstrMessageEvent):
         return data
 
     async def send(self, message: MessageChain | None) -> None:
+        if await self._route_send_via_output_controller(message):
+            return
+        logger.debug(
+            "WebChat send falling back to legacy path: session_id=%s message_id=%s",
+            self.session_id,
+            self.message_obj.message_id,
+        )
         message_id = self.message_obj.message_id
         await WebChatMessageEvent._send(message_id, message, session_id=self.session_id)
         await super().send(MessageChain([]))
 
-    async def send_streaming(self, generator, use_fallback: bool = False) -> None:
+    @staticmethod
+    async def _send_streaming_via_back_queue(
+        message_id: str,
+        session_id: str,
+        generator,
+    ) -> None:
         final_data = ""
         reasoning_content = ""
-        message_id = self.message_obj.message_id
         request_id = str(message_id)
-        conversation_id = _extract_conversation_id(self.session_id)
+        conversation_id = _extract_conversation_id(session_id)
         web_chat_back_queue = webchat_queue_mgr.get_or_create_back_queue(
             request_id,
             conversation_id,
@@ -196,7 +207,7 @@ class WebChatMessageEvent(AstrMessageEvent):
             r = await WebChatMessageEvent._send(
                 message_id=message_id,
                 message=chain,
-                session_id=self.session_id,
+                session_id=session_id,
                 streaming=True,
             )
             if not r:
@@ -214,5 +225,23 @@ class WebChatMessageEvent(AstrMessageEvent):
                 "streaming": True,
                 "message_id": message_id,
             },
+        )
+
+    async def send_streaming(self, generator, use_fallback: bool = False) -> None:
+        if await self._route_streaming_via_output_controller(
+            generator,
+            use_fallback=use_fallback,
+        ):
+            return
+        logger.debug(
+            "WebChat streaming falling back to legacy path: session_id=%s message_id=%s use_fallback=%s",
+            self.session_id,
+            self.message_obj.message_id,
+            use_fallback,
+        )
+        await WebChatMessageEvent._send_streaming_via_back_queue(
+            message_id=self.message_obj.message_id,
+            session_id=self.session_id,
+            generator=generator,
         )
         await super().send_streaming(generator, use_fallback)

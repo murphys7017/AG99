@@ -23,6 +23,11 @@ from astrbot.core.config.default import VERSION
 from astrbot.core.conversation_mgr import ConversationManager
 from astrbot.core.cron import CronJobManager
 from astrbot.core.db import BaseDatabase
+from astrbot.core.interaction import (
+    CoreInputGateway,
+    InteractionMiddleware,
+    InteractionOutputController,
+)
 from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.memory import (
     get_memory_service,
@@ -156,6 +161,13 @@ class AstrBotCoreLifecycle:
 
         # 初始化事件队列
         self.event_queue = Queue()
+        self.interaction_output_controller = InteractionOutputController()
+        self.interaction_middleware = InteractionMiddleware(
+            self.astrbot_config,
+            self.event_queue,
+            self.interaction_output_controller,
+        )
+        self.platform_event_gateway = CoreInputGateway(self.interaction_middleware)
 
         # 初始化人格管理器
         self.persona_mgr = PersonaManager(self.db, self.astrbot_config_mgr)
@@ -169,7 +181,10 @@ class AstrBotCoreLifecycle:
         )
 
         # 初始化平台管理器
-        self.platform_manager = PlatformManager(self.astrbot_config, self.event_queue)
+        self.platform_manager = PlatformManager(
+            self.astrbot_config,
+            self.platform_event_gateway,
+        )
 
         # 初始化对话管理器
         self.conversation_manager = ConversationManager(self.db)

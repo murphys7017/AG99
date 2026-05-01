@@ -445,6 +445,8 @@ class TestAstrBotCoreLifecycleInitialize:
         mock_astrbot_updator = MagicMock()
 
         mock_event_bus = MagicMock()
+        mock_memory_service = MagicMock()
+        mock_memory_service.initialize = AsyncMock()
 
         with ExitStack() as stack:
             mock_register_memory_postprocessor = _enter_lifecycle_initialize_patches(
@@ -465,7 +467,7 @@ class TestAstrBotCoreLifecycleInitialize:
                 mock_pipeline_scheduler=mock_pipeline_scheduler,
                 mock_astrbot_updator=mock_astrbot_updator,
                 mock_event_bus=mock_event_bus,
-                mock_memory_service=MagicMock(),
+                mock_memory_service=mock_memory_service,
                 mock_memory_postprocessor=MagicMock(),
                 migra_patch=AsyncMock(),
                 update_llm_metadata_patch=AsyncMock(),
@@ -499,6 +501,10 @@ class TestAstrBotCoreLifecycleInitialize:
         # Verify pipeline scheduler loaded
         assert lifecycle.pipeline_scheduler_mapping is not None
         mock_register_memory_postprocessor.assert_called_once()
+        assert lifecycle.platform_event_gateway is not None
+        assert lifecycle.interaction_middleware is not None
+        assert lifecycle.interaction_output_controller is not None
+        mock_memory_service.initialize.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_initialize_handles_migration_failure(
@@ -522,6 +528,8 @@ class TestAstrBotCoreLifecycleInitialize:
         # Mock components that need to be created for initialize to continue
         with ExitStack() as stack:
             mock_logger = MagicMock()
+            mock_memory_service = MagicMock()
+            mock_memory_service.initialize = AsyncMock()
             _enter_lifecycle_initialize_patches(
                 stack,
                 mock_astrbot_config=mock_astrbot_config,
@@ -540,7 +548,7 @@ class TestAstrBotCoreLifecycleInitialize:
                 mock_pipeline_scheduler=MagicMock(initialize=AsyncMock()),
                 mock_astrbot_updator=MagicMock(),
                 mock_event_bus=MagicMock(),
-                mock_memory_service=MagicMock(),
+                mock_memory_service=mock_memory_service,
                 mock_memory_postprocessor=MagicMock(),
                 migra_patch=AsyncMock(side_effect=Exception("Migration failed")),
                 update_llm_metadata_patch=AsyncMock(),
