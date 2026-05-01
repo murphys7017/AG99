@@ -1,6 +1,7 @@
 """如需修改配置，请在 `data/cmd_config.json` 中修改或者在管理面板中可视化修改。"""
 
 import os
+from typing import Any, TypedDict
 
 from astrbot.core.computer.booters.cua_defaults import CUA_DEFAULT_CONFIG
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -110,9 +111,7 @@ DEFAULT_CONFIG = {
         "websearch_tavily_key": [],
         "websearch_bocha_key": [],
         "websearch_brave_key": [],
-        "websearch_firecrawl_key": [],
         "websearch_baidu_app_builder_key": "",
-        "websearch_firecrawl_key": [],
         "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
@@ -138,16 +137,6 @@ DEFAULT_CONFIG = {
         "show_tool_call_result": False,
         "buffer_intermediate_messages": False,
         "sanitize_context_by_modalities": False,
-        "prompt_selector": {
-            "enable": False,
-            "provider_id": "ollama",
-            "model": "qwen3:1.7b",
-            "timeout": 1.5,
-            "min_confidence": 0.5,
-            "fallback_profile": "balanced",
-            "recent_history_turns": 2,
-            "use_rules_first": True,
-        },
         "max_quoted_fallback_images": 20,
         "quoted_message_parser": {
             "max_component_chain_depth": 4,
@@ -189,7 +178,7 @@ DEFAULT_CONFIG = {
             "shipyard_neo_ttl": 3600,
             "cua_image": CUA_DEFAULT_CONFIG["image"],
             "cua_os_type": CUA_DEFAULT_CONFIG["os_type"],
-            "cua_idle_timeout": CUA_DEFAULT_CONFIG["idle_timeout"],
+            "cua_ttl": CUA_DEFAULT_CONFIG["ttl"],
             "cua_telemetry_enabled": CUA_DEFAULT_CONFIG["telemetry_enabled"],
             "cua_local": CUA_DEFAULT_CONFIG["local"],
             "cua_api_key": CUA_DEFAULT_CONFIG["api_key"],
@@ -280,27 +269,6 @@ DEFAULT_CONFIG = {
             "pre_ack_emoji": {"enable": False, "emojis": ["🤔"]},
         },
     },
-    "interaction_middleware": {
-        "enabled": True,
-        "default_enabled_for_platforms": ["webchat"],
-        "platforms": {},
-        "decision_provider_id": "",
-        "decision_model": "",
-        "decision_temperature": 0.5,
-        "decision_max_tokens": 512,
-        "decision_timeout": 15.0,
-        "decision_confidence_threshold": 0.6,
-        "finalizer_provider_id": "",
-        "finalizer_model": "",
-        "finalizer_temperature": 0.6,
-        "finalizer_max_tokens": 512,
-        "finalizer_mode": "auto",
-        "memory_window_size": 8,
-        "stream_observation_enabled": True,
-        "stream_observation_min_chars": 200,
-        "stream_interjection_enabled": True,
-        "stream_interjection_max_per_turn": 1,
-    },
     "wake_prefix": ["/"],
     "log_level": "INFO",
     "log_file_enable": False,
@@ -323,10 +291,26 @@ DEFAULT_CONFIG = {
     "kb_final_top_k": 5,  # 知识库检索最终返回结果数量
     "kb_agentic_mode": False,
     "disable_builtin_commands": False,
-    "disable_metrics": False,
 }
 
 
+class ChatProviderTemplate(TypedDict):
+    id: str
+    provider_source_id: str
+    model: str
+    modalities: list
+    custom_extra_body: dict[str, Any]
+    max_context_tokens: int
+
+
+CHAT_PROVIDER_TEMPLATE = {
+    "id": "",
+    "provide_source_id": "",
+    "model": "",
+    "modalities": [],
+    "custom_extra_body": {},
+    "max_context_tokens": 128000,
+}
 
 """
 AstrBot v3 时代的配置元数据，目前仅承担以下功能：
@@ -1188,20 +1172,6 @@ CONFIG_METADATA_2 = {
                         "proxy": "",
                         "custom_headers": {},
                     },
-                    "Volcengine Ark": {
-                        "id": "volcengine_ark",
-                        "provider": "volcengine",
-                        "type": "volcengine_ark_chat_completion",
-                        "provider_type": "chat_completion",
-                        "enable": True,
-                        "key": [],
-                        "api_base": "https://ark.cn-beijing.volces.com/api/v3",
-                        "model": "",
-                        "timeout": 120,
-                        "proxy": "",
-                        "custom_headers": {},
-                        "custom_extra_body": {},
-                    },
                     "Google Gemini": {
                         "id": "google_gemini",
                         "provider": "google",
@@ -2000,13 +1970,13 @@ CONFIG_METADATA_2 = {
                         "options": ["text", "image", "audio", "tool_use"],
                         "labels": ["文本", "图像", "音频", "工具使用"],
                         "render_type": "checkbox",
-                        "hint": "模型支持的模态及能力。",
+                        "hint": "模型支持的模态。如所填写的模型不支持图像，请取消勾选图像。",
                     },
                     "custom_headers": {
-                        "description": "自定义请求头",
+                        "description": "自定义添加请求头",
                         "type": "dict",
                         "items": {},
-                        "hint": "此处添加的键值对将被合并到 OpenAI SDK 的 default_headers 中，用于自定义 HTTP 请求头。",
+                        "hint": "此处添加的键值对将被合并到 OpenAI SDK 的 default_headers 中，用于自定义 HTTP 请求头。值必须为字符串。",
                     },
                     "ollama_disable_thinking": {
                         "description": "关闭思考模式",
@@ -2017,7 +1987,7 @@ CONFIG_METADATA_2 = {
                         "description": "自定义请求体参数",
                         "type": "dict",
                         "items": {},
-                        "hint": "用于在请求时添加额外的参数，如 temperature, top_p, max_tokens, reasoning_effort 等。",
+                        "hint": "用于在请求时添加额外的参数，如 temperature、top_p、max_tokens 等。",
                         "template_schema": {
                             "temperature": {
                                 "name": "Temperature",
@@ -2660,7 +2630,7 @@ CONFIG_METADATA_2 = {
                     "max_context_tokens": {
                         "description": "模型上下文窗口大小",
                         "type": "int",
-                        "hint": "模型最大上下文 Token 大小。如果为 0，则会自动从模型元数据填充（如有）",
+                        "hint": "模型最大上下文 Token 大小。如果为 0，则会自动从模型元数据填充（如有），也可手动修改。",
                     },
                     "dify_api_key": {
                         "description": "API Key",
@@ -2971,11 +2941,6 @@ CONFIG_METADATA_2 = {
             },
             "callback_api_base": {
                 "type": "string",
-            },
-            "disable_metrics": {
-                "description": "禁用匿名使用统计",
-                "type": "bool",
-                "hint": "禁用后，AstrBot 将不再上传匿名使用统计数据。",
             },
             "log_level": {
                 "type": "string",
@@ -3296,7 +3261,6 @@ CONFIG_METADATA_3 = {
                         "hint": "参考：https://console.bce.baidu.com/iam/#/iam/apikey/list",
                         "condition": {
                             "provider_settings.websearch_provider": "baidu_ai_search",
-                            "provider_settings.web_search": True,
                         },
                     },
                     "provider_settings.web_search_link": {
@@ -3394,10 +3358,10 @@ CONFIG_METADATA_3 = {
                             "provider_settings.sandbox.booter": "cua",
                         },
                     },
-                    "provider_settings.sandbox.cua_idle_timeout": {
-                        "description": "CUA Idle Timeout",
+                    "provider_settings.sandbox.cua_ttl": {
+                        "description": "CUA Sandbox TTL",
                         "type": "int",
-                        "hint": "Idle timeout for CUA sandbox sessions in seconds. When greater than 0, AstrBot proactively shuts down an idle CUA sandbox after that amount of inactivity; 0 disables it.",
+                        "hint": "CUA 沙箱生存时间（秒）。当前作为会话配置保存，具体生效取决于 CUA SDK。",
                         "condition": {
                             "provider_settings.computer_use_runtime": "sandbox",
                             "provider_settings.sandbox.booter": "cua",
@@ -3580,6 +3544,14 @@ CONFIG_METADATA_3 = {
                             "provider_settings.agent_runner_type": "local",
                         },
                     },
+                    "provider_settings.fallback_max_context_tokens": {
+                        "description": "上下文窗口兜底值",
+                        "type": "int",
+                        "hint": "当 max_context_tokens 为 0 且模型不在内置元数据中时，使用此值作为上下文窗口大小。默认 128000。",
+                        "condition": {
+                            "provider_settings.agent_runner_type": "local",
+                        },
+                    },
                 },
                 "condition": {
                     "provider_settings.agent_runner_type": "local",
@@ -3675,55 +3647,6 @@ CONFIG_METADATA_3 = {
                         "condition": {
                             "provider_settings.agent_runner_type": "local",
                         },
-                    },
-                    "provider_settings.prompt_selector.enable": {
-                        "description": "启用 Prompt 内容选择器",
-                        "type": "bool",
-                        "hint": "启用后，会在渲染前按需裁剪工具、Subagent、历史、记忆和知识库上下文，降低主模型 token 消耗。",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "local",
-                        },
-                        "collapsed": True,
-                    },
-                    "provider_settings.prompt_selector.provider_id": {
-                        "description": "Prompt 内容选择器提供商 ID",
-                        "type": "string",
-                        "hint": "用于分类上下文需求的小模型提供商 ID，例如 ollama。",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "local",
-                            "provider_settings.prompt_selector.enable": True,
-                        },
-                        "collapsed": True,
-                    },
-                    "provider_settings.prompt_selector.model": {
-                        "description": "Prompt 内容选择器模型",
-                        "type": "string",
-                        "hint": "用于分类上下文需求的小模型名称，例如 qwen3:1.7b。",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "local",
-                            "provider_settings.prompt_selector.enable": True,
-                        },
-                        "collapsed": True,
-                    },
-                    "provider_settings.prompt_selector.timeout": {
-                        "description": "Prompt 内容选择器超时",
-                        "type": "float",
-                        "hint": "小模型分类调用超时时间（秒），超时后回退到默认选择策略。",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "local",
-                            "provider_settings.prompt_selector.enable": True,
-                        },
-                        "collapsed": True,
-                    },
-                    "provider_settings.prompt_selector.recent_history_turns": {
-                        "description": "最近历史轮数",
-                        "type": "int",
-                        "hint": "当选择器判断只需要最近历史时保留的对话轮数。",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "local",
-                            "provider_settings.prompt_selector.enable": True,
-                        },
-                        "collapsed": True,
                     },
                     "provider_settings.max_agent_step": {
                         "description": "工具调用轮数上限",
@@ -4209,158 +4132,6 @@ CONFIG_METADATA_3 = {
                         "hint": "为空时不启用白名单过滤。使用 /sid 获取 ID。",
                         "condition": {
                             "provider_ltm_settings.active_reply.enable": True,
-                        },
-                    },
-                },
-            },
-        },
-    },
-    "interaction_middleware_group": {
-        "name": "交互中间件",
-        "metadata": {
-            "general": {
-                "description": "基础开关",
-                "hint": "控制新的交互中间件主链路。开发期内部链路不提供 fallback 配置，缺失 provider 或非法输出会显式失败。",
-                "type": "object",
-                "items": {
-                    "interaction_middleware.enabled": {
-                        "description": "启用交互中间件",
-                        "type": "bool",
-                    },
-                    "interaction_middleware.default_enabled_for_platforms": {
-                        "description": "默认启用平台",
-                        "hint": "平台 ID 列表。只有列入这里的平台会默认进入交互中间件链路。",
-                        "type": "list",
-                        "items": {"type": "string"},
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.platforms": {
-                        "description": "平台覆盖配置",
-                        "hint": "按平台 ID 覆盖中间件配置。仅用于显式平台差异，不作为缺失配置的 fallback。",
-                        "type": "dict",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.memory_window_size": {
-                        "description": "记忆窗口轮数",
-                        "hint": "构建 decision context 时读取的 interaction memory 轮数。",
-                        "type": "int",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                },
-            },
-            "decision": {
-                "description": "回复接管策略",
-                "hint": "决策 Agent 负责判断当前 turn 是由中间件直接回复、先说一句再交给核心、还是静默交给核心执行。",
-                "type": "object",
-                "items": {
-                    "interaction_middleware.decision_provider_id": {
-                        "description": "决策模型提供商",
-                        "hint": "留空时会在中间件链路显式报错，不会回退到默认模型。",
-                        "type": "string",
-                        "_special": "select_provider",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.decision_model": {
-                        "description": "决策模型名称",
-                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
-                        "type": "string",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.decision_temperature": {
-                        "description": "决策温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 1, "step": 0.05},
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.decision_max_tokens": {
-                        "description": "决策最大 token",
-                        "type": "int",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.decision_timeout": {
-                        "description": "决策超时秒数",
-                        "type": "float",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.decision_confidence_threshold": {
-                        "description": "决策置信度阈值",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 1, "step": 0.05},
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                },
-            },
-            "finalizer": {
-                "description": "最终回复整理",
-                "hint": "整理核心输出后再发送。开发期整理失败会终止当前 turn，不发送替代文本。",
-                "type": "object",
-                "items": {
-                    "interaction_middleware.finalizer_mode": {
-                        "description": "整理模式",
-                        "type": "string",
-                        "options": ["auto", "force", "off"],
-                        "labels": ["自动", "强制", "关闭"],
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.finalizer_provider_id": {
-                        "description": "整理模型提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.finalizer_model": {
-                        "description": "整理模型名称",
-                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
-                        "type": "string",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.finalizer_temperature": {
-                        "description": "整理温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 1, "step": 0.05},
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.finalizer_max_tokens": {
-                        "description": "整理最大 token",
-                        "type": "int",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                },
-            },
-            "stream": {
-                "description": "执行过程提示",
-                "hint": "观察核心流式输出窗口，并允许中间件在核心执行过程中插入简短提示。",
-                "type": "object",
-                "items": {
-                    "interaction_middleware.stream_observation_enabled": {
-                        "description": "启用执行过程观察",
-                        "type": "bool",
-                        "condition": {"interaction_middleware.enabled": True},
-                    },
-                    "interaction_middleware.stream_observation_min_chars": {
-                        "description": "最少累计字符数",
-                        "hint": "核心流式输出累计到这个字符数后，中间件才会判断是否需要插入过程提示。",
-                        "type": "int",
-                        "condition": {
-                            "interaction_middleware.enabled": True,
-                            "interaction_middleware.stream_observation_enabled": True,
-                        },
-                    },
-                    "interaction_middleware.stream_interjection_enabled": {
-                        "description": "允许过程提示",
-                        "type": "bool",
-                        "condition": {
-                            "interaction_middleware.enabled": True,
-                            "interaction_middleware.stream_observation_enabled": True,
-                        },
-                    },
-                    "interaction_middleware.stream_interjection_max_per_turn": {
-                        "description": "每轮最多提示次数",
-                        "type": "int",
-                        "condition": {
-                            "interaction_middleware.enabled": True,
-                            "interaction_middleware.stream_observation_enabled": True,
-                            "interaction_middleware.stream_interjection_enabled": True,
                         },
                     },
                 },
