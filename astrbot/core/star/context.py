@@ -50,6 +50,9 @@ logger = logging.getLogger("astrbot")
 if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
 
+WebApiHandler = Callable[..., Awaitable[Any]]
+RegisteredWebApi = tuple[str, WebApiHandler, list[str], str]
+
 
 @dataclass(slots=True)
 class _PromptExtensionCollectorRegistration:
@@ -80,7 +83,7 @@ class PlatformManagerProtocol(Protocol):
 class Context:
     """暴露给插件的接口上下文。"""
 
-    registered_web_apis: list = []
+    registered_web_apis: list[RegisteredWebApi] = []
 
     # 向后兼容的变量
     _register_tasks: list[Awaitable] = []
@@ -874,8 +877,8 @@ class Context:
     def register_web_api(
         self,
         route: str,
-        view_handler: Awaitable,
-        methods: list,
+        view_handler: WebApiHandler,
+        methods: list[str],
         desc: str,
     ) -> None:
         """注册 Web API。
