@@ -226,6 +226,41 @@ async def on_message(self, event: AstrMessageEvent):
 
 你可以修改(或添加) `metadata.yaml` 文件中的 `display_name` 字段，作为插件在插件市场等场景中的展示名，以方便用户阅读。
 
+### 插件短描述
+
+你可以在 `metadata.yaml` 中新增 `short_desc` 字段，作为插件市场卡片上的短描述。它适合写成一句简短介绍；如果没有提供，卡片会回退显示 `desc`。
+
+```yaml
+short_desc: 一句话介绍你的插件。
+```
+
+### 随插件提供 Skills
+
+插件可以在自己的目录下提供 `skills/` 文件夹。AstrBot 加载插件后会自动把其中合法的 Skill 纳入 Skill Manager，来源会显示为对应插件。
+
+推荐一个插件包含多个 Skill 时使用以下结构：
+
+```text
+your_plugin/
+  metadata.yaml
+  main.py
+  skills/
+    web-search-helper/
+      SKILL.md
+    report-writer/
+      SKILL.md
+```
+
+如果 `skills/` 本身就是一个 Skill，也可以直接放置：
+
+```text
+your_plugin/
+  skills/
+    SKILL.md
+```
+
+这种情况下 Skill 名称会使用插件目录名。插件提供的 Skill 由插件管理，在 WebUI 的 Skills 页面中作为只读来源展示；可以启用或禁用，但不能从本地 Skills 页面删除或编辑。插件卸载或更新后，对应 Skill 会随插件文件变化。
+
 ### 声明支持平台（Optional）
 
 你可以在 `metadata.yaml` 中新增 `support_platforms` 字段（`list[str]`），声明插件支持的平台适配器。WebUI 插件页会展示该字段。
@@ -484,95 +519,11 @@ from astrbot.api.provider import ProviderRequest
 @filter.on_llm_request()
 async def my_custom_hook_1(self, event: AstrMessageEvent, req: ProviderRequest): # 请注意有三个参数
     print(req) # 打印请求的文本
-    req.system_prompt += "自定义 system_prompt" # 如果有其他替代方法，不建议使用此种方式来追加每轮对话都会改变的提示词，否则会破坏缓存，大大增加价格（约增加 7-20 倍的价格）。
+    req.system_prompt += "自定义 system_prompt"
 
 ```
-
-> [!WARNING]
-> **关于提示词的追加**
->
-> `req.system_prompt += ...` 适合追加稳定、长期有效的角色设定或全局规则。不建议把每轮都会变化的内容追加到 `system_prompt`，例如当前时间、好感度、状态栏、短期记忆片段、检索摘要等。这类写法会让系统提示词在每轮请求中变化，容易破坏模型服务端的提示词缓存，显著增加请求成本和首 token 延迟。
->
-> 对于每轮都会变化、内容量中小的提示词，优先通过 `req.extra_user_content_parts` 追加。它会作为额外的用户消息内容块放在本轮用户输入之后，更适合承载"当前时间""角色好感度""本轮相关记忆片段"等动态上下文：
->
-> ```python
-> from astrbot.core.agent.message import TextPart
->
-> @filter.on_llm_request()
-> async def add_dynamic_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
->     req.extra_user_content_parts.append(
->         TextPart(
->             text=(
->                 "<dynamic_context>\n"
->                 "当前时间：2026-05-03 20:00\n"
->                 "好感度：72\n"
->                 "相关记忆：用户喜欢简洁直接的回答。\n"
->                 "</dynamic_context>"
->             )
->         )
->     )
-> ```
->
-> 对于长期记忆、知识库、外部系统查询等内容量较大或不一定每轮都需要的信息，不建议全部塞进提示词。可以优先注册为 `llm_tool`，让模型在需要时调用；也可以先在插件中检索出本轮真正相关的少量摘要，再放入 `extra_user_content_parts`。
 
 > 这里不能使用 yield 来发送消息。如需发送，请直接使用 `event.send()` 方法。
-
-##### 结构化 Prompt 扩展（推荐用于 prompt 注入）
-
-如果插件的目标只是向主流程 prompt 贡献结构化上下文，而不是直接修改 `ProviderRequest`，更推荐使用 Prompt Extension Collector。
-
-这种方式的特点是：
-
-- 插件只提供结构化数据
-- collect/select/render 主链路统一接管挂载与渲染
-- 不需要插件自己决定 system tree 的内部路径
-- 比直接在 `on_llm_request` 里拼接字符串更稳定
-
-最小示例：
-
-```python
-from astrbot.core.prompt import (
-    PromptExtension,
-    PromptExtensionCollectorInterface,
-)
-
-
-class DesktopContextCollector(PromptExtensionCollectorInterface):
-    @property
-    def plugin_id(self) -> str:
-        return "desktop_context"
-
-    async def collect(self, event, plugin_context, config, provider_request=None):
-        return [
-            PromptExtension(
-                plugin_id="desktop_context",
-                mount="input",
-                title="Desktop Snapshot",
-                value={
-                    "kind": "desktop_screenshot",
-                    "summary": "Current desktop screenshot from platform sidecar",
-                },
-            )
-        ]
-
-
-class Main(star.Star):
-    def __init__(self, context: star.Context) -> None:
-        self.context = context
-        self.context.register_prompt_extension_collector(
-            DesktopContextCollector()
-        )
-```
-
-当前 `mount` 语义：
-
-- `system`: 系统侧扩展说明
-- `input`: 当前输入相关扩展
-- `conversation`: 会话相关扩展（V1 渲染到 system 侧）
-- `memory`: 记忆相关扩展
-- `capability`: 能力相关扩展
-
-如果你确实需要直接修改 `ProviderRequest` 的底层字段，仍然可以继续使用 `on_llm_request`。
 
 ##### LLM 请求完成时
 
