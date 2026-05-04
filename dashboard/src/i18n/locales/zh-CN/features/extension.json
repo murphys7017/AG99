@@ -101,6 +101,8 @@
     "notFound": "未找到该插件",
     "docsTitle": "文档",
     "docsEmpty": "暂无文档",
+    "changelogTitle": "更新日志",
+    "changelogEmpty": "暂无更新日志",
     "handlerGroups": {
       "commands": "指令/指令组",
       "hooks": "钩子",
@@ -197,6 +199,12 @@
       "fromFile": "从文件安装",
       "fromUrl": "从链接安装",
       "supportPlatformsCount": "支持 {count} 个平台"
+    },
+    "update": {
+      "title": "更新插件",
+      "sectionTitle": "更新",
+      "downloadSource": "将从以下位置安装更新包体：",
+      "confirm": "确认更新"
     },
     "danger_warning": {
       "title": "警告",

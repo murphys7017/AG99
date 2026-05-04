@@ -101,6 +101,8 @@
         "notFound": "Плагин не найден",
         "docsTitle": "Документация",
         "docsEmpty": "Документация отсутствует",
+        "changelogTitle": "Журнал изменений",
+        "changelogEmpty": "Журнал изменений отсутствует",
         "handlerGroups": {
             "commands": "Команды / группы команд",
             "hooks": "Хуки",
@@ -196,6 +198,12 @@
             "fromFile": "Из файла",
             "fromUrl": "По ссылке",
             "supportPlatformsCount": "Поддерживает платформ: {count}"
+        },
+        "update": {
+            "title": "Обновление плагина",
+            "sectionTitle": "Обновление",
+            "downloadSource": "Пакет обновления будет установлен из:",
+            "confirm": "Подтвердить обновление"
         },
         "danger_warning": {
             "title": "Внимание!",

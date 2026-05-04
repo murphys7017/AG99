@@ -1,9 +1,10 @@
 import os
+import shutil
 import zipfile
 
 from astrbot.core import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
-from astrbot.core.utils.io import ensure_dir, remove_dir
+from astrbot.core.utils.io import on_error, remove_dir
 
 from ..star.star import StarMetadata
 from ..updator import RepoZipUpdator
@@ -17,34 +18,52 @@ class PluginUpdator(RepoZipUpdator):
     def get_plugin_store_path(self) -> str:
         return self.plugin_store_path
 
-    async def install(self, repo_url: str, proxy="") -> str:
+    async def install(self, repo_url: str, proxy="", download_url: str = "") -> str:
         _, repo_name, _ = self.parse_github_url(repo_url)
         repo_name = self.format_name(repo_name)
         plugin_path = os.path.join(self.plugin_store_path, repo_name)
-        await self.download_from_repo_url(plugin_path, repo_url, proxy)
+        if download_url:
+            logger.info(f"Downloading plugin archive for {repo_name}: {download_url}")
+            await self._download_file(download_url, plugin_path + ".zip")
+        else:
+            await self.download_from_repo_url(plugin_path, repo_url, proxy)
         self.unzip_file(plugin_path + ".zip", plugin_path)
 
         return plugin_path
 
-    async def update(self, plugin: StarMetadata, proxy="") -> str:
+    async def update(
+        self, plugin: StarMetadata, proxy="", download_url: str = ""
+    ) -> str:
         repo_url = plugin.repo
 
-        if not repo_url:
-            raise Exception(f"插件 {plugin.name} 没有指定仓库地址。")
+        if not repo_url and not download_url:
+            raise Exception(
+                f"Plugin {plugin.name} does not specify a repository URL or download URL."
+            )
 
         if not plugin.root_dir_name:
-            raise Exception(f"插件 {plugin.name} 的根目录名未指定。")
+            raise Exception(
+                f"Plugin {plugin.name} does not specify a root directory name."
+            )
 
         plugin_path = os.path.join(self.plugin_store_path, plugin.root_dir_name)
 
-        logger.info(f"正在更新插件，路径: {plugin_path}，仓库地址: {repo_url}")
-        await self.download_from_repo_url(plugin_path, repo_url, proxy=proxy)
+        logger.info(
+            f"Updating plugin at path: {plugin_path}, repository URL: {repo_url}",
+        )
+        if download_url:
+            logger.info(
+                f"Downloading plugin update archive for {plugin.name}: {download_url}"
+            )
+            await self._download_file(download_url, plugin_path + ".zip")
+        else:
+            await self.download_from_repo_url(plugin_path, repo_url, proxy=proxy)
 
         try:
             remove_dir(plugin_path)
         except BaseException as e:
             logger.error(
-                f"删除旧版本插件 {plugin_path} 文件夹失败: {e!s}，使用覆盖安装。",
+                f"Failed to remove old plugin directory {plugin_path}: {e!s}; using overwrite installation.",
             )
 
         self.unzip_file(plugin_path + ".zip", plugin_path)
@@ -52,10 +71,29 @@ class PluginUpdator(RepoZipUpdator):
         return plugin_path
 
     def unzip_file(self, zip_path: str, target_dir: str) -> None:
-        ensure_dir(target_dir)
+        os.makedirs(target_dir, exist_ok=True)
+        update_dir = ""
         logger.info(f"Extracting archive: {zip_path}")
         with zipfile.ZipFile(zip_path, "r") as z:
-            update_dir = self._resolve_archive_root_dir(z.namelist())
+            update_dir = z.namelist()[0]
             z.extractall(target_dir)
 
-        self._finalize_extracted_archive(zip_path, target_dir, update_dir)
+        files = os.listdir(os.path.join(target_dir, update_dir))
+        for f in files:
+            if os.path.isdir(os.path.join(target_dir, update_dir, f)):
+                if os.path.exists(os.path.join(target_dir, f)):
+                    shutil.rmtree(os.path.join(target_dir, f), onerror=on_error)
+            elif os.path.exists(os.path.join(target_dir, f)):
+                os.remove(os.path.join(target_dir, f))
+            shutil.move(os.path.join(target_dir, update_dir, f), target_dir)
+
+        try:
+            logger.info(
+                f"Removing temporary files: {zip_path} and {os.path.join(target_dir, update_dir)}",
+            )
+            shutil.rmtree(os.path.join(target_dir, update_dir), onerror=on_error)
+            os.remove(zip_path)
+        except BaseException:
+            logger.warning(
+                f"Failed to remove update files; you can manually delete {zip_path} and {os.path.join(target_dir, update_dir)}",
+            )
