@@ -30,6 +30,7 @@ from astrbot.core.astr_main_agent_resources import (
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
 )
 from astrbot.core.conversation_mgr import Conversation
+from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -2023,6 +2024,7 @@ async def build_main_agent(
             return None
 
     await _decorate_llm_request(event, req, plugin_context, config)
+    apply_interaction_core_task_spec(req, event)
 
     await _apply_kb(event, req, plugin_context, config)
 

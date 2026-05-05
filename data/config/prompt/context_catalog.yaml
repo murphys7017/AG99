@@ -134,6 +134,14 @@ contexts:
     lifecycle: rolling
     notes: "当前快照中的动态人格状态，不等于静态 persona prompt"
 
+  - id: memory.interaction
+    category: memory
+    slots: [history]
+    required: false
+    multiple: false
+    lifecycle: rolling
+    notes: "Interaction middleware 的对话连续性记忆，包含语气、偏好、熟悉度和近期话题"
+
   # ========== Input 类 (ephemeral) ==========
   - id: input.text
     category: input

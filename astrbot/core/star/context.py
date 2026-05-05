@@ -62,6 +62,17 @@ class _PromptExtensionCollectorRegistration:
     seq: int
 
 
+@dataclass(slots=True)
+class _InteractionContributorRegistration:
+    """Internal registration record for interaction contributors."""
+
+    contributor: Any
+    plugin_id: str
+    definition_module_path: str
+    owner_module_path: str | None
+    seq: int
+
+
 class PlatformManagerProtocol(Protocol):
     platform_insts: list[Platform]
 
@@ -117,6 +128,14 @@ class Context:
             _PromptExtensionCollectorRegistration
         ] = []
         self._prompt_extension_collector_seq = 0
+        self._interaction_prompt_contributors: list[
+            _InteractionContributorRegistration
+        ] = []
+        self._interaction_prompt_contributor_seq = 0
+        self._interaction_result_contributors: list[
+            _InteractionContributorRegistration
+        ] = []
+        self._interaction_result_contributor_seq = 0
 
     async def llm_generate(
         self,
@@ -604,6 +623,52 @@ class Context:
             )
         return removed
 
+    def register_interaction_prompt_contributor(self, contributor: Any) -> None:
+        self._register_interaction_contributor(
+            contributor,
+            registry_attr="_interaction_prompt_contributors",
+            seq_attr="_interaction_prompt_contributor_seq",
+            contributor_type="prompt contributor",
+        )
+
+    def list_interaction_prompt_contributors(self) -> list[Any]:
+        return self._list_interaction_contributors(
+            self._interaction_prompt_contributors
+        )
+
+    def remove_interaction_prompt_contributors_by_module_prefix(
+        self,
+        module_prefix: str,
+    ) -> int:
+        return self._remove_interaction_contributors_by_module_prefix(
+            registry_attr="_interaction_prompt_contributors",
+            module_prefix=module_prefix,
+            contributor_type="prompt contributor",
+        )
+
+    def register_interaction_result_contributor(self, contributor: Any) -> None:
+        self._register_interaction_contributor(
+            contributor,
+            registry_attr="_interaction_result_contributors",
+            seq_attr="_interaction_result_contributor_seq",
+            contributor_type="result contributor",
+        )
+
+    def list_interaction_result_contributors(self) -> list[Any]:
+        return self._list_interaction_contributors(
+            self._interaction_result_contributors
+        )
+
+    def remove_interaction_result_contributors_by_module_prefix(
+        self,
+        module_prefix: str,
+    ) -> int:
+        return self._remove_interaction_contributors_by_module_prefix(
+            registry_attr="_interaction_result_contributors",
+            module_prefix=module_prefix,
+            contributor_type="result contributor",
+        )
+
     @staticmethod
     def _normalize_plugin_owner_module(module_path: str | None) -> str | None:
         if not isinstance(module_path, str) or not module_path:
@@ -614,6 +679,102 @@ class Context:
             if part in {"builtin_stars", "plugins"} and index + 1 < len(parts):
                 return ".".join(parts[: index + 2] + ["main"])
         return module_path
+
+    def _register_interaction_contributor(
+        self,
+        contributor: Any,
+        *,
+        registry_attr: str,
+        seq_attr: str,
+        contributor_type: str,
+    ) -> None:
+        plugin_id = getattr(contributor, "plugin_id", None)
+        if not isinstance(plugin_id, str) or not plugin_id.strip():
+            raise ValueError(
+                f"Interaction {contributor_type} must define a non-empty plugin_id"
+            )
+
+        definition_module_path = getattr(
+            type(contributor), "__module__", ""
+        ) or getattr(
+            contributor,
+            "__module__",
+            "",
+        )
+        owner_module_path = self._normalize_plugin_owner_module(definition_module_path)
+
+        seq = getattr(self, seq_attr) + 1
+        setattr(self, seq_attr, seq)
+        registry = getattr(self, registry_attr)
+        registry = [
+            registration
+            for registration in registry
+            if registration.contributor is not contributor
+        ]
+        registry.append(
+            _InteractionContributorRegistration(
+                contributor=contributor,
+                plugin_id=plugin_id.strip(),
+                definition_module_path=str(definition_module_path),
+                owner_module_path=owner_module_path,
+                seq=seq,
+            )
+        )
+        setattr(self, registry_attr, registry)
+        logger.info(
+            "plugin(module_path %s) added interaction %s: %s",
+            owner_module_path or definition_module_path or "<unknown>",
+            contributor_type,
+            plugin_id,
+        )
+
+    def _list_interaction_contributors(
+        self,
+        registry: list[_InteractionContributorRegistration],
+    ) -> list[Any]:
+        active_registrations = [
+            registration
+            for registration in registry
+            if self._is_interaction_contributor_active(registration)
+        ]
+        active_registrations.sort(
+            key=lambda registration: (
+                self._coerce_prompt_extension_priority(registration.contributor),
+                registration.seq,
+            )
+        )
+        return [registration.contributor for registration in active_registrations]
+
+    def _remove_interaction_contributors_by_module_prefix(
+        self,
+        *,
+        registry_attr: str,
+        module_prefix: str,
+        contributor_type: str,
+    ) -> int:
+        clean_prefix = module_prefix.strip()
+        if not clean_prefix:
+            return 0
+        registry = getattr(self, registry_attr)
+        kept: list[_InteractionContributorRegistration] = []
+        removed = 0
+        for registration in registry:
+            if self._matches_interaction_contributor_module_prefix(
+                registration,
+                clean_prefix,
+            ):
+                removed += 1
+                continue
+            kept.append(registration)
+        setattr(self, registry_attr, kept)
+        if removed:
+            logger.info(
+                "removed %s interaction %s(s) for module prefix %s",
+                removed,
+                contributor_type,
+                clean_prefix,
+            )
+        return removed
 
     @staticmethod
     def _coerce_prompt_extension_priority(collector: Any) -> int:
@@ -638,9 +799,40 @@ class Context:
                 return bool(plugin.activated)
         return True
 
+    def _is_interaction_contributor_active(
+        self,
+        registration: _InteractionContributorRegistration,
+    ) -> bool:
+        for candidate in (
+            registration.owner_module_path,
+            registration.definition_module_path,
+        ):
+            if not candidate:
+                continue
+            plugin = star_map.get(candidate)
+            if plugin is not None:
+                return bool(plugin.activated)
+        return True
+
     @staticmethod
     def _matches_prompt_extension_module_prefix(
         registration: _PromptExtensionCollectorRegistration,
+        module_prefix: str,
+    ) -> bool:
+        candidates = (
+            registration.definition_module_path,
+            registration.owner_module_path,
+        )
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if candidate == module_prefix or candidate.startswith(f"{module_prefix}."):
+                return True
+        return False
+
+    @staticmethod
+    def _matches_interaction_contributor_module_prefix(
+        registration: _InteractionContributorRegistration,
         module_prefix: str,
     ) -> bool:
         candidates = (

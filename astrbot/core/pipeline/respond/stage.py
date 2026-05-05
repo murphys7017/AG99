@@ -2,6 +2,7 @@ import asyncio
 import math
 import random
 from collections.abc import AsyncGenerator
+from copy import copy
 
 import astrbot.core.message.components as Comp
 from astrbot.core import logger
@@ -10,6 +11,7 @@ from astrbot.core.message.message_event_result import MessageChain, ResultConten
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
+from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.star_handler import EventType
 from astrbot.core.utils.path_util import path_Mapping
 
@@ -172,12 +174,72 @@ class RespondStage(Stage):
         if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
             return False
 
-        await dispatch_postprocess(
-            event=event,
-            trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
-            plugin_context=self.ctx.plugin_manager.context,
-        )
+        await self._complete_visible_turn(event)
+        self._schedule_after_message_sent_postprocess(event)
         return True
+
+    @staticmethod
+    async def _complete_visible_turn(event: AstrMessageEvent) -> None:
+        await event.complete_visible_turn()
+
+    def _schedule_after_message_sent_postprocess(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        provider_request = self._snapshot_provider_request(
+            event.get_extra("provider_request")
+        )
+        conversation = (
+            provider_request.conversation
+            if getattr(provider_request, "conversation", None) is not None
+            else event.get_extra("conversation")
+        )
+        task = asyncio.create_task(
+            dispatch_postprocess(
+                event=event,
+                trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
+                plugin_context=self.ctx.plugin_manager.context,
+                provider_request=provider_request,
+                conversation=copy(conversation) if conversation is not None else None,
+            ),
+            name=f"postprocess_after_message_sent_{event.get_platform_id()}",
+        )
+        task.add_done_callback(self._log_after_message_sent_postprocess_failure)
+
+    @staticmethod
+    def _snapshot_provider_request(
+        provider_request: ProviderRequest | None,
+    ) -> ProviderRequest | None:
+        if not isinstance(provider_request, ProviderRequest):
+            return None
+        snapshot = copy(provider_request)
+        snapshot.image_urls = list(provider_request.image_urls or [])
+        snapshot.audio_urls = list(provider_request.audio_urls or [])
+        snapshot.extra_user_content_parts = list(
+            provider_request.extra_user_content_parts or []
+        )
+        snapshot.contexts = [
+            dict(item) if isinstance(item, dict) else item
+            for item in (provider_request.contexts or [])
+        ]
+        if isinstance(provider_request.tool_calls_result, list):
+            snapshot.tool_calls_result = list(provider_request.tool_calls_result)
+        if provider_request.conversation is not None:
+            snapshot.conversation = copy(provider_request.conversation)
+        return snapshot
+
+    @staticmethod
+    def _log_after_message_sent_postprocess_failure(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug("postprocess(after_message_sent): background task cancelled")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "postprocess(after_message_sent): background task failed: %s",
+                exc,
+                exc_info=True,
+            )
 
     async def process(
         self,

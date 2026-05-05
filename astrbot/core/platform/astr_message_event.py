@@ -290,6 +290,63 @@ class AstrMessageEvent(abc.ABC):
         )
         self._has_send_oper = True
 
+    async def complete_visible_turn(self) -> None:
+        """Mark the user-visible reply for this event as complete.
+
+        Most platforms complete a visible reply when the send coroutine returns.
+        Queue or streaming callback based platforms can override this to emit an
+        explicit completion payload.
+        """
+        # TODO(interaction): When a platform emits an explicit visible-turn
+        # completion signal, also dispatch the visible-turn postprocess hook with
+        # the final visible reply snapshot.
+
+    def requires_visible_turn_completion(self) -> bool:
+        """Return whether the platform needs an explicit visible-turn completion."""
+        return False
+
+    async def send_interaction_message(
+        self,
+        message: MessageChain,
+        *,
+        platform_extras: dict[str, Any] | None = None,
+        record_send_operation: bool = True,
+    ) -> None:
+        """Send a middleware-controlled message through the platform.
+
+        The default implementation delegates to the platform's regular send
+        method. Platforms with richer client payloads can override this and use
+        platform_extras without leaking adapter details into middleware.
+        """
+        send = self.get_extra("_interaction_original_send")
+        previous_has_send_oper = self._has_send_oper
+        if callable(send):
+            try:
+                await send(message)
+            finally:
+                if not record_send_operation:
+                    self._has_send_oper = previous_has_send_oper
+            return
+        try:
+            await self.send(message)
+        finally:
+            if not record_send_operation:
+                self._has_send_oper = previous_has_send_oper
+
+    async def send_interaction_streaming(
+        self,
+        generator: AsyncGenerator[MessageChain, None],
+        *,
+        platform_extras: dict[str, Any] | None = None,
+        use_fallback: bool = False,
+    ) -> None:
+        """Send middleware-controlled streaming output through the platform."""
+        send_streaming = self.get_extra("_interaction_original_send_streaming")
+        if callable(send_streaming):
+            await send_streaming(generator, use_fallback=use_fallback)
+            return
+        await self.send_streaming(generator, use_fallback=use_fallback)
+
     async def _record_send_operation(self) -> None:
         # Leverage BLAKE2 hash function to generate a non-reversible hash of the sender ID for privacy.
         hash_obj = hashlib.blake2b(self.get_sender_id().encode("utf-8"), digest_size=16)
@@ -302,39 +359,6 @@ class AstrMessageEvent(abc.ABC):
             ),
         )
         self._has_send_oper = True
-
-    async def _route_send_via_output_controller(self, message) -> bool:
-        controller = self.get_extra("_output_controller")
-        if controller is None:
-            return False
-        logger.debug(
-            "Interaction middleware routing send via output controller: platform_id=%s session_id=%s turn_id=%s",
-            self.get_platform_id(),
-            self.session_id,
-            self.get_extra("_turn_id"),
-        )
-        await controller.capture_message_chain(message, self)
-        await self._record_send_operation()
-        return True
-
-    async def _route_streaming_via_output_controller(
-        self,
-        generator: AsyncGenerator[MessageChain, None],
-        use_fallback: bool = False,
-    ) -> bool:
-        controller = self.get_extra("_output_controller")
-        if controller is None:
-            return False
-        logger.debug(
-            "Interaction middleware routing streaming via output controller: platform_id=%s session_id=%s turn_id=%s use_fallback=%s",
-            self.get_platform_id(),
-            self.session_id,
-            self.get_extra("_turn_id"),
-            use_fallback,
-        )
-        await controller.capture_streaming(generator, self, use_fallback=use_fallback)
-        await self._record_streaming_send_operation()
-        return True
 
     async def send_typing(self) -> None:
         """发送输入中状态。

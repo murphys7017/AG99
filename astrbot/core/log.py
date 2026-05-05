@@ -79,7 +79,7 @@ def _build_source_file(pathname: str | None) -> str:
     )
 
 
-def _patch_record(record: "Record") -> None:
+def _ensure_loguru_extra(record: "Record") -> None:
     extra = record["extra"]
     extra.setdefault("plugin_tag", "[Core]")
     extra.setdefault("short_levelname", _get_short_level_name(record["level"].name))
@@ -88,6 +88,28 @@ def _patch_record(record: "Record") -> None:
     extra.setdefault("source_file", _build_source_file(record["file"].path))
     extra.setdefault("source_line", record["line"])
     extra.setdefault("is_trace", False)
+
+
+def _patch_record(record: "Record") -> None:
+    _ensure_loguru_extra(record)
+
+
+def _format_console_record(record: "Record") -> str:
+    _ensure_loguru_extra(record)
+    return (
+        "<green>[{time:HH:mm:ss.SSS}]</green> {extra[plugin_tag]} "
+        "<level>[{extra[short_levelname]}]</level>{extra[astrbot_version_tag]} "
+        "[{extra[source_file]}:{extra[source_line]}]: <level>{message}</level>\n{exception}"
+    )
+
+
+def _format_file_record(record: "Record") -> str:
+    _ensure_loguru_extra(record)
+    return (
+        "[{time:YYYY-MM-DD HH:mm:ss.SSS}] {extra[plugin_tag]} "
+        "[{extra[short_levelname]}]{extra[astrbot_version_tag]} "
+        "[{extra[source_file]}:{extra[source_line]}]: {message}\n{exception}"
+    )
 
 
 _loguru = _raw_loguru_logger.patch(_patch_record)
@@ -204,11 +226,7 @@ class LogManager:
             level="DEBUG",
             colorize=True,
             filter=lambda record: not record["extra"].get("is_trace", False),
-            format=(
-                "<green>[{time:HH:mm:ss.SSS}]</green> {extra[plugin_tag]} "
-                "<level>[{extra[short_levelname]}]</level>{extra[astrbot_version_tag]} "
-                "[{extra[source_file]}:{extra[source_line]}]: <level>{message}</level>"
-            ),
+            format=_format_console_record,
         )
         cls._configured = True
 
@@ -324,11 +342,7 @@ class LogManager:
         return _loguru.add(
             file_path,
             level=logging_level_name,
-            format=(
-                "[{time:YYYY-MM-DD HH:mm:ss.SSS}] {extra[plugin_tag]} "
-                "[{extra[short_levelname]}]{extra[astrbot_version_tag]} "
-                "[{extra[source_file]}:{extra[source_line]}]: {message}"
-            ),
+            format=_format_file_record,
             encoding="utf-8",
             rotation=rotation,
             retention=retention,

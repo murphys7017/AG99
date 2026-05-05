@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from loguru import logger
+
+from astrbot import logger
 
 from .context_types import (
     CategoryType,

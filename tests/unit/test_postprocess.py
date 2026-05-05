@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -297,7 +298,7 @@ async def test_main_agent_hooks_dispatches_postprocess_after_response_hook():
     ):
         await hooks.on_agent_done(run_context, llm_response)
 
-    hook.assert_awaited_once()
+    assert hook.await_count == 2
     dispatch.assert_awaited_once()
     kwargs = dispatch.await_args.kwargs
     assert kwargs["event"] is event
@@ -325,7 +326,7 @@ async def test_main_agent_hooks_does_not_dispatch_postprocess_if_response_hook_s
     ):
         await hooks.on_agent_done(run_context, llm_response)
 
-    hook.assert_awaited_once()
+    assert hook.await_count == 2
     dispatch.assert_not_awaited()
 
 
@@ -397,6 +398,7 @@ async def test_respond_stage_dispatches_postprocess_after_streaming_send():
     result.chain = []
     event.get_result.return_value = result
     event.send_streaming = AsyncMock()
+    event.complete_visible_turn = AsyncMock()
 
     stage = RespondStage()
     stage.config = {"provider_settings": {}}
@@ -414,6 +416,7 @@ async def test_respond_stage_dispatches_postprocess_after_streaming_send():
         ) as dispatch,
     ):
         await stage.process(event)
+        await asyncio.sleep(0)
 
     event.send_streaming.assert_awaited_once_with(result.async_stream, True)
     hook.assert_awaited_once()
@@ -422,6 +425,178 @@ async def test_respond_stage_dispatches_postprocess_after_streaming_send():
     assert kwargs["event"] is event
     assert kwargs["trigger"] == PostProcessTrigger.AFTER_MESSAGE_SENT
     event.clear_result.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_schedules_postprocess_without_waiting_after_send():
+    event, _ = _make_event()
+    result = MagicMock()
+    result.result_content_type = ResultContentType.LLM_RESULT
+    result.chain = [Comp.Plain("hello")]
+    event.get_result.return_value = result
+    event.send = AsyncMock()
+    event.complete_visible_turn = AsyncMock()
+
+    stage = RespondStage()
+    stage.enable_seg = False
+    stage.platform_settings = {}
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    async def _slow_postprocess(**kwargs):
+        started.set()
+        await release.wait()
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(side_effect=_slow_postprocess),
+        ) as dispatch,
+    ):
+        await stage.process(event)
+        await asyncio.wait_for(started.wait(), timeout=1)
+        dispatch.assert_awaited_once()
+        event.complete_visible_turn.assert_awaited_once()
+        event.clear_result.assert_called_once()
+        release.set()
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_passes_postprocess_provider_request_snapshot():
+    event, extras = _make_event()
+    result = MagicMock()
+    result.result_content_type = ResultContentType.LLM_RESULT
+    result.chain = [Comp.Plain("hello")]
+    event.get_result.return_value = result
+    event.send = AsyncMock()
+    event.complete_visible_turn = AsyncMock()
+
+    conversation = MagicMock()
+    conversation.cid = "conv-1"
+    conversation.history = '[{"role":"user","content":"before"}]'
+    req = ProviderRequest(prompt="hello", contexts=[{"role": "user", "content": "hi"}])
+    req.conversation = conversation
+    extras["provider_request"] = req
+
+    stage = RespondStage()
+    stage.enable_seg = False
+    stage.platform_settings = {}
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+
+    captured_kwargs = {}
+
+    async def _capture_postprocess(**kwargs):
+        captured_kwargs.update(kwargs)
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(side_effect=_capture_postprocess),
+        ),
+    ):
+        await stage.process(event)
+        req.prompt = "mutated"
+        req.contexts.append({"role": "assistant", "content": "mutated"})
+        conversation.history = '[{"role":"user","content":"mutated"}]'
+        await asyncio.sleep(0)
+
+    snapshot = captured_kwargs["provider_request"]
+    conversation_snapshot = captured_kwargs["conversation"]
+    assert snapshot is not req
+    assert snapshot.prompt == "hello"
+    assert snapshot.contexts == [{"role": "user", "content": "hi"}]
+    assert snapshot.conversation is not conversation
+    assert snapshot.conversation.history == '[{"role":"user","content":"before"}]'
+    assert conversation_snapshot is not conversation
+    assert conversation_snapshot.history == '[{"role":"user","content":"before"}]'
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_completes_visible_turn_before_postprocess_after_send():
+    event, _ = _make_event()
+    result = MagicMock()
+    result.result_content_type = ResultContentType.LLM_RESULT
+    result.chain = [Comp.Plain("hello")]
+    event.get_result.return_value = result
+    event.send = AsyncMock()
+    calls: list[str] = []
+
+    async def _complete_visible_turn():
+        calls.append("complete")
+
+    async def _postprocess(**kwargs):
+        calls.append("postprocess")
+
+    event.complete_visible_turn = AsyncMock(side_effect=_complete_visible_turn)
+
+    stage = RespondStage()
+    stage.enable_seg = False
+    stage.platform_settings = {}
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(side_effect=_postprocess),
+        ),
+    ):
+        await stage.process(event)
+        await asyncio.sleep(0)
+
+    assert calls == ["complete", "postprocess"]
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_completes_visible_turn_once_after_segmented_sends():
+    event, _ = _make_event()
+    result = MagicMock()
+    result.result_content_type = ResultContentType.LLM_RESULT
+    result.chain = [Comp.Plain("hello"), Comp.Plain("world")]
+    event.get_result.return_value = result
+    event.send = AsyncMock()
+    event.complete_visible_turn = AsyncMock()
+
+    stage = RespondStage()
+    stage.enable_seg = True
+    stage.only_llm_result = False
+    stage.platform_settings = {}
+    stage.interval_method = "random"
+    stage.interval = [0, 0]
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(),
+        ),
+    ):
+        await stage.process(event)
+        await asyncio.sleep(0)
+
+    assert event.send.await_count == 2
+    event.complete_visible_turn.assert_awaited_once()
 
 
 @pytest.mark.asyncio

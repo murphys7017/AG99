@@ -57,6 +57,26 @@ class WecomAIBotMessageEvent(AstrMessageEvent):
             },
         )
 
+    def _get_stream_id(self) -> str:
+        raw = self.message_obj.raw_message
+        if isinstance(raw, dict):
+            return raw.get("stream_id", self.session_id)
+        return self.session_id
+
+    async def complete_visible_turn(self) -> None:
+        if self.get_extra("_visible_turn_completion_sent", False):
+            return
+        await WecomAIBotMessageEvent._send(
+            None,
+            self._get_stream_id(),
+            self.queue_mgr,
+        )
+        self.set_extra("_visible_turn_completion_sent", True)
+        self.set_extra("_platform_completion_signal_sent", True)
+
+    def requires_visible_turn_completion(self) -> bool:
+        return True
+
     @staticmethod
     async def _send(
         message_chain: MessageChain | None,
@@ -139,12 +159,13 @@ class WecomAIBotMessageEvent(AstrMessageEvent):
     async def send(self, message: MessageChain | None) -> None:
         """发送消息"""
         if message is None:
+            await self.complete_visible_turn()
             return
         raw = self.message_obj.raw_message
         assert isinstance(raw, dict), (
             "wecom_ai_bot platform event raw_message should be a dict"
         )
-        stream_id = raw.get("stream_id", self.session_id)
+        stream_id = self._get_stream_id()
         pending_response = self.queue_mgr.get_pending_response(stream_id) or {}
         connection_mode = pending_response.get("callback_params", {}).get(
             "connection_mode"

@@ -35,6 +35,7 @@ class WebChatMessageEvent(AstrMessageEvent):
         session_id: str,
         streaming: bool = False,
         emit_complete: bool = False,
+        platform_extras: dict | None = None,
     ) -> str | None:
         request_id = str(message_id)
         conversation_id = _extract_conversation_id(session_id)
@@ -49,6 +50,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                     "data": "",
                     "streaming": False,
                     "message_id": message_id,
+                    "platform_extras": platform_extras or {},
                 },  # end means this request is finished
             )
             return
@@ -64,6 +66,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                         "streaming": streaming,
                         "chain_type": message.type,
                         "message_id": message_id,
+                        "platform_extras": platform_extras or {},
                     },
                 )
             elif isinstance(comp, Json):
@@ -74,6 +77,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                         "streaming": streaming,
                         "chain_type": message.type,
                         "message_id": message_id,
+                        "platform_extras": platform_extras or {},
                     },
                 )
             elif isinstance(comp, Image):
@@ -90,6 +94,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                         "data": data,
                         "streaming": streaming,
                         "message_id": message_id,
+                        "platform_extras": platform_extras or {},
                     },
                 )
             elif isinstance(comp, Record):
@@ -106,6 +111,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                         "data": data,
                         "streaming": streaming,
                         "message_id": message_id,
+                        "platform_extras": platform_extras or {},
                     },
                 )
             elif isinstance(comp, File):
@@ -123,6 +129,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                         "data": data,
                         "streaming": streaming,
                         "message_id": message_id,
+                        "platform_extras": platform_extras or {},
                     },
                 )
             else:
@@ -136,14 +143,13 @@ class WebChatMessageEvent(AstrMessageEvent):
                     "streaming": streaming,
                     "chain_type": message.type,
                     "message_id": message_id,
+                    "platform_extras": platform_extras or {},
                 },
             )
 
         return data
 
     async def send(self, message: MessageChain | None) -> None:
-        if await self._route_send_via_output_controller(message):
-            return
         logger.debug(
             "WebChat send falling back to legacy path: session_id=%s message_id=%s",
             self.session_id,
@@ -153,11 +159,56 @@ class WebChatMessageEvent(AstrMessageEvent):
         await WebChatMessageEvent._send(message_id, message, session_id=self.session_id)
         await super().send(MessageChain([]))
 
+    async def send_interaction_message(
+        self,
+        message: MessageChain,
+        *,
+        platform_extras: dict | None = None,
+        record_send_operation: bool = True,
+    ) -> None:
+        await WebChatMessageEvent._send(
+            self.message_obj.message_id,
+            message,
+            session_id=self.session_id,
+            platform_extras=platform_extras,
+        )
+        if record_send_operation:
+            await super().send(MessageChain([]))
+
+    async def complete_visible_turn(self) -> None:
+        if self.get_extra("_visible_turn_completion_sent", False):
+            return
+        await WebChatMessageEvent._send(
+            self.message_obj.message_id,
+            None,
+            session_id=self.session_id,
+        )
+        self.set_extra("_visible_turn_completion_sent", True)
+        self.set_extra("_platform_completion_signal_sent", True)
+
+    def requires_visible_turn_completion(self) -> bool:
+        return True
+
+    async def send_interaction_streaming(
+        self,
+        generator,
+        *,
+        platform_extras: dict | None = None,
+        use_fallback: bool = False,
+    ) -> None:
+        await WebChatMessageEvent._send_streaming_via_back_queue(
+            message_id=self.message_obj.message_id,
+            session_id=self.session_id,
+            generator=generator,
+            platform_extras=platform_extras,
+        )
+
     @staticmethod
     async def _send_streaming_via_back_queue(
         message_id: str,
         session_id: str,
         generator,
+        platform_extras: dict | None = None,
     ) -> None:
         final_data = ""
         reasoning_content = ""
@@ -185,6 +236,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                     "data": audio_b64,
                     "streaming": True,
                     "message_id": message_id,
+                    "platform_extras": platform_extras or {},
                 }
                 if text:
                     payload["text"] = text
@@ -209,6 +261,7 @@ class WebChatMessageEvent(AstrMessageEvent):
                 message=chain,
                 session_id=session_id,
                 streaming=True,
+                platform_extras=platform_extras,
             )
             if not r:
                 continue
@@ -224,15 +277,11 @@ class WebChatMessageEvent(AstrMessageEvent):
                 "reasoning": reasoning_content,
                 "streaming": True,
                 "message_id": message_id,
+                "platform_extras": platform_extras or {},
             },
         )
 
     async def send_streaming(self, generator, use_fallback: bool = False) -> None:
-        if await self._route_streaming_via_output_controller(
-            generator,
-            use_fallback=use_fallback,
-        ):
-            return
         logger.debug(
             "WebChat streaming falling back to legacy path: session_id=%s message_id=%s use_fallback=%s",
             self.session_id,

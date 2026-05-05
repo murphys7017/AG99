@@ -216,6 +216,7 @@ class AstrBotCoreLifecycle:
             self.cron_manager,
             self.subagent_orchestrator,
         )
+        self.interaction_middleware.set_plugin_context(self.star_context)
         self.memory_service = get_memory_service()
         self.memory_service.bind_provider_manager(self.provider_manager)
         await self.memory_service.initialize()

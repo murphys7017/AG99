@@ -106,6 +106,20 @@ class TestAstrMessageEventInit:
         assert astr_message_event.trace == astr_message_event.span
 
 
+class TestAstrMessageEventVisibleCompletion:
+    """Tests for generic visible turn completion."""
+
+    @pytest.mark.asyncio
+    async def test_complete_visible_turn_is_noop_for_generic_event(
+        self,
+        astr_message_event,
+    ):
+        await astr_message_event.complete_visible_turn()
+
+        assert astr_message_event.get_extra("_visible_turn_completion_sent") is None
+        assert astr_message_event.requires_visible_turn_completion() is False
+
+
 class TestUnifiedMsgOrigin:
     """Tests for unified_msg_origin property."""
 
@@ -641,63 +655,48 @@ class TestSendStreaming:
         assert astr_message_event._has_send_oper is True
 
 
-class TestOutputControllerRouting:
-    """Tests for middleware output-controller routing helpers."""
+class TestInteractionDelivery:
+    """Tests for middleware platform delivery hooks."""
 
     @pytest.mark.asyncio
-    async def test_route_send_returns_false_without_controller(
+    async def test_send_interaction_message_uses_original_send(
         self, astr_message_event
     ):
-        handled = await astr_message_event._route_send_via_output_controller(
-            MessageEventResult().message("Test")
-        )
-
-        assert handled is False
-        assert astr_message_event._has_send_oper is False
-
-    @pytest.mark.asyncio
-    async def test_route_send_sets_has_send_oper(self, astr_message_event):
-        controller = AsyncMock()
+        original_send = AsyncMock()
+        wrapped_send = AsyncMock()
         message = MessageEventResult().message("Test")
-        astr_message_event.set_extra("_output_controller", controller)
+        astr_message_event.set_extra("_interaction_original_send", original_send)
+        astr_message_event.send = wrapped_send
 
-        with patch(
-            "astrbot.core.platform.astr_message_event.Metric.upload",
-            new_callable=AsyncMock,
-        ) as mock_upload:
-            handled = await astr_message_event._route_send_via_output_controller(
-                message
-            )
+        await astr_message_event.send_interaction_message(message)
 
-        assert handled is True
-        assert astr_message_event._has_send_oper is True
-        controller.capture_message_chain.assert_awaited_once_with(
-            message,
-            astr_message_event,
-        )
-        mock_upload.assert_called_once()
+        original_send.assert_awaited_once_with(message)
+        wrapped_send.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_route_streaming_sets_has_send_oper(self, astr_message_event):
-        controller = AsyncMock()
-        astr_message_event.set_extra("_output_controller", controller)
+    async def test_send_interaction_streaming_uses_original_streaming(
+        self,
+        astr_message_event,
+    ):
+        original_streaming = AsyncMock()
+        wrapped_streaming = AsyncMock()
+        astr_message_event.set_extra(
+            "_interaction_original_send_streaming",
+            original_streaming,
+        )
+        astr_message_event.send_streaming = wrapped_streaming
 
         async def generator():
             yield MessageEventResult().message("Test")
 
-        with patch(
-            "astrbot.core.platform.astr_message_event.Metric.upload",
-            new_callable=AsyncMock,
-        ) as mock_upload:
-            handled = await astr_message_event._route_streaming_via_output_controller(
-                generator(),
-                use_fallback=True,
-            )
+        stream = generator()
+        await astr_message_event.send_interaction_streaming(
+            stream,
+            use_fallback=True,
+        )
 
-        assert handled is True
-        assert astr_message_event._has_send_oper is True
-        controller.capture_streaming.assert_awaited_once()
-        mock_upload.assert_called_once()
+        original_streaming.assert_awaited_once_with(stream, use_fallback=True)
+        wrapped_streaming.assert_not_awaited()
 
 
 class TestSendTyping:

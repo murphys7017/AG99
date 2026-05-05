@@ -48,6 +48,18 @@ contexts:
     ]
 
 
+def test_default_catalog_declares_interaction_memory_slot():
+    catalog = ContextCatalogLoader.load(
+        Path("data/config/prompt/context_catalog.yaml"),
+        strict=True,
+    )
+
+    item = catalog.get("memory.interaction")
+    assert item is not None
+    assert item.category == "memory"
+    assert item.slots == ["history"]
+
+
 def test_context_catalog_loader_skips_invalid_items_fail_open(tmp_path: Path):
     catalog_path = tmp_path / "context_catalog.yaml"
     catalog_path.write_text(

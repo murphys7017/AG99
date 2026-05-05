@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from astrbot.core.message.components import Json, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.platform.sources.webchat.webchat_event import WebChatMessageEvent
-from astrbot.core.message.components import Json, Plain
 
 
 @pytest.fixture
@@ -52,17 +52,27 @@ class CountingAsyncIterable:
 
 class TestWebChatMessageEventSend:
     @pytest.mark.asyncio
-    async def test_send_routes_via_output_controller(self, webchat_event):
+    async def test_send_does_not_route_via_output_controller(self, webchat_event):
+        queue = asyncio.Queue()
         controller = AsyncMock()
         message = MessageChain([Plain("hello")])
         webchat_event.set_extra("_output_controller", controller)
 
-        await webchat_event.send(message)
+        with (
+            patch(
+                "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+                return_value=queue,
+            ),
+            patch(
+                "astrbot.core.platform.astr_message_event.Metric.upload",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await webchat_event.send(message)
 
-        controller.capture_message_chain.assert_awaited_once_with(
-            message,
-            webchat_event,
-        )
+        controller.capture_message_chain.assert_not_awaited()
+        payload = queue.get_nowait()
+        assert payload["data"] == "hello"
         assert webchat_event._has_send_oper is True
 
     @pytest.mark.asyncio
@@ -85,19 +95,52 @@ class TestWebChatMessageEventSend:
         assert payload["type"] == "end"
         assert payload["message_id"] == "msg123"
 
+    @pytest.mark.asyncio
+    async def test_complete_visible_turn_emits_end_payload_once(self, webchat_event):
+        queue = asyncio.Queue()
+
+        with patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ):
+            await webchat_event.complete_visible_turn()
+            await webchat_event.complete_visible_turn()
+
+        payload = queue.get_nowait()
+        assert payload["type"] == "end"
+        assert payload["message_id"] == "msg123"
+        assert queue.empty()
+        assert webchat_event.get_extra("_visible_turn_completion_sent") is True
+        assert webchat_event.get_extra("_platform_completion_signal_sent") is True
+
 
 class TestWebChatMessageEventStreaming:
     @pytest.mark.asyncio
-    async def test_send_streaming_routes_via_output_controller(self, webchat_event):
+    async def test_send_streaming_does_not_route_via_output_controller(
+        self, webchat_event
+    ):
+        queue = asyncio.Queue()
         controller = AsyncMock()
         webchat_event.set_extra("_output_controller", controller)
 
         async def generator():
             yield MessageChain([Plain("hello")])
 
-        await webchat_event.send_streaming(generator())
+        with (
+            patch(
+                "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+                return_value=queue,
+            ),
+            patch(
+                "astrbot.core.platform.astr_message_event.Metric.upload",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await webchat_event.send_streaming(generator())
 
-        controller.capture_streaming.assert_awaited_once()
+        controller.capture_streaming.assert_not_awaited()
+        assert queue.get_nowait()["data"] == "hello"
+        assert queue.get_nowait()["type"] == "complete"
         assert webchat_event._has_send_oper is True
 
     @pytest.mark.asyncio
