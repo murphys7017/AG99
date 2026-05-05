@@ -1,10 +1,14 @@
+# AstrBot Docs
 
-# AstrBot
-_✨ 易上手的多平台 LLM 聊天机器人及开发框架（的官方文档） ✨_
+这个目录大部分内容仍然来自上游 AstrBot 官方文档，用于保留插件开发、平台接入、部署和功能使用说明。
 
-[查看文档](https://docs.astrbot.app/) ｜ [问题提交](https://github.com/AstrBotDevs/AstrBot/issues)
+本 fork 自己的架构说明集中在：
 
-[AstrBot](https://github.com/AstrBotDevs/AstrBot) 是一个松耦合、异步、支持多消息平台部署、具有易用的插件系统和完善的大语言模型（LLM）接入功能的聊天机器人及开发框架。
+- `docs/Yakumo/`
+- `docs/Yakumo/README.md`
+- `docs/Yakumo/upstream-merge-ledger.md`
 
-![image](https://github.com/user-attachments/assets/48f72a71-9456-4166-bbd2-f2a6c8cd740f)
+如果需要查看上游官方文档，请访问：
 
+- https://docs.astrbot.app/
+- https://github.com/AstrBotDevs/AstrBot

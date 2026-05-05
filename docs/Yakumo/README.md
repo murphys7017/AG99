@@ -2,11 +2,12 @@
 
 `docs/Yakumo` 记录的是当前这个分支上的 AstrBot 架构笔记、重构方案和实现进度，不是官方主线文档的镜像副本。
 
-如果你想看官方产品说明、部署方式、插件/平台适配器的标准用法，优先看：
+如果你想看官方产品说明、部署方式、插件/平台适配器的标准用法，优先看上游官方文档：
 
-- 仓库根目录 `README.md`
-- `docs/README.md`
+- 上游仓库 `https://github.com/AstrBotDevs/AstrBot`
 - 官方文档站 `https://docs.astrbot.app/`
+
+如果你想快速了解本 fork 和上游的区别，先看仓库根目录 `README.md`。
 
 如果你想看这个分支到底改了什么、现在做到哪一步、后面准备怎么改，再看 `docs/Yakumo`。
 

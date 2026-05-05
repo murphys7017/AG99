@@ -1,286 +1,161 @@
-![astrbot-github-banner-v2-light-0405_副本](https://github.com/user-attachments/assets/36fb04e4-cc75-4454-bd8b-049d11aa86f9)
+# AstrBot Yakumo Fork
 
+这是 `murphys7017/AstrBot` 对上游 `AstrBotDevs/AstrBot` 的 fork 说明页。
 
-<div align="center">
+AstrBot 本身已经是一个成熟、知名的多平台 LLM 聊天机器人与 Agent 框架，所以这里不再重复上游 README 的产品介绍、部署广告和生态说明。本 README 只说明：这个仓库和上游有什么不同。
 
-<a href="https://github.com/AstrBotDevs/AstrBot/blob/master/README_zh.md">简体中文</a> ｜
-<a href="https://github.com/AstrBotDevs/AstrBot/blob/master/README_zh-TW.md">繁體中文</a> ｜
-<a href="https://github.com/AstrBotDevs/AstrBot/blob/master/README_ja.md">日本語</a> ｜
-<a href="https://github.com/AstrBotDevs/AstrBot/blob/master/README_fr.md">Français</a> ｜
-<a href="https://github.com/AstrBotDevs/AstrBot/blob/master/README_ru.md">Русский</a>
+上游入口：
 
-<br>
+- 上游仓库：https://github.com/AstrBotDevs/AstrBot
+- 官方文档：https://docs.astrbot.app/
 
-<div>
-<a href="https://trendshift.io/repositories/12875" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12875" alt="Soulter%2FAstrBot | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-<a href="https://hellogithub.com/repository/AstrBotDevs/AstrBot" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=d127d50cd5e54c5382328acc3bb25483&claim_uid=ZO9by7qCXgSd6Lp&t=2" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-</div>
+## 核心差异
 
-<br>
+### 1. Yakumo 架构实验
 
-<div>
-<img src="https://img.shields.io/github/v/release/AstrBotDevs/AstrBot?color=76bad9" href="https://github.com/AstrBotDevs/AstrBot/releases/latest">
-<img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="python">
-<img src="https://deepwiki.com/badge.svg" href="https://deepwiki.com/AstrBotDevs/AstrBot">
-<a href="https://zread.ai/AstrBotDevs/AstrBot" target="_blank"><img src="https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff" alt="zread"/></a>
-<a href="https://hub.docker.com/r/soulter/astrbot"><img alt="Docker pull" src="https://img.shields.io/docker/pulls/soulter/astrbot.svg?color=76bad9"/></a>
-<img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.soulter.top%2Fastrbot%2Fplugin-num&query=%24.result&suffix=%20plugins&label=Marketplace&cacheSeconds=3600">
-<img src="https://gitcode.com/Soulter/AstrBot/star/badge.svg" href="https://gitcode.com/Soulter/AstrBot">
-</div>
+本 fork 的主要方向是 Yakumo 架构实验：在保留 AstrBot 原有能力的基础上，逐步把主 Agent、prompt、memory、postprocess、interaction layer 等链路拆得更清楚。
 
-<br>
+相关文档集中在：
 
-<a href="https://astrbot.app/">Documentation</a> ｜
-<a href="https://blog.astrbot.app/">Blog</a> ｜
-<a href="https://astrbot.featurebase.app/roadmap">Roadmap</a> ｜
-<a href="https://github.com/AstrBotDevs/AstrBot/issues">Issue Tracker</a> ｜
-<a href="mailto:community@astrbot.app">Email Support</a>
-</div>
+- `docs/Yakumo/`
+- `docs/Yakumo/current-state.md`
+- `docs/Yakumo/modules/README.md`
 
-AstrBot is an open-source all-in-one Agent chatbot platform that integrates with mainstream instant messaging apps. It provides reliable and scalable conversational AI infrastructure for individuals, developers, and teams. Whether you're building a personal AI companion, intelligent customer service, automation assistant, or enterprise knowledge base, AstrBot enables you to quickly build production-ready AI applications within your IM platform workflows.
+`docs/Yakumo` 描述的是本 fork 的真实代码状态、目标结构和开发记录，不是上游官方文档的镜像。
 
-![screenshot_1 5x_postspark_2026-02-27_22-37-45](https://github.com/user-attachments/assets/f17cdb90-52d7-4773-be2e-ff64b566af6b)
+### 2. Prompt 管线不同
 
-## Key Features
+上游主线更偏向在主 Agent 链路里直接组织模型可见上下文。本 fork 新增并持续推进 `astrbot/core/prompt/*`，把 prompt 构建拆成：
 
-1. 💯 Free & Open Source.
-2. ✨ AI LLM Conversations, Multimodal, Agent, MCP, Skills, Knowledge Base, Persona Settings, Auto Context Compression.
-3. 🤖 Supports integration with Dify, Alibaba Cloud Bailian, Coze, and other agent platforms.
-4. 🌐 Multi-Platform: QQ, WeChat Work, Feishu, DingTalk, WeChat Official Accounts, Telegram, Slack, and [more](#supported-messaging-platforms).
-5. 📦 Plugin Extensions with 1000+ plugins available for one-click installation.
-6. 🛡️ [Agent Sandbox](https://docs.astrbot.app/use/astrbot-agent-sandbox.html) for isolated, safe execution of code, shell calls, and session-level resource reuse.
-7. 💻 WebUI Support.
-8. 🌈 Web ChatUI Support with built-in agent sandbox and web search.
-9. 🌐 Internationalization (i18n) Support.
+- `collect`: 收集 system、persona、input、session、policy、memory、history、skills、tools、subagent、knowledge、extension 等上下文。
+- `select`: 选择本轮真正进入模型请求的上下文。
+- `render`: 渲染模型可见的 prompt/request 结构。
+- `apply`: 将结果投影回 `ProviderRequest`。
 
-<br>
+相关位置：
 
-<table align="center">
-  <tr align="center">
-    <th>💙 Role-playing & Emotional Companionship</th>
-    <th>✨ Proactive Agent</th>
-    <th>🚀 General Agentic Capabilities</th>
-    <th>🧩 1000+ Community Plugins</th>
-  </tr>
-  <tr>
-    <td align="center"><p align="center"><img width="984" height="1746" alt="99b587c5d35eea09d84f33e6cf6cfd4f" src="https://github.com/user-attachments/assets/89196061-3290-458d-b51f-afa178049f84" /></p></td>
-    <td align="center"><p align="center"><img width="976" height="1612" alt="c449acd838c41d0915cc08a3824025b1" src="https://github.com/user-attachments/assets/f75368b4-e022-41dc-a9e0-131c3e73e32e" /></p></td>
-    <td align="center"><p align="center"><img width="974" height="1732" alt="image" src="https://github.com/user-attachments/assets/e22a3968-87d7-4708-a7cd-e7f198c7c32e" /></p></td>
-    <td align="center"><p align="center"><img width="976" height="1734" alt="image" src="https://github.com/user-attachments/assets/0952b395-6b4a-432a-8a50-c294b7f89750" /></p></td>
-  </tr>
-</table>
+- `astrbot/core/prompt/`
+- `data/config/prompt/context_catalog.yaml`
+- `docs/Yakumo/modules/prompt.md`
 
-## Quick Start
+### 3. 新增 memory 系统
 
-### One-Click Deployment
+本 fork 新增 `astrbot/core/memory/*`，不是只依赖上游会话历史。当前已落地的主链路包括：
 
-For users who want to quickly experience AstrBot, are familiar with command-line usage, and can install a `uv` environment on their own, we recommend the `uv` one-click deployment method ⚡️:
+- 回合结束后写入 `TurnRecord`。
+- 更新 topic / short-term memory。
+- consolidation 生成 session insight / experience。
+- experience Markdown 投影。
+- long-term memory 第一版。
+- 长期记忆文档、索引与 document search。
+- 请求前读取 `MemorySnapshot`，供 prompt 管线使用。
 
-```bash
-uv tool install astrbot --python 3.12
-astrbot init # Only execute this command for the first time to initialize the environment
-astrbot run
-```
+仍在推进的部分：
 
-> Requires [uv](https://docs.astral.sh/uv/) to be installed.
-> AstrBot requires Python 3.12 or later. The `--python 3.12` option ensures that `uv` creates the tool environment with Python 3.12.
+- persona state / persona evolution 更新。
+- memory selector/router。
+- memory 对最终 prompt render 的完整接管。
 
-> [!NOTE]
-> For macOS users: due to macOS security checks, the first run of the `astrbot` command may take longer (about 10-20s).
+相关位置：
 
-Update `astrbot`:
+- `astrbot/core/memory/`
+- `docs/Yakumo/dev/memory/`
+- `scripts/import_long_term_memory.py`
+- `scripts/manage_identity_mappings.py`
 
-```bash
-uv tool upgrade astrbot --python 3.12
-```
+### 4. 新增 interaction persona middleware
 
-> [!WARNING]
-> AstrBot deployed via `uv` **does not support upgrading through the WebUI**. To update, please run the command above from the command line.
+本 fork 新增 `astrbot/core/interaction/*`，用于把普通聊天请求拆成更接近“互动人格层”的流程。
 
-### Docker Deployment
+它支持：
 
-For users familiar with containers and looking for a more stable, production-ready deployment method, we recommend deploying AstrBot with Docker / Docker Compose.
+- `self_reply` / `delegate_to_core` / `hybrid` 路由。
+- 进入核心 Agent 前先做 interaction decision。
+- 即时口语回复。
+- core task spec 注入。
+- finalizer 对核心结果做最终表达整理。
+- 流式输出观察与插话。
+- 独立 interaction memory。
+- 插件侧 prompt/result contribution 扩展点。
 
-Please refer to the official documentation: [Deploy AstrBot with Docker](https://docs.astrbot.app/deploy/astrbot/docker.html#%E4%BD%BF%E7%94%A8-docker-%E9%83%A8%E7%BD%B2-astrbot).
+该能力是本 fork 的实验性增强，默认关闭，需要通过 `interaction_middleware` 配置显式启用。
 
-### Deploy on RainYun
+相关位置：
 
-For users who want one-click deployment and do not want to manage servers themselves, we recommend RainYun's one-click cloud deployment service ☁️:
+- `astrbot/core/interaction/`
+- `tests/unit/test_interaction_*.py`
+- `docs/Yakumo/dev/dialog-worker-live-implementation-plan.md`
+- `docs/Yakumo/dialog-worker-live-target-state.md`
 
-[![Deploy on RainYun](https://rainyun-apps.cn-nb1.rains3.com/materials/deploy-on-rainyun-en.svg)](https://app.rainyun.com/apps/rca/store/5994?ref=NjU1ODg0)
+### 5. Provider 与附件链路有本地适配
 
-### Desktop Application Deployment
+本 fork 保留并扩展了一些上游没有完整保留的 provider/附件适配，尤其是 Volcengine Ark / Doubao 方向：
 
-For users who want to use AstrBot on desktop and mainly use ChatUI, we recommend AstrBot App.
+- `astrbot/core/provider/sources/volcengine_ark_source.py`
+- 默认 provider 配置中的 `volcengine_ark`
+- 图片输入、文件 URI、附件 payload 的兼容性修复
+- OpenAI-compatible provider 的若干稳定性修复
 
-Visit [AstrBot-desktop](https://github.com/AstrBotDevs/AstrBot-desktop) to download and install; this method is designed for desktop usage and is not recommended for server scenarios.
+因此，本 fork 不会直接接受会删除这些本地 provider 能力的上游变更。
 
-### Launcher Deployment
+### 6. WebUI / WebChat 有本地语义
 
-For desktop users who also want fast deployment and isolated multi-instance usage, we recommend AstrBot Launcher.
+本 fork 的 WebUI / WebChat 改动和本地 prompt、checkpoint、interaction 语义有关，包含：
 
-Visit [AstrBot Launcher](https://github.com/Raven95676/astrbot-launcher) to download and install.
+- conversation checkpoint。
+- inline edit / regenerate / thread 相关兼容工作。
+- provider 配置页调整。
+- reasoning 展示、附件预览、复制行为修复。
+- IME 输入和暗色模式细节修复。
 
-### Deploy on Replit
+这类改动不能简单按上游 WebUI 大改动全量覆盖，需要逐项判断是否符合本 fork 的 checkpoint/prompt 语义。
 
-Replit deployment is maintained by the community and is suitable for online demos and lightweight trials.
+## 上游合并策略
 
-[![Run on Repl.it](https://repl.it/badge/github/AstrBotDevs/AstrBot)](https://repl.it/github/AstrBotDevs/AstrBot)
+本 fork 会继续吸收上游的安全修复、provider 稳定性修复、平台兼容修复和小范围 UI 修复。
 
-### AUR
+但不会把以下本地架构直接删除或回退：
 
-AUR deployment targets Arch Linux users who prefer installing AstrBot through the system package workflow.
+- `astrbot/core/prompt/**`
+- `astrbot/core/memory/**`
+- `astrbot/core/postprocess/**`
+- `astrbot/core/interaction/**`
+- 本地 provider 适配
+- 本地 prompt/checkpoint 语义
 
-Run the command below to install `astrbot-git`, then start AstrBot in your local environment.
+上游变更取舍记录在：
 
-```bash
-yay -S astrbot-git
-```
+- `docs/Yakumo/upstream-merge-ledger.md`
 
-**More deployment methods**
+合并与修复原则：
 
-If you need panel-based management or deeper customization, see [BT-Panel Deployment](https://docs.astrbot.app/deploy/astrbot/btpanel.html) for BT Panel app-store setup, [1Panel Deployment](https://docs.astrbot.app/deploy/astrbot/1panel.html) for 1Panel app-market deployment, [CasaOS Deployment](https://docs.astrbot.app/deploy/astrbot/casaos.html) for NAS/home-server visual deployment, and [Manual Deployment](https://docs.astrbot.app/deploy/astrbot/cli.html) for fully custom source-based installation with `uv`.
+- 不把 fallback 当作正确性证明。
+- 不用默认值、重试或静默吞错掩盖主链路问题。
+- 优先在根因位置修复，而不是在下游补校正。
+- 本地 prompt/memory/interaction 架构优先作为当前 fork 的事实来源。
 
-## Supported Messaging Platforms
+## 本地运行入口
 
-Connect AstrBot to your favorite chat platform.
-
-| Platform | Maintainer |
-|---------|---------------|
-| QQ | Official |
-| OneBot v11 protocol implementation | Official |
-| Telegram | Official |
-| Wecom & Wecom AI Bot | Official |
-| WeChat Official Accounts | Official |
-| Feishu (Lark) | Official |
-| DingTalk | Official |
-| Slack | Official |
-| Discord | Official |
-| LINE | Official |
-| Satori | Official |
-| KOOK | Official |
-| Misskey | Official |
-| Mattermost | Official |
-| WhatsApp (Coming Soon) | Official |
-| [Matrix](https://github.com/stevessr/astrbot_plugin_matrix_adapter) | Community |
-| [Rocket.Chat](https://github.com/NET-Homeless/astrbot_plugin_rocket_chat_adapter) | Community |
-| [VoceChat](https://github.com/HikariFroya/astrbot_plugin_vocechat) | Community |
-
-## Supported Model Services
-
-| Service | Type |
-|---------|---------------|
-| OpenAI and Compatible Services | LLM Services |
-| Anthropic | LLM Services |
-| Google Gemini | LLM Services |
-| Moonshot AI | LLM Services |
-| Zhipu AI | LLM Services |
-| DeepSeek | LLM Services |
-| Ollama (Self-hosted) | LLM Services |
-| LM Studio (Self-hosted) | LLM Services |
-| [AIHubMix](https://aihubmix.com/?aff=4bfH) | LLM Services (API Gateway, supports all models) |
-| [CompShare](https://www.compshare.cn/?ytag=GPU_YY-gh_astrbot&referral_code=FV7DcGowN4hB5UuXKgpE74) | LLM Services |
-| [302.AI](https://share.302.ai/rr1M3l) | LLM Services |
-| [TokenPony](https://www.tokenpony.cn/3YPyf) | LLM Services |
-| [SiliconFlow](https://docs.siliconflow.cn/cn/usercases/use-siliconcloud-in-astrbot) | LLM Services |
-| [PPIO Cloud](https://ppio.com/user/register?invited_by=AIOONE) | LLM Services |
-| ModelScope | LLM Services |
-| OneAPI | LLM Services |
-| Dify | LLMOps Platforms |
-| Alibaba Cloud Bailian Applications | LLMOps Platforms |
-| Coze | LLMOps Platforms |
-| OpenAI Whisper | Speech-to-Text Services |
-| SenseVoice | Speech-to-Text Services |
-| Xiaomi MiMo Omni | Speech-to-Text Services |
-| OpenAI TTS | Text-to-Speech Services |
-| Gemini TTS | Text-to-Speech Services |
-| GPT-Sovits-Inference | Text-to-Speech Services |
-| GPT-Sovits | Text-to-Speech Services |
-| FishAudio | Text-to-Speech Services |
-| Edge TTS | Text-to-Speech Services |
-| Alibaba Cloud Bailian TTS | Text-to-Speech Services |
-| Azure TTS | Text-to-Speech Services |
-| Minimax TTS | Text-to-Speech Services |
-| Xiaomi MiMo TTS | Text-to-Speech Services |
-| Volcano Engine TTS | Text-to-Speech Services |
-
-## ❤️ Sponsors
-
-<p align="center">
-  <img alt="sponsors" src="https://sponsors.astrbot.app/?v=1">
-</p>
-
-
-## ❤️ Contributing
-
-Issues and Pull Requests are always welcome! Feel free to submit your changes to this project :)
-
-### How to Contribute
-
-You can contribute by reviewing issues or helping with pull request reviews. Any issues or PRs are welcome to encourage community participation. Of course, these are just suggestions—you can contribute in any way you like. For adding new features, please discuss through an Issue first.
-
-### Development Environment
-
-AstrBot uses `ruff` for code formatting and linting.
+Core：
 
 ```bash
-git clone https://github.com/AstrBotDevs/AstrBot
-pip install pre-commit
-pre-commit install
+uv sync
+uv run main.py
 ```
 
+Dashboard 开发模式：
 
-## 🌍 Community
+```bash
+cd dashboard
+pnpm install
+pnpm dev
+```
 
-### QQ Groups
+默认端口：
 
-- Group 12: 916228568 (New)
-- Group 9: 1076659624 (Full)
-- Group 10: 1078079676 (Full)
-- Group 11: 704659519 (Full)
-- Group 1: 322154837 (Full)
-- Group 3: 630166526 (Full)
-- Group 4: 1077826412 (Full)
-- Group 5: 822130018 (Full)
-- Group 6: 753075035 (Full)
-- Group 7: 743746109 (Full)
-- Group 8: 1030353265 (Full)
+- Core / API / Dashboard: http://localhost:6185
+- Dashboard dev server: http://localhost:3000
 
-- Developer Group(Chit-chat): 975206796
-- Developer Group(Formal): 1039761811
+## 许可证
 
-### Discord Server
-
-<a href="https://discord.gg/hAVk6tgV36"><img alt="Discord_community" src="https://img.shields.io/badge/Discord-AstrBot-purple?style=for-the-badge&color=76bad9"></a>
-
-## ❤️ Special Thanks
-
-Special thanks to all Contributors and plugin developers for their contributions to AstrBot ❤️
-
-<a href="https://github.com/AstrBotDevs/AstrBot/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=AstrBotDevs/AstrBot&max=200&columns=14" />
-</a>
-
-Additionally, the birth of this project would not have been possible without the help of the following open-source projects:
-
-- [NapNeko/NapCatQQ](https://github.com/NapNeko/NapCatQQ) - The amazing cat framework
-
-## ⭐ Star History
-
-> [!TIP]
-> If this project has helped you in your life or work, or if you're interested in its future development, please give the project a Star. It's the driving force behind maintaining this open-source project <3
-
-<div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=astrbotdevs/astrbot&type=Date)](https://star-history.com/#astrbotdevs/astrbot&Date)
-
-</div>
-
-<div align="center">
-
-_Companionship and capability should never be at odds. What we aim to create is a robot that can understand emotions, provide genuine companionship, and reliably accomplish tasks._
-
-_私は、高性能ですから!_
-
-<img src="https://files.astrbot.app/watashiwa-koseino-desukara.gif" width="100"/>
-</div>
+本仓库继承上游 AstrBot 的许可证：`AGPL-3.0-or-later`。详见 `LICENSE`。
