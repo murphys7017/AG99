@@ -83,6 +83,7 @@ class InteractionMiddleware:
 
         original_send = event.send
         original_send_streaming = event.send_streaming
+        original_complete_visible_turn = event.complete_visible_turn
         output_controller = self.output_controller
 
         async def send_wrapper(
@@ -117,10 +118,26 @@ class InteractionMiddleware:
             )
             wrapped_event._has_send_oper = True
 
+        async def complete_visible_turn_wrapper(
+            wrapped_event: AstrMessageEvent,
+        ) -> None:
+            logger.debug(
+                "Interaction middleware routing visible completion via output controller: platform_id=%s session_id=%s turn_id=%s",
+                wrapped_event.get_platform_id(),
+                wrapped_event.session_id,
+                wrapped_event.get_extra("_turn_id"),
+            )
+            await output_controller.capture_visible_completion(wrapped_event)
+
         event.set_extra("_interaction_original_send", original_send)
         event.set_extra("_interaction_original_send_streaming", original_send_streaming)
+        event.set_extra(
+            "_interaction_original_complete_visible_turn",
+            original_complete_visible_turn,
+        )
         event.send = MethodType(send_wrapper, event)
         event.send_streaming = MethodType(send_streaming_wrapper, event)
+        event.complete_visible_turn = MethodType(complete_visible_turn_wrapper, event)
         event.set_extra("_interaction_output_interceptor_installed", True)
 
     def handle_inbound(self, event: AstrMessageEvent) -> None:
@@ -192,12 +209,21 @@ class InteractionMiddleware:
                 if not sent:
                     self._forward_to_core(event)
                     return
-            await self._complete_visible_turn_or_record_failure(event)
-            await self._persist_turn(event, decision, decision.immediate_spoken_reply)
+            completed = await self._complete_visible_turn_or_record_failure(event)
+            if completed:
+                await self._persist_turn(
+                    event, decision, decision.immediate_spoken_reply
+                )
             return
         if decision.route_mode == RouteMode.HYBRID:
             if decision.should_emit_immediate_reply:
-                await self._emit_immediate_reply_or_record_failure(event, decision)
+                sent = await self._emit_immediate_reply_or_record_failure(
+                    event, decision
+                )
+                if sent:
+                    await self._persist_turn(
+                        event, decision, decision.immediate_spoken_reply
+                    )
             self._forward_to_core(event)
             return
         if decision.should_emit_immediate_reply:
@@ -327,6 +353,7 @@ class InteractionMiddleware:
                 snapshot,
                 user_text=event.message_str,
                 visible_reply=visible_reply,
+                turn_id=str(event.get_extra("_turn_id", "") or ""),
             )
             await self.memory_store.save_interaction_memory(
                 event.unified_msg_origin,

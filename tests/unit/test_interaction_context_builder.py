@@ -1,0 +1,204 @@
+import pytest
+
+from astrbot.core.interaction.context_builder import (
+    collect_interaction_prompt_contributions,
+    extract_recent_messages,
+)
+from astrbot.core.interaction.contributors import InteractionPromptContribution
+from astrbot.core.interaction.memory_store import (
+    InteractionMemorySnapshot,
+    build_interaction_memory_payload,
+    update_interaction_memory_from_turn,
+)
+from astrbot.core.prompt.context_types import ContextPack, ContextSlot
+
+
+def test_extract_recent_messages_includes_interaction_memory_turns():
+    snapshot = InteractionMemorySnapshot(
+        session_id="session",
+        recent_turns=[
+            {"user": "为什么没有啊", "assistant": "没有什么啊？"},
+            {"user": "联网权限", "assistant": "没有联网权限。"},
+        ],
+    )
+    pack = ContextPack()
+    pack.add_slot(
+        ContextSlot(
+            name="memory.interaction",
+            value=build_interaction_memory_payload(snapshot),
+            category="memory",
+            source="interaction_memory",
+        )
+    )
+
+    messages = extract_recent_messages(pack, limit=8)
+
+    assert messages == [
+        {
+            "source": "interaction_memory",
+            "user_message": {
+                "role": "user",
+                "content": "联网权限",
+            },
+            "assistant_message": {
+                "role": "assistant",
+                "content": "没有联网权限。",
+            },
+        },
+        {
+            "source": "interaction_memory",
+            "user_message": {
+                "role": "user",
+                "content": "为什么没有啊",
+            },
+            "assistant_message": {
+                "role": "assistant",
+                "content": "没有什么啊？",
+            },
+        },
+    ]
+
+
+def test_extract_recent_messages_dedupes_core_and_interaction_memory_turns():
+    snapshot = InteractionMemorySnapshot(
+        session_id="session",
+        recent_turns=[
+            {
+                "user": "联网权限",
+                "assistant": "没有联网权限。",
+            },
+        ],
+    )
+    pack = ContextPack()
+    pack.add_slot(
+        ContextSlot(
+            name="conversation.history",
+            value={
+                "turns": [
+                    {
+                        "user_message": {
+                            "role": "user",
+                            "content": "联网权限",
+                        },
+                        "assistant_message": {
+                            "role": "assistant",
+                            "content": "没有联网权限。",
+                        },
+                    }
+                ]
+            },
+            category="memory",
+            source="conversation",
+        )
+    )
+    pack.add_slot(
+        ContextSlot(
+            name="memory.interaction",
+            value=build_interaction_memory_payload(snapshot),
+            category="memory",
+            source="interaction_memory",
+        )
+    )
+
+    messages = extract_recent_messages(pack, limit=8)
+
+    assert len(messages) == 1
+    assert messages[0]["source"] == "interaction_memory"
+
+
+def test_update_interaction_memory_from_turn_keeps_structured_recent_turns():
+    snapshot = InteractionMemorySnapshot(session_id="session")
+
+    snapshot = update_interaction_memory_from_turn(
+        snapshot,
+        user_text="为什么没有这些权限",
+        visible_reply="权限设计问题。",
+    )
+
+    assert snapshot.recent_turns == [
+        {
+            "user": "为什么没有这些权限",
+            "assistant": "权限设计问题。",
+        }
+    ]
+    assert snapshot.recent_topics == ["为什么没有这些权限"]
+    assert snapshot.last_impression_summary == "权限设计问题。"
+
+
+def test_update_interaction_memory_merges_same_turn_id():
+    snapshot = InteractionMemorySnapshot(session_id="session")
+    snapshot = update_interaction_memory_from_turn(
+        snapshot,
+        user_text="查一下权限",
+        visible_reply="等我看看。",
+        turn_id="turn-1",
+    )
+    snapshot = update_interaction_memory_from_turn(
+        snapshot,
+        user_text="查一下权限",
+        visible_reply="没有联网权限。",
+        turn_id="turn-1",
+    )
+
+    assert snapshot.recent_turns == [
+        {
+            "user": "查一下权限",
+            "assistant": "没有联网权限。",
+            "turn_id": "turn-1",
+        }
+    ]
+
+
+class GoodPromptContributor:
+    plugin_id = "good"
+    priority = 10
+
+    async def collect(self, event, plugin_context, config, decision_context):
+        return InteractionPromptContribution(
+            plugin_id=self.plugin_id,
+            content={"ok": True},
+            priority=self.priority,
+        )
+
+
+class FailingPromptContributor:
+    plugin_id = "bad"
+    priority = 1
+
+    async def collect(self, event, plugin_context, config, decision_context):
+        raise RuntimeError("broken")
+
+
+@pytest.mark.asyncio
+async def test_prompt_contributor_failure_is_recorded_and_ignored():
+    event = type(
+        "Event",
+        (),
+        {
+            "_extras": {},
+            "get_extra": lambda self, key, default=None: self._extras.get(key, default),
+            "set_extra": lambda self, key, value: self._extras.__setitem__(key, value),
+        },
+    )()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "list_interaction_prompt_contributors": lambda self: [
+                FailingPromptContributor(),
+                GoodPromptContributor(),
+            ]
+        },
+    )()
+
+    contributions = await collect_interaction_prompt_contributions(
+        event,
+        plugin_context,
+        config={},
+        decision_context={},
+    )
+
+    assert [item.plugin_id for item in contributions] == ["good"]
+    assert event.get_extra("_interaction_prompt_contributor_failures") == [
+        {"plugin_id": "bad", "error": "broken"}
+    ]

@@ -3,6 +3,13 @@ from typing import Any
 from .types import FinalizerMode, InteractionAgentConfig
 
 
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def is_middleware_enabled_for_platform(platform_id: str, config: Any) -> bool:
     interaction_config = config.get("interaction_middleware", {})
     if not interaction_config.get("enabled", False):
@@ -68,13 +75,19 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         ),
         stream_observation_min_chars=max(
             1,
-            int(interaction_config.get("stream_observation_min_chars", 200) or 200),
+            _int_or_default(
+                interaction_config.get("stream_observation_min_chars", 200),
+                200,
+            ),
         ),
         stream_interjection_enabled=bool(
             interaction_config.get("stream_interjection_enabled", True)
         ),
         stream_interjection_max_per_turn=max(
             0,
-            int(interaction_config.get("stream_interjection_max_per_turn", 1) or 1),
+            _int_or_default(
+                interaction_config.get("stream_interjection_max_per_turn", 1),
+                1,
+            ),
         ),
     )

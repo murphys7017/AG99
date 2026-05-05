@@ -13,12 +13,19 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
 
+from .context_builder import (
+    build_interaction_context_pack,
+    extract_interaction_memory_payload,
+    extract_persona_payload,
+    extract_recent_messages,
+)
 from .contributors import (
     InteractionResultContribution,
     InteractionResultView,
     merge_result_contributions,
 )
 from .core_bridge import get_interaction_decision
+from .decision_agent import _build_decision_build_config
 from .finalizer import finalize_response
 from .memory_store import InteractionMemoryStore, update_interaction_memory_from_turn
 from .types import FinalizerMode, InteractionAgentConfig
@@ -74,7 +81,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
     ) -> None:
         if message is None:
-            await event.complete_visible_turn()
+            await self.capture_visible_completion(event)
             return
 
         is_immediate = bool(event.get_extra("_interaction_emitting_immediate_reply"))
@@ -124,15 +131,10 @@ class InteractionOutputController:
 
         if event.get_extra("_interaction_core_final_result_consumed", False):
             logger.debug(
-                "Interaction outbound classified: platform_id=%s session_id=%s turn_id=%s kind=core_final_model_result_segment_passthrough",
+                "Interaction outbound classified: platform_id=%s session_id=%s turn_id=%s kind=core_final_model_result_segment_suppressed",
                 event.get_platform_id(),
                 event.session_id,
                 event.get_extra("_turn_id"),
-            )
-            await self._send_platform_message(
-                message,
-                event,
-                platform_extras=self.build_platform_output_extras(event),
             )
             return
 
@@ -143,15 +145,38 @@ class InteractionOutputController:
             event.session_id,
             event.get_extra("_turn_id"),
         )
-        final_message = await self.maybe_finalize_and_send(message, event)
+        full_message = self._get_full_core_final_message(event, message)
+        final_message = await self.maybe_finalize_and_send(full_message, event)
         if final_message is not None:
             return
 
         await self._send_platform_message(
-            message,
+            full_message,
             event,
             platform_extras=self.build_platform_output_extras(event),
         )
+
+    async def capture_visible_completion(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        complete_visible_turn = event.get_extra(
+            "_interaction_original_complete_visible_turn"
+        )
+        if callable(complete_visible_turn):
+            await complete_visible_turn()
+            return
+        await event.complete_visible_turn()
+
+    @staticmethod
+    def _get_full_core_final_message(
+        event: AstrMessageEvent,
+        fallback: MessageChain,
+    ) -> MessageChain:
+        result = event.get_result()
+        if result is None or not result.chain:
+            return fallback
+        return result.derive(list(result.chain))
 
     async def capture_streaming(
         self,
@@ -205,8 +230,8 @@ class InteractionOutputController:
         total_text = ""
         pending_text = ""
         window_index = 0
-        interjection_count = 0
         min_chars = self.interaction_config.stream_observation_min_chars
+        observation_state = self._build_stream_observation_state()
         logger.debug(
             "Interaction core stream observation started: platform_id=%s session_id=%s turn_id=%s min_chars=%s interjection_enabled=%s",
             event.get_platform_id(),
@@ -229,12 +254,12 @@ class InteractionOutputController:
                     window_index += 1
                     observed_text = pending_text[:min_chars]
                     pending_text = pending_text[min_chars:]
-                    interjection_count = await self._observe_core_stream_window(
+                    self._schedule_core_stream_observation(
                         event,
                         observed_text=observed_text,
                         total_text=total_text,
                         window_index=window_index,
-                        interjection_count=interjection_count,
+                        observation_state=observation_state,
                         chain_type=chain.type,
                         is_final=False,
                     )
@@ -246,15 +271,27 @@ class InteractionOutputController:
                 pending_text,
             )
             window_index += 1
-            interjection_count = await self._observe_core_stream_window(
+            event.set_extra(
+                "_interaction_core_stream_observation_count",
+                window_index,
+            )
+            self._log_core_stream_observation_window(
                 event,
                 observed_text=pending_text,
                 total_text=total_text,
                 window_index=window_index,
-                interjection_count=interjection_count,
                 chain_type=None,
                 is_final=True,
             )
+            await self._observe_core_stream_window(
+                event,
+                observed_text=pending_text,
+                total_text=total_text,
+                window_index=window_index,
+                observation_state=observation_state,
+                is_final=True,
+            )
+        await self.wait_for_stream_observations(event)
         event.set_extra("_interaction_core_stream_text", total_text)
         logger.debug(
             "Interaction core stream observation finished: platform_id=%s session_id=%s turn_id=%s total_chars=%s windows=%s interjections=%s",
@@ -263,24 +300,69 @@ class InteractionOutputController:
             turn_id,
             len(total_text),
             window_index,
-            interjection_count,
+            observation_state["emitted"],
         )
 
-    async def _observe_core_stream_window(
+    @staticmethod
+    def _build_stream_observation_state() -> dict[str, Any]:
+        return {
+            "emitted": 0,
+            "lock": asyncio.Lock(),
+        }
+
+    def _schedule_core_stream_observation(
         self,
         event: AstrMessageEvent,
         *,
         observed_text: str,
         total_text: str,
         window_index: int,
-        interjection_count: int,
+        observation_state: dict[str, Any],
         chain_type: str | None,
         is_final: bool,
-    ) -> int:
+    ) -> None:
         event.set_extra(
             "_interaction_core_stream_observation_count",
             window_index,
         )
+        self._log_core_stream_observation_window(
+            event,
+            observed_text=observed_text,
+            total_text=total_text,
+            window_index=window_index,
+            chain_type=chain_type,
+            is_final=is_final,
+        )
+        task = asyncio.create_task(
+            self._observe_core_stream_window(
+                event,
+                observed_text=observed_text,
+                total_text=total_text,
+                window_index=window_index,
+                observation_state=observation_state,
+                is_final=is_final,
+            ),
+            name=f"interaction_stream_observation_{event.get_platform_id()}_{window_index}",
+        )
+        tasks = event.get_extra("_interaction_stream_observation_tasks", [])
+        if not isinstance(tasks, list):
+            tasks = []
+        tasks.append(task)
+        event.set_extra("_interaction_stream_observation_tasks", tasks)
+        task.add_done_callback(
+            lambda done_task: self._on_stream_observation_task_done(event, done_task)
+        )
+
+    @staticmethod
+    def _log_core_stream_observation_window(
+        event: AstrMessageEvent,
+        *,
+        observed_text: str,
+        total_text: str,
+        window_index: int,
+        chain_type: str | None,
+        is_final: bool,
+    ) -> None:
         logger.debug(
             "Interaction core stream observation window: platform_id=%s session_id=%s turn_id=%s window_index=%s observed_chars=%s total_chars=%s chain_type=%s final=%s",
             event.get_platform_id(),
@@ -292,11 +374,17 @@ class InteractionOutputController:
             chain_type,
             is_final,
         )
-        if (
-            interjection_count
-            >= self.interaction_config.stream_interjection_max_per_turn
-        ):
-            return interjection_count
+
+    async def _observe_core_stream_window(
+        self,
+        event: AstrMessageEvent,
+        *,
+        observed_text: str,
+        total_text: str,
+        window_index: int,
+        observation_state: dict[str, Any],
+        is_final: bool,
+    ) -> None:
         decision = await self._decide_stream_interjection(
             event,
             observed_text=observed_text,
@@ -304,15 +392,64 @@ class InteractionOutputController:
             window_index=window_index,
             is_final=is_final,
         )
-        if decision.should_interject and decision.reply:
+        if not decision.should_interject or not decision.reply:
+            return
+        lock = observation_state.get("lock")
+        if not isinstance(lock, asyncio.Lock):
+            lock = asyncio.Lock()
+            observation_state["lock"] = lock
+        async with lock:
+            if (
+                observation_state["emitted"]
+                >= self.interaction_config.stream_interjection_max_per_turn
+            ):
+                return
+            observation_state["emitted"] += 1
             await self._emit_stream_interjection(
                 event,
                 decision.reply,
                 window_index=window_index,
                 reason=decision.reason,
             )
-            return interjection_count + 1
-        return interjection_count
+
+    def _on_stream_observation_task_done(
+        self,
+        event: AstrMessageEvent,
+        task: asyncio.Task,
+    ) -> None:
+        tasks = event.get_extra("_interaction_stream_observation_tasks", [])
+        if isinstance(tasks, list) and task in tasks:
+            tasks.remove(task)
+            event.set_extra("_interaction_stream_observation_tasks", tasks)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug(
+                "Interaction stream observation task cancelled: platform_id=%s session_id=%s turn_id=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            failures = event.get_extra("_interaction_stream_observation_failures", [])
+            if not isinstance(failures, list):
+                failures = []
+            failures.append(str(exc))
+            event.set_extra("_interaction_stream_observation_failures", failures)
+            logger.error(
+                "Interaction stream observation task failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+                exc,
+                exc_info=True,
+            )
+
+    async def wait_for_stream_observations(self, event: AstrMessageEvent) -> None:
+        tasks = event.get_extra("_interaction_stream_observation_tasks", [])
+        if not isinstance(tasks, list) or not tasks:
+            return
+        await asyncio.gather(*list(tasks), return_exceptions=True)
 
     async def _decide_stream_interjection(
         self,
@@ -373,7 +510,7 @@ class InteractionOutputController:
             )
             return StreamObservationDecision(reason="provider_unavailable")
 
-        prompt = self._build_stream_interjection_prompt(
+        prompt = await self._build_stream_interjection_prompt(
             event,
             observed_text=observed_text,
             total_text=total_text,
@@ -483,8 +620,8 @@ class InteractionOutputController:
                 return decision
         return None
 
-    @staticmethod
-    def _build_stream_interjection_prompt(
+    async def _build_stream_interjection_prompt(
+        self,
         event: AstrMessageEvent,
         *,
         observed_text: str,
@@ -492,11 +629,49 @@ class InteractionOutputController:
         window_index: int,
         is_final: bool,
     ) -> str:
+        persona_payload: dict[str, Any] = {}
+        memory_payload: dict[str, Any] = {}
+        recent_messages: list[dict[str, Any]] = []
+        if self.plugin_context is not None:
+            try:
+                build_config = _build_decision_build_config(self.plugin_context, event)
+                prompt_context_pack = await build_interaction_context_pack(
+                    event,
+                    self.plugin_context,
+                    build_config,
+                    self.memory_store,
+                )
+                persona_payload = extract_persona_payload(prompt_context_pack)
+                memory_payload = extract_interaction_memory_payload(prompt_context_pack)
+                recent_messages = extract_recent_messages(
+                    prompt_context_pack,
+                    self.interaction_config.memory_window_size,
+                )
+            except Exception as exc:  # noqa: BLE001
+                event.set_extra(
+                    "_interaction_stream_context_build_failed",
+                    True,
+                )
+                event.set_extra(
+                    "_interaction_stream_context_build_failure_reason",
+                    str(exc),
+                )
+                logger.warning(
+                    "Interaction stream context build failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    event.get_extra("_turn_id"),
+                    exc,
+                    exc_info=True,
+                )
         payload = {
             "platform_id": event.get_platform_id(),
             "session_id": event.unified_msg_origin,
             "turn_id": event.get_extra("_turn_id"),
             "user_input": event.message_str,
+            "persona": persona_payload,
+            "interaction_memory": memory_payload,
+            "recent_messages": recent_messages,
             "window_index": window_index,
             "is_final_window": is_final,
             "observed_core_stream_window": observed_text,
@@ -791,6 +966,7 @@ class InteractionOutputController:
                 snapshot,
                 user_text=event.message_str,
                 visible_reply=visible_reply,
+                turn_id=str(event.get_extra("_turn_id", "") or ""),
             )
             await self.memory_store.save_interaction_memory(
                 event.unified_msg_origin,

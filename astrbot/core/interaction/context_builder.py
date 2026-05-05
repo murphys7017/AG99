@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from astrbot import logger
 from astrbot.core.prompt.collectors.conversation_history_collector import (
     ConversationHistoryCollector,
 )
@@ -49,13 +50,70 @@ def extract_recent_messages(
     pack: ContextPack,
     limit: int,
 ) -> list[dict[str, Any]]:
+    interaction_messages: list[dict[str, Any]] = []
+    interaction_slot = pack.get_slot("memory.interaction")
+    if interaction_slot is not None and isinstance(interaction_slot.value, dict):
+        recent_turns = interaction_slot.value.get("recent_turns", [])
+        if isinstance(recent_turns, list):
+            limited_turns = recent_turns[:limit] if limit > 0 else recent_turns
+            for turn in reversed(limited_turns):
+                if not isinstance(turn, dict):
+                    continue
+                user_text = str(turn.get("user", "") or "").strip()
+                assistant_text = str(turn.get("assistant", "") or "").strip()
+                if user_text or assistant_text:
+                    interaction_messages.append(
+                        {
+                            "source": "interaction_memory",
+                            "user_message": {
+                                "role": "user",
+                                "content": user_text,
+                            },
+                            "assistant_message": {
+                                "role": "assistant",
+                                "content": assistant_text,
+                            },
+                        }
+                    )
+
+    core_messages: list[dict[str, Any]] = []
     slot = pack.get_slot("conversation.history")
     if slot is None or not isinstance(slot.value, dict):
-        return []
+        return interaction_messages[-limit:] if limit > 0 else interaction_messages
     turns = slot.value.get("turns", [])
     if not isinstance(turns, list):
-        return []
-    return turns[-limit:] if limit > 0 else turns
+        return interaction_messages[-limit:] if limit > 0 else interaction_messages
+    limited_core_turns = turns[-limit:] if limit > 0 else turns
+    for turn in limited_core_turns:
+        if isinstance(turn, dict):
+            turn = dict(turn)
+            turn.setdefault("source", "core_conversation")
+            core_messages.append(turn)
+    messages = _dedupe_recent_messages([*core_messages, *interaction_messages])
+    return messages[-limit:] if limit > 0 else messages
+
+
+def _dedupe_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped_reversed: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        user_text = _extract_turn_text(message, "user_message")
+        assistant_text = _extract_turn_text(message, "assistant_message")
+        key = (user_text, assistant_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_reversed.append(message)
+    return list(reversed(deduped_reversed))
+
+
+def _extract_turn_text(turn: dict[str, Any], key: str) -> str:
+    payload = turn.get(key, {})
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("content", "") or "").strip()
 
 
 def extract_persona_payload(pack: ContextPack) -> dict[str, Any]:
@@ -118,12 +176,31 @@ async def collect_interaction_prompt_contributions(
 ) -> list[InteractionPromptContribution]:
     contributions: list[InteractionPromptContribution] = []
     for contributor in plugin_context.list_interaction_prompt_contributors():
-        payload = await contributor.collect(
-            event,
-            plugin_context,
-            config,
-            decision_context,
-        )
+        try:
+            payload = await contributor.collect(
+                event,
+                plugin_context,
+                config,
+                decision_context,
+            )
+        except Exception as exc:  # noqa: BLE001
+            failures = event.get_extra("_interaction_prompt_contributor_failures", [])
+            if not isinstance(failures, list):
+                failures = []
+            failures.append(
+                {
+                    "plugin_id": getattr(contributor, "plugin_id", "<unknown>"),
+                    "error": str(exc),
+                }
+            )
+            event.set_extra("_interaction_prompt_contributor_failures", failures)
+            logger.warning(
+                "Interaction prompt contributor failed: plugin_id=%s error=%s",
+                getattr(contributor, "plugin_id", "<unknown>"),
+                exc,
+                exc_info=True,
+            )
+            continue
         if isinstance(payload, InteractionPromptContribution):
             contributions.append(payload)
     contributions.sort(key=lambda item: (item.priority, item.plugin_id))

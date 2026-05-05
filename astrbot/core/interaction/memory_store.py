@@ -13,6 +13,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 class InteractionMemorySnapshot:
     session_id: str
     persona_id: str = ""
+    recent_turns: list[dict[str, str]] = field(default_factory=list)
     speaking_style_notes: list[str] = field(default_factory=list)
     user_preferences: list[str] = field(default_factory=list)
     relationship_notes: list[str] = field(default_factory=list)
@@ -31,6 +32,7 @@ class InteractionMemorySnapshot:
         return cls(
             session_id=session_id,
             persona_id=str(payload.get("persona_id", "") or ""),
+            recent_turns=_coerce_turn_list(payload.get("recent_turns")),
             speaking_style_notes=_coerce_str_list(payload.get("speaking_style_notes")),
             user_preferences=_coerce_str_list(payload.get("user_preferences")),
             relationship_notes=_coerce_str_list(payload.get("relationship_notes")),
@@ -46,6 +48,28 @@ def _coerce_str_list(payload: object) -> list[str]:
     if not isinstance(payload, list):
         return []
     return [str(item).strip() for item in payload if str(item).strip()]
+
+
+def _coerce_turn_list(payload: object) -> list[dict[str, str]]:
+    if not isinstance(payload, list):
+        return []
+    turns: list[dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        user_text = str(item.get("user", "") or "").strip()
+        assistant_text = str(item.get("assistant", "") or "").strip()
+        turn_id = str(item.get("turn_id", "") or "").strip()
+        if not user_text and not assistant_text:
+            continue
+        turn = {
+            "user": user_text,
+            "assistant": assistant_text,
+        }
+        if turn_id:
+            turn["turn_id"] = turn_id
+        turns.append(turn)
+    return turns[-12:]
 
 
 class InteractionMemoryStore:
@@ -106,6 +130,7 @@ def build_interaction_memory_payload(
 ) -> dict[str, Any]:
     return {
         "persona_id": snapshot.persona_id,
+        "recent_turns": list(snapshot.recent_turns),
         "speaking_style_notes": list(snapshot.speaking_style_notes),
         "user_preferences": list(snapshot.user_preferences),
         "relationship_notes": list(snapshot.relationship_notes),
@@ -120,11 +145,26 @@ def update_interaction_memory_from_turn(
     *,
     user_text: str,
     visible_reply: str | None,
+    turn_id: str | None = None,
 ) -> InteractionMemorySnapshot:
     user_text = (user_text or "").strip()
     visible_reply = (visible_reply or "").strip()
     if user_text:
         snapshot.recent_topics = [user_text[:80], *snapshot.recent_topics][:6]
+    if user_text or visible_reply:
+        clean_turn_id = (turn_id or "").strip()
+        new_turn = {
+            "user": user_text[:500],
+            "assistant": visible_reply[:500],
+        }
+        if clean_turn_id:
+            new_turn["turn_id"] = clean_turn_id
+        remaining_turns = []
+        for turn in snapshot.recent_turns:
+            if clean_turn_id and turn.get("turn_id") == clean_turn_id:
+                continue
+            remaining_turns.append(turn)
+        snapshot.recent_turns = [new_turn, *remaining_turns][:12]
     if visible_reply:
         snapshot.last_impression_summary = visible_reply[:160]
     return snapshot

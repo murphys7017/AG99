@@ -3,7 +3,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from astrbot.core.interaction.config import is_middleware_enabled_for_platform
+from astrbot.core.interaction.config import (
+    is_middleware_enabled_for_platform,
+    load_interaction_agent_config,
+)
 from astrbot.core.interaction.decision_agent import InteractionDecisionAgent
 from astrbot.core.interaction.input_gateway import CoreInputGateway
 from astrbot.core.interaction.middleware import InteractionMiddleware
@@ -20,6 +23,10 @@ from astrbot.core.star.context import Context
 class ConcreteAstrMessageEvent(AstrMessageEvent):
     async def send(self, message):
         await super().send(message)
+
+
+async def _call_original_visible_completion(event):
+    await event.get_extra("_interaction_original_complete_visible_turn")()
 
 
 @pytest.fixture
@@ -76,6 +83,20 @@ class TestInteractionMiddlewareConfig:
         }
         assert is_middleware_enabled_for_platform("webchat", config) is True
         assert is_middleware_enabled_for_platform("telegram", config) is False
+
+    def test_stream_interjection_zero_limit_is_preserved(self):
+        config = {
+            "interaction_middleware": {
+                "enabled": True,
+                "stream_observation_min_chars": 0,
+                "stream_interjection_max_per_turn": 0,
+            }
+        }
+
+        loaded = load_interaction_agent_config(config)
+
+        assert loaded.stream_observation_min_chars == 1
+        assert loaded.stream_interjection_max_per_turn == 0
 
 
 class TestInteractionMiddleware:
@@ -259,6 +280,50 @@ class TestInteractionMiddleware:
         forwarded_event = queue.get_nowait()
         assert forwarded_event is webchat_event
         assert forwarded_event._has_send_oper is False
+
+    @pytest.mark.asyncio
+    async def test_hybrid_immediate_reply_is_persisted_for_next_decision(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.HYBRID,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="等我看看。",
+                confidence=0.9,
+                reason="hybrid",
+            )
+        )
+        middleware.memory_store.save_interaction_memory = AsyncMock()
+
+        middleware.handle_inbound(webchat_event)
+        await asyncio.sleep(0)
+
+        assert queue.get_nowait() is webchat_event
+        middleware.memory_store.save_interaction_memory.assert_awaited_once()
+        snapshot = middleware.memory_store.save_interaction_memory.await_args.args[1]
+        assert snapshot.recent_turns[0] == {
+            "user": "Hello world",
+            "assistant": "等我看看。",
+            "turn_id": webchat_event.get_extra("_turn_id"),
+        }
 
     @pytest.mark.asyncio
     async def test_handle_inbound_refreshes_runtime_interaction_config(
@@ -515,7 +580,11 @@ class TestInteractionMiddleware:
         queue = asyncio.Queue()
         controller = MagicMock()
         controller.emit_immediate_spoken_reply = AsyncMock()
-        webchat_event.complete_visible_turn = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        complete_visible_turn = AsyncMock()
+        webchat_event.complete_visible_turn = complete_visible_turn
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -546,12 +615,61 @@ class TestInteractionMiddleware:
         await asyncio.sleep(0)
 
         assert queue.empty()
-        webchat_event.complete_visible_turn.assert_awaited_once()
+        complete_visible_turn.assert_awaited_once()
+        controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
         assert webchat_event.get_extra("_interaction_memory_persist_failed") is True
         assert (
             webchat_event.get_extra("_interaction_memory_persist_failure_reason")
             == "disk full"
         )
+
+    @pytest.mark.asyncio
+    async def test_self_reply_does_not_persist_if_visible_completion_fails(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        complete_visible_turn = AsyncMock(
+            side_effect=RuntimeError("queue closed")
+        )
+        webchat_event.complete_visible_turn = complete_visible_turn
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.SELF_REPLY,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="嗯。",
+                confidence=0.9,
+                reason="self",
+            )
+        )
+        middleware.memory_store.save_interaction_memory = AsyncMock()
+
+        middleware.handle_inbound(webchat_event)
+        await asyncio.sleep(0)
+
+        assert queue.empty()
+        complete_visible_turn.assert_awaited_once()
+        controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
+        middleware.memory_store.save_interaction_memory.assert_not_awaited()
+        assert webchat_event.get_extra("_interaction_visible_completion_failed") is True
 
     @pytest.mark.asyncio
     async def test_self_reply_completes_visible_turn_after_immediate_reply(
@@ -561,7 +679,11 @@ class TestInteractionMiddleware:
         queue = asyncio.Queue()
         controller = MagicMock()
         controller.emit_immediate_spoken_reply = AsyncMock()
-        webchat_event.complete_visible_turn = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        complete_visible_turn = AsyncMock()
+        webchat_event.complete_visible_turn = complete_visible_turn
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -590,7 +712,8 @@ class TestInteractionMiddleware:
 
         assert queue.empty()
         controller.emit_immediate_spoken_reply.assert_awaited_once()
-        webchat_event.complete_visible_turn.assert_awaited_once()
+        complete_visible_turn.assert_awaited_once()
+        controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
 
 
 class TestCoreInputGateway:

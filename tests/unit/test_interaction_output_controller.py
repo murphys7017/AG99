@@ -82,15 +82,17 @@ def generic_event():
 class ResultContributor:
     plugin_id = "result_plugin"
     priority = 10
+    expected_core_result = "dry result"
+    final_text_override = "wrapped result"
 
     async def collect(self, event, plugin_context, result_view):
         assert result_view.turn_id == "turn-1"
-        assert result_view.core_result == "dry result"
+        assert result_view.core_result == self.expected_core_result
         return InteractionResultContribution(
             plugin_id=self.plugin_id,
             platform_extras={"adapter_object": {"ok": True}},
             client_objects=[{"kind": "card"}],
-            final_text_override="wrapped result",
+            final_text_override=self.final_text_override,
             metadata={"source": "unit"},
             priority=self.priority,
         )
@@ -115,9 +117,17 @@ class FailingResultContributor:
 class StreamInterjectionDecider:
     plugin_id = "stream_plugin"
 
+    def __init__(self):
+        self.views = []
+
     async def decide(self, event, plugin_context, stream_view):
         assert stream_view["turn_id"] == "turn-1"
-        assert stream_view["window_index"] == 1
+        self.views.append(dict(stream_view))
+        if stream_view["window_index"] != 1:
+            return {
+                "should_interject": False,
+                "reason": "only_first_window",
+            }
         assert stream_view["is_final"] is False
         assert stream_view["observed_text"] == "hello"
         assert stream_view["total_text"] == "hello"
@@ -140,6 +150,22 @@ class FinalStreamInterjectionDecider:
             "should_interject": True,
             "reply": "收到了。",
             "reason": "final_window",
+        }
+
+
+class SlowStreamInterjectionDecider:
+    plugin_id = "slow_stream_plugin"
+
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def decide(self, event, plugin_context, stream_view):
+        self.started.set()
+        await self.release.wait()
+        return {
+            "should_interject": False,
+            "reason": "slow",
         }
 
 
@@ -318,9 +344,7 @@ async def test_core_final_result_is_consumed_only_once_for_segmented_sends(
         )
 
     first_payload = queue.get_nowait()
-    second_payload = queue.get_nowait()
     assert first_payload["data"] == "wrapped result"
-    assert second_payload["data"] == "second segment"
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_called_once()
 
@@ -474,6 +498,43 @@ async def test_force_finalizer_failure_does_not_send_raw_core_result(webchat_eve
 
 
 @pytest.mark.asyncio
+async def test_segmented_core_final_uses_full_result_once(webchat_event):
+    queue = asyncio.Queue()
+    contributor = ResultContributor()
+    contributor.expected_core_result = "dry result  second segment"
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_result_contributors.return_value = [contributor]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("dry result"), Plain(" second segment")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("dry result")]),
+            webchat_event,
+        )
+        await controller.capture_message_chain(
+            MessageChain([Plain(" second segment")]),
+            webchat_event,
+        )
+
+    payload = queue.get_nowait()
+    assert payload["data"] == "wrapped result"
+    assert queue.empty()
+    plugin_context.list_interaction_result_contributors.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_capture_streaming_observes_core_chunks_without_interjection(
     webchat_event,
 ):
@@ -508,7 +569,42 @@ async def test_capture_streaming_observes_core_chunks_without_interjection(
     assert payloads[-1]["type"] == "complete"
     assert webchat_event.get_extra("_interaction_core_stream_text") == "hello world"
     assert webchat_event.get_extra("_interaction_core_stream_observation_count") == 3
-    assert webchat_event.get_extra("_interaction_core_streaming_result_consumed") is True
+    assert (
+        webchat_event.get_extra("_interaction_core_streaming_result_consumed") is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_capture_streaming_does_not_block_core_chunks(webchat_event):
+    queue = asyncio.Queue()
+    decider = SlowStreamInterjectionDecider()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = [decider]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=5,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+        yield MessageChain([Plain(" world")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        task = asyncio.create_task(
+            controller.capture_streaming(generator(), webchat_event)
+        )
+        await asyncio.wait_for(decider.started.wait(), timeout=1)
+        assert queue.get_nowait()["data"] == "hello"
+        assert queue.get_nowait()["data"] == " world"
+        decider.release.set()
+        await task
 
 
 @pytest.mark.asyncio
@@ -516,10 +612,9 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     webchat_event,
 ):
     queue = asyncio.Queue()
+    decider = StreamInterjectionDecider()
     plugin_context = MagicMock()
-    plugin_context.list_interaction_stream_deciders.return_value = [
-        StreamInterjectionDecider()
-    ]
+    plugin_context.list_interaction_stream_deciders.return_value = [decider]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
@@ -543,17 +638,25 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     while not queue.empty():
         payloads.append(queue.get_nowait())
 
-    assert [payload["data"] for payload in payloads] == [
-        "嗯，我听着。",
+    assert [payload["data"] for payload in payloads if payload["streaming"]] == [
         "hello",
         " core",
         "hello core",
     ]
-    assert payloads[0]["streaming"] is False
-    assert payloads[0]["chain_type"] == "interaction_stream_reply"
-    assert payloads[0]["platform_extras"]["interaction_stream_reply"] is True
+    interjection_payloads = [
+        payload
+        for payload in payloads
+        if payload.get("chain_type") == "interaction_stream_reply"
+    ]
+    assert len(interjection_payloads) == 1
+    assert interjection_payloads[0]["data"] == "嗯，我听着。"
+    assert interjection_payloads[0]["streaming"] is False
+    assert (
+        interjection_payloads[0]["platform_extras"]["interaction_stream_reply"] is True
+    )
     assert payloads[-1]["type"] == "complete"
     assert payloads[-1]["data"] == "hello core"
+    assert [view["window_index"] for view in decider.views] == [1, 2]
 
 
 @pytest.mark.asyncio
