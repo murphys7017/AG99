@@ -240,8 +240,64 @@ async def test_immediate_reply_skips_final_result_contributors(webchat_event):
     payload = queue.get_nowait()
     assert payload["data"] == "嗯，我来看看。"
     assert payload["platform_extras"]["turn_id"] == "turn-1"
+    assert payload["platform_extras"]["message_kind"] == "immediate_reply"
+    assert (
+        payload["platform_extras"]["visible_message_id"]
+        == "turn-1::immediate_reply::0001"
+    )
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+    )
+    decision = InteractionDecision(
+        should_emit_immediate_reply=True,
+        immediate_spoken_reply="行，等我查一下。",
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("设计问题，我改不了。")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+        await controller.capture_message_chain(
+            MessageChain([Plain("设计问题，我改不了。")]),
+            webchat_event,
+        )
+
+    immediate_payload = queue.get_nowait()
+    core_payload = queue.get_nowait()
+
+    assert immediate_payload["platform_extras"]["turn_id"] == "turn-1"
+    assert core_payload["platform_extras"]["turn_id"] == "turn-1"
+    assert immediate_payload["platform_extras"]["message_kind"] == "immediate_reply"
+    assert core_payload["platform_extras"]["message_kind"] == "core_reply"
+    assert (
+        immediate_payload["platform_extras"]["visible_message_id"]
+        == "turn-1::immediate_reply::0001"
+    )
+    assert (
+        core_payload["platform_extras"]["visible_message_id"]
+        == "turn-1::core_reply::0002"
+    )
+    assert (
+        immediate_payload["platform_extras"]["visible_message_id"]
+        != core_payload["platform_extras"]["visible_message_id"]
+    )
+    assert queue.empty()
 
 
 @pytest.mark.asyncio
@@ -306,6 +362,7 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     payload = queue.get_nowait()
     assert payload["data"] == "command result"
     assert payload["platform_extras"]["turn_id"] == "turn-1"
+    assert payload["platform_extras"]["message_kind"] == "passthrough"
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_not_called()
 

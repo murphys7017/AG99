@@ -95,7 +95,10 @@ class InteractionOutputController:
             await self._send_platform_message(
                 message,
                 event,
-                platform_extras=self.build_platform_output_extras(event),
+                platform_extras=self.build_platform_output_extras(
+                    event,
+                    message_kind="immediate_reply",
+                ),
                 record_send_operation=False,
             )
             return
@@ -125,7 +128,10 @@ class InteractionOutputController:
             await self._send_platform_message(
                 message,
                 event,
-                platform_extras=self.build_platform_output_extras(event),
+                platform_extras=self.build_platform_output_extras(
+                    event,
+                    message_kind="passthrough",
+                ),
             )
             return
 
@@ -153,7 +159,10 @@ class InteractionOutputController:
         await self._send_platform_message(
             full_message,
             event,
-            platform_extras=self.build_platform_output_extras(event),
+            platform_extras=self.build_platform_output_extras(
+                event,
+                message_kind="core_reply",
+            ),
         )
 
     async def capture_visible_completion(
@@ -196,7 +205,10 @@ class InteractionOutputController:
         try:
             await event.send_interaction_streaming(
                 observed_generator,
-                platform_extras=self.build_platform_output_extras(event),
+                platform_extras=self.build_platform_output_extras(
+                    event,
+                    message_kind="core_stream",
+                ),
                 use_fallback=use_fallback,
             )
         except Exception as exc:
@@ -718,7 +730,10 @@ class InteractionOutputController:
             message,
             event,
             platform_extras={
-                **self.build_platform_output_extras(event),
+                **self.build_platform_output_extras(
+                    event,
+                    message_kind="stream_interjection",
+                ),
                 "interaction_stream_reply": True,
                 "stream_window_index": window_index,
             },
@@ -748,7 +763,10 @@ class InteractionOutputController:
             await self._send_platform_message(
                 final_message,
                 event,
-                platform_extras=self.build_platform_output_extras(event),
+                platform_extras=self.build_platform_output_extras(
+                    event,
+                    message_kind="core_reply",
+                ),
             )
             await self._persist_interaction_turn(
                 event,
@@ -788,6 +806,7 @@ class InteractionOutputController:
 
         platform_extras = self.build_platform_output_extras(
             event,
+            message_kind="core_reply",
             result_contribution=merged,
         )
         await self._send_platform_message(
@@ -912,11 +931,10 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
         *,
+        message_kind: str,
         result_contribution: InteractionResultContribution | None = None,
     ) -> dict[str, Any]:
-        extras: dict[str, Any] = {
-            "turn_id": event.get_extra("_turn_id"),
-        }
+        extras: dict[str, Any] = {}
         hints = event.get_extra("_interaction_plugin_hints", {})
         if isinstance(hints, dict):
             hinted_extras = hints.get("platform_extras", {})
@@ -928,7 +946,32 @@ class InteractionOutputController:
                 extras["client_objects"] = list(result_contribution.client_objects)
             if result_contribution.metadata:
                 extras["metadata"] = dict(result_contribution.metadata)
+        visible_message_id = self._next_visible_message_id(event, message_kind)
+        extras.update(
+            {
+                "turn_id": event.get_extra("_turn_id"),
+                "visible_message_id": visible_message_id,
+                "message_kind": message_kind,
+                "composite_message_id": visible_message_id,
+            }
+        )
         return {key: value for key, value in extras.items() if value is not None}
+
+    @staticmethod
+    def _next_visible_message_id(event: AstrMessageEvent, message_kind: str) -> str:
+        turn_id = str(event.get_extra("_turn_id", "") or "").strip()
+        if not turn_id:
+            turn_id = "turn"
+        counter = int(event.get_extra("_interaction_visible_message_counter", 0) or 0)
+        counter += 1
+        event.set_extra("_interaction_visible_message_counter", counter)
+        safe_kind = "".join(
+            char if char.isalnum() or char in {"_", "-"} else "_"
+            for char in message_kind
+        ).strip("_")
+        if not safe_kind:
+            safe_kind = "message"
+        return f"{turn_id}::{safe_kind}::{counter:04d}"
 
     async def _send_platform_message(
         self,
