@@ -63,4 +63,18 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         ),
         finalizer_mode=finalizer_mode,
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
+        stream_observation_enabled=bool(
+            interaction_config.get("stream_observation_enabled", True)
+        ),
+        stream_observation_min_chars=max(
+            1,
+            int(interaction_config.get("stream_observation_min_chars", 200) or 200),
+        ),
+        stream_interjection_enabled=bool(
+            interaction_config.get("stream_interjection_enabled", True)
+        ),
+        stream_interjection_max_per_turn=max(
+            0,
+            int(interaction_config.get("stream_interjection_max_per_turn", 1) or 1),
+        ),
     )

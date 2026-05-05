@@ -112,6 +112,37 @@ class FailingResultContributor:
         raise RuntimeError("contributor broken")
 
 
+class StreamInterjectionDecider:
+    plugin_id = "stream_plugin"
+
+    async def decide(self, event, plugin_context, stream_view):
+        assert stream_view["turn_id"] == "turn-1"
+        assert stream_view["window_index"] == 1
+        assert stream_view["is_final"] is False
+        assert stream_view["observed_text"] == "hello"
+        assert stream_view["total_text"] == "hello"
+        return {
+            "should_interject": True,
+            "reply": "嗯，我听着。",
+            "reason": "unit",
+        }
+
+
+class FinalStreamInterjectionDecider:
+    plugin_id = "final_stream_plugin"
+
+    def __init__(self):
+        self.views = []
+
+    async def decide(self, event, plugin_context, stream_view):
+        self.views.append(dict(stream_view))
+        return {
+            "should_interject": True,
+            "reply": "收到了。",
+            "reason": "final_window",
+        }
+
+
 @pytest.mark.asyncio
 async def test_capture_message_chain_collects_result_contributors(webchat_event):
     queue = asyncio.Queue()
@@ -440,6 +471,172 @@ async def test_force_finalizer_failure_does_not_send_raw_core_result(webchat_eve
         webchat_event.get_extra("_interaction_finalizer_failure_reason")
         == "provider_unavailable"
     )
+
+
+@pytest.mark.asyncio
+async def test_capture_streaming_observes_core_chunks_without_interjection(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=5,
+            stream_interjection_enabled=False,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+        yield MessageChain([Plain(" world")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    assert [payload["data"] for payload in payloads] == [
+        "hello",
+        " world",
+        "hello world",
+    ]
+    assert payloads[-1]["type"] == "complete"
+    assert webchat_event.get_extra("_interaction_core_stream_text") == "hello world"
+    assert webchat_event.get_extra("_interaction_core_stream_observation_count") == 3
+    assert webchat_event.get_extra("_interaction_core_streaming_result_consumed") is True
+
+
+@pytest.mark.asyncio
+async def test_capture_streaming_interjection_is_separate_from_core_stream(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = [
+        StreamInterjectionDecider()
+    ]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=5,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+        yield MessageChain([Plain(" core")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    assert [payload["data"] for payload in payloads] == [
+        "嗯，我听着。",
+        "hello",
+        " core",
+        "hello core",
+    ]
+    assert payloads[0]["streaming"] is False
+    assert payloads[0]["chain_type"] == "interaction_stream_reply"
+    assert payloads[0]["platform_extras"]["interaction_stream_reply"] is True
+    assert payloads[-1]["type"] == "complete"
+    assert payloads[-1]["data"] == "hello core"
+
+
+@pytest.mark.asyncio
+async def test_capture_streaming_observes_final_short_output(webchat_event):
+    queue = asyncio.Queue()
+    decider = FinalStreamInterjectionDecider()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = [decider]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=200,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("short result")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    assert len(decider.views) == 1
+    assert decider.views[0]["is_final"] is True
+    assert decider.views[0]["observed_text"] == "short result"
+    assert decider.views[0]["total_text"] == "short result"
+    assert [payload["data"] for payload in payloads] == [
+        "short result",
+        "收到了。",
+        "short result",
+    ]
+    assert payloads[-1]["type"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_streaming_finish_marker_is_not_sent_after_streaming_delivery(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=20,
+            stream_interjection_enabled=False,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("stream final")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+        webchat_event.set_result(
+            MessageEventResult(
+                chain=[Plain("stream final")],
+                result_content_type=ResultContentType.STREAMING_FINISH,
+            )
+        )
+        await controller.capture_message_chain(
+            MessageChain([Plain("stream final")]),
+            webchat_event,
+        )
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    assert [payload["data"] for payload in payloads] == [
+        "stream final",
+        "stream final",
+    ]
+    assert payloads[-1]["type"] == "complete"
 
 
 @pytest.mark.asyncio

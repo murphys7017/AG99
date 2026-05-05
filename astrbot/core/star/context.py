@@ -136,6 +136,10 @@ class Context:
             _InteractionContributorRegistration
         ] = []
         self._interaction_result_contributor_seq = 0
+        self._interaction_stream_deciders: list[
+            _InteractionContributorRegistration
+        ] = []
+        self._interaction_stream_decider_seq = 0
 
     async def llm_generate(
         self,
@@ -667,6 +671,27 @@ class Context:
             registry_attr="_interaction_result_contributors",
             module_prefix=module_prefix,
             contributor_type="result contributor",
+        )
+
+    def register_interaction_stream_decider(self, decider: Any) -> None:
+        self._register_interaction_contributor(
+            decider,
+            registry_attr="_interaction_stream_deciders",
+            seq_attr="_interaction_stream_decider_seq",
+            contributor_type="stream decider",
+        )
+
+    def list_interaction_stream_deciders(self) -> list[Any]:
+        return self._list_interaction_contributors(self._interaction_stream_deciders)
+
+    def remove_interaction_stream_deciders_by_module_prefix(
+        self,
+        module_prefix: str,
+    ) -> int:
+        return self._remove_interaction_contributors_by_module_prefix(
+            registry_attr="_interaction_stream_deciders",
+            module_prefix=module_prefix,
+            contributor_type="stream decider",
         )
 
     @staticmethod
