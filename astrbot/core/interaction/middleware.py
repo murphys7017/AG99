@@ -23,6 +23,7 @@ from .memory_store import (
     update_interaction_memory_from_turn,
 )
 from .output_controller import InteractionOutputController
+from .turn_state import ensure_interaction_turn_state
 from .types import InteractionDecision, RouteMode
 
 
@@ -214,17 +215,18 @@ class InteractionMiddleware:
     async def _handle_inbound_async(self, event: AstrMessageEvent) -> None:
         self.refresh_interaction_config()
         turn_id = uuid.uuid4().hex
+        turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         logger.debug(
             "Interaction middleware async turn start: platform_id=%s session_id=%s turn_id=%s decision_provider_id=%s decision_model=%s finalizer_provider_id=%s",
             event.get_platform_id(),
             event.session_id,
-            turn_id,
+            turn_state.turn_id,
             self.interaction_config.decision_provider_id,
             self.interaction_config.decision_model,
             self.interaction_config.finalizer_provider_id,
         )
         decision = await self._decide_or_fallback(event)
-        self.attach_event_context(event, turn_id=turn_id, decision=decision)
+        self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
         if decision.route_mode == RouteMode.SELF_REPLY:
             if not decision.should_emit_immediate_reply:
                 event.set_extra("_interaction_self_reply_invalid", True)

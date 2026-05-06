@@ -19,6 +19,11 @@ from .context_builder import (
     extract_recent_messages,
 )
 from .memory_store import InteractionMemoryStore
+from .turn_state import (
+    InteractionContextMaterial,
+    get_interaction_turn_state,
+    set_interaction_turn_persona_id,
+)
 from .types import (
     InteractionAgentConfig,
     InteractionDecision,
@@ -288,30 +293,19 @@ class InteractionDecisionAgent:
             return build_fallback_decision("provider unavailable")
 
         build_config = _build_decision_build_config(plugin_context, event)
-        prompt_context_pack = await build_interaction_context_pack(
-            event,
-            plugin_context,
-            build_config,
-            self.memory_store,
+        material = await self._build_or_reuse_context_material(
+            event=event,
+            plugin_context=plugin_context,
+            interaction_config=interaction_config,
+            build_config=build_config,
         )
-        persona_payload = extract_persona_payload(prompt_context_pack)
-        event.set_extra(
-            "_interaction_persona_id", persona_payload.get("persona_id", "")
-        )
-        memory_payload = extract_interaction_memory_payload(prompt_context_pack)
-        recent_messages = extract_recent_messages(
-            prompt_context_pack,
-            interaction_config.memory_window_size,
-        )
-        input_payload = extract_input_payload(prompt_context_pack)
-        capability_payload = build_core_capability_payload(plugin_context, event)
-        decision_context = {
-            "persona": persona_payload,
-            "memory": memory_payload,
-            "recent_messages": recent_messages,
-            "input": input_payload,
-            "core_capabilities": capability_payload,
-        }
+        persona_payload = material.persona_payload
+        set_interaction_turn_persona_id(event, persona_payload.get("persona_id", ""))
+        memory_payload = material.memory_payload
+        recent_messages = material.recent_messages
+        input_payload = material.input_payload
+        capability_payload = material.capability_payload
+        decision_context = material.decision_context
         prompt_contributions = await collect_interaction_prompt_contributions(
             event,
             plugin_context,
@@ -391,4 +385,77 @@ class InteractionDecisionAgent:
             decision.reason,
             decision.core_task_spec is not None,
         )
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is not None:
+            turn_state.decision = decision
         return decision
+
+    async def _build_or_reuse_context_material(
+        self,
+        *,
+        event,
+        plugin_context: Context,
+        interaction_config: InteractionAgentConfig,
+        build_config: InteractionPromptBuildConfig,
+    ) -> InteractionContextMaterial:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is not None:
+            turn_state.prompt_build_config = build_config
+            cached_material = turn_state.context_material
+            if cached_material is not None:
+                cached_recent_messages = cached_material.recent_messages
+                desired_window = interaction_config.memory_window_size
+                if desired_window > 0:
+                    cached_recent_messages = cached_recent_messages[-desired_window:]
+                cached_material.recent_messages = cached_recent_messages
+                cached_material.decision_context = {
+                    "persona": cached_material.persona_payload,
+                    "memory": cached_material.memory_payload,
+                    "recent_messages": cached_recent_messages,
+                    "input": cached_material.input_payload,
+                    "core_capabilities": cached_material.capability_payload,
+                }
+                event.set_extra(
+                    "_interaction_prompt_context_pack",
+                    cached_material.prompt_context_pack,
+                )
+                event.set_extra(
+                    "_interaction_decision_context",
+                    cached_material.decision_context,
+                )
+                return cached_material
+
+        prompt_context_pack = await build_interaction_context_pack(
+            event,
+            plugin_context,
+            build_config,
+            self.memory_store,
+        )
+        persona_payload = extract_persona_payload(prompt_context_pack)
+        memory_payload = extract_interaction_memory_payload(prompt_context_pack)
+        recent_messages = extract_recent_messages(
+            prompt_context_pack,
+            interaction_config.memory_window_size,
+        )
+        input_payload = extract_input_payload(prompt_context_pack)
+        capability_payload = build_core_capability_payload(plugin_context, event)
+        material = InteractionContextMaterial(
+            prompt_context_pack=prompt_context_pack,
+            persona_payload=persona_payload,
+            memory_payload=memory_payload,
+            recent_messages=recent_messages,
+            input_payload=input_payload,
+            capability_payload=capability_payload,
+            decision_context={
+                "persona": persona_payload,
+                "memory": memory_payload,
+                "recent_messages": recent_messages,
+                "input": input_payload,
+                "core_capabilities": capability_payload,
+            },
+        )
+        event.set_extra("_interaction_prompt_context_pack", prompt_context_pack)
+        event.set_extra("_interaction_decision_context", material.decision_context)
+        if turn_state is not None:
+            turn_state.context_material = material
+        return material

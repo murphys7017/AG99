@@ -11,6 +11,10 @@ from astrbot.core.interaction.decision_agent import InteractionDecisionAgent
 from astrbot.core.interaction.input_gateway import CoreInputGateway
 from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.middleware import InteractionMiddleware
+from astrbot.core.interaction.turn_state import (
+    InteractionTurnState,
+    get_interaction_turn_state,
+)
 from astrbot.core.interaction.types import InteractionDecision, RouteMode
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
@@ -136,6 +140,9 @@ class TestInteractionMiddleware:
         assert queue.get_nowait() is webchat_event
         assert webchat_event.get_extra("_interaction_enabled") is True
         assert isinstance(webchat_event.get_extra("_turn_id"), str)
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert isinstance(turn_state, InteractionTurnState)
+        assert turn_state.turn_id == webchat_event.get_extra("_turn_id")
         assert webchat_event.get_extra("_output_controller") is controller
         assert (
             webchat_event.get_extra("_interaction_output_interceptor_installed") is True

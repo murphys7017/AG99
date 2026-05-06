@@ -87,6 +87,7 @@
 - stream observation
 - stream interjection
 - finalizer
+- decision context build
 - result contribution merge
 - visible output recording
 - interaction memory persistence
@@ -164,6 +165,12 @@
 - 决策阶段
 - 流式观察阶段
 
+严格来说，当前至少有三个阶段在各自拼装“本轮上下文材料”：
+
+- `decision_agent.py` 中的决策阶段
+- `output_controller.py` 中的流式观察阶段
+- `finalizer.py` / 最终结果整理阶段对本轮材料的局部重组
+
 这说明系统缺少可复用的 turn-local context material。
 
 直接问题有两个：
@@ -224,6 +231,127 @@
 - 多消息生命周期
 
 这也是后续维护容易越来越乱的原因。
+
+## 10. `decision_agent.py` 仍然游离在统一回合模型之外
+
+当前 `InteractionDecisionAgent` 自己承担了：
+
+- build interaction context pack
+- 提取 persona / memory / input payload
+- 组装 recent messages
+- 构建 decision context
+
+这会带来一个关键问题：
+
+- 即使 middleware 已经引入统一 `turn state`
+- 只要 decision agent 仍然自己独立构建 context
+- 系统仍然会保留“同一轮上下文被重复构建”的根因
+
+因此 `decision_agent.py` 不能被视为中间件外部模块，它必须纳入 Phase 1 的改造范围。
+
+## 11. `core_bridge.py` 仍然依赖 `event.extra` 解析状态
+
+当前 `core_bridge.py` 负责把：
+
+- `InteractionDecision`
+- `CoreTaskSpec`
+- execution context block
+
+注入到 core 的 `ProviderRequest` 中。
+
+这条链路的方向是对的，但它当前仍然偏向：
+
+- 从 `event.extra` 取 decision
+- 再从 decision 反推出 `CoreTaskSpec`
+
+如果 turn state 成为统一状态源，`core_bridge.py` 就不应继续承担“解析状态”的职责，而应退化为一个薄桥接层：
+
+- 从 turn state 读取已决议的 `CoreTaskSpec`
+- 负责把结构化执行意图注入 core request
+
+否则 turn state 只能算“新增状态”，而不是“主状态源”。
+
+## 12. 并发模型尚未定义
+
+当前流式观察链路会创建多个并发任务，它们会围绕同一轮交互读写共享状态。
+
+现状中共享写入主要落在：
+
+- `event.extra`
+- stream observation state
+- visible outputs
+- streaming text buffers
+
+引入 `InteractionTurnState` 之后，如果不提前定义并发模型，问题只会从“分散写 extra”变成“分散写 state”。
+
+必须明确：
+
+- 哪些字段允许并发写
+- 哪些字段只能串行写
+- 谁拥有写权限
+- 插件扩展点是否只能看到只读快照
+
+## 13. 插件扩展点还没有与统一 turn state 对齐
+
+当前存在三类扩展点：
+
+- prompt contributors
+- stream deciders
+- result contributors
+
+其中：
+
+- `InteractionResultView` 已经开始收口只读视图
+- prompt contributor 和 stream decider 仍然更偏向独立参数输入
+
+如果 turn state 成为统一状态源，而插件扩展点仍然各吃各的参数，那么中间件内部统一了，扩展面仍然是散的。
+
+因此插件扩展点也需要对齐为：
+
+- 面向 turn state 的只读阶段视图
+- 而不是继续传播大量松散参数
+
+## 14. `message_chain_delivery.py` 已经进入主路径，需要补充边界定义
+
+`message_chain_delivery.py` 负责消息链的物理拆分和发送，它已经位于中间件的用户可见输出主路径上。
+
+因此必须明确它与未来 `InteractionUtterance` 的边界：
+
+- `InteractionUtterance` 负责语义物化
+- `message_chain_delivery.py` 负责物理投递与拆分
+- delivery 层不应感知 turn state 的业务语义
+
+如果不提前写清楚，后续很容易把 turn 语义继续下沉到 delivery 层。
+
+## 15. 测试迁移策略尚未定义
+
+当前测试大多围绕：
+
+- `event.extra`
+- middleware 输出结果
+- interaction memory 持久化副作用
+
+如果后续把 turn state 变成主状态源，测试也必须同步演进，否则会出现：
+
+- 新实现已经改成 state 驱动
+- 测试仍然只验证旧 extra 语义
+
+这会让双写兼容期的测试价值下降，也不利于后续删除旧字段。
+
+## 16. `AstrMessageEvent.extra` 只是兼容承载，不应被误认为长期归宿
+
+短期内把 `InteractionTurnState` 挂到 `event.extra["_interaction_turn_state"]` 上是正确的兼容策略。
+
+但它只应被视为：
+
+- 兼容落点
+- 生命周期共享通道
+- 与现有 core / plugin / postprocess 机制桥接的临时承载
+
+长期方向仍应是：
+
+- turn state 由 middleware 自身 runtime context 持有
+- `event.extra` 仅保留必要桥接字段
 
 ## 根因分析
 
@@ -322,6 +450,57 @@
 
 后续任何新能力都只能声明自己接入哪个阶段，而不是自己再额外定义一段时序。
 
+## 并发与可见性模型
+
+为了让 `InteractionTurnState` 可落地，必须同时定义其并发与可见性约束。
+
+建议采用保守模型：
+
+1. `InteractionTurnState` 本身保持可变，但不允许外部任意字段直写
+2. 中间件内部提供有限的状态写入入口
+3. stream 相关共享状态使用独立 `asyncio.Lock`
+4. 对插件与辅助模块只暴露只读视图或阶段性 snapshot
+5. 非 stream 阶段尽量保持串行推进，不为了“并发好看”牺牲时序清晰度
+
+推荐分层如下：
+
+- `turn metadata`: 基本不可变，创建后只读
+- `decision material`: 决策完成后只读
+- `utterance ledger`: 允许追加，不允许原地重写历史 utterance
+- `stream state`: 允许并发更新，但必须通过受控入口与锁保护
+- `completion flags`: 只能单向推进，不允许回退
+
+不建议一开始就引入过重的 immutable + CAS 方案。当前更适合：
+
+- 有限可变状态
+- 明确的 owner
+- 小粒度锁
+- 对外只读
+
+## 插件扩展点对齐原则
+
+统一 turn state 后，插件扩展点不应直接拿到可变 state 对象，而应按阶段拿到只读视图。
+
+建议分为三类视图：
+
+1. `InteractionDecisionView`
+   - 给 prompt contributors 使用
+   - 提供 persona / memory / input / recent messages / core capabilities
+
+2. `InteractionStreamView`
+   - 给 stream deciders 使用
+   - 提供 turn metadata、已有 utterances、当前 stream buffer、当前窗口材料
+
+3. `InteractionResultView`
+   - 给 result contributors 使用
+   - 提供 decision、immediate reply、core result、final result、turn metadata
+
+原则是：
+
+- 插件扩展点看到的是“阶段性只读事实”
+- 不是“整个可变 turn state”
+- 这样既能统一扩展口，又不会把中间件内部实现细节泄漏出去
+
 ## 函数级现状与修复步骤
 
 下面按实际主链路函数说明当前行为、存在的问题，以及进入函数后的目标步骤。
@@ -370,6 +549,42 @@
    - `HYBRID`: 先执行 middleware utterance，再把 turn 交给 core 完成
    - `DELEGATE_TO_CORE`: 直接交给 core，但 turn owner 仍然是 middleware
 8. 无论走哪条分支，最终都应通过统一 turn 完成函数收口
+
+## 一点五、`InteractionDecisionAgent.decide()`
+
+文件：
+
+- `astrbot/core/interaction/decision_agent.py`
+
+### 当前进入函数后的步骤
+
+1. 检查是否命中协议命令绕过
+2. 取 decision provider
+3. 独立调用 `build_interaction_context_pack(...)`
+4. 独立提取：
+   - persona payload
+   - interaction memory payload
+   - recent messages
+   - input payload
+5. 组装 `decision_context`
+6. 收集 prompt contributors
+7. 构造 decision prompt
+8. 调用 decision model
+9. 解析 JSON 并生成 `InteractionDecision`
+
+### 当前问题
+
+- 它自己重复构建了 interaction context
+- 即使 middleware 已经有 turn state，这里仍然可能看到另一份“本轮材料”
+- 它是 turn state 收口中最容易被遗漏的根因点
+
+### 修复后的目标步骤
+
+1. 从 `InteractionTurnState` 读取已缓存 context material
+2. 只在 cache 缺失或显式要求 refresh 时重新构建
+3. 使用 state 中的 material 组装 `decision_context`
+4. prompt contributors 改为消费 decision view，而不是松散参数
+5. 产出的 `InteractionDecision` 回写到 turn state
 
 ## 二、`InteractionMiddleware._persist_turn()`
 
@@ -551,6 +766,31 @@
 7. 将其标记为本轮 closing utterance
 8. 由统一 turn completion 逻辑执行后续 memory / postprocess
 
+## 六点五、`apply_interaction_core_task_spec()`
+
+文件：
+
+- `astrbot/core/interaction/core_bridge.py`
+
+### 当前进入函数后的步骤
+
+1. 从 `event.extra` 读取 interaction decision 或 `CoreTaskSpec`
+2. 构建 execution context block
+3. 将 block 注入 `ProviderRequest.system_prompt`
+
+### 当前问题
+
+- bridge 仍然承担了一部分状态解析职责
+- 它还没有正式切换到“以 turn state 为唯一读取源”
+
+### 修复后的目标步骤
+
+1. 从 `InteractionTurnState` 读取已决议的 `CoreTaskSpec`
+2. 若当前 turn 不需要 core task spec，则直接返回
+3. 构建 execution context block
+4. 注入 `ProviderRequest`
+5. 旧 extra 字段仅作为兼容镜像，不再作为主读取路径
+
 ## 七、`finalize_response()`
 
 文件：
@@ -651,17 +891,21 @@
 - 建立 `InteractionTurnState`
 - 所有关键函数都能读取同一个 turn object
 - 旧的 `event.extra` 字段继续存在
+- `decision_agent.py` 对齐 turn state 的缓存上下文
 
 执行重点：
 
 - 在 `middleware.py` 创建 state
+- 在 `decision_agent.py` 改为优先读取 state 中已 materialize 的 context
 - 在 `output_controller.py` 改为优先读写 state
+- 定义 turn state 的基础并发模型与受控写入口
 - 保留旧字段映射，避免插件和外围逻辑失效
 
 完成标准：
 
 - 不需要从分散的 `extra` 中反推核心 turn 状态
 - 新增能力可以优先接入 state，而不是继续堆新 extra
+- decision 阶段不再默认独立构建第二份 interaction context
 
 ## 第二阶段：统一 utterance 模型与消息物化流程
 
@@ -669,17 +913,21 @@
 
 - 所有用户可见文本都先物化为 `InteractionUtterance`
 - 统一 message id、visible output、memory relevance、发送记录
+- `core_bridge.py` 与插件扩展点开始转向 state 驱动
 
 执行重点：
 
 - 重构 `capture_message_chain()`
 - 重构流式插话发送路径
 - 让 final reply 也走同一 utterance materialization 逻辑
+- 让 prompt / stream / result 三类扩展点逐步切换到只读阶段视图
+- 明确 `InteractionUtterance` 与 `message_chain_delivery.py` 的边界
 
 完成标准：
 
 - `_record_visible_output()` 不再是分散补记，而是 utterance 发送流程的自然副产物
 - interaction memory 的材料来源变得稳定且统一
+- `visible_message_id`、turn 内 utterance ledger、物理消息投递边界都变得可解释
 
 ## 第三阶段：收口 turn lifecycle 与 postprocess/memory 边界
 
@@ -688,17 +936,20 @@
 - 统一 turn completion
 - 统一 memory persist
 - 统一 turn postprocess dispatch
+- `core_bridge.py`、postprocess、memory 只消费显式 turn material
 
 执行重点：
 
 - 让 `_persist_turn()` 只消费 finalized turn material
 - 让 `postprocessor.py` 只消费 middleware 明确产出的 turn material
 - 让 `SELF_REPLY`、`HYBRID`、`DELEGATE_TO_CORE` 都通过同一套 turn completion 机制收口
+- 让 `core_bridge.py` 只从 turn state 读取 `CoreTaskSpec`
 
 完成标准：
 
 - 不再由多个函数各自决定“什么时候这一轮算完成”
 - memory 与 postprocess 不再需要从可见输出列表中自行推断完整 turn 语义
+- `core_bridge.py` 不再以 `event.extra` 为主状态源
 
 ## 兼容性策略
 
@@ -709,6 +960,38 @@
 3. `visible_message_id` 继续保持字符串语义稳定
 4. `turn_id` 继续作为一轮多消息的公共标识
 5. `message_id` 的唯一性继续由中间件内部保证，不要求 adapter 变更
+6. `event.extra["_interaction_turn_state"]` 作为兼容承载保留，但不定义为长期目标
+
+## 测试迁移策略
+
+本次重构必须采用“状态迁移与测试迁移同步推进”的方式。
+
+建议按 phase 对齐：
+
+### Phase 1
+
+- 保留现有 `event.extra` 语义测试
+- 新增 turn state 一致性测试
+- 验证 state 与旧 extra 双写结果一致
+- 验证 `decision_agent.py` 优先使用 state cache，而不是重复构建 context
+
+### Phase 2
+
+- 新增 utterance 级测试
+- 验证：
+  - `message_id` 生成
+  - `turn_id` 归属
+  - `memory_relevant` 过滤
+  - visible output ledger 追加顺序
+- 验证 `message_chain_delivery.py` 只负责物理投递，不篡改 utterance 语义
+- 验证三类扩展点看到的是只读阶段视图
+
+### Phase 3
+
+- 新增 turn completion 测试
+- 验证 memory / postprocess / core bridge 只消费 finalized turn material
+- 验证 `SELF_REPLY`、`HYBRID`、`DELEGATE_TO_CORE` 三种模式最终都能统一收口
+- 验证删除或弱化旧 extra 主读取路径后，行为不回退
 
 ## 不建议采用的修复方式
 
