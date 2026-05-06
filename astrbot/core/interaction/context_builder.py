@@ -3,9 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.prompt.collectors.conversation_history_collector import (
-    ConversationHistoryCollector,
-)
 from astrbot.core.prompt.collectors.input_collector import InputCollector
 from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
 from astrbot.core.prompt.context_collect import collect_context_pack
@@ -26,7 +23,6 @@ def build_interaction_collectors(
     return [
         PersonaCollector(),
         InputCollector(),
-        ConversationHistoryCollector(),
         InteractionMemoryCollector(memory_store),
     ]
 
@@ -75,45 +71,7 @@ def extract_recent_messages(
                             },
                         }
                     )
-
-    core_messages: list[dict[str, Any]] = []
-    slot = pack.get_slot("conversation.history")
-    if slot is None or not isinstance(slot.value, dict):
-        return interaction_messages[-limit:] if limit > 0 else interaction_messages
-    turns = slot.value.get("turns", [])
-    if not isinstance(turns, list):
-        return interaction_messages[-limit:] if limit > 0 else interaction_messages
-    limited_core_turns = turns[-limit:] if limit > 0 else turns
-    for turn in limited_core_turns:
-        if isinstance(turn, dict):
-            turn = dict(turn)
-            turn.setdefault("source", "core_conversation")
-            core_messages.append(turn)
-    messages = _dedupe_recent_messages([*core_messages, *interaction_messages])
-    return messages[-limit:] if limit > 0 else messages
-
-
-def _dedupe_recent_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped_reversed: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for message in reversed(messages):
-        if not isinstance(message, dict):
-            continue
-        user_text = _extract_turn_text(message, "user_message")
-        assistant_text = _extract_turn_text(message, "assistant_message")
-        key = (user_text, assistant_text)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped_reversed.append(message)
-    return list(reversed(deduped_reversed))
-
-
-def _extract_turn_text(turn: dict[str, Any], key: str) -> str:
-    payload = turn.get(key, {})
-    if not isinstance(payload, dict):
-        return ""
-    return str(payload.get("content", "") or "").strip()
+    return interaction_messages[-limit:] if limit > 0 else interaction_messages
 
 
 def extract_persona_payload(pack: ContextPack) -> dict[str, Any]:

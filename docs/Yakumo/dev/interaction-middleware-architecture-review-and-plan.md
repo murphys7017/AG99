@@ -1,0 +1,753 @@
+# Interaction Middleware Architecture Review And Refactor Plan
+
+本文件用于说明 AstrBot 当前 `interaction middleware` 的架构现状、已确认问题，以及后续修复计划。
+
+它不是 bug 清单，也不是一次性重构提案，而是一份面向实现的收口文档。重点回答三件事：
+
+- 当前中间件到底哪里“不像一个整体”
+- 这些问题的根因是什么
+- 后续应如何只在中间件内部做最小侵入、最大兼容的修复
+
+本文件讨论范围以 `astrbot/core/interaction/*` 为主，必要时会提及 `astrbot/core/memory/postprocessor.py`，但不以修改 adapter、前端或其他平台层为前提。
+
+## 一句话结论
+
+当前 `interaction middleware` 已经不再是一个薄拦截层，而是一个事实上的交互编排层。
+
+问题不在于它“不能工作”，而在于它还没有形成统一的回合模型。现状更像是：
+
+- 在入站链路上挂了一层决策
+- 在出站链路上挂了一层表达和流式观察
+- 在结果末端挂了一层最终改写
+- 在回合结束后再反向整理历史与记忆
+
+因此它更像“沿链路附着的一组功能”，而不是“围绕同一 turn state 运行的一套系统”。
+
+## 目标与边界
+
+本次修复计划遵循以下原则：
+
+- 只动中间件主链路，不以修改 adapter 为前提
+- 优先修复根因，不以下游补偿作为正确性证明
+- 保持旧字段兼容，避免破坏现有插件和核心调用方
+- 中间件自己的历史、输出和记忆以中间件真实可见输出为准
+
+本计划不追求：
+
+- 一次性重写整个 interaction 子系统
+- 改造平台消息协议
+- 要求前端必须理解新增字段后才可工作
+
+## 当前系统定位
+
+从职责上看，当前中间件已经承担了四类工作：
+
+1. 路由决策
+2. 用户可见输出编排
+3. 语言表达层改写
+4. 本地交互历史沉淀
+
+对应代码入口主要是：
+
+- `astrbot/core/interaction/middleware.py`
+- `astrbot/core/interaction/output_controller.py`
+- `astrbot/core/interaction/finalizer.py`
+- `astrbot/core/interaction/context_builder.py`
+- `astrbot/core/interaction/memory_store.py`
+
+这个定位本身不是问题。问题在于这些职责虽然都在中间件里，但并不是围绕一个统一的“本轮交互状态对象”在运转。
+
+## 已确认的问题
+
+## 1. 缺少统一的 turn-level state
+
+当前一轮交互的重要信息分散在多处：
+
+- `InteractionDecision`
+- `_interaction_immediate_reply`
+- `_visible_turn_outputs`
+- `_interaction_core_stream_text`
+- `_interaction_visible_message_counter`
+- `_interaction_core_final_result_consumed`
+- `_interaction_core_streaming_result_consumed`
+- `_interaction_*_failed`
+
+这些字段大多通过 `event.extra` 传递。这样做可以工作，但有两个结构性问题：
+
+- 没有单一真相源，多个函数各自从 `extra` 中拼接自己需要的局部状态
+- 新能力接入时往往不是接入统一模型，而是新增一个额外字段和一段新的链路逻辑
+
+这会导致系统越来越像“在事件对象上挂元数据”，而不是“围绕 turn state 运行”。
+
+## 2. 多个能力被接到同一链路上，但没有共同宿主
+
+当前主要能力包括：
+
+- immediate reply
+- stream observation
+- stream interjection
+- finalizer
+- result contribution merge
+- visible output recording
+- interaction memory persistence
+- turn postprocess
+
+它们都围绕“同一轮对话”工作，但没有共同的一等对象承载这轮对话。
+
+后果是：
+
+- 每个能力都要自己重新理解“这一轮”
+- 每个能力都要自己决定该读哪些字段
+- 每个能力都需要隐式假设其他能力已经做过什么
+
+这就是当前“像硬凑出来的整体”的根因。
+
+## 3. 一轮中存在多个“会说话的阶段”，但没有统一话语模型
+
+同一轮里，中间件可能会发出多种用户可见文本：
+
+- immediate reply
+- stream interjection
+- passthrough visible message
+- core reply
+- finalized core reply
+- result contributor override 之后的最终文本
+
+这些文本都在用户视角里表现为“同一个助手在说话”，但内部生成机制是分开的。
+
+当前缺少统一定义：
+
+- 每种文本属于哪种 utterance 类型
+- 哪些文本可以进历史
+- 哪些文本只用于过渡、不进入记忆
+- 哪些文本可以覆盖前面的表达
+
+目前这部分逻辑是存在的，但主要靠局部约定，而不是统一的话语模型。
+
+## 4. immediate reply 与 stream interjection 本质相近，却分属两套系统
+
+两者本质上都属于：
+
+> 核心执行尚未结束时，中间件主动说一句话。
+
+但当前实现中：
+
+- immediate reply 在 `middleware.py` 的决策分支中产生
+- stream interjection 在 `output_controller.py` 的流式观察过程中产生
+
+它们分别有：
+
+- 不同的触发时机
+- 不同的上下文准备方式
+- 不同的存储语义
+- 不同的记忆策略
+
+这不是代码错误，但逻辑上不收口。它们应该至少共享同一种“进行中 utterance policy”。
+
+## 5. finalizer 的职责边界仍然偏模糊
+
+`finalizer.py` 现在承担“最终表达层”的职责，但它并不是同一轮文本生成链路中的自然最后一步，而是一层追加改写。
+
+因此当前架构里存在一个模糊点：
+
+- 中间件到底是在“决定谁处理”
+- 还是在“替 core 组织用户可见表达”
+
+如果答案是后者，那它就已经是 orchestrator，而不是薄中间件。
+
+这个定位需要在代码结构上被承认，否则实现会持续表现出“路由器代码里混了表达层逻辑”的样子。
+
+## 6. 上下文构建存在重复建模
+
+当前至少有两个地方会构建 interaction 上下文：
+
+- 决策阶段
+- 流式观察阶段
+
+这说明系统缺少可复用的 turn-local context material。
+
+直接问题有两个：
+
+- 性能上重复构建
+- 语义上不同阶段看到的“本轮状态”不一定完全一致
+
+一旦后续再引入新的阶段性能力，这个问题会进一步放大。
+
+## 7. middleware history 方向已经正确，但对输出链路完整性要求很高
+
+当前设计已经明确：
+
+- middleware 的历史应来自 middleware 自己真实发出的可见内容
+- 不再以 core 原始 conversation history 作为主上下文来源
+
+这个方向是对的，但也意味着：
+
+- 任一用户可见路径漏记，会导致 interaction memory 丢失上下文
+- 任一路径重复记，会导致 interaction memory 污染
+- 任一路径记错 turn，会导致历史错配
+
+换句话说，历史模型已经收口了，但它对“输出路径是否全部接入统一记录点”的要求更高了。
+
+## 8. visible 与 memory_relevant 的边界刚建立，但还没有上升为系统规则
+
+目前已经有一个重要边界：
+
+- `visible_output`: 用户确实看见了
+- `memory_relevant`: 这段内容是否应该进入 interaction memory
+
+这个边界是合理的，也是必要的。
+
+但目前它主要由个别调用点在维护，还没有被抽象成统一规则。例如：
+
+- 哪些类型默认 `memory_relevant=False`
+- 未来新增 utterance 类型时谁来决定其记忆语义
+- 最终持久化时是否应统一过滤某些阶段性输出
+
+如果不继续收口，后续新增功能时还会再次出现“这段话到底算不算历史”的争议。
+
+## 9. 当前中间件的真实架构与代码表象不一致
+
+从行为上看，它已经是一个交互编排器。
+
+但从组织方式上看，很多代码仍然表现为：
+
+- 拦一下
+- 判断一下
+- 记一点状态
+- 下游再补一点
+
+这会导致维护者产生误判，以为这里只是一个薄层，结果在阅读时不断碰到：
+
+- 输出语义
+- 记忆语义
+- 后处理调度
+- 多消息生命周期
+
+这也是后续维护容易越来越乱的原因。
+
+## 根因分析
+
+以上问题可以归结为同一个根因：
+
+> interaction middleware 缺少一个统一的 `turn state` 和统一的 `turn lifecycle owner`。
+
+具体表现为：
+
+- 没有一个对象显式表示“这一轮交互”
+- 没有一个对象显式管理“这一轮已经说过什么”
+- 没有一个对象显式定义“这一轮何时完成、何时可持久化、何时触发 postprocess”
+- 不同阶段通过 `event.extra` 松散协作，而不是通过同一个状态模型协作
+
+因此系统只能表现为“附着式功能集合”。
+
+## 修复目标
+
+后续修复应把 interaction middleware 收口成：
+
+> 一个以 turn 为核心、以用户可见 utterance 为主要材料、以兼容旧 extra 字段为边界的交互编排层。
+
+这个目标拆开后包括四件事：
+
+1. 引入统一 `InteractionTurnState`
+2. 建立统一 `InteractionUtterance` 模型
+3. 收口统一 turn lifecycle
+4. 让 memory / postprocess 只消费中间件显式产出的 turn material
+
+## 目标结构
+
+建议在中间件内部引入以下一等对象。
+
+## 1. InteractionTurnState
+
+建议至少包含：
+
+- `turn_id`
+- `session_id`
+- `platform_id`
+- `user_input`
+- `persona_id`
+- `decision`
+- `utterances`
+- `stream_state`
+- `visible_message_counter`
+- `completion_state`
+- `memory_state`
+- `postprocess_state`
+- `error_state`
+
+旧的 `event.extra` 字段暂时继续保留，但只作为兼容映射层，不作为新的主状态源。
+
+## 2. InteractionUtterance
+
+建议将所有用户可见文本统一为同一种结构，再按类型区分：
+
+- `immediate_reply`
+- `stream_interjection`
+- `passthrough`
+- `core_reply`
+- `core_stream`
+- `finalized_reply`
+
+每条 utterance 至少包含：
+
+- `turn_id`
+- `message_id`
+- `kind`
+- `text`
+- `visible`
+- `memory_relevant`
+- `source`
+- `created_at`
+
+这样可以统一解决：
+
+- message id 生成
+- 可见输出记录
+- memory 归档材料
+- postprocess 可见材料来源
+
+## 3. InteractionTurnLifecycle
+
+建议明确一轮交互的生命周期：
+
+1. `turn_created`
+2. `decision_resolved`
+3. `pre_core_utterance_emitted`
+4. `core_stream_observing`
+5. `core_visible_output_completed`
+6. `turn_material_finalized`
+7. `interaction_memory_persisted`
+8. `turn_postprocess_dispatched`
+9. `turn_completed`
+
+后续任何新能力都只能声明自己接入哪个阶段，而不是自己再额外定义一段时序。
+
+## 函数级现状与修复步骤
+
+下面按实际主链路函数说明当前行为、存在的问题，以及进入函数后的目标步骤。
+
+## 一、`InteractionMiddleware._handle_inbound_async()`
+
+文件：
+
+- `astrbot/core/interaction/middleware.py`
+
+### 当前进入函数后的步骤
+
+1. 刷新 interaction 配置
+2. 生成新的 `turn_id`
+3. 调用决策器获取 `InteractionDecision`
+4. 把 `turn_id` 和 decision 附着到 `event.extra`
+5. 根据 `route_mode` 分三条分支：
+   - `SELF_REPLY`
+   - `HYBRID`
+   - `DELEGATE_TO_CORE`
+6. 在不同分支里分别决定：
+   - 是否先发 immediate reply
+   - 是否立刻结束可见回合
+   - 是否异步持久化 interaction memory
+   - 是否转发给 core
+
+### 当前问题
+
+- 这是整轮交互的事实入口，但没有显式创建 `turn state`
+- 后续所有函数都要再次从 `event.extra` 反推这一轮状态
+- `SELF_REPLY`、`HYBRID`、`DELEGATE` 的共性逻辑没有被提升为统一回合生命周期
+
+### 修复后的目标步骤
+
+1. 刷新配置
+2. 显式创建 `InteractionTurnState`
+3. 将 state 写入 `event.extra["_interaction_turn_state"]`
+4. 运行决策器，并把 decision 写入 state
+5. 根据 decision 计算本轮初始生命周期阶段
+6. 对外保留旧兼容字段：
+   - `_turn_id`
+   - `_interaction_decision`
+   - `_interaction_persona_id`
+7. 进入统一分支调度：
+   - `SELF_REPLY`: 只执行 middleware utterance，随后完成 turn
+   - `HYBRID`: 先执行 middleware utterance，再把 turn 交给 core 完成
+   - `DELEGATE_TO_CORE`: 直接交给 core，但 turn owner 仍然是 middleware
+8. 无论走哪条分支，最终都应通过统一 turn 完成函数收口
+
+## 二、`InteractionMiddleware._persist_turn()`
+
+文件：
+
+- `astrbot/core/interaction/middleware.py`
+
+### 当前进入函数后的步骤
+
+1. 从 `event.extra` 读取 `_turn_id`
+2. 从 `_visible_turn_outputs` 中按 `turn_id` 提取 canonical reply
+3. 如果提取不到，就回退到 `visible_reply`
+4. 调用 `memory_store.update_interaction_memory(...)`
+5. 写入当前用户输入和本轮 assistant reply
+
+### 当前问题
+
+- 持久化材料来自 `event.extra`，不是显式的 turn material
+- 该函数知道太多“如何从输出列表反推 canonical reply”的细节
+- turn memory 的完成时机分散在 middleware 和 output controller 两处
+
+### 修复后的目标步骤
+
+1. 只接收 `InteractionTurnState`
+2. 从 state 中读取已归一化的 `turn.materialized_memory_reply`
+3. 如果 material 尚未 finalized，则拒绝持久化并记录原因
+4. 调用 memory store 更新 interaction memory
+5. 在 state 中标记 `memory_persisted=True`
+6. 再同步兼容字段到 `event.extra`
+
+## 三、`InteractionOutputController.capture_message_chain()`
+
+文件：
+
+- `astrbot/core/interaction/output_controller.py`
+
+### 当前进入函数后的步骤
+
+1. 判断 message 是否为空
+2. 判断当前是否正在发 immediate reply
+3. 判断这条消息是否是 streaming finish 标记
+4. 判断这条消息是不是 core final model result
+5. 根据分类选择：
+   - immediate reply 直接发
+   - passthrough 直接发并持久化
+   - core final result 进入 `maybe_finalize_and_send`
+6. 发送后把文本记录进 `_visible_turn_outputs`
+
+### 当前问题
+
+- 它实际已经承担“出站编排中心”，但对外看起来像一个 send wrapper
+- 它内部混合了：
+  - 消息分类
+  - 可见发送
+  - output record
+  - memory persist
+  - finalizer 调用
+- 这些能力没有围绕统一 utterance 模型组织
+
+### 修复后的目标步骤
+
+1. 从 `InteractionTurnState` 读取当前 turn 状态
+2. 将传入消息先转成 `InteractionUtteranceCandidate`
+3. 根据当前 turn phase 和消息来源分类为：
+   - immediate utterance
+   - passthrough utterance
+   - core final utterance
+   - streaming finish marker
+4. 对分类结果统一执行：
+   - 物化 `InteractionUtterance`
+   - 生成 `message_id`
+   - 发送
+   - 写入 turn state 的 `utterances`
+5. 若该 utterance 被标记为 turn-closing candidate，则进入统一 finalize turn material 逻辑
+6. memory persist 不再由各分支各自决定，而由统一 turn 收口阶段决定
+
+## 四、`InteractionOutputController.capture_streaming()` / `_wrap_core_stream()`
+
+文件：
+
+- `astrbot/core/interaction/output_controller.py`
+
+### 当前进入函数后的步骤
+
+1. 标记 `_interaction_core_streaming_active`
+2. 用 `_wrap_core_stream()` 包装 core 的原始流式生成器
+3. 在包装器中累计：
+   - `total_text`
+   - `pending_text`
+4. 每达到 `stream_observation_min_chars` 就发起一次观察
+5. 每个观察窗口都可能触发 stream interjection
+6. 流结束后等待观察任务完成
+7. 把累计的 stream text 记录为可见输出
+
+### 当前问题
+
+- 这是典型的“沿链路挂功能”，而不是“turn state 里的 stream phase”
+- 窗口观察、插话、累计文本、最终落库都挤在一起
+- stream interjection 的上下文不是 turn-local material，而是现场重建
+
+### 修复后的目标步骤
+
+1. 进入函数时先拿到 `InteractionTurnState.stream_state`
+2. 将 streaming phase 标记为 `observing`
+3. 每个 chunk 只做一件事：更新 state 中的 stream buffer
+4. 当 buffer 达到观察阈值时，调度统一的 `observe_stream_window(state)` 逻辑
+5. `observe_stream_window` 决定是否创建 `stream_interjection` utterance
+6. 所有 interjection 都走统一 utterance 发送路径
+7. 流结束后统一收口：
+   - flush 最后一段 pending buffer
+   - 等待观察任务
+   - 物化 `core_stream` utterance
+   - 更新 turn phase
+
+## 五、`InteractionOutputController._decide_stream_interjection_with_model()`
+
+文件：
+
+- `astrbot/core/interaction/output_controller.py`
+
+### 当前进入函数后的步骤
+
+1. 取 provider
+2. 调用 `_build_stream_interjection_prompt()`
+3. 发起模型调用
+4. 解析 JSON
+5. 返回 `StreamObservationDecision`
+
+### 当前问题
+
+- 该能力的上下文准备与 decision 阶段重复
+- 它没有直接消费 turn state，而是重新 build prompt context
+- 它和 immediate reply 的逻辑边界没有统一定义
+
+### 修复后的目标步骤
+
+1. 从 `InteractionTurnState` 读取：
+   - 用户输入
+   - persona material
+   - interaction memory snapshot
+   - 已有 utterances
+   - 当前 stream buffer
+2. 构造统一的 “in-progress turn utterance decision” prompt
+3. 只允许输出是否插话及一句短句
+4. 返回统一的 `UtteranceDecision`
+5. 若允许插话，则交由统一 utterance materializer 处理
+
+## 六、`InteractionOutputController.maybe_finalize_and_send()`
+
+文件：
+
+- `astrbot/core/interaction/output_controller.py`
+- `astrbot/core/interaction/finalizer.py`
+
+### 当前进入函数后的步骤
+
+1. 读取 core 结果纯文本
+2. 调用 `finalize_response(...)`
+3. 如果 finalizer 失败且是 force 模式，则用错误提示文本兜底
+4. 合并 result contributors
+5. 发送最终消息
+6. 记录 visible output
+7. 持久化 interaction memory
+
+### 当前问题
+
+- finalizer、result contributor、最终发送混在同一层
+- 这是“最终用户可见 reply”的核心路径，但没有统一的 final materialization 阶段
+- finalizer 的职责是“表达层整理”还是“结果改写器”，当前边界不够清晰
+
+### 修复后的目标步骤
+
+1. 接收 core 原始消息，物化 `core_result_candidate`
+2. 根据 turn policy 决定是否进入 finalizer
+3. finalizer 只负责输出“最终文本建议”，不直接决定发送
+4. result contributors 只在统一 final material 阶段合并
+5. 物化最终 `core_reply` 或 `finalized_reply` utterance
+6. 发送 utterance
+7. 将其标记为本轮 closing utterance
+8. 由统一 turn completion 逻辑执行后续 memory / postprocess
+
+## 七、`finalize_response()`
+
+文件：
+
+- `astrbot/core/interaction/finalizer.py`
+
+### 当前进入函数后的步骤
+
+1. 检查是否允许 finalizer
+2. 根据内容长度、结构化标记等判断是否需要改写
+3. 组 prompt
+4. 调用模型
+5. 返回改写文本
+
+### 当前问题
+
+- 它是一个独立模块，但输入材料仍然偏散
+- 它只看当前文本，不是真正看完整 turn state
+- 它容易和 earlier utterance 在语气上发生轻微漂移
+
+### 修复后的目标步骤
+
+1. 输入改为 `InteractionTurnState + core_result_candidate`
+2. prompt 明确区分：
+   - 本轮用户输入
+   - 本轮已经说过的 middleware utterances
+   - core 原始结果
+   - 本轮最终话语边界
+3. 输出只允许是一份最终文本建议
+4. 不直接触发发送，不直接写记忆
+
+## 八、`build_interaction_context_pack()` / `extract_recent_messages()`
+
+文件：
+
+- `astrbot/core/interaction/context_builder.py`
+
+### 当前进入函数后的步骤
+
+1. 使用 `PersonaCollector`、`InputCollector`、`InteractionMemoryCollector`
+2. 构造 interaction 专用 context pack
+3. 从 `memory.interaction.recent_turns` 中提取 recent messages
+
+### 当前问题
+
+- 方向正确，但它服务的是多个阶段的“重新构建”
+- 缺少 turn-local cached material
+- 每个阶段都可能单独调用一次
+
+### 修复后的目标步骤
+
+1. 在 turn 创建阶段就完成一次 interaction context materialization
+2. 将以下结果写入 `InteractionTurnState`：
+   - persona payload
+   - input payload
+   - interaction memory payload
+   - recent messages
+3. 后续阶段优先复用 state 中缓存
+4. 只有在显式声明需要 refresh 时才重新构建
+
+## 九、`MemoryPostProcessor._resolve_interaction_turn_material()`
+
+文件：
+
+- `astrbot/core/memory/postprocessor.py`
+
+### 当前进入函数后的步骤
+
+1. 读取 `turn_id`
+2. 从 `visible_outputs` 中筛出当前 turn
+3. 过滤 `memory_relevant=False` 或 `stream_interjection`
+4. 从剩余输出拼接 assistant text
+5. 构造本轮 conversation history material
+
+### 当前问题
+
+- 它仍然是在 postprocess 阶段“反推这一轮到底说了什么”
+- 如果 turn material 在 middleware 内部能显式产出，这里就不应该自己再推理一次
+- 现在虽然逻辑已比以前统一，但仍然带有“收尾补推断”的味道
+
+### 修复后的目标步骤
+
+1. 由 middleware 在 turn completion 时显式生成 `interaction_turn_material`
+2. postprocessor 直接读取该 material
+3. postprocessor 不再负责解释：
+   - 哪些 visible outputs 算 canonical reply
+   - 哪些 utterance 应排除
+4. postprocessor 只负责消费统一 material 并执行记忆更新
+
+## 分阶段修复计划
+
+为降低侵入性，建议分三阶段推进。
+
+## 第一阶段：引入统一 turn state，但保留旧字段兼容
+
+目标：
+
+- 建立 `InteractionTurnState`
+- 所有关键函数都能读取同一个 turn object
+- 旧的 `event.extra` 字段继续存在
+
+执行重点：
+
+- 在 `middleware.py` 创建 state
+- 在 `output_controller.py` 改为优先读写 state
+- 保留旧字段映射，避免插件和外围逻辑失效
+
+完成标准：
+
+- 不需要从分散的 `extra` 中反推核心 turn 状态
+- 新增能力可以优先接入 state，而不是继续堆新 extra
+
+## 第二阶段：统一 utterance 模型与消息物化流程
+
+目标：
+
+- 所有用户可见文本都先物化为 `InteractionUtterance`
+- 统一 message id、visible output、memory relevance、发送记录
+
+执行重点：
+
+- 重构 `capture_message_chain()`
+- 重构流式插话发送路径
+- 让 final reply 也走同一 utterance materialization 逻辑
+
+完成标准：
+
+- `_record_visible_output()` 不再是分散补记，而是 utterance 发送流程的自然副产物
+- interaction memory 的材料来源变得稳定且统一
+
+## 第三阶段：收口 turn lifecycle 与 postprocess/memory 边界
+
+目标：
+
+- 统一 turn completion
+- 统一 memory persist
+- 统一 turn postprocess dispatch
+
+执行重点：
+
+- 让 `_persist_turn()` 只消费 finalized turn material
+- 让 `postprocessor.py` 只消费 middleware 明确产出的 turn material
+- 让 `SELF_REPLY`、`HYBRID`、`DELEGATE_TO_CORE` 都通过同一套 turn completion 机制收口
+
+完成标准：
+
+- 不再由多个函数各自决定“什么时候这一轮算完成”
+- memory 与 postprocess 不再需要从可见输出列表中自行推断完整 turn 语义
+
+## 兼容性策略
+
+为了兼容现有生态，必须坚持以下策略：
+
+1. 旧的 `event.extra` 字段短期内全部保留
+2. 新增 `InteractionTurnState` 后，先做双写，不立即删旧字段
+3. `visible_message_id` 继续保持字符串语义稳定
+4. `turn_id` 继续作为一轮多消息的公共标识
+5. `message_id` 的唯一性继续由中间件内部保证，不要求 adapter 变更
+
+## 不建议采用的修复方式
+
+以下方式虽然可能暂时缓解表面问题，但不应视为根因修复：
+
+- 继续新增 `_interaction_*` extra 字段来协调更多分支
+- 在 output controller 下游再补一层历史修正
+- 在 memory postprocess 里加入更多推断逻辑
+- 依赖 adapter 或前端配合来定义 turn 语义
+- 在 finalizer 或 stream interjection 上堆更多 prompt 规则来掩盖状态不统一
+
+这些方式只会让系统更像拼装层，而不是让它成为整体。
+
+## 验证要求
+
+每个阶段完成后，至少应验证以下链路：
+
+1. `SELF_REPLY` 单轮闭环是否稳定
+2. `HYBRID` 是否保持“一轮内多消息”的统一 turn 语义
+3. `DELEGATE_TO_CORE` 是否仍由 middleware 持有 turn owner 语义
+4. 流式输出场景下是否能：
+   - 正确累计 stream text
+   - 正确按窗口观察
+   - 正确发出 interjection
+   - 正确落 interaction memory
+5. interaction memory 是否只基于 middleware 自己真实发出的 canonical utterance
+6. postprocess 是否只消费 middleware 最终确认的 turn material
+
+## 最终结论
+
+当前 interaction middleware 的主要问题，不是代码局部报错，而是：
+
+> 它已经承担了交互编排职责，却还没有一个与之相称的统一回合模型。
+
+因此后续修复必须围绕以下根因展开：
+
+- 建立统一 `turn state`
+- 建立统一 `utterance` 模型
+- 建立统一 `turn lifecycle`
+- 让 memory 和 postprocess 只消费中间件显式产出的 turn material
+
+只有这样，interaction middleware 才会从“沿链路附着的一组能力”真正收口为“一个完整的交互编排层”。

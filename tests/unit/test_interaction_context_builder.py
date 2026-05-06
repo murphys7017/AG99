@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from astrbot.core.interaction.context_builder import (
+    build_interaction_collectors,
     collect_interaction_prompt_contributions,
     extract_recent_messages,
 )
@@ -11,6 +12,7 @@ from astrbot.core.interaction.memory_store import (
     InteractionMemorySnapshot,
     InteractionMemoryStore,
     build_interaction_memory_payload,
+    build_interaction_memory_reply_from_visible_outputs,
     update_interaction_memory_from_turn,
 )
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
@@ -62,7 +64,7 @@ def test_extract_recent_messages_includes_interaction_memory_turns():
     ]
 
 
-def test_extract_recent_messages_dedupes_core_and_interaction_memory_turns():
+def test_extract_recent_messages_uses_only_interaction_memory_turns():
     snapshot = InteractionMemorySnapshot(
         session_id="session",
         recent_turns=[
@@ -108,6 +110,12 @@ def test_extract_recent_messages_dedupes_core_and_interaction_memory_turns():
     assert len(messages) == 1
     assert messages[0]["source"] == "interaction_memory"
 
+def test_build_interaction_collectors_uses_only_interaction_collectors():
+    collectors = build_interaction_collectors(InteractionMemoryStore())
+
+    assert len(collectors) == 3
+    assert collectors[-1].__class__.__name__ == "InteractionMemoryCollector"
+
 
 def test_update_interaction_memory_from_turn_keeps_structured_recent_turns():
     snapshot = InteractionMemorySnapshot(session_id="session")
@@ -150,6 +158,40 @@ def test_update_interaction_memory_merges_same_turn_id():
             "turn_id": "turn-1",
         }
     ]
+
+
+def test_build_interaction_memory_reply_from_visible_outputs_filters_by_turn_and_relevance():
+    reply = build_interaction_memory_reply_from_visible_outputs(
+        [
+            {
+                "turn_id": "turn-1",
+                "kind": "immediate_reply",
+                "text": "等我看看。",
+                "memory_relevant": True,
+            },
+            {
+                "turn_id": "turn-1",
+                "kind": "stream_interjection",
+                "text": "还在查。",
+                "memory_relevant": False,
+            },
+            {
+                "turn_id": "turn-1",
+                "kind": "core_reply",
+                "text": "你可以执行工作区命令。",
+                "memory_relevant": True,
+            },
+            {
+                "turn_id": "turn-2",
+                "kind": "core_reply",
+                "text": "别串轮。",
+                "memory_relevant": True,
+            },
+        ],
+        turn_id="turn-1",
+    )
+
+    assert reply == "等我看看。 你可以执行工作区命令。"
 
 
 @pytest.mark.asyncio

@@ -731,6 +731,7 @@ class TestInteractionMiddleware:
                 reason="self",
             )
         )
+        middleware.memory_store.update_interaction_memory = AsyncMock()
 
         with patch(
             "astrbot.core.interaction.middleware.dispatch_postprocess",
@@ -752,6 +753,62 @@ class TestInteractionMiddleware:
         assert dispatch.await_args.kwargs["turn_id"] == webchat_event.get_extra(
             "_turn_id"
         )
+
+    @pytest.mark.asyncio
+    async def test_self_reply_persists_memory_before_turn_postprocess(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        complete_visible_turn = AsyncMock()
+        webchat_event.complete_visible_turn = complete_visible_turn
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.SELF_REPLY,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="嗯。",
+                confidence=0.9,
+                reason="self",
+            )
+        )
+        order: list[str] = []
+
+        async def _capture_update(session_id, persona_id, updater):  # noqa: ANN001
+            del session_id, persona_id, updater
+            order.append("persist")
+            return InteractionMemorySnapshot(session_id="test-session")
+
+        middleware.memory_store.update_interaction_memory = AsyncMock(
+            side_effect=_capture_update
+        )
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(side_effect=lambda **_kwargs: order.append("postprocess")),
+        ):
+            middleware.handle_inbound(webchat_event)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        assert order == ["persist", "postprocess"]
 
 
 class TestCoreInputGateway:

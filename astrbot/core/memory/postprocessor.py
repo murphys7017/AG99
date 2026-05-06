@@ -5,6 +5,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from astrbot.core import logger
+from astrbot.core.interaction.memory_store import (
+    build_interaction_memory_reply_from_visible_outputs,
+)
 from astrbot.core.postprocess import register_postprocessor, unregister_postprocessor
 from astrbot.core.postprocess.types import PostProcessContext, PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
@@ -265,7 +268,9 @@ def _resolve_interaction_turn_material(
     if user_message is None:
         return None
 
-    assistant_text = _join_visible_output_texts(memory_outputs)
+    assistant_text = build_interaction_memory_reply_from_visible_outputs(
+        memory_outputs
+    )
     if not assistant_text:
         return None
 
@@ -313,17 +318,6 @@ def _build_user_message_from_event(event) -> dict[str, Any] | None:
     if not prompt:
         return None
     return {"role": "user", "content": prompt}
-
-
-def _join_visible_output_texts(outputs: list[dict[str, Any]]) -> str:
-    texts: list[str] = []
-    for output in outputs:
-        text = _normalize_text(output.get("text"))
-        if text:
-            texts.append(text)
-    return "\n".join(texts).strip()
-
-
 def _build_user_message_from_prompt(
     provider_request: ProviderRequest | None,
 ) -> dict[str, Any] | None:

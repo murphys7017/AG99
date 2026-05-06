@@ -215,3 +215,26 @@ def update_interaction_memory_from_turn(
     if visible_reply:
         snapshot.last_impression_summary = visible_reply[:160]
     return snapshot
+
+
+def build_interaction_memory_reply_from_visible_outputs(
+    visible_outputs: list[dict[str, Any]] | None,
+    *,
+    turn_id: str | None = None,
+) -> str:
+    if not isinstance(visible_outputs, list):
+        return ""
+    clean_turn_id = (turn_id or "").strip()
+    parts: list[str] = []
+    for item in visible_outputs:
+        if not isinstance(item, dict):
+            continue
+        if clean_turn_id and str(item.get("turn_id", "") or "").strip() != clean_turn_id:
+            continue
+        if not bool(item.get("memory_relevant", True)):
+            continue
+        text = str(item.get("text", "") or "").strip()
+        if not text:
+            continue
+        parts.append(text)
+    return " ".join(parts).strip()

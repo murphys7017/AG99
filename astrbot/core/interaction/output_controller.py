@@ -8,6 +8,7 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.message.components import Plain
+from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.render.selector import _extract_json_object
@@ -27,7 +28,11 @@ from .contributors import (
 from .core_bridge import get_interaction_decision
 from .decision_agent import _build_decision_build_config
 from .finalizer import finalize_response
-from .memory_store import InteractionMemoryStore, update_interaction_memory_from_turn
+from .memory_store import (
+    InteractionMemoryStore,
+    build_interaction_memory_reply_from_visible_outputs,
+    update_interaction_memory_from_turn,
+)
 from .types import FinalizerMode, InteractionAgentConfig
 
 
@@ -45,10 +50,12 @@ class InteractionOutputController:
         plugin_context: Any | None = None,
         interaction_config: InteractionAgentConfig | None = None,
         memory_store: InteractionMemoryStore | None = None,
+        platform_settings: dict[str, Any] | None = None,
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
         self.memory_store = memory_store or InteractionMemoryStore()
+        self.platform_settings = platform_settings or {}
 
     async def emit_immediate_spoken_reply(
         self,
@@ -92,14 +99,12 @@ class InteractionOutputController:
                 event.session_id,
                 event.get_extra("_turn_id"),
             )
-            await self._send_platform_message(
-                message,
+            await self._deliver_visible_message(
                 event,
-                platform_extras=self.build_platform_output_extras(
-                    event,
-                    message_kind="immediate_reply",
-                ),
+                message,
+                message_kind="immediate_reply",
                 record_send_operation=False,
+                allow_segmented_reply=False,
             )
             self._record_visible_output(
                 event,
@@ -130,13 +135,20 @@ class InteractionOutputController:
                 event.session_id,
                 event.get_extra("_turn_id"),
             )
-            await self._send_platform_message(
-                message,
+            await self._deliver_visible_message(
                 event,
-                platform_extras=self.build_platform_output_extras(
-                    event,
-                    message_kind="passthrough",
-                ),
+                message,
+                message_kind="passthrough",
+                allow_segmented_reply=True,
+            )
+            self._record_visible_output(
+                event,
+                message_kind="passthrough",
+                text=message.get_plain_text(),
+            )
+            await self._persist_interaction_turn(
+                event,
+                message.get_plain_text(),
             )
             return
 
@@ -161,13 +173,12 @@ class InteractionOutputController:
         if final_message is not None:
             return
 
-        await self._send_platform_message(
-            full_message,
+        await self._deliver_visible_message(
             event,
-            platform_extras=self.build_platform_output_extras(
-                event,
-                message_kind="core_reply",
-            ),
+            full_message,
+            message_kind="core_reply",
+            result_is_model_result=True,
+            allow_segmented_reply=True,
         )
         self._record_visible_output(
             event,
@@ -781,13 +792,12 @@ class InteractionOutputController:
             and event.get_extra("_interaction_finalizer_failed")
         ):
             final_message = message.derive([Plain("最终回复整理失败，请查看日志。")])
-            await self._send_platform_message(
-                final_message,
+            await self._deliver_visible_message(
                 event,
-                platform_extras=self.build_platform_output_extras(
-                    event,
-                    message_kind="core_reply",
-                ),
+                final_message,
+                message_kind="core_reply",
+                result_is_model_result=True,
+                allow_segmented_reply=True,
             )
             self._record_visible_output(
                 event,
@@ -830,15 +840,17 @@ class InteractionOutputController:
         if merged.final_text_override is not None:
             final_message = message.derive([Plain(merged.final_text_override)])
 
-        platform_extras = self.build_platform_output_extras(
+        platform_extras = self.build_platform_output_base_extras(
             event,
-            message_kind="core_reply",
             result_contribution=merged,
         )
-        await self._send_platform_message(
-            final_message,
+        await self._deliver_visible_message(
             event,
+            final_message,
+            message_kind="core_reply",
             platform_extras=platform_extras,
+            result_is_model_result=True,
+            allow_segmented_reply=True,
         )
         self._record_visible_output(
             event,
@@ -965,6 +977,27 @@ class InteractionOutputController:
         message_kind: str,
         result_contribution: InteractionResultContribution | None = None,
     ) -> dict[str, Any]:
+        extras = self.build_platform_output_base_extras(
+            event,
+            result_contribution=result_contribution,
+        )
+        visible_message_id = self._next_visible_message_id(event, message_kind)
+        extras.update(
+            {
+                "turn_id": event.get_extra("_turn_id"),
+                "visible_message_id": visible_message_id,
+                "message_kind": message_kind,
+                "composite_message_id": visible_message_id,
+            }
+        )
+        return {key: value for key, value in extras.items() if value is not None}
+
+    def build_platform_output_base_extras(
+        self,
+        event: AstrMessageEvent,
+        *,
+        result_contribution: InteractionResultContribution | None = None,
+    ) -> dict[str, Any]:
         extras: dict[str, Any] = {}
         hints = event.get_extra("_interaction_plugin_hints", {})
         if isinstance(hints, dict):
@@ -977,16 +1010,7 @@ class InteractionOutputController:
                 extras["client_objects"] = list(result_contribution.client_objects)
             if result_contribution.metadata:
                 extras["metadata"] = dict(result_contribution.metadata)
-        visible_message_id = self._next_visible_message_id(event, message_kind)
-        extras.update(
-            {
-                "turn_id": event.get_extra("_turn_id"),
-                "visible_message_id": visible_message_id,
-                "message_kind": message_kind,
-                "composite_message_id": visible_message_id,
-            }
-        )
-        return {key: value for key, value in extras.items() if value is not None}
+        return extras
 
     @staticmethod
     def _next_visible_message_id(event: AstrMessageEvent, message_kind: str) -> str:
@@ -1024,6 +1048,58 @@ class InteractionOutputController:
             record_send_operation=record_send_operation,
         )
 
+    async def _deliver_visible_message(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        *,
+        message_kind: str,
+        platform_extras: dict[str, Any] | None = None,
+        record_send_operation: bool = True,
+        result_is_model_result: bool = False,
+        allow_segmented_reply: bool = False,
+    ) -> bool:
+        base_extras = self._strip_message_identity_extras(platform_extras or {})
+
+        async def _send(chain: MessageChain) -> None:
+            await self._send_platform_message(
+                chain,
+                event,
+                platform_extras={
+                    **base_extras,
+                    **self.build_platform_output_extras(
+                        event,
+                        message_kind=message_kind,
+                    ),
+                },
+                record_send_operation=record_send_operation,
+            )
+
+        return await deliver_message_chain(
+            event,
+            message,
+            send_message=_send,
+            platform_settings=self.platform_settings,
+            result_is_model_result=result_is_model_result,
+            allow_segmented_reply=allow_segmented_reply,
+        )
+
+    @staticmethod
+    def _strip_message_identity_extras(
+        platform_extras: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in platform_extras.items()
+            if key
+            not in {
+                "turn_id",
+                "visible_message_id",
+                "message_kind",
+                "composite_message_id",
+            }
+        }
+
     @staticmethod
     def _record_visible_output(
         event: AstrMessageEvent,
@@ -1054,7 +1130,14 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         visible_reply: str | None,
     ) -> None:
-        if not visible_reply:
+        turn_id = str(event.get_extra("_turn_id", "") or "")
+        canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+            event.get_extra("_visible_turn_outputs", []),
+            turn_id=turn_id,
+        )
+        if not canonical_reply:
+            canonical_reply = (visible_reply or "").strip()
+        if not canonical_reply:
             return
         try:
             await self.memory_store.update_interaction_memory(
@@ -1063,8 +1146,8 @@ class InteractionOutputController:
                 lambda snapshot: update_interaction_memory_from_turn(
                     snapshot,
                     user_text=event.message_str,
-                    visible_reply=visible_reply,
-                    turn_id=str(event.get_extra("_turn_id", "") or ""),
+                    visible_reply=canonical_reply,
+                    turn_id=turn_id,
                 ),
             )
             logger.debug(
@@ -1072,7 +1155,7 @@ class InteractionOutputController:
                 event.get_platform_id(),
                 event.session_id,
                 event.get_extra("_turn_id"),
-                len(visible_reply),
+                len(canonical_reply),
             )
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_memory_persist_failed", True)

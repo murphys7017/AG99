@@ -161,7 +161,9 @@ class AstrBotCoreLifecycle:
 
         # 初始化事件队列
         self.event_queue = Queue()
-        self.interaction_output_controller = InteractionOutputController()
+        self.interaction_output_controller = InteractionOutputController(
+            platform_settings=self.astrbot_config.get("platform_settings", {}),
+        )
         self.interaction_middleware = InteractionMiddleware(
             self.astrbot_config,
             self.event_queue,

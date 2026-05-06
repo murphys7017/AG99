@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from astrbot.core.interaction.contributors import InteractionResultContribution
+from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.types import (
     FinalizerMode,
@@ -347,9 +348,12 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     plugin_context.list_interaction_result_contributors.return_value = [
         ResultContributor()
     ]
+    memory_store = MagicMock()
+    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        memory_store=memory_store,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -371,8 +375,17 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     assert payload["data"] == "command result"
     assert payload["platform_extras"]["turn_id"] == "turn-1"
     assert payload["platform_extras"]["message_kind"] == "passthrough"
+    assert webchat_event.get_extra("_visible_turn_outputs") == [
+        {
+            "turn_id": "turn-1",
+            "kind": "passthrough",
+            "text": "command result",
+            "memory_relevant": True,
+        }
+    ]
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_not_called()
+    memory_store.update_interaction_memory.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -518,6 +531,64 @@ async def test_outbound_memory_persist_failure_is_recorded(webchat_event):
 
 
 @pytest.mark.asyncio
+async def test_outbound_memory_persist_uses_visible_outputs_as_canonical_reply(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    memory_store = MagicMock()
+    captured_snapshot = None
+
+    async def _capture_update(session_id, persona_id, updater):  # noqa: ANN001
+        del session_id, persona_id
+        nonlocal captured_snapshot
+        captured_snapshot = updater(InteractionMemorySnapshot(session_id="session"))
+        return captured_snapshot
+
+    memory_store.update_interaction_memory = AsyncMock(side_effect=_capture_update)
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        memory_store=memory_store,
+    )
+    webchat_event.set_extra(
+        "_visible_turn_outputs",
+        [
+            {
+                "turn_id": "turn-1",
+                "kind": "immediate_reply",
+                "text": "等我看看。",
+                "memory_relevant": True,
+            },
+            {
+                "turn_id": "turn-1",
+                "kind": "stream_interjection",
+                "text": "还在查。",
+                "memory_relevant": False,
+            },
+        ],
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("你可以执行工作区命令。")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("你可以执行工作区命令。")]),
+            webchat_event,
+        )
+
+    assert captured_snapshot is not None
+    assert captured_snapshot.recent_turns[0]["assistant"] == (
+        "等我看看。 你可以执行工作区命令。"
+    )
+
+
+@pytest.mark.asyncio
 async def test_force_finalizer_failure_does_not_send_raw_core_result(webchat_event):
     queue = asyncio.Queue()
     plugin_context = MagicMock()
@@ -591,6 +662,53 @@ async def test_segmented_core_final_uses_full_result_once(webchat_event):
     assert payload["data"] == "wrapped result"
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_core_final_result_reuses_segmented_delivery_rules(webchat_event):
+    queue = asyncio.Queue()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        platform_settings={
+            "segmented_reply": {
+                "enable": True,
+                "only_llm_result": True,
+                "interval_method": "random",
+                "interval": "0,0",
+            }
+        },
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("first"), Plain("second")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("first")]),
+            webchat_event,
+        )
+
+    first_payload = queue.get_nowait()
+    second_payload = queue.get_nowait()
+    assert first_payload["data"] == "first"
+    assert second_payload["data"] == "second"
+    assert first_payload["platform_extras"]["turn_id"] == "turn-1"
+    assert second_payload["platform_extras"]["turn_id"] == "turn-1"
+    assert (
+        first_payload["platform_extras"]["visible_message_id"]
+        == "turn-1::core_reply::0001"
+    )
+    assert (
+        second_payload["platform_extras"]["visible_message_id"]
+        == "turn-1::core_reply::0002"
+    )
+    assert queue.empty()
 
 
 @pytest.mark.asyncio

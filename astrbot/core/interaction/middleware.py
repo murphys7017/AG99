@@ -17,7 +17,11 @@ from .core_bridge import (
     INTERACTION_DECISION_EXTRA_KEY,
 )
 from .decision_agent import InteractionDecisionAgent, build_fallback_decision
-from .memory_store import InteractionMemoryStore, update_interaction_memory_from_turn
+from .memory_store import (
+    InteractionMemoryStore,
+    build_interaction_memory_reply_from_visible_outputs,
+    update_interaction_memory_from_turn,
+)
 from .output_controller import InteractionOutputController
 from .types import InteractionDecision, RouteMode
 
@@ -246,10 +250,10 @@ class InteractionMiddleware:
                     return
             completed = await self._complete_visible_turn_or_record_failure(event)
             if completed:
-                self._schedule_turn_postprocess(event)
                 await self._persist_turn(
                     event, decision, decision.immediate_spoken_reply
                 )
+                self._schedule_turn_postprocess(event)
             return
         if decision.route_mode == RouteMode.HYBRID:
             if decision.should_emit_immediate_reply:
@@ -440,6 +444,16 @@ class InteractionMiddleware:
         decision: InteractionDecision,
         visible_reply: str | None,
     ) -> None:
+        del decision
+        turn_id = str(event.get_extra("_turn_id", "") or "")
+        canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+            event.get_extra("_visible_turn_outputs", []),
+            turn_id=turn_id,
+        )
+        if not canonical_reply:
+            canonical_reply = (visible_reply or "").strip()
+        if not canonical_reply:
+            return
         try:
             await self.memory_store.update_interaction_memory(
                 event.unified_msg_origin,
@@ -447,8 +461,8 @@ class InteractionMiddleware:
                 lambda snapshot: update_interaction_memory_from_turn(
                     snapshot,
                     user_text=event.message_str,
-                    visible_reply=visible_reply,
-                    turn_id=str(event.get_extra("_turn_id", "") or ""),
+                    visible_reply=canonical_reply,
+                    turn_id=turn_id,
                 ),
             )
         except Exception as exc:  # noqa: BLE001
