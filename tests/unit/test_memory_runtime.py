@@ -5210,6 +5210,65 @@ async def test_memory_postprocessor_groups_interaction_visible_outputs_by_turn()
     assert len(req.provider_request["visible_outputs"]) == 3
 
 
+@pytest.mark.asyncio
+async def test_memory_postprocessor_prefers_explicit_turn_material():
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.message_str = "Can you check permissions?"
+    event.session_id = "session-1"
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = None
+    ctx.provider_request = ProviderRequest(
+        prompt="Can you check permissions?",
+        session_id="session-1",
+    )
+    ctx.llm_response = None
+    ctx.turn_id = "turn-1"
+    ctx.visible_outputs = []
+    ctx.turn_material = {
+        "turn_id": "turn-1",
+        "assistant_text": "Let me check. You can run commands in the workspace.",
+        "visible_outputs": [
+            {
+                "turn_id": "turn-1",
+                "kind": "immediate_reply",
+                "text": "Let me check.",
+                "memory_relevant": True,
+            },
+            {
+                "turn_id": "turn-1",
+                "kind": "core_reply",
+                "text": "You can run commands in the workspace.",
+                "memory_relevant": True,
+            },
+        ],
+        "history_source": "interaction.turn.material",
+    }
+    ctx.timestamp = datetime.now(UTC)
+
+    req = await processor.build_update_request(ctx)
+
+    assert req is not None
+    assert req.turn_id == "turn-1"
+    assert req.assistant_message["content"] == (
+        "Let me check. You can run commands in the workspace."
+    )
+    assert req.provider_request is not None
+    assert req.provider_request["history_source"] == "interaction.turn.material"
+    assert len(req.provider_request["visible_outputs"]) == 2
+
+
 def test_register_memory_postprocessor_reuses_singleton_and_updates_service(
     monkeypatch: pytest.MonkeyPatch,
 ):

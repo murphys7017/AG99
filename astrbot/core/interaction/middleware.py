@@ -23,7 +23,12 @@ from .memory_store import (
     update_interaction_memory_from_turn,
 )
 from .output_controller import InteractionOutputController
-from .turn_state import ensure_interaction_turn_state
+from .turn_state import (
+    ensure_interaction_turn_state,
+    get_interaction_turn_finalized_material,
+    get_interaction_turn_visible_outputs,
+    set_interaction_turn_finalized_material,
+)
 from .types import InteractionDecision, RouteMode
 
 
@@ -360,11 +365,10 @@ class InteractionMiddleware:
             return False
 
     def _schedule_turn_postprocess(self, event: AstrMessageEvent) -> None:
-        visible_outputs = [
-            dict(item)
-            for item in event.get_extra("_visible_turn_outputs", [])
-            if isinstance(item, dict)
-        ]
+        visible_outputs = get_interaction_turn_visible_outputs(event)
+        turn_material = get_interaction_turn_finalized_material(event)
+        if turn_material is None:
+            turn_material = self._build_finalized_turn_material(event, visible_outputs)
         self._spawn_background_task(
             dispatch_postprocess(
                 event=event,
@@ -372,6 +376,7 @@ class InteractionMiddleware:
                 plugin_context=self.plugin_context,
                 turn_id=str(event.get_extra("_turn_id", "") or ""),
                 visible_outputs=visible_outputs,
+                turn_material=turn_material,
             ),
             name=f"interaction_turn_postprocess_{event.get_platform_id()}",
             done_callback=lambda done_task: self._log_turn_postprocess_failure(
@@ -448,14 +453,20 @@ class InteractionMiddleware:
     ) -> None:
         del decision
         turn_id = str(event.get_extra("_turn_id", "") or "")
+        visible_outputs = get_interaction_turn_visible_outputs(event)
         canonical_reply = build_interaction_memory_reply_from_visible_outputs(
-            event.get_extra("_visible_turn_outputs", []),
+            visible_outputs,
             turn_id=turn_id,
         )
         if not canonical_reply:
             canonical_reply = (visible_reply or "").strip()
         if not canonical_reply:
             return
+        self._build_finalized_turn_material(
+            event,
+            visible_outputs,
+            canonical_reply=canonical_reply,
+        )
         try:
             await self.memory_store.update_interaction_memory(
                 event.unified_msg_origin,
@@ -478,3 +489,40 @@ class InteractionMiddleware:
                 exc,
                 exc_info=True,
             )
+
+    def _build_finalized_turn_material(
+        self,
+        event: AstrMessageEvent,
+        visible_outputs: list[dict[str, Any]] | None = None,
+        *,
+        canonical_reply: str | None = None,
+    ) -> dict[str, Any] | None:
+        turn_id = str(event.get_extra("_turn_id", "") or "").strip()
+        if not turn_id:
+            return None
+        outputs = [
+            dict(item)
+            for item in (
+                visible_outputs
+                if isinstance(visible_outputs, list)
+                else get_interaction_turn_visible_outputs(event)
+            )
+            if isinstance(item, dict)
+        ]
+        if canonical_reply is None:
+            canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+                outputs,
+                turn_id=turn_id,
+            )
+        canonical_reply = (canonical_reply or "").strip()
+        if not canonical_reply:
+            return None
+        material = {
+            "turn_id": turn_id,
+            "user_text": (event.message_str or "").strip(),
+            "assistant_text": canonical_reply,
+            "visible_outputs": outputs,
+            "history_source": "interaction.turn.material",
+        }
+        set_interaction_turn_finalized_material(event, material)
+        return material

@@ -77,6 +77,14 @@ class RespondStage(Stage):
                     for item in event.get_extra("_visible_turn_outputs", [])
                     if isinstance(item, dict)
                 ],
+                turn_material=(
+                    dict(material)
+                    if isinstance(
+                        material := event.get_extra("_interaction_finalized_turn_material"),
+                        dict,
+                    )
+                    else None
+                ),
             ),
             name=task_name,
         )

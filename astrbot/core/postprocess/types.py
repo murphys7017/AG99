@@ -27,6 +27,7 @@ class PostProcessContext:
     conversation: Conversation | None = None
     turn_id: str | None = None
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
+    turn_material: dict[str, Any] | None = None
     timestamp: datetime | None = None
     debug_meta: dict[str, Any] = field(default_factory=dict)
 

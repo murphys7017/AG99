@@ -250,6 +250,35 @@ def _resolve_interaction_turn_material(
     if not turn_id:
         return None
 
+    if isinstance(ctx.turn_material, dict):
+        material_turn_id = _normalize_text(ctx.turn_material.get("turn_id"))
+        assistant_text = _normalize_text(ctx.turn_material.get("assistant_text"))
+        if material_turn_id == turn_id and assistant_text:
+            user_message = current_user_message or _build_user_message_from_event(ctx.event)
+            if user_message is None:
+                return None
+            visible_outputs = [
+                dict(item)
+                for item in ctx.turn_material.get("visible_outputs", [])
+                if isinstance(item, dict) and _normalize_text(item.get("text"))
+            ]
+            conversation_id = _resolve_conversation_id(ctx)
+            conversation_history = _materialize_current_turn_history(
+                _resolve_base_conversation_history(ctx),
+                user_message,
+                {"role": "assistant", "content": assistant_text},
+            )
+            return {
+                "conversation_history": conversation_history,
+                "conversation_id": conversation_id,
+                "history_source": str(
+                    ctx.turn_material.get("history_source")
+                    or "interaction.turn.material"
+                ),
+                "turn_id": turn_id,
+                "visible_outputs": visible_outputs,
+            }
+
     visible_outputs = [
         dict(item)
         for item in ctx.visible_outputs

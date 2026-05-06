@@ -8,7 +8,10 @@ import pytest
 
 import astrbot.core.message.components as Comp
 from astrbot.core.astr_agent_hooks import MainAgentHooks
-from astrbot.core.message.message_event_result import ResultContentType
+from astrbot.core.message.message_event_result import (
+    MessageEventResult,
+    ResultContentType,
+)
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.postprocess import (
     build_postprocess_context,
@@ -42,6 +45,20 @@ def _make_event():
     event.set_extra.side_effect = _set_extra
     event.clear_result = MagicMock()
     return event, extras
+
+
+def _make_result(
+    chain: list | None = None,
+    *,
+    result_content_type: ResultContentType = ResultContentType.LLM_RESULT,
+    async_stream=None,
+) -> MessageEventResult:
+    result = MessageEventResult(
+        chain=list(chain or []),
+        result_content_type=result_content_type,
+    )
+    result.async_stream = async_stream
+    return result
 
 
 class _Processor(PostProcessor):
@@ -189,15 +206,24 @@ def test_build_postprocess_context_uses_provider_request_and_conversation():
     conversation = MagicMock()
     req.conversation = conversation
     extras["provider_request"] = req
+    extras["_interaction_finalized_turn_material"] = {
+        "turn_id": "turn-1",
+        "assistant_text": "done",
+    }
 
     ctx = build_postprocess_context(
         event=event,
         trigger=PostProcessTrigger.ON_LLM_RESPONSE,
+        turn_material=extras["_interaction_finalized_turn_material"],
     )
 
     assert ctx.provider_request is req
     assert ctx.conversation is conversation
     assert ctx.trigger == PostProcessTrigger.ON_LLM_RESPONSE
+    assert ctx.turn_material == {
+        "turn_id": "turn-1",
+        "assistant_text": "done",
+    }
     assert ctx.timestamp is not None
     assert ctx.timestamp.tzinfo == timezone.utc
 
@@ -333,9 +359,7 @@ async def test_main_agent_hooks_does_not_dispatch_postprocess_if_response_hook_s
 @pytest.mark.asyncio
 async def test_respond_stage_does_not_dispatch_postprocess_if_no_message_was_sent():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = []
+    result = _make_result([])
     event.get_result.return_value = result
 
     stage = RespondStage()
@@ -360,9 +384,7 @@ async def test_respond_stage_does_not_dispatch_postprocess_if_no_message_was_sen
 @pytest.mark.asyncio
 async def test_respond_stage_does_not_dispatch_postprocess_if_after_send_hook_stops():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = [Comp.Plain("hello")]
+    result = _make_result([Comp.Plain("hello")])
     event.get_result.return_value = result
     event.send = AsyncMock()
 
@@ -392,10 +414,8 @@ async def test_respond_stage_does_not_dispatch_postprocess_if_after_send_hook_st
 @pytest.mark.asyncio
 async def test_respond_stage_dispatches_postprocess_after_streaming_send():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.STREAMING_RESULT
+    result = _make_result([], result_content_type=ResultContentType.STREAMING_RESULT)
     result.async_stream = object()
-    result.chain = []
     event.get_result.return_value = result
     event.send_streaming = AsyncMock()
     event.complete_visible_turn = AsyncMock()
@@ -433,9 +453,7 @@ async def test_respond_stage_dispatches_postprocess_after_streaming_send():
 @pytest.mark.asyncio
 async def test_respond_stage_schedules_postprocess_without_waiting_after_send():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = [Comp.Plain("hello")]
+    result = _make_result([Comp.Plain("hello")])
     event.get_result.return_value = result
     event.send = AsyncMock()
     event.complete_visible_turn = AsyncMock()
@@ -474,9 +492,7 @@ async def test_respond_stage_schedules_postprocess_without_waiting_after_send():
 @pytest.mark.asyncio
 async def test_respond_stage_passes_postprocess_provider_request_snapshot():
     event, extras = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = [Comp.Plain("hello")]
+    result = _make_result([Comp.Plain("hello")])
     event.get_result.return_value = result
     event.send = AsyncMock()
     event.complete_visible_turn = AsyncMock()
@@ -534,9 +550,7 @@ async def test_respond_stage_passes_postprocess_provider_request_snapshot():
 @pytest.mark.asyncio
 async def test_respond_stage_completes_visible_turn_before_postprocess_after_send():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = [Comp.Plain("hello")]
+    result = _make_result([Comp.Plain("hello")])
     event.get_result.return_value = result
     event.send = AsyncMock()
     calls: list[str] = []
@@ -574,19 +588,20 @@ async def test_respond_stage_completes_visible_turn_before_postprocess_after_sen
 @pytest.mark.asyncio
 async def test_respond_stage_completes_visible_turn_once_after_segmented_sends():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = [Comp.Plain("hello"), Comp.Plain("world")]
+    result = _make_result([Comp.Plain("hello"), Comp.Plain("world")])
     event.get_result.return_value = result
     event.send = AsyncMock()
     event.complete_visible_turn = AsyncMock()
 
     stage = RespondStage()
-    stage.enable_seg = True
-    stage.only_llm_result = False
-    stage.platform_settings = {}
-    stage.interval_method = "random"
-    stage.interval = [0, 0]
+    stage.platform_settings = {
+        "segmented_reply": {
+            "enable": True,
+            "only_llm_result": False,
+            "interval_method": "random",
+            "interval": "0,0",
+        }
+    }
     stage.ctx = MagicMock()
     stage.ctx.plugin_manager.context = MagicMock()
 
@@ -610,10 +625,8 @@ async def test_respond_stage_completes_visible_turn_once_after_segmented_sends()
 @pytest.mark.asyncio
 async def test_respond_stage_does_not_dispatch_postprocess_if_streaming_send_fails():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.STREAMING_RESULT
+    result = _make_result([], result_content_type=ResultContentType.STREAMING_RESULT)
     result.async_stream = object()
-    result.chain = []
     event.get_result.return_value = result
     event.send_streaming = AsyncMock(side_effect=RuntimeError("stream failed"))
 
@@ -635,9 +648,7 @@ async def test_respond_stage_does_not_dispatch_postprocess_if_streaming_send_fai
 @pytest.mark.asyncio
 async def test_respond_stage_does_not_dispatch_postprocess_if_all_non_stream_sends_fail():
     event, _ = _make_event()
-    result = MagicMock()
-    result.result_content_type = ResultContentType.LLM_RESULT
-    result.chain = [Comp.Plain("hello")]
+    result = _make_result([Comp.Plain("hello")])
     event.get_result.return_value = result
     event.send = AsyncMock(side_effect=RuntimeError("send failed"))
 

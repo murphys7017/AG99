@@ -760,6 +760,13 @@ class TestInteractionMiddleware:
         assert dispatch.await_args.kwargs["turn_id"] == webchat_event.get_extra(
             "_turn_id"
         )
+        assert dispatch.await_args.kwargs["turn_material"] == {
+            "turn_id": webchat_event.get_extra("_turn_id"),
+            "user_text": "Hello world",
+            "assistant_text": "嗯。",
+            "visible_outputs": [],
+            "history_source": "interaction.turn.material",
+        }
 
     @pytest.mark.asyncio
     async def test_self_reply_persists_memory_before_turn_postprocess(

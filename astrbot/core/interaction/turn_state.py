@@ -29,6 +29,7 @@ class InteractionTurnState:
     prompt_build_config: Any | None = None
     context_material: InteractionContextMaterial | None = None
     decision: InteractionDecision | None = None
+    finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
     core_stream_text: str = ""
@@ -133,6 +134,26 @@ def set_interaction_turn_persona_id(event, persona_id: str) -> None:
 def set_interaction_turn_decision(event, decision: InteractionDecision | None) -> None:
     state = ensure_interaction_turn_state(event)
     state.decision = decision
+
+
+def set_interaction_turn_finalized_material(
+    event,
+    material: dict[str, Any] | None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    normalized = dict(material) if isinstance(material, dict) else None
+    state.finalized_turn_material = normalized
+    event.set_extra("_interaction_finalized_turn_material", normalized)
+
+
+def get_interaction_turn_finalized_material(event) -> dict[str, Any] | None:
+    state = get_interaction_turn_state(event)
+    if state is not None and isinstance(state.finalized_turn_material, dict):
+        return dict(state.finalized_turn_material)
+    material = event.get_extra("_interaction_finalized_turn_material")
+    if isinstance(material, dict):
+        return dict(material)
+    return None
 
 
 def set_interaction_turn_immediate_reply(event, reply: str | None) -> None:

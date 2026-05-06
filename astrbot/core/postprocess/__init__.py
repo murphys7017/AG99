@@ -36,6 +36,7 @@ def build_postprocess_context(
     conversation: Conversation | None = None,
     turn_id: str | None = None,
     visible_outputs: list[dict] | None = None,
+    turn_material: dict[str, object] | None = None,
 ) -> PostProcessContext:
     req = provider_request or event.get_extra("provider_request")
     resolved_conversation = conversation
@@ -63,6 +64,7 @@ def build_postprocess_context(
         visible_outputs=[
             dict(item) for item in resolved_visible_outputs if isinstance(item, dict)
         ],
+        turn_material=dict(turn_material) if isinstance(turn_material, dict) else None,
         timestamp=datetime.now(timezone.utc),
     )
 
@@ -115,6 +117,7 @@ async def dispatch_postprocess(
     conversation: Conversation | None = None,
     turn_id: str | None = None,
     visible_outputs: list[dict] | None = None,
+    turn_material: dict[str, object] | None = None,
 ) -> None:
     if not POSTPROCESS_MANAGER.has_processors(trigger):
         logger.debug("postprocess(%s): skipped before context build", trigger.value)
@@ -133,5 +136,6 @@ async def dispatch_postprocess(
         conversation=resolved_conversation,
         turn_id=turn_id,
         visible_outputs=visible_outputs,
+        turn_material=turn_material,
     )
     await POSTPROCESS_MANAGER.dispatch(trigger, ctx)
