@@ -8,6 +8,8 @@ from typing import Any
 from astrbot import logger
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.postprocess import dispatch_postprocess
+from astrbot.core.postprocess.types import PostProcessTrigger
 
 from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
 from .core_bridge import (
@@ -211,6 +213,7 @@ class InteractionMiddleware:
                     return
             completed = await self._complete_visible_turn_or_record_failure(event)
             if completed:
+                self._schedule_turn_postprocess(event)
                 await self._persist_turn(
                     event, decision, decision.immediate_spoken_reply
                 )
@@ -314,6 +317,52 @@ class InteractionMiddleware:
                 exc_info=True,
             )
             return False
+
+    def _schedule_turn_postprocess(self, event: AstrMessageEvent) -> None:
+        visible_outputs = [
+            dict(item)
+            for item in event.get_extra("_visible_turn_outputs", [])
+            if isinstance(item, dict)
+        ]
+        task = asyncio.create_task(
+            dispatch_postprocess(
+                event=event,
+                trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
+                plugin_context=self.plugin_context,
+                turn_id=str(event.get_extra("_turn_id", "") or ""),
+                visible_outputs=visible_outputs,
+            ),
+            name=f"interaction_turn_postprocess_{event.get_platform_id()}",
+        )
+        task.add_done_callback(
+            lambda done_task: self._log_turn_postprocess_failure(event, done_task)
+        )
+
+    @staticmethod
+    def _log_turn_postprocess_failure(
+        event: AstrMessageEvent,
+        task: asyncio.Task,
+    ) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug(
+                "Interaction turn postprocess cancelled: platform_id=%s session_id=%s turn_id=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            event.set_extra("_interaction_turn_postprocess_failed", True)
+            event.set_extra("_interaction_turn_postprocess_failure_reason", str(exc))
+            logger.error(
+                "Interaction turn postprocess failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+                exc,
+                exc_info=True,
+            )
 
     def _forward_to_core(self, event: AstrMessageEvent) -> None:
         decision = event.get_extra(INTERACTION_DECISION_EXTRA_KEY)

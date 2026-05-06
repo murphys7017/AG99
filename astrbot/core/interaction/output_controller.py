@@ -101,6 +101,11 @@ class InteractionOutputController:
                 ),
                 record_send_operation=False,
             )
+            self._record_visible_output(
+                event,
+                message_kind="immediate_reply",
+                text=message.get_plain_text(),
+            )
             return
 
         if self._is_already_delivered_streaming_finish(event):
@@ -164,6 +169,11 @@ class InteractionOutputController:
                 message_kind="core_reply",
             ),
         )
+        self._record_visible_output(
+            event,
+            message_kind="core_reply",
+            text=full_message.get_plain_text(),
+        )
 
     async def capture_visible_completion(
         self,
@@ -225,6 +235,11 @@ class InteractionOutputController:
             raise
         else:
             event.set_extra("_interaction_core_streaming_result_consumed", True)
+            self._record_visible_output(
+                event,
+                message_kind="core_stream",
+                text=str(event.get_extra("_interaction_core_stream_text", "") or ""),
+            )
         finally:
             event.set_extra("_interaction_core_streaming_active", False)
 
@@ -739,6 +754,12 @@ class InteractionOutputController:
             },
             record_send_operation=False,
         )
+        self._record_visible_output(
+            event,
+            message_kind="stream_interjection",
+            text=text,
+            memory_relevant=False,
+        )
 
     async def maybe_finalize_and_send(
         self,
@@ -767,6 +788,11 @@ class InteractionOutputController:
                     event,
                     message_kind="core_reply",
                 ),
+            )
+            self._record_visible_output(
+                event,
+                message_kind="core_reply",
+                text=final_message.get_plain_text(),
             )
             await self._persist_interaction_turn(
                 event,
@@ -813,6 +839,11 @@ class InteractionOutputController:
             final_message,
             event,
             platform_extras=platform_extras,
+        )
+        self._record_visible_output(
+            event,
+            message_kind="core_reply",
+            text=final_message.get_plain_text(),
         )
         await self._persist_interaction_turn(
             event,
@@ -992,6 +1023,31 @@ class InteractionOutputController:
             platform_extras=platform_extras,
             record_send_operation=record_send_operation,
         )
+
+    @staticmethod
+    def _record_visible_output(
+        event: AstrMessageEvent,
+        *,
+        message_kind: str,
+        text: str | None,
+        memory_relevant: bool = True,
+    ) -> None:
+        clean_text = (text or "").strip()
+        if not clean_text:
+            return
+        outputs = event.get_extra("_visible_turn_outputs", [])
+        if not isinstance(outputs, list):
+            outputs = []
+        outputs.append(
+            {
+                "turn_id": str(event.get_extra("_turn_id", "") or ""),
+                "kind": message_kind,
+                "text": clean_text,
+                "memory_relevant": memory_relevant,
+            }
+        )
+        event.set_extra("_visible_turn_outputs", outputs)
+        event.set_extra("_postprocess_visible_outputs", outputs)
 
     async def _persist_interaction_turn(
         self,

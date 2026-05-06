@@ -12,8 +12,9 @@ class TurnRecordService:
         self.store = store
 
     async def build_turn_record(self, req: MemoryUpdateRequest) -> TurnRecord:
+        turn_id = (req.turn_id or "").strip() or str(uuid4())
         return TurnRecord(
-            turn_id=str(uuid4()),
+            turn_id=turn_id,
             umo=req.umo,
             conversation_id=req.conversation_id,
             platform_id=req.platform_id,

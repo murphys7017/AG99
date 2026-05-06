@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 class PostProcessTrigger(str, Enum):
     ON_LLM_RESPONSE = "on_llm_response"
     AFTER_MESSAGE_SENT = "after_message_sent"
+    AFTER_TURN_COMPLETED = "after_turn_completed"
 
 
 @dataclass(slots=True)
@@ -24,6 +25,8 @@ class PostProcessContext:
     provider_request: ProviderRequest | None = None
     llm_response: LLMResponse | None = None
     conversation: Conversation | None = None
+    turn_id: str | None = None
+    visible_outputs: list[dict[str, Any]] = field(default_factory=list)
     timestamp: datetime | None = None
     debug_meta: dict[str, Any] = field(default_factory=dict)
 

@@ -17,7 +17,7 @@ from .types import MemoryUpdateRequest
 
 class MemoryPostProcessor:
     name = "memory_postprocessor"
-    triggers = (PostProcessTrigger.AFTER_MESSAGE_SENT,)
+    triggers = (PostProcessTrigger.AFTER_TURN_COMPLETED,)
 
     def __init__(self, memory_service: MemoryService) -> None:
         self.memory_service = memory_service
@@ -59,12 +59,19 @@ class MemoryPostProcessor:
         if material["conversation_id"] is not None:
             provider_payload["conversation_id"] = material["conversation_id"]
         provider_payload["history_source"] = material["history_source"]
+        if material.get("turn_id"):
+            provider_payload["turn_id"] = material["turn_id"]
+        if material.get("visible_outputs"):
+            provider_payload["visible_outputs"] = material["visible_outputs"]
 
         source_refs: list[str] = []
         if material["conversation_id"] is not None:
             source_refs.append(f"conversation:{material['conversation_id']}")
+        if material.get("turn_id"):
+            source_refs.append(f"turn:{material['turn_id']}")
 
         return MemoryUpdateRequest(
+            turn_id=material.get("turn_id"),
             umo=identity.umo,
             conversation_id=material["conversation_id"],
             platform_id=identity.platform_id,
@@ -145,6 +152,13 @@ def _resolve_turn_material(
     current_user_message = _build_user_message_from_prompt(ctx.provider_request)
     current_assistant_message = _build_assistant_message_from_response(ctx.llm_response)
 
+    interaction_material = _resolve_interaction_turn_material(
+        ctx,
+        current_user_message,
+    )
+    if interaction_material is not None:
+        return interaction_material
+
     if ctx.conversation is not None:
         conversation_history = parse_conversation_history(ctx.conversation.history)
         latest_turn = RecentConversationSource.get_latest_turn_payload(
@@ -223,6 +237,91 @@ def _resolve_turn_material(
         }
 
     return None
+
+
+def _resolve_interaction_turn_material(
+    ctx: PostProcessContext,
+    current_user_message: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    turn_id = (ctx.turn_id or "").strip()
+    if not turn_id:
+        return None
+
+    visible_outputs = [
+        dict(item)
+        for item in ctx.visible_outputs
+        if isinstance(item, dict) and _normalize_text(item.get("text"))
+    ]
+    memory_outputs = [
+        item
+        for item in visible_outputs
+        if bool(item.get("memory_relevant", True))
+        and _normalize_text(item.get("kind")) != "stream_interjection"
+    ]
+    if not memory_outputs:
+        return None
+
+    user_message = current_user_message or _build_user_message_from_event(ctx.event)
+    if user_message is None:
+        return None
+
+    assistant_text = _join_visible_output_texts(memory_outputs)
+    if not assistant_text:
+        return None
+
+    conversation_id = _resolve_conversation_id(ctx)
+    conversation_history = _materialize_current_turn_history(
+        _resolve_base_conversation_history(ctx),
+        user_message,
+        {"role": "assistant", "content": assistant_text},
+    )
+    return {
+        "conversation_history": conversation_history,
+        "conversation_id": conversation_id,
+        "history_source": "interaction.turn.visible_outputs",
+        "turn_id": turn_id,
+        "visible_outputs": visible_outputs,
+    }
+
+
+def _resolve_base_conversation_history(ctx: PostProcessContext) -> list[dict[str, Any]]:
+    if ctx.conversation is not None:
+        return parse_conversation_history(ctx.conversation.history)
+
+    provider_request = ctx.provider_request
+    if provider_request is None:
+        return []
+
+    provider_conversation = provider_request.conversation
+    if provider_conversation is not None:
+        return parse_conversation_history(provider_conversation.history)
+
+    return _extract_provider_contexts(provider_request)
+
+
+def _resolve_conversation_id(ctx: PostProcessContext) -> str | None:
+    if ctx.conversation is not None:
+        return ctx.conversation.cid
+    provider_request = ctx.provider_request
+    if provider_request is None or provider_request.conversation is None:
+        return None
+    return provider_request.conversation.cid
+
+
+def _build_user_message_from_event(event) -> dict[str, Any] | None:
+    prompt = _normalize_text(getattr(event, "message_str", None))
+    if not prompt:
+        return None
+    return {"role": "user", "content": prompt}
+
+
+def _join_visible_output_texts(outputs: list[dict[str, Any]]) -> str:
+    texts: list[str] = []
+    for output in outputs:
+        text = _normalize_text(output.get("text"))
+        if text:
+            texts.append(text)
+    return "\n".join(texts).strip()
 
 
 def _build_user_message_from_prompt(

@@ -297,6 +297,20 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
         immediate_payload["platform_extras"]["visible_message_id"]
         != core_payload["platform_extras"]["visible_message_id"]
     )
+    assert webchat_event.get_extra("_visible_turn_outputs") == [
+        {
+            "turn_id": "turn-1",
+            "kind": "immediate_reply",
+            "text": "行，等我查一下。",
+            "memory_relevant": True,
+        },
+        {
+            "turn_id": "turn-1",
+            "kind": "core_reply",
+            "text": "设计问题，我改不了。",
+            "memory_relevant": True,
+        },
+    ]
     assert queue.empty()
 
 
@@ -714,6 +728,20 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     assert payloads[-1]["type"] == "complete"
     assert payloads[-1]["data"] == "hello core"
     assert [view["window_index"] for view in decider.views] == [1, 2]
+    assert webchat_event.get_extra("_visible_turn_outputs") == [
+        {
+            "turn_id": "turn-1",
+            "kind": "stream_interjection",
+            "text": "嗯，我听着。",
+            "memory_relevant": False,
+        },
+        {
+            "turn_id": "turn-1",
+            "kind": "core_stream",
+            "text": "hello core",
+            "memory_relevant": True,
+        },
+    ]
 
 
 @pytest.mark.asyncio

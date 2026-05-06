@@ -66,6 +66,7 @@ from astrbot.core.memory.types import (
 )
 from astrbot.core.memory.vector_index import MemoryVectorIndex
 from astrbot.core.postprocess import get_postprocess_manager
+from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.provider.provider import EmbeddingProvider
 
@@ -361,6 +362,30 @@ async def test_turn_record_service_builds_and_persists_turn(temp_dir: Path):
     assert loaded is not None
     assert loaded.user_message["content"] == "hello"
     assert loaded.assistant_message["content"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_turn_record_service_uses_request_turn_id_when_available(
+    temp_dir: Path,
+):
+    store = MemoryStore(db_path=temp_dir / "memory.db")
+    service = TurnRecordService(store)
+    req = _memory_update_request(
+        user_message={"role": "user", "content": "hello"},
+        assistant_message={"role": "assistant", "content": "hi"},
+        message_timestamp=datetime.now(UTC),
+    )
+    req.turn_id = "turn-from-interaction"
+
+    try:
+        turn = await service.ingest_turn(req)
+        loaded = await store.get_turn_record("turn-from-interaction")
+    finally:
+        await store.close()
+
+    assert turn.turn_id == "turn-from-interaction"
+    assert loaded is not None
+    assert loaded.turn_id == "turn-from-interaction"
 
 
 @pytest.mark.asyncio
@@ -5123,6 +5148,68 @@ async def test_memory_postprocessor_falls_back_to_provider_request_contexts():
     assert req.provider_request["history_source"] == "provider_request.contexts"
 
 
+@pytest.mark.asyncio
+async def test_memory_postprocessor_groups_interaction_visible_outputs_by_turn():
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.message_str = "Can you check permissions?"
+    event.session_id = "session-1"
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = None
+    ctx.provider_request = ProviderRequest(
+        prompt="Can you check permissions?",
+        session_id="session-1",
+    )
+    ctx.llm_response = None
+    ctx.turn_id = "turn-1"
+    ctx.visible_outputs = [
+        {
+            "turn_id": "turn-1",
+            "kind": "immediate_reply",
+            "text": "Let me check.",
+            "memory_relevant": True,
+        },
+        {
+            "turn_id": "turn-1",
+            "kind": "stream_interjection",
+            "text": "Still looking.",
+            "memory_relevant": False,
+        },
+        {
+            "turn_id": "turn-1",
+            "kind": "core_reply",
+            "text": "You can run commands in the workspace.",
+            "memory_relevant": True,
+        },
+    ]
+    ctx.timestamp = datetime.now(UTC)
+
+    req = await processor.build_update_request(ctx)
+
+    assert req is not None
+    assert req.turn_id == "turn-1"
+    assert req.source_refs == ["turn:turn-1"]
+    assert req.user_message["content"] == "Can you check permissions?"
+    assert req.assistant_message["content"] == (
+        "Let me check. You can run commands in the workspace."
+    )
+    assert req.provider_request is not None
+    assert req.provider_request["history_source"] == "interaction.turn.visible_outputs"
+    assert req.provider_request["turn_id"] == "turn-1"
+    assert len(req.provider_request["visible_outputs"]) == 3
+
+
 def test_register_memory_postprocessor_reuses_singleton_and_updates_service(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -5145,7 +5232,11 @@ def test_register_memory_postprocessor_reuses_singleton_and_updates_service(
         assert first_processor is not None
         assert second_processor is first_processor
         assert first_processor.memory_service is second_service
-        assert manager.get_processors(first_processor.triggers[0]) == [first_processor]
+        assert first_processor.triggers == (PostProcessTrigger.AFTER_TURN_COMPLETED,)
+        assert manager.get_processors(PostProcessTrigger.AFTER_TURN_COMPLETED) == [
+            first_processor
+        ]
+        assert manager.get_processors(PostProcessTrigger.AFTER_MESSAGE_SENT) == []
     finally:
         reset_memory_postprocessor()
         manager.clear()

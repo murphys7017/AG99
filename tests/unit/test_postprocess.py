@@ -420,10 +420,13 @@ async def test_respond_stage_dispatches_postprocess_after_streaming_send():
 
     event.send_streaming.assert_awaited_once_with(result.async_stream, True)
     hook.assert_awaited_once()
-    dispatch.assert_awaited_once()
-    kwargs = dispatch.await_args.kwargs
-    assert kwargs["event"] is event
-    assert kwargs["trigger"] == PostProcessTrigger.AFTER_MESSAGE_SENT
+    assert dispatch.await_count == 2
+    triggers = [call.kwargs["trigger"] for call in dispatch.await_args_list]
+    assert triggers == [
+        PostProcessTrigger.AFTER_MESSAGE_SENT,
+        PostProcessTrigger.AFTER_TURN_COMPLETED,
+    ]
+    assert all(call.kwargs["event"] is event for call in dispatch.await_args_list)
     event.clear_result.assert_not_called()
 
 
@@ -461,7 +464,7 @@ async def test_respond_stage_schedules_postprocess_without_waiting_after_send():
     ):
         await stage.process(event)
         await asyncio.wait_for(started.wait(), timeout=1)
-        dispatch.assert_awaited_once()
+        assert dispatch.await_count == 2
         event.complete_visible_turn.assert_awaited_once()
         event.clear_result.assert_called_once()
         release.set()
@@ -491,10 +494,10 @@ async def test_respond_stage_passes_postprocess_provider_request_snapshot():
     stage.ctx = MagicMock()
     stage.ctx.plugin_manager.context = MagicMock()
 
-    captured_kwargs = {}
+    captured_kwargs: list[dict] = []
 
     async def _capture_postprocess(**kwargs):
-        captured_kwargs.update(kwargs)
+        captured_kwargs.append(kwargs)
 
     with (
         patch(
@@ -512,8 +515,13 @@ async def test_respond_stage_passes_postprocess_provider_request_snapshot():
         conversation.history = '[{"role":"user","content":"mutated"}]'
         await asyncio.sleep(0)
 
-    snapshot = captured_kwargs["provider_request"]
-    conversation_snapshot = captured_kwargs["conversation"]
+    turn_kwargs = next(
+        item
+        for item in captured_kwargs
+        if item["trigger"] == PostProcessTrigger.AFTER_TURN_COMPLETED
+    )
+    snapshot = turn_kwargs["provider_request"]
+    conversation_snapshot = turn_kwargs["conversation"]
     assert snapshot is not req
     assert snapshot.prompt == "hello"
     assert snapshot.contexts == [{"role": "user", "content": "hi"}]
@@ -560,7 +568,7 @@ async def test_respond_stage_completes_visible_turn_before_postprocess_after_sen
         await stage.process(event)
         await asyncio.sleep(0)
 
-    assert calls == ["complete", "postprocess"]
+    assert calls == ["complete", "postprocess", "postprocess"]
 
 
 @pytest.mark.asyncio

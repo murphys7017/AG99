@@ -186,6 +186,24 @@ class RespondStage(Stage):
         self,
         event: AstrMessageEvent,
     ) -> None:
+        self._schedule_postprocess(
+            event,
+            trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
+            task_name=f"postprocess_after_message_sent_{event.get_platform_id()}",
+        )
+        self._schedule_postprocess(
+            event,
+            trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
+            task_name=f"postprocess_after_turn_completed_{event.get_platform_id()}",
+        )
+
+    def _schedule_postprocess(
+        self,
+        event: AstrMessageEvent,
+        *,
+        trigger: PostProcessTrigger,
+        task_name: str,
+    ) -> None:
         provider_request = self._snapshot_provider_request(
             event.get_extra("provider_request")
         )
@@ -197,14 +215,22 @@ class RespondStage(Stage):
         task = asyncio.create_task(
             dispatch_postprocess(
                 event=event,
-                trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
+                trigger=trigger,
                 plugin_context=self.ctx.plugin_manager.context,
                 provider_request=provider_request,
                 conversation=copy(conversation) if conversation is not None else None,
+                turn_id=str(event.get_extra("_turn_id", "") or ""),
+                visible_outputs=[
+                    dict(item)
+                    for item in event.get_extra("_visible_turn_outputs", [])
+                    if isinstance(item, dict)
+                ],
             ),
-            name=f"postprocess_after_message_sent_{event.get_platform_id()}",
+            name=task_name,
         )
-        task.add_done_callback(self._log_after_message_sent_postprocess_failure)
+        task.add_done_callback(
+            lambda done_task: self._log_postprocess_failure(trigger, done_task)
+        )
 
     @staticmethod
     def _snapshot_provider_request(
@@ -229,14 +255,18 @@ class RespondStage(Stage):
         return snapshot
 
     @staticmethod
-    def _log_after_message_sent_postprocess_failure(task: asyncio.Task) -> None:
+    def _log_postprocess_failure(
+        trigger: PostProcessTrigger,
+        task: asyncio.Task,
+    ) -> None:
         try:
             task.result()
         except asyncio.CancelledError:
-            logger.debug("postprocess(after_message_sent): background task cancelled")
+            logger.debug("postprocess(%s): background task cancelled", trigger.value)
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                "postprocess(after_message_sent): background task failed: %s",
+                "postprocess(%s): background task failed: %s",
+                trigger.value,
                 exc,
                 exc_info=True,
             )

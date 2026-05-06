@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,6 +17,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
+from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.star.context import Context
 
 
@@ -634,9 +635,7 @@ class TestInteractionMiddleware:
         controller.capture_visible_completion = AsyncMock(
             side_effect=_call_original_visible_completion
         )
-        complete_visible_turn = AsyncMock(
-            side_effect=RuntimeError("queue closed")
-        )
+        complete_visible_turn = AsyncMock(side_effect=RuntimeError("queue closed"))
         webchat_event.complete_visible_turn = complete_visible_turn
         middleware = InteractionMiddleware(
             {
@@ -707,13 +706,26 @@ class TestInteractionMiddleware:
             )
         )
 
-        middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch:
+            middleware.handle_inbound(webchat_event)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
 
         assert queue.empty()
         controller.emit_immediate_spoken_reply.assert_awaited_once()
         complete_visible_turn.assert_awaited_once()
         controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
+        dispatch.assert_awaited_once()
+        assert (
+            dispatch.await_args.kwargs["trigger"]
+            == PostProcessTrigger.AFTER_TURN_COMPLETED
+        )
+        assert dispatch.await_args.kwargs["turn_id"] == webchat_event.get_extra(
+            "_turn_id"
+        )
 
 
 class TestCoreInputGateway:

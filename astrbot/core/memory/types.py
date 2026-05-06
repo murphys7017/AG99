@@ -64,6 +64,7 @@ class MemoryUpdateRequest:
     user_message: MessagePayload
     assistant_message: MessagePayload
     message_timestamp: datetime
+    turn_id: str | None = None
     source_refs: list[SourceRef] = field(default_factory=list)
 
 

@@ -34,17 +34,35 @@ def build_postprocess_context(
     llm_response: LLMResponse | None = None,
     provider_request: ProviderRequest | None = None,
     conversation: Conversation | None = None,
+    turn_id: str | None = None,
+    visible_outputs: list[dict] | None = None,
 ) -> PostProcessContext:
     req = provider_request or event.get_extra("provider_request")
     resolved_conversation = conversation
     if resolved_conversation is None and isinstance(req, ProviderRequest):
         resolved_conversation = req.conversation
+    resolved_turn_id = turn_id
+    if resolved_turn_id is None:
+        raw_turn_id = event.get_extra("_turn_id")
+        resolved_turn_id = str(raw_turn_id).strip() if raw_turn_id else None
+    resolved_visible_outputs = visible_outputs
+    if resolved_visible_outputs is None:
+        raw_visible_outputs = event.get_extra("_visible_turn_outputs", None)
+        if raw_visible_outputs is None:
+            raw_visible_outputs = event.get_extra("_postprocess_visible_outputs", [])
+        resolved_visible_outputs = (
+            list(raw_visible_outputs) if isinstance(raw_visible_outputs, list) else []
+        )
     return PostProcessContext(
         event=event,
         trigger=trigger,
         provider_request=req if isinstance(req, ProviderRequest) else None,
         llm_response=llm_response,
         conversation=resolved_conversation,
+        turn_id=resolved_turn_id,
+        visible_outputs=[
+            dict(item) for item in resolved_visible_outputs if isinstance(item, dict)
+        ],
         timestamp=datetime.now(timezone.utc),
     )
 
@@ -95,6 +113,8 @@ async def dispatch_postprocess(
     provider_request: ProviderRequest | None = None,
     plugin_context=None,
     conversation: Conversation | None = None,
+    turn_id: str | None = None,
+    visible_outputs: list[dict] | None = None,
 ) -> None:
     if not POSTPROCESS_MANAGER.has_processors(trigger):
         logger.debug("postprocess(%s): skipped before context build", trigger.value)
@@ -111,5 +131,7 @@ async def dispatch_postprocess(
         llm_response=llm_response,
         provider_request=provider_request,
         conversation=resolved_conversation,
+        turn_id=turn_id,
+        visible_outputs=visible_outputs,
     )
     await POSTPROCESS_MANAGER.dispatch(trigger, ctx)
