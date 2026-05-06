@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from astrbot.core.interaction.context_builder import (
@@ -7,6 +9,7 @@ from astrbot.core.interaction.context_builder import (
 from astrbot.core.interaction.contributors import InteractionPromptContribution
 from astrbot.core.interaction.memory_store import (
     InteractionMemorySnapshot,
+    InteractionMemoryStore,
     build_interaction_memory_payload,
     update_interaction_memory_from_turn,
 )
@@ -147,6 +150,38 @@ def test_update_interaction_memory_merges_same_turn_id():
             "turn_id": "turn-1",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_interaction_memory_store_serializes_concurrent_updates(
+    tmp_path,
+):
+    store = InteractionMemoryStore()
+    store._base_dir = tmp_path
+
+    async def _update(user_text: str, visible_reply: str, turn_id: str) -> None:
+        await store.update_interaction_memory(
+            "session-1",
+            "persona-1",
+            lambda snapshot: update_interaction_memory_from_turn(
+                snapshot,
+                user_text=user_text,
+                visible_reply=visible_reply,
+                turn_id=turn_id,
+            ),
+        )
+
+    await asyncio.gather(
+        _update("问题一", "回答一", "turn-1"),
+        _update("问题二", "回答二", "turn-2"),
+    )
+
+    snapshot = await store.load_interaction_memory("session-1", "persona-1")
+
+    assert {turn["turn_id"] for turn in snapshot.recent_turns} == {
+        "turn-1",
+        "turn-2",
+    }
 
 
 class GoodPromptContributor:

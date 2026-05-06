@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from asyncio import Queue
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from types import MethodType
 from typing import Any
 
@@ -163,13 +163,46 @@ class InteractionMiddleware:
         self._inflight_tasks.add(task)
         task.add_done_callback(self._on_inflight_task_done)
 
+    def _spawn_background_task(
+        self,
+        coro: Awaitable[Any],
+        *,
+        name: str,
+        done_callback: Callable[[asyncio.Task], None] | None = None,
+    ) -> None:
+        task = asyncio.create_task(coro, name=name)
+        self._inflight_tasks.add(task)
+        if done_callback is not None:
+            task.add_done_callback(
+                lambda done_task: self._on_specific_inflight_task_done(
+                    done_task,
+                    done_callback,
+                )
+            )
+        else:
+            task.add_done_callback(self._on_inflight_task_done)
+
+    def _on_specific_inflight_task_done(
+        self,
+        task: asyncio.Task,
+        done_callback: Callable[[asyncio.Task], None],
+    ) -> None:
+        self._inflight_tasks.discard(task)
+        done_callback(task)
+
     def _on_inflight_task_done(self, task: asyncio.Task) -> None:
         self._inflight_tasks.discard(task)
         try:
             task.result()
+        except asyncio.CancelledError:
+            logger.debug(
+                "Interaction middleware task cancelled: name=%s",
+                task.get_name(),
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                "Interaction middleware inbound task failed: %s",
+                "Interaction middleware task failed: name=%s error=%s",
+                task.get_name(),
                 exc,
                 exc_info=True,
             )
@@ -224,8 +257,10 @@ class InteractionMiddleware:
                     event, decision
                 )
                 if sent:
-                    await self._persist_turn(
-                        event, decision, decision.immediate_spoken_reply
+                    self._schedule_memory_persist(
+                        event,
+                        decision,
+                        decision.immediate_spoken_reply,
                     )
             self._forward_to_core(event)
             return
@@ -324,7 +359,7 @@ class InteractionMiddleware:
             for item in event.get_extra("_visible_turn_outputs", [])
             if isinstance(item, dict)
         ]
-        task = asyncio.create_task(
+        self._spawn_background_task(
             dispatch_postprocess(
                 event=event,
                 trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
@@ -333,9 +368,10 @@ class InteractionMiddleware:
                 visible_outputs=visible_outputs,
             ),
             name=f"interaction_turn_postprocess_{event.get_platform_id()}",
-        )
-        task.add_done_callback(
-            lambda done_task: self._log_turn_postprocess_failure(event, done_task)
+            done_callback=lambda done_task: self._log_turn_postprocess_failure(
+                event,
+                done_task,
+            ),
         )
 
     @staticmethod
@@ -387,6 +423,17 @@ class InteractionMiddleware:
         )
         self.core_queue.put_nowait(event)
 
+    def _schedule_memory_persist(
+        self,
+        event: AstrMessageEvent,
+        decision: InteractionDecision,
+        visible_reply: str | None,
+    ) -> None:
+        self._spawn_background_task(
+            self._persist_turn(event, decision, visible_reply),
+            name=f"interaction_memory_persist_{event.get_platform_id()}",
+        )
+
     async def _persist_turn(
         self,
         event: AstrMessageEvent,
@@ -394,19 +441,15 @@ class InteractionMiddleware:
         visible_reply: str | None,
     ) -> None:
         try:
-            snapshot = await self.memory_store.load_interaction_memory(
+            await self.memory_store.update_interaction_memory(
                 event.unified_msg_origin,
                 str(event.get_extra("_interaction_persona_id", "") or ""),
-            )
-            snapshot = update_interaction_memory_from_turn(
-                snapshot,
-                user_text=event.message_str,
-                visible_reply=visible_reply,
-                turn_id=str(event.get_extra("_turn_id", "") or ""),
-            )
-            await self.memory_store.save_interaction_memory(
-                event.unified_msg_origin,
-                snapshot,
+                lambda snapshot: update_interaction_memory_from_turn(
+                    snapshot,
+                    user_text=event.message_str,
+                    visible_reply=visible_reply,
+                    turn_id=str(event.get_extra("_turn_id", "") or ""),
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_memory_persist_failed", True)

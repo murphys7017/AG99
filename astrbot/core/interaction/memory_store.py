@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -76,6 +78,7 @@ class InteractionMemoryStore:
     def __init__(self) -> None:
         self._base_dir = Path(get_astrbot_data_path()) / "interaction_memory"
         self._base_dir.mkdir(parents=True, exist_ok=True)
+        self._locks: dict[Path, asyncio.Lock] = {}
 
     def _get_session_path(self, session_id: str) -> Path:
         safe_name = (
@@ -86,18 +89,65 @@ class InteractionMemoryStore:
         )
         return self._base_dir / f"{safe_name}.json"
 
+    def _get_session_lock(self, path: Path) -> asyncio.Lock:
+        lock = self._locks.get(path)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[path] = lock
+        return lock
+
     async def load_interaction_memory(
         self,
         session_id: str,
         persona_id: str,
     ) -> InteractionMemorySnapshot:
         path = self._get_session_path(session_id)
-        if not path.exists():
+        async with self._get_session_lock(path):
+            return await self._load_interaction_memory_unlocked(
+                path,
+                session_id,
+                persona_id,
+            )
+
+    async def save_interaction_memory(
+        self,
+        session_id: str,
+        snapshot: InteractionMemorySnapshot,
+    ) -> None:
+        path = self._get_session_path(session_id)
+        async with self._get_session_lock(path):
+            await self._save_interaction_memory_unlocked(path, snapshot)
+
+    async def update_interaction_memory(
+        self,
+        session_id: str,
+        persona_id: str,
+        updater: Callable[[InteractionMemorySnapshot], InteractionMemorySnapshot],
+    ) -> InteractionMemorySnapshot:
+        path = self._get_session_path(session_id)
+        async with self._get_session_lock(path):
+            snapshot = await self._load_interaction_memory_unlocked(
+                path,
+                session_id,
+                persona_id,
+            )
+            updated = updater(snapshot)
+            await self._save_interaction_memory_unlocked(path, updated)
+            return updated
+
+    async def _load_interaction_memory_unlocked(
+        self,
+        path: Path,
+        session_id: str,
+        persona_id: str,
+    ) -> InteractionMemorySnapshot:
+        if not await asyncio.to_thread(path.exists):
             return InteractionMemorySnapshot(
                 session_id=session_id, persona_id=persona_id
             )
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload_text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            payload = json.loads(payload_text)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to load interaction memory: session_id=%s path=%s error=%s",
@@ -113,16 +163,13 @@ class InteractionMemoryStore:
             snapshot.persona_id = persona_id
         return snapshot
 
-    async def save_interaction_memory(
-        self,
-        session_id: str,
+    @staticmethod
+    async def _save_interaction_memory_unlocked(
+        path: Path,
         snapshot: InteractionMemorySnapshot,
     ) -> None:
-        path = self._get_session_path(session_id)
-        path.write_text(
-            json.dumps(asdict(snapshot), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        payload = json.dumps(asdict(snapshot), ensure_ascii=False, indent=2)
+        await asyncio.to_thread(path.write_text, payload, encoding="utf-8")
 
 
 def build_interaction_memory_payload(

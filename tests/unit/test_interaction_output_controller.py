@@ -177,13 +177,7 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
         ResultContributor()
     ]
     memory_store = MagicMock()
-    memory_store.load_interaction_memory = AsyncMock(
-        return_value=MagicMock(
-            recent_topics=[],
-            last_impression_summary="",
-        )
-    )
-    memory_store.save_interaction_memory = AsyncMock()
+    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
@@ -212,7 +206,7 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
     assert payload["platform_extras"]["client_objects"] == [{"kind": "card"}]
     assert queue.empty()
     assert webchat_event.get_extra("_visible_turn_completion_sent") is None
-    memory_store.save_interaction_memory.assert_awaited_once()
+    memory_store.update_interaction_memory.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -490,13 +484,7 @@ async def test_result_contributor_failure_is_recorded(webchat_event):
 async def test_outbound_memory_persist_failure_is_recorded(webchat_event):
     queue = asyncio.Queue()
     memory_store = MagicMock()
-    memory_store.load_interaction_memory = AsyncMock(
-        return_value=MagicMock(
-            recent_topics=[],
-            last_impression_summary="",
-        )
-    )
-    memory_store.save_interaction_memory = AsyncMock(
+    memory_store.update_interaction_memory = AsyncMock(
         side_effect=RuntimeError("disk full")
     )
     controller = InteractionOutputController(

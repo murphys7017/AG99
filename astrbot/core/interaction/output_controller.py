@@ -1057,19 +1057,15 @@ class InteractionOutputController:
         if not visible_reply:
             return
         try:
-            snapshot = await self.memory_store.load_interaction_memory(
+            await self.memory_store.update_interaction_memory(
                 event.unified_msg_origin,
                 str(event.get_extra("_interaction_persona_id", "") or ""),
-            )
-            snapshot = update_interaction_memory_from_turn(
-                snapshot,
-                user_text=event.message_str,
-                visible_reply=visible_reply,
-                turn_id=str(event.get_extra("_turn_id", "") or ""),
-            )
-            await self.memory_store.save_interaction_memory(
-                event.unified_msg_origin,
-                snapshot,
+                lambda snapshot: update_interaction_memory_from_turn(
+                    snapshot,
+                    user_text=event.message_str,
+                    visible_reply=visible_reply,
+                    turn_id=str(event.get_extra("_turn_id", "") or ""),
+                ),
             )
             logger.debug(
                 "Interaction memory persisted: platform_id=%s session_id=%s turn_id=%s visible_reply_length=%s",

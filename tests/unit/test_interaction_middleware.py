@@ -9,6 +9,7 @@ from astrbot.core.interaction.config import (
 )
 from astrbot.core.interaction.decision_agent import InteractionDecisionAgent
 from astrbot.core.interaction.input_gateway import CoreInputGateway
+from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.types import InteractionDecision, RouteMode
 from astrbot.core.message.components import Plain
@@ -244,9 +245,13 @@ class TestInteractionMiddleware:
     async def test_hybrid_emits_reply_before_forwarding(self, webchat_event):
         queue = asyncio.Queue()
         controller = MagicMock()
+        release_persist = asyncio.Event()
 
         async def _emit_immediate_spoken_reply(*_args):
             webchat_event._has_send_oper = True
+
+        async def _wait_for_persist_release(*_args):
+            await release_persist.wait()
 
         controller.emit_immediate_spoken_reply = AsyncMock(
             side_effect=_emit_immediate_spoken_reply
@@ -273,14 +278,20 @@ class TestInteractionMiddleware:
                 reason="hybrid",
             )
         )
+        middleware.memory_store.update_interaction_memory = AsyncMock(
+            side_effect=_wait_for_persist_release
+        )
 
         middleware.handle_inbound(webchat_event)
+        await asyncio.sleep(0)
         await asyncio.sleep(0)
 
         controller.emit_immediate_spoken_reply.assert_awaited_once()
         forwarded_event = queue.get_nowait()
         assert forwarded_event is webchat_event
         assert forwarded_event._has_send_oper is False
+        release_persist.set()
+        await asyncio.sleep(0)
 
     @pytest.mark.asyncio
     async def test_hybrid_immediate_reply_is_persisted_for_next_decision(
@@ -312,15 +323,30 @@ class TestInteractionMiddleware:
                 reason="hybrid",
             )
         )
-        middleware.memory_store.save_interaction_memory = AsyncMock()
+        captured_snapshot = None
+        persisted = asyncio.Event()
+
+        async def _capture_update(session_id, persona_id, updater):  # noqa: ANN001
+            del session_id, persona_id
+            nonlocal captured_snapshot
+            captured_snapshot = updater(
+                InteractionMemorySnapshot(session_id="test-session")
+            )
+            persisted.set()
+            return captured_snapshot
+
+        middleware.memory_store.update_interaction_memory = AsyncMock(
+            side_effect=_capture_update
+        )
 
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
         assert queue.get_nowait() is webchat_event
-        middleware.memory_store.save_interaction_memory.assert_awaited_once()
-        snapshot = middleware.memory_store.save_interaction_memory.await_args.args[1]
-        assert snapshot.recent_turns[0] == {
+        await asyncio.wait_for(persisted.wait(), timeout=1)
+        middleware.memory_store.update_interaction_memory.assert_awaited_once()
+        assert captured_snapshot is not None
+        assert captured_snapshot.recent_turns[0] == {
             "user": "Hello world",
             "assistant": "等我看看。",
             "turn_id": webchat_event.get_extra("_turn_id"),
@@ -608,7 +634,7 @@ class TestInteractionMiddleware:
                 reason="self",
             )
         )
-        middleware.memory_store.save_interaction_memory = AsyncMock(
+        middleware.memory_store.update_interaction_memory = AsyncMock(
             side_effect=RuntimeError("disk full")
         )
 
@@ -659,7 +685,7 @@ class TestInteractionMiddleware:
                 reason="self",
             )
         )
-        middleware.memory_store.save_interaction_memory = AsyncMock()
+        middleware.memory_store.update_interaction_memory = AsyncMock()
 
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
@@ -667,7 +693,7 @@ class TestInteractionMiddleware:
         assert queue.empty()
         complete_visible_turn.assert_awaited_once()
         controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
-        middleware.memory_store.save_interaction_memory.assert_not_awaited()
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
         assert webchat_event.get_extra("_interaction_visible_completion_failed") is True
 
     @pytest.mark.asyncio
