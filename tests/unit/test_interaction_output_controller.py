@@ -6,10 +6,15 @@ import pytest
 from astrbot.core.interaction.contributors import InteractionResultContribution
 from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.turn_state import (
+    InteractionContextMaterial,
+    InteractionTurnState,
+)
 from astrbot.core.interaction.types import (
     FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
+    RouteMode,
 )
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import (
@@ -389,6 +394,72 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
 
 
 @pytest.mark.asyncio
+async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    memory_store = MagicMock()
+    memory_store.update_interaction_memory = AsyncMock()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        memory_store=memory_store,
+    )
+    webchat_event.set_extra(
+        "_interaction_decision",
+        InteractionDecision(
+            route_mode=RouteMode.HYBRID,
+            should_emit_immediate_reply=True,
+            immediate_spoken_reply="我看看。",
+            reason="hybrid",
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("stream final")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+        webchat_event.set_result(
+            MessageEventResult(
+                chain=[Plain("可以执行cmd，限制当前工作目录。没联网权限。")],
+                result_content_type=ResultContentType.GENERAL_RESULT,
+            )
+        )
+        await controller.capture_message_chain(
+            MessageChain([Plain("可以执行cmd，限制当前工作目录。没联网权限。")]),
+            webchat_event,
+        )
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    streamed_payload = payloads[0]
+    final_payload = payloads[-1]
+    assert streamed_payload["data"] == "stream final"
+    assert final_payload["data"] == "可以执行cmd，限制当前工作目录。没联网权限。"
+    assert final_payload["platform_extras"]["message_kind"] == "core_reply"
+    assert webchat_event.get_extra("_visible_turn_outputs") == [
+        {
+            "turn_id": "turn-1",
+            "kind": "core_stream",
+            "text": "stream final",
+            "memory_relevant": True,
+        },
+        {
+            "turn_id": "turn-1",
+            "kind": "core_reply",
+            "text": "可以执行cmd，限制当前工作目录。没联网权限。",
+            "memory_relevant": True,
+        },
+    ]
+    memory_store.update_interaction_memory.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_core_final_result_is_consumed_only_once_for_segmented_sends(
     webchat_event,
 ):
@@ -752,6 +823,38 @@ async def test_capture_streaming_observes_core_chunks_without_interjection(
 
 
 @pytest.mark.asyncio
+async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_event):
+    queue = asyncio.Queue()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_enabled=False,
+            stream_interjection_enabled=False,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+        yield MessageChain([Plain(" world")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    assert webchat_event.get_extra("_interaction_core_stream_text") == "hello world"
+    assert webchat_event.get_extra("_visible_turn_outputs") == [
+        {
+            "turn_id": "turn-1",
+            "kind": "core_stream",
+            "text": "hello world",
+            "memory_relevant": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_capture_streaming_does_not_block_core_chunks(webchat_event):
     queue = asyncio.Queue()
     decider = SlowStreamInterjectionDecider()
@@ -888,6 +991,46 @@ async def test_capture_streaming_observes_final_short_output(webchat_event):
         "short result",
     ]
     assert payloads[-1]["type"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_reuses_turn_context_material(webchat_event):
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_interjection_enabled=True,
+        ),
+    )
+    turn_state = InteractionTurnState(
+        turn_id="turn-1",
+        context_material=InteractionContextMaterial(
+            persona_payload={"persona_id": "alice"},
+            memory_payload={"recent_turns": [{"user": "u1", "assistant": "a1"}]},
+            recent_messages=[
+                {
+                    "source": "interaction_memory",
+                    "user_message": {"role": "user", "content": "u1"},
+                    "assistant_message": {"role": "assistant", "content": "a1"},
+                }
+            ],
+        ),
+    )
+    webchat_event.set_extra("_interaction_turn_state", turn_state)
+
+    with patch(
+        "astrbot.core.interaction.output_controller.build_interaction_context_pack",
+        new=AsyncMock(side_effect=AssertionError("should not rebuild context")),
+    ):
+        prompt = await controller._build_stream_interjection_prompt(
+            webchat_event,
+            observed_text="hello",
+            total_text="hello",
+            window_index=1,
+            is_final=False,
+        )
+
+    assert '"persona_id": "alice"' in prompt
+    assert '"recent_turns"' in prompt
 
 
 @pytest.mark.asyncio

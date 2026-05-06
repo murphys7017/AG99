@@ -6,6 +6,7 @@ from astrbot import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 
+from .turn_state import get_interaction_turn_state
 from .types import CoreTaskSpec, InteractionDecision
 
 INTERACTION_CORE_TASK_SPEC_EXTRA_KEY = "_interaction_core_task_spec"
@@ -13,6 +14,9 @@ INTERACTION_DECISION_EXTRA_KEY = "_interaction_decision"
 
 
 def get_interaction_decision(event: AstrMessageEvent) -> InteractionDecision | None:
+    turn_state = get_interaction_turn_state(event)
+    if turn_state is not None and isinstance(turn_state.decision, InteractionDecision):
+        return turn_state.decision
     decision = event.get_extra(INTERACTION_DECISION_EXTRA_KEY)
     if isinstance(decision, InteractionDecision):
         return decision
@@ -20,6 +24,13 @@ def get_interaction_decision(event: AstrMessageEvent) -> InteractionDecision | N
 
 
 def get_core_task_spec(event: AstrMessageEvent) -> CoreTaskSpec | None:
+    turn_state = get_interaction_turn_state(event)
+    if (
+        turn_state is not None
+        and isinstance(turn_state.decision, InteractionDecision)
+        and isinstance(turn_state.decision.core_task_spec, CoreTaskSpec)
+    ):
+        return turn_state.decision.core_task_spec
     spec = event.get_extra(INTERACTION_CORE_TASK_SPEC_EXTRA_KEY)
     if isinstance(spec, CoreTaskSpec):
         return spec

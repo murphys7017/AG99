@@ -1,5 +1,10 @@
-from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
-from astrbot.core.interaction.types import CoreTaskSpec
+from astrbot.core.interaction.core_bridge import (
+    apply_interaction_core_task_spec,
+    get_core_task_spec,
+    get_interaction_decision,
+)
+from astrbot.core.interaction.turn_state import InteractionTurnState
+from astrbot.core.interaction.types import CoreTaskSpec, InteractionDecision, RouteMode
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
@@ -47,3 +52,59 @@ def test_apply_interaction_core_task_spec_injects_execution_prompt():
     assert "<interaction_execution_context>" in req.system_prompt
     assert "请查询今天的天气。" in req.system_prompt
     assert "查询天气" in req.system_prompt
+
+
+def test_core_bridge_reads_decision_and_task_spec_from_turn_state_first():
+    platform_meta = PlatformMetadata(
+        name="webchat",
+        description="webchat",
+        id="webchat",
+    )
+    message = AstrBotMessage()
+    message.type = MessageType.FRIEND_MESSAGE
+    message.self_id = "webchat"
+    message.session_id = "webchat!user!session123"
+    message.message_id = "msg123"
+    message.sender = MessageMember(user_id="user123", nickname="TestUser")
+    message.message_str = "查天气"
+    event = ConcreteAstrMessageEvent(
+        message_str="查天气",
+        message_obj=message,
+        platform_meta=platform_meta,
+        session_id="webchat!user!session123",
+    )
+
+    state_spec = CoreTaskSpec(
+        task_intent="weather",
+        task_summary="来自 turn state",
+        execution_prompt="按 turn state 执行。",
+    )
+    state_decision = InteractionDecision(
+        route_mode=RouteMode.HYBRID,
+        should_emit_immediate_reply=True,
+        immediate_spoken_reply="我看看。",
+        core_task_spec=state_spec,
+        reason="turn_state",
+    )
+    event.set_extra(
+        "_interaction_turn_state",
+        InteractionTurnState(turn_id="turn-1", decision=state_decision),
+    )
+    event.set_extra(
+        "_interaction_decision",
+        InteractionDecision(
+            route_mode=RouteMode.DELEGATE_TO_CORE,
+            reason="legacy_extra",
+        ),
+    )
+    event.set_extra(
+        "_interaction_core_task_spec",
+        CoreTaskSpec(
+            task_intent="legacy",
+            task_summary="来自 extra",
+            execution_prompt="按 extra 执行。",
+        ),
+    )
+
+    assert get_interaction_decision(event) is state_decision
+    assert get_core_task_spec(event) is state_spec
