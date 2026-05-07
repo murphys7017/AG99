@@ -47,6 +47,9 @@ class PreProcessStage(Stage):
             except Exception as e:
                 logger.warning(f"{platform} 预回应表情发送失败: {e}")
 
+        if event.get_extra("_interaction_inbound_media_materialized", False):
+            return
+
         # 路径映射
         if mappings := self.platform_settings.get("path_mapping", []):
             # 支持 Record，Image 消息段的路径映射。

@@ -22,8 +22,9 @@ from astrbot.core.interaction.types import (
     InteractionDecision,
     RouteMode,
 )
-from astrbot.core.message.components import Plain
+from astrbot.core.message.components import Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.pipeline.preprocess_stage.stage import PreProcessStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
@@ -42,6 +43,16 @@ class StreamingAstrMessageEvent(ConcreteAstrMessageEvent):
         async for _chain in generator:
             pass
         await super().send_streaming(generator, use_fallback=use_fallback)
+
+
+class FakeSTTProvider:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls: list[str] = []
+
+    async def get_text(self, audio_url: str) -> str:
+        self.calls.append(audio_url)
+        return self.text
 
 
 async def _call_original_visible_completion(event):
@@ -81,6 +92,18 @@ def streaming_event(webchat_event):
     )
     event.message_obj.message_str = webchat_event.message_obj.message_str
     return event
+
+
+@pytest.fixture
+def voice_event(webchat_event, tmp_path):
+    audio_path = tmp_path / "voice.wav"
+    audio_path.write_bytes(b"fake-wav")
+    webchat_event.message_str = ""
+    webchat_event.message_obj.message_str = ""
+    webchat_event.message_obj.message = [
+        Record.fromFileSystem(str(audio_path)),
+    ]
+    return webchat_event
 
 
 class TestInteractionMiddlewareConfig:
@@ -172,6 +195,51 @@ class TestInteractionMiddleware:
         assert (
             webchat_event.get_extra("_interaction_output_interceptor_installed") is True
         )
+
+    @pytest.mark.asyncio
+    async def test_inbound_stt_materializes_voice_before_decision(self, voice_event):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        stt_provider = FakeSTTProvider("recognized voice text")
+        plugin_context = MagicMock(spec=Context)
+        plugin_context.get_using_stt_provider.return_value = stt_provider
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                },
+                "provider_stt_settings": {"enable": True},
+            },
+            queue,
+            controller,
+            plugin_context=plugin_context,
+        )
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.DELEGATE_TO_CORE,
+                should_emit_immediate_reply=False,
+                confidence=0.9,
+                reason="delegate",
+            )
+        )
+
+        middleware.handle_inbound(voice_event)
+        await asyncio.sleep(0)
+
+        forwarded_event = queue.get_nowait()
+        middleware.decision_agent.decide.assert_awaited_once()
+        decision_event = middleware.decision_agent.decide.await_args.args[0]
+        assert decision_event.message_str == "recognized voice text"
+        assert forwarded_event.message_obj.message_str == "recognized voice text"
+        assert isinstance(forwarded_event.message_obj.message[0], Plain)
+        assert forwarded_event.get_extra("_interaction_stt_transcribed") is True
+        assert (
+            forwarded_event.get_extra("_interaction_inbound_media_materialized") is True
+        )
+        assert len(stt_provider.calls) == 1
 
     @pytest.mark.asyncio
     async def test_core_send_is_intercepted_after_forwarding(self, webchat_event):
@@ -920,6 +988,31 @@ class TestInteractionMiddleware:
             await asyncio.sleep(0)
 
         assert order == ["persist", "postprocess"]
+
+    @pytest.mark.asyncio
+    async def test_preprocess_skips_media_after_interaction_materialization(
+        self,
+        voice_event,
+    ):
+        stt_provider = FakeSTTProvider("duplicate text")
+        context = MagicMock()
+        context.get_using_stt_provider.return_value = stt_provider
+        stage = PreProcessStage()
+        await stage.initialize(
+            MagicMock(
+                astrbot_config={
+                    "provider_stt_settings": {"enable": True},
+                    "platform_settings": {},
+                },
+                plugin_manager=MagicMock(context=context),
+            )
+        )
+        voice_event.set_extra("_interaction_inbound_media_materialized", True)
+
+        await stage.process(voice_event)
+
+        assert stt_provider.calls == []
+        assert voice_event.message_str == ""
 
 
 class TestCoreInputGateway:

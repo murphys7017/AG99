@@ -5201,6 +5201,52 @@ async def test_memory_postprocessor_skips_interaction_turn_without_finalized_mat
 
 
 @pytest.mark.asyncio
+async def test_memory_postprocessor_does_not_fallback_for_interaction_turn_material():
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.message_str = "Can you check permissions?"
+    event.session_id = "session-1"
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = None
+    ctx.provider_request = ProviderRequest(
+        prompt="Can you check permissions?",
+        session_id="session-1",
+        contexts=[
+            {"role": "user", "content": "Earlier request."},
+            {"role": "assistant", "content": "Earlier answer."},
+        ],
+    )
+    ctx.llm_response = LLMResponse(
+        role="assistant",
+        completion_text="You can run commands in the workspace.",
+    )
+    ctx.turn_id = "turn-1"
+    ctx.turn_material = {
+        "turn_id": "turn-1",
+        "assistant_text": "",
+    }
+    ctx.visible_outputs = []
+    ctx.timestamp = datetime.now(UTC)
+
+    req = await processor.build_update_request(ctx)
+    await processor.run(ctx)
+
+    assert req is None
+    memory_service.update_from_postprocess.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_memory_postprocessor_prefers_explicit_turn_material():
     event = MagicMock()
     event.unified_msg_origin = TEST_UMO

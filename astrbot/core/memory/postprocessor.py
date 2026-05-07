@@ -150,6 +150,8 @@ def _resolve_turn_material(
     )
     if interaction_material is not None:
         return interaction_material
+    if _normalize_text(ctx.turn_id):
+        return None
 
     if ctx.conversation is not None:
         conversation_history = parse_conversation_history(ctx.conversation.history)
@@ -391,7 +393,7 @@ def _is_current_turn_match(
 
 
 def _describe_skip_reason(ctx: PostProcessContext) -> str:
-    if (ctx.turn_id or "").strip():
+    if _normalize_text(ctx.turn_id):
         return "missing_finalized_turn_material"
 
     if ctx.conversation is not None:

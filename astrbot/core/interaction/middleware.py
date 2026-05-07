@@ -6,10 +6,12 @@ from types import MethodType
 from typing import Any
 
 from astrbot import logger
+from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
+from astrbot.core.utils.media_utils import ensure_wav
 
 from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
 from .core_bridge import (
@@ -198,6 +200,7 @@ class InteractionMiddleware:
         self.refresh_interaction_config()
         turn_id = uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
+        await self._materialize_inbound_media(event)
         decision = await self._decide_or_fallback(event)
         self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
         if decision.route_mode == RouteMode.SELF_REPLY:
@@ -263,6 +266,162 @@ class InteractionMiddleware:
             )
             return build_fallback_decision("decision_pipeline_error")
         return decision
+
+    async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:
+        self._apply_inbound_path_mapping(event)
+        await self._normalize_inbound_records(event)
+        await self._transcribe_inbound_records(event)
+        event.set_extra("_interaction_inbound_media_materialized", True)
+
+    def _apply_inbound_path_mapping(self, event: AstrMessageEvent) -> None:
+        platform_settings = self.config.get("platform_settings", {})
+        mappings = platform_settings.get("path_mapping", [])
+        if not isinstance(mappings, list) or not mappings:
+            return
+
+        message_chain = event.get_messages()
+        for idx, component in enumerate(message_chain):
+            if not isinstance(component, Record | Image) or not component.url:
+                continue
+            for mapping in mappings:
+                if not isinstance(mapping, str) or ":" not in mapping:
+                    continue
+                from_, to_ = mapping.split(":", 1)
+                from_ = from_.removesuffix("/")
+                to_ = to_.removesuffix("/")
+                url = component.url.removeprefix("file://")
+                if url.startswith(from_):
+                    component.url = url.replace(from_, to_, 1)
+                    logger.debug(
+                        "Interaction inbound path mapped: platform_id=%s session_id=%s from=%s to=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        url,
+                        component.url,
+                    )
+            message_chain[idx] = component
+
+    async def _normalize_inbound_records(self, event: AstrMessageEvent) -> None:
+        message_chain = event.get_messages()
+        for idx, component in enumerate(message_chain):
+            if not isinstance(component, Record):
+                continue
+            try:
+                original_path = await component.convert_to_file_path()
+                record_path = await ensure_wav(original_path)
+                if record_path != original_path:
+                    event.track_temporary_local_file(record_path)
+                component.file = record_path
+                component.path = record_path
+                message_chain[idx] = component
+            except Exception as exc:  # noqa: BLE001
+                event.set_extra("_interaction_record_normalize_failed", True)
+                event.set_extra(
+                    "_interaction_record_normalize_failure_reason",
+                    str(exc),
+                )
+                logger.warning(
+                    "Interaction inbound voice normalization failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    event.get_extra("_turn_id"),
+                    exc,
+                )
+
+    async def _transcribe_inbound_records(self, event: AstrMessageEvent) -> None:
+        stt_settings = self.config.get("provider_stt_settings", {})
+        if not isinstance(stt_settings, dict) or not stt_settings.get("enable", False):
+            return
+        if self.plugin_context is None:
+            event.set_extra("_interaction_stt_failed", True)
+            event.set_extra(
+                "_interaction_stt_failure_reason",
+                "plugin_context_unavailable",
+            )
+            logger.warning(
+                "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=plugin_context_unavailable",
+                event.get_platform_id(),
+                event.session_id,
+            )
+            return
+
+        get_provider = getattr(self.plugin_context, "get_using_stt_provider", None)
+        stt_provider = (
+            get_provider(event.unified_msg_origin) if callable(get_provider) else None
+        )
+        if not stt_provider:
+            event.set_extra("_interaction_stt_failed", True)
+            event.set_extra(
+                "_interaction_stt_failure_reason",
+                "provider_unavailable",
+            )
+            logger.warning(
+                "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=provider_unavailable",
+                event.get_platform_id(),
+                event.session_id,
+            )
+            return
+
+        message_chain = event.get_messages()
+        for idx, component in enumerate(message_chain):
+            if not isinstance(component, Record):
+                continue
+            try:
+                path = await component.convert_to_file_path()
+            except Exception as exc:  # noqa: BLE001
+                event.set_extra("_interaction_stt_failed", True)
+                event.set_extra("_interaction_stt_failure_reason", str(exc))
+                logger.error(
+                    "Interaction inbound STT audio path resolution failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    event.get_extra("_turn_id"),
+                    exc,
+                    exc_info=True,
+                )
+                continue
+            result = ""
+            retry = 5
+            for attempt in range(retry):
+                try:
+                    result = await stt_provider.get_text(audio_url=path)
+                    break
+                except FileNotFoundError as exc:
+                    event.set_extra("_interaction_stt_failed", True)
+                    event.set_extra("_interaction_stt_failure_reason", str(exc))
+                    logger.warning(
+                        "Interaction inbound STT source unavailable; retrying: platform_id=%s session_id=%s turn_id=%s attempt=%s/%s error=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        event.get_extra("_turn_id"),
+                        attempt + 1,
+                        retry,
+                        exc,
+                    )
+                    await asyncio.sleep(0.5)
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    event.set_extra("_interaction_stt_failed", True)
+                    event.set_extra("_interaction_stt_failure_reason", str(exc))
+                    logger.error(
+                        "Interaction inbound STT failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        event.get_extra("_turn_id"),
+                        exc,
+                        exc_info=True,
+                    )
+                    break
+            text = str(result or "").strip()
+            if not text:
+                continue
+            logger.info("Interaction inbound STT result: %s", text)
+            message_chain[idx] = Plain(text)
+            event.message_str = f"{event.message_str or ''}{text}"
+            event.message_obj.message_str = (
+                f"{event.message_obj.message_str or ''}{text}"
+            )
+            event.set_extra("_interaction_stt_transcribed", True)
 
     async def _emit_immediate_reply(
         self,
