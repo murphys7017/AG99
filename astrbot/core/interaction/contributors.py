@@ -192,7 +192,7 @@ class InteractionResultView:
                 "turn_id": self.turn_id,
                 "platform_id": self.platform_id,
                 "session_id": self.session_id,
-                "decision": self.decision,
+                "decision": freeze_interaction_snapshot(self.decision),
                 "immediate_reply": self.immediate_reply,
                 "core_result": self.core_result,
                 "final_result": self.final_result,
@@ -214,6 +214,7 @@ class InteractionResultView:
     def copy_read_only(self) -> InteractionResultView:
         return replace(
             self,
+            decision=freeze_interaction_snapshot(self.decision),
             visible_outputs=freeze_interaction_snapshot(self.visible_outputs),
             utterances=freeze_interaction_snapshot(self.utterances),
             turn_material_snapshot=freeze_interaction_snapshot(

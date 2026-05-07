@@ -8,10 +8,12 @@ import pytest
 
 import astrbot.core.message.components as Comp
 from astrbot.core.astr_agent_hooks import MainAgentHooks
+from astrbot.core.interaction.turn_state import ensure_interaction_turn_state
 from astrbot.core.message.message_event_result import (
     MessageEventResult,
     ResultContentType,
 )
+from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.postprocess import (
     build_postprocess_context,
@@ -448,6 +450,65 @@ async def test_respond_stage_dispatches_postprocess_after_streaming_send():
     ]
     assert all(call.kwargs["event"] is event for call in dispatch.await_args_list)
     event.clear_result.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_skips_turn_completed_postprocess_for_interaction_turn():
+    event, extras = _make_event()
+    result = _make_result([Comp.Plain("hello")])
+    event.get_result.return_value = result
+    event.send = AsyncMock()
+    event.complete_visible_turn = AsyncMock()
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+
+    stage = RespondStage()
+    stage.enable_seg = False
+    stage.platform_settings = {}
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch,
+    ):
+        await stage.process(event)
+        await asyncio.sleep(0)
+
+    assert [call.kwargs["trigger"] for call in dispatch.await_args_list] == [
+        PostProcessTrigger.AFTER_MESSAGE_SENT
+    ]
+
+
+@pytest.mark.asyncio
+async def test_result_decorate_stage_skips_interaction_turn_reply_prefix():
+    event, extras = _make_event()
+    result = _make_result([Comp.Plain("hello")])
+    event.get_result.return_value = result
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+
+    stage = ResultDecorateStage()
+    stage.content_safe_check_reply = False
+    stage.content_safe_check_stage = None
+    stage.reply_prefix = "[bot] "
+
+    with patch(
+        "astrbot.core.pipeline.result_decorate.stage.star_handlers_registry.get_handlers_by_event_type",
+        return_value=[],
+    ):
+        async for _ in stage.process(event):
+            pass
+
+    assert result.chain[0].text == "hello"
 
 
 @pytest.mark.asyncio

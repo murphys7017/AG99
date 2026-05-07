@@ -63,8 +63,6 @@ GenieData/
 .kilocode/
 pyproject.toml
 .worktrees/
-<<<<<<< HEAD
-=======
 
 dashboard/bun.lock
->>>>>>> upstream/master
+deepseek-tui-windows-x64.exe

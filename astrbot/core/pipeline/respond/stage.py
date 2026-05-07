@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from copy import copy
 
 from astrbot.core import logger
+from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -43,10 +44,18 @@ class RespondStage(Stage):
             trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
             task_name=f"postprocess_after_message_sent_{event.get_platform_id()}",
         )
+        if self._is_interaction_turn(event):
+            return
         self._schedule_postprocess(
             event,
             trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
             task_name=f"postprocess_after_turn_completed_{event.get_platform_id()}",
+        )
+
+    @staticmethod
+    def _is_interaction_turn(event: AstrMessageEvent) -> bool:
+        return bool(event.get_extra("_interaction_enabled")) and (
+            get_interaction_turn_state(event) is not None
         )
 
     def _schedule_postprocess(

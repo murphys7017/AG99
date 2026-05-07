@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import time
+import traceback
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.message.components import Plain
+from astrbot.core import file_token_service, html_renderer
+from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
+from astrbot.core.star.session_llm_manager import SessionServiceManager
 
 from .context_builder import (
     build_interaction_context_pack,
@@ -32,7 +37,6 @@ from .finalizer import finalize_response
 from .memory_store import (
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
-    update_interaction_memory_from_turn,
 )
 from .turn_state import (
     add_interaction_turn_stream_observation_task,
@@ -50,10 +54,8 @@ from .turn_state import (
     has_interaction_turn_core_streaming_result_consumed,
     is_interaction_turn_completed,
     is_interaction_turn_core_streaming_active,
-    mark_interaction_turn_completed,
     mark_interaction_turn_core_final_result_consumed,
     mark_interaction_turn_core_streaming_result_consumed,
-    mark_interaction_turn_memory_persisted,
     mark_interaction_turn_stream_interjection_emitted,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
@@ -92,6 +94,61 @@ class InteractionOutputController:
         self.memory_store = memory_store or InteractionMemoryStore()
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
+        self._refresh_outbound_materialization_config()
+
+    def _refresh_outbound_materialization_config(self) -> None:
+        self.reply_prefix = str(self.platform_settings.get("reply_prefix", "") or "")
+        self.t2i_word_threshold = self._coerce_t2i_word_threshold(
+            self._get_config_value("t2i_word_threshold", 150),
+        )
+        self.t2i_strategy = str(self._get_config_value("t2i_strategy", "remote") or "")
+        self.t2i_use_network = self.t2i_strategy == "remote"
+        self.t2i_active_template = str(
+            self._get_config_value("t2i_active_template", "base") or "base"
+        )
+        self.tts_trigger_probability = self._coerce_probability(
+            self._get_tts_settings().get("trigger_probability", 1.0),
+        )
+        provider_cfg = self._get_provider_settings()
+        self.show_reasoning = bool(provider_cfg.get("display_reasoning_text", False))
+
+    @staticmethod
+    def _coerce_t2i_word_threshold(value: Any) -> int:
+        try:
+            return max(int(value), 50)
+        except (TypeError, ValueError):
+            return 150
+
+    @staticmethod
+    def _coerce_probability(value: Any) -> float:
+        try:
+            return max(0.0, min(float(value), 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
+    def _get_runtime_config(self) -> Any:
+        if self.plugin_context is None:
+            return None
+        get_config = getattr(self.plugin_context, "get_config", None)
+        if not callable(get_config):
+            return None
+        return get_config()
+
+    def _get_config_value(self, key: str, default: Any = None) -> Any:
+        cfg = self._get_runtime_config()
+        if isinstance(cfg, dict):
+            return cfg.get(key, default)
+        if cfg is not None and hasattr(cfg, "get"):
+            return cfg.get(key, default)
+        return default
+
+    def _get_provider_settings(self) -> dict[str, Any]:
+        value = self._get_config_value("provider_settings", {})
+        return value if isinstance(value, dict) else {}
+
+    def _get_tts_settings(self) -> dict[str, Any]:
+        value = self._get_config_value("provider_tts_settings", {})
+        return value if isinstance(value, dict) else {}
 
     async def emit_immediate_spoken_reply(
         self,
@@ -154,6 +211,16 @@ class InteractionOutputController:
             return
 
         if outbound_kind == "passthrough":
+            semantic_text = message.get_plain_text()
+            (
+                message,
+                materialization,
+            ) = await self.materialize_interaction_outbound_message(
+                event,
+                message,
+                message_kind="passthrough",
+                result_is_model_result=False,
+            )
             delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
@@ -163,12 +230,13 @@ class InteractionOutputController:
             self._record_visible_output(
                 event,
                 message_kind="passthrough",
-                text=message.get_plain_text(),
+                text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
+                metadata=materialization,
             )
             await self._persist_interaction_turn(
                 event,
-                message.get_plain_text(),
+                semantic_text,
             )
             return
 
@@ -181,9 +249,19 @@ class InteractionOutputController:
         if final_message is not None:
             return
 
-        delivered_message_ids = await self._deliver_visible_message(
+        semantic_text = full_message.get_plain_text()
+        (
+            materialized_message,
+            materialization,
+        ) = await self.materialize_interaction_outbound_message(
             event,
             full_message,
+            message_kind="core_reply",
+            result_is_model_result=True,
+        )
+        delivered_message_ids = await self._deliver_visible_message(
+            event,
+            materialized_message,
             message_kind="core_reply",
             result_is_model_result=True,
             allow_segmented_reply=True,
@@ -191,8 +269,9 @@ class InteractionOutputController:
         self._record_visible_output(
             event,
             message_kind="core_reply",
-            text=full_message.get_plain_text(),
+            text=semantic_text,
             delivered_message_ids=delivered_message_ids,
+            metadata=materialization,
         )
 
     async def capture_visible_completion(
@@ -872,9 +951,19 @@ class InteractionOutputController:
             and event.get_extra("_interaction_finalizer_failed")
         ):
             final_message = message.derive([Plain("最终回复整理失败，请查看日志。")])
-            delivered_message_ids = await self._deliver_visible_message(
+            semantic_text = final_message.get_plain_text()
+            (
+                materialized_message,
+                materialization,
+            ) = await self.materialize_interaction_outbound_message(
                 event,
                 final_message,
+                message_kind="core_reply",
+                result_is_model_result=True,
+            )
+            delivered_message_ids = await self._deliver_visible_message(
+                event,
+                materialized_message,
                 message_kind="core_reply",
                 result_is_model_result=True,
                 allow_segmented_reply=True,
@@ -882,12 +971,13 @@ class InteractionOutputController:
             self._record_visible_output(
                 event,
                 message_kind="core_reply",
-                text=final_message.get_plain_text(),
+                text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
+                metadata=materialization,
             )
             await self._persist_interaction_turn(
                 event,
-                final_message.get_plain_text(),
+                semantic_text,
             )
             return final_message
         final_message = message
@@ -907,9 +997,19 @@ class InteractionOutputController:
             event,
             result_contribution=merged,
         )
-        delivered_message_ids = await self._deliver_visible_message(
+        semantic_text = final_message.get_plain_text()
+        (
+            materialized_message,
+            materialization,
+        ) = await self.materialize_interaction_outbound_message(
             event,
             final_message,
+            message_kind="core_reply",
+            result_is_model_result=True,
+        )
+        delivered_message_ids = await self._deliver_visible_message(
+            event,
+            materialized_message,
             message_kind="core_reply",
             platform_extras=platform_extras,
             result_is_model_result=True,
@@ -918,12 +1018,13 @@ class InteractionOutputController:
         self._record_visible_output(
             event,
             message_kind="core_reply",
-            text=final_message.get_plain_text(),
+            text=semantic_text,
             delivered_message_ids=delivered_message_ids,
+            metadata=materialization,
         )
         await self._persist_interaction_turn(
             event,
-            final_message.get_plain_text(),
+            semantic_text,
         )
         return final_message
 
@@ -988,7 +1089,11 @@ class InteractionOutputController:
             turn_id=str(event.get_extra("_turn_id", "") or ""),
             platform_id=event.get_platform_id(),
             session_id=event.unified_msg_origin,
-            decision=get_interaction_decision(event),
+            decision=(
+                decision.to_dict()
+                if (decision := get_interaction_decision(event)) is not None
+                else None
+            ),
             immediate_reply=get_interaction_turn_immediate_reply(event),
             core_result=core_result,
             final_result=final_result,
@@ -1118,6 +1223,260 @@ class InteractionOutputController:
                 extras["metadata"] = dict(result_contribution.metadata)
         return extras
 
+    async def materialize_interaction_outbound_message(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        *,
+        message_kind: str,
+        result_is_model_result: bool = False,
+    ) -> tuple[MessageChain, dict[str, Any]]:
+        self._refresh_outbound_materialization_config()
+        materialization: dict[str, Any] = {
+            "message_kind": message_kind,
+            "semantic_text": message.get_plain_text(),
+            "delivered_as": "text",
+        }
+        materialized = self._apply_interaction_reply_prefix(event, message)
+        materialized, reasoning_metadata = self._apply_interaction_reasoning_display(
+            event,
+            materialized,
+        )
+        materialization.update(reasoning_metadata)
+        materialized, tts_metadata = await self._apply_interaction_tts(
+            event,
+            materialized,
+            result_is_model_result=result_is_model_result,
+        )
+        materialization.update(tts_metadata)
+        if tts_metadata.get("delivered_as") == "record":
+            return materialized, materialization
+        materialized, t2i_metadata = await self._apply_interaction_t2i(
+            event,
+            materialized,
+        )
+        materialization.update(t2i_metadata)
+        return materialized, materialization
+
+    def _apply_interaction_reply_prefix(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+    ) -> MessageChain:
+        del event
+        if not self.reply_prefix:
+            return message
+        chain = list(message.chain)
+        for index, comp in enumerate(chain):
+            if isinstance(comp, Plain):
+                chain[index] = Plain(self.reply_prefix + comp.text)
+                return message.derive(chain)
+        return message
+
+    def _apply_interaction_reasoning_display(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+    ) -> tuple[MessageChain, dict[str, Any]]:
+        reasoning_content = str(event.get_extra("_llm_reasoning_content") or "")
+        if not self.show_reasoning or not reasoning_content.strip():
+            return message, {}
+        chain = list(message.chain)
+        if event.get_platform_name() == "lark":
+            chain.insert(
+                0,
+                Json(
+                    data={
+                        "type": "lark_collapsible_panel_reasoning",
+                        "title": "Thinking",
+                        "expanded": False,
+                        "content": reasoning_content,
+                    },
+                ),
+            )
+        else:
+            chain.insert(0, Plain(f"思考: {reasoning_content}\n"))
+        return message.derive(chain), {"reasoning_displayed": True}
+
+    async def _apply_interaction_tts(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        *,
+        result_is_model_result: bool,
+    ) -> tuple[MessageChain, dict[str, Any]]:
+        tts_settings = self._get_tts_settings()
+        get_tts_provider = getattr(self.plugin_context, "get_using_tts_provider", None)
+        tts_provider = (
+            get_tts_provider(event.unified_msg_origin)
+            if callable(get_tts_provider)
+            else None
+        )
+        should_try_tts = (
+            bool(tts_settings.get("enable"))
+            and result_is_model_result
+            and await SessionServiceManager.should_process_tts_request(event)
+            and random.random() <= self.tts_trigger_probability
+        )
+        if not should_try_tts:
+            return message, {}
+        if not tts_provider:
+            self._record_outbound_materialization_failure(
+                event,
+                "tts",
+                "provider_unavailable",
+            )
+            raise RuntimeError("Interaction TTS provider unavailable")
+
+        new_chain = []
+        converted: list[dict[str, Any]] = []
+        for comp in message.chain:
+            if not isinstance(comp, Plain) or len(comp.text) <= 1:
+                new_chain.append(comp)
+                continue
+            try:
+                logger.info("Interaction TTS request: %s", comp.text)
+                audio_path = await tts_provider.get_audio(comp.text)
+                logger.info("Interaction TTS result: %s", audio_path)
+                if not audio_path:
+                    self._record_outbound_materialization_failure(
+                        event,
+                        "tts",
+                        "empty_audio_path",
+                    )
+                    raise RuntimeError("Interaction TTS returned empty audio path")
+                url = await self._register_interaction_tts_file_if_needed(
+                    audio_path,
+                    tts_settings,
+                )
+                delivered_file = url or audio_path
+                new_chain.append(
+                    Record(
+                        file=delivered_file,
+                        url=delivered_file,
+                        text=comp.text,
+                    )
+                )
+                converted.append(
+                    {
+                        "tts_source_text": comp.text,
+                        "tts_audio_path": audio_path,
+                        "tts_audio_url": url,
+                    }
+                )
+                if bool(tts_settings.get("dual_output")):
+                    new_chain.append(comp)
+            except Exception as exc:
+                self._record_outbound_materialization_failure(event, "tts", str(exc))
+                logger.error(traceback.format_exc())
+                raise
+        if not converted:
+            return message.derive(new_chain), {}
+        return (
+            message.derive(new_chain),
+            {
+                "delivered_as": "record",
+                "tts": converted,
+            },
+        )
+
+    async def _register_interaction_tts_file_if_needed(
+        self,
+        audio_path: str,
+        tts_settings: dict[str, Any],
+    ) -> str | None:
+        callback_api_base = self._get_config_value("callback_api_base", "")
+        if not tts_settings.get("use_file_service") or not callback_api_base:
+            return None
+        token = await file_token_service.register_file(audio_path)
+        url = f"{callback_api_base}/api/file/{token}"
+        logger.debug("Interaction TTS file registered: %s", url)
+        return url
+
+    async def _apply_interaction_t2i(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+    ) -> tuple[MessageChain, dict[str, Any]]:
+        use_t2i = (
+            message.use_t2i_
+            if message.use_t2i_ is not None
+            else bool(self._get_config_value("t2i", False))
+        )
+        if not use_t2i:
+            return message, {}
+        parts: list[str] = []
+        for comp in message.chain:
+            if isinstance(comp, Plain):
+                parts.append("\n\n" + comp.text)
+            else:
+                break
+        plain_str = "".join(parts)
+        if not plain_str or len(plain_str) <= self.t2i_word_threshold:
+            return message, {}
+        render_start = time.time()
+        try:
+            url = await html_renderer.render_t2i(
+                plain_str,
+                return_url=True,
+                use_network=self.t2i_use_network,
+                template_name=self.t2i_active_template,
+            )
+        except BaseException as exc:
+            self._record_outbound_materialization_failure(event, "t2i", str(exc))
+            logger.error("Interaction t2i failed.", exc_info=True)
+            raise
+        if time.time() - render_start > 3:
+            logger.warning("Interaction t2i rendering took more than 3 seconds.")
+        if not url:
+            self._record_outbound_materialization_failure(
+                event,
+                "t2i",
+                "empty_image_url",
+            )
+            raise RuntimeError("Interaction t2i returned empty image URL")
+        delivered_url = await self._register_interaction_t2i_file_if_needed(url)
+        image_url = delivered_url or url
+        if image_url.startswith("http"):
+            image = Image.fromURL(image_url)
+        else:
+            image = Image.fromFileSystem(image_url)
+        return (
+            message.derive([image]),
+            {
+                "delivered_as": "image",
+                "t2i_source_text": plain_str,
+                "t2i_image_url": image_url,
+            },
+        )
+
+    @staticmethod
+    def _record_outbound_materialization_failure(
+        event: AstrMessageEvent,
+        stage: str,
+        reason: str,
+    ) -> None:
+        event.set_extra("_interaction_outbound_materialization_failed", True)
+        event.set_extra("_interaction_outbound_materialization_stage", stage)
+        event.set_extra("_interaction_outbound_materialization_failure_reason", reason)
+        record_interaction_turn_completion_failure(
+            event,
+            f"outbound_materialization:{stage}:{reason}",
+        )
+
+    async def _register_interaction_t2i_file_if_needed(self, url: str) -> str | None:
+        callback_api_base = self._get_config_value("callback_api_base", "")
+        if (
+            url.startswith("http")
+            or not self._get_config_value("t2i_use_file_service", False)
+            or not callback_api_base
+        ):
+            return None
+        token = await file_token_service.register_file(url)
+        registered_url = f"{callback_api_base}/api/file/{token}"
+        logger.debug("Interaction t2i file registered: %s", registered_url)
+        return registered_url
+
     @staticmethod
     def _next_visible_message_id(event: AstrMessageEvent, message_kind: str) -> str:
         return next_interaction_turn_visible_message_id(event, message_kind)
@@ -1214,6 +1573,7 @@ class InteractionOutputController:
         message_kind: str,
         text: str | None,
         delivered_message_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         memory_relevant: bool = True,
     ) -> None:
         append_interaction_turn_visible_output(
@@ -1222,6 +1582,7 @@ class InteractionOutputController:
             text=text,
             message_id=(delivered_message_ids[0] if delivered_message_ids else None),
             delivered_message_ids=delivered_message_ids,
+            metadata=metadata,
             memory_relevant=memory_relevant,
         )
 
@@ -1236,69 +1597,18 @@ class InteractionOutputController:
             await self._persist_callback(event, visible_reply)
             return
 
-        material = get_interaction_turn_finalized_material(event)
-        if material is None:
-            turn_id = str(event.get_extra("_turn_id", "") or "").strip()
-            visible_outputs = get_interaction_turn_visible_outputs(event)
-            canonical_reply = build_interaction_memory_reply_from_visible_outputs(
-                visible_outputs,
-                turn_id=turn_id,
-            )
-            if not turn_id or not canonical_reply:
-                record_interaction_turn_completion_failure(
-                    event,
-                    "missing_material",
-                )
-                return
-            material = {
-                "turn_id": turn_id,
-                "user_text": (event.message_str or "").strip(),
-                "assistant_text": canonical_reply,
-                "visible_outputs": visible_outputs,
-                "history_source": "interaction.turn.material",
-            }
-            set_interaction_turn_finalized_material(event, material)
-        else:
-            turn_id = str(material.get("turn_id", "") or "")
-            canonical_reply = str(material.get("assistant_text", "") or "").strip()
-            if not canonical_reply:
-                record_interaction_turn_completion_failure(
-                    event,
-                    "missing_canonical_reply",
-                )
-                return
-        persisted = False
-        try:
-            await self.memory_store.update_interaction_memory(
-                event.unified_msg_origin,
-                str(event.get_extra("_interaction_persona_id", "") or ""),
-                lambda snapshot: update_interaction_memory_from_turn(
-                    snapshot,
-                    user_text=event.message_str,
-                    visible_reply=canonical_reply,
-                    turn_id=turn_id,
-                ),
-            )
-            persisted = True
-            mark_interaction_turn_memory_persisted(event)
-        except Exception as exc:  # noqa: BLE001
-            event.set_extra("_interaction_memory_persist_failed", True)
-            event.set_extra("_interaction_memory_persist_failure_reason", str(exc))
-            record_interaction_turn_completion_failure(
-                event,
-                f"memory_persist:{exc}",
-            )
-            logger.error(
-                "Interaction memory persistence failed after outbound send: platform_id=%s session_id=%s turn_id=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                exc,
-                exc_info=True,
-            )
-        finally:
-            if persisted:
-                mark_interaction_turn_completed(event)
+        event.set_extra("_interaction_persist_callback_missing", True)
+        event.set_extra(
+            "_interaction_memory_persist_failure_reason",
+            "missing_persist_callback",
+        )
+        record_interaction_turn_completion_failure(event, "missing_persist_callback")
+        logger.error(
+            "Interaction turn persist requested without middleware callback: platform_id=%s session_id=%s turn_id=%s",
+            event.get_platform_id(),
+            event.session_id,
+            event.get_extra("_turn_id"),
+        )
 
     @staticmethod
     def _classify_outbound_message(

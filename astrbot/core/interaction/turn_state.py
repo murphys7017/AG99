@@ -30,6 +30,7 @@ class InteractionUtterance:
     kind: str
     text: str
     delivered_message_ids: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     visible: bool = True
     memory_relevant: bool = True
     source: str = ""
@@ -104,6 +105,7 @@ def materialize_utterance(
     text: str,
     message_id: str | None = None,
     delivered_message_ids: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
     memory_relevant: bool = True,
     source: str = "",
     visible: bool = True,
@@ -129,6 +131,7 @@ def materialize_utterance(
         kind=kind,
         text=text,
         delivered_message_ids=delivered_ids,
+        metadata=dict(metadata or {}),
         visible=visible,
         memory_relevant=memory_relevant,
         source=source,
@@ -266,6 +269,7 @@ def append_interaction_turn_visible_output(
     text: str | None,
     message_id: str | None = None,
     delivered_message_ids: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
     memory_relevant: bool = True,
 ) -> None:
     clean_text = (text or "").strip()
@@ -285,6 +289,7 @@ def append_interaction_turn_visible_output(
         text=clean_text,
         message_id=message_id,
         delivered_message_ids=delivered_message_ids,
+        metadata=metadata,
         memory_relevant=memory_relevant,
     )
     outputs = [dict(output) for output in state.visible_outputs]

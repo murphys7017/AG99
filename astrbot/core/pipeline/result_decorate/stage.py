@@ -5,6 +5,7 @@ import traceback
 from collections.abc import AsyncGenerator
 
 from astrbot.core import file_token_service, html_renderer, logger
+from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.message.components import At, Image, Json, Node, Plain, Record, Reply
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.pipeline.content_safety_check.stage import ContentSafetyCheckStage
@@ -135,6 +136,10 @@ class ResultDecorateStage(Stage):
             return
 
         is_stream = result.result_content_type == ResultContentType.STREAMING_FINISH
+
+        if self._is_interaction_turn(event):
+            logger.debug("Interaction turn skips ordinary result decoration.")
+            return
 
         # 回复时检查内容安全
         if (
@@ -416,3 +421,9 @@ class ResultDecorateStage(Stage):
                 # 引用回复
                 if self.reply_with_quote:
                     result.chain.insert(0, Reply(id=event.message_obj.message_id))
+
+    @staticmethod
+    def _is_interaction_turn(event: AstrMessageEvent) -> bool:
+        return bool(event.get_extra("_interaction_enabled")) and (
+            get_interaction_turn_state(event) is not None
+        )

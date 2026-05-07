@@ -880,9 +880,33 @@
    - 哪些 utterance 应排除
 4. postprocessor 只负责消费统一 material 并执行记忆更新
 
+## 当前进度快照
+
+截至当前实现，以下方向已经基本落地：
+
+- `InteractionTurnState` 已成为 interaction 内部主状态源。
+- `core_bridge.py` 已只从 turn state 读取 decision / core task spec。
+- `decision_agent.py` 已优先复用 turn state 中缓存的 context material。
+- `InteractionUtterance`、`InteractionStreamState`、`InteractionTurnCompletionState` 已建立。
+- streaming phase 已迁移为 state-first 的 buffer / observation / interjection / final materialization 链路。
+- prompt / stream / result 三类插件扩展点已开始使用只读阶段视图。
+- memory postprocessor 对 interaction turn 已只消费显式 `turn_material`，不再 fallback 到 provider/context/prompt 推断。
+- STT / 入站语音 materialization 已前移到 interaction middleware decision 之前。
+
+仍然存在的主要结构性缺口：
+
+1. 出站消息语义尚未完全由 interaction middleware 接管。
+2. `ResultDecorateStage` 仍在 interaction turn 中执行 TTS / t2i / reply prefix / reasoning display 等最终输出改写。
+3. `RespondStage` 仍可能对 interaction turn 触发普通 `AFTER_TURN_COMPLETED` postprocess。
+4. `InteractionOutputController._persist_interaction_turn()` 仍有无 middleware callback 时的自完成路径。
+5. `InteractionResultView` 仍直接暴露可变 `InteractionDecision` 对象。
+6. `_schedule_turn_postprocess()` 缺少 finalized material 时仍会现场重建 material。
+
+这些缺口的共同根因是：收消息已经开始由 middleware 持有，但发消息仍处在“middleware 拦截一部分，pipeline 装饰/发送阶段仍拥有部分语义”的过渡状态。
+
 ## 分阶段修复计划
 
-为降低侵入性，建议分三阶段推进。
+为降低侵入性，基础收口按前三阶段推进；在前三阶段之后继续追加 outbound phase，用于让发消息语义也收口到 middleware / output controller。
 
 ## 第一阶段：引入统一 turn state，但保留旧字段兼容
 
@@ -950,6 +974,305 @@
 - 不再由多个函数各自决定“什么时候这一轮算完成”
 - memory 与 postprocess 不再需要从可见输出列表中自行推断完整 turn 语义
 - `core_bridge.py` 不再以 `event.extra` 为主状态源
+
+## 第四阶段：收口 streaming phase
+
+目标：
+
+- 将 `InteractionOutputController.capture_streaming()` / `_wrap_core_stream()` 改为明确的 stream phase。
+- stream buffer、观察窗口、interjection、最终 `core_stream` materialization 全部由 turn state 受控入口管理。
+- 保留旧 `event.extra` 字段作为外部兼容镜像，但内部不再把它们作为正确性来源。
+
+执行重点：
+
+- 在 `turn_state.py` 中引入 `InteractionStreamState`。
+- 在 `output_controller.py` 中通过 `update_interaction_turn_stream_buffer(...)` 统一更新 stream text。
+- 通过 `schedule_interaction_stream_observation(...)` / `_observe_interaction_stream_window(...)` 统一窗口观察。
+- 在 `_finalize_interaction_stream_output(...)` 中统一记录 `core_stream` utterance，并写 finalized turn material。
+- stream decider 只接收 `InteractionStreamView.copy_read_only()`。
+
+完成标准：
+
+- stream text、pending text、observation count、observation failures 均以 `turn_state.stream_state` 为主。
+- `core_stream` utterance 与 finalized material 在流结束时显式产出。
+- stream interjection 进入 utterance ledger，且默认 `memory_relevant=False`。
+
+## 第五阶段：Outbound Phase 收口
+
+本阶段是下一步重点。
+
+### 最终目标
+
+interaction middleware 必须成为一轮 interaction turn 的唯一输出语义 owner：
+
+- middleware / output controller 决定这一轮说什么、何时说、怎么记录、何时完成。
+- `ResultDecorateStage` 和 `RespondStage` 只继续服务非 interaction 事件。
+- platform adapter 与 `message_chain_delivery.py` 仍只负责物理投递，不理解 interaction turn 业务语义。
+- TTS / t2i / reply prefix / reasoning display 等最终输出形态，由 interaction output phase 统一 materialize。
+- finalized turn material 只来自 turn state / utterance ledger，不由后续 pipeline fallback 反推。
+- memory persist 与 turn postprocess 只由 middleware 统一 completion 入口触发一次。
+
+从用户视角看，`HYBRID` 模式应形成同一 turn 内的完整输出序列：
+
+1. middleware 先发 `immediate_reply`。
+2. core 执行中可以产生 stream chunk 与 `stream_interjection`。
+3. core 最终结果进入 output controller。
+4. output controller 完成 finalizer、result contributor、TTS/t2i 等 outbound materialization。
+5. output controller 通过 delivery 层投递最终消息。
+6. middleware 基于 ledger 产出 finalized turn material。
+7. middleware 统一 persist memory，并只调度一次 turn postprocess。
+
+### Step 1：切断重复 lifecycle owner
+
+目的：先消除重复 postprocess、自完成路径和 material fallback，避免继续把旧路径当正确性基础。
+
+需要修改：
+
+- `astrbot/core/pipeline/respond/stage.py`
+  - 修改 `_schedule_after_message_sent_postprocess(event)`。
+  - 对 `event.get_extra("_interaction_enabled")` 为真且存在 interaction turn state 的事件，不再调度 `PostProcessTrigger.AFTER_TURN_COMPLETED`。
+  - `AFTER_MESSAGE_SENT` 是否保留需要明确边界：
+    - 若它只表达平台物理消息已发送，可短期保留。
+    - 若 downstream processor 会把它当 turn completion，必须一起跳过或加 trigger 侧过滤。
+
+- `astrbot/core/interaction/output_controller.py`
+  - 修改 `_persist_interaction_turn(event, visible_reply)`。
+  - 当 `_persist_callback is None` 且事件属于 interaction turn 时，不再自行构造 material、persist memory 或 mark completed。
+  - 新增或使用现有 `record_interaction_turn_completion_failure(event, "missing_persist_callback")`。
+  - 外部测试若直接实例化 `InteractionOutputController`，应显式注入 callback 或改为只验证 output capture，不把无 callback 自完成当正确行为。
+
+- `astrbot/core/interaction/middleware.py`
+  - 修改 `_schedule_turn_postprocess(event)`。
+  - 删除“缺 finalized material 时调用 `_build_finalized_turn_material(...)`”的内部 fallback。
+  - 缺 material 时记录 `_interaction_turn_postprocess_failed=True` 与 completion failure `missing_finalized_turn_material`，并直接返回。
+
+新增测试：
+
+- `tests/unit/test_interaction_middleware.py`
+  - `test_interaction_turn_does_not_schedule_respond_stage_after_turn_completed`
+  - `test_turn_postprocess_requires_finalized_material`
+
+- `tests/unit/test_interaction_output_controller.py`
+  - `test_output_controller_requires_persist_callback_for_interaction_completion`
+
+Agent 相关操作：
+
+- `InteractionMiddleware` 仍是 turn lifecycle owner。
+- `InteractionOutputController` 在 interaction 模式下只向 middleware callback 请求 completion，不再独立完成 turn。
+- `RespondStage` 对 interaction turn 不再扮演 completion owner。
+
+验收标准：
+
+- `SELF_REPLY`、`HYBRID`、`DELEGATE_TO_CORE` 的 `AFTER_TURN_COMPLETED` 均只由 middleware 调度一次。
+- 缺 finalized material 时不会进入 memory postprocessor。
+- output controller 无 callback 时不会把 turn 标记为 completed。
+
+### Step 2：修复插件只读视图最后缺口
+
+目的：result contributor 不得拿到可变 decision 本体。
+
+需要修改：
+
+- `astrbot/core/interaction/output_controller.py`
+  - 修改 `_collect_result_contributions(...)`。
+  - `InteractionResultView(decision=...)` 不再传 `InteractionDecision` 对象本体。
+  - 改为传 `decision.to_dict()` 的深拷贝或 frozen snapshot。
+
+- `astrbot/core/interaction/contributors.py`
+  - 修改 `InteractionResultView.copy_read_only()` 与 `as_read_only_mapping()`。
+  - 对 `decision` 也调用 `freeze_interaction_snapshot(...)`。
+  - 若需要类型清晰，可将字段标注从 `decision: Any` 改为 `decision: Any | None`，并在构造处保证它是 snapshot。
+
+新增测试：
+
+- `tests/unit/test_interaction_output_controller.py`
+  - `test_result_contributor_cannot_mutate_decision_snapshot`
+  - 验证 contributor 修改 view 中 decision 不影响 `turn_state.decision`。
+
+Agent 相关操作：
+
+- result contributor 只能影响 `InteractionResultContribution` 返回值。
+- result contributor 不能修改当前 turn 的 route mode、core task spec、plugin hints 或 fallback 标记。
+
+验收标准：
+
+- 三类插件扩展点均只获得只读阶段事实。
+- 不存在插件通过 view 污染 `InteractionTurnState` 的路径。
+
+### Step 3：新增 outbound materialization 入口
+
+目的：把 interaction turn 最终输出形态从 `ResultDecorateStage` 迁到 `InteractionOutputController`。
+
+需要新增：
+
+- `astrbot/core/interaction/output_controller.py`
+  - 新增 `materialize_interaction_outbound_message(event, message, *, message_kind, result_is_model_result=False) -> MessageChain`。
+  - 新增 `_apply_interaction_reply_prefix(event, message) -> MessageChain`。
+  - 新增 `_apply_interaction_reasoning_display(event, message) -> MessageChain`。
+  - 新增 `_apply_interaction_tts(event, message) -> MessageChain`。
+  - 新增 `_apply_interaction_t2i(event, message) -> MessageChain`。
+  - 新增 `_record_outbound_materialization_metadata(event, utterance, materialization)` 或等价 helper。
+
+需要调整：
+
+- `capture_message_chain(...)`
+  - 在最终 core reply / passthrough / forced finalizer failure 发送前调用 `materialize_interaction_outbound_message(...)`。
+  - `_record_visible_output(...)` 仍记录 canonical semantic text。
+  - utterance metadata 记录实际投递形态，例如：
+    - `delivered_as="text"`
+    - `delivered_as="record"`
+    - `delivered_as="image"`
+    - `tts_source_text`
+    - `tts_audio_path`
+    - `tts_audio_url`
+    - `t2i_source_text`
+    - `t2i_image_url`
+
+- `capture_streaming(...)`
+  - streaming chunk 本身仍不逐个进入 ledger。
+  - 流结束后的 `core_stream` materialization 记录 semantic text。
+  - 是否对 stream final text 做 TTS/t2i 应保持关闭，除非后续明确设计“stream 汇总转语音”。
+
+- `InteractionUtterance`
+  - 如当前缺少 metadata 字段，新增 `metadata: dict[str, Any] = field(default_factory=dict)`。
+  - `materialize_utterance(...)` 增加 `metadata` 参数。
+  - `append_interaction_turn_visible_output(...)` 可选择接收 `metadata`，但 memory material 仍只消费 canonical text。
+
+需要从旧路径迁出的逻辑：
+
+- `astrbot/core/pipeline/result_decorate/stage.py`
+  - TTS 逻辑：[当前 `should_tts` 分支]
+  - t2i 逻辑
+  - reply prefix 逻辑
+  - reasoning display 注入逻辑
+
+Agent 相关操作：
+
+- finalizer 继续只产出 final text。
+- result contributor 继续产出 `InteractionResultContribution`。
+- output controller 在 final text 已确定后执行 outbound materialization。
+- Agent / core 不需要知道最终输出是 text、record 还是 image。
+
+验收标准：
+
+- interaction turn 的最终可见输出不再依赖 `ResultDecorateStage` 改写。
+- TTS/t2i 后的实际投递形态能在 utterance metadata 中解释。
+- interaction memory 仍只使用 semantic assistant text，不被音频路径或图片路径污染。
+
+### Step 4：让 ResultDecorateStage 对 interaction turn 退场
+
+目的：避免旧 pipeline 装饰层继续改写 interaction 输出。
+
+需要修改：
+
+- `astrbot/core/pipeline/result_decorate/stage.py`
+  - 在 `process(event)` 中识别 interaction turn：
+    - `event.get_extra("_interaction_enabled")`
+    - 或 `get_interaction_turn_state(event) is not None`
+  - 对 interaction turn 跳过：
+    - reply prefix
+    - segmented reply
+    - TTS
+    - t2i
+    - reasoning display
+    - forward message transformation
+  - 若仍需要 content safety check，应明确它是“core result safety check”还是“final outbound safety check”。
+    - 建议短期保留现有非 stream content safety。
+    - 长期应迁到 output controller 的 final text safety hook。
+
+新增测试：
+
+- `tests/unit/test_postprocess.py` 或新增 result decorate 测试：
+  - `test_result_decorate_skips_tts_for_interaction_turn`
+  - `test_result_decorate_keeps_non_interaction_tts`
+
+Agent 相关操作：
+
+- interaction Agent 的输出表达不再由普通 pipeline 装饰层二次改写。
+- 非 interaction Agent / 普通 pipeline 行为保持原状。
+
+验收标准：
+
+- interaction turn 的 output controller 是唯一 outbound materialization owner。
+- 非 interaction 事件的 TTS/t2i/reply prefix 不回退。
+
+### Step 5：统一 final material 与 delivered shape
+
+目的：让 finalized material、memory、postprocess、实际投递形态之间边界清楚。
+
+需要修改：
+
+- `astrbot/core/interaction/memory_store.py`
+  - 检查 `build_interaction_memory_reply_from_visible_outputs(...)` 是否只依赖 semantic utterance text。
+  - 确认 `memory_relevant=False` 的 utterance 不进入 canonical assistant reply。
+
+- `astrbot/core/interaction/middleware.py`
+  - `_build_finalized_turn_material(...)` 只从 turn state ledger / explicit canonical reply 读取。
+  - 不再从旧 extra 或 downstream pipeline 输出反推。
+
+- `astrbot/core/memory/postprocessor.py`
+  - 保持 interaction turn 只消费 explicit `ctx.turn_material`。
+  - 不增加新的推断路径。
+
+新增测试：
+
+- `tests/unit/test_interaction_output_controller.py`
+  - `test_tts_materialization_records_record_delivery_but_memory_uses_text`
+  - `test_t2i_materialization_records_image_delivery_but_memory_uses_text`
+
+- `tests/unit/test_interaction_middleware.py`
+  - `test_hybrid_turn_final_material_includes_immediate_and_final_semantic_text_once`
+  - `test_hybrid_turn_postprocess_dispatched_once_after_outbound_materialization`
+
+Agent 相关操作：
+
+- `HYBRID` 中 immediate reply、stream interjection、core final reply 都归同一个 turn ledger。
+- final material 的 `assistant_text` 来自 canonical semantic utterance，而不是 platform payload。
+
+验收标准：
+
+- 用户实际收到的 Record/Image/Text 与 ledger metadata 对得上。
+- memory/postprocess 看到的是同一份 finalized material。
+- 没有重复 postprocess，没有重复 memory persist。
+
+### Step 6：回归与手动验证
+
+必须运行：
+
+```bash
+uv run pytest tests/unit/test_interaction_middleware.py tests/unit/test_interaction_output_controller.py -q
+uv run pytest tests/unit/test_postprocess.py tests/unit/test_memory_runtime.py -q
+uv run pytest tests/unit/test_interaction_context_builder.py tests/unit/test_interaction_decision_agent.py -q
+uv run ruff format .
+uv run ruff check .
+```
+
+建议补充手动或日志验证：
+
+1. `SELF_REPLY`
+   - 只发送 immediate reply。
+   - turn material 只生成一次。
+   - postprocess 只调度一次。
+
+2. `HYBRID`
+   - immediate reply 先发。
+   - core final reply 后发。
+   - 若启用 TTS，最终投递为 Record，但 memory 中仍是文本。
+   - postprocess 只调度一次。
+
+3. `DELEGATE_TO_CORE`
+   - core reply / stream reply 进入 output controller。
+   - finalized material 明确产出。
+   - memory persist 与 postprocess 由 middleware 收口。
+
+4. streaming
+   - stream chunk 正常发出。
+   - stream interjection 独立记录且 `memory_relevant=False`。
+   - final `core_stream` utterance 与 material 一致。
+
+5. 非 interaction 普通事件
+   - `ResultDecorateStage` 的 TTS/t2i/reply prefix 仍然工作。
+   - `RespondStage` 的普通 postprocess 仍然工作。
 
 ## 兼容性策略
 

@@ -477,7 +477,22 @@ class InteractionMiddleware:
         visible_outputs = get_interaction_turn_visible_outputs(event)
         turn_material = get_interaction_turn_finalized_material(event)
         if turn_material is None:
-            turn_material = self._build_finalized_turn_material(event, visible_outputs)
+            event.set_extra("_interaction_turn_postprocess_failed", True)
+            event.set_extra(
+                "_interaction_turn_postprocess_failure_reason",
+                "missing_finalized_turn_material",
+            )
+            record_interaction_turn_completion_failure(
+                event,
+                "missing_finalized_turn_material",
+            )
+            logger.error(
+                "Interaction turn postprocess skipped: missing finalized material platform_id=%s session_id=%s turn_id=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+            )
+            return
         self._spawn_background_task(
             dispatch_postprocess(
                 event=event,
