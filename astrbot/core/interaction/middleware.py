@@ -446,12 +446,21 @@ class InteractionMiddleware:
                         exc,
                         exc_info=True,
                     )
+                    return
+            else:
+                event.set_extra("_interaction_memory_persist_failed", True)
+                event.set_extra(
+                    "_interaction_memory_persist_failure_reason",
+                    "missing_canonical_reply",
+                )
+                return
         else:
             event.set_extra("_interaction_memory_persist_failed", True)
             event.set_extra(
                 "_interaction_memory_persist_failure_reason",
                 "missing_material",
             )
+            return
 
         self._schedule_turn_postprocess(event)
         turn_state.turn_completed = True

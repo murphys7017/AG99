@@ -121,7 +121,9 @@ class MutatingResultContributor:
         with pytest.raises(TypeError):
             result_view.utterances[0]["text"] = "changed"
         with pytest.raises(TypeError):
-            result_view.finalized_turn_material["assistant"] = "changed"
+            result_view.turn_material_snapshot["assistant"] = "changed"
+        with pytest.raises(TypeError):
+            result_view.final_candidate_material["assistant_text"] = "changed"
         return None
 
 
@@ -143,7 +145,15 @@ class InspectingResultContributor:
         assert result_view["turn_id"] == "turn-1"
         assert result_view.visible_outputs[0]["kind"] == "immediate_reply"
         assert result_view.utterances[0]["kind"] == "immediate_reply"
+        assert result_view.turn_material_snapshot["assistant"] == "final answer"
         assert result_view.finalized_turn_material["assistant"] == "final answer"
+        assert result_view.final_candidate_material["assistant_text"] == "dry result"
+        assert result_view.final_candidate_material["visible_outputs"][-1] == {
+            "turn_id": "turn-1",
+            "kind": "core_reply",
+            "text": "dry result",
+            "memory_relevant": True,
+        }
         self.view = result_view
         return None
 
@@ -687,6 +697,9 @@ async def test_outbound_memory_persist_failure_is_recorded(webchat_event):
         webchat_event.get_extra("_interaction_memory_persist_failure_reason")
         == "disk full"
     )
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.turn_completed is False
 
 
 @pytest.mark.asyncio
@@ -953,12 +966,15 @@ async def test_capture_streaming_observes_core_chunks_without_interjection(
 @pytest.mark.asyncio
 async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_event):
     queue = asyncio.Queue()
+    memory_store = MagicMock()
+    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
             finalizer_mode=FinalizerMode.OFF,
             stream_observation_enabled=False,
             stream_interjection_enabled=False,
         ),
+        memory_store=memory_store,
     )
 
     async def generator():
@@ -1001,6 +1017,7 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
     assert len(turn_state.utterances) == 1
     assert turn_state.utterances[0].kind == "core_stream"
     assert turn_state.utterances[0].text == "hello world"
+    memory_store.update_interaction_memory.assert_awaited_once()
 
 
 @pytest.mark.asyncio

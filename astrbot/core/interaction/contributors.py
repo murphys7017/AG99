@@ -181,6 +181,8 @@ class InteractionResultView:
     final_result: str | None = None
     visible_outputs: tuple[Any, ...] = field(default_factory=tuple)
     utterances: tuple[Any, ...] = field(default_factory=tuple)
+    turn_material_snapshot: dict[str, Any] | None = None
+    final_candidate_material: dict[str, Any] | None = None
     finalized_turn_material: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -196,6 +198,12 @@ class InteractionResultView:
                 "final_result": self.final_result,
                 "visible_outputs": freeze_interaction_snapshot(self.visible_outputs),
                 "utterances": freeze_interaction_snapshot(self.utterances),
+                "turn_material_snapshot": freeze_interaction_snapshot(
+                    self.turn_material_snapshot
+                ),
+                "final_candidate_material": freeze_interaction_snapshot(
+                    self.final_candidate_material
+                ),
                 "finalized_turn_material": freeze_interaction_snapshot(
                     self.finalized_turn_material
                 ),
@@ -208,6 +216,12 @@ class InteractionResultView:
             self,
             visible_outputs=freeze_interaction_snapshot(self.visible_outputs),
             utterances=freeze_interaction_snapshot(self.utterances),
+            turn_material_snapshot=freeze_interaction_snapshot(
+                self.turn_material_snapshot
+            ),
+            final_candidate_material=freeze_interaction_snapshot(
+                self.final_candidate_material
+            ),
             finalized_turn_material=freeze_interaction_snapshot(
                 self.finalized_turn_material
             ),

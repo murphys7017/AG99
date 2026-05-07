@@ -244,6 +244,10 @@ class InteractionOutputController:
             raise
         else:
             self._finalize_interaction_stream_output(event)
+            await self._persist_interaction_turn(
+                event,
+                get_interaction_turn_stream_text(event),
+            )
         finally:
             set_interaction_turn_core_streaming_active(event, False)
 
@@ -994,6 +998,11 @@ class InteractionOutputController:
             final_result=final_result,
             visible_outputs=self._snapshot_result_visible_outputs(event),
             utterances=self._snapshot_result_utterances(event),
+            turn_material_snapshot=get_interaction_turn_finalized_material(event),
+            final_candidate_material=self._build_result_final_candidate_material(
+                event,
+                final_result=final_result,
+            ),
             finalized_turn_material=get_interaction_turn_finalized_material(event),
             metadata={},
         )
@@ -1029,6 +1038,33 @@ class InteractionOutputController:
                 contributions.append(payload)
         contributions.sort(key=lambda item: (item.priority, item.plugin_id))
         return contributions
+
+    @staticmethod
+    def _build_result_final_candidate_material(
+        event: AstrMessageEvent,
+        *,
+        final_result: str | None,
+    ) -> dict[str, Any] | None:
+        turn_id = str(event.get_extra("_turn_id", "") or "").strip()
+        assistant_text = (final_result or "").strip()
+        if not turn_id or not assistant_text:
+            return None
+        visible_outputs = [
+            *get_interaction_turn_visible_outputs(event),
+            {
+                "turn_id": turn_id,
+                "kind": "core_reply",
+                "text": assistant_text,
+                "memory_relevant": True,
+            },
+        ]
+        return {
+            "turn_id": turn_id,
+            "user_text": (event.message_str or "").strip(),
+            "assistant_text": assistant_text,
+            "visible_outputs": visible_outputs,
+            "history_source": "interaction.turn.final_candidate",
+        }
 
     @staticmethod
     def _snapshot_result_visible_outputs(event: AstrMessageEvent) -> tuple[Any, ...]:
@@ -1203,6 +1239,9 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         visible_reply: str | None,
     ) -> None:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is not None and turn_state.turn_completed:
+            return
         if self._persist_callback is not None:
             await self._persist_callback(event, visible_reply)
             return
@@ -1230,6 +1269,7 @@ class InteractionOutputController:
             canonical_reply = str(material.get("assistant_text", "") or "").strip()
             if not canonical_reply:
                 return
+        persisted = False
         try:
             await self.memory_store.update_interaction_memory(
                 event.unified_msg_origin,
@@ -1241,6 +1281,7 @@ class InteractionOutputController:
                     turn_id=turn_id,
                 ),
             )
+            persisted = True
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_memory_persist_failed", True)
             event.set_extra("_interaction_memory_persist_failure_reason", str(exc))
@@ -1252,6 +1293,10 @@ class InteractionOutputController:
                 exc,
                 exc_info=True,
             )
+        finally:
+            turn_state = get_interaction_turn_state(event)
+            if turn_state is not None and persisted:
+                turn_state.turn_completed = True
 
     @staticmethod
     def _classify_outbound_message(

@@ -11,11 +11,17 @@ from astrbot.core.interaction.decision_agent import InteractionDecisionAgent
 from astrbot.core.interaction.input_gateway import CoreInputGateway
 from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.middleware import InteractionMiddleware
+from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionTurnState,
     get_interaction_turn_state,
 )
-from astrbot.core.interaction.types import InteractionDecision, RouteMode
+from astrbot.core.interaction.types import (
+    FinalizerMode,
+    InteractionAgentConfig,
+    InteractionDecision,
+    RouteMode,
+)
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -29,6 +35,13 @@ from astrbot.core.star.context import Context
 class ConcreteAstrMessageEvent(AstrMessageEvent):
     async def send(self, message):
         await super().send(message)
+
+
+class StreamingAstrMessageEvent(ConcreteAstrMessageEvent):
+    async def send_streaming(self, generator, use_fallback: bool = False) -> None:
+        async for _chain in generator:
+            pass
+        await super().send_streaming(generator, use_fallback=use_fallback)
 
 
 async def _call_original_visible_completion(event):
@@ -56,6 +69,18 @@ def webchat_event():
         platform_meta=platform_meta,
         session_id="webchat!user!session123",
     )
+
+
+@pytest.fixture
+def streaming_event(webchat_event):
+    event = StreamingAstrMessageEvent(
+        message_str=webchat_event.message_str,
+        message_obj=webchat_event.message_obj,
+        platform_meta=webchat_event.platform_meta,
+        session_id=webchat_event.session_id,
+    )
+    event.message_obj.message_str = webchat_event.message_obj.message_str
+    return event
 
 
 class TestInteractionMiddlewareConfig:
@@ -226,6 +251,75 @@ class TestInteractionMiddleware:
 
         controller.capture_streaming.assert_awaited_once()
         assert forwarded_event._has_send_oper is True
+
+    @pytest.mark.asyncio
+    async def test_core_streaming_finalizes_turn_after_stream_completion(
+        self,
+        streaming_event,
+    ):
+        queue = asyncio.Queue()
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(
+                finalizer_mode=FinalizerMode.OFF,
+                stream_observation_enabled=False,
+                stream_interjection_enabled=False,
+            )
+        )
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.DELEGATE_TO_CORE,
+                should_emit_immediate_reply=False,
+                confidence=0.9,
+                reason="delegate",
+            )
+        )
+        middleware.memory_store.update_interaction_memory = AsyncMock()
+
+        async def generator():
+            yield MessageChain([Plain("stream final")])
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch:
+            middleware.handle_inbound(streaming_event)
+            await asyncio.sleep(0)
+            forwarded_event = queue.get_nowait()
+            await forwarded_event.send_streaming(generator())
+            await asyncio.sleep(0)
+
+        turn_state = get_interaction_turn_state(forwarded_event)
+        assert turn_state is not None
+        assert turn_state.turn_completed is True
+        middleware.memory_store.update_interaction_memory.assert_awaited_once()
+        dispatch.assert_awaited_once()
+        assert dispatch.await_args.kwargs["turn_material"] == {
+            "turn_id": forwarded_event.get_extra("_turn_id"),
+            "user_text": "Hello world",
+            "assistant_text": "stream final",
+            "visible_outputs": [
+                {
+                    "turn_id": forwarded_event.get_extra("_turn_id"),
+                    "kind": "core_stream",
+                    "text": "stream final",
+                    "memory_relevant": True,
+                }
+            ],
+            "history_source": "interaction.turn.material",
+        }
 
     def test_handle_inbound_skips_context_for_disabled_platform(self, webchat_event):
         queue = asyncio.Queue()
@@ -628,8 +722,12 @@ class TestInteractionMiddleware:
             side_effect=RuntimeError("disk full")
         )
 
-        middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch:
+            middleware.handle_inbound(webchat_event)
+            await asyncio.sleep(0)
 
         assert queue.empty()
         complete_visible_turn.assert_awaited_once()
@@ -639,6 +737,10 @@ class TestInteractionMiddleware:
             webchat_event.get_extra("_interaction_memory_persist_failure_reason")
             == "disk full"
         )
+        dispatch.assert_not_awaited()
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.turn_completed is False
 
     @pytest.mark.asyncio
     async def test_self_reply_does_not_persist_if_visible_completion_fails(
