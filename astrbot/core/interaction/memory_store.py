@@ -221,7 +221,22 @@ def build_interaction_memory_reply_from_visible_outputs(
     visible_outputs: list[dict[str, Any]] | None,
     *,
     turn_id: str | None = None,
+    utterances: list[Any] | None = None,
 ) -> str:
+    if isinstance(utterances, list):
+        parts: list[str] = []
+        for u in utterances:
+            kind = str(getattr(u, "kind", "") or "")
+            if kind == "stream_interjection":
+                continue
+            if not bool(getattr(u, "memory_relevant", True)):
+                continue
+            text = str(getattr(u, "text", "") or "").strip()
+            if text:
+                parts.append(text)
+        if parts:
+            return " ".join(parts).strip()
+
     if not isinstance(visible_outputs, list):
         return ""
     clean_turn_id = (turn_id or "").strip()
@@ -229,7 +244,10 @@ def build_interaction_memory_reply_from_visible_outputs(
     for item in visible_outputs:
         if not isinstance(item, dict):
             continue
-        if clean_turn_id and str(item.get("turn_id", "") or "").strip() != clean_turn_id:
+        if (
+            clean_turn_id
+            and str(item.get("turn_id", "") or "").strip() != clean_turn_id
+        ):
             continue
         if not bool(item.get("memory_relevant", True)):
             continue

@@ -5149,7 +5149,7 @@ async def test_memory_postprocessor_falls_back_to_provider_request_contexts():
 
 
 @pytest.mark.asyncio
-async def test_memory_postprocessor_groups_interaction_visible_outputs_by_turn():
+async def test_memory_postprocessor_skips_interaction_turn_without_finalized_material():
     event = MagicMock()
     event.unified_msg_origin = TEST_UMO
     event.get_platform_id.return_value = TEST_PLATFORM_ID
@@ -5197,17 +5197,7 @@ async def test_memory_postprocessor_groups_interaction_visible_outputs_by_turn()
 
     req = await processor.build_update_request(ctx)
 
-    assert req is not None
-    assert req.turn_id == "turn-1"
-    assert req.source_refs == ["turn:turn-1"]
-    assert req.user_message["content"] == "Can you check permissions?"
-    assert req.assistant_message["content"] == (
-        "Let me check. You can run commands in the workspace."
-    )
-    assert req.provider_request is not None
-    assert req.provider_request["history_source"] == "interaction.turn.visible_outputs"
-    assert req.provider_request["turn_id"] == "turn-1"
-    assert len(req.provider_request["visible_outputs"]) == 3
+    assert req is None
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -21,6 +22,64 @@ class InteractionResultContribution:
     final_text_override: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     priority: int = 100
+
+
+@dataclass(slots=True)
+class InteractionStreamView:
+    turn_id: str
+    platform_id: str
+    session_id: str
+    observed_text: str
+    total_text: str
+    pending_text: str
+    window_index: int
+    is_final: bool
+    utterances: tuple[Any, ...] = field(default_factory=tuple)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def as_read_only_mapping(self) -> MappingProxyType:
+        return MappingProxyType(
+            {
+                "turn_id": self.turn_id,
+                "platform_id": self.platform_id,
+                "session_id": self.session_id,
+                "observed_text": self.observed_text,
+                "total_text": self.total_text,
+                "pending_text": self.pending_text,
+                "window_index": self.window_index,
+                "is_final": self.is_final,
+                "utterances": self.utterances,
+                "metadata": MappingProxyType(dict(self.metadata)),
+            }
+        )
+
+    def copy_read_only(self) -> InteractionStreamView:
+        return replace(
+            self,
+            utterances=tuple(self.utterances),
+            metadata=MappingProxyType(dict(self.metadata)),
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        return self.as_read_only_mapping()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.as_read_only_mapping())
+
+    def __len__(self) -> int:
+        return len(self.as_read_only_mapping())
+
+    def keys(self):
+        return self.as_read_only_mapping().keys()
+
+    def items(self):
+        return self.as_read_only_mapping().items()
+
+    def values(self):
+        return self.as_read_only_mapping().values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.as_read_only_mapping().get(key, default)
 
 
 @dataclass(slots=True)

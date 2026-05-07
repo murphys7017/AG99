@@ -5,9 +5,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from astrbot.core import logger
-from astrbot.core.interaction.memory_store import (
-    build_interaction_memory_reply_from_visible_outputs,
-)
 from astrbot.core.postprocess import register_postprocessor, unregister_postprocessor
 from astrbot.core.postprocess.types import PostProcessContext, PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
@@ -254,7 +251,9 @@ def _resolve_interaction_turn_material(
         material_turn_id = _normalize_text(ctx.turn_material.get("turn_id"))
         assistant_text = _normalize_text(ctx.turn_material.get("assistant_text"))
         if material_turn_id == turn_id and assistant_text:
-            user_message = current_user_message or _build_user_message_from_event(ctx.event)
+            user_message = current_user_message or _build_user_message_from_event(
+                ctx.event
+            )
             if user_message is None:
                 return None
             visible_outputs = [
@@ -278,44 +277,7 @@ def _resolve_interaction_turn_material(
                 "turn_id": turn_id,
                 "visible_outputs": visible_outputs,
             }
-
-    visible_outputs = [
-        dict(item)
-        for item in ctx.visible_outputs
-        if isinstance(item, dict) and _normalize_text(item.get("text"))
-    ]
-    memory_outputs = [
-        item
-        for item in visible_outputs
-        if bool(item.get("memory_relevant", True))
-        and _normalize_text(item.get("kind")) != "stream_interjection"
-    ]
-    if not memory_outputs:
-        return None
-
-    user_message = current_user_message or _build_user_message_from_event(ctx.event)
-    if user_message is None:
-        return None
-
-    assistant_text = build_interaction_memory_reply_from_visible_outputs(
-        memory_outputs
-    )
-    if not assistant_text:
-        return None
-
-    conversation_id = _resolve_conversation_id(ctx)
-    conversation_history = _materialize_current_turn_history(
-        _resolve_base_conversation_history(ctx),
-        user_message,
-        {"role": "assistant", "content": assistant_text},
-    )
-    return {
-        "conversation_history": conversation_history,
-        "conversation_id": conversation_id,
-        "history_source": "interaction.turn.visible_outputs",
-        "turn_id": turn_id,
-        "visible_outputs": visible_outputs,
-    }
+    return None
 
 
 def _resolve_base_conversation_history(ctx: PostProcessContext) -> list[dict[str, Any]]:
@@ -347,6 +309,8 @@ def _build_user_message_from_event(event) -> dict[str, Any] | None:
     if not prompt:
         return None
     return {"role": "user", "content": prompt}
+
+
 def _build_user_message_from_prompt(
     provider_request: ProviderRequest | None,
 ) -> dict[str, Any] | None:
@@ -435,6 +399,9 @@ def _is_current_turn_match(
 
 
 def _describe_skip_reason(ctx: PostProcessContext) -> str:
+    if (ctx.turn_id or "").strip():
+        return "missing_finalized_turn_material"
+
     if ctx.conversation is not None:
         return "no_turn_pair"
 

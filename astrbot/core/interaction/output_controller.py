@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +23,7 @@ from .context_builder import (
 from .contributors import (
     InteractionResultContribution,
     InteractionResultView,
+    InteractionStreamView,
     merge_result_contributions,
 )
 from .core_bridge import get_interaction_decision
@@ -36,10 +37,13 @@ from .memory_store import (
 from .turn_state import (
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_visible_output,
+    get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
     get_interaction_turn_stream_interjections_emitted,
+    get_interaction_turn_stream_observation_count,
     get_interaction_turn_stream_observation_tasks,
+    get_interaction_turn_stream_pending_text,
     get_interaction_turn_stream_text,
     get_interaction_turn_visible_outputs,
     has_interaction_turn_core_final_result_consumed,
@@ -52,9 +56,10 @@ from .turn_state import (
     record_interaction_turn_stream_observation_failure,
     remove_interaction_turn_stream_observation_task,
     set_interaction_turn_core_streaming_active,
+    set_interaction_turn_finalized_material,
     set_interaction_turn_immediate_reply,
     set_interaction_turn_stream_observation_count,
-    set_interaction_turn_stream_progress,
+    update_interaction_turn_stream_buffer,
 )
 from .types import FinalizerMode, InteractionAgentConfig, RouteMode
 
@@ -74,11 +79,15 @@ class InteractionOutputController:
         interaction_config: InteractionAgentConfig | None = None,
         memory_store: InteractionMemoryStore | None = None,
         platform_settings: dict[str, Any] | None = None,
+        persist_callback: (
+            Callable[[AstrMessageEvent, str | None], Awaitable[None]] | None
+        ) = None,
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
         self.memory_store = memory_store or InteractionMemoryStore()
         self.platform_settings = platform_settings or {}
+        self._persist_callback = persist_callback
 
     async def emit_immediate_spoken_reply(
         self,
@@ -88,13 +97,6 @@ class InteractionOutputController:
         reply = (decision.immediate_spoken_reply or "").strip()
         if not reply:
             return
-        logger.debug(
-            "Interaction immediate reply emit: platform_id=%s session_id=%s turn_id=%s length=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-            len(reply),
-        )
         set_interaction_turn_immediate_reply(event, reply)
         event.set_extra("_interaction_emitting_immediate_reply", True)
         try:
@@ -117,13 +119,7 @@ class InteractionOutputController:
         is_immediate = bool(event.get_extra("_interaction_emitting_immediate_reply"))
         outbound_kind = self._classify_outbound_message(event, message, is_immediate)
         if is_immediate:
-            logger.debug(
-                "Interaction outbound classified: platform_id=%s session_id=%s turn_id=%s kind=immediate_reply",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-            )
-            await self._deliver_visible_message(
+            delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
                 message_kind="immediate_reply",
@@ -134,6 +130,7 @@ class InteractionOutputController:
                 event,
                 message_kind="immediate_reply",
                 text=message.get_plain_text(),
+                delivered_message_ids=delivered_message_ids,
             )
             return
 
@@ -153,13 +150,7 @@ class InteractionOutputController:
             return
 
         if outbound_kind == "passthrough":
-            logger.debug(
-                "Interaction outbound classified: platform_id=%s session_id=%s turn_id=%s kind=passthrough",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-            )
-            await self._deliver_visible_message(
+            delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
                 message_kind="passthrough",
@@ -169,6 +160,7 @@ class InteractionOutputController:
                 event,
                 message_kind="passthrough",
                 text=message.get_plain_text(),
+                delivered_message_ids=delivered_message_ids,
             )
             await self._persist_interaction_turn(
                 event,
@@ -177,28 +169,15 @@ class InteractionOutputController:
             return
 
         if outbound_kind == "suppressed_duplicate_final":
-            logger.debug(
-                "Interaction outbound classified: platform_id=%s session_id=%s turn_id=%s kind=core_final_model_result_segment_suppressed",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-            )
             return
 
         mark_interaction_turn_core_final_result_consumed(event)
-        logger.debug(
-            "Interaction outbound classified: platform_id=%s session_id=%s turn_id=%s kind=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-            outbound_kind,
-        )
         full_message = self._get_full_core_final_message(event, message)
         final_message = await self.maybe_finalize_and_send(full_message, event)
         if final_message is not None:
             return
 
-        await self._deliver_visible_message(
+        delivered_message_ids = await self._deliver_visible_message(
             event,
             full_message,
             message_kind="core_reply",
@@ -209,6 +188,7 @@ class InteractionOutputController:
             event,
             message_kind="core_reply",
             text=full_message.get_plain_text(),
+            delivered_message_ids=delivered_message_ids,
         )
 
     async def capture_visible_completion(
@@ -239,13 +219,6 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         use_fallback: bool = False,
     ) -> None:
-        logger.debug(
-            "Interaction middleware outbound streaming intercepted: platform_id=%s session_id=%s turn_id=%s use_fallback=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-            use_fallback,
-        )
         set_interaction_turn_core_streaming_active(event, True)
         observed_generator = self._wrap_core_stream(generator, event)
         try:
@@ -270,12 +243,7 @@ class InteractionOutputController:
             )
             raise
         else:
-            mark_interaction_turn_core_streaming_result_consumed(event)
-            self._record_visible_output(
-                event,
-                message_kind="core_stream",
-                text=get_interaction_turn_stream_text(event),
-            )
+            self._finalize_interaction_stream_output(event)
         finally:
             set_interaction_turn_core_streaming_active(event, False)
 
@@ -286,46 +254,37 @@ class InteractionOutputController:
     ) -> AsyncGenerator[MessageChain, None]:
         if not self.interaction_config.stream_observation_enabled:
             async for chain in generator:
-                current_total = get_interaction_turn_stream_text(event)
                 chunk_text = self._extract_observable_stream_text(chain)
                 if chunk_text:
-                    set_interaction_turn_stream_progress(
-                        event,
-                        total_text=f"{current_total}{chunk_text}",
-                        pending_text="",
+                    self._update_interaction_turn_stream_buffer(
+                        event, chunk_text=chunk_text, observe=False
                     )
                 yield chain
             return
 
         turn_id = event.get_extra("_turn_id")
-        total_text = ""
-        pending_text = ""
-        window_index = 0
         min_chars = self.interaction_config.stream_observation_min_chars
         observation_state = self._build_stream_observation_state()
-        logger.debug(
-            "Interaction core stream observation started: platform_id=%s session_id=%s turn_id=%s min_chars=%s interjection_enabled=%s",
-            event.get_platform_id(),
-            event.session_id,
-            turn_id,
-            min_chars,
-            self.interaction_config.stream_interjection_enabled,
-        )
         async for chain in generator:
             chunk_text = self._extract_observable_stream_text(chain)
             if chunk_text:
-                total_text += chunk_text
-                pending_text += chunk_text
-                set_interaction_turn_stream_progress(
-                    event,
-                    total_text=total_text,
-                    pending_text=pending_text,
+                self._update_interaction_turn_stream_buffer(
+                    event, chunk_text=chunk_text, observe=True
                 )
+                total_text = get_interaction_turn_stream_text(event)
+                pending_text = get_interaction_turn_stream_pending_text(event)
                 while len(pending_text) >= min_chars:
-                    window_index += 1
+                    window_index = (
+                        get_interaction_turn_stream_observation_count(event) + 1
+                    )
                     observed_text = pending_text[:min_chars]
                     pending_text = pending_text[min_chars:]
-                    self._schedule_core_stream_observation(
+                    update_interaction_turn_stream_buffer(
+                        event,
+                        total_text=total_text,
+                        pending_text=pending_text,
+                    )
+                    self._schedule_interaction_stream_observation(
                         event,
                         observed_text=observed_text,
                         total_text=total_text,
@@ -336,9 +295,11 @@ class InteractionOutputController:
                     )
             yield chain
 
+        total_text = get_interaction_turn_stream_text(event)
+        pending_text = get_interaction_turn_stream_pending_text(event)
         if pending_text:
-            window_index += 1
-            set_interaction_turn_stream_progress(
+            window_index = get_interaction_turn_stream_observation_count(event) + 1
+            update_interaction_turn_stream_buffer(
                 event,
                 total_text=total_text,
                 pending_text=pending_text,
@@ -347,15 +308,7 @@ class InteractionOutputController:
                 event,
                 window_index,
             )
-            self._log_core_stream_observation_window(
-                event,
-                observed_text=pending_text,
-                total_text=total_text,
-                window_index=window_index,
-                chain_type=None,
-                is_final=True,
-            )
-            await self._observe_core_stream_window(
+            await self._observe_interaction_stream_window(
                 event,
                 observed_text=pending_text,
                 total_text=total_text,
@@ -364,20 +317,57 @@ class InteractionOutputController:
                 is_final=True,
             )
         await self.wait_for_stream_observations(event)
-        set_interaction_turn_stream_progress(
+        update_interaction_turn_stream_buffer(
             event,
             total_text=total_text,
             pending_text="",
         )
-        logger.debug(
-            "Interaction core stream observation finished: platform_id=%s session_id=%s turn_id=%s total_chars=%s windows=%s interjections=%s",
-            event.get_platform_id(),
-            event.session_id,
-            turn_id,
-            len(total_text),
-            window_index,
-            observation_state["emitted"],
+
+    @staticmethod
+    def _update_interaction_turn_stream_buffer(
+        event: AstrMessageEvent,
+        *,
+        chunk_text: str,
+        observe: bool,
+    ) -> None:
+        current_total = get_interaction_turn_stream_text(event)
+        current_pending = (
+            get_interaction_turn_stream_pending_text(event) if observe else ""
         )
+        next_total = f"{current_total}{chunk_text}"
+        next_pending = f"{current_pending}{chunk_text}" if observe else ""
+        update_interaction_turn_stream_buffer(
+            event,
+            total_text=next_total,
+            pending_text=next_pending,
+        )
+
+    def _finalize_interaction_stream_output(self, event: AstrMessageEvent) -> None:
+        mark_interaction_turn_core_streaming_result_consumed(event)
+        self._record_visible_output(
+            event,
+            message_kind="core_stream",
+            text=get_interaction_turn_stream_text(event),
+        )
+        turn_id = str(event.get_extra("_turn_id", "") or "").strip()
+        visible_outputs = get_interaction_turn_visible_outputs(event)
+        turn_state = get_interaction_turn_state(event)
+        canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+            visible_outputs,
+            turn_id=turn_id,
+            utterances=turn_state.utterances if turn_state is not None else None,
+        )
+        if turn_id and canonical_reply:
+            set_interaction_turn_finalized_material(
+                event,
+                {
+                    "turn_id": turn_id,
+                    "user_text": (event.message_str or "").strip(),
+                    "assistant_text": canonical_reply,
+                    "visible_outputs": visible_outputs,
+                    "history_source": "interaction.turn.material",
+                },
+            )
 
     @staticmethod
     def _build_stream_observation_state() -> dict[str, Any]:
@@ -386,7 +376,7 @@ class InteractionOutputController:
             "lock": asyncio.Lock(),
         }
 
-    def _schedule_core_stream_observation(
+    def _schedule_interaction_stream_observation(
         self,
         event: AstrMessageEvent,
         *,
@@ -398,16 +388,8 @@ class InteractionOutputController:
         is_final: bool,
     ) -> None:
         set_interaction_turn_stream_observation_count(event, window_index)
-        self._log_core_stream_observation_window(
-            event,
-            observed_text=observed_text,
-            total_text=total_text,
-            window_index=window_index,
-            chain_type=chain_type,
-            is_final=is_final,
-        )
         task = asyncio.create_task(
-            self._observe_core_stream_window(
+            self._observe_interaction_stream_window(
                 event,
                 observed_text=observed_text,
                 total_text=total_text,
@@ -422,29 +404,28 @@ class InteractionOutputController:
             lambda done_task: self._on_stream_observation_task_done(event, done_task)
         )
 
-    @staticmethod
-    def _log_core_stream_observation_window(
+    def _schedule_core_stream_observation(
+        self,
         event: AstrMessageEvent,
         *,
         observed_text: str,
         total_text: str,
         window_index: int,
+        observation_state: dict[str, Any],
         chain_type: str | None,
         is_final: bool,
     ) -> None:
-        logger.debug(
-            "Interaction core stream observation window: platform_id=%s session_id=%s turn_id=%s window_index=%s observed_chars=%s total_chars=%s chain_type=%s final=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-            window_index,
-            len(observed_text),
-            len(total_text),
-            chain_type,
-            is_final,
+        self._schedule_interaction_stream_observation(
+            event,
+            observed_text=observed_text,
+            total_text=total_text,
+            window_index=window_index,
+            observation_state=observation_state,
+            chain_type=chain_type,
+            is_final=is_final,
         )
 
-    async def _observe_core_stream_window(
+    async def _observe_interaction_stream_window(
         self,
         event: AstrMessageEvent,
         *,
@@ -476,8 +457,8 @@ class InteractionOutputController:
                 >= self.interaction_config.stream_interjection_max_per_turn
             ):
                 return
-            observation_state["emitted"] = mark_interaction_turn_stream_interjection_emitted(
-                event
+            observation_state["emitted"] = (
+                mark_interaction_turn_stream_interjection_emitted(event)
             )
             await self._emit_stream_interjection(
                 event,
@@ -485,6 +466,25 @@ class InteractionOutputController:
                 window_index=window_index,
                 reason=decision.reason,
             )
+
+    async def _observe_core_stream_window(
+        self,
+        event: AstrMessageEvent,
+        *,
+        observed_text: str,
+        total_text: str,
+        window_index: int,
+        observation_state: dict[str, Any],
+        is_final: bool,
+    ) -> None:
+        await self._observe_interaction_stream_window(
+            event,
+            observed_text=observed_text,
+            total_text=total_text,
+            window_index=window_index,
+            observation_state=observation_state,
+            is_final=is_final,
+        )
 
     def _on_stream_observation_task_done(
         self,
@@ -495,12 +495,7 @@ class InteractionOutputController:
         try:
             task.result()
         except asyncio.CancelledError:
-            logger.debug(
-                "Interaction stream observation task cancelled: platform_id=%s session_id=%s turn_id=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-            )
+            pass
         except Exception as exc:  # noqa: BLE001
             record_interaction_turn_stream_observation_failure(event, str(exc))
             logger.error(
@@ -528,15 +523,6 @@ class InteractionOutputController:
         is_final: bool = False,
     ) -> StreamObservationDecision:
         if not self.interaction_config.stream_interjection_enabled:
-            logger.debug(
-                "Interaction stream interjection skipped by config: platform_id=%s session_id=%s turn_id=%s window_index=%s observed_chars=%s final=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                window_index,
-                len(observed_text),
-                is_final,
-            )
             return StreamObservationDecision(reason="disabled")
 
         decision = await self._collect_stream_interjection_from_plugins(
@@ -646,18 +632,20 @@ class InteractionOutputController:
         )
         if not callable(list_deciders):
             return None
-        metadata = {
-            "turn_id": str(event.get_extra("_turn_id", "") or ""),
-            "platform_id": event.get_platform_id(),
-            "session_id": event.unified_msg_origin,
-            "window_index": window_index,
-            "observed_text": observed_text,
-            "total_text": total_text,
-            "is_final": is_final,
-        }
+        stream_view = self._build_stream_view(
+            event,
+            observed_text=observed_text,
+            total_text=total_text,
+            window_index=window_index,
+            is_final=is_final,
+        ).copy_read_only()
         for decider in list_deciders():
             try:
-                payload = await decider.decide(event, self.plugin_context, metadata)
+                payload = await decider.decide(
+                    event,
+                    self.plugin_context,
+                    stream_view,
+                )
             except Exception as exc:  # noqa: BLE001
                 failures = event.get_extra("_interaction_stream_decider_failures", [])
                 if not isinstance(failures, list):
@@ -678,14 +666,49 @@ class InteractionOutputController:
                 continue
             decision = self._coerce_stream_interjection_decision(payload)
             if decision is not None:
-                logger.debug(
-                    "Interaction stream decider result: plugin_id=%s should_interject=%s reason=%s",
-                    getattr(decider, "plugin_id", "<unknown>"),
-                    decision.should_interject,
-                    decision.reason,
-                )
                 return decision
         return None
+
+    @staticmethod
+    def _build_stream_view(
+        event: AstrMessageEvent,
+        *,
+        observed_text: str,
+        total_text: str,
+        window_index: int,
+        is_final: bool,
+    ) -> InteractionStreamView:
+        turn_state = get_interaction_turn_state(event)
+        pending_text = (
+            turn_state.stream_state.pending_text
+            if turn_state is not None
+            else str(event.get_extra("_interaction_core_stream_pending_text", "") or "")
+        )
+        utterances = tuple(turn_state.utterances) if turn_state is not None else ()
+        return InteractionStreamView(
+            turn_id=str(event.get_extra("_turn_id", "") or ""),
+            platform_id=event.get_platform_id(),
+            session_id=event.unified_msg_origin,
+            observed_text=observed_text,
+            total_text=total_text,
+            pending_text=pending_text,
+            window_index=window_index,
+            is_final=is_final,
+            utterances=utterances,
+            metadata={
+                "stream_observation_count": (
+                    turn_state.stream_state.observation_count
+                    if turn_state is not None
+                    else int(
+                        event.get_extra(
+                            "_interaction_core_stream_observation_count",
+                            0,
+                        )
+                        or 0
+                    )
+                ),
+            },
+        )
 
     async def _build_stream_interjection_prompt(
         self,
@@ -700,7 +723,23 @@ class InteractionOutputController:
         memory_payload: dict[str, Any] = {}
         recent_messages: list[dict[str, Any]] = []
         turn_state = get_interaction_turn_state(event)
-        cached_material = turn_state.context_material if turn_state is not None else None
+        cached_material = (
+            turn_state.context_material if turn_state is not None else None
+        )
+        stream_state = turn_state.stream_state if turn_state is not None else None
+        existing_utterances = (
+            [
+                {
+                    "kind": utterance.kind,
+                    "text": utterance.text,
+                    "memory_relevant": utterance.memory_relevant,
+                }
+                for utterance in turn_state.utterances
+                if utterance.kind != "stream_interjection" and utterance.text.strip()
+            ]
+            if turn_state is not None
+            else []
+        )
         if cached_material is not None:
             persona_payload = cached_material.persona_payload
             memory_payload = cached_material.memory_payload
@@ -751,7 +790,15 @@ class InteractionOutputController:
             "window_index": window_index,
             "is_final_window": is_final,
             "observed_core_stream_window": observed_text,
-            "core_stream_so_far": total_text[-800:],
+            "core_stream_so_far": (
+                (stream_state.total_text if stream_state is not None else total_text)[
+                    -800:
+                ]
+            ),
+            "core_stream_pending": (
+                stream_state.pending_text if stream_state is not None else ""
+            ),
+            "existing_turn_utterances": existing_utterances,
             "output_schema": {
                 "should_interject": False,
                 "reply": "不超过 20 字的口语短句，或 null",
@@ -781,32 +828,28 @@ class InteractionOutputController:
             return
         message = MessageChain([Plain(text)])
         message.type = "interaction_stream_reply"
-        logger.debug(
-            "Interaction stream interjection emit: platform_id=%s session_id=%s turn_id=%s window_index=%s length=%s reason=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-            window_index,
-            len(text),
-            reason,
-        )
+        platform_extras = {
+            **self.build_platform_output_extras(
+                event,
+                message_kind="stream_interjection",
+            ),
+            "interaction_stream_reply": True,
+            "stream_window_index": window_index,
+        }
         await self._send_platform_message(
             message,
             event,
-            platform_extras={
-                **self.build_platform_output_extras(
-                    event,
-                    message_kind="stream_interjection",
-                ),
-                "interaction_stream_reply": True,
-                "stream_window_index": window_index,
-            },
+            platform_extras=platform_extras,
             record_send_operation=False,
         )
+        visible_message_id = str(platform_extras.get("visible_message_id", "") or "")
         self._record_visible_output(
             event,
             message_kind="stream_interjection",
             text=text,
+            delivered_message_ids=(
+                [visible_message_id] if visible_message_id else None
+            ),
             memory_relevant=False,
         )
 
@@ -830,7 +873,7 @@ class InteractionOutputController:
             and event.get_extra("_interaction_finalizer_failed")
         ):
             final_message = message.derive([Plain("最终回复整理失败，请查看日志。")])
-            await self._deliver_visible_message(
+            delivered_message_ids = await self._deliver_visible_message(
                 event,
                 final_message,
                 message_kind="core_reply",
@@ -841,6 +884,7 @@ class InteractionOutputController:
                 event,
                 message_kind="core_reply",
                 text=final_message.get_plain_text(),
+                delivered_message_ids=delivered_message_ids,
             )
             await self._persist_interaction_turn(
                 event,
@@ -850,14 +894,6 @@ class InteractionOutputController:
         final_message = message
         if final_text:
             final_message = message.derive([Plain(final_text)])
-            logger.debug(
-                "Interaction finalizer applied: platform_id=%s session_id=%s turn_id=%s original_length=%s final_length=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                len(core_result_text),
-                len(final_text),
-            )
 
         contributions = await self._collect_result_contributions(
             event,
@@ -865,16 +901,6 @@ class InteractionOutputController:
             final_result=final_message.get_plain_text(),
         )
         merged = merge_result_contributions(contributions)
-        logger.debug(
-            "Interaction result contributions merged: platform_id=%s session_id=%s turn_id=%s count=%s has_text_override=%s client_objects=%s platform_extra_keys=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-            len(contributions),
-            merged.final_text_override is not None,
-            len(merged.client_objects),
-            sorted(merged.platform_extras.keys()),
-        )
         if merged.final_text_override is not None:
             final_message = message.derive([Plain(merged.final_text_override)])
 
@@ -882,7 +908,7 @@ class InteractionOutputController:
             event,
             result_contribution=merged,
         )
-        await self._deliver_visible_message(
+        delivered_message_ids = await self._deliver_visible_message(
             event,
             final_message,
             message_kind="core_reply",
@@ -894,6 +920,7 @@ class InteractionOutputController:
             event,
             message_kind="core_reply",
             text=final_message.get_plain_text(),
+            delivered_message_ids=delivered_message_ids,
         )
         await self._persist_interaction_turn(
             event,
@@ -996,14 +1023,6 @@ class InteractionOutputController:
                 )
                 continue
             if isinstance(payload, InteractionResultContribution):
-                logger.debug(
-                    "Interaction result contributor collected: plugin_id=%s priority=%s has_text_override=%s client_objects=%s platform_extra_keys=%s",
-                    payload.plugin_id,
-                    payload.priority,
-                    payload.final_text_override is not None,
-                    len(payload.client_objects),
-                    sorted(payload.platform_extras.keys()),
-                )
                 contributions.append(payload)
         contributions.sort(key=lambda item: (item.priority, item.plugin_id))
         return contributions
@@ -1062,12 +1081,6 @@ class InteractionOutputController:
         platform_extras: dict[str, Any],
         record_send_operation: bool = True,
     ) -> None:
-        logger.debug(
-            "Interaction middleware outbound send intercepted: platform_id=%s session_id=%s turn_id=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-        )
         await event.send_interaction_message(
             message=message,
             platform_extras=platform_extras,
@@ -1084,24 +1097,42 @@ class InteractionOutputController:
         record_send_operation: bool = True,
         result_is_model_result: bool = False,
         allow_segmented_reply: bool = False,
-    ) -> bool:
+    ) -> list[str]:
+        """Send a visible message and record it as a turn utterance.
+
+        Responsibilities are split at the boundary:
+
+        - InteractionUtterance (semantic layer): defines *what* was said,
+          its kind, memory relevance, and turn membership.  Produced by
+          outer methods (capture_message_chain, capture_streaming, etc.)
+          via `append_interaction_turn_visible_output`.
+
+        - deliver_message_chain (physical layer): decides *how* to split
+          and deliver the chain to the platform adapter.  It is unaware of
+          turn state, utterances, or memory semantics.
+        """
         base_extras = self._strip_message_identity_extras(platform_extras or {})
+        delivered_message_ids: list[str] = []
 
         async def _send(chain: MessageChain) -> None:
+            output_extras = {
+                **base_extras,
+                **self.build_platform_output_extras(
+                    event,
+                    message_kind=message_kind,
+                ),
+            }
             await self._send_platform_message(
                 chain,
                 event,
-                platform_extras={
-                    **base_extras,
-                    **self.build_platform_output_extras(
-                        event,
-                        message_kind=message_kind,
-                    ),
-                },
+                platform_extras=output_extras,
                 record_send_operation=record_send_operation,
             )
+            visible_message_id = str(output_extras.get("visible_message_id", "") or "")
+            if visible_message_id:
+                delivered_message_ids.append(visible_message_id)
 
-        return await deliver_message_chain(
+        sent = await deliver_message_chain(
             event,
             message,
             send_message=_send,
@@ -1109,6 +1140,7 @@ class InteractionOutputController:
             result_is_model_result=result_is_model_result,
             allow_segmented_reply=allow_segmented_reply,
         )
+        return delivered_message_ids if sent else []
 
     @staticmethod
     def _strip_message_identity_extras(
@@ -1132,12 +1164,15 @@ class InteractionOutputController:
         *,
         message_kind: str,
         text: str | None,
+        delivered_message_ids: list[str] | None = None,
         memory_relevant: bool = True,
     ) -> None:
         append_interaction_turn_visible_output(
             event,
             message_kind=message_kind,
             text=text,
+            message_id=(delivered_message_ids[0] if delivered_message_ids else None),
+            delivered_message_ids=delivered_message_ids,
             memory_relevant=memory_relevant,
         )
 
@@ -1146,15 +1181,33 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         visible_reply: str | None,
     ) -> None:
-        turn_id = str(event.get_extra("_turn_id", "") or "")
-        canonical_reply = build_interaction_memory_reply_from_visible_outputs(
-            get_interaction_turn_visible_outputs(event),
-            turn_id=turn_id,
-        )
-        if not canonical_reply:
-            canonical_reply = (visible_reply or "").strip()
-        if not canonical_reply:
+        if self._persist_callback is not None:
+            await self._persist_callback(event, visible_reply)
             return
+
+        material = get_interaction_turn_finalized_material(event)
+        if material is None:
+            turn_id = str(event.get_extra("_turn_id", "") or "").strip()
+            visible_outputs = get_interaction_turn_visible_outputs(event)
+            canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+                visible_outputs,
+                turn_id=turn_id,
+            )
+            if not turn_id or not canonical_reply:
+                return
+            material = {
+                "turn_id": turn_id,
+                "user_text": (event.message_str or "").strip(),
+                "assistant_text": canonical_reply,
+                "visible_outputs": visible_outputs,
+                "history_source": "interaction.turn.material",
+            }
+            set_interaction_turn_finalized_material(event, material)
+        else:
+            turn_id = str(material.get("turn_id", "") or "")
+            canonical_reply = str(material.get("assistant_text", "") or "").strip()
+            if not canonical_reply:
+                return
         try:
             await self.memory_store.update_interaction_memory(
                 event.unified_msg_origin,
@@ -1165,13 +1218,6 @@ class InteractionOutputController:
                     visible_reply=canonical_reply,
                     turn_id=turn_id,
                 ),
-            )
-            logger.debug(
-                "Interaction memory persisted: platform_id=%s session_id=%s turn_id=%s visible_reply_length=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                len(canonical_reply),
             )
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_memory_persist_failed", True)

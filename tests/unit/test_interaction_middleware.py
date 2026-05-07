@@ -301,7 +301,7 @@ class TestInteractionMiddleware:
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
-    async def test_hybrid_immediate_reply_is_persisted_for_next_decision(
+    async def test_hybrid_immediate_reply_waits_for_core_before_memory_persist(
         self,
         webchat_event,
     ):
@@ -330,34 +330,17 @@ class TestInteractionMiddleware:
                 reason="hybrid",
             )
         )
-        captured_snapshot = None
         persisted = asyncio.Event()
-
-        async def _capture_update(session_id, persona_id, updater):  # noqa: ANN001
-            del session_id, persona_id
-            nonlocal captured_snapshot
-            captured_snapshot = updater(
-                InteractionMemorySnapshot(session_id="test-session")
-            )
-            persisted.set()
-            return captured_snapshot
-
         middleware.memory_store.update_interaction_memory = AsyncMock(
-            side_effect=_capture_update
+            side_effect=lambda *a, **kw: persisted.set()
         )
 
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
         assert queue.get_nowait() is webchat_event
-        await asyncio.wait_for(persisted.wait(), timeout=1)
-        middleware.memory_store.update_interaction_memory.assert_awaited_once()
-        assert captured_snapshot is not None
-        assert captured_snapshot.recent_turns[0] == {
-            "user": "Hello world",
-            "assistant": "等我看看。",
-            "turn_id": webchat_event.get_extra("_turn_id"),
-        }
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_handle_inbound_refreshes_runtime_interaction_config(

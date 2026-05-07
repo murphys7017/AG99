@@ -3,6 +3,7 @@ from .contributors import (
     InteractionPromptContribution,
     InteractionResultContribution,
     InteractionResultView,
+    InteractionStreamView,
 )
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
@@ -18,7 +19,9 @@ from .output_controller import InteractionOutputController
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
     InteractionContextMaterial,
+    InteractionStreamState,
     InteractionTurnState,
+    InteractionUtterance,
     ensure_interaction_turn_state,
     get_interaction_turn_state,
 )
@@ -44,7 +47,10 @@ __all__ = [
     "InteractionMemorySnapshot",
     "InteractionMemoryStore",
     "InteractionOutputController",
+    "InteractionStreamState",
+    "InteractionStreamView",
     "InteractionTurnState",
+    "InteractionUtterance",
     "InteractionPromptContribution",
     "InteractionResultContribution",
     "InteractionResultView",

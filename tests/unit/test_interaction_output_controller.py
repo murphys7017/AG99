@@ -8,7 +8,9 @@ from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
+    InteractionStreamState,
     InteractionTurnState,
+    get_interaction_turn_state,
 )
 from astrbot.core.interaction.types import (
     FinalizerMode,
@@ -128,6 +130,9 @@ class StreamInterjectionDecider:
 
     async def decide(self, event, plugin_context, stream_view):
         assert stream_view["turn_id"] == "turn-1"
+        assert stream_view.turn_id == "turn-1"
+        with pytest.raises(TypeError):
+            stream_view["metadata"]["bad"] = True
         self.views.append(dict(stream_view))
         if stream_view["window_index"] != 1:
             return {
@@ -172,6 +177,24 @@ class SlowStreamInterjectionDecider:
         return {
             "should_interject": False,
             "reason": "slow",
+        }
+
+
+class MutatingStreamViewDecider:
+    plugin_id = "mutating_stream_plugin"
+
+    def __init__(self):
+        self.view = None
+
+    async def decide(self, event, plugin_context, stream_view):
+        self.view = stream_view
+        with pytest.raises(TypeError):
+            stream_view.metadata["bad"] = True
+        with pytest.raises(AttributeError):
+            stream_view.utterances.append("bad")
+        return {
+            "should_interject": False,
+            "reason": "read_only",
         }
 
 
@@ -310,6 +333,16 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
             "text": "设计问题，我改不了。",
             "memory_relevant": True,
         },
+    ]
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert [utterance.message_id for utterance in turn_state.utterances] == [
+        "turn-1::immediate_reply::0001",
+        "turn-1::core_reply::0002",
+    ]
+    assert [utterance.delivered_message_ids for utterance in turn_state.utterances] == [
+        ["turn-1::immediate_reply::0001"],
+        ["turn-1::core_reply::0002"],
     ]
     assert queue.empty()
 
@@ -657,6 +690,32 @@ async def test_outbound_memory_persist_uses_visible_outputs_as_canonical_reply(
     assert captured_snapshot.recent_turns[0]["assistant"] == (
         "等我看看。 你可以执行工作区命令。"
     )
+    assert webchat_event.get_extra("_interaction_finalized_turn_material") == {
+        "turn_id": "turn-1",
+        "user_text": "帮我查一下天气",
+        "assistant_text": "等我看看。 你可以执行工作区命令。",
+        "visible_outputs": [
+            {
+                "turn_id": "turn-1",
+                "kind": "immediate_reply",
+                "text": "等我看看。",
+                "memory_relevant": True,
+            },
+            {
+                "turn_id": "turn-1",
+                "kind": "stream_interjection",
+                "text": "还在查。",
+                "memory_relevant": False,
+            },
+            {
+                "turn_id": "turn-1",
+                "kind": "core_reply",
+                "text": "你可以执行工作区命令。",
+                "memory_relevant": True,
+            },
+        ],
+        "history_source": "interaction.turn.material",
+    }
 
 
 @pytest.mark.asyncio
@@ -779,6 +838,14 @@ async def test_core_final_result_reuses_segmented_delivery_rules(webchat_event):
         second_payload["platform_extras"]["visible_message_id"]
         == "turn-1::core_reply::0002"
     )
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert len(turn_state.utterances) == 1
+    assert turn_state.utterances[0].message_id == "turn-1::core_reply::0001"
+    assert turn_state.utterances[0].delivered_message_ids == [
+        "turn-1::core_reply::0001",
+        "turn-1::core_reply::0002",
+    ]
     assert queue.empty()
 
 
@@ -820,6 +887,12 @@ async def test_capture_streaming_observes_core_chunks_without_interjection(
     assert (
         webchat_event.get_extra("_interaction_core_streaming_result_consumed") is True
     )
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.stream_state.total_text == "hello world"
+    assert turn_state.stream_state.pending_text == ""
+    assert turn_state.stream_state.observation_count == 3
+    assert turn_state.stream_state.result_consumed is True
 
 
 @pytest.mark.asyncio
@@ -844,6 +917,10 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
         await controller.capture_streaming(generator(), webchat_event)
 
     assert webchat_event.get_extra("_interaction_core_stream_text") == "hello world"
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.stream_state.total_text == "hello world"
+    assert turn_state.stream_state.pending_text == ""
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
@@ -852,6 +929,23 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
             "memory_relevant": True,
         }
     ]
+    assert webchat_event.get_extra("_interaction_finalized_turn_material") == {
+        "turn_id": "turn-1",
+        "user_text": "帮我查一下天气",
+        "assistant_text": "hello world",
+        "visible_outputs": [
+            {
+                "turn_id": "turn-1",
+                "kind": "core_stream",
+                "text": "hello world",
+                "memory_relevant": True,
+            }
+        ],
+        "history_source": "interaction.turn.material",
+    }
+    assert len(turn_state.utterances) == 1
+    assert turn_state.utterances[0].kind == "core_stream"
+    assert turn_state.utterances[0].text == "hello world"
 
 
 @pytest.mark.asyncio
@@ -937,6 +1031,8 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     assert payloads[-1]["type"] == "complete"
     assert payloads[-1]["data"] == "hello core"
     assert [view["window_index"] for view in decider.views] == [1, 2]
+    assert decider.views[0]["pending_text"] == ""
+    assert decider.views[0]["utterances"] == ()
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
@@ -951,6 +1047,17 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
             "memory_relevant": True,
         },
     ]
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert [utterance.kind for utterance in turn_state.utterances] == [
+        "stream_interjection",
+        "core_stream",
+    ]
+    assert turn_state.utterances[0].memory_relevant is False
+    assert turn_state.utterances[0].delivered_message_ids == [
+        "turn-1::stream_interjection::0002"
+    ]
+    assert turn_state.utterances[1].text == "hello core"
 
 
 @pytest.mark.asyncio
@@ -994,6 +1101,39 @@ async def test_capture_streaming_observes_final_short_output(webchat_event):
 
 
 @pytest.mark.asyncio
+async def test_stream_decider_receives_read_only_stream_view(webchat_event):
+    queue = asyncio.Queue()
+    decider = MutatingStreamViewDecider()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = [decider]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=5,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    assert decider.view is not None
+    assert decider.view.turn_id == "turn-1"
+    assert decider.view.observed_text == "hello"
+    assert decider.view.total_text == "hello"
+    assert decider.view.window_index == 1
+    assert decider.view.metadata["stream_observation_count"] == 1
+    assert decider.view.utterances == ()
+
+
+@pytest.mark.asyncio
 async def test_stream_prompt_reuses_turn_context_material(webchat_event):
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
@@ -1031,6 +1171,36 @@ async def test_stream_prompt_reuses_turn_context_material(webchat_event):
 
     assert '"persona_id": "alice"' in prompt
     assert '"recent_turns"' in prompt
+    assert '"existing_turn_utterances"' in prompt
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_uses_stream_state_for_current_buffer(webchat_event):
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_interjection_enabled=True,
+        ),
+    )
+    turn_state = InteractionTurnState(
+        turn_id="turn-1",
+        stream_state=InteractionStreamState(
+            total_text="hello from state",
+            pending_text="from state",
+        ),
+    )
+    webchat_event.set_extra("_interaction_turn_state", turn_state)
+
+    prompt = await controller._build_stream_interjection_prompt(
+        webchat_event,
+        observed_text="hello",
+        total_text="stale total",
+        window_index=1,
+        is_final=False,
+    )
+
+    assert '"core_stream_so_far": "hello from state"' in prompt
+    assert '"core_stream_pending": "from state"' in prompt
 
 
 @pytest.mark.asyncio

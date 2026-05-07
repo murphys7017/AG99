@@ -26,6 +26,7 @@ from .output_controller import InteractionOutputController
 from .turn_state import (
     ensure_interaction_turn_state,
     get_interaction_turn_finalized_material,
+    get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     set_interaction_turn_finalized_material,
 )
@@ -50,6 +51,7 @@ class InteractionMiddleware:
         self.output_controller.interaction_config = self.interaction_config
         self.output_controller.memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
+        self.output_controller._persist_callback = self._on_output_persist_requested
         self._inflight_tasks: set[asyncio.Task] = set()
 
     def set_plugin_context(self, plugin_context: Any) -> None:
@@ -82,12 +84,6 @@ class InteractionMiddleware:
                     decision.core_task_spec,
                 )
             event.set_extra("_interaction_plugin_hints", dict(decision.plugin_hints))
-        logger.debug(
-            "Interaction middleware attached event context: platform_id=%s session_id=%s turn_id=%s",
-            event.get_platform_id(),
-            event.session_id,
-            turn_id,
-        )
 
     def _install_core_output_interceptor(self, event: AstrMessageEvent) -> None:
         if event.get_extra("_interaction_output_interceptor_installed", False):
@@ -102,12 +98,6 @@ class InteractionMiddleware:
             wrapped_event: AstrMessageEvent,
             message: MessageChain | None,
         ) -> None:
-            logger.debug(
-                "Interaction middleware routing core send via output controller: platform_id=%s session_id=%s turn_id=%s",
-                wrapped_event.get_platform_id(),
-                wrapped_event.session_id,
-                wrapped_event.get_extra("_turn_id"),
-            )
             await output_controller.capture_message_chain(message, wrapped_event)
             wrapped_event._has_send_oper = True
 
@@ -116,13 +106,6 @@ class InteractionMiddleware:
             generator: AsyncGenerator[MessageChain, None],
             use_fallback: bool = False,
         ) -> None:
-            logger.debug(
-                "Interaction middleware routing core streaming via output controller: platform_id=%s session_id=%s turn_id=%s use_fallback=%s",
-                wrapped_event.get_platform_id(),
-                wrapped_event.session_id,
-                wrapped_event.get_extra("_turn_id"),
-                use_fallback,
-            )
             await output_controller.capture_streaming(
                 generator,
                 wrapped_event,
@@ -133,12 +116,6 @@ class InteractionMiddleware:
         async def complete_visible_turn_wrapper(
             wrapped_event: AstrMessageEvent,
         ) -> None:
-            logger.debug(
-                "Interaction middleware routing visible completion via output controller: platform_id=%s session_id=%s turn_id=%s",
-                wrapped_event.get_platform_id(),
-                wrapped_event.session_id,
-                wrapped_event.get_extra("_turn_id"),
-            )
             await output_controller.capture_visible_completion(wrapped_event)
 
         event.set_extra("_interaction_original_send", original_send)
@@ -153,14 +130,7 @@ class InteractionMiddleware:
         event.set_extra("_interaction_output_interceptor_installed", True)
 
     def handle_inbound(self, event: AstrMessageEvent) -> None:
-        enabled = self.is_enabled_for_event(event)
-        logger.debug(
-            "Interaction middleware inbound dispatch: platform_id=%s session_id=%s enabled=%s",
-            event.get_platform_id(),
-            event.session_id,
-            enabled,
-        )
-        if not enabled:
+        if not self.is_enabled_for_event(event):
             self.core_queue.put_nowait(event)
             return
         self._spawn_inbound_task(event)
@@ -221,15 +191,6 @@ class InteractionMiddleware:
         self.refresh_interaction_config()
         turn_id = uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
-        logger.debug(
-            "Interaction middleware async turn start: platform_id=%s session_id=%s turn_id=%s decision_provider_id=%s decision_model=%s finalizer_provider_id=%s",
-            event.get_platform_id(),
-            event.session_id,
-            turn_state.turn_id,
-            self.interaction_config.decision_provider_id,
-            self.interaction_config.decision_model,
-            self.interaction_config.finalizer_provider_id,
-        )
         decision = await self._decide_or_fallback(event)
         self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
         if decision.route_mode == RouteMode.SELF_REPLY:
@@ -257,22 +218,14 @@ class InteractionMiddleware:
                     return
             completed = await self._complete_visible_turn_or_record_failure(event)
             if completed:
-                await self._persist_turn(
-                    event, decision, decision.immediate_spoken_reply
+                await self._finalize_turn(
+                    event,
+                    visible_reply=decision.immediate_spoken_reply,
                 )
-                self._schedule_turn_postprocess(event)
             return
         if decision.route_mode == RouteMode.HYBRID:
             if decision.should_emit_immediate_reply:
-                sent = await self._emit_immediate_reply_or_record_failure(
-                    event, decision
-                )
-                if sent:
-                    self._schedule_memory_persist(
-                        event,
-                        decision,
-                        decision.immediate_spoken_reply,
-                    )
+                await self._emit_immediate_reply_or_record_failure(event, decision)
             self._forward_to_core(event)
             return
         if decision.should_emit_immediate_reply:
@@ -302,16 +255,6 @@ class InteractionMiddleware:
                 exc_info=True,
             )
             return build_fallback_decision("decision_pipeline_error")
-        logger.debug(
-            "Interaction middleware decision resolved: platform_id=%s session_id=%s route_mode=%s confidence=%s reason=%s is_fallback=%s fallback_reason=%s",
-            event.get_platform_id(),
-            event.session_id,
-            decision.route_mode.value,
-            decision.confidence,
-            decision.reason,
-            decision.is_fallback,
-            decision.fallback_reason,
-        )
         return decision
 
     async def _emit_immediate_reply(
@@ -393,12 +336,7 @@ class InteractionMiddleware:
         try:
             task.result()
         except asyncio.CancelledError:
-            logger.debug(
-                "Interaction turn postprocess cancelled: platform_id=%s session_id=%s turn_id=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-            )
+            pass
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_turn_postprocess_failed", True)
             event.set_extra("_interaction_turn_postprocess_failure_reason", str(exc))
@@ -420,75 +358,7 @@ class InteractionMiddleware:
             and event._has_send_oper
         ):
             event._has_send_oper = False
-            logger.debug(
-                "Interaction middleware restored core send state before forwarding: platform_id=%s session_id=%s turn_id=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-            )
-        logger.debug(
-            "Interaction middleware forwarding to core: platform_id=%s session_id=%s turn_id=%s",
-            event.get_platform_id(),
-            event.session_id,
-            event.get_extra("_turn_id"),
-        )
         self.core_queue.put_nowait(event)
-
-    def _schedule_memory_persist(
-        self,
-        event: AstrMessageEvent,
-        decision: InteractionDecision,
-        visible_reply: str | None,
-    ) -> None:
-        self._spawn_background_task(
-            self._persist_turn(event, decision, visible_reply),
-            name=f"interaction_memory_persist_{event.get_platform_id()}",
-        )
-
-    async def _persist_turn(
-        self,
-        event: AstrMessageEvent,
-        decision: InteractionDecision,
-        visible_reply: str | None,
-    ) -> None:
-        del decision
-        turn_id = str(event.get_extra("_turn_id", "") or "")
-        visible_outputs = get_interaction_turn_visible_outputs(event)
-        canonical_reply = build_interaction_memory_reply_from_visible_outputs(
-            visible_outputs,
-            turn_id=turn_id,
-        )
-        if not canonical_reply:
-            canonical_reply = (visible_reply or "").strip()
-        if not canonical_reply:
-            return
-        self._build_finalized_turn_material(
-            event,
-            visible_outputs,
-            canonical_reply=canonical_reply,
-        )
-        try:
-            await self.memory_store.update_interaction_memory(
-                event.unified_msg_origin,
-                str(event.get_extra("_interaction_persona_id", "") or ""),
-                lambda snapshot: update_interaction_memory_from_turn(
-                    snapshot,
-                    user_text=event.message_str,
-                    visible_reply=canonical_reply,
-                    turn_id=turn_id,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            event.set_extra("_interaction_memory_persist_failed", True)
-            event.set_extra("_interaction_memory_persist_failure_reason", str(exc))
-            logger.error(
-                "Interaction memory persistence failed: platform_id=%s session_id=%s turn_id=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                exc,
-                exc_info=True,
-            )
 
     def _build_finalized_turn_material(
         self,
@@ -510,9 +380,12 @@ class InteractionMiddleware:
             if isinstance(item, dict)
         ]
         if canonical_reply is None:
+            turn_state = get_interaction_turn_state(event)
+            utterances = turn_state.utterances if turn_state is not None else None
             canonical_reply = build_interaction_memory_reply_from_visible_outputs(
                 outputs,
                 turn_id=turn_id,
+                utterances=utterances,
             )
         canonical_reply = (canonical_reply or "").strip()
         if not canonical_reply:
@@ -526,3 +399,66 @@ class InteractionMiddleware:
         }
         set_interaction_turn_finalized_material(event, material)
         return material
+
+    async def _finalize_turn(
+        self,
+        event: AstrMessageEvent,
+        *,
+        visible_reply: str | None = None,
+    ) -> None:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None:
+            turn_state = ensure_interaction_turn_state(event)
+        if turn_state.turn_completed:
+            return
+
+        material = get_interaction_turn_finalized_material(event)
+        if material is None:
+            material = self._build_finalized_turn_material(
+                event,
+                canonical_reply=visible_reply,
+            )
+        if material is not None:
+            turn_id = str(material.get("turn_id", "") or "")
+            canonical_reply = str(material.get("assistant_text", "") or "").strip()
+            if canonical_reply:
+                try:
+                    await self.memory_store.update_interaction_memory(
+                        event.unified_msg_origin,
+                        str(event.get_extra("_interaction_persona_id", "") or ""),
+                        lambda snapshot: update_interaction_memory_from_turn(
+                            snapshot,
+                            user_text=event.message_str,
+                            visible_reply=canonical_reply,
+                            turn_id=turn_id,
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    event.set_extra("_interaction_memory_persist_failed", True)
+                    event.set_extra(
+                        "_interaction_memory_persist_failure_reason", str(exc)
+                    )
+                    logger.error(
+                        "Interaction memory persistence failed during turn finalization: platform_id=%s session_id=%s turn_id=%s error=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        turn_id,
+                        exc,
+                        exc_info=True,
+                    )
+        else:
+            event.set_extra("_interaction_memory_persist_failed", True)
+            event.set_extra(
+                "_interaction_memory_persist_failure_reason",
+                "missing_material",
+            )
+
+        self._schedule_turn_postprocess(event)
+        turn_state.turn_completed = True
+
+    async def _on_output_persist_requested(
+        self,
+        event: AstrMessageEvent,
+        visible_reply: str | None,
+    ) -> None:
+        await self._finalize_turn(event, visible_reply=visible_reply)

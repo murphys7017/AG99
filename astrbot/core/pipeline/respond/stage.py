@@ -80,7 +80,9 @@ class RespondStage(Stage):
                 turn_material=(
                     dict(material)
                     if isinstance(
-                        material := event.get_extra("_interaction_finalized_turn_material"),
+                        material := event.get_extra(
+                            "_interaction_finalized_turn_material"
+                        ),
                         dict,
                     )
                     else None

@@ -63,7 +63,9 @@ async def deliver_message_chain(
 
     try:
         if await _is_empty_message_chain(working_chain):
-            logger.info("Message chain is empty after delivery validation; skipping send.")
+            logger.info(
+                "Message chain is empty after delivery validation; skipping send."
+            )
             return False
     except Exception as exc:  # noqa: BLE001
         logger.warning("Message chain empty check failed: %s", exc, exc_info=True)
@@ -72,8 +74,7 @@ async def deliver_message_chain(
         comp
         for comp in working_chain
         if not (
-            isinstance(comp, Comp.Plain)
-            and (not comp.text or not comp.text.strip())
+            isinstance(comp, Comp.Plain) and (not comp.text or not comp.text.strip())
         )
     ]
     if not working_chain:

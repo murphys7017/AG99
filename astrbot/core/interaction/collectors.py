@@ -175,12 +175,14 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
         conversation_id = history_payload.get("conversation_id")
         if not isinstance(conversation_id, str) or not conversation_id.strip():
             conversation_id = None
-            if provider_request is not None and provider_request.conversation is not None:
-                raw_conversation_id = getattr(provider_request.conversation, "cid", None)
-                if (
-                    isinstance(raw_conversation_id, str)
-                    and raw_conversation_id.strip()
-                ):
+            if (
+                provider_request is not None
+                and provider_request.conversation is not None
+            ):
+                raw_conversation_id = getattr(
+                    provider_request.conversation, "cid", None
+                )
+                if isinstance(raw_conversation_id, str) and raw_conversation_id.strip():
                     conversation_id = raw_conversation_id
 
         turns = history_payload["turns"]
