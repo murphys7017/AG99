@@ -38,19 +38,12 @@ class MemoryPostProcessor:
         )
         material = _resolve_turn_material(ctx)
         if material is None:
-            logger.debug(
-                "memory postprocess: skip because no update material found reason=%s",
-                _describe_skip_reason(ctx),
-            )
             return None
 
         latest_turn = RecentConversationSource.get_latest_turn_payload(
             material["conversation_history"]
         )
         if latest_turn is None:
-            logger.debug(
-                "memory postprocess: skip because no turn pair found reason=no_turn_pair"
-            )
             return None
 
         event = ctx.event

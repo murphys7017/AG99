@@ -63,7 +63,7 @@ async def deliver_message_chain(
 
     try:
         if await _is_empty_message_chain(working_chain):
-            logger.info(
+            logger.debug(
                 "Message chain is empty after delivery validation; skipping send."
             )
             return False

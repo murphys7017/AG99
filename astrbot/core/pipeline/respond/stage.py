@@ -147,7 +147,7 @@ class RespondStage(Stage):
             event.set_extra("_streaming_finished", True)
             return
 
-        logger.info(
+        logger.debug(
             f"Prepare to send - {event.get_sender_name()}/{event.get_sender_id()}: {event._outline_chain(result.chain)}",
         )
 
@@ -164,7 +164,7 @@ class RespondStage(Stage):
                 )
                 == "realtime_segmenting"
             )
-            logger.info(f"应用流式输出({event.get_platform_id()})")
+            logger.debug(f"应用流式输出({event.get_platform_id()})")
             await event.send_streaming(result.async_stream, realtime_segmenting)
             sent_any = True
             await self._dispatch_after_message_sent(event)
