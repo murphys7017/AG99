@@ -1,5 +1,6 @@
 from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
 from .contributors import (
+    InteractionDecisionView,
     InteractionPromptContribution,
     InteractionResultContribution,
     InteractionResultView,
@@ -43,6 +44,7 @@ __all__ = [
     "InteractionAgentConfig",
     "InteractionContextMaterial",
     "InteractionDecision",
+    "InteractionDecisionView",
     "InteractionMiddleware",
     "InteractionMemorySnapshot",
     "InteractionMemoryStore",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from astrbot import logger
@@ -13,8 +14,9 @@ from astrbot.core.prompt.interfaces.context_collector_inferface import (
 from astrbot.core.star.context import Context
 
 from .collectors import InteractionMemoryCollector
-from .contributors import InteractionPromptContribution
+from .contributors import InteractionDecisionView, InteractionPromptContribution
 from .memory_store import InteractionMemoryStore
+from .turn_state import get_interaction_turn_state
 
 
 def build_interaction_collectors(
@@ -133,14 +135,22 @@ async def collect_interaction_prompt_contributions(
     decision_context: dict[str, Any],
 ) -> list[InteractionPromptContribution]:
     contributions: list[InteractionPromptContribution] = []
+    view = _build_decision_view(
+        event=event,
+        config=config,
+        decision_context=decision_context,
+    ).copy_read_only()
     for contributor in plugin_context.list_interaction_prompt_contributors():
         try:
-            payload = await contributor.collect(
-                event,
-                plugin_context,
-                config,
-                decision_context,
-            )
+            if _uses_legacy_prompt_contributor_signature(contributor.collect):
+                payload = await contributor.collect(
+                    event,
+                    plugin_context,
+                    config,
+                    decision_context,
+                )
+            else:
+                payload = await contributor.collect(event, plugin_context, view)
         except Exception as exc:  # noqa: BLE001
             failures = event.get_extra("_interaction_prompt_contributor_failures", [])
             if not isinstance(failures, list):
@@ -163,3 +173,74 @@ async def collect_interaction_prompt_contributions(
             contributions.append(payload)
     contributions.sort(key=lambda item: (item.priority, item.plugin_id))
     return contributions
+
+
+def _build_decision_view(
+    *,
+    event,
+    config,
+    decision_context: dict[str, Any],
+) -> InteractionDecisionView:
+    turn_state = get_interaction_turn_state(event)
+    material = turn_state.context_material if turn_state is not None else None
+    platform_id = (
+        event.get_platform_id()
+        if callable(getattr(event, "get_platform_id", None))
+        else ""
+    )
+    session_id = str(
+        getattr(event, "unified_msg_origin", None)
+        or getattr(event, "session_id", "")
+        or ""
+    )
+    context = decision_context if isinstance(decision_context, dict) else {}
+    return InteractionDecisionView(
+        turn_id=str(event.get_extra("_turn_id", "") or ""),
+        platform_id=platform_id,
+        session_id=session_id,
+        config=config,
+        decision_context=context,
+        persona=(
+            material.persona_payload
+            if material is not None
+            else dict(context.get("persona", {}) or {})
+        ),
+        input=(
+            material.input_payload
+            if material is not None
+            else dict(context.get("input", {}) or {})
+        ),
+        interaction_memory=(
+            material.memory_payload
+            if material is not None
+            else dict(context.get("memory", {}) or {})
+        ),
+        recent_messages=(
+            material.recent_messages
+            if material is not None
+            else list(context.get("recent_messages", []) or [])
+        ),
+        capabilities=(
+            material.capability_payload
+            if material is not None
+            else dict(context.get("core_capabilities", {}) or {})
+        ),
+        metadata={"prompt_context_cached": material is not None},
+    )
+
+
+def _uses_legacy_prompt_contributor_signature(collect) -> bool:
+    try:
+        signature = inspect.signature(collect)
+    except (TypeError, ValueError):
+        return False
+    positional_params = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+    ]
+    return len(positional_params) >= 4

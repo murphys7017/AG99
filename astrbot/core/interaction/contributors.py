@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterator
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from types import MappingProxyType
 from typing import Any
 
@@ -22,6 +23,93 @@ class InteractionResultContribution:
     final_text_override: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     priority: int = 100
+
+
+def freeze_interaction_snapshot(value: Any) -> Any:
+    if isinstance(value, MappingProxyType):
+        return value
+    if is_dataclass(value) and not isinstance(value, type):
+        return freeze_interaction_snapshot(asdict(value))
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: freeze_interaction_snapshot(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(freeze_interaction_snapshot(item) for item in value)
+    if isinstance(value, set | frozenset):
+        return frozenset(freeze_interaction_snapshot(item) for item in value)
+    try:
+        return copy.deepcopy(value)
+    except Exception:  # noqa: BLE001
+        return value
+
+
+@dataclass(slots=True)
+class InteractionDecisionView:
+    turn_id: str
+    platform_id: str
+    session_id: str
+    config: Any
+    decision_context: dict[str, Any] = field(default_factory=dict)
+    persona: dict[str, Any] = field(default_factory=dict)
+    input: dict[str, Any] = field(default_factory=dict)
+    interaction_memory: dict[str, Any] = field(default_factory=dict)
+    recent_messages: list[dict[str, Any]] = field(default_factory=list)
+    capabilities: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def as_read_only_mapping(self) -> MappingProxyType:
+        return MappingProxyType(
+            {
+                "turn_id": self.turn_id,
+                "platform_id": self.platform_id,
+                "session_id": self.session_id,
+                "config": freeze_interaction_snapshot(self.config),
+                "decision_context": freeze_interaction_snapshot(self.decision_context),
+                "persona": freeze_interaction_snapshot(self.persona),
+                "input": freeze_interaction_snapshot(self.input),
+                "interaction_memory": freeze_interaction_snapshot(
+                    self.interaction_memory
+                ),
+                "recent_messages": freeze_interaction_snapshot(self.recent_messages),
+                "capabilities": freeze_interaction_snapshot(self.capabilities),
+                "metadata": freeze_interaction_snapshot(self.metadata),
+            }
+        )
+
+    def copy_read_only(self) -> InteractionDecisionView:
+        return replace(
+            self,
+            config=freeze_interaction_snapshot(self.config),
+            decision_context=freeze_interaction_snapshot(self.decision_context),
+            persona=freeze_interaction_snapshot(self.persona),
+            input=freeze_interaction_snapshot(self.input),
+            interaction_memory=freeze_interaction_snapshot(self.interaction_memory),
+            recent_messages=freeze_interaction_snapshot(self.recent_messages),
+            capabilities=freeze_interaction_snapshot(self.capabilities),
+            metadata=freeze_interaction_snapshot(self.metadata),
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        return self.as_read_only_mapping()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.as_read_only_mapping())
+
+    def __len__(self) -> int:
+        return len(self.as_read_only_mapping())
+
+    def keys(self):
+        return self.as_read_only_mapping().keys()
+
+    def items(self):
+        return self.as_read_only_mapping().items()
+
+    def values(self):
+        return self.as_read_only_mapping().values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.as_read_only_mapping().get(key, default)
 
 
 @dataclass(slots=True)
@@ -48,16 +136,16 @@ class InteractionStreamView:
                 "pending_text": self.pending_text,
                 "window_index": self.window_index,
                 "is_final": self.is_final,
-                "utterances": self.utterances,
-                "metadata": MappingProxyType(dict(self.metadata)),
+                "utterances": freeze_interaction_snapshot(self.utterances),
+                "metadata": freeze_interaction_snapshot(self.metadata),
             }
         )
 
     def copy_read_only(self) -> InteractionStreamView:
         return replace(
             self,
-            utterances=tuple(self.utterances),
-            metadata=MappingProxyType(dict(self.metadata)),
+            utterances=freeze_interaction_snapshot(self.utterances),
+            metadata=freeze_interaction_snapshot(self.metadata),
         )
 
     def __getitem__(self, key: str) -> Any:
@@ -86,10 +174,14 @@ class InteractionStreamView:
 class InteractionResultView:
     turn_id: str
     platform_id: str
+    session_id: str
     decision: Any
     immediate_reply: str | None = None
     core_result: str | None = None
     final_result: str | None = None
+    visible_outputs: tuple[Any, ...] = field(default_factory=tuple)
+    utterances: tuple[Any, ...] = field(default_factory=tuple)
+    finalized_turn_material: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_read_only_mapping(self) -> MappingProxyType:
@@ -97,16 +189,51 @@ class InteractionResultView:
             {
                 "turn_id": self.turn_id,
                 "platform_id": self.platform_id,
+                "session_id": self.session_id,
                 "decision": self.decision,
                 "immediate_reply": self.immediate_reply,
                 "core_result": self.core_result,
                 "final_result": self.final_result,
-                "metadata": dict(self.metadata),
+                "visible_outputs": freeze_interaction_snapshot(self.visible_outputs),
+                "utterances": freeze_interaction_snapshot(self.utterances),
+                "finalized_turn_material": freeze_interaction_snapshot(
+                    self.finalized_turn_material
+                ),
+                "metadata": freeze_interaction_snapshot(self.metadata),
             }
         )
 
     def copy_read_only(self) -> InteractionResultView:
-        return replace(self, metadata=MappingProxyType(dict(self.metadata)))
+        return replace(
+            self,
+            visible_outputs=freeze_interaction_snapshot(self.visible_outputs),
+            utterances=freeze_interaction_snapshot(self.utterances),
+            finalized_turn_material=freeze_interaction_snapshot(
+                self.finalized_turn_material
+            ),
+            metadata=freeze_interaction_snapshot(self.metadata),
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        return self.as_read_only_mapping()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.as_read_only_mapping())
+
+    def __len__(self) -> int:
+        return len(self.as_read_only_mapping())
+
+    def keys(self):
+        return self.as_read_only_mapping().keys()
+
+    def items(self):
+        return self.as_read_only_mapping().items()
+
+    def values(self):
+        return self.as_read_only_mapping().values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.as_read_only_mapping().get(key, default)
 
 
 def coerce_priority(value: Any, default: int = 100) -> int:

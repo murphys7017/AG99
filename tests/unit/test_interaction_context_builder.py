@@ -7,7 +7,12 @@ from astrbot.core.interaction.context_builder import (
     collect_interaction_prompt_contributions,
     extract_recent_messages,
 )
-from astrbot.core.interaction.contributors import InteractionPromptContribution
+from types import MappingProxyType
+
+from astrbot.core.interaction.contributors import (
+    InteractionDecisionView,
+    InteractionPromptContribution,
+)
 from astrbot.core.interaction.memory_store import (
     InteractionMemorySnapshot,
     InteractionMemoryStore,
@@ -238,12 +243,165 @@ class GoodPromptContributor:
         )
 
 
+class ViewPromptContributor:
+    plugin_id = "view"
+    priority = 5
+
+    def __init__(self):
+        self.view = None
+
+    async def collect(self, event, plugin_context, view):
+        assert isinstance(view, InteractionDecisionView)
+        assert view.turn_id == "turn-1"
+        assert view["platform_id"] == "test-platform"
+        assert view.config["provider_settings"]["name"] == "provider"
+        assert view.decision_context["persona"]["name"] == "Yakumo"
+        assert view.persona["name"] == "Yakumo"
+        assert view.input["text"] == "hello"
+        assert view.interaction_memory["recent_turns"] == ()
+        assert view.recent_messages[0]["source"] == "unit"
+        assert view.capabilities["tools_available"] is True
+        with pytest.raises(TypeError):
+            view.metadata["bad"] = True
+        with pytest.raises(TypeError):
+            view.config["provider_settings"]["name"] = "changed"
+        with pytest.raises(TypeError):
+            view.decision_context["persona"]["name"] = "changed"
+        with pytest.raises(TypeError):
+            view.recent_messages[0]["source"] = "changed"
+        with pytest.raises(AttributeError):
+            view.recent_messages.append({"source": "bad"})
+        self.view = view
+        return InteractionPromptContribution(plugin_id=self.plugin_id, priority=5)
+
+
 class FailingPromptContributor:
     plugin_id = "bad"
     priority = 1
 
     async def collect(self, event, plugin_context, config, decision_context):
         raise RuntimeError("broken")
+
+
+class NewSignatureTypeErrorPromptContributor:
+    plugin_id = "new-type-error"
+
+    async def collect(self, event, plugin_context, view):
+        raise TypeError("internal type error")
+
+
+class LegacyPromptContributor:
+    plugin_id = "legacy"
+
+    def __init__(self):
+        self.config = None
+        self.decision_context = None
+
+    async def collect(self, event, plugin_context, config, decision_context):
+        self.config = config
+        self.decision_context = decision_context
+        return InteractionPromptContribution(plugin_id=self.plugin_id)
+
+
+def _prompt_event():
+    return type(
+        "Event",
+        (),
+        {
+            "_extras": {"_turn_id": "turn-1"},
+            "unified_msg_origin": "session-1",
+            "session_id": "session-1",
+            "get_platform_id": lambda self: "test-platform",
+            "get_extra": lambda self, key, default=None: self._extras.get(key, default),
+            "set_extra": lambda self, key, value: self._extras.__setitem__(key, value),
+        },
+    )()
+
+
+def _decision_context():
+    return {
+        "persona": {"name": "Yakumo"},
+        "memory": {"recent_turns": []},
+        "recent_messages": [{"source": "unit"}],
+        "input": {"text": "hello"},
+        "core_capabilities": {"tools_available": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_prompt_contributor_receives_read_only_decision_view():
+    event = _prompt_event()
+    contributor = ViewPromptContributor()
+    config = {"provider_settings": {"name": "provider"}}
+    decision_context = _decision_context()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {"list_interaction_prompt_contributors": lambda self: [contributor]},
+    )()
+
+    contributions = await collect_interaction_prompt_contributions(
+        event,
+        plugin_context,
+        config=config,
+        decision_context=decision_context,
+    )
+
+    assert [item.plugin_id for item in contributions] == ["view"]
+    assert isinstance(contributor.view.config, MappingProxyType)
+    assert config["provider_settings"]["name"] == "provider"
+    assert decision_context["persona"]["name"] == "Yakumo"
+    assert decision_context["recent_messages"][0]["source"] == "unit"
+
+
+@pytest.mark.asyncio
+async def test_legacy_prompt_contributor_signature_still_receives_old_arguments():
+    event = _prompt_event()
+    contributor = LegacyPromptContributor()
+    config = {"provider_settings": {"name": "provider"}}
+    decision_context = _decision_context()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {"list_interaction_prompt_contributors": lambda self: [contributor]},
+    )()
+
+    contributions = await collect_interaction_prompt_contributions(
+        event,
+        plugin_context,
+        config=config,
+        decision_context=decision_context,
+    )
+
+    assert [item.plugin_id for item in contributions] == ["legacy"]
+    assert contributor.config is config
+    assert contributor.decision_context is decision_context
+
+
+@pytest.mark.asyncio
+async def test_new_prompt_contributor_internal_type_error_is_recorded():
+    event = _prompt_event()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "list_interaction_prompt_contributors": lambda self: [
+                NewSignatureTypeErrorPromptContributor()
+            ]
+        },
+    )()
+
+    contributions = await collect_interaction_prompt_contributions(
+        event,
+        plugin_context,
+        config={},
+        decision_context={},
+    )
+
+    assert contributions == []
+    assert event.get_extra("_interaction_prompt_contributor_failures") == [
+        {"plugin_id": "new-type-error", "error": "internal type error"}
+    ]
 
 
 @pytest.mark.asyncio

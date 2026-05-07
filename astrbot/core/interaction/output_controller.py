@@ -987,11 +987,15 @@ class InteractionOutputController:
         view = InteractionResultView(
             turn_id=str(event.get_extra("_turn_id", "") or ""),
             platform_id=event.get_platform_id(),
+            session_id=event.unified_msg_origin,
             decision=get_interaction_decision(event),
             immediate_reply=get_interaction_turn_immediate_reply(event),
             core_result=core_result,
             final_result=final_result,
-            metadata={"session_id": event.unified_msg_origin},
+            visible_outputs=self._snapshot_result_visible_outputs(event),
+            utterances=self._snapshot_result_utterances(event),
+            finalized_turn_material=get_interaction_turn_finalized_material(event),
+            metadata={},
         )
         contributions: list[InteractionResultContribution] = []
         for contributor in list_contributors():
@@ -1025,6 +1029,25 @@ class InteractionOutputController:
                 contributions.append(payload)
         contributions.sort(key=lambda item: (item.priority, item.plugin_id))
         return contributions
+
+    @staticmethod
+    def _snapshot_result_visible_outputs(event: AstrMessageEvent) -> tuple[Any, ...]:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is not None:
+            return tuple(dict(output) for output in turn_state.visible_outputs)
+        raw_outputs = event.get_extra("_visible_turn_outputs", [])
+        if isinstance(raw_outputs, list):
+            return tuple(
+                dict(output) for output in raw_outputs if isinstance(output, dict)
+            )
+        return ()
+
+    @staticmethod
+    def _snapshot_result_utterances(event: AstrMessageEvent) -> tuple[Any, ...]:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is not None:
+            return tuple(turn_state.utterances)
+        return ()
 
     def build_platform_output_extras(
         self,

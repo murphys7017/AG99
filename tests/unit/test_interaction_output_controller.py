@@ -3,7 +3,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from astrbot.core.interaction.contributors import InteractionResultContribution
+from astrbot.core.interaction.contributors import (
+    InteractionResultContribution,
+    InteractionResultView,
+)
 from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
@@ -95,6 +98,7 @@ class ResultContributor:
 
     async def collect(self, event, plugin_context, result_view):
         assert result_view.turn_id == "turn-1"
+        assert result_view.session_id == event.unified_msg_origin
         assert result_view.core_result == self.expected_core_result
         return InteractionResultContribution(
             plugin_id=self.plugin_id,
@@ -112,6 +116,12 @@ class MutatingResultContributor:
     async def collect(self, event, plugin_context, result_view):
         with pytest.raises(TypeError):
             result_view.metadata["bad"] = True
+        with pytest.raises(TypeError):
+            result_view.visible_outputs[0]["text"] = "changed"
+        with pytest.raises(TypeError):
+            result_view.utterances[0]["text"] = "changed"
+        with pytest.raises(TypeError):
+            result_view.finalized_turn_material["assistant"] = "changed"
         return None
 
 
@@ -120,6 +130,22 @@ class FailingResultContributor:
 
     async def collect(self, event, plugin_context, result_view):
         raise RuntimeError("contributor broken")
+
+
+class InspectingResultContributor:
+    plugin_id = "inspecting_plugin"
+
+    def __init__(self):
+        self.view = None
+
+    async def collect(self, event, plugin_context, result_view):
+        assert isinstance(result_view, InteractionResultView)
+        assert result_view["turn_id"] == "turn-1"
+        assert result_view.visible_outputs[0]["kind"] == "immediate_reply"
+        assert result_view.utterances[0]["kind"] == "immediate_reply"
+        assert result_view.finalized_turn_material["assistant"] == "final answer"
+        self.view = result_view
+        return None
 
 
 class StreamInterjectionDecider:
@@ -535,8 +561,10 @@ async def test_core_final_result_is_consumed_only_once_for_segmented_sends(
 async def test_result_contributor_receives_read_only_view(webchat_event):
     queue = asyncio.Queue()
     plugin_context = MagicMock()
+    inspecting_contributor = InspectingResultContributor()
     plugin_context.list_interaction_result_contributors.return_value = [
-        MutatingResultContributor()
+        inspecting_contributor,
+        MutatingResultContributor(),
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
@@ -553,14 +581,41 @@ async def test_result_contributor_receives_read_only_view(webchat_event):
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
+        await controller.emit_immediate_spoken_reply(
+            InteractionDecision(
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="行，等我查一下。",
+            ),
+            webchat_event,
+        )
+        webchat_event.set_extra(
+            "_interaction_finalized_turn_material",
+            {
+                "turn_id": "turn-1",
+                "user_text": "帮我查一下天气",
+                "assistant": "final answer",
+            },
+        )
         await controller.capture_message_chain(
             MessageChain([Plain("dry result")]),
             webchat_event,
         )
 
+    immediate_payload = queue.get_nowait()
     payload = queue.get_nowait()
+    assert immediate_payload["data"] == "行，等我查一下。"
     assert payload["data"] == "dry result"
     assert queue.empty()
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.visible_outputs[0]["text"] == "行，等我查一下。"
+    assert turn_state.utterances[0].text == "行，等我查一下。"
+    assert (
+        webchat_event.get_extra("_interaction_finalized_turn_material")["assistant"]
+        == "final answer"
+    )
+    assert inspecting_contributor.view is not None
+    assert inspecting_contributor.view.get("session_id") == webchat_event.unified_msg_origin
 
 
 @pytest.mark.asyncio
