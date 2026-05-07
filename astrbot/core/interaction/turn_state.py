@@ -60,6 +60,15 @@ class InteractionStreamState:
 
 
 @dataclass(slots=True)
+class InteractionTurnCompletionState:
+    material_finalized: bool = False
+    memory_persisted: bool = False
+    postprocess_dispatched: bool = False
+    completed: bool = False
+    failure_reason: str | None = None
+
+
+@dataclass(slots=True)
 class InteractionTurnState:
     turn_id: str
     persona_id: str = ""
@@ -81,7 +90,9 @@ class InteractionTurnState:
     core_final_result_consumed: bool = False
     visible_message_counter: int = 0
     stream_interjections_emitted: int = 0
-    turn_completed: bool = False
+    completion_state: InteractionTurnCompletionState = field(
+        default_factory=InteractionTurnCompletionState
+    )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     stream_interjection_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -141,68 +152,8 @@ def ensure_interaction_turn_state(
     state = get_interaction_turn_state(event)
     if state is None:
         resolved_turn_id = turn_id or str(event.get_extra("_turn_id", "") or "")
-        raw_outputs = event.get_extra("_visible_turn_outputs", [])
-        visible_outputs = (
-            [dict(item) for item in raw_outputs if isinstance(item, dict)]
-            if isinstance(raw_outputs, list)
-            else []
-        )
-        raw_tasks = event.get_extra("_interaction_stream_observation_tasks", [])
-        observation_tasks = (
-            [task for task in raw_tasks if isinstance(task, asyncio.Task)]
-            if isinstance(raw_tasks, list)
-            else []
-        )
-        raw_failures = event.get_extra("_interaction_stream_observation_failures", [])
-        observation_failures = (
-            [str(item) for item in raw_failures if str(item).strip()]
-            if isinstance(raw_failures, list)
-            else []
-        )
-        immediate_reply = event.get_extra("_interaction_immediate_reply")
         state = InteractionTurnState(
             turn_id=resolved_turn_id,
-            immediate_reply=(
-                str(immediate_reply).strip() if immediate_reply is not None else None
-            )
-            or None,
-            visible_outputs=visible_outputs,
-            core_stream_text=str(
-                event.get_extra("_interaction_core_stream_text", "") or ""
-            ),
-            core_stream_pending_text=str(
-                event.get_extra("_interaction_core_stream_pending_text", "") or ""
-            ),
-            core_stream_observation_count=int(
-                event.get_extra("_interaction_core_stream_observation_count", 0) or 0
-            ),
-            core_stream_observation_tasks=observation_tasks,
-            core_stream_observation_failures=observation_failures,
-            core_streaming_active=bool(
-                event.get_extra("_interaction_core_streaming_active", False)
-            ),
-            core_streaming_result_consumed=bool(
-                event.get_extra("_interaction_core_streaming_result_consumed", False)
-            ),
-            core_final_result_consumed=bool(
-                event.get_extra("_interaction_core_final_result_consumed", False)
-            ),
-            visible_message_counter=int(
-                event.get_extra("_interaction_visible_message_counter", 0) or 0
-            ),
-            stream_interjections_emitted=int(
-                event.get_extra("_interaction_stream_interjections_emitted", 0) or 0
-            ),
-        )
-        state.stream_state = InteractionStreamState(
-            total_text=state.core_stream_text,
-            pending_text=state.core_stream_pending_text,
-            observation_count=state.core_stream_observation_count,
-            observation_tasks=list(state.core_stream_observation_tasks),
-            observation_failures=list(state.core_stream_observation_failures),
-            active=state.core_streaming_active,
-            result_consumed=state.core_streaming_result_consumed,
-            interjections_emitted=state.stream_interjections_emitted,
         )
         event.set_extra(INTERACTION_TURN_STATE_EXTRA_KEY, state)
     elif turn_id and not state.turn_id:
@@ -233,17 +184,65 @@ def set_interaction_turn_finalized_material(
     state = ensure_interaction_turn_state(event)
     normalized = dict(material) if isinstance(material, dict) else None
     state.finalized_turn_material = normalized
+    state.completion_state.material_finalized = normalized is not None
     event.set_extra("_interaction_finalized_turn_material", normalized)
+    event.set_extra(
+        "_interaction_turn_material_finalized",
+        state.completion_state.material_finalized,
+    )
 
 
 def get_interaction_turn_finalized_material(event) -> dict[str, Any] | None:
     state = get_interaction_turn_state(event)
     if state is not None and isinstance(state.finalized_turn_material, dict):
         return dict(state.finalized_turn_material)
-    material = event.get_extra("_interaction_finalized_turn_material")
-    if isinstance(material, dict):
-        return dict(material)
     return None
+
+
+def mark_interaction_turn_memory_persisted(
+    event,
+    persisted: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.memory_persisted = persisted
+    event.set_extra("_interaction_memory_persisted", persisted)
+
+
+def mark_interaction_turn_postprocess_dispatched(
+    event,
+    dispatched: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.postprocess_dispatched = dispatched
+    event.set_extra("_interaction_turn_postprocess_dispatched", dispatched)
+
+
+def mark_interaction_turn_completed(
+    event,
+    completed: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.completed = completed
+    event.set_extra("_interaction_turn_completed", completed)
+
+
+def record_interaction_turn_completion_failure(
+    event,
+    reason: str,
+) -> None:
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        return
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.failure_reason = clean_reason
+    event.set_extra("_interaction_turn_completion_failure_reason", clean_reason)
+
+
+def is_interaction_turn_completed(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.completion_state.completed
+    return False
 
 
 def set_interaction_turn_immediate_reply(event, reply: str | None) -> None:
@@ -257,9 +256,6 @@ def get_interaction_turn_immediate_reply(event) -> str | None:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.immediate_reply
-    reply = event.get_extra("_interaction_immediate_reply")
-    if isinstance(reply, str):
-        return reply.strip() or None
     return None
 
 
@@ -394,21 +390,21 @@ def get_interaction_turn_stream_text(event) -> str:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.stream_state.total_text
-    return str(event.get_extra("_interaction_core_stream_text", "") or "")
+    return ""
 
 
 def get_interaction_turn_stream_pending_text(event) -> str:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.stream_state.pending_text
-    return str(event.get_extra("_interaction_core_stream_pending_text", "") or "")
+    return ""
 
 
 def get_interaction_turn_stream_observation_count(event) -> int:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.stream_state.observation_count
-    return int(event.get_extra("_interaction_core_stream_observation_count", 0) or 0)
+    return 0
 
 
 def set_interaction_turn_core_streaming_active(
@@ -435,7 +431,7 @@ def has_interaction_turn_core_streaming_result_consumed(event) -> bool:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.stream_state.result_consumed
-    return bool(event.get_extra("_interaction_core_streaming_result_consumed", False))
+    return False
 
 
 def mark_interaction_turn_core_final_result_consumed(
@@ -451,14 +447,14 @@ def has_interaction_turn_core_final_result_consumed(event) -> bool:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.core_final_result_consumed
-    return bool(event.get_extra("_interaction_core_final_result_consumed", False))
+    return False
 
 
 def is_interaction_turn_core_streaming_active(event) -> bool:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.stream_state.active
-    return bool(event.get_extra("_interaction_core_streaming_active", False))
+    return False
 
 
 def mark_interaction_turn_stream_interjection_emitted(event) -> int:
@@ -476,7 +472,7 @@ def get_interaction_turn_stream_interjections_emitted(event) -> int:
     state = get_interaction_turn_state(event)
     if state is not None:
         return state.stream_state.interjections_emitted
-    return int(event.get_extra("_interaction_stream_interjections_emitted", 0) or 0)
+    return 0
 
 
 def next_interaction_turn_visible_message_id(event, message_kind: str) -> str:

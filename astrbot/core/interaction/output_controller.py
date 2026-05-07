@@ -48,11 +48,15 @@ from .turn_state import (
     get_interaction_turn_visible_outputs,
     has_interaction_turn_core_final_result_consumed,
     has_interaction_turn_core_streaming_result_consumed,
+    is_interaction_turn_completed,
     is_interaction_turn_core_streaming_active,
+    mark_interaction_turn_completed,
     mark_interaction_turn_core_final_result_consumed,
     mark_interaction_turn_core_streaming_result_consumed,
+    mark_interaction_turn_memory_persisted,
     mark_interaction_turn_stream_interjection_emitted,
     next_interaction_turn_visible_message_id,
+    record_interaction_turn_completion_failure,
     record_interaction_turn_stream_observation_failure,
     remove_interaction_turn_stream_observation_task,
     set_interaction_turn_core_streaming_active,
@@ -683,9 +687,7 @@ class InteractionOutputController:
     ) -> InteractionStreamView:
         turn_state = get_interaction_turn_state(event)
         pending_text = (
-            turn_state.stream_state.pending_text
-            if turn_state is not None
-            else str(event.get_extra("_interaction_core_stream_pending_text", "") or "")
+            turn_state.stream_state.pending_text if turn_state is not None else ""
         )
         utterances = tuple(turn_state.utterances) if turn_state is not None else ()
         return InteractionStreamView(
@@ -702,13 +704,7 @@ class InteractionOutputController:
                 "stream_observation_count": (
                     turn_state.stream_state.observation_count
                     if turn_state is not None
-                    else int(
-                        event.get_extra(
-                            "_interaction_core_stream_observation_count",
-                            0,
-                        )
-                        or 0
-                    )
+                    else 0
                 ),
             },
         )
@@ -1071,11 +1067,6 @@ class InteractionOutputController:
         turn_state = get_interaction_turn_state(event)
         if turn_state is not None:
             return tuple(dict(output) for output in turn_state.visible_outputs)
-        raw_outputs = event.get_extra("_visible_turn_outputs", [])
-        if isinstance(raw_outputs, list):
-            return tuple(
-                dict(output) for output in raw_outputs if isinstance(output, dict)
-            )
         return ()
 
     @staticmethod
@@ -1239,8 +1230,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         visible_reply: str | None,
     ) -> None:
-        turn_state = get_interaction_turn_state(event)
-        if turn_state is not None and turn_state.turn_completed:
+        if is_interaction_turn_completed(event):
             return
         if self._persist_callback is not None:
             await self._persist_callback(event, visible_reply)
@@ -1255,6 +1245,10 @@ class InteractionOutputController:
                 turn_id=turn_id,
             )
             if not turn_id or not canonical_reply:
+                record_interaction_turn_completion_failure(
+                    event,
+                    "missing_material",
+                )
                 return
             material = {
                 "turn_id": turn_id,
@@ -1268,6 +1262,10 @@ class InteractionOutputController:
             turn_id = str(material.get("turn_id", "") or "")
             canonical_reply = str(material.get("assistant_text", "") or "").strip()
             if not canonical_reply:
+                record_interaction_turn_completion_failure(
+                    event,
+                    "missing_canonical_reply",
+                )
                 return
         persisted = False
         try:
@@ -1282,9 +1280,14 @@ class InteractionOutputController:
                 ),
             )
             persisted = True
+            mark_interaction_turn_memory_persisted(event)
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_memory_persist_failed", True)
             event.set_extra("_interaction_memory_persist_failure_reason", str(exc))
+            record_interaction_turn_completion_failure(
+                event,
+                f"memory_persist:{exc}",
+            )
             logger.error(
                 "Interaction memory persistence failed after outbound send: platform_id=%s session_id=%s turn_id=%s error=%s",
                 event.get_platform_id(),
@@ -1294,9 +1297,8 @@ class InteractionOutputController:
                 exc_info=True,
             )
         finally:
-            turn_state = get_interaction_turn_state(event)
-            if turn_state is not None and persisted:
-                turn_state.turn_completed = True
+            if persisted:
+                mark_interaction_turn_completed(event)
 
     @staticmethod
     def _classify_outbound_message(

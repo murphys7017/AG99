@@ -36,13 +36,17 @@ def test_apply_interaction_core_task_spec_injects_execution_prompt():
         platform_meta=platform_meta,
         session_id="webchat!user!session123",
     )
+    task_spec = CoreTaskSpec(
+        task_intent="weather",
+        task_summary="查询天气",
+        execution_prompt="请查询今天的天气。",
+        suggested_capabilities=["search"],
+    )
     event.set_extra(
-        "_interaction_core_task_spec",
-        CoreTaskSpec(
-            task_intent="weather",
-            task_summary="查询天气",
-            execution_prompt="请查询今天的天气。",
-            suggested_capabilities=["search"],
+        "_interaction_turn_state",
+        InteractionTurnState(
+            turn_id="turn-1",
+            decision=InteractionDecision(core_task_spec=task_spec),
         ),
     )
     req = ProviderRequest(prompt="查天气", system_prompt="base")
@@ -90,21 +94,5 @@ def test_core_bridge_reads_decision_and_task_spec_from_turn_state_first():
         "_interaction_turn_state",
         InteractionTurnState(turn_id="turn-1", decision=state_decision),
     )
-    event.set_extra(
-        "_interaction_decision",
-        InteractionDecision(
-            route_mode=RouteMode.DELEGATE_TO_CORE,
-            reason="legacy_extra",
-        ),
-    )
-    event.set_extra(
-        "_interaction_core_task_spec",
-        CoreTaskSpec(
-            task_intent="legacy",
-            task_summary="来自 extra",
-            execution_prompt="按 extra 执行。",
-        ),
-    )
-
     assert get_interaction_decision(event) is state_decision
     assert get_core_task_spec(event) is state_spec

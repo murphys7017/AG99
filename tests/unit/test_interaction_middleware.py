@@ -303,7 +303,10 @@ class TestInteractionMiddleware:
 
         turn_state = get_interaction_turn_state(forwarded_event)
         assert turn_state is not None
-        assert turn_state.turn_completed is True
+        assert turn_state.completion_state.material_finalized is True
+        assert turn_state.completion_state.memory_persisted is True
+        assert turn_state.completion_state.postprocess_dispatched is True
+        assert turn_state.completion_state.completed is True
         middleware.memory_store.update_interaction_memory.assert_awaited_once()
         dispatch.assert_awaited_once()
         assert dispatch.await_args.kwargs["turn_material"] == {
@@ -740,7 +743,10 @@ class TestInteractionMiddleware:
         dispatch.assert_not_awaited()
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.turn_completed is False
+        assert turn_state.completion_state.memory_persisted is False
+        assert turn_state.completion_state.postprocess_dispatched is False
+        assert turn_state.completion_state.completed is False
+        assert turn_state.completion_state.failure_reason == "memory_persist:disk full"
 
     @pytest.mark.asyncio
     async def test_self_reply_does_not_persist_if_visible_completion_fails(
@@ -838,6 +844,12 @@ class TestInteractionMiddleware:
         complete_visible_turn.assert_awaited_once()
         controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
         dispatch.assert_awaited_once()
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.completion_state.material_finalized is True
+        assert turn_state.completion_state.memory_persisted is True
+        assert turn_state.completion_state.postprocess_dispatched is True
+        assert turn_state.completion_state.completed is True
         assert (
             dispatch.await_args.kwargs["trigger"]
             == PostProcessTrigger.AFTER_TURN_COMPLETED

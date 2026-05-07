@@ -17,9 +17,6 @@ def get_interaction_decision(event: AstrMessageEvent) -> InteractionDecision | N
     turn_state = get_interaction_turn_state(event)
     if turn_state is not None and isinstance(turn_state.decision, InteractionDecision):
         return turn_state.decision
-    decision = event.get_extra(INTERACTION_DECISION_EXTRA_KEY)
-    if isinstance(decision, InteractionDecision):
-        return decision
     return None
 
 
@@ -31,12 +28,6 @@ def get_core_task_spec(event: AstrMessageEvent) -> CoreTaskSpec | None:
         and isinstance(turn_state.decision.core_task_spec, CoreTaskSpec)
     ):
         return turn_state.decision.core_task_spec
-    spec = event.get_extra(INTERACTION_CORE_TASK_SPEC_EXTRA_KEY)
-    if isinstance(spec, CoreTaskSpec):
-        return spec
-    decision = get_interaction_decision(event)
-    if decision is not None:
-        return decision.core_task_spec
     return None
 
 

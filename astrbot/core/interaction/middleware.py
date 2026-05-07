@@ -28,6 +28,12 @@ from .turn_state import (
     get_interaction_turn_finalized_material,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
+    is_interaction_turn_completed,
+    mark_interaction_turn_completed,
+    mark_interaction_turn_memory_persisted,
+    mark_interaction_turn_postprocess_dispatched,
+    record_interaction_turn_completion_failure,
+    set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
 )
 from .types import InteractionDecision, RouteMode
@@ -77,6 +83,7 @@ class InteractionMiddleware:
         event.set_extra("_output_controller", self.output_controller)
         self._install_core_output_interceptor(event)
         if decision is not None:
+            set_interaction_turn_decision(event, decision)
             event.set_extra(INTERACTION_DECISION_EXTRA_KEY, decision)
             if decision.core_task_spec is not None:
                 event.set_extra(
@@ -340,6 +347,7 @@ class InteractionMiddleware:
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_turn_postprocess_failed", True)
             event.set_extra("_interaction_turn_postprocess_failure_reason", str(exc))
+            record_interaction_turn_completion_failure(event, f"postprocess:{exc}")
             logger.error(
                 "Interaction turn postprocess failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                 event.get_platform_id(),
@@ -350,7 +358,8 @@ class InteractionMiddleware:
             )
 
     def _forward_to_core(self, event: AstrMessageEvent) -> None:
-        decision = event.get_extra(INTERACTION_DECISION_EXTRA_KEY)
+        turn_state = get_interaction_turn_state(event)
+        decision = turn_state.decision if turn_state is not None else None
         if (
             isinstance(decision, InteractionDecision)
             and decision.route_mode in {RouteMode.DELEGATE_TO_CORE, RouteMode.HYBRID}
@@ -409,7 +418,7 @@ class InteractionMiddleware:
         turn_state = get_interaction_turn_state(event)
         if turn_state is None:
             turn_state = ensure_interaction_turn_state(event)
-        if turn_state.turn_completed:
+        if is_interaction_turn_completed(event):
             return
 
         material = get_interaction_turn_finalized_material(event)
@@ -438,6 +447,10 @@ class InteractionMiddleware:
                     event.set_extra(
                         "_interaction_memory_persist_failure_reason", str(exc)
                     )
+                    record_interaction_turn_completion_failure(
+                        event,
+                        f"memory_persist:{exc}",
+                    )
                     logger.error(
                         "Interaction memory persistence failed during turn finalization: platform_id=%s session_id=%s turn_id=%s error=%s",
                         event.get_platform_id(),
@@ -447,10 +460,15 @@ class InteractionMiddleware:
                         exc_info=True,
                     )
                     return
+                mark_interaction_turn_memory_persisted(event)
             else:
                 event.set_extra("_interaction_memory_persist_failed", True)
                 event.set_extra(
                     "_interaction_memory_persist_failure_reason",
+                    "missing_canonical_reply",
+                )
+                record_interaction_turn_completion_failure(
+                    event,
                     "missing_canonical_reply",
                 )
                 return
@@ -460,10 +478,12 @@ class InteractionMiddleware:
                 "_interaction_memory_persist_failure_reason",
                 "missing_material",
             )
+            record_interaction_turn_completion_failure(event, "missing_material")
             return
 
         self._schedule_turn_postprocess(event)
-        turn_state.turn_completed = True
+        mark_interaction_turn_postprocess_dispatched(event)
+        mark_interaction_turn_completed(event)
 
     async def _on_output_persist_requested(
         self,

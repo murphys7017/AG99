@@ -13,7 +13,10 @@ from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
     InteractionStreamState,
     InteractionTurnState,
+    append_interaction_turn_visible_output,
     get_interaction_turn_state,
+    set_interaction_turn_decision,
+    set_interaction_turn_finalized_material,
 )
 from astrbot.core.interaction.types import (
     FinalizerMode,
@@ -61,7 +64,7 @@ def webchat_event():
         session_id="webchat!user!session123",
     )
     event.set_extra("_turn_id", "turn-1")
-    event.set_extra("_interaction_decision", InteractionDecision(reason="test"))
+    set_interaction_turn_decision(event, InteractionDecision(reason="test"))
     return event
 
 
@@ -473,8 +476,8 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
         memory_store=memory_store,
     )
-    webchat_event.set_extra(
-        "_interaction_decision",
+    set_interaction_turn_decision(
+        webchat_event,
         InteractionDecision(
             route_mode=RouteMode.HYBRID,
             should_emit_immediate_reply=True,
@@ -598,8 +601,8 @@ async def test_result_contributor_receives_read_only_view(webchat_event):
             ),
             webchat_event,
         )
-        webchat_event.set_extra(
-            "_interaction_finalized_turn_material",
+        set_interaction_turn_finalized_material(
+            webchat_event,
             {
                 "turn_id": "turn-1",
                 "user_text": "帮我查一下天气",
@@ -621,7 +624,7 @@ async def test_result_contributor_receives_read_only_view(webchat_event):
     assert turn_state.visible_outputs[0]["text"] == "行，等我查一下。"
     assert turn_state.utterances[0].text == "行，等我查一下。"
     assert (
-        webchat_event.get_extra("_interaction_finalized_turn_material")["assistant"]
+        get_interaction_turn_state(webchat_event).finalized_turn_material["assistant"]
         == "final answer"
     )
     assert inspecting_contributor.view is not None
@@ -699,7 +702,9 @@ async def test_outbound_memory_persist_failure_is_recorded(webchat_event):
     )
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
-    assert turn_state.turn_completed is False
+    assert turn_state.completion_state.memory_persisted is False
+    assert turn_state.completion_state.completed is False
+    assert turn_state.completion_state.failure_reason == "memory_persist:disk full"
 
 
 @pytest.mark.asyncio
@@ -721,22 +726,16 @@ async def test_outbound_memory_persist_uses_visible_outputs_as_canonical_reply(
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
         memory_store=memory_store,
     )
-    webchat_event.set_extra(
-        "_visible_turn_outputs",
-        [
-            {
-                "turn_id": "turn-1",
-                "kind": "immediate_reply",
-                "text": "等我看看。",
-                "memory_relevant": True,
-            },
-            {
-                "turn_id": "turn-1",
-                "kind": "stream_interjection",
-                "text": "还在查。",
-                "memory_relevant": False,
-            },
-        ],
+    append_interaction_turn_visible_output(
+        webchat_event,
+        message_kind="immediate_reply",
+        text="等我看看。",
+    )
+    append_interaction_turn_visible_output(
+        webchat_event,
+        message_kind="stream_interjection",
+        text="还在查。",
+        memory_relevant=False,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1017,6 +1016,9 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
     assert len(turn_state.utterances) == 1
     assert turn_state.utterances[0].kind == "core_stream"
     assert turn_state.utterances[0].text == "hello world"
+    assert turn_state.completion_state.material_finalized is True
+    assert turn_state.completion_state.memory_persisted is True
+    assert turn_state.completion_state.completed is True
     memory_store.update_interaction_memory.assert_awaited_once()
 
 
