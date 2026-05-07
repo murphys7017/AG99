@@ -1,10 +1,9 @@
 import os
-import shutil
 import zipfile
 
 from astrbot.core import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
-from astrbot.core.utils.io import on_error, remove_dir
+from astrbot.core.utils.io import ensure_dir, remove_dir
 
 from ..star.star import StarMetadata
 from ..updator import RepoZipUpdator
@@ -53,29 +52,10 @@ class PluginUpdator(RepoZipUpdator):
         return plugin_path
 
     def unzip_file(self, zip_path: str, target_dir: str) -> None:
-        os.makedirs(target_dir, exist_ok=True)
-        update_dir = ""
-        logger.info(f"正在解压压缩包: {zip_path}")
+        ensure_dir(target_dir)
+        logger.info(f"Extracting archive: {zip_path}")
         with zipfile.ZipFile(zip_path, "r") as z:
-            update_dir = z.namelist()[0]
+            update_dir = self._resolve_archive_root_dir(z.namelist())
             z.extractall(target_dir)
 
-        files = os.listdir(os.path.join(target_dir, update_dir))
-        for f in files:
-            if os.path.isdir(os.path.join(target_dir, update_dir, f)):
-                if os.path.exists(os.path.join(target_dir, f)):
-                    shutil.rmtree(os.path.join(target_dir, f), onerror=on_error)
-            elif os.path.exists(os.path.join(target_dir, f)):
-                os.remove(os.path.join(target_dir, f))
-            shutil.move(os.path.join(target_dir, update_dir, f), target_dir)
-
-        try:
-            logger.info(
-                f"删除临时文件: {zip_path} 和 {os.path.join(target_dir, update_dir)}",
-            )
-            shutil.rmtree(os.path.join(target_dir, update_dir), onerror=on_error)
-            os.remove(zip_path)
-        except BaseException:
-            logger.warning(
-                f"删除更新文件失败，可以手动删除 {zip_path} 和 {os.path.join(target_dir, update_dir)}",
-            )
+        self._finalize_extracted_archive(zip_path, target_dir, update_dir)
