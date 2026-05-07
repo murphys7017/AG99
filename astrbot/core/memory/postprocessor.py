@@ -4,7 +4,6 @@ import inspect
 from datetime import UTC, datetime
 from typing import Any
 
-from astrbot.core import logger
 from astrbot.core.postprocess import register_postprocessor, unregister_postprocessor
 from astrbot.core.postprocess.types import PostProcessContext, PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest

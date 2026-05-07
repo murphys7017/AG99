@@ -262,7 +262,6 @@ class InteractionOutputController:
                 yield chain
             return
 
-        turn_id = event.get_extra("_turn_id")
         min_chars = self.interaction_config.stream_observation_min_chars
         observation_state = self._build_stream_observation_state()
         async for chain in generator:
