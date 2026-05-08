@@ -924,22 +924,21 @@
 - `InteractionMiddleware._schedule_turn_postprocess()` 缺 finalized material 时不再现场重建 material，而是记录 `missing_finalized_turn_material`。
 - `InteractionResultView.decision` 已改为只读 snapshot。
 - `InteractionUtterance.metadata` 已用于记录实际投递形态，memory/final material 仍只消费 semantic text。
-- `FallbackPolicy` 已加入 interaction config，默认 `fail_fast`，显式 `observable_protect` 才允许体验保护。
+- interaction middleware 开发期拒绝 `fallback_policy` 配置；内部主链路不提供体验兜底模式。
 - decision provider missing / timeout / model error / non-json / invalid payload / low confidence 在 `fail_fast` 下抛错。
 - 入站 STT provider missing / path resolution failed / provider error / empty transcription 在 `fail_fast` 下终止本轮正常 decision。
-- finalizer provider missing / timeout / model error / empty output 在 `fail_fast` 下抛错；forced failure notice 仅在 `observable_protect` 下发送。
+- finalizer provider missing / timeout / model error / empty output 在 `fail_fast` 下抛错；forced finalizer failure 不发送替代文本。
 - `InteractionTurnFailure` ledger 已建立，关键失败入口会记录 stage、reason、exception、用户可见动作和 completion 状态。
-- `observable_protect` 下产出的 fallback decision 会进入 failure ledger，不再只作为普通 decision 返回值存在。
-- SELF_REPLY immediate reply / visible completion 失败在 `fail_fast` 下直接暴露；只有 `observable_protect` 才允许继续转 core 或跳过完成。
+- decision agent 若返回旧 fallback decision，middleware 会记录 failure 并拒绝继续。
+- SELF_REPLY / HYBRID immediate reply 失败与 visible completion 失败在开发期直接暴露，不再转 core 掩盖。
 - stream interjection decider / model 失败已接入 failure ledger；由于它不是主回复链路，用户可见动作记录为继续主 stream。
 
 仍然存在的主要结构性缺口：
 
-1. `build_fallback_decision(...)` 仍作为 `observable_protect` 的外部体验保护工具存在，后续需要确保它不会进入 memory/few-shot/success 样本。
-2. outbound phase 的单元测试已覆盖语义边界，但还缺少真实平台日志/手动验证来证明 Record/Image/Text 投递形态与 ledger metadata 完全一致。
-3. `ResultDecorateStage` 对 interaction turn 已提前退场，但普通 pipeline 的非 interaction 行为仍需在后续回归中持续覆盖。
+1. outbound phase 的单元测试已覆盖语义边界，但还缺少真实平台日志/手动验证来证明 Record/Image/Text 投递形态与 ledger metadata 完全一致。
+2. `ResultDecorateStage` 对 interaction turn 已提前退场，但普通 pipeline 的非 interaction 行为仍需在后续回归中持续覆盖。
 
-当前共同根因已经从“收消息/发消息 owner 分裂”缩小为：interaction 主链路已经默认 fail-fast，但仍有少量保护边界需要按“内部错误直接暴露、外部体验保护可观测”的原则继续分类。
+当前共同根因已经从“收消息/发消息 owner 分裂”缩小为：interaction 主链路应保持开发期 fail-fast，不再新增或保留内部体验兜底。
 
 ## 分阶段修复计划
 
@@ -1361,9 +1360,9 @@ uv run ruff check .
 interaction middleware 的内部主链路必须直接暴露真实错误：
 
 - 内部缺 provider、缺 context material、缺 finalized material、缺 callback、LLM 返回非 JSON、schema invalid、TTS/t2i 失败等，都不能靠 fallback 被解释成“正常完成”。
-- fallback 只能作为明确的外部体验保护，并且必须有可观测日志、诊断字段和失败原因。
+- 开发期不保留内部 fallback；外部边界若将来需要保护，必须单独设计并经确认。
 - 开发期默认 fail-fast：主链路失败应抛错或终止当前 interaction turn，方便直接定位根因。
-- 生产期如需保护用户体验，应通过显式配置开启，并且不得污染 memory、few-shot 样本、success 状态或 turn completion。
+- 不把生产体验保护作为当前开发目标。
 
 ### Step 1：明确 fail-fast 配置与边界
 
@@ -1371,29 +1370,24 @@ interaction middleware 的内部主链路必须直接暴露真实错误：
 
 需要修改：
 
-- `astrbot/core/interaction/types.py`
-  - 在 `InteractionAgentConfig` 增加类似 `fail_fast: bool = True` 或 `fallback_policy: Literal["fail_fast", "observable_protect"]` 的配置。
-
-- `astrbot/core/interaction/config.py`
-  - 从 `interaction_middleware` 配置读取该策略。
-  - 默认值应服务开发期：主链路失败直接暴露。
+- `astrbot/core/interaction/middleware.py`
+  - 在 middleware 边界拒绝 `interaction_middleware.fallback_policy`。
+  - 默认行为就是开发期 fail-fast。
 
 Agent 相关操作：
 
-- interaction Agent 的决策、表达、输出 materialization 均遵循同一 fallback policy。
-- 不允许每个阶段自行决定是否 fallback。
+- interaction Agent 的决策、表达、输出 materialization 不应依赖 fallback policy。
+- 不允许阶段自行决定降级继续运行。
 
 验收标准：
 
-- 所有 fallback/保护行为都能追溯到同一个配置。
-- 默认配置下主链路错误不会被静默转为 delegate/core/text 输出。
+- middleware 范围内配置 fallback policy 会直接报错。
+- 主链路错误不会被静默转为 delegate/core/text 输出。
 
 实现结果：
 
-- `FallbackPolicy` 已加入 `astrbot/core/interaction/types.py`。
-- `InteractionAgentConfig.fallback_policy` 默认 `FallbackPolicy.FAIL_FAST`。
-- `load_interaction_agent_config(...)` 从 `interaction_middleware.fallback_policy` 读取策略，非法值回到 `fail_fast`。
-- `observable_protect` 是显式保护模式，不作为开发期正确性基础。
+- `InteractionMiddleware` 初始化和刷新配置时拒绝 `interaction_middleware.fallback_policy`。
+- 旧 fallback decision 若到达 middleware，会记录 failure 并终止该 turn。
 
 ### Step 2：收口 decision fallback
 
@@ -1404,12 +1398,11 @@ Agent 相关操作：
 - `astrbot/core/interaction/decision_agent.py`
   - `build_fallback_decision(...)` 不再作为内部正确性兜底。
   - provider unavailable、timeout、model error、non-json、invalid payload、low confidence 等场景在 fail-fast 模式下抛出明确异常。
-  - 若 observable protect 模式开启，仍可产出 fallback decision，但必须写入诊断字段并标记 `is_fallback=True`。
 
 - `astrbot/core/interaction/middleware.py`
   - `_decide_or_fallback(...)` 改名或拆分为 `_decide_interaction_route(...)`。
   - fail-fast 下不捕获并转换 decision pipeline error。
-  - observable protect 下记录 `_interaction_decision_failed=True`、reason、原始错误类型，然后才走保护路径。
+  - fail-fast 下记录 `_interaction_decision_failed=True`、reason、原始错误类型，然后抛错。
 
 Agent 相关操作：
 
@@ -1426,8 +1419,9 @@ Agent 相关操作：
 - `InteractionDecisionError` 已加入 `decision_agent.py`。
 - provider unavailable、timeout、model error、non-json、invalid payload、low confidence 在 `fail_fast` 下抛错。
 - `_decide_or_fallback(...)` 已改为 `_decide_interaction_route(...)`。
-- middleware 捕获 decision pipeline error 后记录 `_interaction_decision_failed` 与 failure ledger；默认不再转 core，只有 `observable_protect` 才产出 fallback decision。
-- 已覆盖 missing plugin context / decision pipeline error / low confidence 的 fail-fast 与 observable protect 测试。
+- middleware 捕获 decision pipeline error 后记录 `_interaction_decision_failed` 与 failure ledger，然后抛错。
+- 已覆盖 missing plugin context / decision pipeline error / low confidence 的 fail-fast 测试。
+- 已覆盖 `fallback_policy` 配置被 middleware 拒绝、旧 fallback decision 被 middleware 拒绝的测试。
 
 ### Step 3：收口入站 STT / media materialization 失败语义
 
@@ -1439,7 +1433,6 @@ Agent 相关操作：
   - `_materialize_inbound_media(...)`
   - `_transcribe_inbound_records(...)`
   - provider unavailable、audio path resolution failed、STT failed 在 fail-fast 模式下抛错。
-  - observable protect 模式下可以跳过 STT，但必须标记 `_interaction_stt_failed=True`，且不能把未转写语音当作成功文本输入。
 
 Agent 相关操作：
 
@@ -1455,7 +1448,7 @@ Agent 相关操作：
 
 - `_materialize_inbound_media(...)` 的 record normalize 失败在 `fail_fast` 下抛错。
 - `_transcribe_inbound_records(...)` 对 plugin context missing、provider unavailable、audio path resolution failed、source unavailable、provider error、empty transcription 均记录失败。
-- `fail_fast` 下 STT 失败不进入正常 decision；`observable_protect` 下保留可观测 skip。
+- STT 失败不进入正常 decision。
 - 已覆盖 STT provider missing fail-fast 测试。
 
 ### Step 4：收口 finalizer fallback 与 forced failure 输出
@@ -1468,9 +1461,8 @@ Agent 相关操作：
   - provider unavailable / model error / invalid finalizer output 在 fail-fast 模式下抛错。
 
 - `astrbot/core/interaction/output_controller.py`
-  - `FinalizerMode.FORCE` 下的“最终回复整理失败，请查看日志。”应按策略处理：
-    - fail-fast：不发送替代文本，记录失败并抛错。
-    - observable protect：可以发送替代文本，但该替代文本必须标记为 failure notice，默认不进入 memory。
+  - `FinalizerMode.FORCE` 失败时不发送“最终回复整理失败，请查看日志。”之类的替代文本。
+  - 记录失败并抛错。
 
 Agent 相关操作：
 
@@ -1479,14 +1471,14 @@ Agent 相关操作：
 验收标准：
 
 - forced finalizer failure 不再污染 finalized turn material 的 canonical assistant text。
-- 失败 notice 如需发送，必须 `memory_relevant=False` 或独立 failure kind。
+- 不产生 failure notice。
 
 实现结果：
 
 - `InteractionFinalizerError` 已加入 `finalizer.py`。
 - finalizer plugin context missing、provider unavailable、timeout、model error、empty output 在 `fail_fast` 下抛错。
-- `FinalizerMode.FORCE` 的失败提示只在 `observable_protect` 下发送；默认 fail-fast 不发送替代文本。
-- 已覆盖 forced finalizer failure fail-fast 与 observable protect 测试。
+- `FinalizerMode.FORCE` 失败时默认 fail-fast，不发送替代文本。
+- 已覆盖 forced finalizer failure fail-fast 测试。
 
 ### Step 5：统一 failure diagnostics
 
@@ -1533,7 +1525,7 @@ Agent 相关操作：
 - STT provider missing fail-fast。
 - finalizer provider missing fail-fast。
 - forced finalizer failure 不污染 memory。
-- observable protect 模式下 fallback 有诊断字段且不标记成功。
+- fallback policy 配置被 middleware 拒绝。
 
 必须运行：
 
@@ -1560,8 +1552,7 @@ uv run ruff check .
 
 ### 第六阶段剩余审查点
 
-1. `observable_protect` 模式下的 fallback decision / failure notice 必须继续保证不污染 memory、few-shot 样本和 success 状态。
-2. 真实平台链路还需验证：文本、TTS Record、t2i Image 的 delivered payload、message id、utterance metadata 与 finalized material 是否一致。
+1. 真实平台链路还需验证：文本、TTS Record、t2i Image 的 delivered payload、message id、utterance metadata 与 finalized material 是否一致。
 
 ## 兼容性策略
 
