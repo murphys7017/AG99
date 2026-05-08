@@ -931,13 +931,13 @@
 - `InteractionTurnFailure` ledger 已建立，关键失败入口会记录 stage、reason、exception、用户可见动作和 completion 状态。
 - `observable_protect` 下产出的 fallback decision 会进入 failure ledger，不再只作为普通 decision 返回值存在。
 - SELF_REPLY immediate reply / visible completion 失败在 `fail_fast` 下直接暴露；只有 `observable_protect` 才允许继续转 core 或跳过完成。
+- stream interjection decider / model 失败已接入 failure ledger；由于它不是主回复链路，用户可见动作记录为继续主 stream。
 
 仍然存在的主要结构性缺口：
 
 1. `build_fallback_decision(...)` 仍作为 `observable_protect` 的外部体验保护工具存在，后续需要确保它不会进入 memory/few-shot/success 样本。
-2. stream interjection 的插件/模型失败当前仍是可观测 skip；这是非主回复链路的外部扩展边界，后续需要补 failure ledger 或专门 diagnostics，避免只散落在 extra 中。
-3. outbound phase 的单元测试已覆盖语义边界，但还缺少真实平台日志/手动验证来证明 Record/Image/Text 投递形态与 ledger metadata 完全一致。
-4. `ResultDecorateStage` 对 interaction turn 已提前退场，但普通 pipeline 的非 interaction 行为仍需在后续回归中持续覆盖。
+2. outbound phase 的单元测试已覆盖语义边界，但还缺少真实平台日志/手动验证来证明 Record/Image/Text 投递形态与 ledger metadata 完全一致。
+3. `ResultDecorateStage` 对 interaction turn 已提前退场，但普通 pipeline 的非 interaction 行为仍需在后续回归中持续覆盖。
 
 当前共同根因已经从“收消息/发消息 owner 分裂”缩小为：interaction 主链路已经默认 fail-fast，但仍有少量保护边界需要按“内部错误直接暴露、外部体验保护可观测”的原则继续分类。
 
@@ -1520,7 +1520,7 @@ Agent 相关操作：
 - `InteractionTurnFailure` 已加入 `turn_state.py`。
 - `InteractionTurnState.failures` 成为 failure ledger。
 - `record_interaction_turn_failure(...)` 双写 turn state 与 `_interaction_turn_failures` extra，并同步 completion failure reason。
-- decision、STT、finalizer、SELF_REPLY 发送/完成失败的关键入口已接入 ledger。
+- decision、STT、finalizer、SELF_REPLY 发送/完成失败、stream interjection skip/failure 的关键入口已接入 ledger。
 
 ### Step 6：回归与手动验证
 
@@ -1560,9 +1560,8 @@ uv run ruff check .
 
 ### 第六阶段剩余审查点
 
-1. stream interjection decider / model 失败当前会记录 skip 或 decider failures 并继续主 stream。由于它不是主回复链路，可保留为外部扩展保护，但应补充统一 failure diagnostics。
-2. `observable_protect` 模式下的 fallback decision / failure notice 必须继续保证不污染 memory、few-shot 样本和 success 状态。
-3. 真实平台链路还需验证：文本、TTS Record、t2i Image 的 delivered payload、message id、utterance metadata 与 finalized material 是否一致。
+1. `observable_protect` 模式下的 fallback decision / failure notice 必须继续保证不污染 memory、few-shot 样本和 success 状态。
+2. 真实平台链路还需验证：文本、TTS Record、t2i Image 的 delivered payload、message id、utterance metadata 与 finalized material 是否一致。
 
 ## 兼容性策略
 

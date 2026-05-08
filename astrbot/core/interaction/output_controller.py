@@ -59,6 +59,7 @@ from .turn_state import (
     mark_interaction_turn_stream_interjection_emitted,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
+    record_interaction_turn_failure,
     record_interaction_turn_stream_observation_failure,
     remove_interaction_turn_stream_observation_task,
     set_interaction_turn_core_streaming_active,
@@ -584,6 +585,12 @@ class InteractionOutputController:
             pass
         except Exception as exc:  # noqa: BLE001
             record_interaction_turn_stream_observation_failure(event, str(exc))
+            self._record_stream_interjection_failure(
+                event,
+                reason="observation_task_failed",
+                exception=exc,
+                user_visible_action="continue_core_stream",
+            )
             logger.error(
                 "Interaction stream observation task failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                 event.get_platform_id(),
@@ -638,11 +645,21 @@ class InteractionOutputController:
         is_final: bool,
     ) -> StreamObservationDecision:
         if self.plugin_context is None:
+            self._record_stream_interjection_failure(
+                event,
+                reason="plugin_context_unavailable",
+                user_visible_action="continue_core_stream",
+            )
             return StreamObservationDecision(reason="plugin_context_unavailable")
         provider = self.plugin_context.get_provider_by_id(
             self.interaction_config.decision_provider_id
         )
         if not isinstance(provider, Provider):
+            self._record_stream_interjection_failure(
+                event,
+                reason="provider_unavailable",
+                user_visible_action="continue_core_stream",
+            )
             logger.warning(
                 "Interaction stream interjection skipped: provider unavailable provider_id=%s",
                 self.interaction_config.decision_provider_id,
@@ -675,6 +692,11 @@ class InteractionOutputController:
                 event.get_extra("_turn_id"),
                 window_index,
             )
+            self._record_stream_interjection_failure(
+                event,
+                reason="timeout",
+                user_visible_action="continue_core_stream",
+            )
             return StreamObservationDecision(reason="timeout")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -686,6 +708,12 @@ class InteractionOutputController:
                 exc,
                 exc_info=True,
             )
+            self._record_stream_interjection_failure(
+                event,
+                reason="model_error",
+                exception=exc,
+                user_visible_action="continue_core_stream",
+            )
             return StreamObservationDecision(reason="model_error")
 
         payload = _extract_json_object(llm_resp.completion_text)
@@ -694,6 +722,12 @@ class InteractionOutputController:
             logger.warning(
                 "Interaction stream interjection skipped: reason=non_json raw=%s",
                 llm_resp.completion_text,
+            )
+            self._record_stream_interjection_failure(
+                event,
+                reason="non_json",
+                message=llm_resp.completion_text,
+                user_visible_action="continue_core_stream",
             )
             return StreamObservationDecision(reason="non_json")
         if decision.reply and len(decision.reply) > 40:
@@ -733,6 +767,13 @@ class InteractionOutputController:
                     stream_view,
                 )
             except Exception as exc:  # noqa: BLE001
+                self._record_stream_interjection_failure(
+                    event,
+                    reason="plugin_error",
+                    exception=exc,
+                    message=getattr(decider, "plugin_id", "<unknown>"),
+                    user_visible_action="continue_core_stream",
+                )
                 failures = event.get_extra("_interaction_stream_decider_failures", [])
                 if not isinstance(failures, list):
                     failures = []
@@ -753,7 +794,31 @@ class InteractionOutputController:
             decision = self._coerce_stream_interjection_decision(payload)
             if decision is not None:
                 return decision
+            self._record_stream_interjection_failure(
+                event,
+                reason="invalid_plugin_payload",
+                message=getattr(decider, "plugin_id", "<unknown>"),
+                user_visible_action="continue_core_stream",
+            )
         return None
+
+    @staticmethod
+    def _record_stream_interjection_failure(
+        event: AstrMessageEvent,
+        *,
+        reason: str,
+        exception: BaseException | None = None,
+        message: str | None = None,
+        user_visible_action: str = "continue_core_stream",
+    ) -> None:
+        record_interaction_turn_failure(
+            event,
+            stage="stream_interjection",
+            reason=reason,
+            exception=exception,
+            message=message,
+            user_visible_action=user_visible_action,
+        )
 
     @staticmethod
     def _build_stream_view(

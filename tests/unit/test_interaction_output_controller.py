@@ -270,6 +270,20 @@ class MutatingStreamViewDecider:
         }
 
 
+class FailingStreamInterjectionDecider:
+    plugin_id = "failing_stream_plugin"
+
+    async def decide(self, event, plugin_context, stream_view):
+        raise RuntimeError("decider failed")
+
+
+class InvalidStreamInterjectionDecider:
+    plugin_id = "invalid_stream_plugin"
+
+    async def decide(self, event, plugin_context, stream_view):
+        return "not a decision"
+
+
 @pytest.mark.asyncio
 async def test_capture_message_chain_collects_result_contributors(webchat_event):
     queue = asyncio.Queue()
@@ -1280,6 +1294,102 @@ async def test_stream_decider_receives_read_only_stream_view(webchat_event):
     assert decider.view.window_index == 1
     assert decider.view.metadata["stream_observation_count"] == 1
     assert decider.view.utterances == ()
+
+
+@pytest.mark.asyncio
+async def test_stream_decider_failure_records_turn_failure(webchat_event):
+    queue = asyncio.Queue()
+    decider = FailingStreamInterjectionDecider()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = [decider]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=5,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    assert [payload["data"] for payload in payloads if payload["streaming"]] == [
+        "hello",
+        "hello",
+    ]
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert any(
+        failure.stage == "stream_interjection"
+        and failure.reason == "plugin_error"
+        and failure.exception_type == "RuntimeError"
+        and failure.user_visible_action == "continue_core_stream"
+        for failure in turn_state.failures
+    )
+    failures = webchat_event.get_extra("_interaction_stream_decider_failures")
+    assert failures == [
+        {
+            "plugin_id": "failing_stream_plugin",
+            "error": "decider failed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_interjection_provider_missing_records_turn_failure(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = [
+        InvalidStreamInterjectionDecider()
+    ]
+    plugin_context.get_provider_by_id.return_value = None
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_min_chars=5,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    async def generator():
+        yield MessageChain([Plain("hello")])
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    failure_reasons = [
+        failure.reason
+        for failure in turn_state.failures
+        if failure.stage == "stream_interjection"
+    ]
+    assert failure_reasons == [
+        "invalid_plugin_payload",
+        "provider_unavailable",
+    ]
+    assert all(
+        failure.user_visible_action == "continue_core_stream"
+        for failure in turn_state.failures
+        if failure.stage == "stream_interjection"
+    )
 
 
 @pytest.mark.asyncio
