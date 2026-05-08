@@ -67,7 +67,7 @@ from .turn_state import (
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
-from .types import FinalizerMode, InteractionAgentConfig, RouteMode
+from .types import FallbackPolicy, FinalizerMode, InteractionAgentConfig, RouteMode
 
 
 @dataclass(slots=True)
@@ -950,6 +950,15 @@ class InteractionOutputController:
             and final_text is None
             and event.get_extra("_interaction_finalizer_failed")
         ):
+            record_interaction_turn_completion_failure(
+                event,
+                "finalizer_failed",
+            )
+            if (
+                self.interaction_config.fallback_policy
+                != FallbackPolicy.OBSERVABLE_PROTECT
+            ):
+                raise RuntimeError("Interaction finalizer failed")
             final_message = message.derive([Plain("最终回复整理失败，请查看日志。")])
             semantic_text = final_message.get_plain_text()
             (

@@ -17,6 +17,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_state,
 )
 from astrbot.core.interaction.types import (
+    FallbackPolicy,
     FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
@@ -240,6 +241,46 @@ class TestInteractionMiddleware:
             forwarded_event.get_extra("_interaction_inbound_media_materialized") is True
         )
         assert len(stt_provider.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_inbound_stt_provider_missing_fail_fast_records_failure(
+        self,
+        voice_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        plugin_context = MagicMock(spec=Context)
+        plugin_context.get_using_stt_provider.return_value = None
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                },
+                "provider_stt_settings": {"enable": True},
+            },
+            queue,
+            controller,
+            plugin_context=plugin_context,
+        )
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock()
+
+        middleware.handle_inbound(voice_event)
+        await asyncio.sleep(0)
+
+        assert queue.empty()
+        middleware.decision_agent.decide.assert_not_awaited()
+        assert voice_event.get_extra("_interaction_stt_failed") is True
+        assert (
+            voice_event.get_extra("_interaction_stt_failure_reason")
+            == "provider_unavailable"
+        )
+        turn_state = get_interaction_turn_state(voice_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "inbound_stt"
+        assert turn_state.failures[-1].reason == "provider_unavailable"
 
     @pytest.mark.asyncio
     async def test_core_send_is_intercepted_after_forwarding(self, webchat_event):
@@ -578,7 +619,7 @@ class TestInteractionMiddleware:
         assert decision.reason == "protocol command bypass"
 
     @pytest.mark.asyncio
-    async def test_missing_plugin_context_records_fallback_and_forwards_core(
+    async def test_missing_plugin_context_fail_fast_records_failure(
         self,
         webchat_event,
     ):
@@ -599,13 +640,48 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
+        assert queue.empty()
+        assert webchat_event.get_extra("_interaction_decision_failed") is True
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "decision"
+        assert turn_state.failures[-1].reason == "plugin_context_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_missing_plugin_context_observable_protects_and_forwards_core(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                    "fallback_policy": "observable_protect",
+                }
+            },
+            queue,
+            controller,
+        )
+
+        middleware.handle_inbound(webchat_event)
+        await asyncio.sleep(0)
+
         assert queue.get_nowait() is webchat_event
         decision = webchat_event.get_extra("_interaction_decision")
         assert decision.is_fallback is True
         assert decision.fallback_reason == "plugin_context_unavailable"
+        assert webchat_event.get_extra("_interaction_decision_failed") is True
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "decision"
+        assert turn_state.failures[-1].reason == "plugin_context_unavailable"
 
     @pytest.mark.asyncio
-    async def test_decision_pipeline_error_records_fallback_and_forwards_core(
+    async def test_decision_pipeline_error_fail_fast_records_failure(
         self,
         webchat_event,
     ):
@@ -631,10 +707,12 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
-        assert queue.get_nowait() is webchat_event
-        decision = webchat_event.get_extra("_interaction_decision")
-        assert decision.is_fallback is True
-        assert decision.fallback_reason == "decision_pipeline_error"
+        assert queue.empty()
+        assert webchat_event.get_extra("_interaction_decision_failed") is True
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "decision"
+        assert turn_state.failures[-1].reason == "decision_pipeline_error"
 
     @pytest.mark.asyncio
     async def test_hybrid_immediate_reply_failure_still_forwards_core(
@@ -676,7 +754,7 @@ class TestInteractionMiddleware:
         assert webchat_event.get_extra("_interaction_immediate_reply_failed") is True
 
     @pytest.mark.asyncio
-    async def test_self_reply_immediate_reply_failure_forwards_core(
+    async def test_self_reply_immediate_reply_failure_fail_fast_records_failure(
         self,
         webchat_event,
     ):
@@ -711,8 +789,60 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
+        assert queue.empty()
+        assert webchat_event.get_extra("_interaction_immediate_reply_failed") is True
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "immediate_reply"
+        assert turn_state.failures[-1].reason == "send_failed"
+
+    @pytest.mark.asyncio
+    async def test_self_reply_immediate_reply_failure_observable_protects_core(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock(
+            side_effect=RuntimeError("send failed")
+        )
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                    "fallback_policy": "observable_protect",
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.SELF_REPLY,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="嗯。",
+                confidence=0.9,
+                reason="self",
+            )
+        )
+
+        middleware.handle_inbound(webchat_event)
+        await asyncio.sleep(0)
+
         assert queue.get_nowait() is webchat_event
         assert webchat_event.get_extra("_interaction_immediate_reply_failed") is True
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "immediate_reply"
+        assert turn_state.failures[-1].reason == "send_failed"
+        assert (
+            turn_state.failures[-1].user_visible_action
+            == "continue_core_delegation"
+        )
 
     @pytest.mark.asyncio
     async def test_self_reply_without_immediate_reply_forwards_core(
@@ -861,6 +991,10 @@ class TestInteractionMiddleware:
         controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
         assert webchat_event.get_extra("_interaction_visible_completion_failed") is True
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "visible_completion"
+        assert turn_state.failures[-1].reason == "completion_failed"
 
     @pytest.mark.asyncio
     async def test_self_reply_completes_visible_turn_after_immediate_reply(

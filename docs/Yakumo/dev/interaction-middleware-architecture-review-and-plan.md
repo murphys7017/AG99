@@ -1,6 +1,6 @@
 # Interaction Middleware Architecture Review And Refactor Plan
 
-本文件用于说明 AstrBot 当前 `interaction middleware` 的架构现状、已确认问题，以及后续修复计划。
+本文件用于说明 AstrBot `interaction middleware` 的架构诊断、已执行修复、当前状态，以及后续修复计划。
 
 它不是 bug 清单，也不是一次性重构提案，而是一份面向实现的收口文档。重点回答三件事：
 
@@ -10,22 +10,45 @@
 
 本文件讨论范围以 `astrbot/core/interaction/*` 为主，必要时会提及 `astrbot/core/memory/postprocessor.py`，但不以修改 adapter、前端或其他平台层为前提。
 
+## 当前阅读状态
+
+本文件是一份持续演进的架构收口记录，不是只描述当前代码状态的静态报告。
+
+阅读时请按以下边界理解：
+
+- `已确认的问题` 到 `函数级现状与修复步骤`：历史诊断与早期修复依据，主要描述 Phase 1-5 之前的旧状态。
+- `当前进度快照`：当前代码已经完成的真实状态。
+- `分阶段修复计划` 中第一阶段到第五阶段：已完成或已完成第一轮的康复记录。
+- `第六阶段：开发期 fail-fast 与 fallback 去正确性化`：第一轮代码已落地，后续继续清理剩余保护边界。
+
+截至 `30578c4e refactor: consolidate interaction outbound phase`：
+
+- `InteractionTurnState` 已经是 interaction 内部主状态源。
+- streaming phase 已经 state-first。
+- prompt / result / stream 插件扩展点已改为只读阶段视图。
+- outbound phase 已完成第一轮收口，interaction turn 的 TTS / t2i / reply prefix / reasoning display 已迁入 `InteractionOutputController`。
+- `RespondStage` 和 `ResultDecorateStage` 已不再拥有 interaction turn 的 completion / decoration 语义。
+
+因此，下文早期章节中的“缺少统一 turn-level state”“发消息尚未接管”等问题，应理解为历史问题和改造动机；当前剩余重点是继续审查 fail-fast 边界，避免内部保护路径被当成正确性证明。
+
 ## 一句话结论
 
 当前 `interaction middleware` 已经不再是一个薄拦截层，而是一个事实上的交互编排层。
 
-问题不在于它“不能工作”，而在于它还没有形成统一的回合模型。现状更像是：
+在 Phase 1-5 之前，问题不在于它“不能工作”，而在于它还没有形成统一的回合模型。旧状态更像是：
 
 - 在入站链路上挂了一层决策
 - 在出站链路上挂了一层表达和流式观察
 - 在结果末端挂了一层最终改写
 - 在回合结束后再反向整理历史与记忆
 
-因此它更像“沿链路附着的一组功能”，而不是“围绕同一 turn state 运行的一套系统”。
+因此当时它更像“沿链路附着的一组功能”，而不是“围绕同一 turn state 运行的一套系统”。
+
+当前代码已经基本完成 turn state、streaming phase、只读插件视图、outbound phase，以及开发期 fail-fast 的第一轮收口。下一步重点不是继续证明这些主结构存在，而是清理剩余保护边界，避免它们继续被误用为正确性基础。
 
 ## 目标与边界
 
-本次修复计划遵循以下原则：
+本轮修复计划从一开始遵循以下原则，当前仍然有效：
 
 - 只动中间件主链路，不以修改 adapter 为前提
 - 优先修复根因，不以下游补偿作为正确性证明
@@ -38,9 +61,9 @@
 - 改造平台消息协议
 - 要求前端必须理解新增字段后才可工作
 
-## 当前系统定位
+## 历史系统定位
 
-从职责上看，当前中间件已经承担了四类工作：
+从职责上看，Phase 1-5 之前的中间件已经承担了四类工作：
 
 1. 路由决策
 2. 用户可见输出编排
@@ -55,9 +78,11 @@
 - `astrbot/core/interaction/context_builder.py`
 - `astrbot/core/interaction/memory_store.py`
 
-这个定位本身不是问题。问题在于这些职责虽然都在中间件里，但并不是围绕一个统一的“本轮交互状态对象”在运转。
+这个定位本身不是问题。历史问题在于这些职责虽然都在中间件里，但并不是围绕一个统一的“本轮交互状态对象”在运转。当前代码已经通过 `InteractionTurnState` 完成主状态源收口。
 
-## 已确认的问题
+## 历史诊断：已确认的问题
+
+本节记录的是 Phase 1-5 之前的历史问题，用于解释为什么需要这轮架构收口。它不等同于当前代码状态；当前状态请以 `当前进度快照` 和后续阶段记录为准。
 
 ## 1. 缺少统一的 turn-level state
 
@@ -892,17 +917,29 @@
 - prompt / stream / result 三类插件扩展点已开始使用只读阶段视图。
 - memory postprocessor 对 interaction turn 已只消费显式 `turn_material`，不再 fallback 到 provider/context/prompt 推断。
 - STT / 入站语音 materialization 已前移到 interaction middleware decision 之前。
+- outbound phase 已完成第一轮收口：interaction turn 的 reply prefix / reasoning display / TTS / t2i 已迁入 `InteractionOutputController`。
+- `RespondStage` 已不再对 interaction turn 调度普通 `AFTER_TURN_COMPLETED`。
+- `ResultDecorateStage` 已对 interaction turn 提前退场，不再运行旧装饰链路或 decorating hook。
+- `InteractionOutputController` 无 middleware persist callback 时不再自完成 turn，而是记录 `missing_persist_callback`。
+- `InteractionMiddleware._schedule_turn_postprocess()` 缺 finalized material 时不再现场重建 material，而是记录 `missing_finalized_turn_material`。
+- `InteractionResultView.decision` 已改为只读 snapshot。
+- `InteractionUtterance.metadata` 已用于记录实际投递形态，memory/final material 仍只消费 semantic text。
+- `FallbackPolicy` 已加入 interaction config，默认 `fail_fast`，显式 `observable_protect` 才允许体验保护。
+- decision provider missing / timeout / model error / non-json / invalid payload / low confidence 在 `fail_fast` 下抛错。
+- 入站 STT provider missing / path resolution failed / provider error / empty transcription 在 `fail_fast` 下终止本轮正常 decision。
+- finalizer provider missing / timeout / model error / empty output 在 `fail_fast` 下抛错；forced failure notice 仅在 `observable_protect` 下发送。
+- `InteractionTurnFailure` ledger 已建立，关键失败入口会记录 stage、reason、exception、用户可见动作和 completion 状态。
+- `observable_protect` 下产出的 fallback decision 会进入 failure ledger，不再只作为普通 decision 返回值存在。
+- SELF_REPLY immediate reply / visible completion 失败在 `fail_fast` 下直接暴露；只有 `observable_protect` 才允许继续转 core 或跳过完成。
 
 仍然存在的主要结构性缺口：
 
-1. 出站消息语义尚未完全由 interaction middleware 接管。
-2. `ResultDecorateStage` 仍在 interaction turn 中执行 TTS / t2i / reply prefix / reasoning display 等最终输出改写。
-3. `RespondStage` 仍可能对 interaction turn 触发普通 `AFTER_TURN_COMPLETED` postprocess。
-4. `InteractionOutputController._persist_interaction_turn()` 仍有无 middleware callback 时的自完成路径。
-5. `InteractionResultView` 仍直接暴露可变 `InteractionDecision` 对象。
-6. `_schedule_turn_postprocess()` 缺少 finalized material 时仍会现场重建 material。
+1. `build_fallback_decision(...)` 仍作为 `observable_protect` 的外部体验保护工具存在，后续需要确保它不会进入 memory/few-shot/success 样本。
+2. stream interjection 的插件/模型失败当前仍是可观测 skip；这是非主回复链路的外部扩展边界，后续需要补 failure ledger 或专门 diagnostics，避免只散落在 extra 中。
+3. outbound phase 的单元测试已覆盖语义边界，但还缺少真实平台日志/手动验证来证明 Record/Image/Text 投递形态与 ledger metadata 完全一致。
+4. `ResultDecorateStage` 对 interaction turn 已提前退场，但普通 pipeline 的非 interaction 行为仍需在后续回归中持续覆盖。
 
-这些缺口的共同根因是：收消息已经开始由 middleware 持有，但发消息仍处在“middleware 拦截一部分，pipeline 装饰/发送阶段仍拥有部分语义”的过渡状态。
+当前共同根因已经从“收消息/发消息 owner 分裂”缩小为：interaction 主链路已经默认 fail-fast，但仍有少量保护边界需要按“内部错误直接暴露、外部体验保护可观测”的原则继续分类。
 
 ## 分阶段修复计划
 
@@ -999,7 +1036,13 @@
 
 ## 第五阶段：Outbound Phase 收口
 
-本阶段是下一步重点。
+状态：第一轮代码落地已完成。
+
+对应提交：
+
+- `30578c4e refactor: consolidate interaction outbound phase`
+
+本阶段完成后，interaction 出站语义已经由 middleware / output controller 持有。旧 pipeline stage 不再作为 interaction turn 的正确性基础。
 
 ### 最终目标
 
@@ -1023,6 +1066,8 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
 7. middleware 统一 persist memory，并只调度一次 turn postprocess。
 
 ### Step 1：切断重复 lifecycle owner
+
+状态：已完成。
 
 目的：先消除重复 postprocess、自完成路径和 material fallback，避免继续把旧路径当正确性基础。
 
@@ -1048,12 +1093,16 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
 
 新增测试：
 
-- `tests/unit/test_interaction_middleware.py`
-  - `test_interaction_turn_does_not_schedule_respond_stage_after_turn_completed`
-  - `test_turn_postprocess_requires_finalized_material`
-
 - `tests/unit/test_interaction_output_controller.py`
   - `test_output_controller_requires_persist_callback_for_interaction_completion`
+- `tests/unit/test_postprocess.py`
+  - `test_respond_stage_skips_turn_completed_postprocess_for_interaction_turn`
+
+实现结果：
+
+- `RespondStage._schedule_after_message_sent_postprocess(event)` 对 interaction turn 只保留 `AFTER_MESSAGE_SENT`，不再调度普通 `AFTER_TURN_COMPLETED`。
+- `InteractionOutputController._persist_interaction_turn(...)` 无 `_persist_callback` 时记录 `missing_persist_callback` 并返回，不再自行 persist 或 mark completed。
+- `InteractionMiddleware._schedule_turn_postprocess(...)` 缺 finalized material 时记录 `missing_finalized_turn_material` 并返回，不再重建 material。
 
 Agent 相关操作：
 
@@ -1068,6 +1117,8 @@ Agent 相关操作：
 - output controller 无 callback 时不会把 turn 标记为 completed。
 
 ### Step 2：修复插件只读视图最后缺口
+
+状态：已完成。
 
 目的：result contributor 不得拿到可变 decision 本体。
 
@@ -1086,8 +1137,13 @@ Agent 相关操作：
 新增测试：
 
 - `tests/unit/test_interaction_output_controller.py`
-  - `test_result_contributor_cannot_mutate_decision_snapshot`
-  - 验证 contributor 修改 view 中 decision 不影响 `turn_state.decision`。
+  - `test_result_contributor_receives_read_only_view`
+  - 验证 contributor 修改 view 中 decision / metadata / visible_outputs / utterances / material snapshot 均不能污染 turn state。
+
+实现结果：
+
+- `_collect_result_contributions(...)` 传入 `decision.to_dict()` snapshot。
+- `InteractionResultView.copy_read_only()` 与 `as_read_only_mapping()` 对 `decision` 同样执行 `freeze_interaction_snapshot(...)`。
 
 Agent 相关操作：
 
@@ -1101,17 +1157,19 @@ Agent 相关操作：
 
 ### Step 3：新增 outbound materialization 入口
 
+状态：已完成。
+
 目的：把 interaction turn 最终输出形态从 `ResultDecorateStage` 迁到 `InteractionOutputController`。
 
 需要新增：
 
 - `astrbot/core/interaction/output_controller.py`
-  - 新增 `materialize_interaction_outbound_message(event, message, *, message_kind, result_is_model_result=False) -> MessageChain`。
+  - 新增 `materialize_interaction_outbound_message(event, message, *, message_kind, result_is_model_result=False) -> tuple[MessageChain, dict[str, Any]]`。
   - 新增 `_apply_interaction_reply_prefix(event, message) -> MessageChain`。
-  - 新增 `_apply_interaction_reasoning_display(event, message) -> MessageChain`。
-  - 新增 `_apply_interaction_tts(event, message) -> MessageChain`。
-  - 新增 `_apply_interaction_t2i(event, message) -> MessageChain`。
-  - 新增 `_record_outbound_materialization_metadata(event, utterance, materialization)` 或等价 helper。
+  - 新增 `_apply_interaction_reasoning_display(event, message) -> tuple[MessageChain, dict[str, Any]]`。
+  - 新增 `_apply_interaction_tts(event, message, *, result_is_model_result) -> tuple[MessageChain, dict[str, Any]]`。
+  - 新增 `_apply_interaction_t2i(event, message) -> tuple[MessageChain, dict[str, Any]]`。
+  - 新增 `_record_outbound_materialization_failure(event, stage, reason)`。
 
 需要调整：
 
@@ -1134,7 +1192,7 @@ Agent 相关操作：
   - 是否对 stream final text 做 TTS/t2i 应保持关闭，除非后续明确设计“stream 汇总转语音”。
 
 - `InteractionUtterance`
-  - 如当前缺少 metadata 字段，新增 `metadata: dict[str, Any] = field(default_factory=dict)`。
+  - 已新增 `metadata: dict[str, Any] = field(default_factory=dict)`。
   - `materialize_utterance(...)` 增加 `metadata` 参数。
   - `append_interaction_turn_visible_output(...)` 可选择接收 `metadata`，但 memory material 仍只消费 canonical text。
 
@@ -1153,6 +1211,13 @@ Agent 相关操作：
 - output controller 在 final text 已确定后执行 outbound materialization。
 - Agent / core 不需要知道最终输出是 text、record 还是 image。
 
+实现结果：
+
+- `capture_message_chain(...)` 在 passthrough / core reply / forced finalizer failure 发送前调用 `materialize_interaction_outbound_message(...)`。
+- `_record_visible_output(...)` 继续记录 semantic text，同时把 delivered shape 写入 utterance metadata。
+- TTS / t2i 启用后失败不降级为文本发送；会记录 `_interaction_outbound_materialization_failed`、stage、failure reason，并抛出异常。
+- streaming chunk 仍不逐个进入 utterance ledger；streaming final `core_stream` 仍记录 semantic text，未对 stream final text 执行 TTS/t2i。
+
 验收标准：
 
 - interaction turn 的最终可见输出不再依赖 `ResultDecorateStage` 改写。
@@ -1160,6 +1225,8 @@ Agent 相关操作：
 - interaction memory 仍只使用 semantic assistant text，不被音频路径或图片路径污染。
 
 ### Step 4：让 ResultDecorateStage 对 interaction turn 退场
+
+状态：已完成。
 
 目的：避免旧 pipeline 装饰层继续改写 interaction 输出。
 
@@ -1183,8 +1250,12 @@ Agent 相关操作：
 新增测试：
 
 - `tests/unit/test_postprocess.py` 或新增 result decorate 测试：
-  - `test_result_decorate_skips_tts_for_interaction_turn`
-  - `test_result_decorate_keeps_non_interaction_tts`
+  - `test_result_decorate_stage_skips_interaction_turn_reply_prefix`
+
+实现结果：
+
+- `ResultDecorateStage.process(event)` 在 content safety / decorating hook / reply prefix / segmented reply / TTS / t2i / reasoning display / forward transform 之前识别 interaction turn 并直接返回。
+- 非 interaction 事件仍走原普通 pipeline 装饰逻辑。
 
 Agent 相关操作：
 
@@ -1197,6 +1268,8 @@ Agent 相关操作：
 - 非 interaction 事件的 TTS/t2i/reply prefix 不回退。
 
 ### Step 5：统一 final material 与 delivered shape
+
+状态：已完成第一轮。
 
 目的：让 finalized material、memory、postprocess、实际投递形态之间边界清楚。
 
@@ -1219,10 +1292,13 @@ Agent 相关操作：
 - `tests/unit/test_interaction_output_controller.py`
   - `test_tts_materialization_records_record_delivery_but_memory_uses_text`
   - `test_t2i_materialization_records_image_delivery_but_memory_uses_text`
+  - `test_tts_materialization_failure_is_not_downgraded_to_text`
 
-- `tests/unit/test_interaction_middleware.py`
-  - `test_hybrid_turn_final_material_includes_immediate_and_final_semantic_text_once`
-  - `test_hybrid_turn_postprocess_dispatched_once_after_outbound_materialization`
+实现结果：
+
+- utterance metadata 记录 `delivered_as="text" | "record" | "image"` 以及 TTS/t2i source 和输出地址。
+- finalized material / memory 使用 canonical semantic text，不使用 Record/Image 路径。
+- `memory_relevant=False` 的 stream interjection 不进入 canonical assistant reply。
 
 Agent 相关操作：
 
@@ -1236,6 +1312,8 @@ Agent 相关操作：
 - 没有重复 postprocess，没有重复 memory persist。
 
 ### Step 6：回归与手动验证
+
+状态：自动化回归已完成；手动/日志验证待补。
 
 必须运行：
 
@@ -1273,6 +1351,218 @@ uv run ruff check .
 5. 非 interaction 普通事件
    - `ResultDecorateStage` 的 TTS/t2i/reply prefix 仍然工作。
    - `RespondStage` 的普通 postprocess 仍然工作。
+
+## 第六阶段：开发期 fail-fast 与 fallback 去正确性化
+
+状态：第一轮代码已落地，剩余为边界审查和补充验证。
+
+### 最终目标
+
+interaction middleware 的内部主链路必须直接暴露真实错误：
+
+- 内部缺 provider、缺 context material、缺 finalized material、缺 callback、LLM 返回非 JSON、schema invalid、TTS/t2i 失败等，都不能靠 fallback 被解释成“正常完成”。
+- fallback 只能作为明确的外部体验保护，并且必须有可观测日志、诊断字段和失败原因。
+- 开发期默认 fail-fast：主链路失败应抛错或终止当前 interaction turn，方便直接定位根因。
+- 生产期如需保护用户体验，应通过显式配置开启，并且不得污染 memory、few-shot 样本、success 状态或 turn completion。
+
+### Step 1：明确 fail-fast 配置与边界
+
+状态：已完成第一轮。
+
+需要修改：
+
+- `astrbot/core/interaction/types.py`
+  - 在 `InteractionAgentConfig` 增加类似 `fail_fast: bool = True` 或 `fallback_policy: Literal["fail_fast", "observable_protect"]` 的配置。
+
+- `astrbot/core/interaction/config.py`
+  - 从 `interaction_middleware` 配置读取该策略。
+  - 默认值应服务开发期：主链路失败直接暴露。
+
+Agent 相关操作：
+
+- interaction Agent 的决策、表达、输出 materialization 均遵循同一 fallback policy。
+- 不允许每个阶段自行决定是否 fallback。
+
+验收标准：
+
+- 所有 fallback/保护行为都能追溯到同一个配置。
+- 默认配置下主链路错误不会被静默转为 delegate/core/text 输出。
+
+实现结果：
+
+- `FallbackPolicy` 已加入 `astrbot/core/interaction/types.py`。
+- `InteractionAgentConfig.fallback_policy` 默认 `FallbackPolicy.FAIL_FAST`。
+- `load_interaction_agent_config(...)` 从 `interaction_middleware.fallback_policy` 读取策略，非法值回到 `fail_fast`。
+- `observable_protect` 是显式保护模式，不作为开发期正确性基础。
+
+### Step 2：收口 decision fallback
+
+状态：已完成第一轮。
+
+需要修改：
+
+- `astrbot/core/interaction/decision_agent.py`
+  - `build_fallback_decision(...)` 不再作为内部正确性兜底。
+  - provider unavailable、timeout、model error、non-json、invalid payload、low confidence 等场景在 fail-fast 模式下抛出明确异常。
+  - 若 observable protect 模式开启，仍可产出 fallback decision，但必须写入诊断字段并标记 `is_fallback=True`。
+
+- `astrbot/core/interaction/middleware.py`
+  - `_decide_or_fallback(...)` 改名或拆分为 `_decide_interaction_route(...)`。
+  - fail-fast 下不捕获并转换 decision pipeline error。
+  - observable protect 下记录 `_interaction_decision_failed=True`、reason、原始错误类型，然后才走保护路径。
+
+Agent 相关操作：
+
+- Agent 决策失败不能被视作“自然 delegate_to_core”。
+- fallback decision 不能进入成功样本或作为路由正确性证明。
+
+验收标准：
+
+- provider missing / invalid JSON 的测试必须看到异常或明确失败字段。
+- 没有测试再以 fallback decision 作为主链路成功依据。
+
+实现结果：
+
+- `InteractionDecisionError` 已加入 `decision_agent.py`。
+- provider unavailable、timeout、model error、non-json、invalid payload、low confidence 在 `fail_fast` 下抛错。
+- `_decide_or_fallback(...)` 已改为 `_decide_interaction_route(...)`。
+- middleware 捕获 decision pipeline error 后记录 `_interaction_decision_failed` 与 failure ledger；默认不再转 core，只有 `observable_protect` 才产出 fallback decision。
+- 已覆盖 missing plugin context / decision pipeline error / low confidence 的 fail-fast 与 observable protect 测试。
+
+### Step 3：收口入站 STT / media materialization 失败语义
+
+状态：已完成第一轮。
+
+需要修改：
+
+- `astrbot/core/interaction/middleware.py`
+  - `_materialize_inbound_media(...)`
+  - `_transcribe_inbound_records(...)`
+  - provider unavailable、audio path resolution failed、STT failed 在 fail-fast 模式下抛错。
+  - observable protect 模式下可以跳过 STT，但必须标记 `_interaction_stt_failed=True`，且不能把未转写语音当作成功文本输入。
+
+Agent 相关操作：
+
+- decision agent 只能消费 materialized input。
+- STT 未完成时不能让 decision 误以为空文本输入是用户真实意图。
+
+验收标准：
+
+- 启用 STT 且 provider 缺失时，interaction turn 不进入正常 decision 成功路径。
+- STT 失败不会污染 interaction memory 或 recent messages。
+
+实现结果：
+
+- `_materialize_inbound_media(...)` 的 record normalize 失败在 `fail_fast` 下抛错。
+- `_transcribe_inbound_records(...)` 对 plugin context missing、provider unavailable、audio path resolution failed、source unavailable、provider error、empty transcription 均记录失败。
+- `fail_fast` 下 STT 失败不进入正常 decision；`observable_protect` 下保留可观测 skip。
+- 已覆盖 STT provider missing fail-fast 测试。
+
+### Step 4：收口 finalizer fallback 与 forced failure 输出
+
+状态：已完成第一轮。
+
+需要修改：
+
+- `astrbot/core/interaction/finalizer.py`
+  - provider unavailable / model error / invalid finalizer output 在 fail-fast 模式下抛错。
+
+- `astrbot/core/interaction/output_controller.py`
+  - `FinalizerMode.FORCE` 下的“最终回复整理失败，请查看日志。”应按策略处理：
+    - fail-fast：不发送替代文本，记录失败并抛错。
+    - observable protect：可以发送替代文本，但该替代文本必须标记为 failure notice，默认不进入 memory。
+
+Agent 相关操作：
+
+- finalizer 是表达层主链路，不应把失败消息当作正常 assistant answer。
+
+验收标准：
+
+- forced finalizer failure 不再污染 finalized turn material 的 canonical assistant text。
+- 失败 notice 如需发送，必须 `memory_relevant=False` 或独立 failure kind。
+
+实现结果：
+
+- `InteractionFinalizerError` 已加入 `finalizer.py`。
+- finalizer plugin context missing、provider unavailable、timeout、model error、empty output 在 `fail_fast` 下抛错。
+- `FinalizerMode.FORCE` 的失败提示只在 `observable_protect` 下发送；默认 fail-fast 不发送替代文本。
+- 已覆盖 forced finalizer failure fail-fast 与 observable protect 测试。
+
+### Step 5：统一 failure diagnostics
+
+状态：已完成第一轮。
+
+需要新增或调整：
+
+- `astrbot/core/interaction/turn_state.py`
+  - 增加统一 failure ledger，例如 `InteractionTurnFailure` 或 completion failure list。
+  - 保留旧 `_interaction_*_failed` extra 镜像，但内部以 failure ledger 为主。
+
+- 所有关键失败入口统一记录：
+  - stage
+  - reason
+  - exception type
+  - user visible action taken
+  - whether turn material was finalized
+  - whether memory/postprocess was skipped
+
+Agent 相关操作：
+
+- Agent/subagent 相关失败不能只写 warning。
+- failure ledger 可作为调试、前端显示和后续审计来源。
+
+验收标准：
+
+- 任一失败场景都能从 turn state 解释“哪里失败、是否发过消息、是否写 memory、是否完成 turn”。
+
+实现结果：
+
+- `InteractionTurnFailure` 已加入 `turn_state.py`。
+- `InteractionTurnState.failures` 成为 failure ledger。
+- `record_interaction_turn_failure(...)` 双写 turn state 与 `_interaction_turn_failures` extra，并同步 completion failure reason。
+- decision、STT、finalizer、SELF_REPLY 发送/完成失败的关键入口已接入 ledger。
+
+### Step 6：回归与手动验证
+
+状态：单元回归已完成；真实平台手动验证仍待执行。
+
+必须新增测试：
+
+- decision provider missing fail-fast。
+- decision invalid JSON fail-fast。
+- STT provider missing fail-fast。
+- finalizer provider missing fail-fast。
+- forced finalizer failure 不污染 memory。
+- observable protect 模式下 fallback 有诊断字段且不标记成功。
+
+必须运行：
+
+```bash
+uv run pytest tests/unit/test_interaction_middleware.py tests/unit/test_interaction_decision_agent.py tests/unit/test_interaction_output_controller.py -q
+uv run pytest tests/unit/test_interaction_context_builder.py tests/unit/test_memory_runtime.py -q
+uv run ruff format .
+uv run ruff check .
+```
+
+已运行：
+
+```bash
+uv run pytest tests/unit/test_interaction_middleware.py tests/unit/test_interaction_output_controller.py tests/unit/test_interaction_context_builder.py tests/unit/test_interaction_decision_agent.py tests/unit/test_memory_runtime.py tests/unit/test_postprocess.py -q
+uv run ruff format .
+uv run ruff check .
+```
+
+结果：
+
+- `168 passed`
+- `ruff check` 通过
+- 剩余 warnings 为既有 SwigPy deprecation 与 aiosqlite event-loop-close 测试环境 warning。
+
+### 第六阶段剩余审查点
+
+1. stream interjection decider / model 失败当前会记录 skip 或 decider failures 并继续主 stream。由于它不是主回复链路，可保留为外部扩展保护，但应补充统一 failure diagnostics。
+2. `observable_protect` 模式下的 fallback decision / failure notice 必须继续保证不污染 memory、few-shot 样本和 success 状态。
+3. 真实平台链路还需验证：文本、TTS Record、t2i Image 的 delivered payload、message id、utterance metadata 与 finalized material 是否一致。
 
 ## 兼容性策略
 

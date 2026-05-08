@@ -17,6 +17,11 @@ class FinalizerMode(str, Enum):
     FORCE = "force"
 
 
+class FallbackPolicy(str, Enum):
+    FAIL_FAST = "fail_fast"
+    OBSERVABLE_PROTECT = "observable_protect"
+
+
 @dataclass(slots=True)
 class CoreTaskSpec:
     task_intent: str = "general"
@@ -135,6 +140,7 @@ class InteractionAgentConfig:
     decision_max_tokens: int = 512
     decision_timeout: float = 15.0
     decision_confidence_threshold: float = 0.6
+    fallback_policy: FallbackPolicy = FallbackPolicy.FAIL_FAST
     finalizer_provider_id: str = ""
     finalizer_model: str = ""
     finalizer_temperature: float = 0.6

@@ -70,6 +70,32 @@ class InteractionTurnCompletionState:
 
 
 @dataclass(slots=True)
+class InteractionTurnFailure:
+    stage: str
+    reason: str
+    exception_type: str | None = None
+    message: str | None = None
+    user_visible_action: str | None = None
+    material_finalized: bool = False
+    memory_persisted: bool = False
+    postprocess_dispatched: bool = False
+    created_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "reason": self.reason,
+            "exception_type": self.exception_type,
+            "message": self.message,
+            "user_visible_action": self.user_visible_action,
+            "material_finalized": self.material_finalized,
+            "memory_persisted": self.memory_persisted,
+            "postprocess_dispatched": self.postprocess_dispatched,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass(slots=True)
 class InteractionTurnState:
     turn_id: str
     persona_id: str = ""
@@ -94,6 +120,7 @@ class InteractionTurnState:
     completion_state: InteractionTurnCompletionState = field(
         default_factory=InteractionTurnCompletionState
     )
+    failures: list[InteractionTurnFailure] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     stream_interjection_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -239,6 +266,46 @@ def record_interaction_turn_completion_failure(
     state = ensure_interaction_turn_state(event)
     state.completion_state.failure_reason = clean_reason
     event.set_extra("_interaction_turn_completion_failure_reason", clean_reason)
+
+
+def record_interaction_turn_failure(
+    event,
+    *,
+    stage: str,
+    reason: str,
+    exception: BaseException | None = None,
+    message: str | None = None,
+    user_visible_action: str | None = None,
+) -> None:
+    clean_stage = str(stage or "").strip()
+    clean_reason = str(reason or "").strip()
+    if not clean_stage or not clean_reason:
+        return
+    state = ensure_interaction_turn_state(event)
+    failure = InteractionTurnFailure(
+        stage=clean_stage,
+        reason=clean_reason,
+        exception_type=type(exception).__name__ if exception is not None else None,
+        message=message
+        if message is not None
+        else (str(exception) if exception else None),
+        user_visible_action=user_visible_action,
+        material_finalized=state.completion_state.material_finalized,
+        memory_persisted=state.completion_state.memory_persisted,
+        postprocess_dispatched=state.completion_state.postprocess_dispatched,
+    )
+    state.failures.append(failure)
+    event.set_extra(
+        "_interaction_turn_failures", [item.to_dict() for item in state.failures]
+    )
+    record_interaction_turn_completion_failure(event, f"{clean_stage}:{clean_reason}")
+
+
+def get_interaction_turn_failures(event) -> list[dict[str, Any]]:
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return []
+    return [failure.to_dict() for failure in state.failures]
 
 
 def is_interaction_turn_completed(event) -> bool:

@@ -9,7 +9,8 @@ from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
 from .core_bridge import get_interaction_decision
-from .types import FinalizerMode, InteractionAgentConfig
+from .turn_state import record_interaction_turn_failure
+from .types import FallbackPolicy, FinalizerMode, InteractionAgentConfig
 
 _STRUCTURED_MARKERS = (
     "```",
@@ -23,6 +24,12 @@ _STRUCTURED_MARKERS = (
     "error:",
     "result:",
 )
+
+
+class InteractionFinalizerError(RuntimeError):
+    def __init__(self, reason: str, message: str | None = None) -> None:
+        self.reason = reason
+        super().__init__(message or reason)
 
 
 def should_finalize_response(
@@ -126,11 +133,24 @@ async def finalize_response(
     core_result_text: str,
     immediate_reply: str | None = None,
 ) -> str | None:
-    if plugin_context is None:
-        logger.debug("Interaction finalizer skipped: plugin context unavailable")
-        return None
     if not should_finalize_response(event, core_result_text, config):
         return None
+    if plugin_context is None:
+        event.set_extra("_interaction_finalizer_failed", True)
+        event.set_extra(
+            "_interaction_finalizer_failure_reason",
+            "plugin_context_unavailable",
+        )
+        record_interaction_turn_failure(
+            event,
+            stage="finalizer",
+            reason="plugin_context_unavailable",
+            user_visible_action="none",
+        )
+        if config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+            logger.debug("Interaction finalizer skipped: plugin context unavailable")
+            return None
+        raise InteractionFinalizerError("plugin_context_unavailable")
 
     provider = plugin_context.get_provider_by_id(config.finalizer_provider_id)
     if not isinstance(provider, Provider):
@@ -148,7 +168,15 @@ async def finalize_response(
             "_interaction_finalizer_failure_reason",
             "provider_unavailable",
         )
-        return None
+        record_interaction_turn_failure(
+            event,
+            stage="finalizer",
+            reason="provider_unavailable",
+            user_visible_action="none",
+        )
+        if config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+            return None
+        raise InteractionFinalizerError("provider_unavailable")
 
     decision = get_interaction_decision(event)
     decision_payload = decision.to_dict() if decision is not None else None
@@ -178,19 +206,44 @@ async def finalize_response(
         logger.warning("Interaction finalizer timed out")
         event.set_extra("_interaction_finalizer_failed", True)
         event.set_extra("_interaction_finalizer_failure_reason", "timeout")
-        return None
+        record_interaction_turn_failure(
+            event,
+            stage="finalizer",
+            reason="timeout",
+            user_visible_action="none",
+        )
+        if config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+            return None
+        raise InteractionFinalizerError("timeout") from None
     except Exception as exc:  # noqa: BLE001
         logger.warning("Interaction finalizer failed: %s", exc, exc_info=True)
         event.set_extra("_interaction_finalizer_failed", True)
         event.set_extra("_interaction_finalizer_failure_reason", "model_error")
-        return None
+        record_interaction_turn_failure(
+            event,
+            stage="finalizer",
+            reason="model_error",
+            exception=exc,
+            user_visible_action="none",
+        )
+        if config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+            return None
+        raise InteractionFinalizerError("model_error", str(exc)) from exc
 
     text = (response.completion_text or "").strip()
     if not text:
         logger.warning("Interaction finalizer returned empty text")
         event.set_extra("_interaction_finalizer_failed", True)
         event.set_extra("_interaction_finalizer_failure_reason", "empty_output")
-        return None
+        record_interaction_turn_failure(
+            event,
+            stage="finalizer",
+            reason="empty_output",
+            user_visible_action="none",
+        )
+        if config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+            return None
+        raise InteractionFinalizerError("empty_output")
     logger.debug(
         "Interaction finalizer completed: platform_id=%s session_id=%s output_length=%s",
         event.get_platform_id(),

@@ -23,6 +23,7 @@ from astrbot.core.interaction.turn_state import (
     set_interaction_turn_finalized_material,
 )
 from astrbot.core.interaction.types import (
+    FallbackPolicy,
     FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
@@ -812,7 +813,9 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
 
 
 @pytest.mark.asyncio
-async def test_force_finalizer_failure_does_not_send_raw_core_result(webchat_event):
+async def test_force_finalizer_failure_fail_fast_does_not_send_raw_core_result(
+    webchat_event,
+):
     queue = asyncio.Queue()
     plugin_context = MagicMock()
     plugin_context.get_provider_by_id.return_value = None
@@ -822,6 +825,51 @@ async def test_force_finalizer_failure_does_not_send_raw_core_result(webchat_eve
         interaction_config=InteractionAgentConfig(
             finalizer_mode=FinalizerMode.FORCE,
             finalizer_provider_id="missing",
+        ),
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("raw core result")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        with pytest.raises(RuntimeError, match="provider_unavailable"):
+            await controller.capture_message_chain(
+                MessageChain([Plain("raw core result")]),
+                webchat_event,
+            )
+
+    assert queue.empty()
+    assert webchat_event.get_extra("_interaction_finalizer_failed") is True
+    assert (
+        webchat_event.get_extra("_interaction_finalizer_failure_reason")
+        == "provider_unavailable"
+    )
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.failures[-1].stage == "finalizer"
+    assert turn_state.failures[-1].reason == "provider_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_force_finalizer_failure_observable_protects_with_notice(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_provider_by_id.return_value = None
+    plugin_context.list_interaction_result_contributors.return_value = []
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.FORCE,
+            finalizer_provider_id="missing",
+            fallback_policy=FallbackPolicy.OBSERVABLE_PROTECT,
         ),
     )
     webchat_event.set_result(

@@ -4,6 +4,7 @@ import pytest
 
 from astrbot.core.interaction.decision_agent import (
     InteractionDecisionAgent,
+    InteractionDecisionError,
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
     build_fallback_decision,
@@ -15,6 +16,7 @@ from astrbot.core.interaction.turn_state import (
     InteractionTurnState,
 )
 from astrbot.core.interaction.types import (
+    FallbackPolicy,
     InteractionAgentConfig,
     InteractionDecision,
     RouteMode,
@@ -23,8 +25,24 @@ from astrbot.core.prompt.context_types import ContextPack
 from astrbot.core.provider.entities import LLMResponse
 
 
-def test_validate_interaction_decision_falls_back_on_low_confidence():
+def test_validate_interaction_decision_fail_fast_on_low_confidence():
     config = InteractionAgentConfig(decision_confidence_threshold=0.6)
+    decision = InteractionDecision(
+        route_mode=RouteMode.SELF_REPLY,
+        should_emit_immediate_reply=True,
+        immediate_spoken_reply="嗯，我看看",
+        confidence=0.2,
+        reason="unsure",
+    )
+    with pytest.raises(InteractionDecisionError, match="low confidence"):
+        validate_interaction_decision(decision, config)
+
+
+def test_validate_interaction_decision_observable_protects_on_low_confidence():
+    config = InteractionAgentConfig(
+        decision_confidence_threshold=0.6,
+        fallback_policy=FallbackPolicy.OBSERVABLE_PROTECT,
+    )
     decision = InteractionDecision(
         route_mode=RouteMode.SELF_REPLY,
         should_emit_immediate_reply=True,

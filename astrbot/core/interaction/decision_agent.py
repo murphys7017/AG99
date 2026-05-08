@@ -25,11 +25,18 @@ from .turn_state import (
     set_interaction_turn_persona_id,
 )
 from .types import (
+    FallbackPolicy,
     InteractionAgentConfig,
     InteractionDecision,
     InteractionPromptBuildConfig,
     RouteMode,
 )
+
+
+class InteractionDecisionError(RuntimeError):
+    def __init__(self, reason: str, message: str | None = None) -> None:
+        self.reason = reason
+        super().__init__(message or reason)
 
 
 def build_interaction_agent_system_prompt() -> str:
@@ -150,13 +157,15 @@ def validate_interaction_decision(
         decision.should_emit_immediate_reply = False
         decision.route_mode = RouteMode.DELEGATE_TO_CORE
     if decision.confidence < config.decision_confidence_threshold:
-        logger.warning(
-            "Interaction decision fallback: reason=low_confidence confidence=%s threshold=%s route_mode=%s",
-            decision.confidence,
-            config.decision_confidence_threshold,
-            decision.route_mode.value,
+        message = (
+            f"low confidence: confidence={decision.confidence} "
+            f"threshold={config.decision_confidence_threshold} "
+            f"route_mode={decision.route_mode.value}"
         )
-        return build_fallback_decision("low confidence")
+        if config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+            logger.warning("Interaction decision fallback: reason=%s", message)
+            return build_fallback_decision("low confidence")
+        raise InteractionDecisionError("low_confidence", message)
     return decision
 
 
@@ -286,11 +295,11 @@ class InteractionDecisionAgent:
             interaction_config.decision_provider_id
         )
         if not isinstance(provider, Provider):
-            logger.warning(
-                "Interaction decision fallback: reason=provider_unavailable provider_id=%s",
-                interaction_config.decision_provider_id,
-            )
-            return build_fallback_decision("provider unavailable")
+            message = f"provider unavailable: provider_id={interaction_config.decision_provider_id}"
+            if interaction_config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+                logger.warning("Interaction decision fallback: reason=%s", message)
+                return build_fallback_decision("provider unavailable")
+            raise InteractionDecisionError("provider_unavailable", message)
 
         build_config = _build_decision_build_config(plugin_context, event)
         material = await self._build_or_reuse_context_material(
@@ -351,27 +360,33 @@ class InteractionDecisionAgent:
                 timeout=interaction_config.decision_timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning("Interaction decision fallback: reason=timeout")
-            return build_fallback_decision("timeout")
+            if interaction_config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+                logger.warning("Interaction decision fallback: reason=timeout")
+                return build_fallback_decision("timeout")
+            raise InteractionDecisionError("timeout") from None
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Interaction decision fallback: reason=model_error error=%s",
-                exc,
-                exc_info=True,
-            )
-            return build_fallback_decision("model error")
+            if interaction_config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+                logger.warning(
+                    "Interaction decision fallback: reason=model_error error=%s",
+                    exc,
+                    exc_info=True,
+                )
+                return build_fallback_decision("model error")
+            raise InteractionDecisionError("model_error", str(exc)) from exc
 
         payload = _extract_json_object(llm_resp.completion_text)
         if payload is None:
-            logger.warning(
-                "Interaction decision fallback: reason=non_json raw=%s",
-                llm_resp.completion_text,
-            )
-            return build_fallback_decision("non-json")
+            message = f"non-json: raw={llm_resp.completion_text}"
+            if interaction_config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+                logger.warning("Interaction decision fallback: reason=%s", message)
+                return build_fallback_decision("non-json")
+            raise InteractionDecisionError("non_json", message)
         decision = InteractionDecision.from_mapping(payload)
         if decision is None:
-            logger.warning("Interaction decision fallback: reason=invalid_payload")
-            return build_fallback_decision("invalid payload")
+            if interaction_config.fallback_policy == FallbackPolicy.OBSERVABLE_PROTECT:
+                logger.warning("Interaction decision fallback: reason=invalid_payload")
+                return build_fallback_decision("invalid payload")
+            raise InteractionDecisionError("invalid_payload")
         if not decision.reason:
             decision.reason = "llm decision"
         decision = validate_interaction_decision(decision, interaction_config)

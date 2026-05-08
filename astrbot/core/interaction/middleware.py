@@ -35,10 +35,11 @@ from .turn_state import (
     mark_interaction_turn_memory_persisted,
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
+    record_interaction_turn_failure,
     set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
 )
-from .types import InteractionDecision, RouteMode
+from .types import FallbackPolicy, InteractionDecision, RouteMode
 
 
 class InteractionMiddleware:
@@ -201,7 +202,7 @@ class InteractionMiddleware:
         turn_id = uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         await self._materialize_inbound_media(event)
-        decision = await self._decide_or_fallback(event)
+        decision = await self._decide_interaction_route(event)
         self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
         if decision.route_mode == RouteMode.SELF_REPLY:
             if not decision.should_emit_immediate_reply:
@@ -222,11 +223,21 @@ class InteractionMiddleware:
                 sent = await self._emit_immediate_reply_or_record_failure(
                     event,
                     decision,
+                    continue_on_failure=(
+                        self.interaction_config.fallback_policy
+                        == FallbackPolicy.OBSERVABLE_PROTECT
+                    ),
                 )
                 if not sent:
                     self._forward_to_core(event)
                     return
-            completed = await self._complete_visible_turn_or_record_failure(event)
+            completed = await self._complete_visible_turn_or_record_failure(
+                event,
+                continue_on_failure=(
+                    self.interaction_config.fallback_policy
+                    == FallbackPolicy.OBSERVABLE_PROTECT
+                ),
+            )
             if completed:
                 await self._finalize_turn(
                     event,
@@ -242,14 +253,32 @@ class InteractionMiddleware:
             await self._emit_immediate_reply_or_record_failure(event, decision)
         self._forward_to_core(event)
 
-    async def _decide_or_fallback(self, event: AstrMessageEvent) -> InteractionDecision:
+    async def _decide_interaction_route(
+        self, event: AstrMessageEvent
+    ) -> InteractionDecision:
         if self.plugin_context is None:
-            logger.error(
-                "Interaction decision fallback: reason=plugin_context_unavailable platform_id=%s session_id=%s",
-                event.get_platform_id(),
-                event.session_id,
+            event.set_extra("_interaction_decision_failed", True)
+            event.set_extra(
+                "_interaction_decision_failure_reason",
+                "plugin_context_unavailable",
             )
-            return build_fallback_decision("plugin_context_unavailable")
+            record_interaction_turn_failure(
+                event,
+                stage="decision",
+                reason="plugin_context_unavailable",
+                user_visible_action="none",
+            )
+            if (
+                self.interaction_config.fallback_policy
+                == FallbackPolicy.OBSERVABLE_PROTECT
+            ):
+                logger.error(
+                    "Interaction decision fallback: reason=plugin_context_unavailable platform_id=%s session_id=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                )
+                return build_fallback_decision("plugin_context_unavailable")
+            raise RuntimeError("Interaction decision plugin context unavailable")
         try:
             decision = await self.decision_agent.decide(
                 event,
@@ -257,14 +286,45 @@ class InteractionMiddleware:
                 self.interaction_config,
             )
         except Exception as exc:  # noqa: BLE001
+            event.set_extra("_interaction_decision_failed", True)
+            event.set_extra("_interaction_decision_failure_reason", str(exc))
+            record_interaction_turn_failure(
+                event,
+                stage="decision",
+                reason=getattr(exc, "reason", "decision_pipeline_error"),
+                exception=exc,
+                user_visible_action="none",
+            )
+            if (
+                self.interaction_config.fallback_policy
+                == FallbackPolicy.OBSERVABLE_PROTECT
+            ):
+                logger.error(
+                    "Interaction decision fallback: reason=decision_pipeline_error platform_id=%s session_id=%s error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    exc,
+                    exc_info=True,
+                )
+                return build_fallback_decision("decision_pipeline_error")
             logger.error(
-                "Interaction decision fallback: reason=decision_pipeline_error platform_id=%s session_id=%s error=%s",
+                "Interaction decision failed: platform_id=%s session_id=%s error=%s",
                 event.get_platform_id(),
                 event.session_id,
                 exc,
                 exc_info=True,
             )
-            return build_fallback_decision("decision_pipeline_error")
+            raise
+        if decision.is_fallback:
+            reason = str(decision.fallback_reason or "fallback_decision")
+            event.set_extra("_interaction_decision_failed", True)
+            event.set_extra("_interaction_decision_failure_reason", reason)
+            record_interaction_turn_failure(
+                event,
+                stage="decision",
+                reason=reason,
+                user_visible_action="fallback_decision",
+            )
         return decision
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:
@@ -320,6 +380,13 @@ class InteractionMiddleware:
                     "_interaction_record_normalize_failure_reason",
                     str(exc),
                 )
+                record_interaction_turn_failure(
+                    event,
+                    stage="inbound_record_normalize",
+                    reason="record_normalize_failed",
+                    exception=exc,
+                    user_visible_action="none",
+                )
                 logger.warning(
                     "Interaction inbound voice normalization failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                     event.get_platform_id(),
@@ -327,6 +394,8 @@ class InteractionMiddleware:
                     event.get_extra("_turn_id"),
                     exc,
                 )
+                if self.interaction_config.fallback_policy == FallbackPolicy.FAIL_FAST:
+                    raise
 
     async def _transcribe_inbound_records(self, event: AstrMessageEvent) -> None:
         stt_settings = self.config.get("provider_stt_settings", {})
@@ -338,11 +407,19 @@ class InteractionMiddleware:
                 "_interaction_stt_failure_reason",
                 "plugin_context_unavailable",
             )
+            record_interaction_turn_failure(
+                event,
+                stage="inbound_stt",
+                reason="plugin_context_unavailable",
+                user_visible_action="none",
+            )
             logger.warning(
                 "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=plugin_context_unavailable",
                 event.get_platform_id(),
                 event.session_id,
             )
+            if self.interaction_config.fallback_policy == FallbackPolicy.FAIL_FAST:
+                raise RuntimeError("Interaction STT plugin context unavailable")
             return
 
         get_provider = getattr(self.plugin_context, "get_using_stt_provider", None)
@@ -355,11 +432,19 @@ class InteractionMiddleware:
                 "_interaction_stt_failure_reason",
                 "provider_unavailable",
             )
+            record_interaction_turn_failure(
+                event,
+                stage="inbound_stt",
+                reason="provider_unavailable",
+                user_visible_action="none",
+            )
             logger.warning(
                 "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=provider_unavailable",
                 event.get_platform_id(),
                 event.session_id,
             )
+            if self.interaction_config.fallback_policy == FallbackPolicy.FAIL_FAST:
+                raise RuntimeError("Interaction STT provider unavailable")
             return
 
         message_chain = event.get_messages()
@@ -371,6 +456,13 @@ class InteractionMiddleware:
             except Exception as exc:  # noqa: BLE001
                 event.set_extra("_interaction_stt_failed", True)
                 event.set_extra("_interaction_stt_failure_reason", str(exc))
+                record_interaction_turn_failure(
+                    event,
+                    stage="inbound_stt",
+                    reason="audio_path_resolution_failed",
+                    exception=exc,
+                    user_visible_action="none",
+                )
                 logger.error(
                     "Interaction inbound STT audio path resolution failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                     event.get_platform_id(),
@@ -379,6 +471,8 @@ class InteractionMiddleware:
                     exc,
                     exc_info=True,
                 )
+                if self.interaction_config.fallback_policy == FallbackPolicy.FAIL_FAST:
+                    raise
                 continue
             result = ""
             retry = 5
@@ -389,6 +483,18 @@ class InteractionMiddleware:
                 except FileNotFoundError as exc:
                     event.set_extra("_interaction_stt_failed", True)
                     event.set_extra("_interaction_stt_failure_reason", str(exc))
+                    record_interaction_turn_failure(
+                        event,
+                        stage="inbound_stt",
+                        reason="source_unavailable",
+                        exception=exc,
+                        user_visible_action="none",
+                    )
+                    if (
+                        self.interaction_config.fallback_policy
+                        == FallbackPolicy.FAIL_FAST
+                    ):
+                        raise
                     logger.warning(
                         "Interaction inbound STT source unavailable; retrying: platform_id=%s session_id=%s turn_id=%s attempt=%s/%s error=%s",
                         event.get_platform_id(),
@@ -403,6 +509,13 @@ class InteractionMiddleware:
                 except Exception as exc:  # noqa: BLE001
                     event.set_extra("_interaction_stt_failed", True)
                     event.set_extra("_interaction_stt_failure_reason", str(exc))
+                    record_interaction_turn_failure(
+                        event,
+                        stage="inbound_stt",
+                        reason="provider_error",
+                        exception=exc,
+                        user_visible_action="none",
+                    )
                     logger.error(
                         "Interaction inbound STT failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                         event.get_platform_id(),
@@ -411,9 +524,22 @@ class InteractionMiddleware:
                         exc,
                         exc_info=True,
                     )
+                    if (
+                        self.interaction_config.fallback_policy
+                        == FallbackPolicy.FAIL_FAST
+                    ):
+                        raise
                     break
             text = str(result or "").strip()
             if not text:
+                if self.interaction_config.fallback_policy == FallbackPolicy.FAIL_FAST:
+                    record_interaction_turn_failure(
+                        event,
+                        stage="inbound_stt",
+                        reason="empty_transcription",
+                        user_visible_action="none",
+                    )
+                    raise RuntimeError("Interaction STT returned empty text")
                 continue
             logger.info("Interaction inbound STT result: %s", text)
             message_chain[idx] = Plain(text)
@@ -436,6 +562,8 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
         decision: InteractionDecision,
+        *,
+        continue_on_failure: bool = True,
     ) -> bool:
         try:
             await self._emit_immediate_reply(event, decision)
@@ -443,6 +571,25 @@ class InteractionMiddleware:
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_immediate_reply_failed", True)
             event.set_extra("_interaction_immediate_reply_failure_reason", str(exc))
+            record_interaction_turn_failure(
+                event,
+                stage="immediate_reply",
+                reason="send_failed",
+                exception=exc,
+                user_visible_action=(
+                    "continue_core_delegation" if continue_on_failure else "none"
+                ),
+            )
+            if not continue_on_failure:
+                logger.error(
+                    "Interaction immediate reply failed; fail-fast aborting turn: platform_id=%s session_id=%s turn_id=%s error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    event.get_extra("_turn_id"),
+                    exc,
+                    exc_info=True,
+                )
+                raise
             logger.error(
                 "Interaction immediate reply failed; continuing core delegation: platform_id=%s session_id=%s turn_id=%s error=%s",
                 event.get_platform_id(),
@@ -456,6 +603,8 @@ class InteractionMiddleware:
     async def _complete_visible_turn_or_record_failure(
         self,
         event: AstrMessageEvent,
+        *,
+        continue_on_failure: bool = True,
     ) -> bool:
         try:
             await event.complete_visible_turn()
@@ -463,6 +612,23 @@ class InteractionMiddleware:
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_visible_completion_failed", True)
             event.set_extra("_interaction_visible_completion_failure_reason", str(exc))
+            record_interaction_turn_failure(
+                event,
+                stage="visible_completion",
+                reason="completion_failed",
+                exception=exc,
+                user_visible_action="none",
+            )
+            if not continue_on_failure:
+                logger.error(
+                    "Interaction visible completion failed; fail-fast aborting turn: platform_id=%s session_id=%s turn_id=%s error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    event.get_extra("_turn_id"),
+                    exc,
+                    exc_info=True,
+                )
+                raise
             logger.error(
                 "Interaction visible completion failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                 event.get_platform_id(),
