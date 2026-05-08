@@ -845,7 +845,7 @@ class TestInteractionMiddleware:
         assert turn_state.failures[-1].reason == "send_failed"
 
     @pytest.mark.asyncio
-    async def test_self_reply_without_immediate_reply_forwards_core(
+    async def test_self_reply_without_immediate_reply_is_rejected(
         self,
         webchat_event,
     ):
@@ -877,12 +877,16 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
-        assert queue.get_nowait() is webchat_event
+        assert queue.empty()
         assert webchat_event.get_extra("_interaction_self_reply_invalid") is True
         assert (
             webchat_event.get_extra("_interaction_self_reply_invalid_reason")
             == "missing_immediate_reply"
         )
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "decision"
+        assert turn_state.failures[-1].reason == "missing_self_reply"
 
     @pytest.mark.asyncio
     async def test_self_reply_memory_persist_failure_is_recorded(
@@ -995,6 +999,51 @@ class TestInteractionMiddleware:
         assert turn_state is not None
         assert turn_state.failures[-1].stage == "visible_completion"
         assert turn_state.failures[-1].reason == "completion_failed"
+
+    @pytest.mark.asyncio
+    async def test_finalize_turn_requires_explicit_finalized_material(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.memory_store.update_interaction_memory = AsyncMock()
+        webchat_event.set_extra("_turn_id", "turn-1")
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch:
+            await middleware._finalize_turn(webchat_event)
+
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
+        dispatch.assert_not_awaited()
+        assert webchat_event.get_extra("_interaction_memory_persist_failed") is True
+        assert (
+            webchat_event.get_extra("_interaction_memory_persist_failure_reason")
+            == "missing_finalized_turn_material"
+        )
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.completion_state.material_finalized is False
+        assert turn_state.completion_state.memory_persisted is False
+        assert turn_state.completion_state.postprocess_dispatched is False
+        assert turn_state.completion_state.completed is False
+        assert (
+            turn_state.completion_state.failure_reason
+            == "missing_finalized_turn_material"
+        )
 
     @pytest.mark.asyncio
     async def test_self_reply_completes_visible_turn_after_immediate_reply(

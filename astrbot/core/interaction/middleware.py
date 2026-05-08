@@ -225,29 +225,32 @@ class InteractionMiddleware:
                     "missing_immediate_reply",
                 )
                 logger.error(
-                    "Interaction self reply invalid; forwarding to core: platform_id=%s session_id=%s turn_id=%s reason=missing_immediate_reply",
+                    "Interaction self reply invalid; aborting turn: platform_id=%s session_id=%s turn_id=%s reason=missing_immediate_reply",
                     event.get_platform_id(),
                     event.session_id,
                     event.get_extra("_turn_id"),
                 )
-                self._forward_to_core(event)
-                return
+                record_interaction_turn_failure(
+                    event,
+                    stage="decision",
+                    reason="missing_self_reply",
+                    user_visible_action="none",
+                )
+                raise RuntimeError("Interaction self reply decision missing reply")
             if decision.should_emit_immediate_reply:
-                sent = await self._emit_immediate_reply_or_record_failure(
+                await self._emit_immediate_reply_or_record_failure(
                     event,
                     decision,
                 )
-                if not sent:
-                    self._forward_to_core(event)
-                    return
             completed = await self._complete_visible_turn_or_record_failure(
                 event,
             )
             if completed:
-                await self._finalize_turn(
+                self._materialize_self_reply_turn(
                     event,
-                    visible_reply=decision.immediate_spoken_reply,
+                    reply=decision.immediate_spoken_reply,
                 )
+                await self._finalize_turn(event)
             return
         if decision.route_mode == RouteMode.HYBRID:
             if decision.should_emit_immediate_reply:
@@ -674,11 +677,33 @@ class InteractionMiddleware:
         set_interaction_turn_finalized_material(event, material)
         return material
 
-    async def _finalize_turn(
+    def _materialize_self_reply_turn(
         self,
         event: AstrMessageEvent,
         *,
-        visible_reply: str | None = None,
+        reply: str | None,
+    ) -> dict[str, Any]:
+        material = self._build_finalized_turn_material(
+            event,
+            visible_outputs=get_interaction_turn_visible_outputs(event),
+            canonical_reply=reply,
+        )
+        if material is None:
+            event.set_extra("_interaction_finalized_turn_material_failed", True)
+            event.set_extra(
+                "_interaction_finalized_turn_material_failure_reason",
+                "missing_self_reply_material",
+            )
+            record_interaction_turn_completion_failure(
+                event,
+                "missing_self_reply_material",
+            )
+            raise RuntimeError("Interaction self reply material missing")
+        return material
+
+    async def _finalize_turn(
+        self,
+        event: AstrMessageEvent,
     ) -> None:
         turn_state = get_interaction_turn_state(event)
         if turn_state is None:
@@ -688,63 +713,74 @@ class InteractionMiddleware:
 
         material = get_interaction_turn_finalized_material(event)
         if material is None:
-            material = self._build_finalized_turn_material(
-                event,
-                canonical_reply=visible_reply,
-            )
-        if material is not None:
-            turn_id = str(material.get("turn_id", "") or "")
-            canonical_reply = str(material.get("assistant_text", "") or "").strip()
-            if canonical_reply:
-                try:
-                    await self.memory_store.update_interaction_memory(
-                        event.unified_msg_origin,
-                        str(event.get_extra("_interaction_persona_id", "") or ""),
-                        lambda snapshot: update_interaction_memory_from_turn(
-                            snapshot,
-                            user_text=event.message_str,
-                            visible_reply=canonical_reply,
-                            turn_id=turn_id,
-                        ),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    event.set_extra("_interaction_memory_persist_failed", True)
-                    event.set_extra(
-                        "_interaction_memory_persist_failure_reason", str(exc)
-                    )
-                    record_interaction_turn_completion_failure(
-                        event,
-                        f"memory_persist:{exc}",
-                    )
-                    logger.error(
-                        "Interaction memory persistence failed during turn finalization: platform_id=%s session_id=%s turn_id=%s error=%s",
-                        event.get_platform_id(),
-                        event.session_id,
-                        turn_id,
-                        exc,
-                        exc_info=True,
-                    )
-                    return
-                mark_interaction_turn_memory_persisted(event)
-            else:
-                event.set_extra("_interaction_memory_persist_failed", True)
-                event.set_extra(
-                    "_interaction_memory_persist_failure_reason",
-                    "missing_canonical_reply",
-                )
-                record_interaction_turn_completion_failure(
-                    event,
-                    "missing_canonical_reply",
-                )
-                return
-        else:
             event.set_extra("_interaction_memory_persist_failed", True)
             event.set_extra(
                 "_interaction_memory_persist_failure_reason",
-                "missing_material",
+                "missing_finalized_turn_material",
             )
-            record_interaction_turn_completion_failure(event, "missing_material")
+            record_interaction_turn_completion_failure(
+                event,
+                "missing_finalized_turn_material",
+            )
+            logger.error(
+                "Interaction turn finalization failed: missing finalized material platform_id=%s session_id=%s turn_id=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+            )
             return
+        turn_id = str(material.get("turn_id", "") or "").strip()
+        if not turn_id:
+            event.set_extra("_interaction_memory_persist_failed", True)
+            event.set_extra(
+                "_interaction_memory_persist_failure_reason",
+                "missing_turn_id",
+            )
+            record_interaction_turn_completion_failure(event, "missing_turn_id")
+            return
+
+        canonical_reply = str(material.get("assistant_text", "") or "").strip()
+        if not canonical_reply:
+            event.set_extra("_interaction_memory_persist_failed", True)
+            event.set_extra(
+                "_interaction_memory_persist_failure_reason",
+                "missing_canonical_reply",
+            )
+            record_interaction_turn_completion_failure(
+                event,
+                "missing_canonical_reply",
+            )
+            return
+
+        try:
+            await self.memory_store.update_interaction_memory(
+                event.unified_msg_origin,
+                str(event.get_extra("_interaction_persona_id", "") or ""),
+                lambda snapshot: update_interaction_memory_from_turn(
+                    snapshot,
+                    user_text=event.message_str,
+                    visible_reply=canonical_reply,
+                    turn_id=turn_id,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            event.set_extra("_interaction_memory_persist_failed", True)
+            event.set_extra("_interaction_memory_persist_failure_reason", str(exc))
+            record_interaction_turn_completion_failure(
+                event,
+                f"memory_persist:{exc}",
+            )
+            logger.error(
+                "Interaction memory persistence failed during turn finalization: platform_id=%s session_id=%s turn_id=%s error=%s",
+                event.get_platform_id(),
+                event.session_id,
+                turn_id,
+                exc,
+                exc_info=True,
+            )
+            return
+        else:
+            mark_interaction_turn_memory_persisted(event)
 
         self._schedule_turn_postprocess(event)
         mark_interaction_turn_postprocess_dispatched(event)
@@ -755,4 +791,5 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         visible_reply: str | None,
     ) -> None:
-        await self._finalize_turn(event, visible_reply=visible_reply)
+        del visible_reply
+        await self._finalize_turn(event)

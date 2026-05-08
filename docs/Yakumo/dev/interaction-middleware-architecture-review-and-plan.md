@@ -921,7 +921,9 @@
 - `RespondStage` 已不再对 interaction turn 调度普通 `AFTER_TURN_COMPLETED`。
 - `ResultDecorateStage` 已对 interaction turn 提前退场，不再运行旧装饰链路或 decorating hook。
 - `InteractionOutputController` 无 middleware persist callback 时不再自完成 turn，而是记录 `missing_persist_callback`。
+- `InteractionOutputController` 在请求 middleware persist 前会先显式 materialize finalized turn material；persist callback 不再承担 material 构造职责。
 - `InteractionMiddleware._schedule_turn_postprocess()` 缺 finalized material 时不再现场重建 material，而是记录 `missing_finalized_turn_material`。
+- `InteractionMiddleware._finalize_turn()` 已改为只消费显式 finalized material；缺 material / turn_id / assistant_text 都是 completion contract failure，不再从 visible reply 或 visible outputs 现场反推。
 - `InteractionResultView.decision` 已改为只读 snapshot。
 - `InteractionUtterance.metadata` 已用于记录实际投递形态，memory/final material 仍只消费 semantic text。
 - interaction middleware 开发期拒绝 `fallback_policy` 配置；内部主链路不提供体验兜底模式。
@@ -930,6 +932,8 @@
 - finalizer provider missing / timeout / model error / empty output 在 `fail_fast` 下抛错；forced finalizer failure 不发送替代文本。
 - `InteractionTurnFailure` ledger 已建立，关键失败入口会记录 stage、reason、exception、用户可见动作和 completion 状态。
 - decision agent 若返回旧 fallback decision，middleware 会记录 failure 并拒绝继续。
+- SELF_REPLY 缺少 immediate reply 已前移到 decision validation；middleware 只拒绝契约违规，不再补救转 core。
+- SELF_REPLY 成功路径会在 visible completion 后显式 materialize turn material，再进入统一 finalization。
 - SELF_REPLY / HYBRID immediate reply 失败与 visible completion 失败在开发期直接暴露，不再转 core 掩盖。
 - stream interjection decider / model 失败已接入 failure ledger；由于它不是主回复链路，用户可见动作记录为继续主 stream。
 
@@ -1089,6 +1093,9 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
   - 修改 `_schedule_turn_postprocess(event)`。
   - 删除“缺 finalized material 时调用 `_build_finalized_turn_material(...)`”的内部 fallback。
   - 缺 material 时记录 `_interaction_turn_postprocess_failed=True` 与 completion failure `missing_finalized_turn_material`，并直接返回。
+  - 修改 `_finalize_turn(event)`。
+  - `_finalize_turn(...)` 只消费已写入 turn state 的 finalized material；缺 material、缺 `turn_id`、缺 `assistant_text` 均记录 completion failure 并返回。
+  - SELF_REPLY 成功路径通过 `_materialize_self_reply_turn(...)` 显式写入 material 后再调用 `_finalize_turn(...)`。
 
 新增测试：
 
@@ -1101,13 +1108,18 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
 
 - `RespondStage._schedule_after_message_sent_postprocess(event)` 对 interaction turn 只保留 `AFTER_MESSAGE_SENT`，不再调度普通 `AFTER_TURN_COMPLETED`。
 - `InteractionOutputController._persist_interaction_turn(...)` 无 `_persist_callback` 时记录 `missing_persist_callback` 并返回，不再自行 persist 或 mark completed。
+- `InteractionOutputController._materialize_finalized_turn(...)` 在 passthrough / core reply / core stream 等请求 persist 前显式写入 finalized material。
 - `InteractionMiddleware._schedule_turn_postprocess(...)` 缺 finalized material 时记录 `missing_finalized_turn_material` 并返回，不再重建 material。
+- `InteractionMiddleware._finalize_turn(...)` 缺 finalized material 时记录 `missing_finalized_turn_material` 并返回，不再从 `visible_reply` 或 visible outputs 构造 material。
+- `InteractionMiddleware._materialize_self_reply_turn(...)` 负责 SELF_REPLY 成功路径的显式 materialization。
 
 Agent 相关操作：
 
 - `InteractionMiddleware` 仍是 turn lifecycle owner。
 - `InteractionOutputController` 在 interaction 模式下只向 middleware callback 请求 completion，不再独立完成 turn。
+- `InteractionOutputController` 是 outbound material producer，middleware completion 只消费其显式产物。
 - `RespondStage` 对 interaction turn 不再扮演 completion owner。
+- `_finalize_turn(...)` 是 completion consumer，不再兼任 material builder。
 
 验收标准：
 
@@ -1279,7 +1291,8 @@ Agent 相关操作：
   - 确认 `memory_relevant=False` 的 utterance 不进入 canonical assistant reply。
 
 - `astrbot/core/interaction/middleware.py`
-  - `_build_finalized_turn_material(...)` 只从 turn state ledger / explicit canonical reply 读取。
+  - `_build_finalized_turn_material(...)` 只作为显式 materializer 使用。
+  - `_finalize_turn(...)` 只消费已经 materialized 的 turn material。
   - 不再从旧 extra 或 downstream pipeline 输出反推。
 
 - `astrbot/core/memory/postprocessor.py`
@@ -1418,6 +1431,7 @@ Agent 相关操作：
 
 - `InteractionDecisionError` 已加入 `decision_agent.py`。
 - provider unavailable、timeout、model error、non-json、invalid payload、low confidence 在 `fail_fast` 下抛错。
+- SELF_REPLY 缺少 `immediate_spoken_reply` 在 decision validation 阶段抛错。
 - `_decide_or_fallback(...)` 已改为 `_decide_interaction_route(...)`。
 - middleware 捕获 decision pipeline error 后记录 `_interaction_decision_failed` 与 failure ledger，然后抛错。
 - 已覆盖 missing plugin context / decision pipeline error / low confidence 的 fail-fast 测试。

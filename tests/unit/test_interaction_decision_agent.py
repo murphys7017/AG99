@@ -71,6 +71,20 @@ def test_validate_interaction_decision_truncates_spoken_reply():
     assert len(validated.immediate_spoken_reply) <= 60
 
 
+def test_validate_interaction_decision_rejects_self_reply_without_reply():
+    config = InteractionAgentConfig(decision_confidence_threshold=0.1)
+    decision = InteractionDecision(
+        route_mode=RouteMode.SELF_REPLY,
+        should_emit_immediate_reply=False,
+        immediate_spoken_reply=None,
+        confidence=0.9,
+        reason="invalid",
+    )
+
+    with pytest.raises(InteractionDecisionError, match="self_reply decision"):
+        validate_interaction_decision(decision, config)
+
+
 def test_build_fallback_decision_is_marked_as_fallback():
     decision = build_fallback_decision("provider unavailable")
 

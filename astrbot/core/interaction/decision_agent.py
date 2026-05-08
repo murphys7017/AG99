@@ -149,6 +149,11 @@ def validate_interaction_decision(
             reply = reply[:60].rstrip("，,。.!！?？")
         decision.immediate_spoken_reply = reply
     if decision.route_mode == RouteMode.SELF_REPLY:
+        if not decision.immediate_spoken_reply:
+            raise InteractionDecisionError(
+                "missing_self_reply",
+                "self_reply decision requires immediate_spoken_reply",
+            )
         decision.should_emit_immediate_reply = bool(decision.immediate_spoken_reply)
     if decision.route_mode == RouteMode.HYBRID and not decision.immediate_spoken_reply:
         logger.info(

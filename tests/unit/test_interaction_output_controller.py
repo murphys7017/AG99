@@ -511,6 +511,20 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     ]
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_not_called()
+    assert webchat_event.get_extra("_interaction_finalized_turn_material") == {
+        "turn_id": "turn-1",
+        "user_text": "帮我查一下天气",
+        "assistant_text": "command result",
+        "visible_outputs": [
+            {
+                "turn_id": "turn-1",
+                "kind": "passthrough",
+                "text": "command result",
+                "memory_relevant": True,
+            }
+        ],
+        "history_source": "interaction.turn.material",
+    }
     memory_store.update_interaction_memory.assert_not_awaited()
 
 
@@ -673,9 +687,9 @@ async def test_result_contributor_receives_read_only_view(webchat_event):
     assert turn_state is not None
     assert turn_state.visible_outputs[0]["text"] == "行，等我查一下。"
     assert turn_state.utterances[0].text == "行，等我查一下。"
-    assert (
-        get_interaction_turn_state(webchat_event).finalized_turn_material["assistant"]
-        == "final answer"
+    assert turn_state.finalized_turn_material is not None
+    assert turn_state.finalized_turn_material["assistant_text"] == (
+        "行，等我查一下。 dry result"
     )
     assert inspecting_contributor.view is not None
     assert inspecting_contributor.view.get("session_id") == webchat_event.unified_msg_origin

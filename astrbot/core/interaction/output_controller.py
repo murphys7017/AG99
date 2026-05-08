@@ -205,6 +205,7 @@ class InteractionOutputController:
                 event.get_extra("_turn_id"),
                 len(message.get_plain_text()),
             )
+            self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(
                 event,
                 message.get_plain_text(),
@@ -235,6 +236,7 @@ class InteractionOutputController:
                 delivered_message_ids=delivered_message_ids,
                 metadata=materialization,
             )
+            self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(
                 event,
                 semantic_text,
@@ -274,6 +276,7 @@ class InteractionOutputController:
             delivered_message_ids=delivered_message_ids,
             metadata=materialization,
         )
+        self._materialize_finalized_turn(event)
 
     async def capture_visible_completion(
         self,
@@ -436,6 +439,10 @@ class InteractionOutputController:
             message_kind="core_stream",
             text=get_interaction_turn_stream_text(event),
         )
+        self._materialize_finalized_turn(event)
+
+    @staticmethod
+    def _materialize_finalized_turn(event: AstrMessageEvent) -> None:
         turn_id = str(event.get_extra("_turn_id", "") or "").strip()
         visible_outputs = get_interaction_turn_visible_outputs(event)
         turn_state = get_interaction_turn_state(event)
@@ -1049,6 +1056,7 @@ class InteractionOutputController:
                 delivered_message_ids=delivered_message_ids,
                 metadata=materialization,
             )
+            self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(
                 event,
                 semantic_text,
@@ -1096,6 +1104,7 @@ class InteractionOutputController:
             delivered_message_ids=delivered_message_ids,
             metadata=materialization,
         )
+        self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(
             event,
             semantic_text,
