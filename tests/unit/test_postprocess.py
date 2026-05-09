@@ -512,6 +512,54 @@ async def test_result_decorate_stage_skips_interaction_turn_reply_prefix():
 
 
 @pytest.mark.asyncio
+async def test_result_decorate_stage_warns_when_tts_provider_missing():
+    event, _ = _make_event()
+    result = _make_result([Comp.Plain("hello")])
+    event.get_result.return_value = result
+
+    stage = ResultDecorateStage()
+    stage.content_safe_check_reply = False
+    stage.content_safe_check_stage = None
+    stage.reply_prefix = ""
+    stage.reply_with_mention = False
+    stage.reply_with_quote = False
+    stage.enable_segmented_reply = False
+    stage.forward_threshold = 1000
+    stage.show_reasoning = False
+    stage.content_cleanup_rule = ""
+    stage.tts_trigger_probability = 1.0
+    stage.ctx = MagicMock()
+    stage.ctx.astrbot_config = {
+        "provider_tts_settings": {
+            "enable": True,
+            "use_file_service": False,
+            "dual_output": False,
+        },
+        "provider_settings": {},
+        "t2i": False,
+    }
+    stage.ctx.plugin_manager.context.get_using_tts_provider.return_value = None
+
+    with (
+        patch(
+            "astrbot.core.pipeline.result_decorate.stage.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "astrbot.core.pipeline.result_decorate.stage.star_handlers_registry.get_handlers_by_event_type",
+            return_value=[],
+        ),
+        patch("astrbot.core.pipeline.result_decorate.stage.logger.warning") as warning,
+    ):
+        async for _ in stage.process(event):
+            pass
+
+    assert result.chain[0].text == "hello"
+    warning.assert_called_once()
+    assert "未配置文本转语音模型" in warning.call_args.args[0]
+
+
+@pytest.mark.asyncio
 async def test_respond_stage_schedules_postprocess_without_waiting_after_send():
     event, _ = _make_event()
     result = _make_result([Comp.Plain("hello")])

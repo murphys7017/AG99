@@ -7,6 +7,11 @@ from astrbot.core import logger
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.media_utils import ensure_wav
+from astrbot.core.voice import (
+    VoiceServiceError,
+    resolve_stt_provider,
+    transcribe_record,
+)
 
 from ..context import PipelineContext
 from ..stage import Stage, register_stage
@@ -85,10 +90,14 @@ class PreProcessStage(Stage):
 
         # STT
         if self.stt_settings.get("enable", False):
-            # TODO: 独立
             ctx = self.plugin_manager.context
-            stt_provider = ctx.get_using_stt_provider(event.unified_msg_origin)
-            if not stt_provider:
+            try:
+                stt_provider = resolve_stt_provider(
+                    ctx,
+                    event,
+                    stage="pipeline.preprocess_stt",
+                )
+            except VoiceServiceError:
                 logger.warning(
                     f"会话 {event.unified_msg_origin} 未配置语音转文本模型。",
                 )
@@ -96,18 +105,26 @@ class PreProcessStage(Stage):
             message_chain = event.get_messages()
             for idx, component in enumerate(message_chain):
                 if isinstance(component, Record):
-                    path = await component.convert_to_file_path()
                     retry = 5
                     for i in range(retry):
                         try:
-                            result = await stt_provider.get_text(audio_url=path)
-                            if result:
-                                logger.info("语音转文本结果: " + result)
-                                message_chain[idx] = Plain(result)
-                                event.message_str += result
-                                event.message_obj.message_str += result
+                            result = await transcribe_record(
+                                ctx,
+                                event,
+                                component,
+                                provider=stt_provider,
+                                stage="pipeline.preprocess_stt",
+                            )
+                            logger.info("语音转文本结果: " + result.text)
+                            message_chain[idx] = Plain(result.text)
+                            event.message_str += result.text
+                            event.message_obj.message_str += result.text
                             break
-                        except FileNotFoundError as e:
+                        except VoiceServiceError as e:
+                            if e.reason != "source_unavailable":
+                                logger.error(traceback.format_exc())
+                                logger.error(f"语音转文本失败: {e}")
+                                break
                             # napcat workaround
                             logger.warning(e)
                             logger.warning(f"重试中: {i + 1}/{retry}")

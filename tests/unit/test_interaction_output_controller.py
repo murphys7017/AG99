@@ -10,6 +10,7 @@ from astrbot.core.interaction.contributors import (
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
+from astrbot.core.interaction.finalizer import InteractionFinalizerError
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
@@ -18,18 +19,16 @@ from astrbot.core.interaction.turn_state import (
     append_interaction_turn_visible_output,
     get_interaction_turn_state,
     mark_interaction_turn_completed,
-    mark_interaction_turn_memory_persisted,
     set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
 )
 from astrbot.core.interaction.types import (
-    FallbackPolicy,
     FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
     RouteMode,
 )
-from astrbot.core.message.components import Image, Plain, Record
+from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_event_result import (
     MessageChain,
     MessageEventResult,
@@ -169,8 +168,7 @@ class InspectingResultContributor:
         return None
 
 
-async def _mark_persisted_callback(event, visible_reply):  # noqa: ANN001
-    del visible_reply
+async def _mark_completed_callback(event):  # noqa: ANN001
     turn_state = get_interaction_turn_state(event)
     assert turn_state is not None
     visible_outputs = [dict(output) for output in turn_state.visible_outputs]
@@ -190,7 +188,6 @@ async def _mark_persisted_callback(event, visible_reply):  # noqa: ANN001
                 "history_source": "interaction.turn.material",
             },
         )
-    mark_interaction_turn_memory_persisted(event)
     mark_interaction_turn_completed(event)
 
 
@@ -291,13 +288,10 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
     plugin_context.list_interaction_result_contributors.return_value = [
         ResultContributor()
     ]
-    memory_store = MagicMock()
-    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        memory_store=memory_store,
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
 
     with patch(
@@ -322,7 +316,6 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
     assert payload["platform_extras"]["client_objects"] == [{"kind": "card"}]
     assert queue.empty()
     assert webchat_event.get_extra("_visible_turn_completion_sent") is None
-    memory_store.update_interaction_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -473,13 +466,10 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     plugin_context.list_interaction_result_contributors.return_value = [
         ResultContributor()
     ]
-    memory_store = MagicMock()
-    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        memory_store=memory_store,
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -525,7 +515,6 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
         ],
         "history_source": "interaction.turn.material",
     }
-    memory_store.update_interaction_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -533,12 +522,9 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
     webchat_event,
 ):
     queue = asyncio.Queue()
-    memory_store = MagicMock()
-    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        memory_store=memory_store,
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
     set_interaction_turn_decision(
         webchat_event,
@@ -592,7 +578,6 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
             "memory_relevant": True,
         },
     ]
-    memory_store.update_interaction_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -734,11 +719,8 @@ async def test_output_controller_requires_persist_callback_for_interaction_compl
     webchat_event,
 ):
     queue = asyncio.Queue()
-    memory_store = MagicMock()
-    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        memory_store=memory_store,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -761,15 +743,14 @@ async def test_output_controller_requires_persist_callback_for_interaction_compl
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_persist_callback_missing") is True
     assert (
-        webchat_event.get_extra("_interaction_memory_persist_failure_reason")
+        webchat_event.get_extra("_interaction_turn_finalization_failure_reason")
         == "missing_persist_callback"
     )
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
-    assert turn_state.completion_state.memory_persisted is False
+    assert turn_state.completion_state.legacy_memory_persisted is False
     assert turn_state.completion_state.completed is False
     assert turn_state.completion_state.failure_reason == "missing_persist_callback"
-    memory_store.update_interaction_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -777,12 +758,9 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
     webchat_event,
 ):
     queue = asyncio.Queue()
-    memory_store = MagicMock()
-    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        memory_store=memory_store,
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
     append_interaction_turn_visible_output(
         webchat_event,
@@ -837,7 +815,6 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
         ],
         "history_source": "interaction.turn.material",
     }
-    memory_store.update_interaction_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -885,7 +862,7 @@ async def test_force_finalizer_failure_fail_fast_does_not_send_raw_core_result(
 
 
 @pytest.mark.asyncio
-async def test_force_finalizer_failure_observable_protects_with_notice(
+async def test_force_finalizer_failure_observable_protect_does_not_send_notice(
     webchat_event,
 ):
     queue = asyncio.Queue()
@@ -897,7 +874,6 @@ async def test_force_finalizer_failure_observable_protects_with_notice(
         interaction_config=InteractionAgentConfig(
             finalizer_mode=FinalizerMode.FORCE,
             finalizer_provider_id="missing",
-            fallback_policy=FallbackPolicy.OBSERVABLE_PROTECT,
         ),
     )
     webchat_event.set_result(
@@ -911,13 +887,12 @@ async def test_force_finalizer_failure_observable_protects_with_notice(
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
-        await controller.capture_message_chain(
-            MessageChain([Plain("raw core result")]),
-            webchat_event,
-        )
+        with pytest.raises(InteractionFinalizerError, match="provider_unavailable"):
+            await controller.capture_message_chain(
+                MessageChain([Plain("raw core result")]),
+                webchat_event,
+            )
 
-    payload = queue.get_nowait()
-    assert payload["data"] == "最终回复整理失败，请查看日志。"
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_finalizer_failed") is True
     assert (
@@ -1067,16 +1042,13 @@ async def test_capture_streaming_observes_core_chunks_without_interjection(
 @pytest.mark.asyncio
 async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_event):
     queue = asyncio.Queue()
-    memory_store = MagicMock()
-    memory_store.update_interaction_memory = AsyncMock()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
             finalizer_mode=FinalizerMode.OFF,
             stream_observation_enabled=False,
             stream_interjection_enabled=False,
         ),
-        memory_store=memory_store,
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
 
     async def generator():
@@ -1120,9 +1092,62 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
     assert turn_state.utterances[0].kind == "core_stream"
     assert turn_state.utterances[0].text == "hello world"
     assert turn_state.completion_state.material_finalized is True
-    assert turn_state.completion_state.memory_persisted is True
     assert turn_state.completion_state.completed is True
-    memory_store.update_interaction_memory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_capture_streaming_uses_audio_chunk_text_for_live_material(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_observation_enabled=False,
+            stream_interjection_enabled=False,
+        ),
+        persist_callback=_mark_completed_callback,
+    )
+
+    async def generator():
+        audio_chunk = MessageChain([Plain("audio-base64"), Json({"text": "spoken"})])
+        audio_chunk.type = "audio_chunk"
+        yield audio_chunk
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+
+    assert payloads[0]["type"] == "audio_chunk"
+    assert payloads[0]["data"] == "audio-base64"
+    assert payloads[0]["text"] == "spoken"
+    assert webchat_event.get_extra("_interaction_core_stream_text") == "spoken"
+    assert webchat_event.get_extra("_interaction_finalized_turn_material") == {
+        "turn_id": "turn-1",
+        "user_text": "帮我查一下天气",
+        "assistant_text": "spoken",
+        "visible_outputs": [
+            {
+                "turn_id": "turn-1",
+                "kind": "core_stream",
+                "text": "spoken",
+                "memory_relevant": True,
+            }
+        ],
+        "history_source": "interaction.turn.material",
+    }
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.stream_state.total_text == "spoken"
+    assert turn_state.utterances[0].kind == "core_stream"
+    assert turn_state.utterances[0].text == "spoken"
+    assert turn_state.completion_state.completed is True
 
 
 @pytest.mark.asyncio
@@ -1477,6 +1502,38 @@ async def test_stream_prompt_uses_stream_state_for_current_buffer(webchat_event)
 
 
 @pytest.mark.asyncio
+async def test_stream_prompt_records_missing_context_store(webchat_event):
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "interaction_middleware": {},
+        "provider_settings": {},
+        "provider_stt_settings": {},
+        "provider_tts_settings": {},
+    }
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_interjection_enabled=True,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="interaction_memory_store"):
+        await controller._build_stream_interjection_prompt(
+            webchat_event,
+            observed_text="hello",
+            total_text="hello",
+            window_index=1,
+            is_final=False,
+        )
+
+    assert webchat_event.get_extra("_interaction_stream_context_build_failed") is True
+    assert "interaction_memory_store" in webchat_event.get_extra(
+        "_interaction_stream_context_build_failure_reason",
+    )
+
+
+@pytest.mark.asyncio
 async def test_streaming_finish_marker_is_not_sent_after_streaming_delivery(
     webchat_event,
 ):
@@ -1536,12 +1593,13 @@ async def test_tts_materialization_records_record_delivery_but_memory_uses_text(
         "t2i": False,
     }
     tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
     tts_provider.get_audio = AsyncMock(return_value="voice.wav")
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1577,6 +1635,10 @@ async def test_tts_materialization_records_record_delivery_but_memory_uses_text(
     assert turn_state.utterances[0].text == "semantic answer"
     assert turn_state.utterances[0].metadata["delivered_as"] == "record"
     assert turn_state.utterances[0].metadata["tts"][0]["tts_audio_path"] == "voice.wav"
+    assert (
+        turn_state.utterances[0].metadata["tts"][0]["tts_provider_id"]
+        == "tts-provider"
+    )
     assert webchat_event.get_extra("_interaction_finalized_turn_material")[
         "assistant_text"
     ] == "semantic answer"
@@ -1600,7 +1662,7 @@ async def test_t2i_materialization_records_image_delivery_but_memory_uses_text(
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
     long_text = "这是一段很长的语义回复，" * 8
     webchat_event.set_result(
@@ -1663,7 +1725,7 @@ async def test_tts_materialization_failure_is_not_downgraded_to_text(webchat_eve
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-        persist_callback=_mark_persisted_callback,
+        persist_callback=_mark_completed_callback,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1681,7 +1743,7 @@ async def test_tts_materialization_failure_is_not_downgraded_to_text(webchat_eve
             "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
             new=AsyncMock(return_value=True),
         ),
-        pytest.raises(RuntimeError, match="TTS provider unavailable"),
+        pytest.raises(RuntimeError, match="Voice TTS provider unavailable"),
     ):
         await controller.capture_message_chain(
             MessageChain([Plain("semantic answer")]),
@@ -1691,6 +1753,142 @@ async def test_tts_materialization_failure_is_not_downgraded_to_text(webchat_eve
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_outbound_materialization_failed") is True
     assert webchat_event.get_extra("_interaction_outbound_materialization_stage") == "tts"
+    assert (
+        webchat_event.get_extra("_interaction_outbound_materialization_failure_reason")
+        == "provider_unavailable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tts_file_registration_failure_is_not_downgraded_to_text(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "provider_tts_settings": {
+            "enable": True,
+            "dual_output": False,
+            "use_file_service": True,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": False,
+        "callback_api_base": "http://localhost:6185",
+    }
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        persist_callback=_mark_completed_callback,
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("semantic answer")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "astrbot.core.voice.service.file_token_service.register_file",
+            new=AsyncMock(side_effect=RuntimeError("registry down")),
+        ),
+        pytest.raises(RuntimeError, match="registry down"),
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("semantic answer")]),
+            webchat_event,
+        )
+
+    assert queue.empty()
+    assert webchat_event.get_extra("_interaction_outbound_materialization_failed") is True
+    assert webchat_event.get_extra("_interaction_outbound_materialization_stage") == "tts"
+    assert (
+        webchat_event.get_extra("_interaction_outbound_materialization_failure_reason")
+        == "file_registration_failed"
+    )
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert any(
+        failure.stage == "outbound_materialization"
+        and failure.reason == "file_registration_failed"
+        for failure in turn_state.failures
+    )
+
+
+@pytest.mark.asyncio
+async def test_tts_file_service_config_missing_is_not_downgraded_to_text(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "provider_tts_settings": {
+            "enable": True,
+            "dual_output": False,
+            "use_file_service": True,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": False,
+        "callback_api_base": "",
+    }
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        persist_callback=_mark_completed_callback,
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("semantic answer")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+        pytest.raises(RuntimeError, match="callback_api_base"),
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("semantic answer")]),
+            webchat_event,
+        )
+
+    assert queue.empty()
+    assert (
+        webchat_event.get_extra("_interaction_outbound_materialization_failure_reason")
+        == "file_registration_config_missing"
+    )
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert any(
+        failure.stage == "outbound_materialization"
+        and failure.reason == "file_registration_config_missing"
+        for failure in turn_state.failures
+    )
 
 
 @pytest.mark.asyncio

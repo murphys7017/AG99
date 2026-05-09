@@ -18,6 +18,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.session_llm_manager import SessionServiceManager
+from astrbot.core.voice import VoiceServiceError, resolve_tts_provider, synthesize_text
 
 from .context_builder import (
     build_interaction_context_pack,
@@ -68,7 +69,7 @@ from .turn_state import (
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
-from .types import FallbackPolicy, FinalizerMode, InteractionAgentConfig, RouteMode
+from .types import FinalizerMode, InteractionAgentConfig, RouteMode
 
 
 @dataclass(slots=True)
@@ -84,15 +85,13 @@ class InteractionOutputController:
         *,
         plugin_context: Any | None = None,
         interaction_config: InteractionAgentConfig | None = None,
-        memory_store: InteractionMemoryStore | None = None,
+        interaction_memory_store: InteractionMemoryStore | None = None,
         platform_settings: dict[str, Any] | None = None,
-        persist_callback: (
-            Callable[[AstrMessageEvent, str | None], Awaitable[None]] | None
-        ) = None,
+        persist_callback: (Callable[[AstrMessageEvent], Awaitable[None]] | None) = None,
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
-        self.memory_store = memory_store or InteractionMemoryStore()
+        self.interaction_memory_store = interaction_memory_store
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
         self._refresh_outbound_materialization_config()
@@ -206,10 +205,7 @@ class InteractionOutputController:
                 len(message.get_plain_text()),
             )
             self._materialize_finalized_turn(event)
-            await self._persist_interaction_turn(
-                event,
-                message.get_plain_text(),
-            )
+            await self._persist_interaction_turn(event)
             return
 
         if outbound_kind == "passthrough":
@@ -237,10 +233,7 @@ class InteractionOutputController:
                 metadata=materialization,
             )
             self._materialize_finalized_turn(event)
-            await self._persist_interaction_turn(
-                event,
-                semantic_text,
-            )
+            await self._persist_interaction_turn(event)
             return
 
         if outbound_kind == "suppressed_duplicate_final":
@@ -248,35 +241,7 @@ class InteractionOutputController:
 
         mark_interaction_turn_core_final_result_consumed(event)
         full_message = self._get_full_core_final_message(event, message)
-        final_message = await self.maybe_finalize_and_send(full_message, event)
-        if final_message is not None:
-            return
-
-        semantic_text = full_message.get_plain_text()
-        (
-            materialized_message,
-            materialization,
-        ) = await self.materialize_interaction_outbound_message(
-            event,
-            full_message,
-            message_kind="core_reply",
-            result_is_model_result=True,
-        )
-        delivered_message_ids = await self._deliver_visible_message(
-            event,
-            materialized_message,
-            message_kind="core_reply",
-            result_is_model_result=True,
-            allow_segmented_reply=True,
-        )
-        self._record_visible_output(
-            event,
-            message_kind="core_reply",
-            text=semantic_text,
-            delivered_message_ids=delivered_message_ids,
-            metadata=materialization,
-        )
-        self._materialize_finalized_turn(event)
+        await self._deliver_core_reply(full_message, event)
 
     async def capture_visible_completion(
         self,
@@ -331,10 +296,7 @@ class InteractionOutputController:
             raise
         else:
             self._finalize_interaction_stream_output(event)
-            await self._persist_interaction_turn(
-                event,
-                get_interaction_turn_stream_text(event),
-            )
+            await self._persist_interaction_turn(event)
         finally:
             set_interaction_turn_core_streaming_active(event, False)
 
@@ -899,12 +861,16 @@ class InteractionOutputController:
                 recent_messages = recent_messages[-desired_window:]
         elif self.plugin_context is not None:
             try:
+                if self.interaction_memory_store is None:
+                    raise RuntimeError(
+                        "Interaction stream prompt context requires interaction_memory_store"
+                    )
                 build_config = _build_decision_build_config(self.plugin_context, event)
                 prompt_context_pack = await build_interaction_context_pack(
                     event,
                     self.plugin_context,
                     build_config,
-                    self.memory_store,
+                    self.interaction_memory_store,
                 )
                 persona_payload = extract_persona_payload(prompt_context_pack)
                 memory_payload = extract_interaction_memory_payload(prompt_context_pack)
@@ -929,6 +895,7 @@ class InteractionOutputController:
                     exc,
                     exc_info=True,
                 )
+                raise
         payload = {
             "platform_id": event.get_platform_id(),
             "session_id": event.unified_msg_origin,
@@ -1003,11 +970,11 @@ class InteractionOutputController:
             memory_relevant=False,
         )
 
-    async def maybe_finalize_and_send(
+    async def _deliver_core_reply(
         self,
         message: MessageChain,
         event: AstrMessageEvent,
-    ) -> MessageChain | None:
+    ) -> None:
         core_result_text = message.get_plain_text()
         immediate_reply = get_interaction_turn_immediate_reply(event)
         final_text = await finalize_response(
@@ -1026,42 +993,7 @@ class InteractionOutputController:
                 event,
                 "finalizer_failed",
             )
-            if (
-                self.interaction_config.fallback_policy
-                != FallbackPolicy.OBSERVABLE_PROTECT
-            ):
-                raise RuntimeError("Interaction finalizer failed")
-            final_message = message.derive([Plain("最终回复整理失败，请查看日志。")])
-            semantic_text = final_message.get_plain_text()
-            (
-                materialized_message,
-                materialization,
-            ) = await self.materialize_interaction_outbound_message(
-                event,
-                final_message,
-                message_kind="core_reply",
-                result_is_model_result=True,
-            )
-            delivered_message_ids = await self._deliver_visible_message(
-                event,
-                materialized_message,
-                message_kind="core_reply",
-                result_is_model_result=True,
-                allow_segmented_reply=True,
-            )
-            self._record_visible_output(
-                event,
-                message_kind="core_reply",
-                text=semantic_text,
-                delivered_message_ids=delivered_message_ids,
-                metadata=materialization,
-            )
-            self._materialize_finalized_turn(event)
-            await self._persist_interaction_turn(
-                event,
-                semantic_text,
-            )
-            return final_message
+            raise RuntimeError("Interaction finalizer failed")
         final_message = message
         if final_text:
             final_message = message.derive([Plain(final_text)])
@@ -1105,11 +1037,7 @@ class InteractionOutputController:
             metadata=materialization,
         )
         self._materialize_finalized_turn(event)
-        await self._persist_interaction_turn(
-            event,
-            semantic_text,
-        )
-        return final_message
+        await self._persist_interaction_turn(event)
 
     @staticmethod
     def _is_core_final_model_result(event: AstrMessageEvent) -> bool:
@@ -1129,7 +1057,13 @@ class InteractionOutputController:
 
     @staticmethod
     def _extract_observable_stream_text(chain: MessageChain) -> str:
-        if chain.type in {"reasoning", "audio_chunk", "break"}:
+        if chain.type in {"reasoning", "break"}:
+            return ""
+        if chain.type == "audio_chunk":
+            for component in chain.chain:
+                if isinstance(component, Json):
+                    text = component.data.get("text")
+                    return str(text or "")
             return ""
         return chain.get_plain_text()
 
@@ -1389,12 +1323,6 @@ class InteractionOutputController:
         result_is_model_result: bool,
     ) -> tuple[MessageChain, dict[str, Any]]:
         tts_settings = self._get_tts_settings()
-        get_tts_provider = getattr(self.plugin_context, "get_using_tts_provider", None)
-        tts_provider = (
-            get_tts_provider(event.unified_msg_origin)
-            if callable(get_tts_provider)
-            else None
-        )
         should_try_tts = (
             bool(tts_settings.get("enable"))
             and result_is_model_result
@@ -1403,13 +1331,19 @@ class InteractionOutputController:
         )
         if not should_try_tts:
             return message, {}
-        if not tts_provider:
+        try:
+            tts_provider = resolve_tts_provider(
+                self.plugin_context,
+                event,
+                stage="interaction.outbound_tts",
+            )
+        except VoiceServiceError as exc:
             self._record_outbound_materialization_failure(
                 event,
                 "tts",
-                "provider_unavailable",
+                exc.reason,
             )
-            raise RuntimeError("Interaction TTS provider unavailable")
+            raise
 
         new_chain = []
         converted: list[dict[str, Any]] = []
@@ -1419,38 +1353,42 @@ class InteractionOutputController:
                 continue
             try:
                 logger.info("Interaction TTS request: %s", comp.text)
-                audio_path = await tts_provider.get_audio(comp.text)
-                logger.info("Interaction TTS result: %s", audio_path)
-                if not audio_path:
-                    self._record_outbound_materialization_failure(
-                        event,
-                        "tts",
-                        "empty_audio_path",
-                    )
-                    raise RuntimeError("Interaction TTS returned empty audio path")
-                url = await self._register_interaction_tts_file_if_needed(
-                    audio_path,
-                    tts_settings,
+                result = await synthesize_text(
+                    self.plugin_context,
+                    event,
+                    comp.text,
+                    provider=tts_provider,
+                    stage="interaction.outbound_tts",
+                    use_file_service=bool(tts_settings.get("use_file_service")),
+                    callback_api_base=str(
+                        self._get_config_value("callback_api_base", "")
+                    ),
+                    require_file_registration_config=True,
                 )
-                delivered_file = url or audio_path
+                logger.info("Interaction TTS result: %s", result.audio_path)
                 new_chain.append(
                     Record(
-                        file=delivered_file,
-                        url=delivered_file,
-                        text=comp.text,
+                        file=result.delivered_file,
+                        url=result.delivered_file,
+                        text=result.text,
                     )
                 )
                 converted.append(
                     {
-                        "tts_source_text": comp.text,
-                        "tts_audio_path": audio_path,
-                        "tts_audio_url": url,
+                        "tts_source_text": result.text,
+                        "tts_audio_path": result.audio_path,
+                        "tts_audio_url": result.audio_url,
+                        "tts_provider_id": result.provider_id,
                     }
                 )
                 if bool(tts_settings.get("dual_output")):
                     new_chain.append(comp)
-            except Exception as exc:
-                self._record_outbound_materialization_failure(event, "tts", str(exc))
+            except VoiceServiceError as exc:
+                self._record_outbound_materialization_failure(
+                    event,
+                    "tts",
+                    exc.reason,
+                )
                 logger.error(traceback.format_exc())
                 raise
         if not converted:
@@ -1462,19 +1400,6 @@ class InteractionOutputController:
                 "tts": converted,
             },
         )
-
-    async def _register_interaction_tts_file_if_needed(
-        self,
-        audio_path: str,
-        tts_settings: dict[str, Any],
-    ) -> str | None:
-        callback_api_base = self._get_config_value("callback_api_base", "")
-        if not tts_settings.get("use_file_service") or not callback_api_base:
-            return None
-        token = await file_token_service.register_file(audio_path)
-        url = f"{callback_api_base}/api/file/{token}"
-        logger.debug("Interaction TTS file registered: %s", url)
-        return url
 
     async def _apply_interaction_t2i(
         self,
@@ -1542,6 +1467,12 @@ class InteractionOutputController:
         event.set_extra("_interaction_outbound_materialization_failed", True)
         event.set_extra("_interaction_outbound_materialization_stage", stage)
         event.set_extra("_interaction_outbound_materialization_failure_reason", reason)
+        record_interaction_turn_failure(
+            event,
+            stage="outbound_materialization",
+            reason=reason,
+            user_visible_action="none",
+        )
         record_interaction_turn_completion_failure(
             event,
             f"outbound_materialization:{stage}:{reason}",
@@ -1672,17 +1603,17 @@ class InteractionOutputController:
     async def _persist_interaction_turn(
         self,
         event: AstrMessageEvent,
-        visible_reply: str | None,
     ) -> None:
         if is_interaction_turn_completed(event):
             return
         if self._persist_callback is not None:
-            await self._persist_callback(event, visible_reply)
+            await self._persist_callback(event)
             return
 
         event.set_extra("_interaction_persist_callback_missing", True)
+        event.set_extra("_interaction_turn_finalization_failed", True)
         event.set_extra(
-            "_interaction_memory_persist_failure_reason",
+            "_interaction_turn_finalization_failure_reason",
             "missing_persist_callback",
         )
         record_interaction_turn_completion_failure(event, "missing_persist_callback")

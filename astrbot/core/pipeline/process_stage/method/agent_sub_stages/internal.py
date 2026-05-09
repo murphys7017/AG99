@@ -38,6 +38,7 @@ from astrbot.core.provider.entities import (
 from astrbot.core.star.star_handler import EventType
 from astrbot.core.utils.metrics import Metric
 from astrbot.core.utils.session_lock import session_lock_manager
+from astrbot.core.voice import VoiceServiceError, resolve_tts_provider
 
 from .....astr_agent_run_util import AgentRunner, run_agent, run_live_agent
 from ....context import PipelineContext, call_event_hook
@@ -367,12 +368,14 @@ class InternalAgentSubStage(Stage):
                         # Live Mode: 使用 run_live_agent
                         logger.info("[Internal Agent] 检测到 Live Mode，启用 TTS 处理")
 
-                        # 获取 TTS Provider
-                        tts_provider = (
-                            self.ctx.plugin_manager.context.get_using_tts_provider(
-                                event.unified_msg_origin
+                        try:
+                            tts_provider = resolve_tts_provider(
+                                self.ctx.plugin_manager.context,
+                                event,
+                                stage="pipeline.live_tts",
                             )
-                        )
+                        except VoiceServiceError:
+                            tts_provider = None
 
                         if not tts_provider:
                             logger.warning(

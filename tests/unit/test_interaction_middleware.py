@@ -9,7 +9,6 @@ from astrbot.core.interaction.config import (
 )
 from astrbot.core.interaction.decision_agent import InteractionDecisionAgent
 from astrbot.core.interaction.input_gateway import CoreInputGateway
-from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
@@ -103,6 +102,12 @@ def voice_event(webchat_event, tmp_path):
     webchat_event.message_obj.message = [
         Record.fromFileSystem(str(audio_path)),
     ]
+    return webchat_event
+
+
+@pytest.fixture
+def live_event(webchat_event):
+    webchat_event.set_extra("action_type", "live")
     return webchat_event
 
 
@@ -412,10 +417,10 @@ class TestInteractionMiddleware:
         turn_state = get_interaction_turn_state(forwarded_event)
         assert turn_state is not None
         assert turn_state.completion_state.material_finalized is True
-        assert turn_state.completion_state.memory_persisted is True
+        assert turn_state.completion_state.legacy_memory_persisted is False
         assert turn_state.completion_state.postprocess_dispatched is True
         assert turn_state.completion_state.completed is True
-        middleware.memory_store.update_interaction_memory.assert_awaited_once()
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
         dispatch.assert_awaited_once()
         assert dispatch.await_args.kwargs["turn_material"] == {
             "turn_id": forwarded_event.get_extra("_turn_id"),
@@ -506,7 +511,7 @@ class TestInteractionMiddleware:
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
-    async def test_hybrid_immediate_reply_waits_for_core_before_memory_persist(
+    async def test_hybrid_immediate_reply_waits_for_core_before_turn_completion(
         self,
         webchat_event,
     ):
@@ -802,6 +807,45 @@ class TestInteractionMiddleware:
         assert turn_state.failures[-1].reason == "send_failed"
 
     @pytest.mark.asyncio
+    async def test_live_mode_routes_directly_to_core_audio_stream(self, live_event):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock()
+
+        middleware.handle_inbound(live_event)
+        await asyncio.sleep(0)
+
+        assert queue.get_nowait() is live_event
+        assert queue.empty()
+        middleware.decision_agent.decide.assert_not_awaited()
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
+        assert (
+            live_event.get_extra("_interaction_live_mode_protocol_route")
+            == "core_audio_stream"
+        )
+        turn_state = get_interaction_turn_state(live_event)
+        assert turn_state is not None
+        assert turn_state.decision is not None
+        assert turn_state.decision.route_mode == RouteMode.DELEGATE_TO_CORE
+        assert turn_state.decision.should_emit_immediate_reply is False
+        assert turn_state.decision.reason == "live_mode_requires_audio_chunk_stream"
+        assert turn_state.failures == []
+
+    @pytest.mark.asyncio
     async def test_self_reply_immediate_reply_failure_fail_fast_records_failure(
         self,
         webchat_event,
@@ -889,7 +933,7 @@ class TestInteractionMiddleware:
         assert turn_state.failures[-1].reason == "missing_self_reply"
 
     @pytest.mark.asyncio
-    async def test_self_reply_memory_persist_failure_is_recorded(
+    async def test_self_reply_completion_does_not_write_legacy_interaction_memory(
         self,
         webchat_event,
     ):
@@ -923,9 +967,7 @@ class TestInteractionMiddleware:
                 reason="self",
             )
         )
-        middleware.memory_store.update_interaction_memory = AsyncMock(
-            side_effect=RuntimeError("disk full")
-        )
+        middleware.memory_store.update_interaction_memory = AsyncMock()
 
         with patch(
             "astrbot.core.interaction.middleware.dispatch_postprocess",
@@ -933,22 +975,19 @@ class TestInteractionMiddleware:
         ) as dispatch:
             middleware.handle_inbound(webchat_event)
             await asyncio.sleep(0)
+            await asyncio.sleep(0)
 
         assert queue.empty()
         complete_visible_turn.assert_awaited_once()
         controller.capture_visible_completion.assert_awaited_once_with(webchat_event)
-        assert webchat_event.get_extra("_interaction_memory_persist_failed") is True
-        assert (
-            webchat_event.get_extra("_interaction_memory_persist_failure_reason")
-            == "disk full"
-        )
-        dispatch.assert_not_awaited()
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
+        dispatch.assert_awaited_once()
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.completion_state.memory_persisted is False
-        assert turn_state.completion_state.postprocess_dispatched is False
-        assert turn_state.completion_state.completed is False
-        assert turn_state.completion_state.failure_reason == "memory_persist:disk full"
+        assert turn_state.completion_state.legacy_memory_persisted is False
+        assert turn_state.completion_state.postprocess_dispatched is True
+        assert turn_state.completion_state.completed is True
+        assert turn_state.completion_state.failure_reason is None
 
     @pytest.mark.asyncio
     async def test_self_reply_does_not_persist_if_visible_completion_fails(
@@ -1029,15 +1068,18 @@ class TestInteractionMiddleware:
 
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
         dispatch.assert_not_awaited()
-        assert webchat_event.get_extra("_interaction_memory_persist_failed") is True
         assert (
-            webchat_event.get_extra("_interaction_memory_persist_failure_reason")
+            webchat_event.get_extra("_interaction_turn_finalization_failed")
+            is True
+        )
+        assert (
+            webchat_event.get_extra("_interaction_turn_finalization_failure_reason")
             == "missing_finalized_turn_material"
         )
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
         assert turn_state.completion_state.material_finalized is False
-        assert turn_state.completion_state.memory_persisted is False
+        assert turn_state.completion_state.legacy_memory_persisted is False
         assert turn_state.completion_state.postprocess_dispatched is False
         assert turn_state.completion_state.completed is False
         assert (
@@ -1098,7 +1140,7 @@ class TestInteractionMiddleware:
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
         assert turn_state.completion_state.material_finalized is True
-        assert turn_state.completion_state.memory_persisted is True
+        assert turn_state.completion_state.legacy_memory_persisted is False
         assert turn_state.completion_state.postprocess_dispatched is True
         assert turn_state.completion_state.completed is True
         assert (
@@ -1117,7 +1159,7 @@ class TestInteractionMiddleware:
         }
 
     @pytest.mark.asyncio
-    async def test_self_reply_persists_memory_before_turn_postprocess(
+    async def test_self_reply_dispatches_postprocess_as_memory_owner(
         self,
         webchat_event,
     ):
@@ -1151,16 +1193,8 @@ class TestInteractionMiddleware:
                 reason="self",
             )
         )
+        middleware.memory_store.update_interaction_memory = AsyncMock()
         order: list[str] = []
-
-        async def _capture_update(session_id, persona_id, updater):  # noqa: ANN001
-            del session_id, persona_id, updater
-            order.append("persist")
-            return InteractionMemorySnapshot(session_id="test-session")
-
-        middleware.memory_store.update_interaction_memory = AsyncMock(
-            side_effect=_capture_update
-        )
 
         with patch(
             "astrbot.core.interaction.middleware.dispatch_postprocess",
@@ -1170,7 +1204,8 @@ class TestInteractionMiddleware:
             await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-        assert order == ["persist", "postprocess"]
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
+        assert order == ["postprocess"]
 
     @pytest.mark.asyncio
     async def test_preprocess_skips_media_after_interaction_materialization(

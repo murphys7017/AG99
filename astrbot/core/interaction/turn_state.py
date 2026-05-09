@@ -63,7 +63,7 @@ class InteractionStreamState:
 @dataclass(slots=True)
 class InteractionTurnCompletionState:
     material_finalized: bool = False
-    memory_persisted: bool = False
+    legacy_memory_persisted: bool = False
     postprocess_dispatched: bool = False
     completed: bool = False
     failure_reason: str | None = None
@@ -77,7 +77,7 @@ class InteractionTurnFailure:
     message: str | None = None
     user_visible_action: str | None = None
     material_finalized: bool = False
-    memory_persisted: bool = False
+    legacy_memory_persisted: bool = False
     postprocess_dispatched: bool = False
     created_at: float = field(default_factory=time.time)
 
@@ -89,7 +89,7 @@ class InteractionTurnFailure:
             "message": self.message,
             "user_visible_action": self.user_visible_action,
             "material_finalized": self.material_finalized,
-            "memory_persisted": self.memory_persisted,
+            "legacy_memory_persisted": self.legacy_memory_persisted,
             "postprocess_dispatched": self.postprocess_dispatched,
             "created_at": self.created_at,
         }
@@ -229,13 +229,13 @@ def get_interaction_turn_finalized_material(event) -> dict[str, Any] | None:
     return None
 
 
-def mark_interaction_turn_memory_persisted(
+def mark_interaction_turn_legacy_memory_persisted(
     event,
     persisted: bool = True,
 ) -> None:
     state = ensure_interaction_turn_state(event)
-    state.completion_state.memory_persisted = persisted
-    event.set_extra("_interaction_memory_persisted", persisted)
+    state.completion_state.legacy_memory_persisted = persisted
+    event.set_extra("_interaction_legacy_memory_persisted", persisted)
 
 
 def mark_interaction_turn_postprocess_dispatched(
@@ -291,7 +291,7 @@ def record_interaction_turn_failure(
         else (str(exception) if exception else None),
         user_visible_action=user_visible_action,
         material_finalized=state.completion_state.material_finalized,
-        memory_persisted=state.completion_state.memory_persisted,
+        legacy_memory_persisted=state.completion_state.legacy_memory_persisted,
         postprocess_dispatched=state.completion_state.postprocess_dispatched,
     )
     state.failures.append(failure)

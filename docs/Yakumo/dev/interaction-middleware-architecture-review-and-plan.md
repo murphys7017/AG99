@@ -115,7 +115,7 @@
 - decision context build
 - result contribution merge
 - visible output recording
-- interaction memory persistence
+- legacy interaction memory cache 与 memory service 写入边界
 - turn postprocess
 
 它们都围绕“同一轮对话”工作，但没有共同的一等对象承载这轮对话。
@@ -469,9 +469,12 @@
 4. `core_stream_observing`
 5. `core_visible_output_completed`
 6. `turn_material_finalized`
-7. `interaction_memory_persisted`
-8. `turn_postprocess_dispatched`
-9. `turn_completed`
+7. `turn_postprocess_dispatched`
+8. `turn_completed`
+
+`InteractionMemoryStore` 不再是 completion 写入 owner；它只保留为
+decision/context 构建阶段的 legacy interaction cache。interaction turn 的记忆写入
+由 `AFTER_TURN_COMPLETED` postprocess / memory service 消费 finalized material 后负责。
 
 后续任何新能力都只能声明自己接入哪个阶段，而不是自己再额外定义一段时序。
 
@@ -611,7 +614,7 @@
 4. prompt contributors 改为消费 decision view，而不是松散参数
 5. 产出的 `InteractionDecision` 回写到 turn state
 
-## 二、`InteractionMiddleware._persist_turn()`
+## 二、`InteractionMiddleware._finalize_turn()`
 
 文件：
 
@@ -619,26 +622,24 @@
 
 ### 当前进入函数后的步骤
 
-1. 从 `event.extra` 读取 `_turn_id`
-2. 从 `_visible_turn_outputs` 中按 `turn_id` 提取 canonical reply
-3. 如果提取不到，就回退到 `visible_reply`
-4. 调用 `memory_store.update_interaction_memory(...)`
-5. 写入当前用户输入和本轮 assistant reply
+1. 从 `InteractionTurnState` 读取 finalized turn material。
+2. 校验 material、`turn_id`、`assistant_text` 均已显式存在。
+3. 调度 `AFTER_TURN_COMPLETED` postprocess，并传递 explicit turn material。
+4. 标记 postprocess dispatched / completed。
 
 ### 当前问题
 
-- 持久化材料来自 `event.extra`，不是显式的 turn material
-- 该函数知道太多“如何从输出列表反推 canonical reply”的细节
-- turn memory 的完成时机分散在 middleware 和 output controller 两处
+- 旧实现曾从 `visible_reply` 或 visible outputs 反推材料；该路径已移除。
+- 旧实现曾在 middleware completion 里直接写 interaction memory；该职责已移交给 postprocess / memory service。
+- 当前剩余重点是保证所有 outbound persist 请求前都已经显式 materialized，并且 postprocess 能看到同一份 material。
 
 ### 修复后的目标步骤
 
-1. 只接收 `InteractionTurnState`
-2. 从 state 中读取已归一化的 `turn.materialized_memory_reply`
-3. 如果 material 尚未 finalized，则拒绝持久化并记录原因
-4. 调用 memory store 更新 interaction memory
-5. 在 state 中标记 `memory_persisted=True`
-6. 再同步兼容字段到 `event.extra`
+1. 只消费 `InteractionTurnState.finalized_turn_material`
+2. 如果 material 尚未 finalized，则记录 turn finalization failure
+3. 调度 `AFTER_TURN_COMPLETED` postprocess
+4. 在 state 中标记 `postprocess_dispatched=True`
+5. 标记 `completed=True`，表示 middleware lifecycle handoff completed
 
 ## 三、`InteractionOutputController.capture_message_chain()`
 
@@ -655,7 +656,7 @@
 5. 根据分类选择：
    - immediate reply 直接发
    - passthrough 直接发并持久化
-   - core final result 进入 `maybe_finalize_and_send`
+   - core final result 进入单一 core reply handler
 6. 发送后把文本记录进 `_visible_turn_outputs`
 
 ### 当前问题
@@ -665,7 +666,7 @@
   - 消息分类
   - 可见发送
   - output record
-  - memory persist
+  - completion handoff
   - finalizer 调用
 - 这些能力没有围绕统一 utterance 模型组织
 
@@ -684,7 +685,7 @@
    - 发送
    - 写入 turn state 的 `utterances`
 5. 若该 utterance 被标记为 turn-closing candidate，则进入统一 finalize turn material 逻辑
-6. memory persist 不再由各分支各自决定，而由统一 turn 收口阶段决定
+6. postprocess handoff 不再由各分支各自决定，而由统一 turn 收口阶段决定；memory 写入由 postprocess / memory service 消费 finalized material 后负责
 
 ## 四、`InteractionOutputController.capture_streaming()` / `_wrap_core_stream()`
 
@@ -757,7 +758,7 @@
 4. 返回统一的 `UtteranceDecision`
 5. 若允许插话，则交由统一 utterance materializer 处理
 
-## 六、`InteractionOutputController.maybe_finalize_and_send()`
+## 六、`InteractionOutputController._deliver_core_reply()`
 
 文件：
 
@@ -768,7 +769,7 @@
 
 1. 读取 core 结果纯文本
 2. 调用 `finalize_response(...)`
-3. 如果 finalizer 失败且是 force 模式，则用错误提示文本兜底
+3. 如果 finalizer 失败且是 force 模式，则记录失败并抛错
 4. 合并 result contributors
 5. 发送最终消息
 6. 记录 visible output
@@ -924,6 +925,7 @@
 - `InteractionOutputController` 在请求 middleware persist 前会先显式 materialize finalized turn material；persist callback 不再承担 material 构造职责。
 - `InteractionMiddleware._schedule_turn_postprocess()` 缺 finalized material 时不再现场重建 material，而是记录 `missing_finalized_turn_material`。
 - `InteractionMiddleware._finalize_turn()` 已改为只消费显式 finalized material；缺 material / turn_id / assistant_text 都是 completion contract failure，不再从 visible reply 或 visible outputs 现场反推。
+- `InteractionMiddleware._finalize_turn()` 不再写 `InteractionMemoryStore`；interaction turn 的主记忆写入 owner 已收口到 memory postprocessor / memory service。
 - `InteractionResultView.decision` 已改为只读 snapshot。
 - `InteractionUtterance.metadata` 已用于记录实际投递形态，memory/final material 仍只消费 semantic text。
 - interaction middleware 开发期拒绝 `fallback_policy` 配置；内部主链路不提供体验兜底模式。
@@ -932,6 +934,9 @@
 - finalizer provider missing / timeout / model error / empty output 在 `fail_fast` 下抛错；forced finalizer failure 不发送替代文本。
 - `InteractionTurnFailure` ledger 已建立，关键失败入口会记录 stage、reason、exception、用户可见动作和 completion 状态。
 - decision agent 若返回旧 fallback decision，middleware 会记录 failure 并拒绝继续。
+- 通用平台 live audio 语音路径已识别为独立协议：`action_type=live` 必须进入 core audio streaming，不能由 interaction decision 选择 `SELF_REPLY` 或带普通文本 immediate reply 的 `HYBRID`。
+- `action_type=live` 事件现在由 middleware 生成显式 `DELEGATE_TO_CORE` protocol decision，并转交 core 的 `run_live_agent()` 产生 `audio_chunk`。
+- `audio_chunk` 中的 `Json({"text": ...})` 已进入 stream buffer 与 finalized material；音频 base64 仍只作为平台 streaming payload，不进入 memory text。
 - SELF_REPLY 缺少 immediate reply 已前移到 decision validation；middleware 只拒绝契约违规，不再补救转 core。
 - SELF_REPLY 成功路径会在 visible completion 后显式 materialize turn material，再进入统一 finalization。
 - SELF_REPLY / HYBRID immediate reply 失败与 visible completion 失败在开发期直接暴露，不再转 core 掩盖。
@@ -941,6 +946,7 @@
 
 1. outbound phase 的单元测试已覆盖语义边界，但还缺少真实平台日志/手动验证来证明 Record/Image/Text 投递形态与 ledger metadata 完全一致。
 2. `ResultDecorateStage` 对 interaction turn 已提前退场，但普通 pipeline 的非 interaction 行为仍需在后续回归中持续覆盖。
+3. 共享语音服务边界已完成第一轮接入；剩余重点是 live audio 缺 provider 的协议诊断和真实平台日志验证。
 
 当前共同根因已经从“收消息/发消息 owner 分裂”缩小为：interaction 主链路应保持开发期 fail-fast，不再新增或保留内部体验兜底。
 
@@ -998,7 +1004,7 @@
 目标：
 
 - 统一 turn completion
-- 统一 memory persist
+- 统一 turn completion / postprocess handoff
 - 统一 turn postprocess dispatch
 - `core_bridge.py`、postprocess、memory 只消费显式 turn material
 
@@ -1056,7 +1062,7 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
 - platform adapter 与 `message_chain_delivery.py` 仍只负责物理投递，不理解 interaction turn 业务语义。
 - TTS / t2i / reply prefix / reasoning display 等最终输出形态，由 interaction output phase 统一 materialize。
 - finalized turn material 只来自 turn state / utterance ledger，不由后续 pipeline fallback 反推。
-- memory persist 与 turn postprocess 只由 middleware 统一 completion 入口触发一次。
+- turn postprocess 只由 middleware 统一 completion 入口触发一次；memory 写入由 postprocess / memory service 作为 consumer 执行。
 
 从用户视角看，`HYBRID` 模式应形成同一 turn 内的完整输出序列：
 
@@ -1066,7 +1072,7 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
 4. output controller 完成 finalizer、result contributor、TTS/t2i 等 outbound materialization。
 5. output controller 通过 delivery 层投递最终消息。
 6. middleware 基于 ledger 产出 finalized turn material。
-7. middleware 统一 persist memory，并只调度一次 turn postprocess。
+7. middleware 只调度一次 turn postprocess；memory 写入由 postprocess / memory service 消费同一份 finalized material。
 
 ### Step 1：切断重复 lifecycle owner
 
@@ -1084,8 +1090,8 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
     - 若 downstream processor 会把它当 turn completion，必须一起跳过或加 trigger 侧过滤。
 
 - `astrbot/core/interaction/output_controller.py`
-  - 修改 `_persist_interaction_turn(event, visible_reply)`。
-  - 当 `_persist_callback is None` 且事件属于 interaction turn 时，不再自行构造 material、persist memory 或 mark completed。
+  - 修改 `_persist_interaction_turn(event)`。
+  - 当 `_persist_callback is None` 且事件属于 interaction turn 时，不再自行构造 material、调度 postprocess 或 mark completed。
   - 新增或使用现有 `record_interaction_turn_completion_failure(event, "missing_persist_callback")`。
   - 外部测试若直接实例化 `InteractionOutputController`，应显式注入 callback 或改为只验证 output capture，不把无 callback 自完成当正确行为。
 
@@ -1108,10 +1114,12 @@ interaction middleware 必须成为一轮 interaction turn 的唯一输出语义
 
 - `RespondStage._schedule_after_message_sent_postprocess(event)` 对 interaction turn 只保留 `AFTER_MESSAGE_SENT`，不再调度普通 `AFTER_TURN_COMPLETED`。
 - `InteractionOutputController._persist_interaction_turn(...)` 无 `_persist_callback` 时记录 `missing_persist_callback` 并返回，不再自行 persist 或 mark completed。
+- `InteractionOutputController._persist_interaction_turn(...)` 不再接收 `visible_reply`，persist callback 只消费 event 中显式 finalized material。
 - `InteractionOutputController._materialize_finalized_turn(...)` 在 passthrough / core reply / core stream 等请求 persist 前显式写入 finalized material。
 - `InteractionMiddleware._schedule_turn_postprocess(...)` 缺 finalized material 时记录 `missing_finalized_turn_material` 并返回，不再重建 material。
-- `InteractionMiddleware._finalize_turn(...)` 缺 finalized material 时记录 `missing_finalized_turn_material` 并返回，不再从 `visible_reply` 或 visible outputs 构造 material。
+- `InteractionMiddleware._finalize_turn(...)` 缺 finalized material 时记录 turn finalization failure 并返回，不再从 reply 字符串或 visible outputs 构造 material。
 - `InteractionMiddleware._materialize_self_reply_turn(...)` 负责 SELF_REPLY 成功路径的显式 materialization。
+- core final model result 已收口到 `_deliver_core_reply(...)` 单一路径；旧的 `maybe_finalize_and_send(...)` 后续 delivery 分支已删除。
 
 Agent 相关操作：
 
@@ -1321,7 +1329,7 @@ Agent 相关操作：
 
 - 用户实际收到的 Record/Image/Text 与 ledger metadata 对得上。
 - memory/postprocess 看到的是同一份 finalized material。
-- 没有重复 postprocess，没有重复 memory persist。
+- 没有重复 postprocess，memory 写入只由 postprocess / memory service 消费 finalized material 后发生。
 
 ### Step 6：回归与手动验证
 
@@ -1353,16 +1361,101 @@ uv run ruff check .
 3. `DELEGATE_TO_CORE`
    - core reply / stream reply 进入 output controller。
    - finalized material 明确产出。
-   - memory persist 与 postprocess 由 middleware 收口。
+   - postprocess handoff 由 middleware 收口，memory 写入由 postprocess / memory service 负责。
 
 4. streaming
    - stream chunk 正常发出。
    - stream interjection 独立记录且 `memory_relevant=False`。
    - final `core_stream` utterance 与 material 一致。
+   - 通用平台 live audio 必须通过 `audio_chunk` 流式协议播放语音。
+   - `audio_chunk` 的音频 base64 进入 WebChat back queue 并由 websocket `t=response` 推给前端。
+   - `audio_chunk` 附带的文本进入 interaction stream material；base64 音频数据不进入 memory。
 
 5. 非 interaction 普通事件
    - `ResultDecorateStage` 的 TTS/t2i/reply prefix 仍然工作。
    - `RespondStage` 的普通 postprocess 仍然工作。
+
+## 第七阶段：共享语音服务边界与通用平台音频收口
+
+状态：共享语音服务边界已完成第一轮接入；live audio 协议诊断待补。
+
+### 总目标
+
+语音能力需要同时支持两条流程：
+
+1. core 旧流程：
+   - `PreProcessStage` 继续支持普通事件 STT。
+   - `ResultDecorateStage` 继续支持非 interaction 事件 TTS。
+   - core live stage 继续支持 live audio streaming。
+   - 这些路径属于对既有生态、平台行为和插件配置的兼容边界，不能直接删除。
+2. interaction middleware 新流程：
+   - inbound voice 在 decision 前完成 STT materialization。
+   - outbound reply 在 output controller 中完成 TTS materialization。
+   - 通用平台 live audio 走 `audio_chunk` streaming 协议，并纳入 interaction turn state / stream material。
+   - middleware 内部不能依赖 core 旧路径作为失败兜底；缺 provider、provider error、空结果必须进入可观测 failure。
+
+最终形态不是“core 或 middleware 二选一”，而是建立共享 voice service port：
+
+- provider 解析、输入校验、失败原因、diagnostics 统一。
+- core 与 middleware 都调用同一套服务接口。
+- core 旧阶段保留为兼容调用方。
+- middleware 成为 interaction turn 的语义 owner，但不垄断所有非 interaction 事件。
+
+### 当前修复
+
+- `action_type=live` 是通用平台音频流协议入口，不走普通 interaction decision。
+- middleware 对 live event 生成显式 `DELEGATE_TO_CORE` protocol decision，并保持 turn state / output interceptor。
+- core pipeline 继续通过 `run_live_agent(...)` 产生 `MessageChain(type="audio_chunk")`。
+- WebChat back queue 继续把 `audio_chunk` 转为 live websocket `t=response`，前端 live audio 视图继续播放该音频帧。
+- `InteractionOutputController._extract_observable_stream_text(...)` 从 `audio_chunk` 的 `Json({"text": ...})` 提取 spoken text，用于 stream buffer、`core_stream` utterance、finalized material 与 memory。
+
+### 仍未完成
+
+- TTS / STT provider 解析已集中到 `astrbot/core/voice/service.py`。
+- `PreProcessStage`、`ResultDecorateStage`、`InteractionMiddleware`、`InteractionOutputController`、core live stage 已改为调用共享 voice service。
+- `run_live_agent(...)` 仍负责使用已解析的 TTS provider 生成音频 chunk；这是底层 runner 执行职责，不再负责 provider 解析。
+- `run_live_agent(...)` 在缺 TTS provider 时仍可能发送普通文本流；这对 live audio 语音协议来说不是正确完成，但普通非 live core 流程仍需要保留兼容文本输出。
+- live audio 缺 provider fail-fast、音频 chunk materialization、音频统计与 completion failure 还没有完全统一接入 interaction turn diagnostics。
+
+### 下一步建议
+
+1. 共享 voice service port 已新增：
+   - `astrbot/core/voice/service.py`
+   - `resolve_stt_provider(plugin_context, event)`
+   - `resolve_tts_provider(plugin_context, event)`
+   - `transcribe_record(plugin_context, event, record_component, *, stage)`
+   - `synthesize_text(plugin_context, event, text, *, stage)`
+   - 返回值带 provider id、source text、输出路径/URL、诊断 metadata。
+2. core 兼容接入已完成：
+   - `PreProcessStage` 调用共享 STT service，保留原有启用开关和普通事件行为。
+   - `ResultDecorateStage` 调用共享 TTS service，继续只处理非 interaction 事件。
+   - core live stage 通过共享 TTS service resolve provider，再调用 live audio runner。
+3. middleware 接入已完成：
+   - `_transcribe_inbound_records(...)` 调用共享 STT service。
+   - `_apply_interaction_tts(...)` 调用共享 TTS service。
+   - live audio protocol route 使用同一套 TTS provider 解析与 diagnostics。
+4. 下一步 live audio fail-fast 规则：
+   - live event 缺 TTS provider 时记录 `live_tts_provider_unavailable`，不标记成功语音 turn。
+   - 不能把普通文本流当作 live audio 语音协议的成功完成。
+   - 若未来要允许“无语音文本模式”，必须是显式用户配置的外部兼容模式，并写入 failure/diagnostics，不能污染成功状态。
+5. 下一步将 LiveMode completion material 纳入统一 stream phase：
+   - `audio_chunk` 文本作为 canonical spoken text。
+   - 音频 chunk metadata 作为 delivered shape / diagnostics，不进入 memory。
+6. 下一步增加端到端日志断点：
+   - middleware live protocol route。
+   - shared voice service provider id。
+   - core `run_live_agent()` 首个 `audio_chunk`。
+   - webchat back queue `type=audio_chunk`。
+   - websocket `t=response`。
+   - frontend `playAudioChunk(...)` 调用。
+
+### 兼容性原则
+
+- core 旧流程继续支持 STT / TTS，不能因 interaction middleware 重构被删除。
+- middleware 新流程也必须支持 STT / TTS，且必须通过 turn state / utterance ledger / finalized material 记录语义。
+- 共享 voice service 是能力抽象，不是 fallback。
+- 非 interaction 事件继续走 core pipeline；interaction 事件走 middleware owner。
+- 外部平台兼容可以保留保护模式，但必须可观测，不能写成成功状态。
 
 ## 第六阶段：开发期 fail-fast 与 fallback 去正确性化
 
@@ -1510,7 +1603,7 @@ Agent 相关操作：
   - exception type
   - user visible action taken
   - whether turn material was finalized
-  - whether memory/postprocess was skipped
+  - whether postprocess handoff or memory consumer was skipped
 
 Agent 相关操作：
 
@@ -1519,7 +1612,7 @@ Agent 相关操作：
 
 验收标准：
 
-- 任一失败场景都能从 turn state 解释“哪里失败、是否发过消息、是否写 memory、是否完成 turn”。
+- 任一失败场景都能从 turn state 解释“哪里失败、是否发过消息、是否调度 postprocess、memory consumer 是否写入、是否完成 turn”。
 
 实现结果：
 

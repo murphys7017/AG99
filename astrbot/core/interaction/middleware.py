@@ -12,6 +12,11 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.utils.media_utils import ensure_wav
+from astrbot.core.voice import (
+    VoiceServiceError,
+    resolve_stt_provider,
+    transcribe_record,
+)
 
 from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
 from .core_bridge import (
@@ -22,7 +27,6 @@ from .decision_agent import InteractionDecisionAgent
 from .memory_store import (
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
-    update_interaction_memory_from_turn,
 )
 from .output_controller import InteractionOutputController
 from .turn_state import (
@@ -32,7 +36,6 @@ from .turn_state import (
     get_interaction_turn_visible_outputs,
     is_interaction_turn_completed,
     mark_interaction_turn_completed,
-    mark_interaction_turn_memory_persisted,
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
@@ -59,7 +62,7 @@ class InteractionMiddleware:
         self.memory_store = InteractionMemoryStore()
         self.decision_agent = InteractionDecisionAgent(self.memory_store)
         self.output_controller.interaction_config = self.interaction_config
-        self.output_controller.memory_store = self.memory_store
+        self.output_controller.interaction_memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
         self.output_controller._persist_callback = self._on_output_persist_requested
         self._inflight_tasks: set[asyncio.Task] = set()
@@ -86,6 +89,10 @@ class InteractionMiddleware:
 
     def is_enabled_for_event(self, event: AstrMessageEvent) -> bool:
         return is_middleware_enabled_for_platform(event.get_platform_id(), self.config)
+
+    @staticmethod
+    def _is_live_mode_event(event: AstrMessageEvent) -> bool:
+        return event.get_extra("action_type") == "live"
 
     def attach_event_context(
         self,
@@ -215,7 +222,10 @@ class InteractionMiddleware:
         turn_id = uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         await self._materialize_inbound_media(event)
-        decision = await self._decide_interaction_route(event)
+        if self._is_live_mode_event(event):
+            decision = self._build_live_mode_decision(event)
+        else:
+            decision = await self._decide_interaction_route(event)
         self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
         if decision.route_mode == RouteMode.SELF_REPLY:
             if not decision.should_emit_immediate_reply:
@@ -260,6 +270,29 @@ class InteractionMiddleware:
         if decision.should_emit_immediate_reply:
             await self._emit_immediate_reply_or_record_failure(event, decision)
         self._forward_to_core(event)
+
+    def _build_live_mode_decision(
+        self,
+        event: AstrMessageEvent,
+    ) -> InteractionDecision:
+        event.set_extra("_interaction_live_mode_protocol_route", "core_audio_stream")
+        event.set_extra(
+            "_interaction_live_mode_protocol_reason",
+            "live_mode_requires_audio_chunk_stream",
+        )
+        logger.info(
+            "Interaction live mode routed to core audio stream: platform_id=%s session_id=%s turn_id=%s",
+            event.get_platform_id(),
+            event.session_id,
+            event.get_extra("_turn_id"),
+        )
+        return InteractionDecision(
+            route_mode=RouteMode.DELEGATE_TO_CORE,
+            should_emit_immediate_reply=False,
+            immediate_spoken_reply=None,
+            confidence=1.0,
+            reason="live_mode_requires_audio_chunk_stream",
+        )
 
     async def _decide_interaction_route(
         self, event: AstrMessageEvent
@@ -387,119 +420,70 @@ class InteractionMiddleware:
         stt_settings = self.config.get("provider_stt_settings", {})
         if not isinstance(stt_settings, dict) or not stt_settings.get("enable", False):
             return
-        if self.plugin_context is None:
+        try:
+            stt_provider = resolve_stt_provider(
+                self.plugin_context,
+                event,
+                stage="interaction.inbound_stt",
+            )
+        except VoiceServiceError as exc:
             event.set_extra("_interaction_stt_failed", True)
             event.set_extra(
                 "_interaction_stt_failure_reason",
-                "plugin_context_unavailable",
+                exc.reason,
             )
             record_interaction_turn_failure(
                 event,
                 stage="inbound_stt",
-                reason="plugin_context_unavailable",
+                reason=exc.reason,
                 user_visible_action="none",
             )
             logger.warning(
-                "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=plugin_context_unavailable",
+                "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=%s",
                 event.get_platform_id(),
                 event.session_id,
+                exc.reason,
             )
-            raise RuntimeError("Interaction STT plugin context unavailable")
-
-        get_provider = getattr(self.plugin_context, "get_using_stt_provider", None)
-        stt_provider = (
-            get_provider(event.unified_msg_origin) if callable(get_provider) else None
-        )
-        if not stt_provider:
-            event.set_extra("_interaction_stt_failed", True)
-            event.set_extra(
-                "_interaction_stt_failure_reason",
-                "provider_unavailable",
-            )
-            record_interaction_turn_failure(
-                event,
-                stage="inbound_stt",
-                reason="provider_unavailable",
-                user_visible_action="none",
-            )
-            logger.warning(
-                "Interaction inbound STT skipped: platform_id=%s session_id=%s reason=provider_unavailable",
-                event.get_platform_id(),
-                event.session_id,
-            )
-            raise RuntimeError("Interaction STT provider unavailable")
+            raise
 
         message_chain = event.get_messages()
         for idx, component in enumerate(message_chain):
             if not isinstance(component, Record):
                 continue
             try:
-                path = await component.convert_to_file_path()
-            except Exception as exc:  # noqa: BLE001
+                result = await transcribe_record(
+                    self.plugin_context,
+                    event,
+                    component,
+                    provider=stt_provider,
+                    stage="interaction.inbound_stt",
+                )
+            except VoiceServiceError as exc:
                 event.set_extra("_interaction_stt_failed", True)
                 event.set_extra("_interaction_stt_failure_reason", str(exc))
                 record_interaction_turn_failure(
                     event,
                     stage="inbound_stt",
-                    reason="audio_path_resolution_failed",
+                    reason=exc.reason,
                     exception=exc,
                     user_visible_action="none",
                 )
-                logger.error(
-                    "Interaction inbound STT audio path resolution failed: platform_id=%s session_id=%s turn_id=%s error=%s",
-                    event.get_platform_id(),
-                    event.session_id,
-                    event.get_extra("_turn_id"),
-                    exc,
-                    exc_info=True,
-                )
+                if exc.reason in {"audio_path_resolution_failed", "provider_error"}:
+                    logger.error(
+                        "Interaction inbound STT failed: platform_id=%s session_id=%s turn_id=%s reason=%s error=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        event.get_extra("_turn_id"),
+                        exc.reason,
+                        exc,
+                        exc_info=True,
+                    )
                 raise
-            try:
-                result = await stt_provider.get_text(audio_url=path)
-            except FileNotFoundError as exc:
-                event.set_extra("_interaction_stt_failed", True)
-                event.set_extra("_interaction_stt_failure_reason", str(exc))
-                record_interaction_turn_failure(
-                    event,
-                    stage="inbound_stt",
-                    reason="source_unavailable",
-                    exception=exc,
-                    user_visible_action="none",
-                )
-                raise
-            except Exception as exc:  # noqa: BLE001
-                event.set_extra("_interaction_stt_failed", True)
-                event.set_extra("_interaction_stt_failure_reason", str(exc))
-                record_interaction_turn_failure(
-                    event,
-                    stage="inbound_stt",
-                    reason="provider_error",
-                    exception=exc,
-                    user_visible_action="none",
-                )
-                logger.error(
-                    "Interaction inbound STT failed: platform_id=%s session_id=%s turn_id=%s error=%s",
-                    event.get_platform_id(),
-                    event.session_id,
-                    event.get_extra("_turn_id"),
-                    exc,
-                    exc_info=True,
-                )
-                raise
-            text = str(result or "").strip()
-            if not text:
-                record_interaction_turn_failure(
-                    event,
-                    stage="inbound_stt",
-                    reason="empty_transcription",
-                    user_visible_action="none",
-                )
-                raise RuntimeError("Interaction STT returned empty text")
-            logger.info("Interaction inbound STT result: %s", text)
-            message_chain[idx] = Plain(text)
-            event.message_str = f"{event.message_str or ''}{text}"
+            logger.info("Interaction inbound STT result: %s", result.text)
+            message_chain[idx] = Plain(result.text)
+            event.message_str = f"{event.message_str or ''}{result.text}"
             event.message_obj.message_str = (
-                f"{event.message_obj.message_str or ''}{text}"
+                f"{event.message_obj.message_str or ''}{result.text}"
             )
             event.set_extra("_interaction_stt_transcribed", True)
 
@@ -713,9 +697,8 @@ class InteractionMiddleware:
 
         material = get_interaction_turn_finalized_material(event)
         if material is None:
-            event.set_extra("_interaction_memory_persist_failed", True)
-            event.set_extra(
-                "_interaction_memory_persist_failure_reason",
+            self._record_turn_finalization_failure(
+                event,
                 "missing_finalized_turn_material",
             )
             record_interaction_turn_completion_failure(
@@ -731,19 +714,14 @@ class InteractionMiddleware:
             return
         turn_id = str(material.get("turn_id", "") or "").strip()
         if not turn_id:
-            event.set_extra("_interaction_memory_persist_failed", True)
-            event.set_extra(
-                "_interaction_memory_persist_failure_reason",
-                "missing_turn_id",
-            )
+            self._record_turn_finalization_failure(event, "missing_turn_id")
             record_interaction_turn_completion_failure(event, "missing_turn_id")
             return
 
         canonical_reply = str(material.get("assistant_text", "") or "").strip()
         if not canonical_reply:
-            event.set_extra("_interaction_memory_persist_failed", True)
-            event.set_extra(
-                "_interaction_memory_persist_failure_reason",
+            self._record_turn_finalization_failure(
+                event,
                 "missing_canonical_reply",
             )
             record_interaction_turn_completion_failure(
@@ -751,45 +729,21 @@ class InteractionMiddleware:
                 "missing_canonical_reply",
             )
             return
-
-        try:
-            await self.memory_store.update_interaction_memory(
-                event.unified_msg_origin,
-                str(event.get_extra("_interaction_persona_id", "") or ""),
-                lambda snapshot: update_interaction_memory_from_turn(
-                    snapshot,
-                    user_text=event.message_str,
-                    visible_reply=canonical_reply,
-                    turn_id=turn_id,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            event.set_extra("_interaction_memory_persist_failed", True)
-            event.set_extra("_interaction_memory_persist_failure_reason", str(exc))
-            record_interaction_turn_completion_failure(
-                event,
-                f"memory_persist:{exc}",
-            )
-            logger.error(
-                "Interaction memory persistence failed during turn finalization: platform_id=%s session_id=%s turn_id=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                turn_id,
-                exc,
-                exc_info=True,
-            )
-            return
-        else:
-            mark_interaction_turn_memory_persisted(event)
 
         self._schedule_turn_postprocess(event)
         mark_interaction_turn_postprocess_dispatched(event)
         mark_interaction_turn_completed(event)
 
+    @staticmethod
+    def _record_turn_finalization_failure(
+        event: AstrMessageEvent,
+        reason: str,
+    ) -> None:
+        event.set_extra("_interaction_turn_finalization_failed", True)
+        event.set_extra("_interaction_turn_finalization_failure_reason", reason)
+
     async def _on_output_persist_requested(
         self,
         event: AstrMessageEvent,
-        visible_reply: str | None,
     ) -> None:
-        del visible_reply
         await self._finalize_turn(event)

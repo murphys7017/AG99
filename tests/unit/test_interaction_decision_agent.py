@@ -16,7 +16,6 @@ from astrbot.core.interaction.turn_state import (
     InteractionTurnState,
 )
 from astrbot.core.interaction.types import (
-    FallbackPolicy,
     InteractionAgentConfig,
     InteractionDecision,
     RouteMode,
@@ -38,10 +37,9 @@ def test_validate_interaction_decision_fail_fast_on_low_confidence():
         validate_interaction_decision(decision, config)
 
 
-def test_validate_interaction_decision_observable_protects_on_low_confidence():
+def test_validate_interaction_decision_ignores_observable_protect_on_low_confidence():
     config = InteractionAgentConfig(
         decision_confidence_threshold=0.6,
-        fallback_policy=FallbackPolicy.OBSERVABLE_PROTECT,
     )
     decision = InteractionDecision(
         route_mode=RouteMode.SELF_REPLY,
@@ -50,11 +48,8 @@ def test_validate_interaction_decision_observable_protects_on_low_confidence():
         confidence=0.2,
         reason="unsure",
     )
-    validated = validate_interaction_decision(decision, config)
-    assert validated.route_mode == RouteMode.DELEGATE_TO_CORE
-    assert validated.should_emit_immediate_reply is False
-    assert validated.is_fallback is True
-    assert validated.fallback_reason == "low confidence"
+    with pytest.raises(InteractionDecisionError, match="low confidence"):
+        validate_interaction_decision(decision, config)
 
 
 def test_validate_interaction_decision_truncates_spoken_reply():
