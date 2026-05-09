@@ -8,14 +8,6 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class InteractionPromptContribution:
-    plugin_id: str
-    title: str | None = None
-    content: dict[str, Any] = field(default_factory=dict)
-    priority: int = 100
-
-
-@dataclass(slots=True)
 class InteractionResultContribution:
     plugin_id: str
     platform_extras: dict[str, Any] = field(default_factory=dict)

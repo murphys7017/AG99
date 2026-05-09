@@ -1217,6 +1217,25 @@ def test_render_engine_renders_extension_slots_to_system_and_input_targets():
                 category="extension",
                 source="test",
             ),
+            "extension.context": ContextSlot(
+                name="extension.context",
+                value={
+                    "format": "prompt_extensions_v1",
+                    "mount": "context",
+                    "items": [
+                        {
+                            "plugin_id": "desktop.sidecar",
+                            "title": "Runtime Context",
+                            "value_kind": "mapping",
+                            "value": {"state": "ready"},
+                            "order": 100,
+                            "meta": {},
+                        }
+                    ],
+                },
+                category="extension",
+                source="test",
+            ),
             "extension.conversation": ContextSlot(
                 name="extension.conversation",
                 value={
@@ -1254,13 +1273,20 @@ def test_render_engine_renders_extension_slots_to_system_and_input_targets():
     assert "desktop.sidecar" in result.system_prompt
     assert "<conversation_extensions>" in result.system_prompt
     assert "desktop help" in result.system_prompt
-    assert len(result.messages) == 1
+    assert "Runtime Context" not in result.system_prompt
+    assert len(result.messages) == 2
     assert result.messages[0]["role"] == "user"
-    assert len(result.messages[0]["content"]) == 2
-    assert result.messages[0]["content"][0]["type"] == "text"
-    assert "<extensions>" in result.messages[0]["content"][0]["text"]
-    assert "desktop.sidecar" in result.messages[0]["content"][0]["text"]
-    assert result.messages[0]["content"][1] == {
+    assert result.messages[0]["_no_save"] is True
+    assert "<extensions>" in result.messages[0]["content"]
+    assert "Runtime Context" in result.messages[0]["content"]
+    assert "Visible desktop" not in result.messages[0]["content"]
+    assert result.messages[1]["role"] == "user"
+    assert len(result.messages[1]["content"]) == 2
+    assert result.messages[1]["content"][0]["type"] == "text"
+    assert "<extensions>" in result.messages[1]["content"][0]["text"]
+    assert "Visible desktop" in result.messages[1]["content"][0]["text"]
+    assert "Runtime Context" not in result.messages[1]["content"][0]["text"]
+    assert result.messages[1]["content"][1] == {
         "type": "text",
         "text": "<user_input>\n  <text>Hello</text>\n</user_input>",
     }

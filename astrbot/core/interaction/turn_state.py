@@ -46,6 +46,7 @@ class InteractionContextMaterial:
     input_payload: dict[str, Any] = field(default_factory=dict)
     capability_payload: dict[str, Any] = field(default_factory=dict)
     decision_context: dict[str, Any] = field(default_factory=dict)
+    prompt_extensions_collected: bool = False
 
 
 @dataclass(slots=True)

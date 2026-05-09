@@ -783,6 +783,7 @@ class BasePromptRenderer:
         rendered_slot_names: list[str] = []
         mount_targets = {
             "system": "system/extensions",
+            "context": "context/extensions",
             "input": "user_input/extensions",
             "conversation": "system/conversation_extensions",
             "memory": "context/memory/extensions",
@@ -817,7 +818,11 @@ class BasePromptRenderer:
                 continue
             messages.extend(self._compile_turn_messages(prompt_tree, history_node))
 
-        for context_path in ("context/memory", "context/knowledge"):
+        for context_path in (
+            "context/extensions",
+            "context/memory",
+            "context/knowledge",
+        ):
             context_message = self._compile_context_message(
                 prompt_tree,
                 context_path,

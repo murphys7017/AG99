@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 PromptExtensionMount = Literal[
     "system",
+    "context",
     "input",
     "conversation",
     "memory",
@@ -17,6 +18,7 @@ PromptExtensionValueKind = Literal["text", "mapping", "sequence"]
 
 PROMPT_EXTENSION_MOUNTS: tuple[PromptExtensionMount, ...] = (
     "system",
+    "context",
     "input",
     "conversation",
     "memory",

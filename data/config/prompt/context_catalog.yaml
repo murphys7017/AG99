@@ -266,6 +266,14 @@ contexts:
     lifecycle: dynamic
     notes: "插件贡献的当前输入扩展"
 
+  - id: extension.context
+    category: extension
+    slots: [user_input]
+    required: false
+    multiple: false
+    lifecycle: dynamic
+    notes: "插件贡献的当前请求动态上下文扩展，V1 渲染为独立 context message"
+
   - id: extension.conversation
     category: extension
     slots: [system]

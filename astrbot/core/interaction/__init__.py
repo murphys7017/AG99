@@ -1,7 +1,6 @@
 from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
 from .contributors import (
     InteractionDecisionView,
-    InteractionPromptContribution,
     InteractionResultContribution,
     InteractionResultView,
     InteractionStreamView,
@@ -55,7 +54,6 @@ __all__ = [
     "InteractionStreamView",
     "InteractionTurnState",
     "InteractionUtterance",
-    "InteractionPromptContribution",
     "InteractionResultContribution",
     "InteractionResultView",
     "RouteMode",

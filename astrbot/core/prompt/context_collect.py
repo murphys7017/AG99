@@ -103,6 +103,66 @@ def _coerce_prompt_extension_collector_priority(collector: object) -> int:
         return 100
 
 
+def _coerce_prompt_extension_order(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 100
+
+
+def build_prompt_extension_slots(
+    extensions: Iterable[PromptExtension],
+    *,
+    source: str = "prompt_extension_collectors",
+) -> list[ContextSlot]:
+    grouped_items: dict[str, list[dict[str, object]]] = {
+        mount: [] for mount in PROMPT_EXTENSION_MOUNTS
+    }
+    for extension in extensions:
+        if not isinstance(extension.plugin_id, str) or not extension.plugin_id.strip():
+            raise ValueError("Prompt extension must define a non-empty plugin_id")
+        if extension.mount not in PROMPT_EXTENSION_MOUNTS:
+            raise ValueError(
+                f"Prompt extension has invalid mount: plugin_id={extension.plugin_id} mount={extension.mount}"
+            )
+        if extension.value_kind not in PROMPT_EXTENSION_VALUE_KINDS:
+            raise ValueError(
+                f"Prompt extension has invalid value_kind: plugin_id={extension.plugin_id} value_kind={extension.value_kind}"
+            )
+        grouped_items[extension.mount].append(_build_prompt_extension_record(extension))
+
+    slots: list[ContextSlot] = []
+    for mount, items in grouped_items.items():
+        if not items:
+            continue
+        slot_name = PROMPT_EXTENSION_SLOT_NAMES[mount]
+        slots.append(
+            ContextSlot(
+                name=slot_name,
+                value={
+                    "format": "prompt_extensions_v1",
+                    "mount": mount,
+                    "items": items,
+                },
+                category="extension",
+                source=source,
+                render_mode="structured",
+                meta={
+                    "mount": mount,
+                    "plugin_count": len(
+                        {
+                            item["plugin_id"]
+                            for item in items
+                            if isinstance(item.get("plugin_id"), str)
+                        }
+                    ),
+                    "item_count": len(items),
+                },
+            )
+        )
+    return slots
+
+
 async def _collect_prompt_extension_slots(
     *,
     event: AstrMessageEvent,
@@ -126,9 +186,7 @@ async def _collect_prompt_extension_slots(
         )
     )
 
-    grouped_items: dict[str, list[dict[str, object]]] = {
-        mount: [] for mount in PROMPT_EXTENSION_MOUNTS
-    }
+    collected_extensions: list[PromptExtension] = []
     collector_names: list[str] = []
 
     for collector in collectors:
@@ -179,39 +237,12 @@ async def _collect_prompt_extension_slots(
                 )
                 continue
 
-            grouped_items[extension.mount].append(
-                _build_prompt_extension_record(extension)
-            )
+            collected_extensions.append(extension)
 
-    slots: list[ContextSlot] = []
-    for mount, items in grouped_items.items():
-        if not items:
-            continue
-        slot_name = PROMPT_EXTENSION_SLOT_NAMES[mount]
-        slots.append(
-            ContextSlot(
-                name=slot_name,
-                value={
-                    "format": "prompt_extensions_v1",
-                    "mount": mount,
-                    "items": items,
-                },
-                category="extension",
-                source="prompt_extension_collectors",
-                render_mode="structured",
-                meta={
-                    "mount": mount,
-                    "plugin_count": len(
-                        {
-                            item["plugin_id"]
-                            for item in items
-                            if isinstance(item.get("plugin_id"), str)
-                        }
-                    ),
-                    "item_count": len(items),
-                },
-            )
-        )
+    slots = build_prompt_extension_slots(
+        collected_extensions,
+        source="prompt_extension_collectors",
+    )
     return slots, collector_names
 
 
@@ -222,6 +253,7 @@ async def collect_context_pack(
     config,
     provider_request=None,
     collectors: Iterable[ContextCollectorInterface] | None = None,
+    include_prompt_extensions: bool = True,
 ) -> ContextPack:
     """
     Collect prompt context into a single pack.
@@ -288,30 +320,31 @@ async def collect_context_pack(
 
             pack.add_slot(slot)
 
-    extension_slots, extension_collectors = await _collect_prompt_extension_slots(
-        event=event,
-        plugin_context=plugin_context,
-        config=config,
-        provider_request=provider_request,
-    )
-    pack.meta["extension_collectors"] = extension_collectors
+    if include_prompt_extensions:
+        extension_slots, extension_collectors = await _collect_prompt_extension_slots(
+            event=event,
+            plugin_context=plugin_context,
+            config=config,
+            provider_request=provider_request,
+        )
+        pack.meta["extension_collectors"] = extension_collectors
 
-    for slot in extension_slots:
-        if not catalog.has(slot.name):
-            logger.warning(
-                "Prompt context slot is not declared in catalog: slot=%s collector=%s",
-                slot.name,
-                "PromptExtensionCollectors",
-            )
+        for slot in extension_slots:
+            if not catalog.has(slot.name):
+                logger.warning(
+                    "Prompt context slot is not declared in catalog: slot=%s collector=%s",
+                    slot.name,
+                    "PromptExtensionCollectors",
+                )
 
-        if pack.has_slot(slot.name):
-            logger.warning(
-                "Prompt context slot overwritten: slot=%s collector=%s",
-                slot.name,
-                "PromptExtensionCollectors",
-            )
+            if pack.has_slot(slot.name):
+                logger.warning(
+                    "Prompt context slot overwritten: slot=%s collector=%s",
+                    slot.name,
+                    "PromptExtensionCollectors",
+                )
 
-        pack.add_slot(slot)
+            pack.add_slot(slot)
 
     pack.meta["slot_count"] = len(pack.slots)
     return pack

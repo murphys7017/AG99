@@ -60,6 +60,18 @@ def test_default_catalog_declares_interaction_memory_slot():
     assert item.slots == ["history"]
 
 
+def test_default_catalog_declares_dynamic_context_extension_slot():
+    catalog = ContextCatalogLoader.load(
+        Path("data/config/prompt/context_catalog.yaml"),
+        strict=True,
+    )
+
+    item = catalog.get("extension.context")
+    assert item is not None
+    assert item.category == "extension"
+    assert item.slots == ["user_input"]
+
+
 def test_context_catalog_loader_skips_invalid_items_fail_open(tmp_path: Path):
     catalog_path = tmp_path / "context_catalog.yaml"
     catalog_path.write_text(

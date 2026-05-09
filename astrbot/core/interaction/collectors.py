@@ -12,6 +12,10 @@ from astrbot.core.prompt.context_types import ContextSlot
 from astrbot.core.prompt.interfaces.context_collector_inferface import (
     ContextCollectorInterface,
 )
+from astrbot.core.prompt.strict_mode import (
+    handle_prompt_pipeline_failure,
+    is_prompt_pipeline_strict,
+)
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
@@ -58,12 +62,11 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
-        del config
-
         history_payload = await self._resolve_history_source(
             event,
             plugin_context,
             provider_request,
+            strict=is_prompt_pipeline_strict(config),
         )
         if history_payload is None:
             return []
@@ -75,10 +78,13 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
         event: AstrMessageEvent,
         plugin_context: Context,
         provider_request: ProviderRequest | None,
+        *,
+        strict: bool,
     ) -> dict[str, object] | None:
         history_payload = await self._load_current_conversation_history(
             event,
             plugin_context,
+            strict=strict,
         )
         if history_payload is not None:
             return history_payload
@@ -91,6 +97,7 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
             history_payload = self._load_history_payload(
                 raw_history=getattr(conversation, "history", None),
                 source_name="provider_request.conversation.history",
+                strict=strict,
             )
             if history_payload is not None:
                 history_payload["conversation_id"] = getattr(conversation, "cid", None)
@@ -99,12 +106,15 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
         return self._load_history_payload(
             raw_history=getattr(provider_request, "contexts", None),
             source_name="provider_request.contexts",
+            strict=strict,
         )
 
     async def _load_current_conversation_history(
         self,
         event: AstrMessageEvent,
         plugin_context: Context,
+        *,
+        strict: bool,
     ) -> dict[str, object] | None:
         conversation_manager = getattr(plugin_context, "conversation_manager", None)
         if conversation_manager is None:
@@ -121,11 +131,19 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
                 conversation_id,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to collect interaction conversation history for umo=%s: %s",
-                event.unified_msg_origin,
-                exc,
-                exc_info=True,
+            handle_prompt_pipeline_failure(
+                strict=strict,
+                message=(
+                    "Failed to collect interaction conversation history "
+                    f"for umo={event.unified_msg_origin}: {exc}"
+                ),
+                exc=exc,
+                log_failure=lambda exc=exc: logger.warning(
+                    "Failed to collect interaction conversation history for umo=%s: %s",
+                    event.unified_msg_origin,
+                    exc,
+                    exc_info=True,
+                ),
             )
             return None
 
@@ -135,6 +153,7 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
         history_payload = self._load_history_payload(
             raw_history=getattr(conversation, "history", None),
             source_name="conversation_manager.current_conversation.history",
+            strict=strict,
         )
         if history_payload is None:
             return None
@@ -146,16 +165,25 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
         *,
         raw_history: str | list[dict] | None,
         source_name: str,
+        strict: bool,
     ) -> dict[str, object] | None:
         try:
             messages = parse_conversation_history(raw_history)
             turns = extract_turn_payloads(messages)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to collect interaction conversation history from %s: %s",
-                source_name,
-                exc,
-                exc_info=True,
+            handle_prompt_pipeline_failure(
+                strict=strict,
+                message=(
+                    "Failed to collect interaction conversation history "
+                    f"from {source_name}: {exc}"
+                ),
+                exc=exc,
+                log_failure=lambda exc=exc: logger.warning(
+                    "Failed to collect interaction conversation history from %s: %s",
+                    source_name,
+                    exc,
+                    exc_info=True,
+                ),
             )
             return None
 

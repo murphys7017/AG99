@@ -1,22 +1,35 @@
 from __future__ import annotations
 
-import inspect
+from collections.abc import Iterable
 from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.collectors.input_collector import InputCollector
 from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
-from astrbot.core.prompt.context_collect import collect_context_pack
+from astrbot.core.prompt.context_collect import (
+    build_prompt_extension_slots,
+    collect_context_pack,
+)
 from astrbot.core.prompt.context_types import ContextPack
+from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces.context_collector_inferface import (
     ContextCollectorInterface,
 )
 from astrbot.core.star.context import Context
 
-from .collectors import InteractionMemoryCollector
-from .contributors import InteractionDecisionView, InteractionPromptContribution
+from .collectors import (
+    InteractionConversationHistoryCollector,
+    InteractionMemoryCollector,
+)
+from .contributors import InteractionDecisionView
 from .memory_store import InteractionMemoryStore
 from .turn_state import get_interaction_turn_state
+
+
+class InteractionPromptContributorError(RuntimeError):
+    def __init__(self, reason: str, message: str | None = None) -> None:
+        self.reason = reason
+        super().__init__(message or reason)
 
 
 def build_interaction_collectors(
@@ -25,6 +38,7 @@ def build_interaction_collectors(
     return [
         PersonaCollector(),
         InputCollector(),
+        InteractionConversationHistoryCollector(),
         InteractionMemoryCollector(memory_store),
     ]
 
@@ -41,6 +55,7 @@ async def build_interaction_context_pack(
         config=config,
         provider_request=event.get_extra("provider_request"),
         collectors=build_interaction_collectors(memory_store),
+        include_prompt_extensions=False,
     )
 
 
@@ -128,51 +143,132 @@ def build_core_capability_payload(plugin_context: Context, event) -> dict[str, A
     }
 
 
-async def collect_interaction_prompt_contributions(
+async def collect_interaction_prompt_extensions(
     event,
     plugin_context: Context,
     config,
     decision_context: dict[str, Any],
-) -> list[InteractionPromptContribution]:
-    contributions: list[InteractionPromptContribution] = []
+) -> list[PromptExtension]:
+    extensions: list[PromptExtension] = []
     view = _build_decision_view(
         event=event,
         config=config,
         decision_context=decision_context,
     ).copy_read_only()
     for contributor in plugin_context.list_interaction_prompt_contributors():
+        plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
         try:
-            if _uses_legacy_prompt_contributor_signature(contributor.collect):
-                payload = await contributor.collect(
-                    event,
-                    plugin_context,
-                    config,
-                    decision_context,
-                )
-            else:
-                payload = await contributor.collect(event, plugin_context, view)
+            payload = await contributor.collect(event, plugin_context, view)
         except Exception as exc:  # noqa: BLE001
-            failures = event.get_extra("_interaction_prompt_contributor_failures", [])
-            if not isinstance(failures, list):
-                failures = []
-            failures.append(
-                {
-                    "plugin_id": getattr(contributor, "plugin_id", "<unknown>"),
-                    "error": str(exc),
-                }
+            _record_interaction_prompt_contributor_failure(
+                event,
+                plugin_id=plugin_id,
+                error=str(exc),
             )
-            event.set_extra("_interaction_prompt_contributor_failures", failures)
-            logger.warning(
-                "Interaction prompt contributor failed: plugin_id=%s error=%s",
-                getattr(contributor, "plugin_id", "<unknown>"),
-                exc,
-                exc_info=True,
+            raise InteractionPromptContributorError(
+                "collector_failed",
+                f"Interaction prompt contributor failed: plugin_id={plugin_id} error={exc}",
+            ) from exc
+
+        try:
+            contributor_extensions = _normalize_interaction_prompt_extensions(payload)
+            build_prompt_extension_slots(
+                contributor_extensions,
+                source="interaction_prompt_contributors",
             )
-            continue
-        if isinstance(payload, InteractionPromptContribution):
-            contributions.append(payload)
-    contributions.sort(key=lambda item: (item.priority, item.plugin_id))
-    return contributions
+            extensions.extend(contributor_extensions)
+        except (InteractionPromptContributorError, ValueError) as exc:
+            _record_interaction_prompt_contributor_failure(
+                event,
+                plugin_id=plugin_id,
+                error=str(exc),
+            )
+            raise InteractionPromptContributorError(
+                "invalid_payload", str(exc)
+            ) from exc
+
+    extensions.sort(key=lambda item: (item.order, item.plugin_id))
+    return extensions
+
+
+def append_interaction_prompt_extensions_to_pack(
+    pack: ContextPack,
+    extensions: list[PromptExtension],
+) -> None:
+    if not extensions:
+        return
+    slots = build_prompt_extension_slots(
+        extensions,
+        source="interaction_prompt_contributors",
+    )
+    for slot in slots:
+        _merge_or_add_extension_slot(pack, slot)
+    pack.meta["interaction_prompt_extension_count"] = len(extensions)
+    pack.meta["slot_count"] = len(pack.slots)
+
+
+def _merge_or_add_extension_slot(pack: ContextPack, slot) -> None:
+    existing = pack.get_slot(slot.name)
+    if (
+        existing is None
+        or not isinstance(existing.value, dict)
+        or not isinstance(slot.value, dict)
+    ):
+        pack.add_slot(slot)
+        return
+    existing_items = existing.value.get("items")
+    incoming_items = slot.value.get("items")
+    if not isinstance(existing_items, list) or not isinstance(incoming_items, list):
+        pack.add_slot(slot)
+        return
+    existing_items.extend(incoming_items)
+    existing_items.sort(
+        key=lambda item: (
+            int(item.get("order", 100) or 100) if isinstance(item, dict) else 100,
+            str(item.get("plugin_id", "")) if isinstance(item, dict) else "",
+        )
+    )
+    existing.meta["item_count"] = len(existing_items)
+    existing.meta["plugin_count"] = len(
+        {
+            item.get("plugin_id")
+            for item in existing_items
+            if isinstance(item, dict) and isinstance(item.get("plugin_id"), str)
+        }
+    )
+
+
+def _normalize_interaction_prompt_extensions(payload: object) -> list[PromptExtension]:
+    if payload is None:
+        return []
+    if isinstance(payload, PromptExtension):
+        return [payload]
+    if isinstance(payload, Iterable) and not isinstance(payload, str | bytes | dict):
+        items = list(payload)
+        if all(isinstance(item, PromptExtension) for item in items):
+            return items
+    raise InteractionPromptContributorError(
+        "invalid_payload",
+        "interaction prompt contributor must return PromptExtension, list[PromptExtension], or None",
+    )
+
+
+def _record_interaction_prompt_contributor_failure(
+    event,
+    *,
+    plugin_id: str,
+    error: str,
+) -> None:
+    failures = event.get_extra("_interaction_prompt_contributor_failures", [])
+    if not isinstance(failures, list):
+        failures = []
+    failures.append({"plugin_id": plugin_id, "error": error})
+    event.set_extra("_interaction_prompt_contributor_failures", failures)
+    logger.error(
+        "Interaction prompt contributor failed: plugin_id=%s error=%s",
+        plugin_id,
+        error,
+    )
 
 
 def _build_decision_view(
@@ -227,20 +323,3 @@ def _build_decision_view(
         ),
         metadata={"prompt_context_cached": material is not None},
     )
-
-
-def _uses_legacy_prompt_contributor_signature(collect) -> bool:
-    try:
-        signature = inspect.signature(collect)
-    except (TypeError, ValueError):
-        return False
-    positional_params = [
-        parameter
-        for parameter in signature.parameters.values()
-        if parameter.kind
-        in {
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        }
-    ]
-    return len(positional_params) >= 4

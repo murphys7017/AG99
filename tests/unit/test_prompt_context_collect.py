@@ -2697,6 +2697,13 @@ class _ExtensionCollectorAlpha(PromptExtensionCollectorInterface):
                 value_kind="text",
             ),
             PromptExtension(
+                plugin_id="alpha.plugin",
+                mount="context",
+                title="Runtime Context",
+                value={"state": "ready"},
+                order=30,
+            ),
+            PromptExtension(
                 plugin_id="",
                 mount="memory",
                 value={"skip": True},
@@ -2796,6 +2803,12 @@ async def test_collect_context_pack_collects_prompt_extensions_into_extension_sl
     assert input_slot is not None
     assert input_slot.value["items"][0]["value"] == "Input sidecar"
 
+    context_slot = pack.get_slot("extension.context")
+    assert context_slot is not None
+    assert context_slot.value["mount"] == "context"
+    assert context_slot.value["items"][0]["title"] == "Runtime Context"
+    assert context_slot.value["items"][0]["value"] == {"state": "ready"}
+
     conversation_slot = pack.get_slot("extension.conversation")
     assert conversation_slot is not None
     assert conversation_slot.value["items"][0]["plugin_id"] == "beta.plugin"
@@ -2820,4 +2833,5 @@ async def test_collect_context_pack_fail_open_when_prompt_extension_collector_ra
     )
 
     assert pack.get_slot("extension.system") is not None
+    assert pack.get_slot("extension.context") is not None
     assert pack.get_slot("extension.input") is not None

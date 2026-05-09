@@ -1,18 +1,16 @@
 import asyncio
+from types import MappingProxyType
 
 import pytest
 
 from astrbot.core.interaction.context_builder import (
+    InteractionPromptContributorError,
+    append_interaction_prompt_extensions_to_pack,
     build_interaction_collectors,
-    collect_interaction_prompt_contributions,
+    collect_interaction_prompt_extensions,
     extract_recent_messages,
 )
-from types import MappingProxyType
-
-from astrbot.core.interaction.contributors import (
-    InteractionDecisionView,
-    InteractionPromptContribution,
-)
+from astrbot.core.interaction.contributors import InteractionDecisionView
 from astrbot.core.interaction.memory_store import (
     InteractionMemorySnapshot,
     InteractionMemoryStore,
@@ -20,7 +18,9 @@ from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
     update_interaction_memory_from_turn,
 )
+from astrbot.core.interaction.types import InteractionPromptBuildConfig
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
+from astrbot.core.prompt.extensions import PromptExtension
 
 
 def test_extract_recent_messages_includes_interaction_memory_turns():
@@ -118,8 +118,46 @@ def test_extract_recent_messages_uses_only_interaction_memory_turns():
 def test_build_interaction_collectors_uses_only_interaction_collectors():
     collectors = build_interaction_collectors(InteractionMemoryStore())
 
-    assert len(collectors) == 3
+    assert len(collectors) == 4
+    assert collectors[-2].__class__.__name__ == "InteractionConversationHistoryCollector"
     assert collectors[-1].__class__.__name__ == "InteractionMemoryCollector"
+
+
+@pytest.mark.asyncio
+async def test_interaction_history_collector_raises_on_history_parse_failure_in_strict_mode(
+    monkeypatch,
+):
+    collector = build_interaction_collectors(InteractionMemoryStore())[-2]
+    event = _prompt_event()
+    provider_request = type(
+        "ProviderRequest",
+        (),
+        {
+            "conversation": None,
+            "contexts": [{"role": "user", "content": "hello"}],
+        },
+    )()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {"conversation_manager": None},
+    )()
+
+    def _raise_parse_failure(raw_history):
+        raise ValueError("broken history")
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.collectors.parse_conversation_history",
+        _raise_parse_failure,
+    )
+
+    with pytest.raises(RuntimeError, match="broken history"):
+        await collector.collect(
+            event,
+            plugin_context,
+            InteractionPromptBuildConfig(),
+            provider_request=provider_request,
+        )
 
 
 def test_update_interaction_memory_from_turn_keeps_structured_recent_turns():
@@ -235,11 +273,13 @@ class GoodPromptContributor:
     plugin_id = "good"
     priority = 10
 
-    async def collect(self, event, plugin_context, config, decision_context):
-        return InteractionPromptContribution(
+    async def collect(self, event, plugin_context, view):
+        return PromptExtension(
             plugin_id=self.plugin_id,
-            content={"ok": True},
-            priority=self.priority,
+            mount="capability",
+            value={"ok": True},
+            order=self.priority,
+            meta={"scope": "static", "node_type": "unit"},
         )
 
 
@@ -272,14 +312,31 @@ class ViewPromptContributor:
         with pytest.raises(AttributeError):
             view.recent_messages.append({"source": "bad"})
         self.view = view
-        return InteractionPromptContribution(plugin_id=self.plugin_id, priority=5)
+        return [
+            PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="capability",
+                title="Capability",
+                value={"ok": True},
+                order=5,
+                meta={"scope": "static", "node_type": "capability_contract"},
+            ),
+            PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="context",
+                title="Runtime State",
+                value={"state": "ready"},
+                order=6,
+                meta={"scope": "dynamic", "node_type": "runtime_state"},
+            ),
+        ]
 
 
 class FailingPromptContributor:
     plugin_id = "bad"
     priority = 1
 
-    async def collect(self, event, plugin_context, config, decision_context):
+    async def collect(self, event, plugin_context, view):
         raise RuntimeError("broken")
 
 
@@ -288,19 +345,6 @@ class NewSignatureTypeErrorPromptContributor:
 
     async def collect(self, event, plugin_context, view):
         raise TypeError("internal type error")
-
-
-class LegacyPromptContributor:
-    plugin_id = "legacy"
-
-    def __init__(self):
-        self.config = None
-        self.decision_context = None
-
-    async def collect(self, event, plugin_context, config, decision_context):
-        self.config = config
-        self.decision_context = decision_context
-        return InteractionPromptContribution(plugin_id=self.plugin_id)
 
 
 def _prompt_event():
@@ -340,46 +384,36 @@ async def test_prompt_contributor_receives_read_only_decision_view():
         {"list_interaction_prompt_contributors": lambda self: [contributor]},
     )()
 
-    contributions = await collect_interaction_prompt_contributions(
+    extensions = await collect_interaction_prompt_extensions(
         event,
         plugin_context,
         config=config,
         decision_context=decision_context,
     )
 
-    assert [item.plugin_id for item in contributions] == ["view"]
+    assert [item.plugin_id for item in extensions] == ["view", "view"]
     assert isinstance(contributor.view.config, MappingProxyType)
     assert config["provider_settings"]["name"] == "provider"
     assert decision_context["persona"]["name"] == "Yakumo"
     assert decision_context["recent_messages"][0]["source"] == "unit"
+    pack = ContextPack()
+    append_interaction_prompt_extensions_to_pack(pack, extensions)
+    capability_slot = pack.get_slot("extension.capability")
+    context_slot = pack.get_slot("extension.context")
+    assert capability_slot is not None
+    assert context_slot is not None
+    assert capability_slot.value["items"][0]["meta"] == {
+        "scope": "static",
+        "node_type": "capability_contract",
+    }
+    assert context_slot.value["items"][0]["meta"] == {
+        "scope": "dynamic",
+        "node_type": "runtime_state",
+    }
 
 
 @pytest.mark.asyncio
-async def test_legacy_prompt_contributor_signature_still_receives_old_arguments():
-    event = _prompt_event()
-    contributor = LegacyPromptContributor()
-    config = {"provider_settings": {"name": "provider"}}
-    decision_context = _decision_context()
-    plugin_context = type(
-        "PluginContext",
-        (),
-        {"list_interaction_prompt_contributors": lambda self: [contributor]},
-    )()
-
-    contributions = await collect_interaction_prompt_contributions(
-        event,
-        plugin_context,
-        config=config,
-        decision_context=decision_context,
-    )
-
-    assert [item.plugin_id for item in contributions] == ["legacy"]
-    assert contributor.config is config
-    assert contributor.decision_context is decision_context
-
-
-@pytest.mark.asyncio
-async def test_new_prompt_contributor_internal_type_error_is_recorded():
+async def test_prompt_contributor_internal_type_error_fails_fast():
     event = _prompt_event()
     plugin_context = type(
         "PluginContext",
@@ -391,21 +425,21 @@ async def test_new_prompt_contributor_internal_type_error_is_recorded():
         },
     )()
 
-    contributions = await collect_interaction_prompt_contributions(
-        event,
-        plugin_context,
-        config={},
-        decision_context={},
-    )
+    with pytest.raises(InteractionPromptContributorError, match="internal type error"):
+        await collect_interaction_prompt_extensions(
+            event,
+            plugin_context,
+            config={},
+            decision_context={},
+        )
 
-    assert contributions == []
     assert event.get_extra("_interaction_prompt_contributor_failures") == [
         {"plugin_id": "new-type-error", "error": "internal type error"}
     ]
 
 
 @pytest.mark.asyncio
-async def test_prompt_contributor_failure_is_recorded_and_ignored():
+async def test_prompt_contributor_failure_is_recorded_and_fails_fast():
     event = type(
         "Event",
         (),
@@ -426,14 +460,78 @@ async def test_prompt_contributor_failure_is_recorded_and_ignored():
         },
     )()
 
-    contributions = await collect_interaction_prompt_contributions(
-        event,
-        plugin_context,
-        config={},
-        decision_context={},
-    )
+    with pytest.raises(InteractionPromptContributorError, match="broken"):
+        await collect_interaction_prompt_extensions(
+            event,
+            plugin_context,
+            config={},
+            decision_context={},
+        )
 
-    assert [item.plugin_id for item in contributions] == ["good"]
     assert event.get_extra("_interaction_prompt_contributor_failures") == [
         {"plugin_id": "bad", "error": "broken"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_contributor_invalid_payload_fails_fast():
+    event = _prompt_event()
+
+    class InvalidPromptContributor:
+        plugin_id = "invalid"
+
+        async def collect(self, event, plugin_context, view):
+            return {"not": "a prompt extension"}
+
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {"list_interaction_prompt_contributors": lambda self: [InvalidPromptContributor()]},
+    )()
+
+    with pytest.raises(InteractionPromptContributorError, match="PromptExtension"):
+        await collect_interaction_prompt_extensions(
+            event,
+            plugin_context,
+            config={},
+            decision_context={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_contributor_invalid_extension_mount_fails_fast():
+    event = _prompt_event()
+
+    class InvalidMountPromptContributor:
+        plugin_id = "invalid-mount"
+
+        async def collect(self, event, plugin_context, view):
+            return PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="bad",
+                value={"bad": True},
+            )
+
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "list_interaction_prompt_contributors": lambda self: [
+                InvalidMountPromptContributor()
+            ]
+        },
+    )()
+
+    with pytest.raises(InteractionPromptContributorError, match="invalid mount"):
+        await collect_interaction_prompt_extensions(
+            event,
+            plugin_context,
+            config={},
+            decision_context={},
+        )
+    assert event.get_extra("_interaction_prompt_contributor_failures") == [
+        {
+            "plugin_id": "invalid-mount",
+            "error": "Prompt extension has invalid mount: plugin_id=invalid-mount mount=bad",
+        }
     ]

@@ -47,7 +47,8 @@ prompt
 
 - `system/**` -> `system_prompt`
 - `history/**` -> history messages immediately after system
-- `context/memory` -> `_no_save` user context message after history
+- `context/extensions` -> `_no_save` user context message after history
+- `context/memory` -> `_no_save` user context message after context extensions
 - `context/knowledge` -> `_no_save` user context message after memory
 - `user_input/**` -> current user message
 - `tools/**` -> tool schema
@@ -92,7 +93,12 @@ collect 层的 logical group 不要求和 render 落点一一对应。
 
 `persona.tools_whitelist` 与 `persona.skills_whitelist` 只作为 renderer 过滤输入，不进入 prompt 正文。
 
-### 4.5 Omit empty nodes
+### 4.5 Keep stable system contract separate from dynamic context
+
+`extension.system` 只承载稳定系统契约。当前请求动态事实应通过 `extension.context`
+进入 `context/extensions`，在 compile 阶段作为 `_no_save` user context message 输出。
+
+### 4.6 Omit empty nodes
 
 树里没有正文、没有有效子节点的空标签不进入最终渲染结果。
 

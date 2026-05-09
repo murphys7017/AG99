@@ -643,7 +643,7 @@ def _select_extension_slot(
     slot: ContextSlot,
     decision: PromptSelectionDecision,
 ) -> ContextSlot | None:
-    if slot.name in {"extension.system", "extension.input"}:
+    if slot.name in {"extension.system", "extension.context", "extension.input"}:
         return slot
     if slot.name == "extension.conversation":
         return slot if decision.history != "none" else None
