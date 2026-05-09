@@ -25,9 +25,10 @@ prompt
 │  ├─ persona
 │  ├─ policy
 │  ├─ capability
-│  ├─ knowledge
-│  ├─ memory
 │  └─ session
+├─ context
+│  ├─ memory
+│  └─ knowledge
 ├─ history
 │  ├─ begin_dialogs
 │  └─ conversation
@@ -45,6 +46,8 @@ prompt
 这棵树是中间表示，不是最终 payload。后续默认编译方向为：
 
 - `system/**` -> `system_prompt`
+- `context/memory` -> `_no_save` user context message before history
+- `context/knowledge` -> `_no_save` user context message before history
 - `history/**` -> history messages
 - `user_input/**` -> current user message
 - `tools/**` -> tool schema
@@ -122,12 +125,12 @@ collect 层的 logical group 不要求和 render 落点一一对应。
 | `policy` | `policy.safety_prompt` | `system/policy/safety` | raw text | config info | 原样放入 |
 | `policy` | `policy.sandbox_prompt` | `system/policy/sandbox` | raw text | runtime info | 原样放入 |
 | `conversation` | `conversation.history` | `history/conversation/turn/*` | user/assistant 文本 | `format` `source` `conversation_id` `turn_count` | 展开为 turn 结构 |
-| `knowledge` | `knowledge.snippets` | `system/knowledge/snippets` | `text` | `query` `format` `query_source` | v1 不拆多 snippets |
-| `memory` | `memory.topic_state` | `system/memory/topic_state` | useful summary fields | technical fields | 不混入 history |
-| `memory` | `memory.short_term` | `system/memory/short_term` | useful summary fields | technical fields | 同上 |
-| `memory` | `memory.experiences` | `system/memory/experiences/experience` | summary fields | technical fields | 同上 |
-| `memory` | `memory.long_term_memories` | `system/memory/long_term_memories/memory` | summary fields | technical fields | 同上 |
-| `memory` | `memory.persona_state` | `system/memory/persona_state` | state fields | technical fields | 同上 |
+| `knowledge` | `knowledge.snippets` | `context/knowledge/snippets` | `text` | `query` `format` `query_source` | v1 不拆多 snippets |
+| `memory` | `memory.topic_state` | `context/memory/topic_state` | useful summary fields | technical fields | 不混入 history |
+| `memory` | `memory.short_term` | `context/memory/short_term` | useful summary fields | technical fields | 同上 |
+| `memory` | `memory.experiences` | `context/memory/experiences/experience` | summary fields | technical fields | 同上 |
+| `memory` | `memory.long_term_memories` | `context/memory/long_term_memories/memory` | summary fields | technical fields | 同上 |
+| `memory` | `memory.persona_state` | `context/memory/persona_state` | state fields | technical fields | 同上 |
 | `capability` | `capability.skills_prompt` | `system/capability/skills` | rendered skills prompt | runtime / counts / filters | 应用 `persona.skills_whitelist` |
 | `capability` | `capability.subagent_router_prompt` | `system/capability/subagent_router` | raw text | config info | 原样放入 |
 | `capability` | `capability.tools_schema` | `tools/function_tools/tool` | no raw schema dump | full schema payload | 应用 `persona.tools_whitelist` |
@@ -165,7 +168,7 @@ history
 ### 6.3 Memory
 
 ```text
-system
+context
 └─ memory
    ├─ topic_state
    ├─ short_term
@@ -240,13 +243,15 @@ tools
 
 ### 7.7 `render_knowledge_context()`
 
-- `knowledge.snippets` 放入 `system/knowledge/snippets`
+- `knowledge.snippets` 放入 `context/knowledge/snippets`
+- compile 阶段生成独立 `_no_save` user context message，不进入 `system_prompt`
 - 正文只保留 `text`
 - `query` 等调试字段留在 meta
 
 ### 7.8 `render_memory_context()`
 
-- memory 全部放 `system/memory`
+- memory 全部放 `context/memory`
+- compile 阶段生成独立 `_no_save` user context message，不进入 `system_prompt`
 - 不伪装成历史消息
 - 只渲染对模型理解状态有帮助的字段
 - 技术性字段留在 meta

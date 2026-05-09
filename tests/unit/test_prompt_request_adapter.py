@@ -68,6 +68,35 @@ def test_request_adapter_applies_system_prompt_history_and_text_user_message():
     assert apply_result.warnings == []
 
 
+def test_request_adapter_preserves_internal_context_messages():
+    request = ProviderRequest(prompt="old prompt")
+    result = RenderResult(
+        system_prompt="<system>stable</system>",
+        messages=[
+            {
+                "role": "user",
+                "content": "<memory>context</memory>",
+                "_no_save": True,
+            },
+            {"role": "user", "content": "final user input"},
+        ],
+    )
+
+    apply_result = apply_render_result_to_request(result, request)
+
+    assert request.system_prompt == "<system>stable</system>"
+    assert request.contexts == [
+        {
+            "role": "user",
+            "content": "<memory>context</memory>",
+            "_no_save": True,
+        }
+    ]
+    assert request.prompt == "final user input"
+    assert apply_result.history_message_count == 1
+    assert apply_result.used_user_message is True
+
+
 def test_request_adapter_maps_multimodal_user_content_into_request_parts():
     result = RenderResult(
         messages=[

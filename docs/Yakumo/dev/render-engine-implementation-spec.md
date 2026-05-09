@@ -248,12 +248,13 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 5 �
 - `system -> system/extensions`
 - `input -> user_input/extensions`
 - `conversation -> system/conversation_extensions`
-- `memory -> system/memory/extensions`
+- `memory -> context/memory/extensions`
 - `capability -> system/capability/extensions`
 
 其中：
 
 - `conversation` 在 V1 先走 system 侧说明，不生成 synthetic 历史消息
+- `memory` 随 `context/memory` 编译为 history 后、current input 前的 `_no_save` user context message，不进入 `system_prompt`
 - `input` 会在 `_compile_user_input_message()` 中被单独编译成一个 text content part
 - 同一 mount 下按 `plugin_id` 聚合成“一个插件一个节点”
 - 原始 `plugin_id` 会作为可见子节点保留，便于插件认领自身输出

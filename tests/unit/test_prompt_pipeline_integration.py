@@ -383,18 +383,22 @@ async def test_collect_and_render_pipeline_builds_base_prompt_contract(
     assert result.system_prompt is not None
     assert "Base &lt;system&gt; &amp; guardrails" in result.system_prompt
     assert "You are &lt;Alice&gt; &amp; analyst." in result.system_prompt
-    assert "Knowledge &lt;snippet&gt; &amp; facts." in result.system_prompt
-    assert "Roadmap &lt;planning&gt;" in result.system_prompt
+    assert "Knowledge &lt;snippet&gt; &amp; facts." not in result.system_prompt
+    assert "Roadmap &lt;planning&gt;" not in result.system_prompt
     assert "skill_alpha" in result.system_prompt
     assert "skill_beta" not in result.system_prompt
     assert "Route &lt;carefully&gt; &amp; deliberately." in result.system_prompt
 
     roles = [message["role"] for message in result.messages]
-    assert roles == ["user", "assistant", "user", "assistant", "user"]
-    assert result.messages[0]["content"] == "Hi"
-    assert result.messages[1]["content"] == "Hello"
-    assert result.messages[2]["content"] == "Can you help?"
-    assert result.messages[3]["content"] == "Yes, what do you need?"
+    assert roles == ["user", "user", "user", "assistant", "user", "assistant", "user"]
+    assert result.messages[0]["_no_save"] is True
+    assert result.messages[1]["_no_save"] is True
+    assert "Roadmap &lt;planning&gt;" in result.messages[0]["content"]
+    assert "Knowledge &lt;snippet&gt; &amp; facts." in result.messages[1]["content"]
+    assert result.messages[2]["content"] == "Hi"
+    assert result.messages[3]["content"] == "Hello"
+    assert result.messages[4]["content"] == "Can you help?"
+    assert result.messages[5]["content"] == "Yes, what do you need?"
 
     final_message = result.messages[-1]
     assert isinstance(final_message["content"], list)

@@ -134,9 +134,9 @@ class BasePromptRenderer:
             "input": "user_input",
             "session": "system/session",
             "conversation": "history/conversation",
-            "knowledge": "system/knowledge",
+            "knowledge": "context/knowledge",
             "capability": "system/capability",
-            "memory": "system/memory",
+            "memory": "context/memory",
             "extension": "system/extensions",
         }
 
@@ -785,7 +785,7 @@ class BasePromptRenderer:
             "system": "system/extensions",
             "input": "user_input/extensions",
             "conversation": "system/conversation_extensions",
-            "memory": "system/memory/extensions",
+            "memory": "context/memory/extensions",
             "capability": "system/capability/extensions",
         }
 
@@ -811,6 +811,14 @@ class BasePromptRenderer:
     def _compile_messages(self, prompt_tree: PromptBuilder) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
 
+        for context_path in ("context/memory", "context/knowledge"):
+            context_message = self._compile_context_message(
+                prompt_tree,
+                context_path,
+            )
+            if context_message is not None:
+                messages.append(context_message)
+
         for history_path in ("history/begin_dialogs", "history/conversation"):
             history_node = self._find_tag_path(prompt_tree, history_path)
             if history_node is None:
@@ -822,6 +830,28 @@ class BasePromptRenderer:
             messages.append(user_message)
 
         return messages
+
+    def _compile_context_message(
+        self,
+        prompt_tree: PromptBuilder,
+        node_path: str,
+    ) -> dict[str, Any] | None:
+        context_node = self._find_tag_path(prompt_tree, node_path)
+        if context_node is None:
+            return None
+        content = self._render_subtree_text(
+            prompt_tree,
+            context_node,
+            include_root=True,
+            escape_text=True,
+        )
+        if not content:
+            return None
+        return {
+            "role": "user",
+            "content": content,
+            "_no_save": True,
+        }
 
     def _compile_user_input_message(
         self,

@@ -74,9 +74,9 @@ def test_base_prompt_renderer_returns_nested_node_structure():
     assert structure["policy"] == "system/policy"
     assert structure["session"] == "system/session"
     assert structure["conversation"] == "history/conversation"
-    assert structure["knowledge"] == "system/knowledge"
+    assert structure["knowledge"] == "context/knowledge"
     assert structure["capability"] == "system/capability"
-    assert structure["memory"] == "system/memory"
+    assert structure["memory"] == "context/memory"
     assert structure["extension"] == "system/extensions"
 
 
@@ -162,12 +162,92 @@ def test_render_engine_builds_prompt_tree_from_nested_slots():
     assert "<policy>" in rendered
     assert "<safety>" in rendered
     assert "Safety prompt." in rendered
-    assert "<knowledge>" in rendered
-    assert "<snippets>" in rendered
-    assert "Knowledge result." in rendered
+    assert "<knowledge>" not in rendered
+    assert "Knowledge result." not in rendered
     assert "<tools>" not in rendered
-    assert result.messages == []
+    assert len(result.messages) == 1
+    knowledge_message = result.messages[0]
+    assert knowledge_message["role"] == "user"
+    assert knowledge_message["_no_save"] is True
+    assert "<knowledge>" in knowledge_message["content"]
+    assert "<snippets>" in knowledge_message["content"]
+    assert "Knowledge result." in knowledge_message["content"]
     assert result.tool_schema is None
+
+
+def test_render_engine_compiles_memory_and_knowledge_as_context_messages():
+    pack = ContextPack(
+        slots={
+            "memory.short_term": ContextSlot(
+                name="memory.short_term",
+                value={
+                    "short_summary": "Recent project focus.",
+                    "active_focus": "Prompt layout",
+                    "updated_at": "2026-04-17T20:33:00+08:00",
+                },
+                category="memory",
+                source="test",
+            ),
+            "knowledge.snippets": ContextSlot(
+                name="knowledge.snippets",
+                value={
+                    "format": "kb_text_block_v1",
+                    "query": "prompt cache",
+                    "text": "Cacheable prefix guidance.",
+                },
+                category="memory",
+                source="test",
+            ),
+            "conversation.history": ContextSlot(
+                name="conversation.history",
+                value={
+                    "format": "turn_pairs",
+                    "turns": [
+                        {
+                            "user_message": {
+                                "role": "user",
+                                "content": "Previous question",
+                            },
+                            "assistant_message": {
+                                "role": "assistant",
+                                "content": "Previous answer",
+                            },
+                        }
+                    ],
+                },
+                category="memory",
+                source="test",
+            ),
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Current question",
+                category="input",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=BasePromptRenderer()).render(pack)
+
+    assert result.system_prompt is None
+    assert [message["role"] for message in result.messages] == [
+        "user",
+        "user",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert result.messages[0]["_no_save"] is True
+    assert result.messages[1]["_no_save"] is True
+    assert "<memory>" in result.messages[0]["content"]
+    assert "<short_term>" in result.messages[0]["content"]
+    assert "Recent project focus." in result.messages[0]["content"]
+    assert "Prompt layout" in result.messages[0]["content"]
+    assert "<knowledge>" in result.messages[1]["content"]
+    assert "Cacheable prefix guidance." in result.messages[1]["content"]
+    assert result.messages[2] == {"role": "user", "content": "Previous question"}
+    assert result.messages[3] == {"role": "assistant", "content": "Previous answer"}
+    assert result.messages[4] == {"role": "user", "content": "Current question"}
 
 
 def test_render_engine_prunes_empty_persona_segment_nodes():
