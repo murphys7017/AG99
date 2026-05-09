@@ -7,10 +7,10 @@ from astrbot.core.interaction.contributors import (
     InteractionResultContribution,
     InteractionResultView,
 )
+from astrbot.core.interaction.finalizer import InteractionFinalizerError
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
-from astrbot.core.interaction.finalizer import InteractionFinalizerError
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
@@ -127,8 +127,8 @@ class ImmediateResultContributor:
         assert result_view.turn_id == "turn-1"
         assert result_view.session_id == event.unified_msg_origin
         assert result_view.core_result is None
-        assert result_view.final_result == "???????"
-        assert result_view.immediate_reply == "???????"
+        assert result_view.final_result == "嗯，我来看看。"
+        assert result_view.immediate_reply == "嗯，我来看看。"
         assert result_view.metadata["phase"] == "immediate"
         assert result_view.metadata["message_kind"] == "immediate_reply"
         assert result_view.metadata["is_immediate"] is True
@@ -136,7 +136,7 @@ class ImmediateResultContributor:
         assert result_view.final_candidate_material["visible_outputs"][-1] == {
             "turn_id": "turn-1",
             "kind": "immediate_reply",
-            "text": "???????",
+            "text": "嗯，我来看看。",
             "memory_relevant": True,
         }
         self.view = result_view
@@ -144,7 +144,7 @@ class ImmediateResultContributor:
             plugin_id=self.plugin_id,
             platform_extras={"adapter_object": {"phase": "immediate"}},
             client_objects=[{"kind": "motion"}],
-            final_text_override="???????",
+            final_text_override="嗯，我马上看。",
             metadata={"source": "immediate-unit"},
         )
 
@@ -366,7 +366,7 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
     )
     decision = InteractionDecision(
         should_emit_immediate_reply=True,
-        immediate_spoken_reply="???????",
+        immediate_spoken_reply="嗯，我来看看。",
     )
 
     with patch(
@@ -376,7 +376,7 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
         await controller.emit_immediate_spoken_reply(decision, webchat_event)
 
     payload = queue.get_nowait()
-    assert payload["data"] == "???????"
+    assert payload["data"] == "嗯，我马上看。"
     assert payload["platform_extras"]["turn_id"] == "turn-1"
     assert payload["platform_extras"]["message_kind"] == "immediate_reply"
     assert payload["platform_extras"]["adapter_object"] == {"phase": "immediate"}
@@ -391,8 +391,209 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
     assert contributor.view is not None
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
-    assert turn_state.immediate_reply == "???????"
-    assert turn_state.visible_outputs[0]["text"] == "???????"
+    assert turn_state.immediate_reply == "嗯，我马上看。"
+    assert turn_state.visible_outputs[0]["text"] == "嗯，我马上看。"
+
+
+@pytest.mark.asyncio
+async def test_immediate_reply_materializes_tts_without_reasoning_or_t2i(webchat_event):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "provider_tts_settings": {
+            "enable": True,
+            "dual_output": False,
+            "use_file_service": False,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": True,
+        "t2i_word_threshold": 1,
+    }
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+    )
+    controller.show_reasoning = True
+    webchat_event.set_extra("_llm_reasoning_content", "hidden chain of thought")
+    decision = InteractionDecision(
+        should_emit_immediate_reply=True,
+        immediate_spoken_reply="嗯，我来看看。",
+    )
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch.object(
+            Record,
+            "convert_to_base64",
+            new=AsyncMock(return_value="dm9pY2U="),
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.html_renderer.render_t2i",
+            new=AsyncMock(side_effect=AssertionError("immediate reply must not use t2i")),
+        ),
+    ):
+        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+
+    payload = queue.get_nowait()
+    assert payload["type"] == "record"
+    assert payload["platform_extras"]["message_kind"] == "immediate_reply"
+    assert payload["platform_extras"]["semantic_text"] == "嗯，我来看看。"
+    assert queue.empty()
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.utterances[0].text == "嗯，我来看看。"
+    assert turn_state.utterances[0].metadata["delivered_as"] == "record"
+    assert turn_state.utterances[0].metadata["tts"][0]["tts_audio_path"] == "voice.wav"
+    assert (
+        turn_state.utterances[0].metadata["tts"][0]["tts_provider_id"]
+        == "tts-provider"
+    )
+
+
+@pytest.mark.asyncio
+async def test_immediate_reply_uses_session_scoped_tts_config(webchat_event):
+    queue = asyncio.Queue()
+    session_config = {
+        "provider_tts_settings": {
+            "enable": True,
+            "dual_output": False,
+            "use_file_service": False,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": False,
+    }
+    global_config = {
+        "provider_tts_settings": {
+            "enable": False,
+            "dual_output": False,
+            "use_file_service": False,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": False,
+    }
+    plugin_context = MagicMock()
+    plugin_context.get_config.side_effect = (
+        lambda umo=None: session_config
+        if umo == webchat_event.unified_msg_origin
+        else global_config
+    )
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+    )
+    decision = InteractionDecision(
+        should_emit_immediate_reply=True,
+        immediate_spoken_reply="嗯，我来看看。",
+    )
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch.object(
+            Record,
+            "convert_to_base64",
+            new=AsyncMock(return_value="dm9pY2U="),
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
+        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+
+    payload = queue.get_nowait()
+    assert payload["type"] == "record"
+    plugin_context.get_config.assert_any_call(umo=webchat_event.unified_msg_origin)
+
+
+@pytest.mark.asyncio
+async def test_immediate_reply_dual_output_keeps_single_semantic_text(
+    webchat_event,
+):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "provider_tts_settings": {
+            "enable": True,
+            "dual_output": True,
+            "use_file_service": False,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": False,
+    }
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+    )
+    decision = InteractionDecision(
+        should_emit_immediate_reply=True,
+        immediate_spoken_reply="行，马上。",
+    )
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch.object(
+            Record,
+            "convert_to_base64",
+            new=AsyncMock(return_value="dm9pY2U="),
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
+        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+
+    record_payload = queue.get_nowait()
+    plain_payload = queue.get_nowait()
+    assert record_payload["type"] == "record"
+    assert plain_payload["type"] == "plain"
+    assert (
+        record_payload["platform_extras"]["semantic_text"]
+        == plain_payload["platform_extras"]["semantic_text"]
+        == "行，马上。"
+    )
+    assert (
+        record_payload["platform_extras"]["visible_message_id"]
+        != plain_payload["platform_extras"]["visible_message_id"]
+    )
+    assert queue.empty()
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert len(turn_state.utterances) == 1
+    assert turn_state.utterances[0].text == "行，马上。"
+    assert turn_state.utterances[0].delivered_message_ids == [
+        record_payload["platform_extras"]["visible_message_id"],
+        plain_payload["platform_extras"]["visible_message_id"],
+    ]
 
 
 @pytest.mark.asyncio

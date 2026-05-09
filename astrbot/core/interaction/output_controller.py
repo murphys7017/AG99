@@ -96,20 +96,25 @@ class InteractionOutputController:
         self._persist_callback = persist_callback
         self._refresh_outbound_materialization_config()
 
-    def _refresh_outbound_materialization_config(self) -> None:
+    def _refresh_outbound_materialization_config(
+        self,
+        event: AstrMessageEvent | None = None,
+    ) -> None:
         self.reply_prefix = str(self.platform_settings.get("reply_prefix", "") or "")
         self.t2i_word_threshold = self._coerce_t2i_word_threshold(
-            self._get_config_value("t2i_word_threshold", 150),
+            self._get_config_value("t2i_word_threshold", 150, event=event),
         )
-        self.t2i_strategy = str(self._get_config_value("t2i_strategy", "remote") or "")
+        self.t2i_strategy = str(
+            self._get_config_value("t2i_strategy", "remote", event=event) or ""
+        )
         self.t2i_use_network = self.t2i_strategy == "remote"
         self.t2i_active_template = str(
-            self._get_config_value("t2i_active_template", "base") or "base"
+            self._get_config_value("t2i_active_template", "base", event=event) or "base"
         )
         self.tts_trigger_probability = self._coerce_probability(
-            self._get_tts_settings().get("trigger_probability", 1.0),
+            self._get_tts_settings(event).get("trigger_probability", 1.0),
         )
-        provider_cfg = self._get_provider_settings()
+        provider_cfg = self._get_provider_settings(event)
         self.show_reasoning = bool(provider_cfg.get("display_reasoning_text", False))
 
     @staticmethod
@@ -126,28 +131,42 @@ class InteractionOutputController:
         except (TypeError, ValueError):
             return 1.0
 
-    def _get_runtime_config(self) -> Any:
+    def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
         if self.plugin_context is None:
             return None
         get_config = getattr(self.plugin_context, "get_config", None)
         if not callable(get_config):
             return None
+        if event is not None:
+            return get_config(umo=event.unified_msg_origin)
         return get_config()
 
-    def _get_config_value(self, key: str, default: Any = None) -> Any:
-        cfg = self._get_runtime_config()
+    def _get_config_value(
+        self,
+        key: str,
+        default: Any = None,
+        *,
+        event: AstrMessageEvent | None = None,
+    ) -> Any:
+        cfg = self._get_runtime_config(event)
         if isinstance(cfg, dict):
             return cfg.get(key, default)
         if cfg is not None and hasattr(cfg, "get"):
             return cfg.get(key, default)
         return default
 
-    def _get_provider_settings(self) -> dict[str, Any]:
-        value = self._get_config_value("provider_settings", {})
+    def _get_provider_settings(
+        self,
+        event: AstrMessageEvent | None = None,
+    ) -> dict[str, Any]:
+        value = self._get_config_value("provider_settings", {}, event=event)
         return value if isinstance(value, dict) else {}
 
-    def _get_tts_settings(self) -> dict[str, Any]:
-        value = self._get_config_value("provider_tts_settings", {})
+    def _get_tts_settings(
+        self,
+        event: AstrMessageEvent | None = None,
+    ) -> dict[str, Any]:
+        value = self._get_config_value("provider_tts_settings", {}, event=event)
         return value if isinstance(value, dict) else {}
 
     async def emit_immediate_spoken_reply(
@@ -193,6 +212,13 @@ class InteractionOutputController:
                 message = message.derive([Plain(merged.final_text_override)])
                 semantic_text = message.get_plain_text()
                 set_interaction_turn_immediate_reply(event, semantic_text)
+            (
+                message,
+                materialization,
+            ) = await self.materialize_immediate_interaction_outbound_message(
+                event,
+                message,
+            )
             delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
@@ -203,12 +229,14 @@ class InteractionOutputController:
                 ),
                 record_send_operation=False,
                 allow_segmented_reply=False,
+                semantic_text=semantic_text,
             )
             self._record_visible_output(
                 event,
                 message_kind="immediate_reply",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
+                metadata=materialization,
             )
             return
 
@@ -241,6 +269,7 @@ class InteractionOutputController:
                 message,
                 message_kind="passthrough",
                 allow_segmented_reply=True,
+                semantic_text=semantic_text,
             )
             self._record_visible_output(
                 event,
@@ -1047,6 +1076,7 @@ class InteractionOutputController:
             platform_extras=platform_extras,
             result_is_model_result=True,
             allow_segmented_reply=True,
+            semantic_text=semantic_text,
         )
         self._record_visible_output(
             event,
@@ -1276,7 +1306,7 @@ class InteractionOutputController:
         message_kind: str,
         result_is_model_result: bool = False,
     ) -> tuple[MessageChain, dict[str, Any]]:
-        self._refresh_outbound_materialization_config()
+        self._refresh_outbound_materialization_config(event)
         materialization: dict[str, Any] = {
             "message_kind": message_kind,
             "semantic_text": message.get_plain_text(),
@@ -1301,6 +1331,26 @@ class InteractionOutputController:
             materialized,
         )
         materialization.update(t2i_metadata)
+        return materialized, materialization
+
+    async def materialize_immediate_interaction_outbound_message(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+    ) -> tuple[MessageChain, dict[str, Any]]:
+        self._refresh_outbound_materialization_config(event)
+        materialization: dict[str, Any] = {
+            "message_kind": "immediate_reply",
+            "semantic_text": message.get_plain_text(),
+            "delivered_as": "text",
+        }
+        materialized = self._apply_interaction_reply_prefix(event, message)
+        materialized, tts_metadata = await self._apply_interaction_tts(
+            event,
+            materialized,
+            result_is_model_result=True,
+        )
+        materialization.update(tts_metadata)
         return materialized, materialization
 
     def _apply_interaction_reply_prefix(
@@ -1350,7 +1400,7 @@ class InteractionOutputController:
         *,
         result_is_model_result: bool,
     ) -> tuple[MessageChain, dict[str, Any]]:
-        tts_settings = self._get_tts_settings()
+        tts_settings = self._get_tts_settings(event)
         should_try_tts = (
             bool(tts_settings.get("enable"))
             and result_is_model_result
@@ -1389,7 +1439,7 @@ class InteractionOutputController:
                     stage="interaction.outbound_tts",
                     use_file_service=bool(tts_settings.get("use_file_service")),
                     callback_api_base=str(
-                        self._get_config_value("callback_api_base", "")
+                        self._get_config_value("callback_api_base", "", event=event)
                     ),
                     require_file_registration_config=True,
                 )
@@ -1437,7 +1487,7 @@ class InteractionOutputController:
         use_t2i = (
             message.use_t2i_
             if message.use_t2i_ is not None
-            else bool(self._get_config_value("t2i", False))
+            else bool(self._get_config_value("t2i", False, event=event))
         )
         if not use_t2i:
             return message, {}
@@ -1471,7 +1521,7 @@ class InteractionOutputController:
                 "empty_image_url",
             )
             raise RuntimeError("Interaction t2i returned empty image URL")
-        delivered_url = await self._register_interaction_t2i_file_if_needed(url)
+        delivered_url = await self._register_interaction_t2i_file_if_needed(event, url)
         image_url = delivered_url or url
         if image_url.startswith("http"):
             image = Image.fromURL(image_url)
@@ -1506,11 +1556,23 @@ class InteractionOutputController:
             f"outbound_materialization:{stage}:{reason}",
         )
 
-    async def _register_interaction_t2i_file_if_needed(self, url: str) -> str | None:
-        callback_api_base = self._get_config_value("callback_api_base", "")
+    async def _register_interaction_t2i_file_if_needed(
+        self,
+        event: AstrMessageEvent,
+        url: str,
+    ) -> str | None:
+        callback_api_base = self._get_config_value(
+            "callback_api_base",
+            "",
+            event=event,
+        )
         if (
             url.startswith("http")
-            or not self._get_config_value("t2i_use_file_service", False)
+            or not self._get_config_value(
+                "t2i_use_file_service",
+                False,
+                event=event,
+            )
             or not callback_api_base
         ):
             return None
@@ -1547,6 +1609,7 @@ class InteractionOutputController:
         record_send_operation: bool = True,
         result_is_model_result: bool = False,
         allow_segmented_reply: bool = False,
+        semantic_text: str | None = None,
     ) -> list[str]:
         """Send a visible message and record it as a turn utterance.
 
@@ -1563,6 +1626,9 @@ class InteractionOutputController:
         """
         base_extras = self._strip_message_identity_extras(platform_extras or {})
         delivered_message_ids: list[str] = []
+        semantic_text = (
+            message.get_plain_text() if semantic_text is None else semantic_text
+        )
 
         async def _send(chain: MessageChain) -> None:
             output_extras = {
@@ -1571,6 +1637,7 @@ class InteractionOutputController:
                     event,
                     message_kind=message_kind,
                 ),
+                "semantic_text": semantic_text,
             }
             await self._send_platform_message(
                 chain,
