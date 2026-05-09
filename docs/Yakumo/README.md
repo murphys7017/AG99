@@ -56,7 +56,17 @@
 - `target-state.md` / `prompt-development-plan.md`：偏目标态
 - `dev/history/*`：偏历史讨论，不代表当前实现
 
-### 4. 这个分支强调“先接管模型可见输入，再逐步替换旧链路”
+### 4. Interaction middleware 已进入当前架构线
+
+这个分支新增并持续收口 `astrbot/core/interaction/*`。它不是单纯的
+WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
+
+- 输入侧：在 core decision 之前完成 turn state、入站媒体 materialization、STT、路由决策。
+- 输出侧：接管 interaction turn 的 send / streaming 语义，统一 finalizer、result contributor、TTS、t2i、utterance ledger 与 finalized turn material。
+- Completion：middleware 只产出 finalized material 并调度 `AFTER_TURN_COMPLETED` postprocess；memory 写入由 postprocess / memory service 消费同一份 material。
+- Voice：core 旧流程和 middleware 新流程共享 `astrbot/core/voice/*`，但 failure policy 由调用方决定。middleware 内部主链路开发期 fail-fast，不把 fallback 当正确性证明。
+
+### 5. 这个分支强调“先接管模型可见输入，再逐步替换旧链路”
 
 尤其在 prompt 方向，这个分支的策略不是一次性把官方链路全部替掉，而是分阶段推进：
 
@@ -74,8 +84,10 @@
 1. `docs/Yakumo/current-state.md`
 2. `docs/Yakumo/modules/README.md`
 3. `docs/Yakumo/modules/prompt.md`
-4. `docs/Yakumo/dev/memory/index.md`
-5. 具体专题文档
+4. `docs/Yakumo/dialog-worker-live-target-state.md`
+5. `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
+6. `docs/Yakumo/dev/memory/index.md`
+7. 具体专题文档
 
 ## 使用约定
 

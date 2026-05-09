@@ -106,6 +106,13 @@ Prompt System 的职责是：
 - 不负责替换 AstrBot 原生 hook/event 机制
 - 不负责直接持有 memory store
 
+interaction middleware 接入后还需要额外明确：
+
+- middleware 负责产出 finalized turn material
+- postprocess 负责作为 completion consumer boundary
+- memory service 负责实际记忆写入
+- postprocess 不应为 interaction turn 自行从 visible outputs、provider request 或历史 extra 中反推完整 turn material
+
 ## 三、与现有 AstrBot 机制的关系
 
 `Post Process System` 必须明确建立在 AstrBot 现有机制之上，而不是另起炉灶。

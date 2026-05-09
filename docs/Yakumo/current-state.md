@@ -55,6 +55,37 @@
 - Agent 内核和 AstrBot 业务实现没有明确隔离
 - 新的 `prompt` 模块已经完成 collect 收口，并落地了 selector/render 基础骨架，但还没有真正接管 request delivery
 
+### 2.5 Interaction Middleware
+
+- `astrbot/core/interaction/*`
+- `astrbot/core/voice/*`
+- `astrbot/core/memory/postprocessor.py`
+- `astrbot/core/postprocess/*`
+
+职责：
+
+- 在 adapter 与 core queue 之间维护 interaction turn state
+- 在 core decision 之前处理入站媒体、STT、route decision 与 immediate reply
+- 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
+- 统一 finalizer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
+- 将 turn completion 收口为：middleware 产出 finalized material，postprocess / memory service 消费 material 并写 memory
+- 对普通 core 非 interaction 事件保留原 pipeline STT/TTS 兼容路径
+
+当前已完成：
+
+- `InteractionTurnState`、`InteractionUtterance`、`InteractionStreamState` 已成为主状态模型
+- prompt / result / stream 插件扩展点已收口到只读阶段视图
+- SELF_REPLY / HYBRID / DELEGATE_TO_CORE 主链路已由 middleware 持有 turn owner 语义
+- interaction outbound phase 已迁入 `InteractionOutputController`
+- core 旧流程与 middleware 新流程共享 voice service
+- interaction 内部主链路开发期 fail-fast，不依赖 fallback 证明正确性
+
+当前仍需继续收口：
+
+- 正式 output gateway 仍未替换当前 `event.send` / `event.send_streaming` interception 形态
+- live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
+- 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
+
 ### 3. 插件与工具整合层
 
 - `astrbot/core/star/context.py`
@@ -82,10 +113,12 @@
 - `astrbot/core/conversation_mgr.py`
 - `astrbot/core/db/*`
 - `astrbot/core/platform/*`
+- `astrbot/core/voice/*`
 
 职责：
 
 - 提供模型、STT、TTS、会话、数据库、消息平台能力
+- `voice` 是共享 STT/TTS service port，core 旧流程与 interaction middleware 都通过它解析 provider、执行转写/合成与记录 diagnostics
 
 问题：
 

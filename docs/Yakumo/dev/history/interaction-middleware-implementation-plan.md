@@ -1,5 +1,13 @@
 # AstrBot Interaction Middleware Implementation Plan
 
+> Historical note: this was the first function-level implementation plan for
+> inserting interaction middleware between adapter and core. It is archived
+> because the current code has already moved beyond the transport/routing MVP:
+> turn state, stream phase, readonly plugin views, outbound materialization,
+> voice service integration, fail-fast policy, and postprocess-owned memory
+> completion are now tracked in
+> `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`.
+
 本文档是 `docs/Yakumo/dialog-worker-live-target-state.md` 的函数级实现拆解。
 
 需要明确：

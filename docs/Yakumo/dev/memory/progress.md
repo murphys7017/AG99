@@ -31,7 +31,7 @@
 
 当前已落地：
 
-1. `AFTER_MESSAGE_SENT`
+1. `AFTER_MESSAGE_SENT` 或 interaction middleware 调度的 `AFTER_TURN_COMPLETED`
 2. `MemoryPostProcessor`
 3. `MemoryService.update_from_postprocess(...)`
 4. `TurnRecordService.ingest_turn(...)`
@@ -54,6 +54,13 @@
 - 短期层继续按 `umo + conversation_id` 工作
 - `canonical_user_id` 缺失时，不阻断短期写入
 - `canonical_user_id` 缺失时，中长期链路直接停止，不做 fallback
+
+interaction turn 约束：
+
+- middleware 是 finalized material producer
+- postprocess / memory service 是 memory 写入 owner
+- interaction memory 不从 visible outputs 兜底反推 assistant reply
+- 音频、图片、文件等物理投递形态只作为 utterance metadata，不污染 canonical memory text
 
 ### 2.2 短期分析链路
 

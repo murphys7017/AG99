@@ -84,7 +84,7 @@ AstrBot 本身已经是一个成熟、知名的多平台 LLM 聊天机器人与 
 
 - `astrbot/core/interaction/`
 - `tests/unit/test_interaction_*.py`
-- `docs/Yakumo/dev/dialog-worker-live-implementation-plan.md`
+- `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
 - `docs/Yakumo/dialog-worker-live-target-state.md`
 
 ### 5. Provider 与附件链路有本地适配

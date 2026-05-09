@@ -12,6 +12,7 @@
 
 - `prompt-progress-memory-reference.md`
 - `postprocess-issue-draft.md`
+- `interaction-middleware-implementation-plan.md`
 - `memory/mvp-plan.md`
 - `memory/long-term-fix-plan.md`
 

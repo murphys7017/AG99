@@ -6,13 +6,16 @@
 
 1. **当前已落地的首期形态**
    - 在 adapter 与 core 之间插入一层 middleware
-   - 接管输入打标与 `event.send()` / `event.send_streaming()` outbound seam
-   - 先以 WebChat 为首个验证平台
+   - 建立 `InteractionTurnState` / utterance ledger / stream state
+   - 接管 interaction turn 的输入 materialization、路由决策、输出 materialization 与 completion handoff
+   - core 旧流程与 middleware 新流程共享 STT/TTS voice service
 2. **长期目标形态**
    - 把 middleware 提升为真正的 interaction agent layer
    - 承载人格、独立记忆、交互路由、拟人化进度表达与最终结果再表达
 
-换句话说，当前版本已经拿到了“接线权”，但还没有完成“人格化决策权”。
+换句话说，当前版本已经不只是 transport shell，而是已经具备 turn owner
+语义的 interaction orchestration layer；长期目标仍是继续增强人格 runtime、
+正式 output gateway 与 live audio diagnostics。
 
 ## 核心定位
 
@@ -40,22 +43,27 @@ Core 负责把事做成，Middleware 负责像“这个角色本人”一样和�
 
 - adapter -> middleware -> core queue 的输入接入点
 - 按 `platform_id` 可配置启用
-- 对已启用平台接管 `event.send()` / `event.send_streaming()`
-- 以 WebChat 为首个启用平台完成链路验证
+- `self_reply / delegate_to_core / hybrid` 的路由决策
+- state-first streaming phase、stream interjection 与 finalized material
+- prompt / result / stream 插件扩展点的只读阶段视图
+- interaction outbound phase：finalizer、result contributor、reply prefix、reasoning display、TTS、t2i
+- SELF_REPLY / HYBRID / DELEGATE 的统一 turn completion handoff
+- memory 写入 owner 收口到 postprocess / memory service
+- core 普通流程和 middleware interaction 流程共享 voice service
 
 当前这版实现，还没有完成：
 
-- middleware 自己的人格 runtime
-- middleware 自己的独立记忆系统
-- `self_reply / delegate_to_core / hybrid` 的路由决策
+- 正式 output gateway 替换当前 `event.send()` / `event.send_streaming()` interception 形态
+- middleware 自己完整的人格 runtime
 - core 中间事件的人格化进度转述
-- core 最终结果的拟人化再表达
+- live audio 缺 provider / 文本降级 / completion diagnostics 的完整统一
+- 真实平台日志断点与手动验证
 
 因此，当前版本应理解为：
 
 ```text
-Phase 1 = transport / routing shell
-最终目标 = interaction agent layer
+当前 = state-first interaction orchestration layer
+下一步 = formal output gateway + live audio diagnostics + persona runtime
 ```
 
 ## 目标链路
@@ -157,11 +165,12 @@ Core 不再直接拥有最终用户表达主导权。它可以产出：
 - 捕获 core 执行过程中的中间结果
 - 捕获 core 最终结果
 - 对已启用 middleware 的平台，接管 `event.send()` / `event.send_streaming()` 两个 outbound API
-- 维护 task state / output buffer
+- 维护 turn state / utterance ledger / stream state
 - 判断是否显示原始进度、拟人化进度，还是完全静默
 - 调用 Dialog/Expression 层生成用户可见表达
 - 对 core 最终结果做再表达
 - 将表达结果交给 adapter outbound
+- 产出 finalized turn material，并调度 `AFTER_TURN_COMPLETED` postprocess
 
 ## Memory / Knowledge Boundary
 
@@ -190,6 +199,7 @@ Core 不再直接拥有最终用户表达主导权。它可以产出：
 因此：
 
 - 人格记忆应优先放在 middleware
+- 当前 interaction turn completion 的 memory 写入 owner 是 postprocess / memory service；middleware 只生产 finalized material 并调度 postprocess
 - knowledge base 应优先保留在 core
 - middleware 决定是否调用 core 的 knowledge / tools / search
 
@@ -435,5 +445,5 @@ humanized progress:
 - 对已启用平台，Core 最终结果不再默认直接输出给 adapter
 - 用户可见表达由 middleware 的表达策略决定
 - 对已启用平台，Worker/tool/subagent/background task 不能绕过 middleware public 输出
-- WebChat/Live/Live2D 只作为下游消费者，不成为 core 架构中心
+- WebChat / live audio / 其他平台都只作为下游消费者，不成为 core 架构中心
 - 中长期目标上，middleware 能逐步承载人格、独立记忆、交互路由与拟人化进度表达

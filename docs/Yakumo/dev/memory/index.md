@@ -28,7 +28,7 @@
 
 当前真实闭环：
 
-1. `AFTER_MESSAGE_SENT`
+1. `AFTER_MESSAGE_SENT` 或 interaction middleware 调度的 `AFTER_TURN_COMPLETED`
 2. `MemoryPostProcessor`
 3. `MemoryService.update_from_postprocess(...)`
 4. `TurnRecordService.ingest_turn(...)`
@@ -40,6 +40,12 @@
 10. 达阈值时 `LongTermMemoryService.run_promotion(...)`
 11. 通过 `DocumentSearchService` 执行长期记忆文档搜索
 12. 请求前通过 `MemoryService.get_snapshot(...)` 读取短期层 + 中长期只读视图
+
+interaction turn 的额外约束：
+
+- middleware 必须先产出 explicit finalized turn material
+- `MemoryPostProcessor` 只消费该 material，不从 visible outputs 或 provider request 反推完整 assistant reply
+- Record/Image/Audio 等投递形态不进入 memory text；memory 使用 canonical semantic assistant text
 
 ## 1. 当前目录目标
 
