@@ -117,6 +117,38 @@ class ResultContributor:
         )
 
 
+class ImmediateResultContributor:
+    plugin_id = "immediate_result_plugin"
+
+    def __init__(self):
+        self.view = None
+
+    async def collect(self, event, plugin_context, result_view):
+        assert result_view.turn_id == "turn-1"
+        assert result_view.session_id == event.unified_msg_origin
+        assert result_view.core_result is None
+        assert result_view.final_result == "???????"
+        assert result_view.immediate_reply == "???????"
+        assert result_view.metadata["phase"] == "immediate"
+        assert result_view.metadata["message_kind"] == "immediate_reply"
+        assert result_view.metadata["is_immediate"] is True
+        assert result_view.metadata["is_final"] is False
+        assert result_view.final_candidate_material["visible_outputs"][-1] == {
+            "turn_id": "turn-1",
+            "kind": "immediate_reply",
+            "text": "???????",
+            "memory_relevant": True,
+        }
+        self.view = result_view
+        return InteractionResultContribution(
+            plugin_id=self.plugin_id,
+            platform_extras={"adapter_object": {"phase": "immediate"}},
+            client_objects=[{"kind": "motion"}],
+            final_text_override="???????",
+            metadata={"source": "immediate-unit"},
+        )
+
+
 class MutatingResultContributor:
     plugin_id = "mutating_plugin"
 
@@ -157,6 +189,10 @@ class InspectingResultContributor:
         assert result_view.utterances[0]["kind"] == "immediate_reply"
         assert result_view.turn_material_snapshot["assistant"] == "final answer"
         assert result_view.finalized_turn_material["assistant"] == "final answer"
+        assert result_view.metadata["phase"] == "final"
+        assert result_view.metadata["message_kind"] == "core_reply"
+        assert result_view.metadata["is_immediate"] is False
+        assert result_view.metadata["is_final"] is True
         assert result_view.final_candidate_material["assistant_text"] == "dry result"
         assert result_view.final_candidate_material["visible_outputs"][-1] == {
             "turn_id": "turn-1",
@@ -319,19 +355,18 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
 
 
 @pytest.mark.asyncio
-async def test_immediate_reply_skips_final_result_contributors(webchat_event):
+async def test_immediate_reply_collects_result_contributors(webchat_event):
     queue = asyncio.Queue()
+    contributor = ImmediateResultContributor()
     plugin_context = MagicMock()
-    plugin_context.list_interaction_result_contributors.return_value = [
-        ResultContributor()
-    ]
+    plugin_context.list_interaction_result_contributors.return_value = [contributor]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
     )
     decision = InteractionDecision(
         should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我来看看。",
+        immediate_spoken_reply="???????",
     )
 
     with patch(
@@ -341,15 +376,23 @@ async def test_immediate_reply_skips_final_result_contributors(webchat_event):
         await controller.emit_immediate_spoken_reply(decision, webchat_event)
 
     payload = queue.get_nowait()
-    assert payload["data"] == "嗯，我来看看。"
+    assert payload["data"] == "???????"
     assert payload["platform_extras"]["turn_id"] == "turn-1"
     assert payload["platform_extras"]["message_kind"] == "immediate_reply"
+    assert payload["platform_extras"]["adapter_object"] == {"phase": "immediate"}
+    assert payload["platform_extras"]["client_objects"] == [{"kind": "motion"}]
+    assert payload["platform_extras"]["metadata"] == {"source": "immediate-unit"}
     assert (
         payload["platform_extras"]["visible_message_id"]
         == "turn-1::immediate_reply::0001"
     )
     assert queue.empty()
-    plugin_context.list_interaction_result_contributors.assert_not_called()
+    plugin_context.list_interaction_result_contributors.assert_called_once_with()
+    assert contributor.view is not None
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.immediate_reply == "???????"
+    assert turn_state.visible_outputs[0]["text"] == "???????"
 
 
 @pytest.mark.asyncio

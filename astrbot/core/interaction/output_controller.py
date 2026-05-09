@@ -180,17 +180,34 @@ class InteractionOutputController:
         is_immediate = bool(event.get_extra("_interaction_emitting_immediate_reply"))
         outbound_kind = self._classify_outbound_message(event, message, is_immediate)
         if is_immediate:
+            semantic_text = message.get_plain_text()
+            contributions = await self._collect_result_contributions(
+                event,
+                core_result=None,
+                final_result=semantic_text,
+                phase="immediate",
+                candidate_message_kind="immediate_reply",
+            )
+            merged = merge_result_contributions(contributions)
+            if merged.final_text_override is not None:
+                message = message.derive([Plain(merged.final_text_override)])
+                semantic_text = message.get_plain_text()
+                set_interaction_turn_immediate_reply(event, semantic_text)
             delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
                 message_kind="immediate_reply",
+                platform_extras=self.build_platform_output_base_extras(
+                    event,
+                    result_contribution=merged,
+                ),
                 record_send_operation=False,
                 allow_segmented_reply=False,
             )
             self._record_visible_output(
                 event,
                 message_kind="immediate_reply",
-                text=message.get_plain_text(),
+                text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
             )
             return
@@ -1002,6 +1019,8 @@ class InteractionOutputController:
             event,
             core_result=core_result_text,
             final_result=final_message.get_plain_text(),
+            phase="final",
+            candidate_message_kind="core_reply",
         )
         merged = merge_result_contributions(contributions)
         if merged.final_text_override is not None:
@@ -1091,6 +1110,8 @@ class InteractionOutputController:
         *,
         core_result: str | None,
         final_result: str | None,
+        phase: str,
+        candidate_message_kind: str,
     ) -> list[InteractionResultContribution]:
         if self.plugin_context is None:
             return []
@@ -1120,9 +1141,15 @@ class InteractionOutputController:
             final_candidate_material=self._build_result_final_candidate_material(
                 event,
                 final_result=final_result,
+                message_kind=candidate_message_kind,
             ),
             finalized_turn_material=get_interaction_turn_finalized_material(event),
-            metadata={},
+            metadata={
+                "phase": phase,
+                "message_kind": candidate_message_kind,
+                "is_immediate": phase == "immediate",
+                "is_final": phase == "final",
+            },
         )
         contributions: list[InteractionResultContribution] = []
         for contributor in list_contributors():
@@ -1162,6 +1189,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         *,
         final_result: str | None,
+        message_kind: str,
     ) -> dict[str, Any] | None:
         turn_id = str(event.get_extra("_turn_id", "") or "").strip()
         assistant_text = (final_result or "").strip()
@@ -1171,7 +1199,7 @@ class InteractionOutputController:
             *get_interaction_turn_visible_outputs(event),
             {
                 "turn_id": turn_id,
-                "kind": "core_reply",
+                "kind": message_kind,
                 "text": assistant_text,
                 "memory_relevant": True,
             },
