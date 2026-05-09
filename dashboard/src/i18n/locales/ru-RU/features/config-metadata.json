@@ -992,6 +992,102 @@
             }
         }
     },
+    "interaction_middleware_group": {
+        "name": "Interaction Middleware",
+        "general": {
+            "description": "Основные настройки",
+            "hint": "Управляет новым основным путем interaction middleware. Во время разработки внутренний путь не предоставляет fallback-конфигурацию: отсутствие провайдера или некорректный вывод завершаются явной ошибкой.",
+            "interaction_middleware": {
+                "enabled": {
+                    "description": "Включить Interaction Middleware"
+                },
+                "default_enabled_for_platforms": {
+                    "description": "Платформы, включенные по умолчанию",
+                    "hint": "Список ID платформ. Только эти платформы по умолчанию входят в путь interaction middleware."
+                },
+                "platforms": {
+                    "description": "Переопределения платформ",
+                    "hint": "Переопределяет настройки middleware по ID платформы. Используется только для явных различий платформ, не как fallback для отсутствующей конфигурации."
+                },
+                "memory_window_size": {
+                    "description": "Размер окна памяти",
+                    "hint": "Количество ходов interaction memory, читаемых при построении decision context."
+                }
+            }
+        },
+        "decision": {
+            "description": "Стратегия передачи ответа",
+            "hint": "Decision agent выбирает: отвечает ли middleware напрямую, говорит короткую фразу перед передачей в core или молча делегирует выполнение core.",
+            "interaction_middleware": {
+                "decision_provider_id": {
+                    "description": "Провайдер модели решения",
+                    "hint": "Если пусто, путь middleware завершится явной ошибкой вместо fallback к модели по умолчанию."
+                },
+                "decision_model": {
+                    "description": "Имя модели решения",
+                    "hint": "Необязательно. Если пусто, используется имя модели выбранного провайдера."
+                },
+                "decision_temperature": {
+                    "description": "Температура решения"
+                },
+                "decision_max_tokens": {
+                    "description": "Максимум токенов решения"
+                },
+                "decision_timeout": {
+                    "description": "Таймаут решения (сек)"
+                },
+                "decision_confidence_threshold": {
+                    "description": "Порог уверенности решения"
+                }
+            }
+        },
+        "finalizer": {
+            "description": "Финальная обработка ответа",
+            "hint": "Обрабатывает вывод core перед отправкой. Во время разработки ошибка обработки завершает текущий turn и не отправляет заменяющий текст.",
+            "interaction_middleware": {
+                "finalizer_mode": {
+                    "description": "Режим обработки",
+                    "labels": [
+                        "Авто",
+                        "Принудительно",
+                        "Выкл"
+                    ]
+                },
+                "finalizer_provider_id": {
+                    "description": "Провайдер модели обработки"
+                },
+                "finalizer_model": {
+                    "description": "Имя модели обработки",
+                    "hint": "Необязательно. Если пусто, используется имя модели выбранного провайдера."
+                },
+                "finalizer_temperature": {
+                    "description": "Температура обработки"
+                },
+                "finalizer_max_tokens": {
+                    "description": "Максимум токенов обработки"
+                }
+            }
+        },
+        "stream": {
+            "description": "Подсказки во время выполнения",
+            "hint": "Наблюдает окна потокового вывода core и позволяет middleware вставлять короткие подсказки, пока core еще выполняет задачу.",
+            "interaction_middleware": {
+                "stream_observation_enabled": {
+                    "description": "Включить наблюдение выполнения"
+                },
+                "stream_observation_min_chars": {
+                    "description": "Минимум накопленных символов",
+                    "hint": "Middleware решает, нужна ли подсказка, только когда потоковый вывод core достигнет этого количества символов."
+                },
+                "stream_interjection_enabled": {
+                    "description": "Разрешить подсказки во время выполнения"
+                },
+                "stream_interjection_max_per_turn": {
+                    "description": "Максимум подсказок за turn"
+                }
+            }
+        }
+    },
     "system_group": {
         "name": "Система",
         "system": {

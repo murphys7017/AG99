@@ -991,6 +991,102 @@
       }
     }
   },
+  "interaction_middleware_group": {
+    "name": "Interaction Middleware",
+    "general": {
+      "description": "General",
+      "hint": "Controls the new interaction middleware main path. Internal development paths do not expose fallback configuration; missing providers or invalid outputs fail explicitly.",
+      "interaction_middleware": {
+        "enabled": {
+          "description": "Enable Interaction Middleware"
+        },
+        "default_enabled_for_platforms": {
+          "description": "Default Enabled Platforms",
+          "hint": "Platform ID list. Only platforms listed here enter the interaction middleware path by default."
+        },
+        "platforms": {
+          "description": "Platform Overrides",
+          "hint": "Override middleware settings by platform ID. Use only for explicit platform differences, not as fallback for missing configuration."
+        },
+        "memory_window_size": {
+          "description": "Memory Window Size",
+          "hint": "Number of interaction memory turns read when building the decision context."
+        }
+      }
+    },
+    "decision": {
+      "description": "Reply Handoff Strategy",
+      "hint": "The decision agent chooses whether the middleware replies directly, speaks briefly before handing off to core, or silently delegates to core.",
+      "interaction_middleware": {
+        "decision_provider_id": {
+          "description": "Decision Model Provider",
+          "hint": "If empty, the middleware path fails explicitly instead of falling back to the default model."
+        },
+        "decision_model": {
+          "description": "Decision Model Name",
+          "hint": "Optional. Empty uses the selected provider's own model name."
+        },
+        "decision_temperature": {
+          "description": "Decision Temperature"
+        },
+        "decision_max_tokens": {
+          "description": "Decision Max Tokens"
+        },
+        "decision_timeout": {
+          "description": "Decision Timeout Seconds"
+        },
+        "decision_confidence_threshold": {
+          "description": "Decision Confidence Threshold"
+        }
+      }
+    },
+    "finalizer": {
+      "description": "Final Reply Cleanup",
+      "hint": "Cleans up core output before delivery. During development, cleanup failure terminates the current turn and does not send replacement text.",
+      "interaction_middleware": {
+        "finalizer_mode": {
+          "description": "Cleanup Mode",
+          "labels": [
+            "Auto",
+            "Force",
+            "Off"
+          ]
+        },
+        "finalizer_provider_id": {
+          "description": "Cleanup Model Provider"
+        },
+        "finalizer_model": {
+          "description": "Cleanup Model Name",
+          "hint": "Optional. Empty uses the selected provider's own model name."
+        },
+        "finalizer_temperature": {
+          "description": "Cleanup Temperature"
+        },
+        "finalizer_max_tokens": {
+          "description": "Cleanup Max Tokens"
+        }
+      }
+    },
+    "stream": {
+      "description": "In-Progress Prompts",
+      "hint": "Observes core streaming output windows and lets the middleware insert short in-progress prompts while core is still working.",
+      "interaction_middleware": {
+        "stream_observation_enabled": {
+          "description": "Enable In-Progress Observation"
+        },
+        "stream_observation_min_chars": {
+          "description": "Minimum Accumulated Characters",
+          "hint": "The middleware only decides whether to insert an in-progress prompt after core streaming output reaches this character count."
+        },
+        "stream_interjection_enabled": {
+          "description": "Allow In-Progress Prompts"
+        },
+        "stream_interjection_max_per_turn": {
+          "description": "Max Prompts Per Turn"
+        }
+      }
+    }
+  },
   "system_group": {
     "name": "System",
     "system": {

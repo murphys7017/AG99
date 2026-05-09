@@ -4159,6 +4159,158 @@ CONFIG_METADATA_3 = {
             },
         },
     },
+    "interaction_middleware_group": {
+        "name": "交互中间件",
+        "metadata": {
+            "general": {
+                "description": "基础开关",
+                "hint": "控制新的交互中间件主链路。开发期内部链路不提供 fallback 配置，缺失 provider 或非法输出会显式失败。",
+                "type": "object",
+                "items": {
+                    "interaction_middleware.enabled": {
+                        "description": "启用交互中间件",
+                        "type": "bool",
+                    },
+                    "interaction_middleware.default_enabled_for_platforms": {
+                        "description": "默认启用平台",
+                        "hint": "平台 ID 列表。只有列入这里的平台会默认进入交互中间件链路。",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.platforms": {
+                        "description": "平台覆盖配置",
+                        "hint": "按平台 ID 覆盖中间件配置。仅用于显式平台差异，不作为缺失配置的 fallback。",
+                        "type": "dict",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.memory_window_size": {
+                        "description": "记忆窗口轮数",
+                        "hint": "构建 decision context 时读取的 interaction memory 轮数。",
+                        "type": "int",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                },
+            },
+            "decision": {
+                "description": "回复接管策略",
+                "hint": "决策 Agent 负责判断当前 turn 是由中间件直接回复、先说一句再交给核心、还是静默交给核心执行。",
+                "type": "object",
+                "items": {
+                    "interaction_middleware.decision_provider_id": {
+                        "description": "决策模型提供商",
+                        "hint": "留空时会在中间件链路显式报错，不会回退到默认模型。",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.decision_model": {
+                        "description": "决策模型名称",
+                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
+                        "type": "string",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.decision_temperature": {
+                        "description": "决策温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 1, "step": 0.05},
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.decision_max_tokens": {
+                        "description": "决策最大 token",
+                        "type": "int",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.decision_timeout": {
+                        "description": "决策超时秒数",
+                        "type": "float",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.decision_confidence_threshold": {
+                        "description": "决策置信度阈值",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 1, "step": 0.05},
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                },
+            },
+            "finalizer": {
+                "description": "最终回复整理",
+                "hint": "整理核心输出后再发送。开发期整理失败会终止当前 turn，不发送替代文本。",
+                "type": "object",
+                "items": {
+                    "interaction_middleware.finalizer_mode": {
+                        "description": "整理模式",
+                        "type": "string",
+                        "options": ["auto", "force", "off"],
+                        "labels": ["自动", "强制", "关闭"],
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.finalizer_provider_id": {
+                        "description": "整理模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.finalizer_model": {
+                        "description": "整理模型名称",
+                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
+                        "type": "string",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.finalizer_temperature": {
+                        "description": "整理温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 1, "step": 0.05},
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.finalizer_max_tokens": {
+                        "description": "整理最大 token",
+                        "type": "int",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                },
+            },
+            "stream": {
+                "description": "执行过程提示",
+                "hint": "观察核心流式输出窗口，并允许中间件在核心执行过程中插入简短提示。",
+                "type": "object",
+                "items": {
+                    "interaction_middleware.stream_observation_enabled": {
+                        "description": "启用执行过程观察",
+                        "type": "bool",
+                        "condition": {"interaction_middleware.enabled": True},
+                    },
+                    "interaction_middleware.stream_observation_min_chars": {
+                        "description": "最少累计字符数",
+                        "hint": "核心流式输出累计到这个字符数后，中间件才会判断是否需要插入过程提示。",
+                        "type": "int",
+                        "condition": {
+                            "interaction_middleware.enabled": True,
+                            "interaction_middleware.stream_observation_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.stream_interjection_enabled": {
+                        "description": "允许过程提示",
+                        "type": "bool",
+                        "condition": {
+                            "interaction_middleware.enabled": True,
+                            "interaction_middleware.stream_observation_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.stream_interjection_max_per_turn": {
+                        "description": "每轮最多提示次数",
+                        "type": "int",
+                        "condition": {
+                            "interaction_middleware.enabled": True,
+                            "interaction_middleware.stream_observation_enabled": True,
+                            "interaction_middleware.stream_interjection_enabled": True,
+                        },
+                    },
+                },
+            },
+        },
+    },
 }
 
 CONFIG_METADATA_3_SYSTEM = {

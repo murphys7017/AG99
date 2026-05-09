@@ -47,6 +47,11 @@ const sidebarItem: menu[] = [
         title: 'core.navigation.configTabs.system',
         icon: 'mdi-cog-outline',
         to: '/config#system'
+      },
+      {
+        title: 'core.navigation.configTabs.extension',
+        icon: 'mdi-tune-variant',
+        to: '/config#extension'
       }
     ]
   },

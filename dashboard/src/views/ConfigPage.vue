@@ -377,7 +377,7 @@ export default {
       lastSavedConfigSnapshot: '',
 
       // 配置类型切换
-      configType: 'normal', // 'normal' 或 'system'
+      configType: 'normal', // 'normal', 'system' 或 'extension'
       configSearchKeyword: '',
 
       // 系统配置开关
@@ -412,8 +412,6 @@ export default {
 
     const targetConfigId = this.initialConfigId || 'default';
     this.getConfigInfoList(targetConfigId);
-    // 初始化配置类型状态
-    this.configType = this.isSystemConfig ? 'system' : 'normal';
     
     // 监听语言切换事件，重新加载配置以获取插件的 i18n 数据
     window.addEventListener('astrbot-locale-changed', this.handleLocaleChange);
@@ -433,16 +431,14 @@ export default {
   methods: {
     // 处理语言切换事件，重新加载配置以获取插件的 i18n 数据
     handleLocaleChange() {
-      // 重新加载当前配置
+      if (this.isSystemConfig) {
+        this.getConfig();
+        return;
+      }
       if (this.selectedConfigID) {
         this.getConfig(this.selectedConfigID);
-      } else if (this.isSystemConfig) {
-        this.getConfig();
       }
     },
-
-  },
-  methods: {
     onConfigSearchInput(value) {
       this.configSearchKeyword = normalizeTextInput(value);
     },
@@ -453,7 +449,7 @@ export default {
         return null;
       }
       const cleanHash = rawHash.slice(lastHashIndex + 1);
-      return cleanHash === 'system' || cleanHash === 'normal' ? cleanHash : null;
+      return ['system', 'normal', 'extension'].includes(cleanHash) ? cleanHash : null;
     },
     async syncConfigTypeFromHash(hash) {
       const configType = this.extractConfigTypeFromHash(hash);
@@ -461,8 +457,7 @@ export default {
         return false;
       }
 
-      this.configType = configType;
-      await this.onConfigTypeToggle();
+      await this.onConfigTypeToggle(configType);
       return true;
     },
     getConfigInfoList(abconf_id) {
@@ -511,7 +506,7 @@ export default {
         this.config_data = res.data.data.config;
         this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
         this.fetched = true
-        this.metadata = res.data.data.metadata;
+        this.metadata = this.getVisibleMetadata(res.data.data.metadata);
         this.configContentKey += 1;
         // 获取配置后更新
           this.$nextTick(() => {
@@ -526,6 +521,13 @@ export default {
         this.save_message_snack = true;
         this.save_message_success = "error";
       });
+    },
+    getVisibleMetadata(metadata) {
+      if (this.configType !== 'extension') {
+        return metadata || {};
+      }
+      const group = metadata?.interaction_middleware_group;
+      return group ? { interaction_middleware_group: group } : {};
     },
     updateConfig() {
       if (!this.fetched) return;
@@ -815,7 +817,9 @@ export default {
         this.save_message_success = "error";
       });
     },
-    async onConfigTypeToggle() {
+    async onConfigTypeToggle(nextConfigType = this.configType) {
+      const previousConfigType = this.configType;
+      const previousIsSystemConfig = this.isSystemConfig;
       // 检查是否有未保存的更改
       if (this.hasUnsavedChanges) {
         const message = this.tm('unsavedChangesWarning.leavePage');
@@ -829,9 +833,10 @@ export default {
         // 关闭弹窗
         if (saveAndSwitch === 'close') {
           // 恢复路由
-          const originalHash = this.isSystemConfig ? '#system' : '#normal';
+          const originalHash = `#${previousConfigType}`;
           this.$router.replace('/config' + originalHash);
-          this.configType = this.isSystemConfig ? 'system' : 'normal';
+          this.configType = previousConfigType;
+          this.isSystemConfig = previousIsSystemConfig;
           return;
         }
         if (saveAndSwitch) {
@@ -843,6 +848,7 @@ export default {
           }
         }
       }
+      this.configType = nextConfigType;
       this.isSystemConfig = this.configType === 'system';
       this.fetched = false; // 重置加载状态
 
@@ -860,9 +866,12 @@ export default {
     },
     onSystemConfigToggle() {
       // 保持向后兼容性，更新 configType
-      this.configType = this.isSystemConfig ? 'system' : 'normal';
+      this.configType = this.configTypeFromSystemFlag();
 
       this.onConfigTypeToggle();
+    },
+    configTypeFromSystemFlag() {
+      return this.isSystemConfig ? 'system' : 'normal';
     },
     openTestChat() {
       if (!this.selectedConfigID) {

@@ -868,10 +868,6 @@
   content: "\F167A";
 }
 
-.mdi-send::before {
-  content: "\F048A";
-}
-
 .mdi-server::before {
   content: "\F048B";
 }
@@ -998,6 +994,10 @@
 
 .mdi-trash-can-outline::before {
   content: "\F0A7A";
+}
+
+.mdi-tune-variant::before {
+  content: "\F1542";
 }
 
 .mdi-unfold-more-horizontal::before {

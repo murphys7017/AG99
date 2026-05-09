@@ -44,6 +44,7 @@
   },
   "configTabs": {
     "normal": "Normal Config",
-    "system": "System Config"
+    "system": "System Config",
+    "extension": "Extension Config"
   }
 }

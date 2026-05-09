@@ -44,6 +44,7 @@
   },
   "configTabs": {
     "normal": "普通配置",
-    "system": "系统配置"
+    "system": "系统配置",
+    "extension": "扩展配置"
   }
 }
