@@ -811,6 +811,12 @@ class BasePromptRenderer:
     def _compile_messages(self, prompt_tree: PromptBuilder) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
 
+        for history_path in ("history/begin_dialogs", "history/conversation"):
+            history_node = self._find_tag_path(prompt_tree, history_path)
+            if history_node is None:
+                continue
+            messages.extend(self._compile_turn_messages(prompt_tree, history_node))
+
         for context_path in ("context/memory", "context/knowledge"):
             context_message = self._compile_context_message(
                 prompt_tree,
@@ -818,12 +824,6 @@ class BasePromptRenderer:
             )
             if context_message is not None:
                 messages.append(context_message)
-
-        for history_path in ("history/begin_dialogs", "history/conversation"):
-            history_node = self._find_tag_path(prompt_tree, history_path)
-            if history_node is None:
-                continue
-            messages.extend(self._compile_turn_messages(prompt_tree, history_node))
 
         user_message = self._compile_user_input_message(prompt_tree)
         if user_message is not None:

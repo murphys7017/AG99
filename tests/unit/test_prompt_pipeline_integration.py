@@ -390,15 +390,15 @@ async def test_collect_and_render_pipeline_builds_base_prompt_contract(
     assert "Route &lt;carefully&gt; &amp; deliberately." in result.system_prompt
 
     roles = [message["role"] for message in result.messages]
-    assert roles == ["user", "user", "user", "assistant", "user", "assistant", "user"]
-    assert result.messages[0]["_no_save"] is True
-    assert result.messages[1]["_no_save"] is True
-    assert "Roadmap &lt;planning&gt;" in result.messages[0]["content"]
-    assert "Knowledge &lt;snippet&gt; &amp; facts." in result.messages[1]["content"]
-    assert result.messages[2]["content"] == "Hi"
-    assert result.messages[3]["content"] == "Hello"
-    assert result.messages[4]["content"] == "Can you help?"
-    assert result.messages[5]["content"] == "Yes, what do you need?"
+    assert roles == ["user", "assistant", "user", "assistant", "user", "user", "user"]
+    assert result.messages[0]["content"] == "Hi"
+    assert result.messages[1]["content"] == "Hello"
+    assert result.messages[2]["content"] == "Can you help?"
+    assert result.messages[3]["content"] == "Yes, what do you need?"
+    assert result.messages[4]["_no_save"] is True
+    assert result.messages[5]["_no_save"] is True
+    assert "Roadmap &lt;planning&gt;" in result.messages[4]["content"]
+    assert "Knowledge &lt;snippet&gt; &amp; facts." in result.messages[5]["content"]
 
     final_message = result.messages[-1]
     assert isinstance(final_message["content"], list)

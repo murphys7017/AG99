@@ -175,7 +175,7 @@ def test_render_engine_builds_prompt_tree_from_nested_slots():
     assert result.tool_schema is None
 
 
-def test_render_engine_compiles_memory_and_knowledge_as_context_messages():
+def test_render_engine_compiles_history_before_dynamic_context_messages():
     pack = ContextPack(
         slots={
             "memory.short_term": ContextSlot(
@@ -232,21 +232,21 @@ def test_render_engine_compiles_memory_and_knowledge_as_context_messages():
     assert result.system_prompt is None
     assert [message["role"] for message in result.messages] == [
         "user",
-        "user",
-        "user",
         "assistant",
         "user",
+        "user",
+        "user",
     ]
-    assert result.messages[0]["_no_save"] is True
-    assert result.messages[1]["_no_save"] is True
-    assert "<memory>" in result.messages[0]["content"]
-    assert "<short_term>" in result.messages[0]["content"]
-    assert "Recent project focus." in result.messages[0]["content"]
-    assert "Prompt layout" in result.messages[0]["content"]
-    assert "<knowledge>" in result.messages[1]["content"]
-    assert "Cacheable prefix guidance." in result.messages[1]["content"]
-    assert result.messages[2] == {"role": "user", "content": "Previous question"}
-    assert result.messages[3] == {"role": "assistant", "content": "Previous answer"}
+    assert result.messages[0] == {"role": "user", "content": "Previous question"}
+    assert result.messages[1] == {"role": "assistant", "content": "Previous answer"}
+    assert result.messages[2]["_no_save"] is True
+    assert result.messages[3]["_no_save"] is True
+    assert "<memory>" in result.messages[2]["content"]
+    assert "<short_term>" in result.messages[2]["content"]
+    assert "Recent project focus." in result.messages[2]["content"]
+    assert "Prompt layout" in result.messages[2]["content"]
+    assert "<knowledge>" in result.messages[3]["content"]
+    assert "Cacheable prefix guidance." in result.messages[3]["content"]
     assert result.messages[4] == {"role": "user", "content": "Current question"}
 
 

@@ -46,9 +46,9 @@ prompt
 这棵树是中间表示，不是最终 payload。后续默认编译方向为：
 
 - `system/**` -> `system_prompt`
-- `context/memory` -> `_no_save` user context message before history
-- `context/knowledge` -> `_no_save` user context message before history
-- `history/**` -> history messages
+- `history/**` -> history messages immediately after system
+- `context/memory` -> `_no_save` user context message after history
+- `context/knowledge` -> `_no_save` user context message after memory
 - `user_input/**` -> current user message
 - `tools/**` -> tool schema
 
