@@ -53,7 +53,7 @@
 - `astr_main_agent.py` 职责过载
 - Agent 层直接感知 plugin context、persona、knowledge base、skills、cron、sandbox
 - Agent 内核和 AstrBot 业务实现没有明确隔离
-- 新的 `prompt` 模块已经完成 collect 收口，并落地了 selector/render 基础骨架，但还没有真正接管 request delivery
+- 新的 `prompt` 模块已经完成 collect/select/render/apply 主链路，当前默认 `apply_visible` 会接管模型可见 `ProviderRequest` 字段；shadow/legacy 仍作为显式配置模式存在
 
 ### 2.5 Interaction Middleware
 

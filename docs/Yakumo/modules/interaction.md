@@ -119,6 +119,195 @@ InteractionOutputController
 - `stream_interjection` 默认 `memory_relevant=False`
 - Record/Image/Audio 投递形态记录在 utterance metadata 中，memory 使用 semantic assistant text
 
+## 插件侧两个接口
+
+interaction middleware 对插件主要暴露两个阶段接口：
+
+1. `register_interaction_prompt_contributor(...)`
+   - 在 middleware decision 前运行。
+   - 用于向 interaction decision prompt 注入结构化信息。
+   - 返回 `PromptExtension` 或 `list[PromptExtension]`。
+   - 影响中间件如何判断本轮应该 `self_reply`、`hybrid` 还是 `delegate_to_core`。
+
+2. `register_interaction_result_contributor(...)`
+   - 在 interaction 输出阶段运行。
+   - 用于读取本轮 decision、immediate reply、core result、final result、visible outputs 等结果快照。
+   - 返回 `InteractionResultContribution`。
+   - 可以补充平台侧 extras、client objects，或覆盖最终文本。
+
+这两个接口不是普通 core prompt extension 的替代品。它们只作用在 interaction
+middleware 的 turn 内部，用于插件参与“中间件决策”和“中间件输出 materialization”。
+
+### Prompt Contributor
+
+注册方式：
+
+```python
+from astrbot.api import star
+from astrbot.core.prompt import PromptExtension
+
+
+class MotionPromptContributor:
+    plugin_id = "example.motion"
+    priority = 50
+
+    async def collect(self, event, plugin_context, view):
+        return [
+            PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="capability",
+                title="Motion Contract",
+                value={
+                    "motion_available": True,
+                    "supported_actions": ["nod", "shake_head", "wave"],
+                },
+                value_kind="mapping",
+                order=10,
+                meta={
+                    "scope": "static",
+                    "node_type": "motion_contract",
+                },
+            ),
+            PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="context",
+                title="Motion Runtime State",
+                value={
+                    "current_pose": "idle",
+                    "can_interrupt": True,
+                },
+                value_kind="mapping",
+                order=20,
+                meta={
+                    "scope": "dynamic",
+                    "node_type": "motion_runtime_state",
+                },
+            ),
+        ]
+
+
+class Main(star.Star):
+    def __init__(self, context: star.Context) -> None:
+        self.context = context
+        self.context.register_interaction_prompt_contributor(
+            MotionPromptContributor()
+        )
+```
+
+`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。
+常用字段：
+
+- `view.turn_id`
+- `view.platform_id`
+- `view.session_id`
+- `view.persona`
+- `view.input`
+- `view.interaction_memory`
+- `view.recent_messages`
+- `view.capabilities`
+- `view.decision_context`
+
+推荐 mount 选择：
+
+- `capability`: 稳定能力契约，例如插件能提供哪些动作、哪些协议、哪些输出能力。
+- `context`: 当前请求动态事实，例如设备状态、运行时状态、临时 session facts。
+- `system`: 仅用于稳定决策规则；不要放动态事实。
+- `input`: 仅用于确实需要贴近当前用户输入的补充材料。
+
+middleware 会把 `capability/system` 渲染进稳定 system prompt，把 `context`
+渲染为 history 后、memory/knowledge 前的独立 context message。这样动态事实不会污染
+system prefix，也不会进入会话历史。
+
+失败语义：
+
+- contributor 抛异常会记录 `_interaction_prompt_contributor_failures`。
+- 返回值不是 `PromptExtension`、`list[PromptExtension]` 或 `None` 会直接失败。
+- invalid mount 会直接失败。
+- interaction 主链路开发期按 fail-fast 处理，不用 fallback 掩盖 contributor 错误。
+
+### Result Contributor
+
+注册方式：
+
+```python
+from astrbot.api import star
+from astrbot.core.interaction import InteractionResultContribution
+
+
+class MotionResultContributor:
+    plugin_id = "example.motion"
+    priority = 50
+
+    async def collect(self, event, plugin_context, view):
+        final_text = view.final_result or view.core_result or view.immediate_reply
+        if not final_text:
+            return None
+
+        return InteractionResultContribution(
+            plugin_id=self.plugin_id,
+            platform_extras={
+                "motion_intent": {
+                    "action": "nod",
+                    "reason": "assistant_acknowledged_user",
+                }
+            },
+            client_objects=[
+                {
+                    "type": "motion_intent",
+                    "action": "nod",
+                    "source": "interaction_result_contributor",
+                }
+            ],
+            metadata={
+                "text_length": len(final_text),
+                "phase": view.metadata.get("phase"),
+            },
+            priority=50,
+        )
+
+
+class Main(star.Star):
+    def __init__(self, context: star.Context) -> None:
+        self.context = context
+        self.context.register_interaction_result_contributor(
+            MotionResultContributor()
+        )
+```
+
+`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionResultView`。
+常用字段：
+
+- `view.turn_id`
+- `view.platform_id`
+- `view.session_id`
+- `view.decision`
+- `view.immediate_reply`
+- `view.core_result`
+- `view.final_result`
+- `view.visible_outputs`
+- `view.utterances`
+- `view.final_candidate_material`
+- `view.finalized_turn_material`
+- `view.metadata`
+
+`InteractionResultContribution` 字段语义：
+
+- `platform_extras`: 合并到平台侧 extras，用于平台 adapter 或前端消费。
+- `client_objects`: 追加到客户端对象列表，用于 UI、动作、Live2D、sidecar 等消费。
+- `final_text_override`: 覆盖最终要发送的文本；只在确实需要改写最终表达时使用。
+- `metadata`: contributor 自己的诊断和附加信息。
+- `priority`: 合并顺序，数值越小越先处理。
+
+result contributor 只能基于只读结果快照产出 contribution。不要修改 `view`，也不要把
+motion/audio/image 等物理投递结果伪装成成功文本；中间件的输出 materialization 仍由
+`InteractionOutputController` 统一处理。
+
+失败语义：
+
+- contributor 抛异常会记录 `_interaction_result_contributor_failures` 并打日志。
+- 非 `InteractionResultContribution` 返回值会被忽略。
+- result contributor 是输出扩展边界，不应作为主链路正确性的 fallback。
+
 ## 仍需继续收口
 
 - 正式 output gateway 替换当前 send interception 形态

@@ -2,113 +2,104 @@
 
 这是 `murphys7017/AstrBot` 对上游 `AstrBotDevs/AstrBot` 的 fork 说明页。
 
-AstrBot 本身已经是一个成熟、知名的多平台 LLM 聊天机器人与 Agent 框架，所以这里不再重复上游 README 的产品介绍、部署广告和生态说明。本 README 只说明：这个仓库和上游有什么不同。
+AstrBot 本身已经是一个成熟的多平台 LLM 聊天机器人与 Agent 框架，所以这里不再重复上游 README 的完整产品介绍。本 README 只用比较直白的话说明：这个 fork 想把 AstrBot 改成什么样，以及它和上游最大的区别是什么。
 
 上游入口：
 
 - 上游仓库：https://github.com/AstrBotDevs/AstrBot
 - 官方文档：https://docs.astrbot.app/
 
-## 核心差异
+## 这个 fork 想做什么
 
-### 1. Yakumo 架构实验
+简单说，这个 fork 想让机器人不只是“收到消息 -> 丢给核心 Agent -> 等最终答案”。
 
-本 fork 的主要方向是 Yakumo 架构实验：在保留 AstrBot 原有能力的基础上，逐步把主 Agent、prompt、memory、postprocess、interaction layer 等链路拆得更清楚。
+我希望它更像一个有前台人格的助手：
 
-相关文档集中在：
+- 用户说话后，先由一个类似“拟人层”的环节接住。
+- 拟人层先理解这句话的语气、意图和当前互动状态。
+- 如果适合，它可以先给一个很短的临时回应，比如“我看看”“等我想一下”“这个我需要查一下”。
+- 同时它会判断：这件事要不要交给更重的核心 Agent 去处理。
+- 如果只是寒暄、确认、轻量互动，拟人层可以自己完成。
+- 如果需要查资料、调用工具、写代码、检索知识库、让子 Agent 工作，它会把任务交给核心。
+- 核心处理完以后，拟人层还可以再把结果整理成更自然、更符合当前人格的表达。
 
-- `docs/Yakumo/`
-- `docs/Yakumo/current-state.md`
-- `docs/Yakumo/modules/README.md`
+所以它不是要推翻 AstrBot 原来的核心能力，而是在核心前后加一层更像“角色本人”的互动流程。
 
-`docs/Yakumo` 描述的是本 fork 的真实代码状态、目标结构和开发记录，不是上游官方文档的镜像。
+## 和上游最大的不同
 
-### 2. Prompt 管线不同
+### 1. 多了一个拟人层
 
-上游主线更偏向在主 Agent 链路里直接组织模型可见上下文。本 fork 新增并持续推进 `astrbot/core/prompt/*`，把 prompt 构建拆成：
+上游 AstrBot 更像一个直接的 Agent 框架：平台收到消息，整理上下文，然后交给主 Agent 生成回复。
 
-- `collect`: 收集 system、persona、input、session、policy、memory、history、skills、tools、subagent、knowledge、extension 等上下文。
-- `select`: 选择本轮真正进入模型请求的上下文。
-- `render`: 渲染模型可见的 prompt/request 结构。
-- `apply`: 将结果投影回 `ProviderRequest`。
+这个 fork 在中间增加了一个“拟人层”。它更关心这轮对话应该怎么互动，而不只是怎么完成任务。
 
-相关位置：
+大致流程是：
 
-- `astrbot/core/prompt/`
-- `data/config/prompt/context_catalog.yaml`
-- `docs/Yakumo/modules/prompt.md`
+1. 用户发来消息。
+2. 拟人层先接住消息，读取当前人格、最近对话、互动记忆和平台能力。
+3. 拟人层判断这一轮该怎么处理：自己回复、交给核心，或者先临时回应再交给核心。
+4. 如果交给核心，核心 Agent 继续负责工具、知识库、子 Agent、搜索、代码等重任务。
+5. 核心完成后，拟人层再统一处理最终表达、语音、图片、动作意图、前端可见输出等内容。
+6. 最后系统把这轮真正发生过的内容写入后处理和记忆链路。
 
-### 3. 新增 memory 系统
+这个设计的目标是让机器人以后可以更自然地“边互动边工作”，而不是永远等核心算完后一次性吐出最终答案。
 
-本 fork 新增 `astrbot/core/memory/*`，不是只依赖上游会话历史。当前已落地的主链路包括：
+### 2. 记忆不是只看聊天记录
 
-- 回合结束后写入 `TurnRecord`。
-- 更新 topic / short-term memory。
-- consolidation 生成 session insight / experience。
-- experience Markdown 投影。
-- long-term memory 第一版。
-- 长期记忆文档、索引与 document search。
-- 请求前读取 `MemorySnapshot`，供 prompt 管线使用。
+上游已经有会话历史，但这个 fork 额外做了一套更长期的记忆方向。
 
-仍在推进的部分：
+它想记录的不只是“上一轮用户说了什么”，还包括：
 
-- persona state / persona evolution 更新。
-- memory selector/router。
-- memory 对最终 prompt render 的完整接管。
+- 最近这段对话在聊什么。
+- 用户长期偏好和稳定信息。
+- 某些值得保存的经验或结论。
+- 可以在后续对话里重新检索出来的长期记忆文档。
 
-相关位置：
+也就是说，它更像是在给角色做一套“会沉淀的记忆”，而不是每次只把聊天记录往前塞。
 
-- `astrbot/core/memory/`
-- `docs/Yakumo/dev/memory/`
-- `scripts/import_long_term_memory.py`
-- `scripts/manage_identity_mappings.py`
+### 3. Prompt 不再只是到处拼字符串
 
-### 4. 新增 interaction persona middleware
+上游主线更偏向在主 Agent 流程里直接组织模型能看到的内容。
 
-本 fork 新增 `astrbot/core/interaction/*`，用于把普通聊天请求拆成更接近“互动人格层”的流程。
+这个 fork 把这些内容先整理成一份结构化上下文，再决定哪些内容要给模型看、怎么给模型看。
 
-它支持：
+这样做的目的不是为了炫技，而是为了后面更容易控制：
 
-- `self_reply` / `delegate_to_core` / `hybrid` 路由。
-- 进入核心 Agent 前先做 interaction decision。
-- 即时口语回复。
-- core task spec 注入。
-- finalizer 对核心结果做最终表达整理。
-- 流式输出观察与插话。
-- 独立 interaction memory。
-- 插件侧 prompt/result contribution 扩展点。
+- 哪些记忆应该出现。
+- 哪些工具和能力应该暴露。
+- 哪些平台状态应该临时告诉模型。
+- 哪些内容只是给本轮使用，不应该写进长期聊天历史。
+- 不同模型或不同 provider 需要不同格式时，能更容易调整。
 
-该能力是本 fork 的实验性增强，默认关闭，需要通过 `interaction_middleware` 配置显式启用。
+### 4. WebChat 和前端更偏向“互动现场”
 
-相关位置：
+这个 fork 的 WebUI / WebChat 改动，不只是普通管理页面调整。它们更多是为了配合上面的互动流程：
 
-- `astrbot/core/interaction/`
-- `tests/unit/test_interaction_*.py`
-- `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
-- `docs/Yakumo/dialog-worker-live-target-state.md`
+- 能显示更细的聊天过程。
+- 能处理临时回复、最终回复、流式内容等不同阶段。
+- 能保留 checkpoint、重试、分支、reasoning 展示等本地语义。
+- 未来也可以更自然地接 Live2D、动作意图、语音和其他前端表现。
 
-### 5. Provider 与附件链路有本地适配
+### 5. 保留了一些本地 provider 和附件适配
 
-本 fork 保留并扩展了一些上游没有完整保留的 provider/附件适配，尤其是 Volcengine Ark / Doubao 方向：
+这个 fork 还保留并扩展了一些本地使用中需要的 provider 和附件处理能力，尤其是 Volcengine Ark / Doubao 方向，以及图片、文件、OpenAI-compatible provider 的一些兼容修复。
 
-- `astrbot/core/provider/sources/volcengine_ark_source.py`
-- 默认 provider 配置中的 `volcengine_ark`
-- 图片输入、文件 URI、附件 payload 的兼容性修复
-- OpenAI-compatible provider 的若干稳定性修复
+这些改动比较偏实际使用需求，所以不会简单因为上游删除了某个 provider 路径，就直接在这个 fork 里也删掉。
 
-因此，本 fork 不会直接接受会删除这些本地 provider 能力的上游变更。
+## 当前状态
 
-### 6. WebUI / WebChat 有本地语义
+这个 fork 还在开发中。很多东西已经能跑通，但目标还不是“做一个稳定发行版”。
 
-本 fork 的 WebUI / WebChat 改动和本地 prompt、checkpoint、interaction 语义有关，包含：
+当前更重要的是把真实链路暴露出来：
 
-- conversation checkpoint。
-- inline edit / regenerate / thread 相关兼容工作。
-- provider 配置页调整。
-- reasoning 展示、附件预览、复制行为修复。
-- IME 输入和暗色模式细节修复。
+- 拟人层什么时候自己回复。
+- 什么时候应该交给核心。
+- 临时回复、核心结果、最终表达分别是什么。
+- 哪些内容真的发给了用户。
+- 哪些内容真的进入了记忆。
+- 如果中间失败，应该明确失败，而不是靠降级逻辑假装成功。
 
-这类改动不能简单按上游 WebUI 大改动全量覆盖，需要逐项判断是否符合本 fork 的 checkpoint/prompt 语义。
+更详细的技术记录放在 `docs/Yakumo/`。其中 `current-state.md` 和 `modules/*` 更接近当前代码状态，`dev/*` 和一些早期设计文档可能已经过时。
 
 ## 上游合并策略
 

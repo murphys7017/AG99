@@ -13,7 +13,9 @@
 
 ## 和官方主线的区别
 
-当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”，因此和官方主线有几个关键差异：
+当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”。其中 `current-state.md`、`modules/*` 和本 README 优先维护为当前事实；`dev/*`、`target-state.md`、`prompt-development-plan.md` 以及早期中文详解文档只作为设计记录或历史参考。
+
+因此和官方主线有几个关键差异：
 
 ### 1. Prompt 链路不是官方那套直拼流程
 
@@ -51,10 +53,11 @@
 
 因此这里的文档不都表示“已经正式接入主链路”。阅读时要区分：
 
-- `current-state.md` / `modules/*`：偏现状
-- `dev/*`：偏设计与实现进度
-- `target-state.md` / `prompt-development-plan.md`：偏目标态
-- `dev/history/*`：偏历史讨论，不代表当前实现
+- `current-state.md` / `modules/*`：当前事实入口
+- `dev/memory/*`：memory 子系统的实现记录，其中 `progress.md` 更接近当前进度
+- `dev/*`：设计与阶段性实现记录，可能落后于代码
+- `target-state.md` / `prompt-development-plan.md`：目标态和早期计划，不代表已完成实现
+- `dev/history/*`、`astr_main_agent.py文件详解.md`、`消息处理流程详解.md`：历史讨论或旧链路详解，不代表当前实现
 
 ### 4. Interaction middleware 已进入当前架构线
 
@@ -79,15 +82,25 @@ WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 
 ## 阅读建议
 
-建议按这个顺序看：
+建议按这个顺序看当前 fork 和上游的差异：
 
 1. `docs/Yakumo/current-state.md`
 2. `docs/Yakumo/modules/README.md`
 3. `docs/Yakumo/modules/prompt.md`
-4. `docs/Yakumo/dialog-worker-live-target-state.md`
-5. `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
-6. `docs/Yakumo/dev/memory/index.md`
-7. 具体专题文档
+4. `docs/Yakumo/modules/interaction.md`
+5. `docs/Yakumo/dev/memory/index.md`
+6. `docs/Yakumo/dev/memory/progress.md`
+7. `docs/Yakumo/upstream-merge-ledger.md`
+
+以下文档只建议在追溯设计背景时阅读，不应直接当作当前实现说明：
+
+- `docs/Yakumo/dialog-worker-live-target-state.md`
+- `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
+- `docs/Yakumo/prompt-development-plan.md`
+- `docs/Yakumo/target-state.md`
+- `docs/Yakumo/dev/history/*`
+- `docs/Yakumo/astr_main_agent.py文件详解.md`
+- `docs/Yakumo/消息处理流程详解.md`
 
 ## 使用约定
 
