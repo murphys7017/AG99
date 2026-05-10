@@ -156,7 +156,7 @@ def _exercise_unzip_file_windows_path_normalization(
         captured["listdir"] = path
         return [".dockerignore"]
 
-    monkeypatch.setattr(updater_module.os, "makedirs", lambda path, exist_ok=True: None)
+    monkeypatch.setattr(updater_module, "ensure_dir", lambda path: None, raising=False)
     monkeypatch.setattr(updater_module.os.path, "join", ntpath.join)
     monkeypatch.setattr(updater_module.os.path, "normpath", ntpath.normpath)
     monkeypatch.setattr(updater_module.os.path, "commonpath", ntpath.commonpath)
@@ -546,9 +546,7 @@ def test_repo_unzip_file_rejects_archive_roots_outside_target_dir(
 ) -> None:
     import astrbot.core.zip_updator as zip_updator_module
 
-    monkeypatch.setattr(
-        zip_updator_module.os, "makedirs", lambda path, exist_ok=True: None
-    )
+    monkeypatch.setattr(zip_updator_module, "ensure_dir", lambda path: None)
     monkeypatch.setattr(zip_updator_module.os.path, "join", ntpath.join)
     monkeypatch.setattr(zip_updator_module.os.path, "normpath", ntpath.normpath)
     monkeypatch.setattr(zip_updator_module.os.path, "commonpath", ntpath.commonpath)
@@ -582,9 +580,7 @@ def test_repo_unzip_file_handles_archives_without_explicit_root_dir_entry(
         captured["listdir"] = path
         return ["README.md"]
 
-    monkeypatch.setattr(
-        zip_updator_module.os, "makedirs", lambda path, exist_ok=True: None
-    )
+    monkeypatch.setattr(zip_updator_module, "ensure_dir", lambda path: None)
     monkeypatch.setattr(zip_updator_module.os.path, "join", ntpath.join)
     monkeypatch.setattr(zip_updator_module.os.path, "normpath", ntpath.normpath)
     monkeypatch.setattr(zip_updator_module.os.path, "commonpath", ntpath.commonpath)
