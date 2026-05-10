@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from copy import deepcopy
 from typing import Any
 
@@ -76,6 +77,20 @@ def build_interaction_decision_schema() -> dict[str, Any]:
         "confidence": 0.0,
         "reason": "简短原因",
     }
+
+
+def build_interaction_decision_json_contract() -> str:
+    schema_text = json.dumps(
+        build_interaction_decision_schema(),
+        ensure_ascii=False,
+        indent=2,
+    )
+    return (
+        "你必须只输出一个 JSON object，不能输出 Markdown、XML、HTML 或任何标签格式。\n"
+        "字段名必须使用 JSON 字符串键，例如 route_mode 和 confidence。\n"
+        "JSON object 必须符合下面的字段结构：\n"
+        f"{schema_text}"
+    )
 
 
 def build_interaction_decision_prompt() -> str:
@@ -479,9 +494,9 @@ def add_interaction_decision_slots_to_pack(
         PromptExtension(
             plugin_id="astrbot.interaction",
             mount="system",
-            title="Interaction output schema",
-            value_kind="mapping",
-            value=build_interaction_decision_schema(),
+            title="Interaction output JSON contract",
+            value_kind="text",
+            value=build_interaction_decision_json_contract(),
             order=1,
             meta={
                 "scope": "static",

@@ -10,6 +10,7 @@ from astrbot.core.interaction.decision_agent import (
     _maybe_bypass_protocol_command,
     build_fallback_decision,
     build_interaction_decision_contexts,
+    build_interaction_decision_json_contract,
     validate_interaction_decision,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
@@ -386,8 +387,10 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
 
     assert decision.route_mode == RouteMode.SELF_REPLY
     assert "Interaction middleware decision policy" in captured["system_prompt"]
-    assert "Interaction output schema" in captured["system_prompt"]
+    assert "Interaction output JSON contract" in captured["system_prompt"]
     assert "route_mode" in captured["system_prompt"]
+    assert "<route_mode>" not in captured["system_prompt"]
+    assert "不能输出 Markdown、XML、HTML 或任何标签格式" in captured["system_prompt"]
     assert "Core capabilities" not in captured["system_prompt"]
     assert "tools_available" not in captured["system_prompt"]
     assert "Motion Contract" in captured["system_prompt"]
@@ -410,8 +413,12 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     assert context_slot is not None
     assert [item["title"] for item in system_slot.value["items"]] == [
         "Interaction middleware decision policy",
-        "Interaction output schema",
+        "Interaction output JSON contract",
     ]
+    assert system_slot.value["items"][1]["value_kind"] == "text"
+    assert system_slot.value["items"][1]["value"] == (
+        build_interaction_decision_json_contract()
+    )
     assert [item["title"] for item in capability_slot.value["items"]] == [
         "Motion Contract"
     ]
