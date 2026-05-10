@@ -8,6 +8,7 @@ import certifi
 import httpx
 import pytest
 
+from astrbot.core.star.updator import PluginUpdator
 from astrbot.core.zip_updator import RepoZipUpdator
 
 
