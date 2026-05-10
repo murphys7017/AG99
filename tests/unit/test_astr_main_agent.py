@@ -375,7 +375,9 @@ class TestApplyKb:
         )
         retrieve = AsyncMock(return_value="KB result")
 
-        with patch("astrbot.core.astr_main_agent.retrieve_knowledge_base", retrieve):
+        with patch(
+            "astrbot.core.astr_main_agent.retrieve_knowledge_base_with_cache", retrieve
+        ):
             await module._apply_kb(mock_event, req, mock_context, config)
 
         retrieve.assert_not_awaited()
