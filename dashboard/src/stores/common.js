@@ -12,6 +12,8 @@ export const useCommonStore = defineStore("common", {
     startTime: -1,
 
     pluginMarketData: [],
+    astrBotVersion: "",
+    dashboardVersion: "",
   }),
   actions: {
     async createEventSource() {
@@ -142,6 +144,10 @@ export const useCommonStore = defineStore("common", {
       }
       this.fetchStartTime().catch(() => {});
       return this.startTime
+    },
+    setAstrBotVersion(astrBotVersion, dashboardVersion) {
+      this.astrBotVersion = astrBotVersion || "";
+      this.dashboardVersion = dashboardVersion || "";
     },
     async getPluginCollections(force = false, customSource = null) {
       // 获取插件市场数据
