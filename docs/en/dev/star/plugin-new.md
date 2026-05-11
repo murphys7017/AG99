@@ -51,6 +51,16 @@ You can add a `logo.png` file in the plugin directory as the plugin's logo. Plea
 
 You can modify (or add) the `display_name` field in the `metadata.yaml` file to serve as the plugin's display name in scenarios like the plugin marketplace, making it easier for users to read.
 
+Plugin display names and descriptions can follow the WebUI language. See [Plugin Internationalization](./guides/plugin-i18n).
+
+### Plugin Short Description (Optional)
+
+You can add a `short_desc` field to `metadata.yaml` as the short description shown on plugin marketplace cards. Keep it to a concise one-sentence summary. If it is not provided, cards fall back to `desc`.
+
+```yaml
+short_desc: A one-line summary of your plugin.
+```
+
 ### Declare Supported Platforms (Optional)
 
 You can add a `support_platforms` field (`list[str]`) to `metadata.yaml` to declare which platform adapters your plugin supports. The WebUI plugin page will display this field.
@@ -114,15 +124,6 @@ If the plugin fails to load due to code errors or other reasons, you can also cl
 Currently, AstrBot manages plugin dependencies using pip's built-in `requirements.txt` file. If your plugin requires third-party libraries, please be sure to create a `requirements.txt` file in the plugin directory and list the dependencies used, to prevent Module Not Found errors when users install your plugin.
 
 > For the complete format of `requirements.txt`, please refer to the [pip official documentation](https://pip.pypa.io/en/stable/reference/requirements-file-format/).
-
-## Message Events and Input Semantics
-
-- Handle message events, message chains, and hooks: [`Handling Message Events`](guides/listen-message-event.md)
-- Send text, images, files, and other rich media: [`Send Messages`](guides/send-message.md)
-- Build platform adapters and attach structured prompt-input semantics: [`Developing a Platform Adapter`](/en/dev/plugin-platform-adapter)
-
-If a platform provides extra meaning for an input item, such as “this image is the user's current desktop screenshot”, “this file is a runtime log”, or “this text is quoted context instead of new user input”, do not inject that explanation into `message_str`.  
-The adapter should provide a structured sidecar through event `extra`. See [`Handling Message Events`](guides/listen-message-event.md) and [`Developing a Platform Adapter`](/en/dev/plugin-platform-adapter) for the protocol.
 
 ## Development Principles
 

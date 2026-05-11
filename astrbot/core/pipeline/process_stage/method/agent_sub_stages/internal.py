@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import json
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 
@@ -15,7 +14,6 @@ from astrbot.core.agent.message import (
 )
 from astrbot.core.agent.response import AgentStats
 from astrbot.core.astr_main_agent import (
-    CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY,
     MainAgentBuildConfig,
     MainAgentBuildResult,
     build_main_agent,
@@ -38,7 +36,6 @@ from astrbot.core.provider.entities import (
 from astrbot.core.star.star_handler import EventType
 from astrbot.core.utils.metrics import Metric
 from astrbot.core.utils.session_lock import session_lock_manager
-from astrbot.core.voice import VoiceServiceError, resolve_tts_provider
 
 from .....astr_agent_run_util import AgentRunner, run_agent, run_live_agent
 from ....context import PipelineContext, call_event_hook
@@ -50,86 +47,6 @@ from ...follow_up import (
     try_capture_follow_up,
     unregister_active_runner,
 )
-
-
-def _sanitize_prompt_log_value(value):
-    if isinstance(value, dict):
-        return {key: _sanitize_prompt_log_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_prompt_log_value(item) for item in value]
-    if isinstance(value, str) and value.startswith("data:image/"):
-        header, _, payload = value.partition(",")
-        mime = header.removeprefix("data:").removesuffix(";base64")
-        return (
-            f"<omitted inline image data: mime={mime or 'unknown'} "
-            f"base64_chars={len(payload)}>"
-        )
-    return value
-
-
-def _serialize_final_prompt_messages(messages: list[Message]) -> tuple[str, list[dict]]:
-    payload = [
-        _sanitize_prompt_log_value(message.model_dump(mode="json"))
-        for message in messages
-    ]
-    rendered = json.dumps(payload, ensure_ascii=False, indent=2)
-    return rendered, payload
-
-
-def _resolve_conversation_save_user_message(event: AstrMessageEvent) -> Message | None:
-    raw_message = event.get_extra(CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY)
-    if raw_message is None:
-        return None
-    try:
-        message = (
-            raw_message
-            if isinstance(raw_message, Message)
-            else Message.model_validate(raw_message)
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "Invalid conversation save user message ignored: %s",
-            raw_message,
-            exc_info=True,
-        )
-        return None
-    if message.role != "user":
-        logger.warning(
-            "Conversation save message ignored because role is not user: %s",
-            message.role,
-        )
-        return None
-    return message
-
-
-async def _build_current_request_message_payload(
-    req: ProviderRequest,
-) -> dict | None:
-    if not (
-        req.prompt is not None
-        or req.image_urls
-        or req.audio_urls
-        or req.extra_user_content_parts
-    ):
-        return None
-    try:
-        return await req.assemble_context()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to assemble current request message for history replacement: %s",
-            exc,
-            exc_info=True,
-        )
-        return None
-
-
-def _message_matches_payload(message: Message, payload: dict | None) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    dumped = message.model_dump(mode="json")
-    return dumped.get("role") == payload.get("role") and dumped.get(
-        "content"
-    ) == payload.get("content")
 
 
 class InternalAgentSubStage(Stage):
@@ -190,6 +107,9 @@ class InternalAgentSubStage(Stage):
         )
         if self.dequeue_context_length <= 0:
             self.dequeue_context_length = 1
+        self.fallback_max_context_tokens: int = settings.get(
+            "fallback_max_context_tokens", 128000
+        )
 
         self.llm_safety_mode = settings.get("llm_safety_mode", True)
         self.safety_mode_strategy = settings.get(
@@ -219,6 +139,7 @@ class InternalAgentSubStage(Stage):
             llm_compress_provider_id=self.llm_compress_provider_id,
             max_context_length=self.max_context_length,
             dequeue_context_length=self.dequeue_context_length,
+            fallback_max_context_tokens=self.fallback_max_context_tokens,
             llm_safety_mode=self.llm_safety_mode,
             safety_mode_strategy=self.safety_mode_strategy,
             computer_use_runtime=self.computer_use_runtime,
@@ -228,7 +149,6 @@ class InternalAgentSubStage(Stage):
             subagent_orchestrator=conf.get("subagent_orchestrator", {}),
             timezone=self.ctx.plugin_manager.context.get_config().get("timezone"),
             max_quoted_fallback_images=settings.get("max_quoted_fallback_images", 20),
-            prompt_selector=settings.get("prompt_selector", {}),
         )
 
     async def process(
@@ -328,25 +248,6 @@ class InternalAgentSubStage(Stage):
                     # apply reset
                     if reset_coro:
                         await reset_coro
-                        rendered_messages, serialized_messages = (
-                            _serialize_final_prompt_messages(
-                                agent_runner.run_context.messages
-                            )
-                        )
-                        logger.info(
-                            "Final LLM prompt prepared. provider_id=%s model=%s messages=\n%s",
-                            provider.provider_config.get("id", ""),
-                            provider.get_model(),
-                            json.loads(rendered_messages)[:-3],
-                        )
-                        event.trace.record(
-                            "final_llm_prompt",
-                            chat_provider={
-                                "id": provider.provider_config.get("id", ""),
-                                "model": provider.get_model(),
-                            },
-                            messages=serialized_messages,
-                        )
 
                     register_active_runner(event.unified_msg_origin, agent_runner)
                     runner_registered = True
@@ -368,14 +269,12 @@ class InternalAgentSubStage(Stage):
                         # Live Mode: 使用 run_live_agent
                         logger.info("[Internal Agent] 检测到 Live Mode，启用 TTS 处理")
 
-                        try:
-                            tts_provider = resolve_tts_provider(
-                                self.ctx.plugin_manager.context,
-                                event,
-                                stage="pipeline.live_tts",
+                        # 获取 TTS Provider
+                        tts_provider = (
+                            self.ctx.plugin_manager.context.get_using_tts_provider(
+                                event.unified_msg_origin
                             )
-                        except VoiceServiceError:
-                            tts_provider = None
+                        )
 
                         if not tts_provider:
                             logger.warning(
@@ -554,25 +453,11 @@ class InternalAgentSubStage(Stage):
             logger.debug("LLM 响应为空，不保存记录。")
             return
 
-        save_user_message = _resolve_conversation_save_user_message(event)
-        current_request_payload = None
-        if save_user_message is not None:
-            current_request_payload = await _build_current_request_message_payload(req)
-
         messages_to_save: list[Message] = []
         skipped_initial_system = False
-        save_user_message_applied = False
         for message in all_messages:
             if message.role == "system" and not skipped_initial_system:
                 skipped_initial_system = True
-                continue
-            if (
-                save_user_message is not None
-                and not save_user_message_applied
-                and _message_matches_payload(message, current_request_payload)
-            ):
-                messages_to_save.append(save_user_message)
-                save_user_message_applied = True
                 continue
             if message.role in ["assistant", "user"] and message._no_save:
                 continue

@@ -53,6 +53,16 @@ git clone 插件仓库地址
 
 可以修改(或添加) `metadata.yaml` 文件中的 `display_name` 字段，作为插件在插件市场等场景中的展示名，以方便用户阅读。
 
+插件展示名和描述支持按 WebUI 语言显示，详见[插件国际化](./guides/plugin-i18n)。
+
+### 插件短描述（可选）
+
+你可以在 `metadata.yaml` 中新增 `short_desc` 字段，作为插件市场卡片上的短描述。它适合写成一句简短介绍；如果没有提供，卡片会回退显示 `desc`。
+
+```yaml
+short_desc: 一句话介绍你的插件。
+```
+
 ### 声明支持平台（Optional）
 
 你可以在 `metadata.yaml` 中新增 `support_platforms` 字段（`list[str]`），声明插件支持的平台适配器。WebUI 插件页会展示该字段。
@@ -116,15 +126,6 @@ AstrBot 采用在运行时注入插件的机制。因此，在调试插件时，
 目前 AstrBot 对插件的依赖管理使用 `pip` 自带的 `requirements.txt` 文件。如果你的插件需要依赖第三方库，请务必在插件目录下创建 `requirements.txt` 文件并写入所使用的依赖库，以防止用户在安装你的插件时出现依赖未找到(Module Not Found)的问题。
 
 > `requirements.txt` 的完整格式可以参考 [pip 官方文档](https://pip.pypa.io/en/stable/reference/requirements-file-format/)。
-
-## 消息事件与输入语义
-
-- 处理消息事件、消息链、事件钩子：[`处理消息事件`](guides/listen-message-event.md)
-- 发送文本、图片、文件等富媒体消息：[`发送消息`](guides/send-message.md)
-- 开发平台适配器并为 Prompt 输入补充结构化语义：[`开发一个平台适配器`](/dev/plugin-platform-adapter)
-
-如果平台会附带额外的输入含义，例如“这张图片是用户当前桌面截图”、“这个文件是运行日志”、“这段文字是引用说明而不是用户新输入”，请不要把这些说明直接拼进 `message_str`。  
-应由平台适配器通过事件 `extra` 提供结构化 sidecar，具体协议见 [`处理消息事件`](guides/listen-message-event.md) 和 [`开发一个平台适配器`](/dev/plugin-platform-adapter)。
 
 ## 开发原则
 

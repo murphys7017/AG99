@@ -12,6 +12,8 @@ export const useCommonStore = defineStore("common", {
     startTime: -1,
 
     pluginMarketData: [],
+    astrBotVersion: "",
+    dashboardVersion: "",
   }),
   actions: {
     async createEventSource() {
@@ -143,6 +145,10 @@ export const useCommonStore = defineStore("common", {
       this.fetchStartTime().catch(() => {});
       return this.startTime
     },
+    setAstrBotVersion(astrBotVersion, dashboardVersion) {
+      this.astrBotVersion = astrBotVersion || "";
+      this.dashboardVersion = dashboardVersion || "";
+    },
     async getPluginCollections(force = false, customSource = null) {
       // 获取插件市场数据
       if (!force && this.pluginMarketData.length > 0 && !customSource) {
@@ -163,8 +169,10 @@ export const useCommonStore = defineStore("common", {
               const pluginData = res.data.data[key];
               
               data.push({
+                ...pluginData,
                 "name": pluginData.name || key, // 优先使用插件数据中的name字段，否则使用键名
                 "desc": pluginData.desc,
+                "short_desc": pluginData?.short_desc ? pluginData.short_desc : "",
                 "author": pluginData.author,
                 "repo": pluginData.repo,
                 "installed": false,
@@ -175,7 +183,9 @@ export const useCommonStore = defineStore("common", {
                 "pinned": pluginData?.pinned ? pluginData.pinned : false,
                 "stars": pluginData?.stars ? pluginData.stars : 0,
                 "updated_at": pluginData?.updated_at ? pluginData.updated_at : "",
+                "download_url": pluginData?.download_url ? pluginData.download_url : "",
                 "display_name": pluginData?.display_name ? pluginData.display_name : "",
+                "i18n": pluginData?.i18n && typeof pluginData.i18n === 'object' ? pluginData.i18n : {},
                 "astrbot_version": pluginData?.astrbot_version ? pluginData.astrbot_version : "",
                 "category": pluginData?.category ? pluginData.category : "",
                 "support_platforms": Array.isArray(pluginData?.support_platforms)
