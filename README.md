@@ -1,152 +1,141 @@
 # AstrBot Yakumo Fork
 
-这是 `murphys7017/AstrBot` 对上游 `AstrBotDevs/AstrBot` 的 fork 说明页。
+> 实验性分支：让机器人不只是「问答机器」，而是更像一个真实的对话伙伴。
 
-AstrBot 本身已经是一个成熟的多平台 LLM 聊天机器人与 Agent 框架，所以这里不再重复上游 README 的完整产品介绍。本 README 只用比较直白的话说明：这个 fork 想把 AstrBot 改成什么样，以及它和上游最大的区别是什么。
+**AstrBot** 是一个成熟的多平台 LLM 聊天机器人与 Agent 框架。这个 fork 在其基础上增加了一层「拟人化交互」能力，目标让机器人的回复更自然、互动更有节奏感。
 
-上游入口：
+[上游仓库](https://github.com/AstrBotDevs/AstrBot) · [官方文档](https://docs.astrbot.app/) · [本分支详细文档](./docs/Yakumo/)
 
-- 上游仓库：https://github.com/AstrBotDevs/AstrBot
-- 官方文档：https://docs.astrbot.app/
+---
 
-## 这个 fork 想做什么
+## 和上游的区别
 
-简单说，这个 fork 想让机器人不只是“收到消息 -> 丢给核心 Agent -> 等最终答案”。
+| 能力 | 上游 AstrBot | Yakumo Fork |
+|------|:------------:|:-----------:|
+| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **拟人层** → 决策 → 核心处理 → 拟人层整理 → 回复 |
+| 快速回复 | 不支持 | 支持「临时回复」，边想边说 |
+| 回复风格控制 | 仅靠 prompt | 拟人层统一管理表达方式 |
+| 记忆系统 | 会话历史 | 会话历史 + **长期记忆沉淀** |
+| Prompt 组织 | 字符串拼接 | **结构化上下文**（collect → select → render → apply） |
+| Interaction 语义 | 分散在各处 | **Interaction Middleware** 统一接管 |
+| 前端展示 | 最终回复 | 临时回复 / 核心结果 / 最终表达 分阶段展示 |
+| 本地 provider 支持 | 基础 | 保留并扩展 Ark / Doubao 等本地场景 |
 
-我希望它更像一个有前台人格的助手：
+---
 
-- 用户说话后，先由一个类似“拟人层”的环节接住。
-- 拟人层先理解这句话的语气、意图和当前互动状态。
-- 如果适合，它可以先给一个很短的临时回应，比如“我看看”“等我想一下”“这个我需要查一下”。
-- 同时它会判断：这件事要不要交给更重的核心 Agent 去处理。
-- 如果只是寒暄、确认、轻量互动，拟人层可以自己完成。
-- 如果需要查资料、调用工具、写代码、检索知识库、让子 Agent 工作，它会把任务交给核心。
-- 核心处理完以后，拟人层还可以再把结果整理成更自然、更符合当前人格的表达。
+## 核心理念：什么是「拟人层」
 
-所以它不是要推翻 AstrBot 原来的核心能力，而是在核心前后加一层更像“角色本人”的互动流程。
+大多数 Agent 框架的流程是：**收到消息 → 交给大模型 → 等待完整答案 → 回复用户**。
 
-## 和上游最大的不同
+这个 fork 在中间加了一层「拟人层」：
 
-### 1. 多了一个拟人层
+```
+用户发消息
+    ↓
+拟人层接住消息，判断这一轮该怎么处理
+    ↓
+    ├── 轻量互动（寒暄、确认、简单问答）→ 拟人层直接回复
+    └── 重度任务（查资料、调工具、写代码）→ 交给核心 Agent
+         ↓
+    核心执行中，拟人层实时提取中间结果反馈给用户
+         ↓
+    核心处理完毕
+         ↓
+    拟人层整理最终结果，用更自然的表达方式呈现
+         ↓
+    写入记忆链路（长期记忆 + 本轮上下文）
+```
 
-上游 AstrBot 更像一个直接的 Agent 框架：平台收到消息，整理上下文，然后交给主 Agent 生成回复。
+**上下文分离** — 拟人层和核心 Agent 各自维护独立的上下文：
 
-这个 fork 在中间增加了一个“拟人层”。它更关心这轮对话应该怎么互动，而不只是怎么完成任务。
+| 上下文 | 负责方 | 用途 |
+|--------|--------|------|
+| 拟人层上下文 | 拟人层 | 互动节奏、临时回复、表达风格、人格记忆 |
+| 核心历史 | 核心 Agent | 任务规划、工具调用、知识库检索、代码执行 |
 
-大致流程是：
+---
 
-1. 用户发来消息。
-2. 拟人层先接住消息，读取当前人格、最近对话、互动记忆和平台能力。
-3. 拟人层判断这一轮该怎么处理：自己回复、交给核心，或者先临时回应再交给核心。
-4. 如果交给核心，核心 Agent 继续负责工具、知识库、子 Agent、搜索、代码等重任务。
-5. 核心完成后，拟人层再统一处理最终表达、语音、图片、动作意图、前端可见输出等内容。
-6. 最后系统把这轮真正发生过的内容写入后处理和记忆链路。
+## Interaction Middleware
 
-这个设计的目标是让机器人以后可以更自然地“边互动边工作”，而不是永远等核心算完后一次性吐出最终答案。
+这是本 fork 的核心架构之一，一个通用的交互中间件：
 
-### 2. 记忆不是只看聊天记录
+- **输入侧**：在核心 decision 之前完成 turn state、入站媒体 materialization、STT、路由决策
+- **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
+- **Completion 收口**：middleware 产出 finalized material，postprocess / memory service 消费同一份 material 写记忆
+- **Voice 共享**：core 旧流程和 middleware 新流程共享 `voice/*`，failure policy 由调用方决定
 
-上游已经有会话历史，但这个 fork 额外做了一套更长期的记忆方向。
+当前主链路开发期 **fail-fast**，不把 fallback 当正确性证明。
 
-它想记录的不只是“上一轮用户说了什么”，还包括：
+---
 
-- 最近这段对话在聊什么。
-- 用户长期偏好和稳定信息。
-- 某些值得保存的经验或结论。
-- 可以在后续对话里重新检索出来的长期记忆文档。
+## Prompt 结构化上下文
 
-也就是说，它更像是在给角色做一套“会沉淀的记忆”，而不是每次只把聊天记录往前塞。
+上游的 prompt 是直接在 `astr_main_agent.py` 里组织模型可见上下文。这个 fork 推进了一套新的 prompt 子系统：
 
-### 3. Prompt 不再只是到处拼字符串
+```
+collect → select → render → apply
+```
 
-上游主线更偏向在主 Agent 流程里直接组织模型能看到的内容。
+- **collect**：把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge 等信息结构化收集成 `ContextPack`
+- **select**：给后续筛选层预留接口
+- **render**：由 renderer 决定节点结构和模型可见输出
+- **apply**：把 render 结果投影回 `ProviderRequest`
 
-这个 fork 把这些内容先整理成一份结构化上下文，再决定哪些内容要给模型看、怎么给模型看。
-
-这样做的目的不是为了炫技，而是为了后面更容易控制：
-
-- 哪些记忆应该出现。
-- 哪些工具和能力应该暴露。
-- 哪些平台状态应该临时告诉模型。
-- 哪些内容只是给本轮使用，不应该写进长期聊天历史。
-- 不同模型或不同 provider 需要不同格式时，能更容易调整。
-
-### 4. WebChat 和前端更偏向“互动现场”
-
-这个 fork 的 WebUI / WebChat 改动，不只是普通管理页面调整。它们更多是为了配合上面的互动流程：
-
-- 能显示更细的聊天过程。
-- 能处理临时回复、最终回复、流式内容等不同阶段。
-- 能保留 checkpoint、重试、分支、reasoning 展示等本地语义。
-- 未来也可以更自然地接 Live2D、动作意图、语音和其他前端表现。
-
-### 5. 保留了一些本地 provider 和附件适配
-
-这个 fork 还保留并扩展了一些本地使用中需要的 provider 和附件处理能力，尤其是 Volcengine Ark / Doubao 方向，以及图片、文件、OpenAI-compatible provider 的一些兼容修复。
-
-这些改动比较偏实际使用需求，所以不会简单因为上游删除了某个 provider 路径，就直接在这个 fork 里也删掉。
+---
 
 ## 当前状态
 
-这个 fork 还在开发中。很多东西已经能跑通，但目标还不是“做一个稳定发行版”。
+| 功能 | 状态 | 说明 |
+|------|:----:|------|
+| 拟人层决策 | 🟡 开发中 | 核心逻辑已通，关键路径验证中 |
+| 临时回复 | 🟡 开发中 | 流式交互已支持，表达优化进行中 |
+| 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
+| Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
+| 结构化 Prompt | 🟡 开发中 | collect/render/apply 已跑通，select 筛选层待完善 |
+| 上游兼容 | 🟢 稳定 | 安全修复、provider 稳定修复持续同步 |
 
-当前更重要的是把真实链路暴露出来：
+> [!NOTE]
+> 本 fork 目标是**暴露真实链路问题**，而非快速迭代发行版。如果你需要开箱即用的稳定版本，请使用[上游 AstrBot](https://github.com/AstrBotDevs/AstrBot)。
 
-- 拟人层什么时候自己回复。
-- 什么时候应该交给核心。
-- 临时回复、核心结果、最终表达分别是什么。
-- 哪些内容真的发给了用户。
-- 哪些内容真的进入了记忆。
-- 如果中间失败，应该明确失败，而不是靠降级逻辑假装成功。
+---
 
-更详细的技术记录放在 `docs/Yakumo/`。其中 `current-state.md` 和 `modules/*` 更接近当前代码状态，`dev/*` 和一些早期设计文档可能已经过时。
-
-## 上游合并策略
-
-本 fork 会继续吸收上游的安全修复、provider 稳定性修复、平台兼容修复和小范围 UI 修复。
-
-但不会把以下本地架构直接删除或回退：
-
-- `astrbot/core/prompt/**`
-- `astrbot/core/memory/**`
-- `astrbot/core/postprocess/**`
-- `astrbot/core/interaction/**`
-- 本地 provider 适配
-- 本地 prompt/checkpoint 语义
-
-上游变更取舍记录在：
-
-- `docs/Yakumo/upstream-merge-ledger.md`
-
-合并与修复原则：
-
-- 不把 fallback 当作正确性证明。
-- 不用默认值、重试或静默吞错掩盖主链路问题。
-- 优先在根因位置修复，而不是在下游补校正。
-- 本地 prompt/memory/interaction 架构优先作为当前 fork 的事实来源。
-
-## 本地运行入口
-
-Core：
+## 快速开始
 
 ```bash
+# Core
 uv sync
 uv run main.py
-```
 
-Dashboard 开发模式：
-
-```bash
+# Dashboard（可选）
 cd dashboard
 pnpm install
 pnpm dev
 ```
 
-默认端口：
+- Core / API: http://localhost:6185
+- Dashboard: http://localhost:3000
 
-- Core / API / Dashboard: http://localhost:6185
-- Dashboard dev server: http://localhost:3000
+---
+
+## 深入了解
+
+`docs/Yakumo/` 记录了本 fork 的架构设计、实现进度和开发记录。建议阅读顺序：
+
+**想快速了解当前状态：**
+1. [docs/Yakumo/README.md](./docs/Yakumo/README.md) — 文档索引和阅读建议
+2. [docs/Yakumo/current-state.md](./docs/Yakumo/current-state.md) — 当前代码状态总览
+3. [docs/Yakumo/modules/README.md](./docs/Yakumo/modules/README.md) — 各模块职责说明
+
+**想了解具体子系统：**
+- [docs/Yakumo/modules/interaction.md](./docs/Yakumo/modules/interaction.md) — Interaction Middleware 详解
+- [docs/Yakumo/modules/prompt.md](./docs/Yakumo/modules/prompt.md) — Prompt 结构化上下文
+- [docs/Yakumo/dev/memory/index.md](./docs/Yakumo/dev/memory/index.md) — 记忆系统设计
+- [docs/Yakumo/upstream-merge-ledger.md](./docs/Yakumo/upstream-merge-ledger.md) — 上游合并记录
+
+> `dev/*` 下的文档为阶段性设计与实现记录，不代表当前已完成实现。阅读时请注意区分「当前事实」和「设计记录」。
+
+---
 
 ## 许可证
 
-本仓库继承上游 AstrBot 的许可证：`AGPL-3.0-or-later`。详见 `LICENSE`。
+继承上游 AGPL-3.0-or-later。详见 [LICENSE](./LICENSE)。
