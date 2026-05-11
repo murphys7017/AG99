@@ -526,6 +526,7 @@ export default {
       const hiddenFromNormalConfig = new Set([
         'ext_group',
         'interaction_middleware_group',
+        'memory_group',
       ]);
       if (this.configType !== 'extension') {
         return Object.entries(metadata || {}).reduce((visibleMetadata, [groupKey, group]) => {
@@ -538,6 +539,7 @@ export default {
       const visibleGroupKeys = [
         'ext_group',
         'interaction_middleware_group',
+        'memory_group',
       ];
       return visibleGroupKeys.reduce((visibleMetadata, groupKey) => {
         if (metadata?.[groupKey]) {

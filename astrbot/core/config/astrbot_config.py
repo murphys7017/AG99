@@ -2,13 +2,27 @@ import enum
 import json
 import logging
 import os
+from pathlib import Path
 
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+import yaml
+
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_root
 
 from .default import DEFAULT_CONFIG, DEFAULT_VALUE_MAP
 
 ASTRBOT_CONFIG_PATH = os.path.join(get_astrbot_data_path(), "cmd_config.json")
 logger = logging.getLogger("astrbot")
+
+
+def _load_legacy_memory_config() -> dict | None:
+    config_path = Path(get_astrbot_root()) / "data/memory/config.yaml"
+    if not config_path.exists():
+        return None
+
+    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"memory config must be a mapping: {config_path}")
+    return loaded
 
 
 class RateLimitStrategy(enum.Enum):
@@ -44,10 +58,17 @@ class AstrBotConfig(dict):
         if schema:
             default_config = self._config_schema_to_default_config(schema)
 
+        legacy_memory_config = None
+        if "memory" in default_config:
+            legacy_memory_config = _load_legacy_memory_config()
+
         if not self.check_exist():
             """不存在时载入默认配置"""
+            config_to_write = default_config.copy()
+            if legacy_memory_config is not None:
+                config_to_write["memory"] = legacy_memory_config
             with open(config_path, "w", encoding="utf-8-sig") as f:
-                json.dump(default_config, f, indent=4, ensure_ascii=False)
+                json.dump(config_to_write, f, indent=4, ensure_ascii=False)
                 object.__setattr__(self, "first_deploy", True)  # 标记第一次部署
 
         with open(config_path, encoding="utf-8-sig") as f:
@@ -56,6 +77,11 @@ class AstrBotConfig(dict):
             if conf_str.startswith("\ufeff"):
                 conf_str = conf_str[1:]
             conf = json.loads(conf_str)
+
+        if "memory" not in conf:
+            if legacy_memory_config is not None:
+                conf["memory"] = legacy_memory_config
+                logger.info("已从 data/memory/config.yaml 迁移 memory 配置到主配置")
 
         # 检查配置完整性，并插入
         has_new = self.check_config_integrity(default_config, conf)

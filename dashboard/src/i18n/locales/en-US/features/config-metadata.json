@@ -1108,6 +1108,283 @@
       }
     }
   },
+  "memory_group": {
+    "name": "Memory",
+    "general": {
+      "description": "Master Switches",
+      "hint": "These settings are stored in the memory field of the main config JSON, and the Memory runtime reads from the same field.",
+      "memory": {
+        "enabled": {
+          "description": "Enable Memory"
+        },
+        "short_term": {
+          "enabled": {
+            "description": "Enable Short-Term Memory"
+          }
+        },
+        "long_term": {
+          "enabled": {
+            "description": "Enable Long-Term Memory"
+          }
+        },
+        "analysis": {
+          "enabled": {
+            "description": "Enable Memory Analysis"
+          },
+          "strict": {
+            "description": "Strict Analysis Mode",
+            "hint": "When enabled, analyzer configuration errors or invalid outputs fail explicitly."
+          }
+        }
+      }
+    },
+    "schedule": {
+      "description": "Trigger Conditions",
+      "memory": {
+        "short_term": {
+          "recent_turns_window": {
+            "description": "Short-Term Analysis Window"
+          }
+        },
+        "consolidation": {
+          "enabled": {
+            "description": "Enable Consolidation"
+          },
+          "min_short_term_updates": {
+            "description": "Short-Term Updates Required"
+          },
+          "batch_window_hours": {
+            "description": "Batch Window Hours"
+          }
+        },
+        "long_term": {
+          "min_experience_importance": {
+            "description": "Minimum Long-Term Importance"
+          },
+          "min_pending_experiences": {
+            "description": "Pending Experiences Required"
+          }
+        }
+      }
+    },
+    "jobs": {
+      "description": "Background Jobs",
+      "memory": {
+        "identity": {
+          "enabled": {
+            "description": "Enable Identity Mapping",
+            "hint": "When enabled, Memory can merge accounts from different platforms into one memory identity according to identity mappings."
+          }
+        },
+        "jobs": {
+          "consolidation_enabled": {
+            "description": "Run Consolidation After Messages"
+          },
+          "long_term_enabled": {
+            "description": "Run Long-Term Promotion After Consolidation"
+          },
+          "persona_reflection_enabled": {
+            "description": "Enable Persona Reflection Job"
+          }
+        },
+        "persona": {
+          "enabled": {
+            "description": "Enable Persona Reflection"
+          },
+          "reflection_interval_hours": {
+            "description": "Persona Reflection Interval Hours"
+          }
+        }
+      }
+    },
+    "keyword_extraction": {
+      "description": "Keyword Extraction",
+      "memory": {
+        "keyword_extraction": {
+          "enabled": {
+            "description": "Enable Keyword Extraction"
+          },
+          "implementation": {
+            "description": "Keyword Extraction Implementation"
+          },
+          "top_k": {
+            "description": "Keyword Count"
+          }
+        }
+      }
+    },
+    "vector_index": {
+      "description": "Vector Index",
+      "memory": {
+        "vector_index": {
+          "enabled": {
+            "description": "Enable Vector Index"
+          },
+          "provider": {
+            "description": "Index Provider"
+          },
+          "provider_id": {
+            "description": "Embedding Provider",
+            "hint": "Provider instance ID used to generate memory vectors."
+          },
+          "model": {
+            "description": "Embedding Model Name",
+            "hint": "Optional. When empty, the selected provider's own model name is used."
+          },
+          "experience_top_k": {
+            "description": "Experience Search Count"
+          },
+          "long_term_top_k": {
+            "description": "Long-Term Memory Search Count"
+          }
+        }
+      }
+    },
+    "analyzers": {
+      "description": "Analyzers",
+      "hint": "Each analyzer uses its prompt and output schema. Model names stay in the full config editor; the regular page exposes provider, timeout, and temperature.",
+      "memory": {
+        "analysis": {
+          "analyzers": {
+            "description": "Full Analyzer Config",
+            "topic_v1": {
+              "enabled": {
+                "description": "Enable Topic Analyzer"
+              },
+              "provider_id": {
+                "description": "Topic Analyzer Provider"
+              },
+              "timeout_seconds": {
+                "description": "Topic Analyzer Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Topic Analyzer Temperature"
+              }
+            },
+            "focus_v1": {
+              "enabled": {
+                "description": "Enable Focus Analyzer"
+              },
+              "provider_id": {
+                "description": "Focus Analyzer Provider"
+              },
+              "timeout_seconds": {
+                "description": "Focus Analyzer Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Focus Analyzer Temperature"
+              }
+            },
+            "summary_v1": {
+              "enabled": {
+                "description": "Enable Short-Term Summary Analyzer"
+              },
+              "provider_id": {
+                "description": "Short-Term Summary Provider"
+              },
+              "timeout_seconds": {
+                "description": "Short-Term Summary Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Short-Term Summary Temperature"
+              }
+            },
+            "session_insight_v1": {
+              "enabled": {
+                "description": "Enable Session Insight Analyzer"
+              },
+              "provider_id": {
+                "description": "Session Insight Provider"
+              },
+              "timeout_seconds": {
+                "description": "Session Insight Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Session Insight Temperature"
+              }
+            },
+            "experience_extract_v1": {
+              "enabled": {
+                "description": "Enable Experience Extraction Analyzer"
+              },
+              "provider_id": {
+                "description": "Experience Extraction Provider"
+              },
+              "timeout_seconds": {
+                "description": "Experience Extraction Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Experience Extraction Temperature"
+              }
+            },
+            "long_term_promote_v1": {
+              "enabled": {
+                "description": "Enable Long-Term Promotion Analyzer"
+              },
+              "provider_id": {
+                "description": "Long-Term Promotion Provider"
+              },
+              "timeout_seconds": {
+                "description": "Long-Term Promotion Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Long-Term Promotion Temperature"
+              }
+            },
+            "long_term_compose_v1": {
+              "enabled": {
+                "description": "Enable Long-Term Compose Analyzer"
+              },
+              "provider_id": {
+                "description": "Long-Term Compose Provider"
+              },
+              "timeout_seconds": {
+                "description": "Long-Term Compose Timeout Seconds"
+              },
+              "temperature": {
+                "description": "Long-Term Compose Temperature"
+              }
+            }
+          },
+          "stages": {
+            "description": "Full Analysis Stage Config"
+          }
+        }
+      }
+    },
+    "advanced_paths": {
+      "description": "Advanced Paths",
+      "hint": "These paths determine where Memory data, prompts, and index files are stored. Change them only when migrating data directories or debugging.",
+      "memory": {
+        "identity": {
+          "mappings_path": {
+            "description": "Identity Mapping File Path"
+          }
+        },
+        "storage": {
+          "sqlite_path": {
+            "description": "SQLite Database Path"
+          },
+          "docs_root": {
+            "description": "Long-Term Memory Documents Directory"
+          },
+          "projections_root": {
+            "description": "Experience Projection Directory"
+          }
+        },
+        "vector_index": {
+          "root_dir": {
+            "description": "Vector Index Directory"
+          }
+        },
+        "analysis": {
+          "prompts_root": {
+            "description": "Memory Analysis Prompt Directory"
+          }
+        }
+      }
+    }
+  },
   "system_group": {
     "name": "System",
     "system": {

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.config.default import DEFAULT_CONFIG
 from astrbot.core.memory.config import (
     DEFAULT_MEMORY_ANALYZER_MODEL,
     DEFAULT_MEMORY_ANALYZER_PROMPTS,
@@ -9,7 +11,9 @@ from astrbot.core.memory.config import (
     _build_default_memory_config,
     build_default_memory_config_payload,
     ensure_memory_config_file,
+    get_memory_config,
     load_memory_config,
+    reset_memory_config,
 )
 
 
@@ -263,3 +267,126 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     assert payload["analysis"]["stages"]["long_term_compose"]["analyzers"] == [
         "long_term_compose_v1",
     ]
+
+
+def test_astrbot_config_migrates_legacy_memory_yaml_values(
+    temp_dir: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir))
+    legacy_config_path = temp_dir / "data" / "memory" / "config.yaml"
+    legacy_config_path.parent.mkdir(parents=True)
+    legacy_config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  enabled: true",
+                "  strict: true",
+                "  prompts_root: data/memory/prompts",
+                "  analyzers:",
+                "    topic_v1:",
+                "      enabled: true",
+                "      implementation: prompt_json",
+                "      provider_id: volcengine_ark/Doubao-Seed-2.0-lite",
+                "      model: ep-20260307170657-rq64x",
+                "      prompt_file: topic_v1.md",
+                "      output_schema: TopicStateResult",
+                "      timeout_seconds: 20",
+                "      temperature: 0.0",
+                "      extra_body:",
+                "        thinking:",
+                "          type: disabled",
+                "  stages:",
+                "    short_term_update:",
+                "      analyzers:",
+                "        - topic_v1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main_config_path = temp_dir / "data" / "cmd_config.json"
+    main_config_path.parent.mkdir(parents=True, exist_ok=True)
+    main_config = {
+        key: value for key, value in DEFAULT_CONFIG.items() if key != "memory"
+    }
+    main_config_path.write_text(
+        __import__("json").dumps(main_config, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    config = AstrBotConfig(config_path=str(main_config_path))
+
+    analyzer_config = config["memory"]["analysis"]["analyzers"]["topic_v1"]
+    assert analyzer_config["provider_id"] == "volcengine_ark/Doubao-Seed-2.0-lite"
+    assert analyzer_config["model"] == "ep-20260307170657-rq64x"
+    assert analyzer_config["extra_body"]["thinking"]["type"] == "disabled"
+
+
+def test_astrbot_config_migrates_legacy_memory_yaml_when_main_config_is_created(
+    temp_dir: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir))
+    legacy_config_path = temp_dir / "data" / "memory" / "config.yaml"
+    legacy_config_path.parent.mkdir(parents=True)
+    legacy_config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  analyzers:",
+                "    topic_v1:",
+                "      provider_id: memory-lite",
+                "      model: memory-model",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main_config_path = temp_dir / "data" / "cmd_config.json"
+
+    config = AstrBotConfig(config_path=str(main_config_path))
+
+    analyzer_config = config["memory"]["analysis"]["analyzers"]["topic_v1"]
+    assert analyzer_config["provider_id"] == "memory-lite"
+    assert analyzer_config["model"] == "memory-model"
+
+
+def test_astrbot_config_does_not_migrate_legacy_memory_into_schema_config(
+    temp_dir: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir))
+    legacy_config_path = temp_dir / "data" / "memory" / "config.yaml"
+    legacy_config_path.parent.mkdir(parents=True)
+    legacy_config_path.write_text("enabled: true\n", encoding="utf-8")
+    schema_config_path = temp_dir / "data" / "plugin_config.json"
+    schema_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    config = AstrBotConfig(
+        config_path=str(schema_config_path),
+        schema={
+            "enabled": {
+                "type": "bool",
+                "default": True,
+            },
+        },
+    )
+
+    assert config["enabled"] is True
+    assert "memory" not in config
+
+
+def test_get_memory_config_uses_current_json_config_payload(temp_dir: Path):
+    reset_memory_config()
+    try:
+        current_config = build_default_memory_config_payload()
+        current_config["storage"]["sqlite_path"] = str(temp_dir / "current.db")
+        current_config["enabled"] = False
+
+        loaded = get_memory_config({"memory": current_config})
+
+        assert loaded.enabled is False
+        assert loaded.storage.sqlite_path == temp_dir / "current.db"
+    finally:
+        reset_memory_config()

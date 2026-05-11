@@ -23,6 +23,9 @@ from astrbot.core.memory.types import (
     TopicState,
 )
 from astrbot.core.message.components import File, Image, Plain, Reply
+from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import (
+    InternalAgentSubStage,
+)
 from astrbot.core.prompt.context_collect import collect_context_pack
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces import PromptExtensionCollectorInterface
@@ -30,9 +33,6 @@ from astrbot.core.prompt.render import (
     BasePromptRenderer,
     PromptRenderEngine,
     apply_render_result_to_request,
-)
-from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import (
-    InternalAgentSubStage,
 )
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo
@@ -57,8 +57,8 @@ def _make_event():
     event.platform_meta = MagicMock(support_proactive_message=False)
     event.trace = MagicMock()
 
-    def _get_extra(key):
-        return extras.get(key)
+    def _get_extra(key, default=None):
+        return extras.get(key, default)
 
     def _set_extra(key, value):
         extras[key] = value
@@ -175,6 +175,9 @@ def memory_service_mock():
     with patch(
         "astrbot.core.prompt.collectors.memory_collector.get_memory_service",
         return_value=service,
+    ), patch(
+        "astrbot.core.prompt.collectors.memory_collector.get_memory_config",
+        return_value=MagicMock(enabled=True),
     ):
         yield service
 

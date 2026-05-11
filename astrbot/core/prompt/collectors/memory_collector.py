@@ -4,10 +4,12 @@ Memory context collector for prompt context packing.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
+from astrbot.core.memory.config import get_memory_config
 from astrbot.core.memory.service import get_memory_service
 from astrbot.core.memory.types import (
     Experience,
@@ -43,9 +45,14 @@ class MemoryCollector(ContextCollectorInterface):
 
         conversation_id = self._resolve_conversation_id(provider_request)
         query = self._resolve_query(event, provider_request)
+        event_config = event.get_extra("_astrbot_config")
+        if not isinstance(event_config, Mapping):
+            event_config = None
 
         try:
-            snapshot = await get_memory_service().get_snapshot(
+            if not get_memory_config(event_config).enabled:
+                return []
+            snapshot = await get_memory_service(event_config).get_snapshot(
                 umo=umo,
                 conversation_id=conversation_id,
                 query=query,

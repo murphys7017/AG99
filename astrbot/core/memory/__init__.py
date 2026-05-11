@@ -20,6 +20,7 @@ from .config import (
     get_default_memory_config_path,
     get_memory_config,
     load_memory_config,
+    reset_memory_config,
     resolve_memory_path,
 )
 from .consolidation_service import ConsolidationService
@@ -42,7 +43,12 @@ from .postprocessor import (
     unregister_memory_postprocessor,
 )
 from .projection import ExperienceProjectionService
-from .service import MemoryService, get_memory_service, shutdown_memory_service
+from .service import (
+    MemoryService,
+    bind_memory_provider_manager,
+    get_memory_service,
+    shutdown_memory_service,
+)
 from .short_term_service import ShortTermMemoryService
 from .snapshot_builder import MemorySnapshotBuilder
 from .store import MemoryStore
@@ -141,9 +147,11 @@ __all__ = [
     "MemoryVectorIndex",
     "VectorSearchHit",
     "get_default_memory_config_path",
+    "bind_memory_provider_manager",
     "get_memory_service",
     "get_memory_config",
     "load_memory_config",
+    "reset_memory_config",
     "register_memory_postprocessor",
     "reset_memory_postprocessor",
     "render_prompt_template",

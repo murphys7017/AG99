@@ -3,6 +3,7 @@
 import os
 
 from astrbot.core.computer.booters.cua_defaults import CUA_DEFAULT_CONFIG
+from astrbot.core.memory_config_defaults import build_default_memory_config_payload
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 VERSION = "4.24.2"
@@ -223,6 +224,7 @@ DEFAULT_CONFIG = {
         "stream_interjection_enabled": True,
         "stream_interjection_max_per_turn": 1,
     },
+    "memory": build_default_memory_config_payload(),
     "provider_stt_settings": {
         "enable": False,
         "provider_id": "",
@@ -4256,6 +4258,336 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.stream_interjection_max_per_turn": {
                         "description": "每轮最多提示次数",
                         "type": "int",
+                    },
+                },
+            },
+        },
+    },
+    "memory_group": {
+        "name": "记忆",
+        "metadata": {
+            "general": {
+                "description": "总开关",
+                "type": "object",
+                "hint": "这些配置保存在主配置 JSON 的 memory 字段，Memory 运行时也从同一个字段读取。",
+                "items": {
+                    "memory.enabled": {
+                        "description": "启用记忆模块",
+                        "type": "bool",
+                    },
+                    "memory.short_term.enabled": {
+                        "description": "启用短期记忆",
+                        "type": "bool",
+                    },
+                    "memory.long_term.enabled": {
+                        "description": "启用长期记忆",
+                        "type": "bool",
+                    },
+                    "memory.analysis.enabled": {
+                        "description": "启用记忆分析",
+                        "type": "bool",
+                    },
+                    "memory.analysis.strict": {
+                        "description": "严格分析模式",
+                        "type": "bool",
+                        "hint": "开启后，分析器配置错误或输出不合法会显式失败。",
+                    },
+                },
+            },
+            "schedule": {
+                "description": "触发条件",
+                "type": "object",
+                "items": {
+                    "memory.short_term.recent_turns_window": {
+                        "description": "短期分析窗口轮数",
+                        "type": "int",
+                    },
+                    "memory.consolidation.enabled": {
+                        "description": "启用记忆整理",
+                        "type": "bool",
+                    },
+                    "memory.consolidation.min_short_term_updates": {
+                        "description": "整理所需短期更新次数",
+                        "type": "int",
+                    },
+                    "memory.consolidation.batch_window_hours": {
+                        "description": "整理批次时间窗口",
+                        "type": "int",
+                    },
+                    "memory.long_term.min_experience_importance": {
+                        "description": "长期记忆最低重要性",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 1, "step": 0.05},
+                    },
+                    "memory.long_term.min_pending_experiences": {
+                        "description": "长期提升所需经验数量",
+                        "type": "int",
+                    },
+                },
+            },
+            "jobs": {
+                "description": "后台任务",
+                "type": "object",
+                "items": {
+                    "memory.identity.enabled": {
+                        "description": "启用身份映射",
+                        "type": "bool",
+                        "hint": "开启后，Memory 会按身份映射把不同平台账号归并到同一记忆身份。",
+                    },
+                    "memory.jobs.consolidation_enabled": {
+                        "description": "消息后触发整理任务",
+                        "type": "bool",
+                    },
+                    "memory.jobs.long_term_enabled": {
+                        "description": "整理后触发长期提升",
+                        "type": "bool",
+                    },
+                    "memory.persona.enabled": {
+                        "description": "启用人格反思",
+                        "type": "bool",
+                    },
+                    "memory.jobs.persona_reflection_enabled": {
+                        "description": "启用人格反思任务",
+                        "type": "bool",
+                        "condition": {"memory.persona.enabled": True},
+                    },
+                    "memory.persona.reflection_interval_hours": {
+                        "description": "人格反思间隔小时",
+                        "type": "int",
+                        "condition": {"memory.persona.enabled": True},
+                    },
+                },
+            },
+            "keyword_extraction": {
+                "description": "关键词提取",
+                "type": "object",
+                "items": {
+                    "memory.keyword_extraction.enabled": {
+                        "description": "启用关键词提取",
+                        "type": "bool",
+                    },
+                    "memory.keyword_extraction.implementation": {
+                        "description": "关键词提取实现",
+                        "type": "string",
+                        "options": ["jieba_tfidf"],
+                    },
+                    "memory.keyword_extraction.top_k": {
+                        "description": "关键词数量",
+                        "type": "int",
+                    },
+                },
+            },
+            "vector_index": {
+                "description": "向量索引",
+                "type": "object",
+                "items": {
+                    "memory.vector_index.enabled": {
+                        "description": "启用向量索引",
+                        "type": "bool",
+                    },
+                    "memory.vector_index.provider": {
+                        "description": "索引提供者",
+                        "type": "string",
+                        "options": ["faiss"],
+                    },
+                    "memory.vector_index.provider_id": {
+                        "description": "Embedding 提供商",
+                        "type": "string",
+                        "_special": "select_provider_embedding",
+                        "hint": "用于生成记忆向量的 provider 实例 ID。",
+                    },
+                    "memory.vector_index.model": {
+                        "description": "Embedding 模型名称",
+                        "type": "string",
+                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
+                    },
+                    "memory.vector_index.experience_top_k": {
+                        "description": "经验检索数量",
+                        "type": "int",
+                    },
+                    "memory.vector_index.long_term_top_k": {
+                        "description": "长期记忆检索数量",
+                        "type": "int",
+                    },
+                },
+            },
+            "analyzers": {
+                "description": "分析器",
+                "type": "object",
+                "hint": "每个分析器使用对应 Prompt 和输出 Schema。模型名保留在完整配置编辑器中，常规页面只暴露 provider、超时和温度。",
+                "items": {
+                    "memory.analysis.analyzers.topic_v1.enabled": {
+                        "description": "启用话题分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.topic_v1.provider_id": {
+                        "description": "话题分析提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.topic_v1.timeout_seconds": {
+                        "description": "话题分析超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.topic_v1.temperature": {
+                        "description": "话题分析温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers.focus_v1.enabled": {
+                        "description": "启用关注点分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.focus_v1.provider_id": {
+                        "description": "关注点分析提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.focus_v1.timeout_seconds": {
+                        "description": "关注点分析超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.focus_v1.temperature": {
+                        "description": "关注点分析温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers.summary_v1.enabled": {
+                        "description": "启用短期摘要分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.summary_v1.provider_id": {
+                        "description": "短期摘要提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.summary_v1.timeout_seconds": {
+                        "description": "短期摘要超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.summary_v1.temperature": {
+                        "description": "短期摘要温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers.session_insight_v1.enabled": {
+                        "description": "启用会话洞察分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.session_insight_v1.provider_id": {
+                        "description": "会话洞察提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.session_insight_v1.timeout_seconds": {
+                        "description": "会话洞察超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.session_insight_v1.temperature": {
+                        "description": "会话洞察温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers.experience_extract_v1.enabled": {
+                        "description": "启用经验提取分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.experience_extract_v1.provider_id": {
+                        "description": "经验提取提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.experience_extract_v1.timeout_seconds": {
+                        "description": "经验提取超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.experience_extract_v1.temperature": {
+                        "description": "经验提取温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers.long_term_promote_v1.enabled": {
+                        "description": "启用长期提升决策分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.long_term_promote_v1.provider_id": {
+                        "description": "长期提升决策提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.long_term_promote_v1.timeout_seconds": {
+                        "description": "长期提升决策超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.long_term_promote_v1.temperature": {
+                        "description": "长期提升决策温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers.long_term_compose_v1.enabled": {
+                        "description": "启用长期记忆撰写分析器",
+                        "type": "bool",
+                    },
+                    "memory.analysis.analyzers.long_term_compose_v1.provider_id": {
+                        "description": "长期记忆撰写提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "memory.analysis.analyzers.long_term_compose_v1.timeout_seconds": {
+                        "description": "长期记忆撰写超时秒数",
+                        "type": "int",
+                    },
+                    "memory.analysis.analyzers.long_term_compose_v1.temperature": {
+                        "description": "长期记忆撰写温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "memory.analysis.analyzers": {
+                        "description": "分析器完整配置",
+                        "type": "dict",
+                        "collapsed": True,
+                    },
+                    "memory.analysis.stages": {
+                        "description": "分析阶段完整配置",
+                        "type": "dict",
+                        "collapsed": True,
+                    },
+                },
+            },
+            "advanced_paths": {
+                "description": "高级路径",
+                "type": "object",
+                "hint": "这些路径决定 Memory 数据、Prompt 和索引文件的位置。仅在迁移数据目录或调试时修改。",
+                "items": {
+                    "memory.identity.mappings_path": {
+                        "description": "身份映射文件路径",
+                        "type": "string",
+                        "collapsed": True,
+                    },
+                    "memory.storage.sqlite_path": {
+                        "description": "SQLite 数据库路径",
+                        "type": "string",
+                        "collapsed": True,
+                    },
+                    "memory.storage.docs_root": {
+                        "description": "长期记忆文档目录",
+                        "type": "string",
+                        "collapsed": True,
+                    },
+                    "memory.storage.projections_root": {
+                        "description": "经验投影目录",
+                        "type": "string",
+                        "collapsed": True,
+                    },
+                    "memory.vector_index.root_dir": {
+                        "description": "向量索引目录",
+                        "type": "string",
+                        "collapsed": True,
+                    },
+                    "memory.analysis.prompts_root": {
+                        "description": "记忆分析 Prompt 目录",
+                        "type": "string",
+                        "collapsed": True,
                     },
                 },
             },

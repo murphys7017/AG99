@@ -1109,6 +1109,283 @@
             }
         }
     },
+    "memory_group": {
+        "name": "Память",
+        "general": {
+            "description": "Основные переключатели",
+            "hint": "Эти настройки хранятся в поле memory основного JSON-конфига, и runtime памяти читает то же поле.",
+            "memory": {
+                "enabled": {
+                    "description": "Включить память"
+                },
+                "short_term": {
+                    "enabled": {
+                        "description": "Включить краткосрочную память"
+                    }
+                },
+                "long_term": {
+                    "enabled": {
+                        "description": "Включить долгосрочную память"
+                    }
+                },
+                "analysis": {
+                    "enabled": {
+                        "description": "Включить анализ памяти"
+                    },
+                    "strict": {
+                        "description": "Строгий режим анализа",
+                        "hint": "Если включено, ошибки конфигурации анализатора и неверный вывод завершаются явной ошибкой."
+                    }
+                }
+            }
+        },
+        "schedule": {
+            "description": "Условия запуска",
+            "memory": {
+                "short_term": {
+                    "recent_turns_window": {
+                        "description": "Окно анализа краткосрочной памяти"
+                    }
+                },
+                "consolidation": {
+                    "enabled": {
+                        "description": "Включить консолидацию"
+                    },
+                    "min_short_term_updates": {
+                        "description": "Требуемые обновления краткосрочной памяти"
+                    },
+                    "batch_window_hours": {
+                        "description": "Окно партии в часах"
+                    }
+                },
+                "long_term": {
+                    "min_experience_importance": {
+                        "description": "Минимальная важность для долгосрочной памяти"
+                    },
+                    "min_pending_experiences": {
+                        "description": "Требуемые ожидающие события"
+                    }
+                }
+            }
+        },
+        "jobs": {
+            "description": "Фоновые задачи",
+            "memory": {
+                "identity": {
+                    "enabled": {
+                        "description": "Включить сопоставление идентичностей",
+                        "hint": "Если включено, Memory может объединять аккаунты с разных платформ в одну идентичность памяти согласно mapping-файлу."
+                    }
+                },
+                "jobs": {
+                    "consolidation_enabled": {
+                        "description": "Запускать консолидацию после сообщений"
+                    },
+                    "long_term_enabled": {
+                        "description": "Запускать перенос в долгосрочную память после консолидации"
+                    },
+                    "persona_reflection_enabled": {
+                        "description": "Включить задачу рефлексии персоны"
+                    }
+                },
+                "persona": {
+                    "enabled": {
+                        "description": "Включить рефлексию персоны"
+                    },
+                    "reflection_interval_hours": {
+                        "description": "Интервал рефлексии персоны в часах"
+                    }
+                }
+            }
+        },
+        "keyword_extraction": {
+            "description": "Извлечение ключевых слов",
+            "memory": {
+                "keyword_extraction": {
+                    "enabled": {
+                        "description": "Включить извлечение ключевых слов"
+                    },
+                    "implementation": {
+                        "description": "Реализация извлечения ключевых слов"
+                    },
+                    "top_k": {
+                        "description": "Количество ключевых слов"
+                    }
+                }
+            }
+        },
+        "vector_index": {
+            "description": "Векторный индекс",
+            "memory": {
+                "vector_index": {
+                    "enabled": {
+                        "description": "Включить векторный индекс"
+                    },
+                    "provider": {
+                        "description": "Провайдер индекса"
+                    },
+                    "provider_id": {
+                        "description": "Embedding-провайдер",
+                        "hint": "ID экземпляра provider для генерации векторов памяти."
+                    },
+                    "model": {
+                        "description": "Имя embedding-модели",
+                        "hint": "Необязательно. Если пусто, используется модель выбранного provider."
+                    },
+                    "experience_top_k": {
+                        "description": "Количество результатов поиска событий"
+                    },
+                    "long_term_top_k": {
+                        "description": "Количество результатов поиска долгосрочной памяти"
+                    }
+                }
+            }
+        },
+        "analyzers": {
+            "description": "Анализаторы",
+            "hint": "Каждый анализатор использует свой prompt и output schema. Имена моделей остаются в полном редакторе конфигурации.",
+            "memory": {
+                "analysis": {
+                    "analyzers": {
+                        "description": "Полная конфигурация анализаторов",
+                        "topic_v1": {
+                            "enabled": {
+                                "description": "Включить анализатор темы"
+                            },
+                            "provider_id": {
+                                "description": "Provider анализатора темы"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут анализатора темы в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура анализатора темы"
+                            }
+                        },
+                        "focus_v1": {
+                            "enabled": {
+                                "description": "Включить анализатор фокуса"
+                            },
+                            "provider_id": {
+                                "description": "Provider анализатора фокуса"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут анализатора фокуса в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура анализатора фокуса"
+                            }
+                        },
+                        "summary_v1": {
+                            "enabled": {
+                                "description": "Включить анализатор краткого резюме"
+                            },
+                            "provider_id": {
+                                "description": "Provider краткого резюме"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут краткого резюме в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура краткого резюме"
+                            }
+                        },
+                        "session_insight_v1": {
+                            "enabled": {
+                                "description": "Включить анализатор сессии"
+                            },
+                            "provider_id": {
+                                "description": "Provider анализа сессии"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут анализа сессии в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура анализа сессии"
+                            }
+                        },
+                        "experience_extract_v1": {
+                            "enabled": {
+                                "description": "Включить извлечение событий"
+                            },
+                            "provider_id": {
+                                "description": "Provider извлечения событий"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут извлечения событий в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура извлечения событий"
+                            }
+                        },
+                        "long_term_promote_v1": {
+                            "enabled": {
+                                "description": "Включить анализатор переноса в долгосрочную память"
+                            },
+                            "provider_id": {
+                                "description": "Provider переноса в долгосрочную память"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут переноса в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура переноса"
+                            }
+                        },
+                        "long_term_compose_v1": {
+                            "enabled": {
+                                "description": "Включить анализатор записи долгосрочной памяти"
+                            },
+                            "provider_id": {
+                                "description": "Provider записи долгосрочной памяти"
+                            },
+                            "timeout_seconds": {
+                                "description": "Таймаут записи в секундах"
+                            },
+                            "temperature": {
+                                "description": "Температура записи"
+                            }
+                        }
+                    },
+                    "stages": {
+                        "description": "Полная конфигурация стадий анализа"
+                    }
+                }
+            }
+        },
+        "advanced_paths": {
+            "description": "Расширенные пути",
+            "hint": "Эти пути определяют расположение данных Memory, prompt-файлов и индексов. Меняйте их только при миграции каталогов данных или отладке.",
+            "memory": {
+                "identity": {
+                    "mappings_path": {
+                        "description": "Путь к файлу сопоставления идентичностей"
+                    }
+                },
+                "storage": {
+                    "sqlite_path": {
+                        "description": "Путь к базе SQLite"
+                    },
+                    "docs_root": {
+                        "description": "Каталог документов долгосрочной памяти"
+                    },
+                    "projections_root": {
+                        "description": "Каталог проекций событий"
+                    }
+                },
+                "vector_index": {
+                    "root_dir": {
+                        "description": "Каталог векторного индекса"
+                    }
+                },
+                "analysis": {
+                    "prompts_root": {
+                        "description": "Каталог prompt-файлов анализа памяти"
+                    }
+                }
+            }
+        }
+    },
     "system_group": {
         "name": "Система",
         "system": {

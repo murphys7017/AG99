@@ -2,6 +2,8 @@
 
 import json
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,6 +14,16 @@ from astrbot.core.config.default import (
     DEFAULT_VALUE_MAP,
 )
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
+from astrbot.dashboard.routes.config import ConfigRoute
+
+
+class AwaitableJsonRequest:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    @property
+    async def json(self):
+        return self._payload
 
 
 @pytest.fixture
@@ -672,3 +684,171 @@ class TestConfigMetadataI18n:
             prefix, key = item_key.split(".", 1)
             assert prefix == "interaction_middleware"
             assert key in defaults
+
+    def test_memory_extension_config_metadata_is_exposed(self):
+        """Extension config page requires memory metadata to be present."""
+        result = ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3)
+
+        group = result["memory_group"]
+        assert sorted(group["metadata"]) == [
+            "advanced_paths",
+            "analyzers",
+            "general",
+            "jobs",
+            "keyword_extraction",
+            "schedule",
+            "vector_index",
+        ]
+        assert (
+            group["metadata"]["general"]["items"]["memory.enabled"]["description"]
+            == "memory_group.general.memory.enabled.description"
+        )
+        assert (
+            group["metadata"]["vector_index"]["items"][
+                "memory.vector_index.provider_id"
+            ]["_special"]
+            == "select_provider_embedding"
+        )
+        assert (
+            group["metadata"]["analyzers"]["items"][
+                "memory.analysis.analyzers.topic_v1.provider_id"
+            ]["_special"]
+            == "select_provider"
+        )
+
+    def test_memory_defaults_match_exposed_metadata(self):
+        """All exposed memory config keys should exist in DEFAULT_CONFIG."""
+
+        def get_by_selector(config: dict, selector: str):
+            current = config
+            for key in selector.split("."):
+                assert isinstance(current, dict), selector
+                assert key in current, selector
+                current = current[key]
+            return current
+
+        exposed_keys = {
+            item_key
+            for section in CONFIG_METADATA_3["memory_group"]["metadata"].values()
+            for item_key in section["items"]
+        }
+
+        for item_key in exposed_keys:
+            get_by_selector(DEFAULT_CONFIG, item_key)
+
+
+class TestConfigRouteMemoryReload:
+    @pytest.mark.asyncio
+    async def test_save_resets_memory_runtime_when_memory_config_changes(self):
+        route = object.__new__(ConfigRoute)
+        route.acm = SimpleNamespace(
+            confs={
+                "default": {
+                    "memory": {
+                        "enabled": True,
+                    },
+                }
+            },
+            default_conf={
+                "provider_sources": [],
+                "provider": [],
+                "platform": [],
+            },
+        )
+        route.core_lifecycle = SimpleNamespace(
+            reload_pipeline_scheduler=AsyncMock(),
+        )
+        new_config = {
+            "memory": {
+                "enabled": False,
+            },
+            "provider_sources": ["client-value"],
+            "provider": ["client-value"],
+            "platform": ["client-value"],
+        }
+        route._save_astrbot_configs = AsyncMock()
+
+        with (
+            patch(
+                "astrbot.dashboard.routes.config.request",
+                new=AwaitableJsonRequest(
+                    {
+                        "config": new_config,
+                        "conf_id": "default",
+                    }
+                ),
+            ),
+            patch(
+                "astrbot.dashboard.routes.config.reset_memory_config"
+            ) as reset_memory_config,
+            patch(
+                "astrbot.dashboard.routes.config.shutdown_memory_service",
+                new=AsyncMock(),
+            ) as shutdown_memory_service,
+        ):
+            response = await route.post_astrbot_configs()
+
+        assert response["status"] == "ok"
+        reset_memory_config.assert_called_once()
+        assert reset_memory_config.call_args.args[0] is route.acm.confs["default"]
+        shutdown_memory_service.assert_awaited_once()
+        assert shutdown_memory_service.await_args.args[0] is route.acm.confs["default"]
+        route._save_astrbot_configs.assert_awaited_once()
+        saved_config = route._save_astrbot_configs.await_args.args[0]
+        assert saved_config["provider_sources"] == []
+        assert saved_config["provider"] == []
+        assert saved_config["platform"] == []
+
+    @pytest.mark.asyncio
+    async def test_save_does_not_reset_memory_runtime_when_memory_config_unchanged(
+        self,
+    ):
+        memory_config = {
+            "enabled": True,
+        }
+        route = object.__new__(ConfigRoute)
+        route.acm = SimpleNamespace(
+            confs={
+                "default": {
+                    "memory": memory_config,
+                }
+            },
+            default_conf={
+                "provider_sources": [],
+                "provider": [],
+                "platform": [],
+            },
+        )
+        route.core_lifecycle = SimpleNamespace(
+            reload_pipeline_scheduler=AsyncMock(),
+        )
+        route._save_astrbot_configs = AsyncMock()
+
+        with (
+            patch(
+                "astrbot.dashboard.routes.config.request",
+                new=AwaitableJsonRequest(
+                    {
+                        "config": {
+                            "memory": dict(memory_config),
+                            "provider_sources": [],
+                            "provider": [],
+                            "platform": [],
+                        },
+                        "conf_id": "default",
+                    }
+                ),
+            ),
+            patch(
+                "astrbot.dashboard.routes.config.reset_memory_config"
+            ) as reset_memory_config,
+            patch(
+                "astrbot.dashboard.routes.config.shutdown_memory_service",
+                new=AsyncMock(),
+            ) as shutdown_memory_service,
+        ):
+            response = await route.post_astrbot_configs()
+
+        assert response["status"] == "ok"
+        reset_memory_config.assert_not_called()
+        shutdown_memory_service.assert_not_awaited()

@@ -19,6 +19,8 @@ from astrbot.core.config.default import (
 )
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
+from astrbot.core.memory.config import reset_memory_config
+from astrbot.core.memory.service import shutdown_memory_service
 from astrbot.core.platform.register import platform_cls_map, platform_registry
 from astrbot.core.provider import Provider
 from astrbot.core.provider.register import provider_registry
@@ -1014,6 +1016,10 @@ class ConfigRoute(Route):
         conf_id = data.get("conf_id", None)
 
         try:
+            old_memory_config = None
+            if conf_id in self.acm.confs:
+                old_memory_config = copy.deepcopy(self.acm.confs[conf_id].get("memory"))
+
             # 不更新 provider_sources, provider, platform
             # 这些配置有单独的接口进行更新
             if conf_id == "default":
@@ -1022,6 +1028,11 @@ class ConfigRoute(Route):
                     config[key] = self.acm.default_conf[key]
 
             await self._save_astrbot_configs(config, conf_id)
+            if config.get("memory") != old_memory_config:
+                updated_config = self.acm.confs.get(conf_id)
+                if updated_config is not None:
+                    reset_memory_config(updated_config)
+                    await shutdown_memory_service(updated_config)
             await self.core_lifecycle.reload_pipeline_scheduler(conf_id)
 
             # Non-blocking Bay connectivity check

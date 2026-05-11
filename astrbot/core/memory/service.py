@@ -8,7 +8,7 @@ from typing import Any
 from astrbot.core import logger
 
 from .analyzer_manager import MemoryAnalyzerManager
-from .config import get_memory_config
+from .config import MemoryConfig, get_memory_config
 from .consolidation_service import ConsolidationService
 from .document_search import DocumentSearchService
 from .experience_service import ExperienceService
@@ -358,77 +358,120 @@ class MemoryService:
 
 
 _MEMORY_SERVICE: MemoryService | None = None
+_MEMORY_SERVICES_BY_KEY: dict[str, MemoryService] = {}
+_MEMORY_PROVIDER_MANAGER: Any | None = None
 
 
-def get_memory_service() -> MemoryService:
+def _memory_service_key(config: object | None) -> str:
+    if config is None:
+        return "default"
+    return str(id(config))
+
+
+def _build_memory_service(config: MemoryConfig) -> MemoryService:
+    store = MemoryStore(config=config)
+    analyzer_manager = MemoryAnalyzerManager(config.analysis)
+    identity_mapping_service = MemoryIdentityMappingService(store, config=config)
+    identity_resolver = MemoryIdentityResolver(identity_mapping_service)
+    history_source = RecentConversationSource(
+        store,
+        recent_turns_window=config.short_term.recent_turns_window,
+    )
+    turn_record_service = TurnRecordService(store)
+    short_term_service = ShortTermMemoryService(
+        store,
+        history_source,
+        analyzer_manager=analyzer_manager,
+        analysis_config=config.analysis,
+    )
+    consolidation_service = ConsolidationService(
+        store,
+        analyzer_manager=analyzer_manager,
+        analysis_config=config.analysis,
+        consolidation_config=config.consolidation,
+    )
+    experience_service = ExperienceService(store)
+    vector_index = MemoryVectorIndex(store, config=config)
+    long_term_service = LongTermMemoryService(
+        store,
+        analyzer_manager=analyzer_manager,
+        analysis_config=config.analysis,
+        long_term_config=config.long_term,
+        vector_index=vector_index,
+    )
+    manual_long_term_service = LongTermMemoryManualService(
+        store,
+        vector_index=vector_index,
+    )
+    document_search_service = DocumentSearchService(
+        store,
+        vector_index=vector_index,
+    )
+    snapshot_builder = MemorySnapshotBuilder(
+        store,
+        document_search_service=document_search_service,
+    )
+    service = MemoryService(
+        store,
+        turn_record_service,
+        short_term_service,
+        snapshot_builder,
+        analyzer_manager,
+        identity_mapping_service,
+        identity_resolver,
+        consolidation_service,
+        experience_service,
+        long_term_service,
+        manual_long_term_service,
+        document_search_service,
+    )
+    if _MEMORY_PROVIDER_MANAGER is not None:
+        service.bind_provider_manager(_MEMORY_PROVIDER_MANAGER)
+    return service
+
+
+def bind_memory_provider_manager(provider_manager: Any) -> None:
+    global _MEMORY_PROVIDER_MANAGER
+    _MEMORY_PROVIDER_MANAGER = provider_manager
+    if _MEMORY_SERVICE is not None:
+        _MEMORY_SERVICE.bind_provider_manager(provider_manager)
+    for service in _MEMORY_SERVICES_BY_KEY.values():
+        service.bind_provider_manager(provider_manager)
+
+
+def get_memory_service(config: Any | None = None) -> MemoryService:
     global _MEMORY_SERVICE
+    if config is not None:
+        key = _memory_service_key(config)
+        cached_service = _MEMORY_SERVICES_BY_KEY.get(key)
+        if cached_service is None:
+            cached_service = _build_memory_service(get_memory_config(config))
+            _MEMORY_SERVICES_BY_KEY[key] = cached_service
+        return cached_service
+
     if _MEMORY_SERVICE is None:
-        config = get_memory_config()
-        store = MemoryStore(config=config)
-        analyzer_manager = MemoryAnalyzerManager(config.analysis)
-        identity_mapping_service = MemoryIdentityMappingService(store, config=config)
-        identity_resolver = MemoryIdentityResolver(identity_mapping_service)
-        history_source = RecentConversationSource(
-            store,
-            recent_turns_window=config.short_term.recent_turns_window,
-        )
-        turn_record_service = TurnRecordService(store)
-        short_term_service = ShortTermMemoryService(
-            store,
-            history_source,
-            analyzer_manager=analyzer_manager,
-            analysis_config=config.analysis,
-        )
-        consolidation_service = ConsolidationService(
-            store,
-            analyzer_manager=analyzer_manager,
-            analysis_config=config.analysis,
-            consolidation_config=config.consolidation,
-        )
-        experience_service = ExperienceService(store)
-        vector_index = MemoryVectorIndex(store, config=config)
-        long_term_service = LongTermMemoryService(
-            store,
-            analyzer_manager=analyzer_manager,
-            analysis_config=config.analysis,
-            long_term_config=config.long_term,
-            vector_index=vector_index,
-        )
-        manual_long_term_service = LongTermMemoryManualService(
-            store,
-            vector_index=vector_index,
-        )
-        document_search_service = DocumentSearchService(
-            store,
-            vector_index=vector_index,
-        )
-        snapshot_builder = MemorySnapshotBuilder(
-            store,
-            document_search_service=document_search_service,
-        )
-        _MEMORY_SERVICE = MemoryService(
-            store,
-            turn_record_service,
-            short_term_service,
-            snapshot_builder,
-            analyzer_manager,
-            identity_mapping_service,
-            identity_resolver,
-            consolidation_service,
-            experience_service,
-            long_term_service,
-            manual_long_term_service,
-            document_search_service,
-        )
+        _MEMORY_SERVICE = _build_memory_service(get_memory_config())
     return _MEMORY_SERVICE
 
 
-async def shutdown_memory_service() -> None:
+async def shutdown_memory_service(config: Any | None = None) -> None:
     global _MEMORY_SERVICE
+    if config is not None:
+        service = _MEMORY_SERVICES_BY_KEY.pop(_memory_service_key(config), None)
+        if service is not None:
+            await service.store.close()
+        return
+
     if _MEMORY_SERVICE is None:
+        for service in list(_MEMORY_SERVICES_BY_KEY.values()):
+            await service.store.close()
+        _MEMORY_SERVICES_BY_KEY.clear()
         return
     await _MEMORY_SERVICE.store.close()
     _MEMORY_SERVICE = None
+    for service in list(_MEMORY_SERVICES_BY_KEY.values()):
+        await service.store.close()
+    _MEMORY_SERVICES_BY_KEY.clear()
 
 
 def _get_conversation_history(

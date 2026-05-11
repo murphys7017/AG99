@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
+from astrbot.core.memory_config_defaults import (
+    DEFAULT_MEMORY_ANALYSIS_STAGES,
+    DEFAULT_MEMORY_ANALYZER_MODEL,
+    DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
+    DEFAULT_MEMORY_ANALYZER_SPECS,
+    DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION,
+    build_default_memory_config_payload,
+)
 from astrbot.core.utils.astrbot_path import get_astrbot_root
 
 DEFAULT_MEMORY_ANALYZER_PROMPTS: dict[str, str] = {
@@ -195,25 +204,6 @@ Supporting experiences JSON:
 """,
 }
 
-DEFAULT_MEMORY_ANALYZER_PROVIDER_ID = ""
-DEFAULT_MEMORY_ANALYZER_MODEL = ""
-DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION = "jieba_tfidf"
-DEFAULT_MEMORY_ANALYZER_SPECS: dict[str, tuple[str, str]] = {
-    "topic_v1": ("topic_v1.md", "TopicStateResult"),
-    "focus_v1": ("focus_v1.md", "ShortTermFocusResult"),
-    "summary_v1": ("summary_v1.md", "ShortTermSummaryResult"),
-    "session_insight_v1": ("session_insight_v1.md", "SessionInsightResult"),
-    "experience_extract_v1": ("experience_extract_v1.md", "ExperienceExtractResult"),
-    "long_term_promote_v1": ("long_term_promote_v1.md", "LongTermPromoteResult"),
-    "long_term_compose_v1": ("long_term_compose_v1.md", "LongTermComposeResult"),
-}
-DEFAULT_MEMORY_ANALYSIS_STAGES: dict[str, list[str]] = {
-    "short_term_update": ["topic_v1", "focus_v1", "summary_v1"],
-    "session_insight_update": ["session_insight_v1"],
-    "experience_extract": ["experience_extract_v1"],
-    "long_term_promote": ["long_term_promote_v1"],
-    "long_term_compose": ["long_term_compose_v1"],
-}
 DEFAULT_IDENTITY_MAPPINGS_PAYLOAD: dict[str, list[dict[str, str]]] = {"bindings": []}
 
 
@@ -402,92 +392,15 @@ def _serialize_path_for_payload(path: Path | None) -> str | None:
         return path.as_posix()
 
 
-def build_default_memory_config_payload() -> dict:
-    default_config = _build_default_memory_config()
-    return {
-        "enabled": default_config.enabled,
-        "identity": {
-            "enabled": default_config.identity.enabled,
-            "mappings_path": _serialize_path_for_payload(
-                default_config.identity.mappings_path
-            ),
-        },
-        "storage": {
-            "sqlite_path": _serialize_path_for_payload(
-                default_config.storage.sqlite_path
-            ),
-            "docs_root": _serialize_path_for_payload(default_config.storage.docs_root),
-            "projections_root": _serialize_path_for_payload(
-                default_config.storage.projections_root
-            ),
-        },
-        "short_term": {
-            "enabled": default_config.short_term.enabled,
-            "recent_turns_window": default_config.short_term.recent_turns_window,
-        },
-        "consolidation": {
-            "enabled": default_config.consolidation.enabled,
-            "min_short_term_updates": default_config.consolidation.min_short_term_updates,
-            "batch_window_hours": default_config.consolidation.batch_window_hours,
-        },
-        "long_term": {
-            "enabled": default_config.long_term.enabled,
-            "min_experience_importance": default_config.long_term.min_experience_importance,
-            "min_pending_experiences": default_config.long_term.min_pending_experiences,
-        },
-        "vector_index": {
-            "enabled": default_config.vector_index.enabled,
-            "provider": default_config.vector_index.provider,
-            "provider_id": default_config.vector_index.provider_id,
-            "model": default_config.vector_index.model,
-            "root_dir": _serialize_path_for_payload(
-                default_config.vector_index.root_dir
-            ),
-            "experience_top_k": default_config.vector_index.experience_top_k,
-            "long_term_top_k": default_config.vector_index.long_term_top_k,
-        },
-        "keyword_extraction": {
-            "enabled": default_config.keyword_extraction.enabled,
-            "implementation": default_config.keyword_extraction.implementation,
-            "top_k": default_config.keyword_extraction.top_k,
-        },
-        "persona": {
-            "enabled": default_config.persona.enabled,
-            "reflection_interval_hours": default_config.persona.reflection_interval_hours,
-        },
-        "jobs": {
-            "consolidation_enabled": default_config.jobs.consolidation_enabled,
-            "long_term_enabled": default_config.jobs.long_term_enabled,
-            "persona_reflection_enabled": default_config.jobs.persona_reflection_enabled,
-        },
-        "analysis": {
-            "enabled": default_config.analysis.enabled,
-            "strict": default_config.analysis.strict,
-            "prompts_root": _serialize_path_for_payload(
-                default_config.analysis.prompts_root
-            ),
-            "analyzers": {
-                analyzer_name: {
-                    "enabled": analyzer_config.enabled,
-                    "implementation": analyzer_config.implementation,
-                    "provider_id": analyzer_config.provider_id,
-                    "model": analyzer_config.model,
-                    "prompt_file": analyzer_config.prompt_file,
-                    "output_schema": analyzer_config.output_schema,
-                    "timeout_seconds": analyzer_config.timeout_seconds,
-                    "temperature": analyzer_config.temperature,
-                    "extra_body": analyzer_config.extra_body,
-                }
-                for analyzer_name, analyzer_config in default_config.analysis.analyzers.items()
-            },
-            "stages": {
-                stage_name: {
-                    "analyzers": list(stage_config.analyzers),
-                }
-                for stage_name, stage_config in default_config.analysis.stages.items()
-            },
-        },
-    }
+def load_memory_config_payload(path: Path | None = None) -> dict:
+    config_path = path or get_default_memory_config_path()
+    if not config_path.exists():
+        ensure_memory_config_file(config_path)
+
+    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"memory config must be a mapping: {config_path}")
+    return loaded
 
 
 def ensure_memory_config_file(
@@ -623,16 +536,26 @@ def _load_stage_configs(payload: object) -> dict[str, MemoryAnalysisStageConfig]
     return stages
 
 
-def load_memory_config(path: Path | None = None) -> MemoryConfig:
-    config_path = path or get_default_memory_config_path()
-    if not config_path.exists():
-        ensure_memory_config_file(config_path)
+def load_memory_config(
+    path: Path | None = None,
+    payload: Mapping[str, object] | None = None,
+) -> MemoryConfig:
+    if path is not None and payload is not None:
+        raise ValueError("memory config path and payload cannot be used together")
 
-    payload: dict = {}
-    if config_path.exists():
-        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        if isinstance(loaded, dict):
-            payload = loaded
+    if payload is not None:
+        payload = dict(payload)
+    elif path is None:
+        from astrbot.core import astrbot_config
+
+        payload = astrbot_config.get("memory")
+        if not isinstance(payload, dict):
+            raise ValueError("memory config in AstrBot config must be a mapping")
+    else:
+        config_path = path
+        if not config_path.exists():
+            ensure_memory_config_file(config_path)
+        payload = load_memory_config_payload(config_path)
 
     storage_payload = payload.get("storage", {}) if isinstance(payload, dict) else {}
     short_term_payload = (
@@ -802,10 +725,37 @@ def ensure_default_memory_prompt_files(
 
 
 _MEMORY_CONFIG: MemoryConfig | None = None
+_MEMORY_CONFIGS_BY_KEY: dict[str, MemoryConfig] = {}
 
 
-def get_memory_config() -> MemoryConfig:
+def _memory_config_key(config: object | None) -> str:
+    if config is None:
+        return "default"
+    return str(id(config))
+
+
+def get_memory_config(config: Mapping[str, object] | None = None) -> MemoryConfig:
     global _MEMORY_CONFIG
+    if config is not None:
+        key = _memory_config_key(config)
+        cached_config = _MEMORY_CONFIGS_BY_KEY.get(key)
+        if cached_config is None:
+            payload = config.get("memory")
+            if not isinstance(payload, Mapping):
+                raise ValueError("memory config in AstrBot config must be a mapping")
+            cached_config = load_memory_config(payload=payload)
+            _MEMORY_CONFIGS_BY_KEY[key] = cached_config
+        return cached_config
+
     if _MEMORY_CONFIG is None:
         _MEMORY_CONFIG = load_memory_config()
     return _MEMORY_CONFIG
+
+
+def reset_memory_config(config: Mapping[str, object] | None = None) -> None:
+    global _MEMORY_CONFIG
+    if config is None:
+        _MEMORY_CONFIG = None
+        _MEMORY_CONFIGS_BY_KEY.clear()
+        return
+    _MEMORY_CONFIGS_BY_KEY.pop(_memory_config_key(config), None)

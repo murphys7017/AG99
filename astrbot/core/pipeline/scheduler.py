@@ -78,6 +78,8 @@ class PipelineScheduler:
             event (AstrMessageEvent): 事件对象
 
         """
+        event.set_extra("_astrbot_config", self.ctx.astrbot_config)
+        event.set_extra("_astrbot_config_id", self.ctx.astrbot_config_id)
         active_event_registry.register(event)
         try:
             await self._process_stages(event)

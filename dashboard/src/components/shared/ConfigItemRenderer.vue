@@ -10,6 +10,9 @@
     <template v-else-if="itemMeta?._special === 'select_provider_tts'">
       <ProviderSelector :model-value="modelValue" @update:model-value="emitUpdate" :provider-type="'text_to_speech'" />
     </template>
+    <template v-else-if="itemMeta?._special === 'select_provider_embedding'">
+      <ProviderSelector :model-value="modelValue" @update:model-value="emitUpdate" :provider-type="'embedding'" />
+    </template>
     <template v-else-if="itemMeta?._special === 'select_providers'">
       <ProviderSelector
         :model-value="modelValue"

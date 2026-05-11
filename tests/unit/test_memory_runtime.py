@@ -65,6 +65,7 @@ from astrbot.core.memory.types import (
     TurnRecord,
 )
 from astrbot.core.memory.vector_index import MemoryVectorIndex
+from astrbot.core.memory_config_defaults import build_default_memory_config_payload
 from astrbot.core.postprocess import get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
@@ -5335,3 +5336,49 @@ def test_register_memory_postprocessor_reuses_singleton_and_updates_service(
     finally:
         reset_memory_postprocessor()
         manager.clear()
+
+
+@pytest.mark.asyncio
+async def test_memory_postprocessor_uses_event_config_memory_service(monkeypatch):
+    default_service = MagicMock()
+    default_service.update_from_postprocess = AsyncMock()
+    event_service = MagicMock()
+    event_service.update_from_postprocess = AsyncMock()
+    event_service.identity_resolver = MagicMock()
+    event_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    event_config = {"memory": build_default_memory_config_payload()}
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.session_id = "session-1"
+    event.get_extra.side_effect = lambda key=None, default=None: (
+        event_config if key == "_astrbot_config" else default
+    )
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = Conversation(
+        platform_id="test",
+        user_id="test:private:user",
+        cid="conv-1",
+        history=json.dumps(_make_history()),
+    )
+    ctx.provider_request = ProviderRequest(prompt="hello", session_id="session-1")
+    ctx.timestamp = datetime.now(UTC)
+
+    def _resolve_service(config=None):
+        return event_service if config is event_config else default_service
+
+    monkeypatch.setattr(
+        "astrbot.core.memory.postprocessor.get_memory_service",
+        _resolve_service,
+    )
+
+    processor = MemoryPostProcessor(default_service)
+    await processor.run(ctx)
+
+    event_service.update_from_postprocess.assert_awaited_once()
+    default_service.update_from_postprocess.assert_not_awaited()

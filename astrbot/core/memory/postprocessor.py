@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -81,6 +82,14 @@ class MemoryPostProcessor:
         )
 
     async def run(self, ctx: PostProcessContext) -> None:
+        event_config = ctx.event.get_extra("_astrbot_config")
+        if not isinstance(event_config, Mapping):
+            event_config = None
+        if event_config is not None and not get_memory_config(event_config).enabled:
+            return
+        if event_config is None and not get_memory_config().enabled:
+            return
+        self.memory_service = resolve_memory_service_for_event(ctx.event)
         req = await self.build_update_request(ctx)
         if req is None:
             return
@@ -95,9 +104,6 @@ def register_memory_postprocessor(
 ) -> MemoryPostProcessor | None:
     global _MEMORY_POSTPROCESSOR
 
-    if not get_memory_config().enabled:
-        return None
-
     resolved_memory_service = memory_service or get_memory_service()
     processor = _MEMORY_POSTPROCESSOR
     if processor is None:
@@ -108,6 +114,13 @@ def register_memory_postprocessor(
 
     register_postprocessor(processor)
     return processor
+
+
+def resolve_memory_service_for_event(event: Any) -> MemoryService:
+    event_config = event.get_extra("_astrbot_config")
+    if isinstance(event_config, Mapping):
+        return get_memory_service(event_config)
+    return get_memory_service()
 
 
 def unregister_memory_postprocessor() -> bool:

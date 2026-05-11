@@ -30,6 +30,7 @@ from astrbot.core.interaction import (
 )
 from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.memory import (
+    bind_memory_provider_manager,
     get_memory_service,
     register_memory_postprocessor,
     reset_memory_postprocessor,
@@ -261,8 +262,8 @@ class AstrBotCoreLifecycle:
             self.subagent_orchestrator,
         )
         self.interaction_middleware.set_plugin_context(self.star_context)
-        self.memory_service = get_memory_service()
-        self.memory_service.bind_provider_manager(self.provider_manager)
+        bind_memory_provider_manager(self.provider_manager)
+        self.memory_service = get_memory_service(self.astrbot_config)
         await self.memory_service.initialize()
         self.memory_postprocessor = register_memory_postprocessor(self.memory_service)
 

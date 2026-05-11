@@ -86,8 +86,8 @@ def _make_event():
     event.platform_meta = MagicMock(support_proactive_message=False)
     event.trace = MagicMock()
 
-    def _get_extra(key):
-        return extras.get(key)
+    def _get_extra(key, default=None):
+        return extras.get(key, default)
 
     def _set_extra(key, value):
         extras[key] = value
@@ -193,6 +193,9 @@ def _patch_memory_service():
     with patch(
         "astrbot.core.prompt.collectors.memory_collector.get_memory_service",
         return_value=service,
+    ), patch(
+        "astrbot.core.prompt.collectors.memory_collector.get_memory_config",
+        return_value=MagicMock(enabled=True),
     ):
         yield service
 
