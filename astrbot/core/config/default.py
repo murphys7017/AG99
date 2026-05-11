@@ -1,12 +1,11 @@
 """如需修改配置，请在 `data/cmd_config.json` 中修改或者在管理面板中可视化修改。"""
 
 import os
-from typing import Any, TypedDict
 
 from astrbot.core.computer.booters.cua_defaults import CUA_DEFAULT_CONFIG
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-VERSION = "4.23.6"
+VERSION = "4.24.2"
 DB_PATH = os.path.join(get_astrbot_data_path(), "data_v4.db")
 PERSONAL_WECHAT_CONFIG_METADATA = {
     "weixin_oc_base_url": {
@@ -112,6 +111,7 @@ DEFAULT_CONFIG = {
         "websearch_bocha_key": [],
         "websearch_brave_key": [],
         "websearch_baidu_app_builder_key": "",
+        "websearch_firecrawl_key": [],
         "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
@@ -178,7 +178,7 @@ DEFAULT_CONFIG = {
             "shipyard_neo_ttl": 3600,
             "cua_image": CUA_DEFAULT_CONFIG["image"],
             "cua_os_type": CUA_DEFAULT_CONFIG["os_type"],
-            "cua_ttl": CUA_DEFAULT_CONFIG["ttl"],
+            "cua_idle_timeout": CUA_DEFAULT_CONFIG["idle_timeout"],
             "cua_telemetry_enabled": CUA_DEFAULT_CONFIG["telemetry_enabled"],
             "cua_local": CUA_DEFAULT_CONFIG["local"],
             "cua_api_key": CUA_DEFAULT_CONFIG["api_key"],
@@ -291,26 +291,9 @@ DEFAULT_CONFIG = {
     "kb_final_top_k": 5,  # 知识库检索最终返回结果数量
     "kb_agentic_mode": False,
     "disable_builtin_commands": False,
+    "disable_metrics": False,
 }
 
-
-class ChatProviderTemplate(TypedDict):
-    id: str
-    provider_source_id: str
-    model: str
-    modalities: list
-    custom_extra_body: dict[str, Any]
-    max_context_tokens: int
-
-
-CHAT_PROVIDER_TEMPLATE = {
-    "id": "",
-    "provide_source_id": "",
-    "model": "",
-    "modalities": [],
-    "custom_extra_body": {},
-    "max_context_tokens": 128000,
-}
 
 """
 AstrBot v3 时代的配置元数据，目前仅承担以下功能：
@@ -1970,13 +1953,13 @@ CONFIG_METADATA_2 = {
                         "options": ["text", "image", "audio", "tool_use"],
                         "labels": ["文本", "图像", "音频", "工具使用"],
                         "render_type": "checkbox",
-                        "hint": "模型支持的模态。如所填写的模型不支持图像，请取消勾选图像。",
+                        "hint": "模型支持的模态及能力。",
                     },
                     "custom_headers": {
-                        "description": "自定义添加请求头",
+                        "description": "自定义请求头",
                         "type": "dict",
                         "items": {},
-                        "hint": "此处添加的键值对将被合并到 OpenAI SDK 的 default_headers 中，用于自定义 HTTP 请求头。值必须为字符串。",
+                        "hint": "此处添加的键值对将被合并到 OpenAI SDK 的 default_headers 中，用于自定义 HTTP 请求头。",
                     },
                     "ollama_disable_thinking": {
                         "description": "关闭思考模式",
@@ -1987,7 +1970,7 @@ CONFIG_METADATA_2 = {
                         "description": "自定义请求体参数",
                         "type": "dict",
                         "items": {},
-                        "hint": "用于在请求时添加额外的参数，如 temperature、top_p、max_tokens 等。",
+                        "hint": "用于在请求时添加额外的参数，如 temperature, top_p, max_tokens, reasoning_effort 等。",
                         "template_schema": {
                             "temperature": {
                                 "name": "Temperature",
@@ -2630,7 +2613,7 @@ CONFIG_METADATA_2 = {
                     "max_context_tokens": {
                         "description": "模型上下文窗口大小",
                         "type": "int",
-                        "hint": "模型最大上下文 Token 大小。如果为 0，则会自动从模型元数据填充（如有），也可手动修改。",
+                        "hint": "模型最大上下文 Token 大小。如果为 0，则会自动从模型元数据填充（如有）",
                     },
                     "dify_api_key": {
                         "description": "API Key",
@@ -2941,6 +2924,11 @@ CONFIG_METADATA_2 = {
             },
             "callback_api_base": {
                 "type": "string",
+            },
+            "disable_metrics": {
+                "description": "禁用匿名使用统计",
+                "type": "bool",
+                "hint": "禁用后，AstrBot 将不再上传匿名使用统计数据。",
             },
             "log_level": {
                 "type": "string",
@@ -3261,6 +3249,7 @@ CONFIG_METADATA_3 = {
                         "hint": "参考：https://console.bce.baidu.com/iam/#/iam/apikey/list",
                         "condition": {
                             "provider_settings.websearch_provider": "baidu_ai_search",
+                            "provider_settings.web_search": True,
                         },
                     },
                     "provider_settings.web_search_link": {
@@ -3358,10 +3347,10 @@ CONFIG_METADATA_3 = {
                             "provider_settings.sandbox.booter": "cua",
                         },
                     },
-                    "provider_settings.sandbox.cua_ttl": {
-                        "description": "CUA Sandbox TTL",
+                    "provider_settings.sandbox.cua_idle_timeout": {
+                        "description": "CUA Idle Timeout",
                         "type": "int",
-                        "hint": "CUA 沙箱生存时间（秒）。当前作为会话配置保存，具体生效取决于 CUA SDK。",
+                        "hint": "Idle timeout for CUA sandbox sessions in seconds. When greater than 0, AstrBot proactively shuts down an idle CUA sandbox after that amount of inactivity; 0 disables it.",
                         "condition": {
                             "provider_settings.computer_use_runtime": "sandbox",
                             "provider_settings.sandbox.booter": "cua",
