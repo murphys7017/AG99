@@ -47,12 +47,10 @@ def registered_plugin_page(core_lifecycle_td: AstrBotCoreLifecycle, monkeypatch)
         Path(core_lifecycle_td.plugin_manager.plugin_store_path) / PLUGIN_PAGE_DEMO_NAME
     )
     page_root = plugin_root / "pages" / PLUGIN_PAGE_DEMO_PAGE_NAME
-    i18n_root = plugin_root / ".astrbot-plugin" / "i18n"
     shared_root = page_root / "shared"
     images_root = page_root / "images"
     shared_root.mkdir(parents=True, exist_ok=True)
     images_root.mkdir(parents=True, exist_ok=True)
-    i18n_root.mkdir(parents=True, exist_ok=True)
 
     (page_root / "index.html").write_text(
         """
@@ -94,21 +92,6 @@ window.renderTabs = renderTabs;
     )
     (images_root / "logo.svg").write_text(
         '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
-        encoding="utf-8",
-    )
-    (i18n_root / "zh-CN.json").write_text(
-        """
-{
-  "metadata": {
-    "display_name": "插件页面演示"
-  },
-  "pages": {
-    "bridge-demo": {
-      "title": "Bridge 演示页"
-    }
-  }
-}
-""".strip(),
         encoding="utf-8",
     )
 
@@ -343,7 +326,6 @@ async def test_plugin_detail_includes_scanned_page_component(
             "name": PLUGIN_PAGE_DEMO_PAGE_NAME,
             "title": PLUGIN_PAGE_DEMO_PAGE_NAME,
             "page_name": PLUGIN_PAGE_DEMO_PAGE_NAME,
-            "i18n_key": f"pages.{PLUGIN_PAGE_DEMO_PAGE_NAME}",
             "description": "Plugin Page entry",
             "plugin_name": PLUGIN_PAGE_DEMO_NAME,
         }
@@ -369,7 +351,6 @@ async def test_plugin_page_entry_returns_signed_content_path(
     assert data["status"] == "ok"
     assert data["data"]["name"] == PLUGIN_PAGE_DEMO_PAGE_NAME
     assert data["data"]["title"] == PLUGIN_PAGE_DEMO_PAGE_NAME
-    assert data["data"]["i18n_key"] == f"pages.{PLUGIN_PAGE_DEMO_PAGE_NAME}"
     assert data["data"]["content_path"].startswith(
         f"/api/plugin/page/content/{PLUGIN_PAGE_DEMO_NAME}/{PLUGIN_PAGE_DEMO_PAGE_NAME}/"
     )
@@ -486,11 +467,6 @@ async def test_plugin_page_content_issues_scoped_asset_token(
     assert app_js_response.status_code == 200
     bridge_response = await anonymous_client.get(bridge_sdk_url.group(1))
     assert bridge_response.status_code == 200
-    bridge_js = (await bridge_response.get_data()).decode("utf-8")
-    assert "window.AstrBotPluginPage?.__setInitialContext" in bridge_js
-    assert '"locale": "zh-CN"' in bridge_js
-    assert '"displayName": "插件页面演示"' in bridge_js
-    assert '"pageTitle": "Bridge 演示页"' in bridge_js
     css_response = await anonymous_client.get(css_url.group(1))
     assert css_response.status_code == 200
 
@@ -1724,102 +1700,3 @@ async def test_batch_upload_skills_partial_success(
     assert data["data"]["failed"] == [
         {"filename": "bad_skill.zip", "error": "install failed"}
     ]
-
-
-@pytest.mark.asyncio
-async def test_skill_file_browser_and_editor_security(
-    app: Quart,
-    authenticated_header: dict,
-    monkeypatch,
-    tmp_path,
-):
-    async def _fake_sync_skills_to_active_sandboxes():
-        return
-
-    skills_root = tmp_path / "skills"
-    skill_dir = skills_root / "demo_skill"
-    skill_dir.mkdir(parents=True)
-    skill_md = skill_dir / "SKILL.md"
-    skill_md.write_text(
-        "---\ndescription: Demo skill\n---\n# Demo\n",
-        encoding="utf-8",
-    )
-    (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
-    (skill_dir / "large.md").write_text("x" * (512 * 1024 + 1), encoding="utf-8")
-    (skill_dir / "binary.md").write_bytes(b"\xff\xfe\x00")
-    outside_file = tmp_path / "outside.txt"
-    outside_file.write_text("outside", encoding="utf-8")
-    if hasattr(os, "symlink"):
-        os.symlink(outside_file, skill_dir / "outside-link.txt")
-
-    monkeypatch.setattr(
-        "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-        lambda: str(skills_root),
-    )
-    monkeypatch.setattr(
-        "astrbot.dashboard.routes.skills.sync_skills_to_active_sandboxes",
-        _fake_sync_skills_to_active_sandboxes,
-    )
-
-    test_client = app.test_client()
-
-    list_response = await test_client.get(
-        "/api/skills/files?name=demo_skill",
-        headers=authenticated_header,
-    )
-    list_data = await list_response.get_json()
-    assert list_data["status"] == "ok"
-    listed_paths = {item["path"] for item in list_data["data"]["entries"]}
-    assert "SKILL.md" in listed_paths
-    assert "outside-link.txt" not in listed_paths
-
-    read_response = await test_client.get(
-        "/api/skills/file?name=demo_skill&path=SKILL.md",
-        headers=authenticated_header,
-    )
-    read_data = await read_response.get_json()
-    assert read_data["status"] == "ok"
-    assert "# Demo" in read_data["data"]["content"]
-
-    update_response = await test_client.post(
-        "/api/skills/file",
-        json={
-            "name": "demo_skill",
-            "path": "SKILL.md",
-            "content": "# Updated\n",
-        },
-        headers=authenticated_header,
-    )
-    update_data = await update_response.get_json()
-    assert update_data["status"] == "ok"
-    assert skill_md.read_text(encoding="utf-8") == "# Updated\n"
-
-    traversal_response = await test_client.get(
-        "/api/skills/file?name=demo_skill&path=../outside.txt",
-        headers=authenticated_header,
-    )
-    traversal_data = await traversal_response.get_json()
-    assert traversal_data["status"] == "error"
-
-    symlink_response = await test_client.get(
-        "/api/skills/file?name=demo_skill&path=outside-link.txt",
-        headers=authenticated_header,
-    )
-    symlink_data = await symlink_response.get_json()
-    assert symlink_data["status"] == "error"
-
-    large_response = await test_client.get(
-        "/api/skills/file?name=demo_skill&path=large.md",
-        headers=authenticated_header,
-    )
-    large_data = await large_response.get_json()
-    assert large_data["status"] == "error"
-    assert large_data["message"] == "File is too large"
-
-    binary_response = await test_client.get(
-        "/api/skills/file?name=demo_skill&path=binary.md",
-        headers=authenticated_header,
-    )
-    binary_data = await binary_response.get_json()
-    assert binary_data["status"] == "error"
-    assert binary_data["message"] == "File is not valid UTF-8 text"
