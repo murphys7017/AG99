@@ -186,6 +186,8 @@ class MainAgentBuildConfig:
     max_context_length: int = -1
     """The maximum number of turns to keep in context. -1 means no limit.
     This enforce max turns before compression"""
+    fallback_max_context_tokens: int = 128000
+    """Fallback context window size when model metadata does not provide one."""
     dequeue_context_length: int = 1
     """The number of oldest turns to remove when context length limit is reached."""
     llm_safety_mode: bool = True
