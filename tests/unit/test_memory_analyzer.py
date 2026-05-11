@@ -86,6 +86,53 @@ def test_render_prompt_template_preserves_json_braces():
 
 
 @pytest.mark.asyncio
+async def test_memory_analyzer_manager_injects_configured_output_schema_contract(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir / "astrbot-root"))
+    config_path = temp_dir / "memory-config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  enabled: true",
+                '  prompts_root: "custom/prompts"',
+                "  analyzers:",
+                "    focus_v1:",
+                '      implementation: "prompt_json"',
+                '      provider_id: "memory-lite"',
+                '      model: "dummy-model"',
+                '      prompt_file: "focus_v1.md"',
+                '      output_schema: "ShortTermFocusResult"',
+                "  stages:",
+                "    short_term_update:",
+                '      analyzers: ["focus_v1"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = load_memory_config(config_path)
+    prompt_path = config.analysis.prompts_root / "focus_v1.md"
+    prompt_path.write_text("Analyze focus: {text}", encoding="utf-8")
+
+    provider = DummyProvider()
+    manager = MemoryAnalyzerManager(config.analysis)
+    manager.bind_provider_manager(DummyProviderManager(provider))
+
+    await manager.dispatch_stage(
+        "short_term_update",
+        payload={"text": "keep debugging memory"},
+    )
+
+    assert "Output schema contract:" in provider.last_prompt
+    assert "Schema: ShortTermFocusResult" in provider.last_prompt
+    assert '"active_focus" must be a non-empty string' in provider.last_prompt
+    assert "Do not omit required keys" in provider.last_prompt
+
+
+@pytest.mark.asyncio
 async def test_memory_analyzer_manager_dispatches_stage_with_configured_prompt(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
