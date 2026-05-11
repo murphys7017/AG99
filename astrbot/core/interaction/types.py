@@ -135,9 +135,7 @@ class InteractionAgentConfig:
     default_enabled_for_platforms: list[str] = field(default_factory=list)
     platforms: dict[str, dict[str, Any]] = field(default_factory=dict)
     decision_provider_id: str = ""
-    decision_model: str = ""
     decision_temperature: float = 0.5
-    decision_max_tokens: int = 512
     decision_timeout: float = 15.0
     decision_confidence_threshold: float = 0.6
     fallback_policy: FallbackPolicy = FallbackPolicy.FAIL_FAST

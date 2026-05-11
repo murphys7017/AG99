@@ -52,12 +52,8 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         decision_provider_id=str(
             interaction_config.get("decision_provider_id", "") or ""
         ),
-        decision_model=str(interaction_config.get("decision_model", "") or ""),
         decision_temperature=float(
             interaction_config.get("decision_temperature", 0.5) or 0.5
-        ),
-        decision_max_tokens=int(
-            interaction_config.get("decision_max_tokens", 512) or 512
         ),
         decision_timeout=float(
             interaction_config.get("decision_timeout", 15.0) or 15.0

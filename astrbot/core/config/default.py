@@ -204,6 +204,25 @@ DEFAULT_CONFIG = {
         ),
         "agents": [],
     },
+    "interaction_middleware": {
+        "enabled": False,
+        "default_enabled_for_platforms": [],
+        "platforms": {},
+        "memory_window_size": 8,
+        "decision_provider_id": "",
+        "decision_temperature": 0.5,
+        "decision_timeout": 15.0,
+        "decision_confidence_threshold": 0.6,
+        "finalizer_mode": "auto",
+        "finalizer_provider_id": "",
+        "finalizer_model": "",
+        "finalizer_temperature": 0.6,
+        "finalizer_max_tokens": 512,
+        "stream_observation_enabled": True,
+        "stream_observation_min_chars": 200,
+        "stream_interjection_enabled": True,
+        "stream_interjection_max_per_turn": 1,
+    },
     "provider_stt_settings": {
         "enable": False,
         "provider_id": "",
@@ -4122,6 +4141,121 @@ CONFIG_METADATA_3 = {
                         "condition": {
                             "provider_ltm_settings.active_reply.enable": True,
                         },
+                    },
+                },
+            },
+        },
+    },
+    "interaction_middleware_group": {
+        "name": "交互中间件",
+        "metadata": {
+            "general": {
+                "description": "基础开关",
+                "type": "object",
+                "hint": "控制新的交互中间件主链路。开发期内部链路不提供 fallback 配置，缺失 provider 或非法输出会显式失败。",
+                "items": {
+                    "interaction_middleware.enabled": {
+                        "description": "启用交互中间件",
+                        "type": "bool",
+                    },
+                    "interaction_middleware.default_enabled_for_platforms": {
+                        "description": "默认启用平台",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "hint": "平台 ID 列表。只有列入这里的平台会默认进入交互中间件链路。",
+                    },
+                    "interaction_middleware.platforms": {
+                        "description": "平台覆盖配置",
+                        "type": "dict",
+                        "hint": "按平台 ID 覆盖中间件配置。仅用于显式平台差异，不作为缺失配置的 fallback。",
+                    },
+                    "interaction_middleware.memory_window_size": {
+                        "description": "记忆窗口轮数",
+                        "type": "int",
+                        "hint": "构建 decision context 时读取的 interaction memory 轮数。",
+                    },
+                },
+            },
+            "decision": {
+                "description": "回复接管策略",
+                "type": "object",
+                "hint": "决策 Agent 负责判断当前 turn 是由中间件直接回复、先说一句再交给核心、还是静默交给核心执行。",
+                "items": {
+                    "interaction_middleware.decision_provider_id": {
+                        "description": "决策模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "留空时会在中间件链路显式报错，不会回退到默认模型。",
+                    },
+                    "interaction_middleware.decision_temperature": {
+                        "description": "决策温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "interaction_middleware.decision_timeout": {
+                        "description": "决策超时秒数",
+                        "type": "float",
+                    },
+                    "interaction_middleware.decision_confidence_threshold": {
+                        "description": "决策置信度阈值",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 1, "step": 0.05},
+                    },
+                },
+            },
+            "finalizer": {
+                "description": "最终回复整理",
+                "type": "object",
+                "hint": "整理核心输出后再发送。开发期整理失败会终止当前 turn，不发送替代文本。",
+                "items": {
+                    "interaction_middleware.finalizer_mode": {
+                        "description": "整理模式",
+                        "type": "string",
+                        "options": ["auto", "force", "off"],
+                        "labels": ["自动", "强制", "关闭"],
+                    },
+                    "interaction_middleware.finalizer_provider_id": {
+                        "description": "整理模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                    },
+                    "interaction_middleware.finalizer_model": {
+                        "description": "整理模型名称",
+                        "type": "string",
+                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
+                    },
+                    "interaction_middleware.finalizer_temperature": {
+                        "description": "整理温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "interaction_middleware.finalizer_max_tokens": {
+                        "description": "整理最大 token",
+                        "type": "int",
+                    },
+                },
+            },
+            "stream": {
+                "description": "执行过程提示",
+                "type": "object",
+                "hint": "观察核心流式输出窗口，并允许中间件在核心执行过程中插入简短提示。",
+                "items": {
+                    "interaction_middleware.stream_observation_enabled": {
+                        "description": "启用执行过程观察",
+                        "type": "bool",
+                    },
+                    "interaction_middleware.stream_observation_min_chars": {
+                        "description": "最少累计字符数",
+                        "type": "int",
+                        "hint": "核心流式输出累计到这个字符数后，中间件才会判断是否需要插入过程提示。",
+                    },
+                    "interaction_middleware.stream_interjection_enabled": {
+                        "description": "允许过程提示",
+                        "type": "bool",
+                    },
+                    "interaction_middleware.stream_interjection_max_per_turn": {
+                        "description": "每轮最多提示次数",
+                        "type": "int",
                     },
                 },
             },

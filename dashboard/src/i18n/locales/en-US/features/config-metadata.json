@@ -1050,15 +1050,8 @@
           "description": "Decision Model Provider",
           "hint": "If empty, the middleware path fails explicitly instead of falling back to the default model."
         },
-        "decision_model": {
-          "description": "Decision Model Name",
-          "hint": "Optional. Empty uses the selected provider's own model name."
-        },
         "decision_temperature": {
           "description": "Decision Temperature"
-        },
-        "decision_max_tokens": {
-          "description": "Decision Max Tokens"
         },
         "decision_timeout": {
           "description": "Decision Timeout Seconds"

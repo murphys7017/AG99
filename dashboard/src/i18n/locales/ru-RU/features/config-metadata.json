@@ -1051,15 +1051,8 @@
                     "description": "Провайдер модели решения",
                     "hint": "Если пусто, путь middleware завершится явной ошибкой вместо fallback к модели по умолчанию."
                 },
-                "decision_model": {
-                    "description": "Имя модели решения",
-                    "hint": "Необязательно. Если пусто, используется имя модели выбранного провайдера."
-                },
                 "decision_temperature": {
                     "description": "Температура решения"
-                },
-                "decision_max_tokens": {
-                    "description": "Максимум токенов решения"
                 },
                 "decision_timeout": {
                     "description": "Таймаут решения (сек)"

@@ -6,7 +6,11 @@ import os
 import pytest
 
 from astrbot.core.config.astrbot_config import AstrBotConfig, RateLimitStrategy
-from astrbot.core.config.default import DEFAULT_VALUE_MAP
+from astrbot.core.config.default import (
+    CONFIG_METADATA_3,
+    DEFAULT_CONFIG,
+    DEFAULT_VALUE_MAP,
+)
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
 
 
@@ -248,12 +252,14 @@ class TestConfigValidation:
         assert keys[1] == "platform_settings"
         assert keys[2] == "provider_settings"
 
-    def test_remove_unknown_config_keys(self, temp_config_path, minimal_default_config):
-        """Test that unknown config keys are removed."""
+    def test_preserve_unknown_config_keys(
+        self, temp_config_path, minimal_default_config
+    ):
+        """Unknown keys are preserved so new config can survive older defaults."""
         existing_config = {
             "config_version": 2,
             "platform_settings": {},
-            "unknown_key": "should_be_removed",
+            "unknown_key": "should_be_preserved",
         }
         with open(temp_config_path, "w", encoding="utf-8-sig") as f:
             json.dump(existing_config, f)
@@ -262,7 +268,7 @@ class TestConfigValidation:
             config_path=temp_config_path, default_config=minimal_default_config
         )
 
-        assert "unknown_key" not in config
+        assert config["unknown_key"] == "should_be_preserved"
 
     def test_nested_config_validation(self, temp_config_path):
         """Test validation of nested config structures."""
@@ -626,3 +632,43 @@ class TestConfigMetadataI18n:
             result["group"]["metadata"]["section"]["items"]["field"]["name"]
             == "group.section.field.name"
         )
+
+    def test_interaction_middleware_extension_config_metadata_is_exposed(self):
+        """Extension config page requires this group to be present in metadata."""
+        result = ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3)
+
+        group = result["interaction_middleware_group"]
+        assert sorted(group["metadata"]) == [
+            "decision",
+            "finalizer",
+            "general",
+            "stream",
+        ]
+        assert (
+            group["metadata"]["general"]["items"]["interaction_middleware.enabled"][
+                "description"
+            ]
+            == "interaction_middleware_group.general.interaction_middleware.enabled.description"
+        )
+        assert (
+            group["metadata"]["decision"]["items"][
+                "interaction_middleware.decision_provider_id"
+            ]["_special"]
+            == "select_provider"
+        )
+
+    def test_interaction_middleware_defaults_match_exposed_metadata(self):
+        """All exposed interaction middleware config keys should have defaults."""
+        exposed_keys = {
+            item_key
+            for section in CONFIG_METADATA_3["interaction_middleware_group"][
+                "metadata"
+            ].values()
+            for item_key in section["items"]
+        }
+        defaults = DEFAULT_CONFIG["interaction_middleware"]
+
+        for item_key in exposed_keys:
+            prefix, key = item_key.split(".", 1)
+            assert prefix == "interaction_middleware"
+            assert key in defaults

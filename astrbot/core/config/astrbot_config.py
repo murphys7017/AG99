@@ -132,7 +132,8 @@ class AstrBotConfig(dict):
         # 检查是否存在参考配置中没有的配置项
         for key in list(conf.keys()):
             if key not in refer_conf:
-                logger.info("检查到未知配置项，将从当前配置中删除")
+                logger.info("检查到未知配置项，已保留原始值")
+                new_conf[key] = conf[key]
                 has_new = True
 
         # 顺序不一致也算作变更

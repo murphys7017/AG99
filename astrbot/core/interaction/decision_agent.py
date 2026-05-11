@@ -175,18 +175,16 @@ async def call_decision_model(
     *,
     provider: Provider,
     provider_id: str,
-    model: str,
     prompt: str,
     contexts: list[dict[str, Any]],
     system_prompt: str,
     temperature: float,
-    max_tokens: int,
     timeout: float,
 ):
     logger.debug(
         "Interaction decision model request: provider_id=%s model=%s timeout=%s",
         provider_id,
-        model or provider.get_model(),
+        provider.get_model(),
         timeout,
     )
     return await asyncio.wait_for(
@@ -194,9 +192,7 @@ async def call_decision_model(
             prompt=prompt,
             contexts=contexts,
             system_prompt=system_prompt,
-            model=model or None,
             temperature=temperature,
-            max_tokens=max_tokens,
         ),
         timeout=timeout,
     )
@@ -358,12 +354,10 @@ class InteractionDecisionAgent:
                 plugin_context,
                 provider=provider,
                 provider_id=interaction_config.decision_provider_id,
-                model=interaction_config.decision_model,
                 prompt=prompt,
                 contexts=build_interaction_decision_contexts(render_result.messages),
                 system_prompt=render_result.system_prompt or "",
                 temperature=interaction_config.decision_temperature,
-                max_tokens=interaction_config.decision_max_tokens,
                 timeout=interaction_config.decision_timeout,
             )
         except asyncio.TimeoutError:

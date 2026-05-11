@@ -693,9 +693,7 @@ class InteractionOutputController:
                 provider.text_chat(
                     prompt=prompt,
                     system_prompt="",
-                    model=self.interaction_config.decision_model or None,
                     temperature=self.interaction_config.decision_temperature,
-                    max_tokens=min(self.interaction_config.decision_max_tokens, 160),
                 ),
                 timeout=self.interaction_config.decision_timeout,
             )

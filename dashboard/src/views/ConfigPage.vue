@@ -523,11 +523,28 @@ export default {
       });
     },
     getVisibleMetadata(metadata) {
+      const hiddenFromNormalConfig = new Set([
+        'ext_group',
+        'interaction_middleware_group',
+      ]);
       if (this.configType !== 'extension') {
-        return metadata || {};
+        return Object.entries(metadata || {}).reduce((visibleMetadata, [groupKey, group]) => {
+          if (!hiddenFromNormalConfig.has(groupKey)) {
+            visibleMetadata[groupKey] = group;
+          }
+          return visibleMetadata;
+        }, {});
       }
-      const group = metadata?.interaction_middleware_group;
-      return group ? { interaction_middleware_group: group } : {};
+      const visibleGroupKeys = [
+        'ext_group',
+        'interaction_middleware_group',
+      ];
+      return visibleGroupKeys.reduce((visibleMetadata, groupKey) => {
+        if (metadata?.[groupKey]) {
+          visibleMetadata[groupKey] = metadata[groupKey];
+        }
+        return visibleMetadata;
+      }, {});
     },
     updateConfig() {
       if (!this.fetched) return;

@@ -1052,15 +1052,8 @@
           "description": "决策模型提供商",
           "hint": "留空时会在中间件链路显式报错，不会回退到默认模型。"
         },
-        "decision_model": {
-          "description": "决策模型名称",
-          "hint": "可选。留空时使用所选提供商自身的模型名称。"
-        },
         "decision_temperature": {
           "description": "决策温度"
-        },
-        "decision_max_tokens": {
-          "description": "决策最大 token"
         },
         "decision_timeout": {
           "description": "决策超时秒数"
