@@ -13,8 +13,8 @@ from astrbot.core.message.message_event_result import (
     MessageEventResult,
     ResultContentType,
 )
-from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
 from astrbot.core.pipeline.respond.stage import RespondStage
+from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
 from astrbot.core.postprocess import (
     build_postprocess_context,
     get_postprocess_manager,
@@ -123,7 +123,7 @@ async def test_postprocess_manager_dispatches_matching_processors_in_order():
 
 
 @pytest.mark.asyncio
-async def test_postprocess_manager_isolates_processor_failures():
+async def test_postprocess_manager_raises_processor_failures():
     event, _ = _make_event()
     calls: list[str] = []
     manager = PostProcessManager()
@@ -147,11 +147,11 @@ async def test_postprocess_manager_isolates_processor_failures():
         event=event,
         trigger=PostProcessTrigger.ON_LLM_RESPONSE,
     )
-    await manager.dispatch(PostProcessTrigger.ON_LLM_RESPONSE, ctx)
+    with pytest.raises(RuntimeError, match="broken failed"):
+        await manager.dispatch(PostProcessTrigger.ON_LLM_RESPONSE, ctx)
 
     assert calls == [
         "broken:on_llm_response",
-        "healthy:on_llm_response",
     ]
 
 

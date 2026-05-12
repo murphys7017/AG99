@@ -190,12 +190,15 @@ def _patch_memory_service():
         )
     )
 
-    with patch(
-        "astrbot.core.prompt.collectors.memory_collector.get_memory_service",
-        return_value=service,
-    ), patch(
-        "astrbot.core.prompt.collectors.memory_collector.get_memory_config",
-        return_value=MagicMock(enabled=True),
+    with (
+        patch(
+            "astrbot.core.prompt.collectors.memory_collector.get_memory_service",
+            return_value=service,
+        ),
+        patch(
+            "astrbot.core.prompt.collectors.memory_collector.get_memory_config",
+            return_value=MagicMock(enabled=True),
+        ),
     ):
         yield service
 
@@ -1846,7 +1849,7 @@ async def test_collect_context_pack_memory_uses_none_conversation_id_without_req
 
 
 @pytest.mark.asyncio
-async def test_collect_context_pack_memory_fail_open_when_snapshot_request_raises(
+async def test_collect_context_pack_memory_raises_when_snapshot_request_raises(
     _patch_memory_service,
 ):
     event, _ = _make_event()
@@ -1858,19 +1861,14 @@ async def test_collect_context_pack_memory_fail_open_when_snapshot_request_raise
     )
     _patch_memory_service.get_snapshot.side_effect = RuntimeError("memory down")
 
-    pack = await collect_context_pack(
-        event=event,
-        plugin_context=context,
-        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
-        provider_request=req,
-        collectors=[MemoryCollector()],
-    )
-
-    assert pack.get_slot("memory.topic_state") is None
-    assert pack.get_slot("memory.short_term") is None
-    assert pack.get_slot("memory.experiences") is None
-    assert pack.get_slot("memory.long_term_memories") is None
-    assert pack.get_slot("memory.persona_state") is None
+    with pytest.raises(RuntimeError, match="memory down"):
+        await collect_context_pack(
+            event=event,
+            plugin_context=context,
+            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+            provider_request=req,
+            collectors=[MemoryCollector()],
+        )
 
 
 @pytest.mark.asyncio
@@ -2629,34 +2627,31 @@ class _StaticCollector(ContextCollectorInterface):
 
 
 @pytest.mark.asyncio
-async def test_collect_context_pack_fail_open_when_a_collector_raises():
+async def test_collect_context_pack_raises_when_a_collector_raises():
     event, _ = _make_event()
     context = _make_context()
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
 
-    pack = await collect_context_pack(
-        event=event,
-        plugin_context=context,
-        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
-        collectors=[_BrokenCollector(), _StaticCollector()],
-    )
-
-    text_slot = pack.get_slot("input.text")
-    assert text_slot is not None
-    assert text_slot.value == "hello"
+    with pytest.raises(RuntimeError, match="boom"):
+        await collect_context_pack(
+            event=event,
+            plugin_context=context,
+            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+            collectors=[_BrokenCollector(), _StaticCollector()],
+        )
 
 
 @pytest.mark.asyncio
-async def test_collect_context_pack_raises_when_collector_fails_in_strict_mode():
+async def test_collect_context_pack_raises_when_collector_fails_with_strict_mode_flag():
     event, _ = _make_event()
     context = _make_context()
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
 
-    with pytest.raises(RuntimeError, match="Prompt context collector failed"):
+    with pytest.raises(RuntimeError, match="boom"):
         await collect_context_pack(
             event=event,
             plugin_context=context,

@@ -80,23 +80,14 @@ class PostProcessManager:
             len(processors),
         )
         for processor in processors:
-            try:
-                logger.debug(
-                    "postprocess(%s): start processor=%s",
-                    trigger.value,
-                    processor.name,
-                )
-                await processor.run(ctx)
-                logger.debug(
-                    "postprocess(%s): finish processor=%s",
-                    trigger.value,
-                    processor.name,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "postprocess(%s): processor=%s failed: %s",
-                    trigger.value,
-                    processor.name,
-                    exc,
-                    exc_info=True,
-                )
+            logger.debug(
+                "postprocess(%s): start processor=%s",
+                trigger.value,
+                processor.name,
+            )
+            await processor.run(ctx)
+            logger.debug(
+                "postprocess(%s): finish processor=%s",
+                trigger.value,
+                processor.name,
+            )

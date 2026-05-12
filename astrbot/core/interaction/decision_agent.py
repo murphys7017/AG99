@@ -110,20 +110,6 @@ def build_interaction_decision_contexts(
     return contexts
 
 
-def build_fallback_decision(reason: str) -> InteractionDecision:
-    return InteractionDecision(
-        route_mode=RouteMode.DELEGATE_TO_CORE,
-        should_emit_immediate_reply=False,
-        immediate_spoken_reply=None,
-        core_task_spec=None,
-        plugin_hints={},
-        confidence=0.0,
-        reason=reason,
-        is_fallback=True,
-        fallback_reason=reason,
-    )
-
-
 def build_protocol_bypass_decision(reason: str) -> InteractionDecision:
     return InteractionDecision(
         route_mode=RouteMode.DELEGATE_TO_CORE,
@@ -133,8 +119,6 @@ def build_protocol_bypass_decision(reason: str) -> InteractionDecision:
         plugin_hints={},
         confidence=1.0,
         reason=reason,
-        is_fallback=False,
-        fallback_reason=None,
     )
 
 

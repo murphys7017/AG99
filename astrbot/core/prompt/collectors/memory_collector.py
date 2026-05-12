@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from astrbot.core import logger
 from astrbot.core.memory.config import get_memory_config
 from astrbot.core.memory.service import get_memory_service
 from astrbot.core.memory.types import (
@@ -49,23 +48,13 @@ class MemoryCollector(ContextCollectorInterface):
         if not isinstance(event_config, Mapping):
             event_config = None
 
-        try:
-            if not get_memory_config(event_config).enabled:
-                return []
-            snapshot = await get_memory_service(event_config).get_snapshot(
-                umo=umo,
-                conversation_id=conversation_id,
-                query=query,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to collect memory snapshot: umo=%s conversation_id=%s error=%s",
-                umo,
-                conversation_id,
-                exc,
-                exc_info=True,
-            )
+        if not get_memory_config(event_config).enabled:
             return []
+        snapshot = await get_memory_service(event_config).get_snapshot(
+            umo=umo,
+            conversation_id=conversation_id,
+            query=query,
+        )
 
         slots: list[ContextSlot] = []
 

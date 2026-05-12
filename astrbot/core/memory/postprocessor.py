@@ -235,14 +235,6 @@ def _resolve_turn_material(
                     "history_source": "provider_request.contexts",
                 }
 
-    if current_user_message is not None and current_assistant_message is not None:
-        conversation_history = [current_user_message, current_assistant_message]
-        return {
-            "conversation_history": conversation_history,
-            "conversation_id": None,
-            "history_source": "prompt_response_fallback",
-        }
-
     return None
 
 
@@ -413,7 +405,7 @@ def _describe_skip_reason(ctx: PostProcessContext) -> str:
         return "no_turn_pair"
 
     if ctx.provider_request is None:
-        return "conversation_unavailable_fallback_failed"
+        return "conversation_unavailable"
 
     if not _extract_provider_contexts(ctx.provider_request) and (
         ctx.provider_request.conversation is None
@@ -423,7 +415,7 @@ def _describe_skip_reason(ctx: PostProcessContext) -> str:
         if _build_user_message_from_prompt(ctx.provider_request) is None:
             return "no_history"
 
-    return "conversation_unavailable_fallback_failed"
+    return "conversation_unavailable"
 
 
 def _normalize_text(value: Any) -> str:

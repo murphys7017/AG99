@@ -8,7 +8,6 @@ from astrbot.core.interaction.decision_agent import (
     InteractionDecisionError,
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
-    build_fallback_decision,
     build_interaction_decision_contexts,
     build_interaction_decision_json_contract,
     validate_interaction_decision,
@@ -99,15 +98,6 @@ def test_build_interaction_decision_contexts_strips_internal_runtime_fields():
     assert rendered_messages[1]["_no_save"] is True
 
 
-def test_build_fallback_decision_is_marked_as_fallback():
-    decision = build_fallback_decision("provider unavailable")
-
-    assert decision.route_mode == RouteMode.DELEGATE_TO_CORE
-    assert decision.is_fallback is True
-    assert decision.fallback_reason == "provider unavailable"
-    assert decision.should_emit_immediate_reply is False
-
-
 def test_protocol_command_bypass_delegates_without_fallback_or_reply():
     class PluginContext:
         def get_config(self, umo=None):
@@ -127,7 +117,6 @@ def test_protocol_command_bypass_delegates_without_fallback_or_reply():
     assert decision is not None
     assert decision.route_mode == RouteMode.DELEGATE_TO_CORE
     assert decision.should_emit_immediate_reply is False
-    assert decision.is_fallback is False
     assert decision.reason == "protocol command bypass"
 
 

@@ -334,17 +334,6 @@ class InteractionMiddleware:
                 exc_info=True,
             )
             raise
-        if decision.is_fallback:
-            reason = str(decision.fallback_reason or "fallback_decision")
-            event.set_extra("_interaction_decision_failed", True)
-            event.set_extra("_interaction_decision_failure_reason", reason)
-            record_interaction_turn_failure(
-                event,
-                stage="decision",
-                reason=reason,
-                user_visible_action="none",
-            )
-            raise RuntimeError(f"Interaction fallback decision rejected: {reason}")
         return decision
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:

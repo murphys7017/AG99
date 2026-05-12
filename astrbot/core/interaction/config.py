@@ -1,6 +1,6 @@
 from typing import Any
 
-from .types import FallbackPolicy, FinalizerMode, InteractionAgentConfig
+from .types import FinalizerMode, InteractionAgentConfig
 
 
 def _int_or_default(value: Any, default: int) -> int:
@@ -36,13 +36,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         finalizer_mode = FinalizerMode(finalizer_mode_raw)
     except ValueError:
         finalizer_mode = FinalizerMode.AUTO
-    fallback_policy_raw = str(
-        interaction_config.get("fallback_policy", FallbackPolicy.FAIL_FAST.value)
-    )
-    try:
-        fallback_policy = FallbackPolicy(fallback_policy_raw)
-    except ValueError:
-        fallback_policy = FallbackPolicy.FAIL_FAST
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", False)),
         default_enabled_for_platforms=list(
@@ -61,7 +54,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         decision_confidence_threshold=float(
             interaction_config.get("decision_confidence_threshold", 0.6) or 0.6
         ),
-        fallback_policy=fallback_policy,
         finalizer_provider_id=str(
             interaction_config.get("finalizer_provider_id", "") or ""
         ),

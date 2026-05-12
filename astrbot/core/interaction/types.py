@@ -17,11 +17,6 @@ class FinalizerMode(str, Enum):
     FORCE = "force"
 
 
-class FallbackPolicy(str, Enum):
-    FAIL_FAST = "fail_fast"
-    OBSERVABLE_PROTECT = "observable_protect"
-
-
 @dataclass(slots=True)
 class CoreTaskSpec:
     task_intent: str = "general"
@@ -70,8 +65,6 @@ class InteractionDecision:
     plugin_hints: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
     reason: str = ""
-    is_fallback: bool = False
-    fallback_reason: str | None = None
 
     @classmethod
     def from_mapping(cls, payload: object) -> InteractionDecision | None:
@@ -105,12 +98,6 @@ class InteractionDecision:
             plugin_hints=plugin_hints,
             confidence=confidence,
             reason=str(payload.get("reason", "") or ""),
-            is_fallback=bool(payload.get("is_fallback", False)),
-            fallback_reason=(
-                str(payload.get("fallback_reason"))
-                if payload.get("fallback_reason") is not None
-                else None
-            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -124,8 +111,6 @@ class InteractionDecision:
             "plugin_hints": dict(self.plugin_hints),
             "confidence": self.confidence,
             "reason": self.reason,
-            "is_fallback": self.is_fallback,
-            "fallback_reason": self.fallback_reason,
         }
 
 
@@ -138,7 +123,6 @@ class InteractionAgentConfig:
     decision_temperature: float = 0.5
     decision_timeout: float = 15.0
     decision_confidence_threshold: float = 0.6
-    fallback_policy: FallbackPolicy = FallbackPolicy.FAIL_FAST
     finalizer_provider_id: str = ""
     finalizer_model: str = ""
     finalizer_temperature: float = 0.6

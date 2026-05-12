@@ -619,7 +619,6 @@ class TestInteractionMiddleware:
         controller.emit_immediate_spoken_reply.assert_not_awaited()
         decision = webchat_event.get_extra("_interaction_decision")
         assert decision.route_mode == RouteMode.DELEGATE_TO_CORE
-        assert decision.is_fallback is False
         assert decision.reason == "protocol command bypass"
 
     @pytest.mark.asyncio
@@ -688,46 +687,6 @@ class TestInteractionMiddleware:
 
         with pytest.raises(RuntimeError, match="fallback_policy is disabled"):
             middleware.refresh_interaction_config()
-
-    @pytest.mark.asyncio
-    async def test_fallback_decision_from_agent_is_rejected(
-        self,
-        webchat_event,
-    ):
-        queue = asyncio.Queue()
-        controller = MagicMock()
-        middleware = InteractionMiddleware(
-            {
-                "interaction_middleware": {
-                    "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
-                }
-            },
-            queue,
-            controller,
-        )
-        middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                confidence=0.0,
-                reason="fallback",
-                is_fallback=True,
-                fallback_reason="legacy fallback",
-            )
-        )
-
-        middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
-
-        assert queue.empty()
-        assert webchat_event.get_extra("_interaction_decision_failed") is True
-        turn_state = get_interaction_turn_state(webchat_event)
-        assert turn_state is not None
-        assert turn_state.failures[-1].stage == "decision"
-        assert turn_state.failures[-1].reason == "legacy fallback"
 
     @pytest.mark.asyncio
     async def test_decision_pipeline_error_fail_fast_records_failure(
@@ -1068,10 +1027,7 @@ class TestInteractionMiddleware:
 
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
         dispatch.assert_not_awaited()
-        assert (
-            webchat_event.get_extra("_interaction_turn_finalization_failed")
-            is True
-        )
+        assert webchat_event.get_extra("_interaction_turn_finalization_failed") is True
         assert (
             webchat_event.get_extra("_interaction_turn_finalization_failure_reason")
             == "missing_finalized_turn_material"

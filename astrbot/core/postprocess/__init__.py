@@ -87,24 +87,15 @@ async def resolve_postprocess_conversation(
     if conversation_manager is None:
         return None
 
-    try:
-        conversation_id = await conversation_manager.get_curr_conversation_id(
-            event.unified_msg_origin
-        )
-        if not conversation_id:
-            return None
-        return await conversation_manager.get_conversation(
-            event.unified_msg_origin,
-            conversation_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to resolve postprocess conversation for umo=%s: %s",
-            event.unified_msg_origin,
-            exc,
-            exc_info=True,
-        )
+    conversation_id = await conversation_manager.get_curr_conversation_id(
+        event.unified_msg_origin
+    )
+    if not conversation_id:
         return None
+    return await conversation_manager.get_conversation(
+        event.unified_msg_origin,
+        conversation_id,
+    )
 
 
 async def dispatch_postprocess(

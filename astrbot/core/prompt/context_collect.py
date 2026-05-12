@@ -1,7 +1,7 @@
 """
 Prompt context collection helpers.
 
-This module wires collectors into a single fail-open collection flow.
+This module wires collectors into a single fail-fast collection flow.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ from .extensions.types import (
     PromptExtension,
 )
 from .interfaces.context_collector_inferface import ContextCollectorInterface
-from .strict_mode import handle_prompt_pipeline_failure, is_prompt_pipeline_strict
 
 PROMPT_CONTEXT_PACK_EXTRA_KEY = "prompt_context_pack"
 PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
@@ -258,10 +257,9 @@ async def collect_context_pack(
     """
     Collect prompt context into a single pack.
 
-    This stage is intentionally fail-open and does not mutate ProviderRequest.
+    This stage is fail-fast for internal collectors and does not mutate ProviderRequest.
     """
-    strict = is_prompt_pipeline_strict(config)
-    catalog = get_catalog(strict=strict)
+    catalog = get_catalog(strict=True)
     collector_list = (
         list(collectors) if collectors is not None else _default_collectors()
     )
@@ -279,29 +277,12 @@ async def collect_context_pack(
         collector_name = collector.__class__.__name__
         pack.meta["collectors"].append(collector_name)
 
-        try:
-            slots = await collector.collect(
-                event,
-                plugin_context,
-                config,
-                provider_request=provider_request,
-            )
-        except Exception as exc:  # noqa: BLE001
-            handle_prompt_pipeline_failure(
-                strict=strict,
-                message=(
-                    "Prompt context collector failed: "
-                    f"collector={collector_name} error={exc}"
-                ),
-                exc=exc,
-                log_failure=lambda exc=exc: logger.warning(
-                    "Prompt context collector failed: collector=%s error=%s",
-                    collector_name,
-                    exc,
-                    exc_info=True,
-                ),
-            )
-            continue
+        slots = await collector.collect(
+            event,
+            plugin_context,
+            config,
+            provider_request=provider_request,
+        )
 
         for slot in slots:
             if not catalog.has(slot.name):
