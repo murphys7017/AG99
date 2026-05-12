@@ -1,144 +1,38 @@
-## Setup commands
+# Agent Entry Point
 
-### Core
+This project uses `.ai/` as the runtime governance directory for AI coding agents.
 
-```
-uv sync
-uv run main.py
-```
+Agents should not treat this file as the full governance system. This file is only the entry point and loading guide.
 
-Exposed an API server on `http://localhost:6185` by default.
+For the shared Codex/OpenCode/Claude Code/Cursor execution protocol, read `docs/runtime/agent_execution_protocol.md`.
 
-### Dashboard(WebUI)
+## Governance Philosophy
 
-```
-cd dashboard
-pnpm install # First time only. Use npm install -g pnpm if pnpm is not installed.
-pnpm dev
-```
+This project treats AI coding agents as non-deterministic runtime systems. Reliability is a control problem, not a prompt problem.
 
-Runs on `http://localhost:3000` by default.
+Prefer policy-driven execution over prompt-driven behavior: classify the task, estimate risk, load only relevant governance, follow a bounded workflow, apply checklists and evaluation, and update explicit state when required.
 
-## Pre-commit setup
+## Default Loading Order
 
-AstrBot uses [pre-commit](https://pre-commit.com/) hooks to automatically format and lint Python code before each commit. The hooks run `ruff check`, `ruff format`, and `pyupgrade` (see [`.pre-commit-config.yaml`](.pre-commit-config.yaml) for details).
+1. Read `.ai/README.md`.
+2. Read `.ai/index.md`.
+3. Read `.ai/constitution/core.md`.
+4. Read `.ai/invariants/core.md`.
+5. Classify the task using `.ai/router/task_classification.md`.
+6. Estimate risk using `.ai/router/risk_levels.md` and `.ai/router/disturbance_model.md`.
+7. Read `.ai/runtime/continuity.md` for long-running, multi-turn, interrupted, or resumed work.
+8. Load relevant policies, workflows, skills, checklists, evaluation, and state files using `.ai/router/loading_rules.md`.
 
-To set it up:
+## Core Behavior
 
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-After installation, the hooks will run automatically on `git commit`. You can also run them manually at any time:
-
-```bash
-ruff format .
-ruff check .
-```
-
-> **Note:** If you use VSCode, install the `Ruff` extension for real-time formatting and linting in the editor.
-
-## Dev environment tips
-
-1. When modifying the WebUI, be sure to maintain componentization and clean code. Avoid duplicate code.
-2. Do not add any report files such as xxx_SUMMARY.md.
-3. After finishing, use `ruff format .` and `ruff check .` to format and check the code.
-4. When committing, ensure to use conventional commits messages, such as `feat: add new agent for data analysis` or `fix: resolve bug in provider manager`.
-5. Use English for all new comments.
-6. For path handling, use `pathlib.Path` instead of string paths, and use `astrbot.core.utils.path_utils` to get the AstrBot data and temp directory.
-
-## PR instructions
-
-1. Title format: use conventional commit messages
-2. Use English to write PR title and descriptions.
-
-## 核心原则
-
-- 当前处于项目开发期，默认不要 fallback、不要体验兜底、不要降级继续运行。开发目标是暴露真实问题，而不是让链路看起来可用。
-- 对 interaction middleware 等正在重构的内部主链路，fallback 不允许作为设计选项；缺 provider、缺上下文、模型输出非法、发送失败、记忆/完成失败等都应 fail-fast 或明确终止当前 turn。
-- 只有外部不可信输入、平台边界、第三方生态兼容等无法由本项目直接保证的边界，才可以在用户明确同意后保留临时保护；保护必须可观测，并且不能写成成功状态。
-- 不依赖兜底路径作为正确性证明。
-- 不把 fallback、默认动作、默认 profile、默认参数、重试、静默忽略、错误吞掉视为修复。
-- 审阅时判断的是是否存在真实问题，而不是系统能否依靠降级路径继续运行。
-- 修复时必须定位根因，并在根因位置修改；禁止只在下游补校正、补重试、补默认值来掩盖问题。
-- 如果临时保护逻辑确实必要，必须明确说明它只是保护边界，不是根因修复，并继续完成根因修复。
-
-## 审阅标准
-
-审阅必须沿真实数据流检查，而不是只看单点函数：
-
-- 用户输入如何进入 AstrBot。
-- 主 LLM 如何生成文本。
-- 动作参数模型如何被调用。
-- 后端如何解析、校验和广播 motion intent。
-- 前端如何接收、编译、记录历史样本。
-- Live2D 如何真正应用参数并播放。
-
-审阅结论必须区分：
-
-- 已确认正确。
-- 已确认存在问题。
-- 依赖 fallback 才能运行。
-- 信息不足，需要补充日志或复现。
-
-以下情况不能判定为“没问题”：
-
-- 主链路失败但 fallback 生效。
-- 参数错误被默认值替代。
-- 异常被 catch 后只打 warning。
-- 编译失败后走默认动作。
-- 播放失败但 UI 状态仍显示成功。
-- 历史样本存在，但不是来自真实播放链路。
-
-## 修复标准
-
-修复前必须先说明根因假设，并用代码路径或日志验证。修复应优先落在问题产生的位置。
-
-禁止的修复方式：
-
-- 下游强制改回正确状态来掩盖上游错误。
-- 扩大容错范围让错误不暴露。
-- 用默认值替代缺失数据。
-- 静默丢弃异常数据。
-- 只增加重试、延时、节流来规避竞态。
-- 把错误降级为 warning 后宣称修复。
-
-允许的防护方式：
-
-- 在边界处保留明确校验。
-- 对外部不可信输入做显式拒绝。
-- 对已知平台缺陷做隔离，但必须注明平台缺陷和触发条件。
-- 增加日志来证明根因和修复效果。
-
-## fallback 使用规则
-
-开发期默认禁止 fallback。不要为了用户体验隐藏错误；当前项目目标是让错误暴露、可定位、可修复。
-
-fallback 不能作为正确性基础。除非用户明确要求某个外部边界保留体验保护，否则不要新增 fallback，也不要保留内部 fallback。
-
-- fallback 触发必须有可观测日志。
-- fallback 触发必须进入诊断信息或错误原因。
-- fallback 不能覆盖主链路失败事实。
-- fallback 不能污染历史样本、LLM few-shot 示例或成功状态。
-- 如果 fallback 被频繁触发，应视为主链路 bug。
-
-## 验证要求
-
-修复完成后至少验证对应链路的关键断点：
-
-- 后端是否生成了预期 payload。
-- payload schema 是否正确。
-- 前端是否接收到了同一 turn_id 的 payload。
-- 编译器是否产出真实参数计划。
-- Live2D 播放入口是否被调用。
-- UI 状态、历史记录、样本来源是否与真实执行一致。
-
-测试通过只是最低要求。对于交互、窗口、Live2D、音频和跨进程链路，必须结合日志或手动复现说明验证范围。
-
-## 沟通要求
-
-- 明确说明是在修复根因，还是临时防护。
-- 如果只是临时防护，必须继续追踪根因，不能停止在防护层。
-- 不要用“能跑”“没有崩”“fallback 生效”作为完成依据。
-- 如果发现之前的修复是在掩盖问题，应主动撤回或重做。
+- Follow a closed execution loop: analyze, plan, implement, review, validate, correct.
+- Make the task objective, success criteria, and non-goals explicit when they affect execution.
+- Prefer stable constrained execution over unconstrained changes.
+- Build context before editing files.
+- Make the smallest correct change that solves the task.
+- Preserve architecture and user changes unless explicitly instructed otherwise.
+- Keep important assumptions, state, and risks observable.
+- Apply checklists and report evaluation results when applicable.
+- Validate changes when practical and report gaps honestly.
+- Update explicit state when the router path requires or recommends it.
+- Create commits only when explicitly requested.
