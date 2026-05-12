@@ -4994,6 +4994,10 @@ async def test_memory_postprocessor_skips_invalid_conversation_history():
 
     assert req is None
     memory_service.update_from_postprocess.assert_not_awaited()
+    assert event.set_extra.call_args_list[-1].args == (
+        "_memory_postprocess_skipped_reason",
+        "no_turn_pair",
+    )
 
 
 @pytest.mark.asyncio
@@ -5199,6 +5203,43 @@ async def test_memory_postprocessor_skips_interaction_turn_without_finalized_mat
     req = await processor.build_update_request(ctx)
 
     assert req is None
+
+
+@pytest.mark.asyncio
+async def test_memory_postprocessor_records_skip_reason_for_missing_turn_material():
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.message_str = "Can you check permissions?"
+    event.session_id = "session-1"
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = None
+    ctx.provider_request = ProviderRequest(
+        prompt="Can you check permissions?",
+        session_id="session-1",
+    )
+    ctx.llm_response = None
+    ctx.turn_id = "turn-1"
+    ctx.visible_outputs = []
+    ctx.timestamp = datetime.now(UTC)
+
+    await processor.run(ctx)
+
+    memory_service.update_from_postprocess.assert_not_awaited()
+    assert event.set_extra.call_args_list[-1].args == (
+        "_memory_postprocess_skipped_reason",
+        "missing_finalized_turn_material",
+    )
 
 
 @pytest.mark.asyncio

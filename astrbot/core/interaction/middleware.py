@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from asyncio import Queue
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from types import MethodType
 from typing import Any
 
@@ -45,6 +45,21 @@ from .turn_state import (
 from .types import InteractionDecision, RouteMode
 
 
+def _merge_runtime_config(base: Any, override: Any) -> Any:
+    if not isinstance(base, Mapping):
+        return override if isinstance(override, Mapping) else base
+    if not isinstance(override, Mapping):
+        return dict(base)
+
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_runtime_config(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class InteractionMiddleware:
     def __init__(
         self,
@@ -57,7 +72,7 @@ class InteractionMiddleware:
         self.core_queue = core_queue
         self.output_controller = output_controller
         self.plugin_context = plugin_context
-        self._reject_development_fallback_policy()
+        self._reject_development_fallback_policy(config)
         self.interaction_config = load_interaction_agent_config(config)
         self.memory_store = InteractionMemoryStore()
         self.decision_agent = InteractionDecisionAgent(self.memory_store)
@@ -71,13 +86,34 @@ class InteractionMiddleware:
         self.plugin_context = plugin_context
         self.output_controller.plugin_context = plugin_context
 
-    def refresh_interaction_config(self) -> None:
-        self._reject_development_fallback_policy()
-        self.interaction_config = load_interaction_agent_config(self.config)
+    def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
+        if self.plugin_context is None:
+            return self.config
+        get_config = getattr(self.plugin_context, "get_config", None)
+        if not callable(get_config):
+            return self.config
+        if event is not None:
+            runtime_config = get_config(umo=event.unified_msg_origin)
+            if not isinstance(runtime_config, Mapping):
+                return self.config
+            return _merge_runtime_config(self.config, runtime_config)
+        runtime_config = get_config()
+        if not isinstance(runtime_config, Mapping):
+            return self.config
+        return _merge_runtime_config(self.config, runtime_config)
+
+    def refresh_interaction_config(
+        self,
+        event: AstrMessageEvent | None = None,
+    ) -> None:
+        runtime_config = self._get_runtime_config(event)
+        self._reject_development_fallback_policy(runtime_config)
+        self.interaction_config = load_interaction_agent_config(runtime_config)
         self.output_controller.interaction_config = self.interaction_config
 
-    def _reject_development_fallback_policy(self) -> None:
-        interaction_config = self.config.get("interaction_middleware", {})
+    @staticmethod
+    def _reject_development_fallback_policy(config: Any) -> None:
+        interaction_config = config.get("interaction_middleware", {})
         if not isinstance(interaction_config, dict):
             return
         fallback_policy = interaction_config.get("fallback_policy")
@@ -88,7 +124,10 @@ class InteractionMiddleware:
         )
 
     def is_enabled_for_event(self, event: AstrMessageEvent) -> bool:
-        return is_middleware_enabled_for_platform(event.get_platform_id(), self.config)
+        return is_middleware_enabled_for_platform(
+            event.get_platform_id(),
+            self._get_runtime_config(event),
+        )
 
     @staticmethod
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:
@@ -218,14 +257,16 @@ class InteractionMiddleware:
             )
 
     async def _handle_inbound_async(self, event: AstrMessageEvent) -> None:
-        self.refresh_interaction_config()
+        runtime_config = self._get_runtime_config(event)
+        self._reject_development_fallback_policy(runtime_config)
+        interaction_config = load_interaction_agent_config(runtime_config)
         turn_id = uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         await self._materialize_inbound_media(event)
         if self._is_live_mode_event(event):
             decision = self._build_live_mode_decision(event)
         else:
-            decision = await self._decide_interaction_route(event)
+            decision = await self._decide_interaction_route(event, interaction_config)
         self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
         if decision.route_mode == RouteMode.SELF_REPLY:
             if not decision.should_emit_immediate_reply:
@@ -295,7 +336,9 @@ class InteractionMiddleware:
         )
 
     async def _decide_interaction_route(
-        self, event: AstrMessageEvent
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
     ) -> InteractionDecision:
         if self.plugin_context is None:
             event.set_extra("_interaction_decision_failed", True)
@@ -314,7 +357,7 @@ class InteractionMiddleware:
             decision = await self.decision_agent.decide(
                 event,
                 self.plugin_context,
-                self.interaction_config,
+                interaction_config,
             )
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_decision_failed", True)
@@ -337,13 +380,18 @@ class InteractionMiddleware:
         return decision
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:
-        self._apply_inbound_path_mapping(event)
+        runtime_config = self._get_runtime_config(event)
+        self._apply_inbound_path_mapping(event, runtime_config)
         await self._normalize_inbound_records(event)
-        await self._transcribe_inbound_records(event)
+        await self._transcribe_inbound_records(event, runtime_config)
         event.set_extra("_interaction_inbound_media_materialized", True)
 
-    def _apply_inbound_path_mapping(self, event: AstrMessageEvent) -> None:
-        platform_settings = self.config.get("platform_settings", {})
+    def _apply_inbound_path_mapping(
+        self,
+        event: AstrMessageEvent,
+        runtime_config: Any,
+    ) -> None:
+        platform_settings = runtime_config.get("platform_settings", {})
         mappings = platform_settings.get("path_mapping", [])
         if not isinstance(mappings, list) or not mappings:
             return
@@ -405,8 +453,12 @@ class InteractionMiddleware:
                 )
                 raise
 
-    async def _transcribe_inbound_records(self, event: AstrMessageEvent) -> None:
-        stt_settings = self.config.get("provider_stt_settings", {})
+    async def _transcribe_inbound_records(
+        self,
+        event: AstrMessageEvent,
+        runtime_config: Any,
+    ) -> None:
+        stt_settings = runtime_config.get("provider_stt_settings", {})
         if not isinstance(stt_settings, dict) or not stt_settings.get("enable", False):
             return
         try:

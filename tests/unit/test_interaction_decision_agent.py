@@ -83,6 +83,20 @@ def test_validate_interaction_decision_rejects_self_reply_without_reply():
         validate_interaction_decision(decision, config)
 
 
+def test_validate_interaction_decision_rejects_hybrid_without_reply():
+    config = InteractionAgentConfig(decision_confidence_threshold=0.1)
+    decision = InteractionDecision(
+        route_mode=RouteMode.HYBRID,
+        should_emit_immediate_reply=False,
+        immediate_spoken_reply=None,
+        confidence=0.9,
+        reason="invalid",
+    )
+
+    with pytest.raises(InteractionDecisionError, match="hybrid decision"):
+        validate_interaction_decision(decision, config)
+
+
 def test_build_interaction_decision_contexts_strips_internal_runtime_fields():
     rendered_messages = [
         {"role": "user", "content": "history"},

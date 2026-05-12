@@ -559,7 +559,7 @@ class TestInteractionMiddleware:
     ):
         queue = asyncio.Queue()
         controller = MagicMock()
-        config = {
+        default_config = {
             "interaction_middleware": {
                 "enabled": True,
                 "default_enabled_for_platforms": ["webchat"],
@@ -567,8 +567,22 @@ class TestInteractionMiddleware:
                 "decision_provider_id": "",
             }
         }
-        middleware = InteractionMiddleware(config, queue, controller)
+        runtime_config = {
+            "interaction_middleware": {
+                "enabled": True,
+                "default_enabled_for_platforms": ["webchat"],
+                "platforms": {},
+                "decision_provider_id": "runtime_provider",
+                "memory_window_size": 3,
+            }
+        }
+        middleware = InteractionMiddleware(default_config, queue, controller)
         middleware.plugin_context = MagicMock(spec=Context)
+        middleware.plugin_context.get_config.side_effect = (
+            lambda umo=None: runtime_config
+            if umo == webchat_event.unified_msg_origin
+            else default_config
+        )
         middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
         middleware.decision_agent.decide = AsyncMock(
             return_value=InteractionDecision(
@@ -578,14 +592,16 @@ class TestInteractionMiddleware:
                 reason="delegate",
             )
         )
-        config["interaction_middleware"]["decision_provider_id"] = "runtime_provider"
 
         middleware.handle_inbound(webchat_event)
         await asyncio.sleep(0)
 
-        assert middleware.interaction_config.decision_provider_id == "runtime_provider"
-        assert controller.interaction_config.decision_provider_id == "runtime_provider"
         middleware.decision_agent.decide.assert_awaited_once()
+        decision_config = middleware.decision_agent.decide.await_args.args[2]
+        assert decision_config.decision_provider_id == "runtime_provider"
+        assert decision_config.memory_window_size == 3
+        assert middleware.interaction_config.decision_provider_id == ""
+        assert controller.interaction_config.decision_provider_id == ""
 
     @pytest.mark.asyncio
     async def test_protocol_command_bypass_does_not_emit_immediate_reply(
@@ -687,6 +703,34 @@ class TestInteractionMiddleware:
 
         with pytest.raises(RuntimeError, match="fallback_policy is disabled"):
             middleware.refresh_interaction_config()
+
+    def test_fallback_policy_refresh_uses_runtime_config_for_event(self, webchat_event):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        plugin_context = MagicMock(spec=Context)
+        plugin_context.get_config.side_effect = lambda umo=None: {
+            "interaction_middleware": {
+                "enabled": True,
+                "default_enabled_for_platforms": ["webchat"],
+                "platforms": {},
+                "fallback_policy": "observable_protect",
+            }
+        }
+        middleware.set_plugin_context(plugin_context)
+
+        with pytest.raises(RuntimeError, match="fallback_policy is disabled"):
+            middleware.refresh_interaction_config(webchat_event)
 
     @pytest.mark.asyncio
     async def test_decision_pipeline_error_fail_fast_records_failure(

@@ -86,12 +86,18 @@ class MemoryPostProcessor:
         if not isinstance(event_config, Mapping):
             event_config = None
         if event_config is not None and not get_memory_config(event_config).enabled:
+            ctx.event.set_extra("_memory_postprocess_skipped_reason", "memory_disabled")
             return
         if event_config is None and not get_memory_config().enabled:
+            ctx.event.set_extra("_memory_postprocess_skipped_reason", "memory_disabled")
             return
         self.memory_service = resolve_memory_service_for_event(ctx.event)
         req = await self.build_update_request(ctx)
         if req is None:
+            ctx.event.set_extra(
+                "_memory_postprocess_skipped_reason",
+                _describe_skip_reason(ctx),
+            )
             return
         await self.memory_service.update_from_postprocess(req)
 

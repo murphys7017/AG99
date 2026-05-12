@@ -5,7 +5,7 @@ import json
 import random
 import time
 import traceback
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +20,7 @@ from astrbot.core.provider import Provider
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.voice import VoiceServiceError, resolve_tts_provider, synthesize_text
 
+from .config import load_interaction_agent_config
 from .context_builder import (
     build_interaction_context_pack,
     extract_interaction_memory_payload,
@@ -132,6 +133,10 @@ class InteractionOutputController:
             return 1.0
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
+        if event is not None:
+            event_config = event.get_extra("_astrbot_config")
+            if isinstance(event_config, Mapping):
+                return event_config
         if self.plugin_context is None:
             return None
         get_config = getattr(self.plugin_context, "get_config", None)
@@ -140,6 +145,15 @@ class InteractionOutputController:
         if event is not None:
             return get_config(umo=event.unified_msg_origin)
         return get_config()
+
+    def _get_interaction_config(
+        self,
+        event: AstrMessageEvent | None = None,
+    ) -> InteractionAgentConfig:
+        runtime_config = self._get_runtime_config(event)
+        if isinstance(runtime_config, Mapping):
+            return load_interaction_agent_config(runtime_config)
+        return self.interaction_config
 
     def _get_config_value(
         self,
@@ -351,7 +365,8 @@ class InteractionOutputController:
         generator: AsyncGenerator[MessageChain, None],
         event: AstrMessageEvent,
     ) -> AsyncGenerator[MessageChain, None]:
-        if not self.interaction_config.stream_observation_enabled:
+        interaction_config = self._get_interaction_config(event)
+        if not interaction_config.stream_observation_enabled:
             async for chain in generator:
                 chunk_text = self._extract_observable_stream_text(chain)
                 if chunk_text:
@@ -361,7 +376,7 @@ class InteractionOutputController:
                 yield chain
             return
 
-        min_chars = self.interaction_config.stream_observation_min_chars
+        min_chars = interaction_config.stream_observation_min_chars
         observation_state = self._build_stream_observation_state()
         async for chain in generator:
             chunk_text = self._extract_observable_stream_text(chain)
@@ -556,7 +571,7 @@ class InteractionOutputController:
         async with lock:
             if (
                 get_interaction_turn_stream_interjections_emitted(event)
-                >= self.interaction_config.stream_interjection_max_per_turn
+                >= self._get_interaction_config(event).stream_interjection_max_per_turn
             ):
                 return
             observation_state["emitted"] = (
@@ -630,7 +645,8 @@ class InteractionOutputController:
         window_index: int,
         is_final: bool = False,
     ) -> StreamObservationDecision:
-        if not self.interaction_config.stream_interjection_enabled:
+        interaction_config = self._get_interaction_config(event)
+        if not interaction_config.stream_interjection_enabled:
             return StreamObservationDecision(reason="disabled")
 
         decision = await self._collect_stream_interjection_from_plugins(
@@ -659,6 +675,7 @@ class InteractionOutputController:
         window_index: int,
         is_final: bool,
     ) -> StreamObservationDecision:
+        interaction_config = self._get_interaction_config(event)
         if self.plugin_context is None:
             self._record_stream_interjection_failure(
                 event,
@@ -667,7 +684,7 @@ class InteractionOutputController:
             )
             return StreamObservationDecision(reason="plugin_context_unavailable")
         provider = self.plugin_context.get_provider_by_id(
-            self.interaction_config.decision_provider_id
+            interaction_config.decision_provider_id
         )
         if not isinstance(provider, Provider):
             self._record_stream_interjection_failure(
@@ -677,7 +694,7 @@ class InteractionOutputController:
             )
             logger.warning(
                 "Interaction stream interjection skipped: provider unavailable provider_id=%s",
-                self.interaction_config.decision_provider_id,
+                interaction_config.decision_provider_id,
             )
             return StreamObservationDecision(reason="provider_unavailable")
 
@@ -693,9 +710,9 @@ class InteractionOutputController:
                 provider.text_chat(
                     prompt=prompt,
                     system_prompt="",
-                    temperature=self.interaction_config.decision_temperature,
+                    temperature=interaction_config.decision_temperature,
                 ),
-                timeout=self.interaction_config.decision_timeout,
+                timeout=interaction_config.decision_timeout,
             )
         except asyncio.TimeoutError:
             logger.warning(
@@ -899,7 +916,7 @@ class InteractionOutputController:
         if cached_material is not None:
             persona_payload = cached_material.persona_payload
             memory_payload = cached_material.memory_payload
-            desired_window = self.interaction_config.memory_window_size
+            desired_window = self._get_interaction_config(event).memory_window_size
             recent_messages = list(cached_material.recent_messages)
             if desired_window > 0:
                 recent_messages = recent_messages[-desired_window:]
@@ -920,7 +937,7 @@ class InteractionOutputController:
                 memory_payload = extract_interaction_memory_payload(prompt_context_pack)
                 recent_messages = extract_recent_messages(
                     prompt_context_pack,
-                    self.interaction_config.memory_window_size,
+                    self._get_interaction_config(event).memory_window_size,
                 )
             except Exception as exc:  # noqa: BLE001
                 event.set_extra(
@@ -1019,17 +1036,18 @@ class InteractionOutputController:
         message: MessageChain,
         event: AstrMessageEvent,
     ) -> None:
+        interaction_config = self._get_interaction_config(event)
         core_result_text = message.get_plain_text()
         immediate_reply = get_interaction_turn_immediate_reply(event)
         final_text = await finalize_response(
             event=event,
             plugin_context=self.plugin_context,
-            config=self.interaction_config,
+            config=interaction_config,
             core_result_text=core_result_text,
             immediate_reply=immediate_reply,
         )
         if (
-            self.interaction_config.finalizer_mode == FinalizerMode.FORCE
+            interaction_config.finalizer_mode == FinalizerMode.FORCE
             and final_text is None
             and event.get_extra("_interaction_finalizer_failed")
         ):

@@ -139,11 +139,10 @@ def validate_interaction_decision(
             )
         decision.should_emit_immediate_reply = bool(decision.immediate_spoken_reply)
     if decision.route_mode == RouteMode.HYBRID and not decision.immediate_spoken_reply:
-        logger.info(
-            "Interaction decision downgraded: reason=hybrid_without_immediate_reply",
+        raise InteractionDecisionError(
+            "missing_hybrid_reply",
+            "hybrid decision requires immediate_spoken_reply",
         )
-        decision.should_emit_immediate_reply = False
-        decision.route_mode = RouteMode.DELEGATE_TO_CORE
     if decision.confidence < config.decision_confidence_threshold:
         message = (
             f"low confidence: confidence={decision.confidence} "
