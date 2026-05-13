@@ -143,13 +143,6 @@ def validate_interaction_decision(
             "missing_hybrid_reply",
             "hybrid decision requires immediate_spoken_reply",
         )
-    if decision.confidence < config.decision_confidence_threshold:
-        message = (
-            f"low confidence: confidence={decision.confidence} "
-            f"threshold={config.decision_confidence_threshold} "
-            f"route_mode={decision.route_mode.value}"
-        )
-        raise InteractionDecisionError("low_confidence", message)
     return decision
 
 

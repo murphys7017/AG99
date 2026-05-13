@@ -1208,6 +1208,127 @@ class TestInteractionMiddleware:
         assert order == ["postprocess"]
 
     @pytest.mark.asyncio
+    async def test_self_reply_persists_conversation_history(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        webchat_event.complete_visible_turn = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        conversation_manager = MagicMock()
+        conversation_manager.get_curr_conversation_id = AsyncMock(return_value="conv-1")
+        conversation_manager.add_message_pair = AsyncMock()
+        middleware.plugin_context = MagicMock(
+            spec=Context,
+            conversation_manager=conversation_manager,
+        )
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.SELF_REPLY,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="嗯。",
+                confidence=0.0,
+                reason="self",
+            )
+        )
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ):
+            middleware.handle_inbound(webchat_event)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        conversation_manager.get_curr_conversation_id.assert_awaited_once_with(
+            webchat_event.unified_msg_origin
+        )
+        conversation_manager.add_message_pair.assert_awaited_once_with(
+            "conv-1",
+            user_message={"role": "user", "content": "Hello world"},
+            assistant_message={"role": "assistant", "content": "嗯。"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_self_reply_conversation_history_failure_is_recorded(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        webchat_event.complete_visible_turn = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        conversation_manager = MagicMock()
+        conversation_manager.get_curr_conversation_id = AsyncMock(return_value="conv-1")
+        conversation_manager.add_message_pair = AsyncMock(
+            side_effect=RuntimeError("db unavailable")
+        )
+        middleware.plugin_context = MagicMock(
+            spec=Context,
+            conversation_manager=conversation_manager,
+        )
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.SELF_REPLY,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="嗯。",
+                confidence=0.0,
+                reason="self",
+            )
+        )
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ):
+            middleware.handle_inbound(webchat_event)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        assert webchat_event.get_extra("_interaction_conversation_history_failed") is True
+        assert (
+            webchat_event.get_extra("_interaction_turn_completion_failure_reason")
+            == "conversation_history:persist_failed"
+        )
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.failures[-1].stage == "conversation_history"
+        assert turn_state.failures[-1].reason == "persist_failed"
+        assert turn_state.failures[-1].user_visible_action == "continue_turn_completion"
+        assert turn_state.completion_state.completed is True
+
+    @pytest.mark.asyncio
     async def test_preprocess_skips_media_after_interaction_materialization(
         self,
         voice_event,

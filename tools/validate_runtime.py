@@ -13,7 +13,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 REQUIRED_FILES = [
     "AGENTS.md",
     ".ai/README.md",
@@ -65,12 +64,47 @@ EXPECTED_POLICY_KEYS = [
 ]
 
 EXPECTED_STATE_FIELDS = {
-    "task_state.yaml": ["current_task:", "type:", "scope:", "risk:", "phase:", "owner:"],
-    "context_state.yaml": ["context:", "confidence:", "required_files_loaded:", "assumptions:", "unresolved_questions:"],
-    "architecture_state.yaml": ["architecture:", "stability:", "pending_breaking_change:", "boundary_changes:"],
-    "risk_state.yaml": ["risk:", "current_level:", "scope_expansion_detected:", "architecture_risk_detected:", "destructive_action_pending:"],
-    "execution_state.yaml": ["execution:", "phase:", "validation_passed:", "review_completed:", "correction_required:"],
-    "verification_state.yaml": ["verification:", "checks_run:", "checks_failed:", "validation_gap:"],
+    "task_state.yaml": [
+        "current_task:",
+        "type:",
+        "scope:",
+        "risk:",
+        "phase:",
+        "owner:",
+    ],
+    "context_state.yaml": [
+        "context:",
+        "confidence:",
+        "required_files_loaded:",
+        "assumptions:",
+        "unresolved_questions:",
+    ],
+    "architecture_state.yaml": [
+        "architecture:",
+        "stability:",
+        "pending_breaking_change:",
+        "boundary_changes:",
+    ],
+    "risk_state.yaml": [
+        "risk:",
+        "current_level:",
+        "scope_expansion_detected:",
+        "architecture_risk_detected:",
+        "destructive_action_pending:",
+    ],
+    "execution_state.yaml": [
+        "execution:",
+        "phase:",
+        "validation_passed:",
+        "review_completed:",
+        "correction_required:",
+    ],
+    "verification_state.yaml": [
+        "verification:",
+        "checks_run:",
+        "checks_failed:",
+        "validation_gap:",
+    ],
 }
 
 EXPECTED_EXAMPLE_FILES = [
@@ -212,7 +246,9 @@ class Validator:
         disturbance_text = self.read_text(disturbance_model)
 
         if "disturbance_model.md" not in risk_text:
-            self.error(risk_levels, "risk levels do not reference the disturbance model")
+            self.error(
+                risk_levels, "risk levels do not reference the disturbance model"
+            )
 
         for required in [
             "Ambiguous User Intent",
@@ -224,7 +260,10 @@ class Validator:
             "Escalation Rule",
         ]:
             if required not in disturbance_text:
-                self.error(disturbance_model, f"disturbance model is missing section: {required}")
+                self.error(
+                    disturbance_model,
+                    f"disturbance model is missing section: {required}",
+                )
 
     def check_runtime_continuity(self) -> None:
         agents = "AGENTS.md"
@@ -243,7 +282,11 @@ class Validator:
         continuity_text = self.read_text(continuity)
         checklist_text = self.read_text(checklist)
 
-        for relative, text in [(agents, agents_text), (index, index_text), (protocol, protocol_text)]:
+        for relative, text in [
+            (agents, agents_text),
+            (index, index_text),
+            (protocol, protocol_text),
+        ]:
             for ref in [".ai/runtime/continuity.md", "checklists/continuity.md"]:
                 if relative == agents and ref == "checklists/continuity.md":
                     continue
@@ -261,11 +304,22 @@ class Validator:
             "correction",
         ]:
             if required not in continuity_text:
-                self.error(continuity, f"continuity guidance is missing concept: {required}")
+                self.error(
+                    continuity, f"continuity guidance is missing concept: {required}"
+                )
 
-        for required in ["checklist_result:", "checklist: continuity", "scope", "risk", "workflow", "validation"]:
+        for required in [
+            "checklist_result:",
+            "checklist: continuity",
+            "scope",
+            "risk",
+            "workflow",
+            "validation",
+        ]:
             if required not in checklist_text:
-                self.error(checklist, f"continuity checklist is missing concept: {required}")
+                self.error(
+                    checklist, f"continuity checklist is missing concept: {required}"
+                )
 
         workflow_dir = self.root / ".ai" / "workflows"
         if workflow_dir.exists():
@@ -273,7 +327,9 @@ class Validator:
                 text = path.read_text(encoding="utf-8")
                 relative = path.relative_to(self.root).as_posix()
                 if "continuity checkpoint" not in text:
-                    self.error(relative, "workflow does not mention continuity checkpoint")
+                    self.error(
+                        relative, "workflow does not mention continuity checkpoint"
+                    )
 
     def check_correctness_discipline(self) -> None:
         index = ".ai/index.md"
@@ -282,7 +338,13 @@ class Validator:
         dataflow_skill = ".ai/skills/dataflow_review.md"
         root_cause_checklist = ".ai/checklists/root_cause.md"
 
-        for relative in [index, loading_rules, correctness_policy, dataflow_skill, root_cause_checklist]:
+        for relative in [
+            index,
+            loading_rules,
+            correctness_policy,
+            dataflow_skill,
+            root_cause_checklist,
+        ]:
             if not self.exists(relative):
                 return
 
@@ -292,25 +354,56 @@ class Validator:
         skill_text = self.read_text(dataflow_skill)
         checklist_text = self.read_text(root_cause_checklist)
 
-        for ref in ["policies/correctness.yaml", "skills/dataflow_review.md", "checklists/root_cause.md"]:
+        for ref in [
+            "policies/correctness.yaml",
+            "skills/dataflow_review.md",
+            "checklists/root_cause.md",
+        ]:
             if ref not in index_text:
-                self.error(index, f"governance map is missing correctness reference: {ref}")
+                self.error(
+                    index, f"governance map is missing correctness reference: {ref}"
+                )
 
-        for ref in ["policies/correctness.yaml", "skills/dataflow_review.md", "checklists/root_cause.md"]:
+        for ref in [
+            "policies/correctness.yaml",
+            "skills/dataflow_review.md",
+            "checklists/root_cause.md",
+        ]:
             if ref not in loading_text:
-                self.error(loading_rules, f"loading rules are missing correctness reference: {ref}")
+                self.error(
+                    loading_rules,
+                    f"loading rules are missing correctness reference: {ref}",
+                )
 
-        for required in ["root_cause_over_masking", "fallback_not_correctness_proof", "observable_failure_paths"]:
+        for required in [
+            "root_cause_over_masking",
+            "fallback_not_correctness_proof",
+            "observable_failure_paths",
+        ]:
             if required not in policy_text:
-                self.error(correctness_policy, f"correctness policy is missing rule: {required}")
+                self.error(
+                    correctness_policy,
+                    f"correctness policy is missing rule: {required}",
+                )
 
-        for required in ["primary path", "fallback", "confirmed faulty", "insufficient information"]:
+        for required in [
+            "primary path",
+            "fallback",
+            "confirmed faulty",
+            "insufficient information",
+        ]:
             if required not in skill_text:
-                self.error(dataflow_skill, f"dataflow review skill is missing concept: {required}")
+                self.error(
+                    dataflow_skill,
+                    f"dataflow review skill is missing concept: {required}",
+                )
 
         for required in ["root cause", "fallback", "primary path", "checklist_result:"]:
             if required not in checklist_text:
-                self.error(root_cause_checklist, f"root cause checklist is missing concept: {required}")
+                self.error(
+                    root_cause_checklist,
+                    f"root cause checklist is missing concept: {required}",
+                )
 
     def check_objective_discipline(self) -> None:
         agents = "AGENTS.md"
@@ -320,7 +413,14 @@ class Validator:
         objective_checklist = ".ai/checklists/objective_satisfaction.md"
         evaluation = ".ai/evaluation/README.md"
 
-        for relative in [agents, index, loading_rules, objective_policy, objective_checklist, evaluation]:
+        for relative in [
+            agents,
+            index,
+            loading_rules,
+            objective_policy,
+            objective_checklist,
+            evaluation,
+        ]:
             if not self.exists(relative):
                 return
 
@@ -333,13 +433,21 @@ class Validator:
 
         for required in ["task objective", "success criteria", "non-goals"]:
             if required not in agents_text:
-                self.error(agents, f"agent entry point is missing objective concept: {required}")
+                self.error(
+                    agents,
+                    f"agent entry point is missing objective concept: {required}",
+                )
 
         for ref in ["policies/objective.yaml", "checklists/objective_satisfaction.md"]:
             if ref not in index_text:
-                self.error(index, f"governance map is missing objective reference: {ref}")
+                self.error(
+                    index, f"governance map is missing objective reference: {ref}"
+                )
             if ref not in loading_text:
-                self.error(loading_rules, f"loading rules are missing objective reference: {ref}")
+                self.error(
+                    loading_rules,
+                    f"loading rules are missing objective reference: {ref}",
+                )
 
         for required in [
             "objective_before_execution",
@@ -347,7 +455,9 @@ class Validator:
             "non_goals_limit_scope",
         ]:
             if required not in policy_text:
-                self.error(objective_policy, f"objective policy is missing rule: {required}")
+                self.error(
+                    objective_policy, f"objective policy is missing rule: {required}"
+                )
 
         for required in [
             "checklist: objective_satisfaction",
@@ -357,10 +467,18 @@ class Validator:
             "required_correction:",
         ]:
             if required not in checklist_text:
-                self.error(objective_checklist, f"objective checklist is missing concept: {required}")
+                self.error(
+                    objective_checklist,
+                    f"objective checklist is missing concept: {required}",
+                )
 
-        if "objective_satisfaction: pass | partial | fail | not_applicable" not in evaluation_text:
-            self.error(evaluation, "evaluation schema is missing objective_satisfaction")
+        if (
+            "objective_satisfaction: pass | partial | fail | not_applicable"
+            not in evaluation_text
+        ):
+            self.error(
+                evaluation, "evaluation schema is missing objective_satisfaction"
+            )
 
         workflow_dir = self.root / ".ai" / "workflows"
         if workflow_dir.exists():
@@ -368,7 +486,10 @@ class Validator:
                 text = path.read_text(encoding="utf-8")
                 relative = path.relative_to(self.root).as_posix()
                 if "objective" not in text and "success criteria" not in text:
-                    self.error(relative, "workflow does not mention objective or success criteria")
+                    self.error(
+                        relative,
+                        "workflow does not mention objective or success criteria",
+                    )
 
     def check_task_class_coverage(self) -> None:
         classification = ".ai/router/task_classification.md"
@@ -381,9 +502,16 @@ class Validator:
 
         for task_class in EXPECTED_TASK_CLASSES:
             if f"- {task_class}" not in classification_text:
-                self.error(classification, f"expected task class is missing: {task_class}")
-            if not re.search(rf"^### {re.escape(task_class)} \+", loading_text, re.MULTILINE):
-                self.error(loading_rules, f"loading matrix has no entry for task class: {task_class}")
+                self.error(
+                    classification, f"expected task class is missing: {task_class}"
+                )
+            if not re.search(
+                rf"^### {re.escape(task_class)} \+", loading_text, re.MULTILINE
+            ):
+                self.error(
+                    loading_rules,
+                    f"loading matrix has no entry for task class: {task_class}",
+                )
 
     def check_policy_schema(self) -> None:
         policy_dir = self.root / ".ai" / "policies"
@@ -406,7 +534,9 @@ class Validator:
             for index, block in enumerate(rule_blocks[1:], start=1):
                 normalized = "id: " + block
                 for key in EXPECTED_POLICY_KEYS:
-                    if not re.search(rf"^\s*{re.escape(key)}\s*:", normalized, re.MULTILINE):
+                    if not re.search(
+                        rf"^\s*{re.escape(key)}\s*:", normalized, re.MULTILINE
+                    ):
                         self.error(relative, f"rule {index} is missing key: {key}")
 
     def check_checklist_result_schema(self) -> None:
@@ -418,9 +548,18 @@ class Validator:
         for path in sorted(checklist_dir.glob("*.md")):
             text = path.read_text(encoding="utf-8")
             relative = path.relative_to(self.root).as_posix()
-            for required in ["## Result Format", "checklist_result:", "status: pass | partial | fail", "evidence:", "issues:", "required_correction:"]:
+            for required in [
+                "## Result Format",
+                "checklist_result:",
+                "status: pass | partial | fail",
+                "evidence:",
+                "issues:",
+                "required_correction:",
+            ]:
                 if required not in text:
-                    self.error(relative, f"checklist result schema is missing: {required}")
+                    self.error(
+                        relative, f"checklist result schema is missing: {required}"
+                    )
 
     def check_evaluation_schema(self) -> None:
         relative = ".ai/evaluation/README.md"
@@ -480,7 +619,10 @@ class Validator:
             relative = path.relative_to(self.root).as_posix()
             for required_ref in required_refs:
                 if required_ref not in text:
-                    self.error(relative, f"adapter is missing required load reference: {required_ref}")
+                    self.error(
+                        relative,
+                        f"adapter is missing required load reference: {required_ref}",
+                    )
             if "Do not bypass the router layer" not in text:
                 self.error(relative, "adapter does not enforce router usage")
 
@@ -518,24 +660,41 @@ class Validator:
 
             for field in EXPECTED_EXAMPLE_ROUTE_FIELDS:
                 if field not in route_text:
-                    self.error(route.relative_to(self.root).as_posix(), f"expected route is missing field: {field}")
+                    self.error(
+                        route.relative_to(self.root).as_posix(),
+                        f"expected route is missing field: {field}",
+                    )
 
             for ref in re.findall(r"-\s+(\.ai/[^\s]+)", route_text):
                 if not (self.root / ref).exists():
-                    self.error(route.relative_to(self.root).as_posix(), f"referenced runtime file does not exist: {ref}")
+                    self.error(
+                        route.relative_to(self.root).as_posix(),
+                        f"referenced runtime file does not exist: {ref}",
+                    )
 
             if "Acceptable behavior:" not in behavior_text:
-                self.error(behavior.relative_to(self.root).as_posix(), "expected behavior is missing acceptable behavior section")
+                self.error(
+                    behavior.relative_to(self.root).as_posix(),
+                    "expected behavior is missing acceptable behavior section",
+                )
             if "Unacceptable behavior:" not in behavior_text:
-                self.error(behavior.relative_to(self.root).as_posix(), "expected behavior is missing unacceptable behavior section")
+                self.error(
+                    behavior.relative_to(self.root).as_posix(),
+                    "expected behavior is missing unacceptable behavior section",
+                )
 
             for field in EXPECTED_EXAMPLE_EVALUATION_FIELDS:
                 if field not in evaluation_text:
-                    self.error(evaluation.relative_to(self.root).as_posix(), f"expected evaluation is missing field: {field}")
+                    self.error(
+                        evaluation.relative_to(self.root).as_posix(),
+                        f"expected evaluation is missing field: {field}",
+                    )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate the AI governance runtime structure.")
+    parser = argparse.ArgumentParser(
+        description="Validate the AI governance runtime structure."
+    )
     parser.add_argument(
         "root",
         nargs="?",

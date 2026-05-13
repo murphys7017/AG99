@@ -213,7 +213,6 @@ DEFAULT_CONFIG = {
         "decision_provider_id": "",
         "decision_temperature": 0.5,
         "decision_timeout": 15.0,
-        "decision_confidence_threshold": 0.6,
         "finalizer_mode": "auto",
         "finalizer_provider_id": "",
         "finalizer_model": "",
@@ -4197,11 +4196,6 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.decision_timeout": {
                         "description": "决策超时秒数",
                         "type": "float",
-                    },
-                    "interaction_middleware.decision_confidence_threshold": {
-                        "description": "决策置信度阈值",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 1, "step": 0.05},
                     },
                 },
             },

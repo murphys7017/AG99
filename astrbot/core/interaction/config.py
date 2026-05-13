@@ -51,9 +51,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         decision_timeout=float(
             interaction_config.get("decision_timeout", 15.0) or 15.0
         ),
-        decision_confidence_threshold=float(
-            interaction_config.get("decision_confidence_threshold", 0.6) or 0.6
-        ),
         finalizer_provider_id=str(
             interaction_config.get("finalizer_provider_id", "") or ""
         ),

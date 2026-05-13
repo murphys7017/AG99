@@ -27,36 +27,8 @@ from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.provider.entities import LLMResponse
 
 
-def test_validate_interaction_decision_fail_fast_on_low_confidence():
-    config = InteractionAgentConfig(decision_confidence_threshold=0.6)
-    decision = InteractionDecision(
-        route_mode=RouteMode.SELF_REPLY,
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我看看",
-        confidence=0.2,
-        reason="unsure",
-    )
-    with pytest.raises(InteractionDecisionError, match="low confidence"):
-        validate_interaction_decision(decision, config)
-
-
-def test_validate_interaction_decision_ignores_observable_protect_on_low_confidence():
-    config = InteractionAgentConfig(
-        decision_confidence_threshold=0.6,
-    )
-    decision = InteractionDecision(
-        route_mode=RouteMode.SELF_REPLY,
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我看看",
-        confidence=0.2,
-        reason="unsure",
-    )
-    with pytest.raises(InteractionDecisionError, match="low confidence"):
-        validate_interaction_decision(decision, config)
-
-
 def test_validate_interaction_decision_truncates_spoken_reply():
-    config = InteractionAgentConfig(decision_confidence_threshold=0.1)
+    config = InteractionAgentConfig()
     decision = InteractionDecision(
         route_mode=RouteMode.SELF_REPLY,
         should_emit_immediate_reply=True,
@@ -70,7 +42,7 @@ def test_validate_interaction_decision_truncates_spoken_reply():
 
 
 def test_validate_interaction_decision_rejects_self_reply_without_reply():
-    config = InteractionAgentConfig(decision_confidence_threshold=0.1)
+    config = InteractionAgentConfig()
     decision = InteractionDecision(
         route_mode=RouteMode.SELF_REPLY,
         should_emit_immediate_reply=False,
@@ -84,7 +56,7 @@ def test_validate_interaction_decision_rejects_self_reply_without_reply():
 
 
 def test_validate_interaction_decision_rejects_hybrid_without_reply():
-    config = InteractionAgentConfig(decision_confidence_threshold=0.1)
+    config = InteractionAgentConfig()
     decision = InteractionDecision(
         route_mode=RouteMode.HYBRID,
         should_emit_immediate_reply=False,
@@ -297,7 +269,6 @@ async def test_decision_agent_reuses_turn_state_context_material():
     ]
     config = InteractionAgentConfig(
         decision_provider_id="provider-1",
-        decision_confidence_threshold=0.1,
         memory_window_size=1,
     )
     agent = InteractionDecisionAgent(InteractionMemoryStore())
@@ -361,7 +332,6 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     ]
     config = InteractionAgentConfig(
         decision_provider_id="provider-1",
-        decision_confidence_threshold=0.1,
     )
     agent = InteractionDecisionAgent(InteractionMemoryStore())
 

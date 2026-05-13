@@ -122,7 +122,6 @@ class InteractionAgentConfig:
     decision_provider_id: str = ""
     decision_temperature: float = 0.5
     decision_timeout: float = 15.0
-    decision_confidence_threshold: float = 0.6
     finalizer_provider_id: str = ""
     finalizer_model: str = ""
     finalizer_temperature: float = 0.6
