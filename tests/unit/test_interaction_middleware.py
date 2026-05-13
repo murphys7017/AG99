@@ -1208,7 +1208,7 @@ class TestInteractionMiddleware:
         assert order == ["postprocess"]
 
     @pytest.mark.asyncio
-    async def test_self_reply_persists_conversation_history(
+    async def test_self_reply_does_not_persist_conversation_history_inline(
         self,
         webchat_event,
     ):
@@ -1256,17 +1256,11 @@ class TestInteractionMiddleware:
             await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-        conversation_manager.get_curr_conversation_id.assert_awaited_once_with(
-            webchat_event.unified_msg_origin
-        )
-        conversation_manager.add_message_pair.assert_awaited_once_with(
-            "conv-1",
-            user_message={"role": "user", "content": "Hello world"},
-            assistant_message={"role": "assistant", "content": "嗯。"},
-        )
+        conversation_manager.get_curr_conversation_id.assert_not_awaited()
+        conversation_manager.add_message_pair.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_self_reply_conversation_history_failure_is_recorded(
+    async def test_self_reply_does_not_record_conversation_history_failure_inline(
         self,
         webchat_event,
     ):
@@ -1316,16 +1310,9 @@ class TestInteractionMiddleware:
             await asyncio.sleep(0)
             await asyncio.sleep(0)
 
-        assert webchat_event.get_extra("_interaction_conversation_history_failed") is True
-        assert (
-            webchat_event.get_extra("_interaction_turn_completion_failure_reason")
-            == "conversation_history:persist_failed"
-        )
+        assert webchat_event.get_extra("_interaction_conversation_history_failed") is None
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.failures[-1].stage == "conversation_history"
-        assert turn_state.failures[-1].reason == "persist_failed"
-        assert turn_state.failures[-1].user_visible_action == "continue_turn_completion"
         assert turn_state.completion_state.completed is True
 
     @pytest.mark.asyncio

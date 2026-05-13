@@ -48,7 +48,7 @@ Core 负责把事做成，Middleware 负责像“这个角色本人”一样和�
 - prompt / result / stream 插件扩展点的只读阶段视图
 - interaction outbound phase：finalizer、result contributor、reply prefix、reasoning display、TTS、t2i
 - SELF_REPLY / HYBRID / DELEGATE 的统一 turn completion handoff
-- memory 写入 owner 收口到 postprocess / memory service
+- memory 与 interaction conversation history 的持久化 owner 收口到 `AFTER_TURN_COMPLETED` postprocess consumers
 - core 普通流程和 middleware interaction 流程共享 voice service
 
 当前这版实现，还没有完成：
@@ -199,7 +199,7 @@ Core 不再直接拥有最终用户表达主导权。它可以产出：
 因此：
 
 - 人格记忆应优先放在 middleware
-- 当前 interaction turn completion 的 memory 写入 owner 是 postprocess / memory service；middleware 只生产 finalized material 并调度 postprocess
+- 当前 interaction turn completion 的 memory 与 conversation history 持久化 owner 都在 postprocess consumers；middleware 只生产 finalized material 并调度 postprocess
 - knowledge base 应优先保留在 core
 - middleware 决定是否调用 core 的 knowledge / tools / search
 

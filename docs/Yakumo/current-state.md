@@ -68,7 +68,7 @@
 - 在 core decision 之前处理入站媒体、STT、route decision 与 immediate reply
 - 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
 - 统一 finalizer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
-- 将 turn completion 收口为：middleware 产出 finalized material，postprocess / memory service 消费 material 并写 memory
+- 将 turn completion 收口为：middleware 产出 finalized material，postprocess consumers 再消费 material；当前 memory service 与 interaction conversation history 都在 `AFTER_TURN_COMPLETED` 阶段落地
 - 对普通 core 非 interaction 事件保留原 pipeline STT/TTS 兼容路径
 
 当前已完成：

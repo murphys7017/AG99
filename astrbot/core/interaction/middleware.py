@@ -301,7 +301,6 @@ class InteractionMiddleware:
                     event,
                     reply=decision.immediate_spoken_reply,
                 )
-                await self._save_self_reply_conversation_history(event)
                 await self._finalize_turn(event)
             return
         if decision.route_mode == RouteMode.HYBRID:
@@ -726,64 +725,6 @@ class InteractionMiddleware:
             )
             raise RuntimeError("Interaction self reply material missing")
         return material
-
-    async def _save_self_reply_conversation_history(
-        self,
-        event: AstrMessageEvent,
-    ) -> None:
-        if self.plugin_context is None:
-            return
-
-        conversation_manager = getattr(
-            self.plugin_context, "conversation_manager", None
-        )
-        if conversation_manager is None:
-            return
-
-        material = get_interaction_turn_finalized_material(event)
-        if material is None:
-            return
-
-        user_text = str(material.get("user_text", "") or "").strip()
-        assistant_text = str(material.get("assistant_text", "") or "").strip()
-        if not user_text or not assistant_text:
-            return
-
-        try:
-            conversation_id = await conversation_manager.get_curr_conversation_id(
-                event.unified_msg_origin
-            )
-            if not conversation_id:
-                conversation_id = await conversation_manager.new_conversation(
-                    event.unified_msg_origin,
-                    event.get_platform_id(),
-                )
-            await conversation_manager.add_message_pair(
-                conversation_id,
-                user_message={"role": "user", "content": user_text},
-                assistant_message={"role": "assistant", "content": assistant_text},
-            )
-        except Exception as exc:  # noqa: BLE001
-            event.set_extra("_interaction_conversation_history_failed", True)
-            event.set_extra(
-                "_interaction_conversation_history_failure_reason",
-                str(exc),
-            )
-            record_interaction_turn_failure(
-                event,
-                stage="conversation_history",
-                reason="persist_failed",
-                exception=exc,
-                user_visible_action="continue_turn_completion",
-            )
-            logger.error(
-                "Interaction self reply conversation persistence failed: platform_id=%s session_id=%s turn_id=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                exc,
-                exc_info=True,
-            )
 
     async def _finalize_turn(
         self,

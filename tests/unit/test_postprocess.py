@@ -8,6 +8,9 @@ import pytest
 
 import astrbot.core.message.components as Comp
 from astrbot.core.astr_agent_hooks import MainAgentHooks
+from astrbot.core.interaction.conversation_postprocessor import (
+    InteractionConversationPostProcessor,
+)
 from astrbot.core.interaction.turn_state import ensure_interaction_turn_state
 from astrbot.core.message.message_event_result import (
     MessageEventResult,
@@ -820,3 +823,83 @@ def test_unregister_postprocessor_helper_returns_false_for_unknown_processor():
     )
 
     assert unregister_postprocessor(processor) is False
+
+
+@pytest.mark.asyncio
+async def test_interaction_conversation_postprocessor_persists_turn_after_completion():
+    event, _ = _make_event()
+    event.session_id = "session-1"
+    event.get_extra.side_effect = lambda key, default=None: {
+        "_turn_id": "turn-1",
+    }.get(key, default)
+    conversation_manager = MagicMock()
+    conversation_manager.get_curr_conversation_id = AsyncMock(return_value="conv-1")
+    conversation_manager.add_message_pair = AsyncMock()
+    plugin_context = MagicMock(conversation_manager=conversation_manager)
+    processor = InteractionConversationPostProcessor()
+    ctx = PostProcessContext(
+        event=event,
+        trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
+        turn_id="turn-1",
+        turn_material={
+            "turn_id": "turn-1",
+            "user_text": "Hello world",
+            "assistant_text": "嗯。",
+        },
+        debug_meta={"plugin_context": plugin_context},
+    )
+
+    await processor.run(ctx)
+
+    conversation_manager.get_curr_conversation_id.assert_awaited_once_with(
+        event.unified_msg_origin
+    )
+    conversation_manager.add_message_pair.assert_awaited_once_with(
+        "conv-1",
+        user_message={"role": "user", "content": "Hello world"},
+        assistant_message={"role": "assistant", "content": "嗯。"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_interaction_conversation_postprocessor_records_failure():
+    extras: dict[str, object] = {}
+    event = MagicMock()
+    event.unified_msg_origin = "test:private:user"
+    event.session_id = "session-1"
+    event.get_platform_id.return_value = "test_platform"
+
+    def _get_extra(key, default=None):
+        return extras.get(key, default)
+
+    def _set_extra(key, value):
+        extras[key] = value
+
+    event.get_extra.side_effect = _get_extra
+    event.set_extra.side_effect = _set_extra
+
+    conversation_manager = MagicMock()
+    conversation_manager.get_curr_conversation_id = AsyncMock(return_value="conv-1")
+    conversation_manager.add_message_pair = AsyncMock(
+        side_effect=RuntimeError("db unavailable")
+    )
+    plugin_context = MagicMock(conversation_manager=conversation_manager)
+    processor = InteractionConversationPostProcessor()
+    ctx = PostProcessContext(
+        event=event,
+        trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
+        turn_id="turn-1",
+        turn_material={
+            "turn_id": "turn-1",
+            "user_text": "Hello world",
+            "assistant_text": "嗯。",
+        },
+        debug_meta={"plugin_context": plugin_context},
+    )
+
+    await processor.run(ctx)
+
+    assert extras["_interaction_conversation_history_failed"] is True
+    assert extras["_interaction_turn_completion_failure_reason"] == (
+        "conversation_history:persist_failed"
+    )

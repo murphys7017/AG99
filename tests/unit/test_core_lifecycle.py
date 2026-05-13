@@ -32,6 +32,7 @@ def _enter_lifecycle_initialize_patches(
     mock_event_bus,
     mock_memory_service,
     mock_memory_postprocessor,
+    mock_interaction_conversation_postprocessor=None,
     migra_patch,
     update_llm_metadata_patch,
     logger_patch=None,
@@ -133,6 +134,12 @@ def _enter_lifecycle_initialize_patches(
             return_value=mock_memory_postprocessor,
         )
     )
+    register_interaction_postprocess_patch = stack.enter_context(
+        patch(
+            "astrbot.core.core_lifecycle.register_interaction_conversation_postprocessor",
+            return_value=mock_interaction_conversation_postprocessor or MagicMock(),
+        )
+    )
     stack.enter_context(patch("astrbot.core.core_lifecycle.migra", migra_patch))
     stack.enter_context(
         patch(
@@ -142,7 +149,7 @@ def _enter_lifecycle_initialize_patches(
     )
     if logger_patch is not None:
         stack.enter_context(patch("astrbot.core.core_lifecycle.logger", logger_patch))
-    return register_patch, get_memory_service_patch
+    return register_patch, register_interaction_postprocess_patch, get_memory_service_patch
 
 
 @pytest.fixture
@@ -570,6 +577,7 @@ class TestAstrBotCoreLifecycleInitialize:
         with ExitStack() as stack:
             (
                 mock_register_memory_postprocessor,
+                mock_register_interaction_conversation_postprocessor,
                 mock_get_memory_service,
             ) = _enter_lifecycle_initialize_patches(
                 stack,
@@ -591,6 +599,7 @@ class TestAstrBotCoreLifecycleInitialize:
                 mock_event_bus=mock_event_bus,
                 mock_memory_service=mock_memory_service,
                 mock_memory_postprocessor=MagicMock(),
+                mock_interaction_conversation_postprocessor=MagicMock(),
                 migra_patch=AsyncMock(),
                 update_llm_metadata_patch=AsyncMock(),
             )
@@ -623,6 +632,7 @@ class TestAstrBotCoreLifecycleInitialize:
         # Verify pipeline scheduler loaded
         assert lifecycle.pipeline_scheduler_mapping is not None
         mock_register_memory_postprocessor.assert_called_once()
+        mock_register_interaction_conversation_postprocessor.assert_called_once()
         mock_get_memory_service.assert_called_once_with(lifecycle.astrbot_config)
         assert lifecycle.platform_event_gateway is not None
         assert lifecycle.interaction_middleware is not None
@@ -886,6 +896,10 @@ class TestAstrBotCoreLifecycleStopAdditional:
                 return_value=True,
             ) as mock_reset_memory_postprocessor,
             patch(
+                "astrbot.core.core_lifecycle.reset_interaction_conversation_postprocessor",
+                return_value=True,
+            ) as mock_reset_interaction_conversation_postprocessor,
+            patch(
                 "astrbot.core.core_lifecycle.shutdown_memory_service",
                 new_callable=AsyncMock,
             ) as mock_shutdown_memory_service,
@@ -897,6 +911,7 @@ class TestAstrBotCoreLifecycleStopAdditional:
         lifecycle.platform_manager.terminate.assert_awaited_once()
         lifecycle.kb_manager.terminate.assert_awaited_once()
         mock_reset_memory_postprocessor.assert_called_once()
+        mock_reset_interaction_conversation_postprocessor.assert_called_once()
         mock_shutdown_memory_service.assert_awaited_once()
 
     @pytest.mark.asyncio

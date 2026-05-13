@@ -33,6 +33,7 @@ def build_postprocess_context(
     trigger: PostProcessTrigger,
     llm_response: LLMResponse | None = None,
     provider_request: ProviderRequest | None = None,
+    plugin_context=None,
     conversation: Conversation | None = None,
     turn_id: str | None = None,
     visible_outputs: list[dict] | None = None,
@@ -66,6 +67,7 @@ def build_postprocess_context(
         ],
         turn_material=dict(turn_material) if isinstance(turn_material, dict) else None,
         timestamp=datetime.now(timezone.utc),
+        debug_meta={"plugin_context": plugin_context} if plugin_context is not None else {},
     )
 
 
@@ -128,5 +130,6 @@ async def dispatch_postprocess(
         turn_id=turn_id,
         visible_outputs=visible_outputs,
         turn_material=turn_material,
+        plugin_context=plugin_context,
     )
     await POSTPROCESS_MANAGER.dispatch(trigger, ctx)

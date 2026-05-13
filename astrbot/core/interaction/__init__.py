@@ -5,6 +5,12 @@ from .contributors import (
     InteractionResultView,
     InteractionStreamView,
 )
+from .conversation_postprocessor import (
+    InteractionConversationPostProcessor,
+    register_interaction_conversation_postprocessor,
+    reset_interaction_conversation_postprocessor,
+    unregister_interaction_conversation_postprocessor,
+)
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
@@ -42,6 +48,7 @@ __all__ = [
     "INTERACTION_DECISION_EXTRA_KEY",
     "INTERACTION_TURN_STATE_EXTRA_KEY",
     "InteractionAgentConfig",
+    "InteractionConversationPostProcessor",
     "InteractionContextMaterial",
     "InteractionDecision",
     "InteractionDecisionView",
@@ -64,4 +71,7 @@ __all__ = [
     "get_interaction_decision",
     "is_middleware_enabled_for_platform",
     "load_interaction_agent_config",
+    "register_interaction_conversation_postprocessor",
+    "reset_interaction_conversation_postprocessor",
+    "unregister_interaction_conversation_postprocessor",
 ]
