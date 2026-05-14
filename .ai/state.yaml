@@ -1,18 +1,24 @@
 task:
-  class: unknown
-  risk: unknown
-  phase: idle
-  scope: unknown
+  class: bugfix
+  risk: medium
+  phase: validated
+  scope: interaction middleware TTS coverage and memory whitelist gating
 context:
-  confidence: unknown
-  assumptions: []
+  confidence: high
+  assumptions:
+    - Memory postprocess should respect the same session/group whitelist used by the pipeline when session config is available.
+    - Streaming core chunks should remain text streaming; TTS should not be applied per chunk.
   unresolved_questions: []
 architecture:
   stability: stable
-  boundary_changes: []
+  boundary_changes:
+    - Interaction self-reply events now retain runtime config for postprocess consumers.
+    - Memory postprocessor now gates updates with platform session whitelist settings.
 verification:
-  checks_run: []
+  checks_run:
+    - .venv\Scripts\python -m pytest tests/unit/test_interaction_output_controller.py tests/unit/test_interaction_middleware.py tests/unit/test_memory_runtime.py -q
+    - .venv\Scripts\python -m ruff check astrbot/core/interaction/output_controller.py astrbot/core/interaction/middleware.py astrbot/core/memory/postprocessor.py tests/unit/test_interaction_output_controller.py tests/unit/test_interaction_middleware.py tests/unit/test_memory_runtime.py
   checks_failed: []
-  validation_gap: unknown
+  validation_gap: aiosqlite event-loop shutdown warnings remain in focused pytest run
 runtime:
   mode: minimal_v1

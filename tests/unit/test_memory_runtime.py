@@ -5001,6 +5001,106 @@ async def test_memory_postprocessor_skips_invalid_conversation_history():
 
 
 @pytest.mark.asyncio
+async def test_memory_postprocessor_skips_non_whitelisted_group():
+    history = _make_history()
+    conversation = Conversation(
+        platform_id="aiocqhttp",
+        user_id="aiocqhttp:group:10001",
+        cid="conv-1",
+        history=json.dumps(history),
+    )
+    event = MagicMock()
+    event.unified_msg_origin = "aiocqhttp:GroupMessage:10001"
+    event.get_platform_id.return_value = "aiocqhttp"
+    event.get_platform_name.return_value = "aiocqhttp"
+    event.get_group_id.return_value = "10001"
+    event.get_message_type.return_value = None
+    event.session_id = "10001"
+    event.role = "member"
+    event.get_extra.side_effect = lambda key, default=None: {
+        "_astrbot_config": {
+            "memory": {"enabled": True},
+            "platform_settings": {
+                "enable_id_white_list": True,
+                "id_whitelist": ["20002"],
+                "wl_ignore_admin_on_group": False,
+                "wl_ignore_admin_on_friend": False,
+            },
+        }
+    }.get(key, default)
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = conversation
+    ctx.provider_request = ProviderRequest(prompt="hello", session_id="10001")
+    ctx.timestamp = datetime.now(UTC)
+
+    await processor.run(ctx)
+
+    memory_service.update_from_postprocess.assert_not_awaited()
+    assert event.set_extra.call_args_list[-1].args == (
+        "_memory_postprocess_skipped_reason",
+        "session_not_whitelisted",
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_postprocessor_allows_whitelisted_group(monkeypatch):
+    history = _make_history()
+    conversation = Conversation(
+        platform_id="aiocqhttp",
+        user_id="aiocqhttp:group:10001",
+        cid="conv-1",
+        history=json.dumps(history),
+    )
+    event = MagicMock()
+    event.unified_msg_origin = "aiocqhttp:GroupMessage:10001"
+    event.get_platform_id.return_value = "aiocqhttp"
+    event.get_platform_name.return_value = "aiocqhttp"
+    event.get_group_id.return_value = "10001"
+    event.get_message_type.return_value = None
+    event.session_id = "10001"
+    event.role = "member"
+    event.get_extra.side_effect = lambda key, default=None: {
+        "_astrbot_config": {
+            "memory": {"enabled": True},
+            "platform_settings": {
+                "enable_id_white_list": True,
+                "id_whitelist": ["10001"],
+                "wl_ignore_admin_on_group": False,
+                "wl_ignore_admin_on_friend": False,
+            },
+        }
+    }.get(key, default)
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    monkeypatch.setattr(
+        "astrbot.core.memory.postprocessor.resolve_memory_service_for_event",
+        lambda _event: memory_service,
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = conversation
+    ctx.provider_request = ProviderRequest(prompt="hello", session_id="10001")
+    ctx.timestamp = datetime.now(UTC)
+
+    await processor.run(ctx)
+
+    memory_service.update_from_postprocess.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_memory_postprocessor_falls_back_to_provider_request_conversation():
     history = [
         {"role": "user", "content": "Previous turn."},

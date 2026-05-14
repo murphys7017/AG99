@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from astrbot.core.platform.message_type import MessageType
 from astrbot.core.postprocess import register_postprocessor, unregister_postprocessor
 from astrbot.core.postprocess.types import PostProcessContext, PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
@@ -91,6 +92,15 @@ class MemoryPostProcessor:
         if event_config is None and not get_memory_config().enabled:
             ctx.event.set_extra("_memory_postprocess_skipped_reason", "memory_disabled")
             return
+        if event_config is not None and not _is_event_allowed_by_session_whitelist(
+            ctx.event,
+            event_config,
+        ):
+            ctx.event.set_extra(
+                "_memory_postprocess_skipped_reason",
+                "session_not_whitelisted",
+            )
+            return
         self.memory_service = resolve_memory_service_for_event(ctx.event)
         req = await self.build_update_request(ctx)
         if req is None:
@@ -141,6 +151,54 @@ def reset_memory_postprocessor() -> bool:
     removed = unregister_memory_postprocessor()
     _MEMORY_POSTPROCESSOR = None
     return removed
+
+
+def _is_event_allowed_by_session_whitelist(
+    event: Any,
+    event_config: Mapping[str, Any],
+) -> bool:
+    platform_settings = event_config.get("platform_settings", {})
+    if not isinstance(platform_settings, Mapping):
+        return True
+    if not platform_settings.get("enable_id_white_list", False):
+        return True
+
+    whitelist = [
+        str(item).strip()
+        for item in platform_settings.get("id_whitelist", [])
+        if str(item).strip()
+    ]
+    if not whitelist:
+        return True
+
+    if _safe_call(event, "get_platform_name") == "webchat":
+        return True
+
+    role = getattr(event, "role", None)
+    message_type = _safe_call(event, "get_message_type")
+    if (
+        role == "admin"
+        and message_type == MessageType.GROUP_MESSAGE
+        and platform_settings.get("wl_ignore_admin_on_group", False)
+    ):
+        return True
+    if (
+        role == "admin"
+        and message_type == MessageType.FRIEND_MESSAGE
+        and platform_settings.get("wl_ignore_admin_on_friend", False)
+    ):
+        return True
+
+    umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+    group_id = str(_safe_call(event, "get_group_id") or "").strip()
+    return umo in whitelist or group_id in whitelist
+
+
+def _safe_call(event: Any, name: str) -> Any:
+    method = getattr(event, name, None)
+    if not callable(method):
+        return None
+    return method()
 
 
 def _serialize_provider_request(

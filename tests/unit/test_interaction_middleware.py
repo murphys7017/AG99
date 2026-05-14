@@ -1208,6 +1208,72 @@ class TestInteractionMiddleware:
         assert order == ["postprocess"]
 
     @pytest.mark.asyncio
+    async def test_self_reply_sets_runtime_config_for_postprocess(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock(
+            side_effect=_call_original_visible_completion
+        )
+        webchat_event.complete_visible_turn = AsyncMock()
+        default_config = {
+            "interaction_middleware": {
+                "enabled": True,
+                "default_enabled_for_platforms": ["webchat"],
+                "platforms": {},
+            },
+            "platform_settings": {
+                "enable_id_white_list": False,
+                "id_whitelist": [],
+            },
+        }
+        runtime_config = {
+            "interaction_middleware": {
+                "enabled": True,
+                "default_enabled_for_platforms": ["webchat"],
+                "platforms": {},
+            },
+            "platform_settings": {
+                "enable_id_white_list": True,
+                "id_whitelist": ["webchat!user!session123"],
+            },
+        }
+        middleware = InteractionMiddleware(default_config, queue, controller)
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.plugin_context.get_config.side_effect = (
+            lambda umo=None: runtime_config
+            if umo == webchat_event.unified_msg_origin
+            else default_config
+        )
+        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
+        middleware.decision_agent.decide = AsyncMock(
+            return_value=InteractionDecision(
+                route_mode=RouteMode.SELF_REPLY,
+                should_emit_immediate_reply=True,
+                immediate_spoken_reply="嗯。",
+                confidence=0.9,
+                reason="self",
+            )
+        )
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch:
+            middleware.handle_inbound(webchat_event)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        assert webchat_event.get_extra("_astrbot_config") == runtime_config
+        assert (
+            dispatch.await_args.kwargs["event"].get_extra("_astrbot_config")
+            == runtime_config
+        )
+
+    @pytest.mark.asyncio
     async def test_self_reply_does_not_persist_conversation_history_inline(
         self,
         webchat_event,

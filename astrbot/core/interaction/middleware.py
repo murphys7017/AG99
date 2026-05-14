@@ -259,6 +259,8 @@ class InteractionMiddleware:
     async def _handle_inbound_async(self, event: AstrMessageEvent) -> None:
         runtime_config = self._get_runtime_config(event)
         self._reject_development_fallback_policy(runtime_config)
+        if isinstance(runtime_config, Mapping):
+            event.set_extra("_astrbot_config", runtime_config)
         interaction_config = load_interaction_agent_config(runtime_config)
         turn_id = uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)

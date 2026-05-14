@@ -73,6 +73,16 @@ from .turn_state import (
 from .types import FinalizerMode, InteractionAgentConfig, RouteMode
 
 
+def _merge_runtime_config(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_runtime_config(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 @dataclass(slots=True)
 class StreamObservationDecision:
     should_interject: bool = False
@@ -136,7 +146,21 @@ class InteractionOutputController:
         if event is not None:
             event_config = event.get_extra("_astrbot_config")
             if isinstance(event_config, Mapping):
+                plugin_config = self._get_plugin_runtime_config(event)
+                if isinstance(plugin_config, Mapping):
+                    return _merge_runtime_config(event_config, plugin_config)
                 return event_config
+        if self.plugin_context is None:
+            return None
+        plugin_config = self._get_plugin_runtime_config(event)
+        if isinstance(plugin_config, Mapping):
+            return plugin_config
+        return None
+
+    def _get_plugin_runtime_config(
+        self,
+        event: AstrMessageEvent | None = None,
+    ) -> Any:
         if self.plugin_context is None:
             return None
         get_config = getattr(self.plugin_context, "get_config", None)
@@ -1006,6 +1030,10 @@ class InteractionOutputController:
             return
         message = MessageChain([Plain(text)])
         message.type = "interaction_stream_reply"
+        (
+            materialized_message,
+            materialization,
+        ) = await self.materialize_immediate_interaction_outbound_message(event, message)
         platform_extras = {
             **self.build_platform_output_extras(
                 event,
@@ -1015,7 +1043,7 @@ class InteractionOutputController:
             "stream_window_index": window_index,
         }
         await self._send_platform_message(
-            message,
+            materialized_message,
             event,
             platform_extras=platform_extras,
             record_send_operation=False,
@@ -1028,6 +1056,7 @@ class InteractionOutputController:
             delivered_message_ids=(
                 [visible_message_id] if visible_message_id else None
             ),
+            metadata=materialization,
             memory_relevant=False,
         )
 

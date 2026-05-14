@@ -1889,6 +1889,127 @@ async def test_tts_materialization_records_record_delivery_but_memory_uses_text(
 
 
 @pytest.mark.asyncio
+async def test_core_reply_tts_merges_default_and_session_config(webchat_event):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "provider_tts_settings": {
+            "enable": True,
+            "trigger_probability": 1.0,
+        },
+    }
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        persist_callback=_mark_completed_callback,
+    )
+    webchat_event.set_extra(
+        "_astrbot_config",
+        {
+            "provider_tts_settings": {
+                "enable": False,
+                "dual_output": False,
+                "use_file_service": False,
+                "trigger_probability": 0.0,
+            },
+            "provider_settings": {},
+            "t2i": False,
+        },
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("semantic answer")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch.object(
+            Record,
+            "convert_to_base64",
+            new=AsyncMock(return_value="dm9pY2U="),
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("semantic answer")]),
+            webchat_event,
+        )
+
+    payload = queue.get_nowait()
+    assert payload["type"] == "record"
+    assert tts_provider.get_audio.await_args.args == ("semantic answer",)
+
+
+@pytest.mark.asyncio
+async def test_streaming_core_chunks_are_not_materialized_per_chunk(webchat_event):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {
+        "provider_tts_settings": {
+            "enable": True,
+            "dual_output": False,
+            "use_file_service": False,
+            "trigger_probability": 1.0,
+        },
+        "provider_settings": {},
+        "t2i": False,
+    }
+    tts_provider = MagicMock()
+    tts_provider.meta.return_value.id = "tts-provider"
+    tts_provider.get_audio = AsyncMock(return_value="voice.wav")
+    plugin_context.get_using_tts_provider.return_value = tts_provider
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.OFF,
+            stream_interjection_enabled=False,
+        ),
+        persist_callback=_mark_completed_callback,
+    )
+
+    async def generator():
+        yield MessageChain([Plain("stream answer")])
+
+    with (
+        patch(
+            "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+            return_value=queue,
+        ),
+        patch.object(
+            Record,
+            "convert_to_base64",
+            new=AsyncMock(return_value="dm9pY2U="),
+        ),
+        patch(
+            "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
+        await controller.capture_streaming(generator(), webchat_event)
+
+    payloads = []
+    while not queue.empty():
+        payloads.append(queue.get_nowait())
+    assert [payload["type"] for payload in payloads] == ["plain", "complete"]
+    tts_provider.get_audio.assert_not_awaited()
+    assert webchat_event.get_extra("_interaction_finalized_turn_material")[
+        "assistant_text"
+    ] == "stream answer"
+
+
+@pytest.mark.asyncio
 async def test_t2i_materialization_records_image_delivery_but_memory_uses_text(
     webchat_event,
 ):
