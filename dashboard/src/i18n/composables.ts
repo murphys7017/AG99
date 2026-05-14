@@ -122,17 +122,28 @@ export function useI18n() {
  */
 export function useModuleI18n(moduleName: string) {
   const { t } = useI18n();
+  const normalizedModuleName = moduleName.replace(/\//g, '.');
+
+  const resolveFullKey = (key: string) => {
+    if (
+      key.startsWith(`${normalizedModuleName}.`)
+      || key.startsWith('core.')
+      || key.startsWith('features.')
+      || key.startsWith('messages.')
+    ) {
+      return key;
+    }
+
+    return `${normalizedModuleName}.${key}`;
+  };
 
   const tm = (key: string, params?: Record<string, string | number>): string => {
-    // 将斜杠转换为点号以匹配嵌套对象结构
-    const normalizedModuleName = moduleName.replace(/\//g, '.');
-    return t(`${normalizedModuleName}.${key}`, params);
+    return t(resolveFullKey(key), params);
   };
 
   // 获取原始翻译值（可能是字符串、数组或对象）
   const getRaw = (key: string): any => {
-    const normalizedModuleName = moduleName.replace(/\//g, '.');
-    const fullKey = `${normalizedModuleName}.${key}`;
+    const fullKey = resolveFullKey(key);
     const keys = fullKey.split('.');
     let value: any = translations.value;
 
