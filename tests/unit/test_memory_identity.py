@@ -174,6 +174,47 @@ async def test_identity_mappings_reload_syncs_yaml_to_sqlite(temp_dir: Path):
     assert reloaded_bindings[0].canonical_user_id == "aki-updated"
 
 
+@pytest.mark.asyncio
+async def test_identity_mappings_reload_uses_config_bindings_before_yaml(
+    temp_dir: Path,
+):
+    config, mappings_path = _write_memory_config(temp_dir)
+    config.identity.bindings = [
+        {
+            "platform_id": "qq",
+            "sender_user_id": "10001",
+            "canonical_user_id": "aki-from-config",
+            "nickname_hint": "aki",
+        }
+    ]
+    _write_identity_yaml(
+        mappings_path,
+        {
+            "bindings": [
+                {
+                    "platform_id": "discord",
+                    "sender_user_id": "aki-user",
+                    "canonical_user_id": "aki-from-yaml",
+                }
+            ]
+        },
+    )
+    store = MemoryStore(config=config)
+    mapping_service = MemoryIdentityMappingService(store, config=config)
+
+    try:
+        count = await mapping_service.reload_from_yaml()
+        bindings = await store.list_all_identity_mappings()
+    finally:
+        await store.close()
+
+    assert count == 1
+    assert len(bindings) == 1
+    assert bindings[0].platform_user_key == "qq:10001"
+    assert bindings[0].canonical_user_id == "aki-from-config"
+    assert bindings[0].nickname_hint == "aki"
+
+
 def test_identity_mappings_validate_rejects_duplicate_platform_user_key(temp_dir: Path):
     config, mappings_path = _write_memory_config(temp_dir)
     _write_identity_yaml(
@@ -527,6 +568,23 @@ def test_identity_mappings_validate_rejects_non_list_payload(temp_dir: Path):
 
     with pytest.raises(ValueError, match="field `bindings` must be a list"):
         mapping_service.validate_yaml()
+
+
+def test_identity_mapping_service_bind_rejects_yaml_write_for_config_bindings(
+    temp_dir: Path,
+):
+    config, _ = _write_memory_config(temp_dir)
+    config.identity.bindings = []
+    store = MemoryStore(config=config)
+    mapping_service = MemoryIdentityMappingService(store, config=config)
+
+    with pytest.raises(RuntimeError, match="configured in Web config"):
+        mapping_service.upsert_binding_in_yaml(
+            "qq",
+            "10001",
+            "aki",
+            nickname_hint=None,
+        )
 
 
 @pytest.mark.asyncio

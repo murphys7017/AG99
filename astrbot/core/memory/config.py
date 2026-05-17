@@ -218,6 +218,7 @@ class MemoryStorageConfig:
 @dataclass(slots=True)
 class MemoryIdentityConfig:
     enabled: bool = True
+    bindings: list[dict[str, str]] | None = None
     mappings_path: Path = field(
         default_factory=lambda: resolve_memory_path(
             "data/memory/identity_mappings.yaml"
@@ -584,6 +585,11 @@ def load_memory_config(
         enabled=_as_bool(payload.get("enabled"), True),
         identity=MemoryIdentityConfig(
             enabled=_as_bool(identity_payload.get("enabled"), True),
+            bindings=(
+                identity_payload.get("bindings")
+                if isinstance(identity_payload.get("bindings"), list)
+                else None
+            ),
             mappings_path=resolve_memory_path(
                 _as_str(
                     identity_payload.get("mappings_path"),

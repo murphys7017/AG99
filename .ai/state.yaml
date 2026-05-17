@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: medium
-  phase: frontend_i18n_validated
-  scope: memory standard/advanced provider split and simplified Web config
+  phase: identity_bindings_config_validated
+  scope: memory standard/advanced provider split, simplified Web config, and Web-editable identity mappings
 context:
   confidence: high
   assumptions:
@@ -10,6 +10,7 @@ context:
     - Consolidation and long-term memory analyzers should use the advanced memory provider.
     - Advanced memory provider should fall back to standard provider when left empty.
     - Existing per-analyzer provider_id values should remain as legacy fallbacks when standard/advanced providers are empty.
+    - memory.identity.bindings should take precedence over the legacy identity_mappings.yaml file when present in Web config.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -17,6 +18,7 @@ architecture:
     - Memory analysis now supports standard_provider_id and advanced_provider_id.
     - Analyzer provider resolution prefers standard/advanced providers and falls back to legacy per-analyzer provider_id values.
     - Memory Web config now exposes a simplified basic/models/advanced layout.
+    - Memory identity mappings can be edited through memory.identity.bindings while legacy YAML remains as a fallback.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py -q
@@ -25,6 +27,9 @@ verification:
     - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/zh-CN/features/config-metadata.json
     - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/en-US/features/config-metadata.json
     - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/ru-RU/features/config-metadata.json
+    - .venv\Scripts\python -m pytest tests/unit/test_memory_identity.py tests/unit/test_memory_config.py -q
+    - .venv\Scripts\python -m ruff check astrbot/core/config/default.py astrbot/core/memory/config.py astrbot/core/memory/identity.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_config.py tests/unit/test_memory_identity.py
+    - pnpm build
   checks_failed: []
   validation_gap: pytest still reports existing SwigPy* deprecation warnings
 runtime:

@@ -4329,6 +4329,41 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "collapsed": True,
                     },
+                    "memory.identity.bindings": {
+                        "description": "身份映射",
+                        "type": "template_list",
+                        "default": [],
+                        "templates": {
+                            "binding": {
+                                "name": "绑定账号",
+                                "description": "把某个平台用户绑定到同一个记忆身份。",
+                                "items": {
+                                    "platform_id": {
+                                        "description": "平台 ID",
+                                        "type": "string",
+                                        "default": "",
+                                    },
+                                    "sender_user_id": {
+                                        "description": "用户 ID",
+                                        "type": "string",
+                                        "default": "",
+                                    },
+                                    "canonical_user_id": {
+                                        "description": "记忆身份 ID",
+                                        "type": "string",
+                                        "default": "",
+                                    },
+                                    "nickname_hint": {
+                                        "description": "昵称备注",
+                                        "type": "string",
+                                        "default": "",
+                                    },
+                                },
+                            }
+                        },
+                        "hint": "在这里维护跨平台账号绑定。平台 ID 通常是 qq、webchat、discord 等；用户 ID 是平台侧用户 ID；记忆身份 ID 相同的账号会共享同一份记忆。",
+                        "collapsed": True,
+                    },
                     "memory.vector_index.enabled": {
                         "description": "启用向量索引",
                         "type": "bool",

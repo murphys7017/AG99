@@ -1443,6 +1443,28 @@
           "enabled": {
             "description": "Enable Identity Mapping"
           },
+          "bindings": {
+            "description": "Identity Mappings",
+            "hint": "Maintain cross-platform account bindings here. Platform ID is usually qq, webchat, discord, and similar; User ID is the platform-side user ID; accounts with the same Memory Identity ID share one memory identity.",
+            "templates": {
+              "binding": {
+                "name": "Bind Account",
+                "hint": "Bind one platform user to a shared memory identity.",
+                "platform_id": {
+                  "description": "Platform ID"
+                },
+                "sender_user_id": {
+                  "description": "User ID"
+                },
+                "canonical_user_id": {
+                  "description": "Memory Identity ID"
+                },
+                "nickname_hint": {
+                  "description": "Nickname Note"
+                }
+              }
+            }
+          },
           "mappings_path": {
             "description": "Identity Mapping File Path"
           }

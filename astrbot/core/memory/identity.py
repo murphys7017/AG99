@@ -38,8 +38,15 @@ class MemoryIdentityMappingService:
     async def reload_from_yaml(self) -> int:
         if not self.config.identity.enabled:
             return await self.store.sync_identity_mappings([])
-        bindings = self.load_bindings_from_yaml()
+        bindings = self.load_bindings()
         return await self.store.sync_identity_mappings(bindings)
+
+    def load_bindings(self) -> list[MemoryIdentityBinding]:
+        if self.config.identity.bindings is not None:
+            return self._parse_bindings_payload(
+                {"bindings": self.config.identity.bindings}
+            )
+        return self.load_bindings_from_yaml()
 
     def load_bindings_from_yaml(self) -> list[MemoryIdentityBinding]:
         payload = self._load_yaml_payload()
@@ -90,6 +97,11 @@ class MemoryIdentityMappingService:
         canonical_user_id: str,
         nickname_hint: str | None = None,
     ) -> MemoryIdentityBinding:
+        if self.config.identity.bindings is not None:
+            raise RuntimeError(
+                "memory identity mappings are configured in Web config; "
+                "edit memory.identity.bindings instead of the YAML file"
+            )
         binding = self._build_binding(
             platform_id=platform_id,
             sender_user_id=sender_user_id,
@@ -110,6 +122,11 @@ class MemoryIdentityMappingService:
         return binding
 
     def remove_binding_from_yaml(self, platform_user_key: str) -> bool:
+        if self.config.identity.bindings is not None:
+            raise RuntimeError(
+                "memory identity mappings are configured in Web config; "
+                "edit memory.identity.bindings instead of the YAML file"
+            )
         bindings = self.load_bindings_from_yaml()
         filtered = [
             binding

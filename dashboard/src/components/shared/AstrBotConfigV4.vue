@@ -106,7 +106,11 @@ function setValueBySelector(obj, selector, value) {
 function createSelectorModel(selector) {
   return computed({
     get() {
-      return getValueBySelector(props.iterable, selector)
+      const value = getValueBySelector(props.iterable, selector)
+      if (value === undefined && props.metadata?.[props.metadataKey]?.items?.[selector]?.type === 'template_list') {
+        return props.metadata[props.metadataKey].items[selector]?.default || []
+      }
+      return value
     },
     set(value) {
       setValueBySelector(props.iterable, selector, value)

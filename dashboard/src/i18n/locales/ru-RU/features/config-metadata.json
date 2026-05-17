@@ -1444,6 +1444,28 @@
                     "enabled": {
                         "description": "Включить сопоставление идентичностей"
                     },
+                    "bindings": {
+                        "description": "Сопоставления идентичностей",
+                        "hint": "Здесь можно поддерживать привязки аккаунтов между платформами. Platform ID обычно qq, webchat, discord и т.п.; User ID — ID пользователя на платформе; аккаунты с одинаковым ID памяти используют одну память.",
+                        "templates": {
+                            "binding": {
+                                "name": "Привязать аккаунт",
+                                "hint": "Привязать пользователя платформы к общей идентичности памяти.",
+                                "platform_id": {
+                                    "description": "Platform ID"
+                                },
+                                "sender_user_id": {
+                                    "description": "User ID"
+                                },
+                                "canonical_user_id": {
+                                    "description": "ID памяти"
+                                },
+                                "nickname_hint": {
+                                    "description": "Заметка о нике"
+                                }
+                            }
+                        }
+                    },
                     "mappings_path": {
                         "description": "Путь к файлу сопоставления идентичностей"
                     }
