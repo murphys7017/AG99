@@ -2189,6 +2189,12 @@ CONFIG_METADATA_2 = {
                         "description": "API Base URL",
                         "type": "string",
                     },
+                    "input_type": {
+                        "description": "输入类型",
+                        "type": "string",
+                        "hint": "Embedding 请求的输入类型。NVIDIA Embedding 常用 passage 或 query。",
+                        "options": ["passage", "query"],
+                    },
                     "volcengine_cluster": {
                         "type": "string",
                         "description": "火山引擎集群",
