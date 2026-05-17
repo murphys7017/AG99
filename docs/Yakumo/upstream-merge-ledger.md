@@ -31,6 +31,7 @@ Current local upstream-sync commits:
 - `6096253d` Polish dashboard input and status handling
 - `a1e4240d` Auto-select Shipyard Neo profiles by default
 - `8cbb60d4` Expose embedding input type setting
+- Pending commit in current sync batch: provider streaming empty-assistant filtering, Discord command quota startup guard, Weixin OC session-timeout login-state reset.
 
 Recently absorbed by rewrite:
 
@@ -46,6 +47,14 @@ Recently absorbed by rewrite:
   - Chat upload filename sanitization, IME Enter guard, provider status test error display, console auto-scroll sync, console log layout improvements.
 - Shipyard Neo:
   - Empty profile now means auto-select; any non-empty explicit profile is honored.
+- 2026-05-18 follow-up review found these upstream fixes already present in this fork before this batch:
+  - Windows updater zip root path normalization.
+  - Blank prompt skipping knowledge-base retrieval.
+  - Startup warning when default chat provider is missing or invalid.
+  - Anthropic custom headers and system-prompt compatibility.
+  - OpenRouter `reasoning` key override.
+  - Empty-string reasoning content support.
+  - Telegram media group scheduled-job exception logging.
 
 ### Topic Merge Plan
 
@@ -53,9 +62,9 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 
 | Topic | Status | Upstream examples | Local action | Next check |
 | --- | --- | --- | --- | --- |
-| Security fixes | In progress | Upload path traversal, backup importer traversal, password policy, updater zip root path | Upload filename sanitization was absorbed; older backup-importer handling was previously marked absorbed. Password policy and updater behavior still need a dedicated review against local auth/updater changes. | Review `7ddf6371`, `d1059cd5`, and related auth/updater commits. |
-| Provider and model runtime | In progress | OpenAI http client, reasoning content, Claude no-arg tools, MiniMax TTS, Embedding providers, Anthropic compatibility | Several small compatibility fixes were rewritten locally. | Review remaining provider commits for Anthropic/custom headers, OpenRouter reasoning key, empty assistant streaming, default provider warning. |
-| Platform adapters and outbound media | In progress | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin send failure, and message-tool path handling were absorbed. | Prioritize Weixin session timeout, Telegram/Discord safety fixes, then evaluate KOOK/Dingtalk/Feishu as feature work. |
+| Security fixes | In progress | Upload path traversal, backup importer traversal, password policy, updater zip root path | Upload filename sanitization was absorbed; older backup-importer and updater zip-root handling are already present. Password policy remains deferred because upstream `7ddf6371` is a broad auth/onboarding/storage migration, not a small patch. | Review password setup/password hashing as a dedicated auth migration batch. |
+| Provider and model runtime | In progress | OpenAI http client, reasoning content, Claude no-arg tools, MiniMax TTS, Embedding providers, Anthropic compatibility | Several small compatibility fixes were rewritten locally. This batch adds shared empty-assistant sanitization to both non-streaming and streaming OpenAI-compatible requests. | After commit, re-run `git cherry` triage and review provider warning/default-model edge cases only if behavior differs locally. |
+| Platform adapters and outbound media | In progress | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin send failure, Telegram media group logging, and message-tool path handling were absorbed. This batch adds Discord command-quota startup guard and Weixin OC session timeout cleanup. | Evaluate KOOK/Dingtalk/Feishu as feature work after stability fixes. |
 | Dashboard UX and WebUI | In progress | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX | IME, console, upload sanitization, and provider test feedback were absorbed. Inline edit/regenerate remains intentionally deferred. | Review Noto Sans/font stack and initial password UX because they are low-risk user-facing polish. |
 | Plugin system | In progress | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Basic `pages` metadata and install cleanup were absorbed. | Review dynamic plugin API routes and plugin update/changelog/storage changes as one feature batch. |
 | Knowledge base and retrieval | Deferred | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, Firecrawl search tools | Firecrawl config/tool hook had been absorbed in the earlier review; FTS5/EPUB remain deferred due storage/retrieval impact. | Review blank-prompt skip as a small bugfix; keep FTS5/EPUB as a dedicated migration task. |
