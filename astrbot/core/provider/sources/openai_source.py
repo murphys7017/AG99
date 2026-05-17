@@ -526,6 +526,36 @@ class ProviderOpenAIOfficial(Provider):
         except NotFoundError as e:
             raise Exception(f"获取模型列表失败：{e}")
 
+    @staticmethod
+    def _sanitize_assistant_messages(payloads: dict) -> None:
+        """Filter or normalize empty assistant messages before API requests."""
+        messages = payloads.get("messages")
+        if not isinstance(messages, list):
+            return
+
+        def _is_empty(content: Any) -> bool:
+            return content is None or content == "" or content == []
+
+        cleaned_messages: list[Any] = []
+        for idx, msg in enumerate(messages):
+            if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                cleaned_messages.append(msg)
+                continue
+
+            content = msg.get("content")
+            tool_calls = msg.get("tool_calls")
+
+            if _is_empty(content) and not tool_calls:
+                logger.warning(f"过滤第 {idx} 条空 assistant 消息 (无工具调用)")
+                continue
+
+            if _is_empty(content) and tool_calls:
+                msg["content"] = None
+
+            cleaned_messages.append(msg)
+
+        payloads["messages"] = cleaned_messages
+
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         if tools:
             model = payloads.get("model", "").lower()
@@ -555,26 +585,7 @@ class ProviderOpenAIOfficial(Provider):
 
         model = payloads.get("model", "").lower()
 
-        if "messages" in payloads and isinstance(payloads["messages"], list):
-            cleaned_messages = []
-            for idx, msg in enumerate(payloads["messages"]):
-                # 过滤空的 assistant 消息，防止严格 API（如 Moonshot）返回 400 错误
-                if msg.get("role") == "assistant":
-                    content = msg.get("content")
-                    tool_calls = msg.get("tool_calls")
-
-                    # 情况1: 空/null content 且无 tool_calls -> 过滤掉
-                    if not tool_calls and (content == "" or content is None):
-                        logger.warning(f"过滤第 {idx} 条空 assistant 消息 (无工具调用)")
-                        continue
-
-                    # 情况2: 空 content 但有 tool_calls -> 设为 None (符合 OpenAI 规范)
-                    if content == "" and tool_calls:
-                        msg["content"] = None
-
-                cleaned_messages.append(msg)
-
-            payloads["messages"] = cleaned_messages
+        self._sanitize_assistant_messages(payloads)
 
         completion = await self.client.chat.completions.create(
             **payloads,
@@ -625,6 +636,7 @@ class ProviderOpenAIOfficial(Provider):
         for key in to_del:
             del payloads[key]
         self._apply_provider_specific_extra_body_overrides(extra_body)
+        self._sanitize_assistant_messages(payloads)
 
         stream = await self.client.chat.completions.create(
             **payloads,
