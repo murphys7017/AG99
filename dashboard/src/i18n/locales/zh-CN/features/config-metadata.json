@@ -1798,11 +1798,21 @@
       "embedding_api_base": {
         "description": "API Base URL"
       },
+      "input_type": {
+        "description": "输入类型",
+        "hint": "Embedding 请求的输入类型。NVIDIA Embedding 常用 passage 或 query。"
+      },
       "openai_embedding": {
         "hint": "如果测试不通过，可以尝试添加 /v1 在末尾以兼容部分 OpenAI API 版本。"
       },
       "gemini_embedding": {
         "hint": "Gemini Embedding 无需手动添加 /v1beta。"
+      },
+      "nvidia_embedding": {
+        "hint": "使用 NVIDIA NIM Embedding API。默认 Base URL 会自动拼接 /embeddings。"
+      },
+      "ollama_embedding": {
+        "hint": "使用本地或远程 Ollama /api/embed 接口。默认地址为 http://localhost:11434。"
       },
       "volcengine_cluster": {
         "description": "火山引擎集群",

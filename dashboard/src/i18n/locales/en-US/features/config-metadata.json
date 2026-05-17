@@ -1796,11 +1796,21 @@
       "embedding_api_base": {
         "description": "API Base URL"
       },
+      "input_type": {
+        "description": "Input type",
+        "hint": "Embedding request input type. NVIDIA Embedding commonly uses passage or query."
+      },
       "openai_embedding": {
         "hint": "If testing fails, try adding /v1 at the end to be compatible with some OpenAI API versions."
       },
       "gemini_embedding": {
         "hint": "Gemini Embedding does not require manually adding /v1beta."
+      },
+      "nvidia_embedding": {
+        "hint": "Use the NVIDIA NIM Embedding API. The default Base URL is joined with /embeddings automatically."
+      },
+      "ollama_embedding": {
+        "hint": "Use a local or remote Ollama /api/embed endpoint. The default address is http://localhost:11434."
       },
       "volcengine_cluster": {
         "description": "Volcengine cluster",

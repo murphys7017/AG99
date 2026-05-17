@@ -1793,11 +1793,21 @@
             "embedding_api_base": {
                 "description": "Адрес прокси-сервера"
             },
+            "input_type": {
+                "description": "Тип ввода",
+                "hint": "Тип ввода для запроса эмбеддингов. Для NVIDIA Embedding обычно используется passage или query."
+            },
             "openai_embedding": {
                 "hint": "Если тест не проходит, попробуйте добавить /v1 в конец embedding_api_base для совместимости с некоторыми версиями OpenAI API."
             },
             "gemini_embedding": {
                 "hint": "Gemini Embedding не требует ручного добавления /v1beta."
+            },
+            "nvidia_embedding": {
+                "hint": "Использует NVIDIA NIM Embedding API. К Base URL автоматически добавляется /embeddings."
+            },
+            "ollama_embedding": {
+                "hint": "Использует локальный или удаленный endpoint Ollama /api/embed. Адрес по умолчанию: http://localhost:11434."
             },
             "volcengine_cluster": {
                 "description": "Кластер Volcengine",
