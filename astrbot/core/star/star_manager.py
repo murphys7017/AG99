@@ -520,6 +520,9 @@ class PluginManager:
                     else None
                 ),
                 i18n=PluginManager._load_plugin_i18n(plugin_path),
+                pages=metadata["pages"]
+                if isinstance(metadata.get("pages"), list)
+                else [],
             )
 
         return metadata
@@ -1794,6 +1797,7 @@ class PluginManager:
             dir=self.plugin_store_path, prefix="plugin_upload_"
         )
         temp_desti_dir = desti_dir
+        skip_failed_tracking = False
 
         try:
             self.updator.unzip_file(zip_file_path, desti_dir)
@@ -1803,6 +1807,7 @@ class PluginManager:
                 metadata_dir_name,
             )
             if target_plugin_path != desti_dir and os.path.exists(target_plugin_path):
+                skip_failed_tracking = True
                 raise Exception(f"安装失败：目录 {metadata_dir_name} 已存在。")
             if target_plugin_path != desti_dir:
                 os.rename(desti_dir, target_plugin_path)
@@ -1866,17 +1871,20 @@ class PluginManager:
 
             return plugin_info
         except Exception as e:
-            self._track_failed_install_dir(
-                dir_name=dir_name,
-                plugin_path=desti_dir,
-                error=e,
-            )
+            if not skip_failed_tracking:
+                self._track_failed_install_dir(
+                    dir_name=dir_name,
+                    plugin_path=desti_dir,
+                    error=e,
+                )
             logger.warning(
                 f"安装插件 {dir_name} 失败，插件安装目录：{desti_dir}",
             )
             raise
         finally:
-            if temp_desti_dir != desti_dir and os.path.isdir(temp_desti_dir):
+            if (skip_failed_tracking or temp_desti_dir != desti_dir) and os.path.isdir(
+                temp_desti_dir
+            ):
                 try:
                     remove_dir(temp_desti_dir)
                 except Exception as e:
