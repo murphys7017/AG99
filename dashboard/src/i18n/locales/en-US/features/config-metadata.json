@@ -1111,8 +1111,8 @@
   "memory_group": {
     "name": "Memory",
     "general": {
-      "description": "Master Switches",
-      "hint": "These settings are stored in the memory field of the main config JSON, and the Memory runtime reads from the same field.",
+      "description": "Basic",
+      "hint": "Memory updates short-term memory after conversations and organizes it into long-term memory according to the configuration.",
       "memory": {
         "enabled": {
           "description": "Enable Memory"
@@ -1127,6 +1127,11 @@
             "description": "Enable Long-Term Memory"
           }
         },
+        "persona": {
+          "enabled": {
+            "description": "Enable Persona Reflection"
+          }
+        },
         "analysis": {
           "enabled": {
             "description": "Enable Memory Analysis"
@@ -1134,6 +1139,28 @@
           "strict": {
             "description": "Strict Analysis Mode",
             "hint": "When enabled, analyzer configuration errors or invalid outputs fail explicitly."
+          }
+        }
+      }
+    },
+    "models": {
+      "description": "Models",
+      "hint": "The standard model handles frequent lightweight tasks; the advanced model handles consolidation, extraction, and long-term memory writing. When the advanced model is empty, the standard model is used.",
+      "memory": {
+        "analysis": {
+          "standard_provider_id": {
+            "description": "Standard Memory Model",
+            "hint": "Used for topic detection, focus extraction, and short-term summaries."
+          },
+          "advanced_provider_id": {
+            "description": "Advanced Memory Model",
+            "hint": "Used for session insights, experience extraction, long-term memory decisions, and writing. Uses the standard memory model when empty."
+          }
+        },
+        "vector_index": {
+          "provider_id": {
+            "description": "Embedding Provider",
+            "hint": "Provider instance ID used to generate memory vectors."
           }
         }
       }
@@ -1380,6 +1407,68 @@
         "analysis": {
           "prompts_root": {
             "description": "Memory Analysis Prompt Directory"
+          }
+        }
+      }
+    },
+    "advanced": {
+      "description": "Advanced Configuration",
+      "hint": "Usually no changes are needed. Use this only when debugging Memory behavior, migrating data directories, or overriding individual analyzers.",
+      "memory": {
+        "analysis": {
+          "enabled": {
+            "description": "Enable Memory Analysis"
+          },
+          "analyzers": {
+            "description": "Full Analyzer Configuration"
+          },
+          "stages": {
+            "description": "Full Analysis Stage Configuration"
+          },
+          "prompts_root": {
+            "description": "Memory Analysis Prompt Directory"
+          }
+        },
+        "short_term": {
+          "enabled": {
+            "description": "Enable Short-Term Memory"
+          }
+        },
+        "consolidation": {
+          "enabled": {
+            "description": "Enable Memory Consolidation"
+          }
+        },
+        "identity": {
+          "enabled": {
+            "description": "Enable Identity Mapping"
+          },
+          "mappings_path": {
+            "description": "Identity Mapping File Path"
+          }
+        },
+        "vector_index": {
+          "enabled": {
+            "description": "Enable Vector Index"
+          },
+          "root_dir": {
+            "description": "Vector Index Directory"
+          }
+        },
+        "storage": {
+          "sqlite_path": {
+            "description": "SQLite Database Path"
+          },
+          "docs_root": {
+            "description": "Long-Term Memory Documents Directory"
+          },
+          "projections_root": {
+            "description": "Experience Projection Directory"
+          }
+        },
+        "persona": {
+          "enabled": {
+            "description": "Enable Persona Reflection"
           }
         }
       }

@@ -1,7 +1,7 @@
 task:
   class: feature
   risk: medium
-  phase: validated
+  phase: frontend_i18n_validated
   scope: memory standard/advanced provider split and simplified Web config
 context:
   confidence: high
@@ -22,6 +22,9 @@ verification:
     - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py -q
     - .venv\Scripts\python -m ruff check astrbot/core/config/default.py astrbot/core/memory/analyzer_manager.py astrbot/core/memory/config.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py
     - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_memory_store.py tests/unit/test_memory_identity.py tests/unit/test_memory_runtime.py tests/unit/test_config.py -q
+    - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/zh-CN/features/config-metadata.json
+    - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/en-US/features/config-metadata.json
+    - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/ru-RU/features/config-metadata.json
   checks_failed: []
   validation_gap: pytest still reports existing SwigPy* deprecation warnings
 runtime:
