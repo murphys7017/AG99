@@ -97,7 +97,11 @@ class MemoryAnalyzerManager:
                 f"is not registered for `{analyzer_name}`"
             )
 
-        provider = await self._resolve_provider(analyzer_name, analyzer_config)
+        provider_id, provider_tier = self._resolve_provider_id(
+            analyzer_name,
+            analyzer_config,
+        )
+        provider = await self._resolve_provider(analyzer_name, provider_id)
         prompt_path = self._resolve_prompt_path(analyzer_name, analyzer_config)
         prompt_template = prompt_path.read_text(encoding="utf-8")
         request = MemoryAnalyzerRequest(
@@ -107,7 +111,7 @@ class MemoryAnalyzerManager:
             prompt_template=prompt_template,
             prompt_path=prompt_path,
             provider=provider,
-            provider_id=analyzer_config.provider_id,
+            provider_id=provider_id,
             model=None,
             output_schema=analyzer_config.output_schema,
             timeout_seconds=analyzer_config.timeout_seconds,
@@ -117,10 +121,11 @@ class MemoryAnalyzerManager:
             conversation_id=conversation_id,
         )
         logger.info(
-            "memory analyzer execution started: analyzer=%s implementation=%s provider_id=%s stage=%s",
+            "memory analyzer execution started: analyzer=%s implementation=%s provider_id=%s provider_tier=%s stage=%s",
             analyzer_name,
             analyzer_config.implementation,
-            analyzer_config.provider_id,
+            provider_id,
+            provider_tier,
             stage,
         )
         result = await implementation.analyze(request)
@@ -145,38 +150,59 @@ class MemoryAnalyzerManager:
             raise MemoryAnalyzerConfigurationError(
                 f"memory analyzer `{analyzer_name}` is disabled"
             )
-        if not analyzer_config.provider_id:
-            raise MemoryAnalyzerConfigurationError(
-                f"memory analyzer `{analyzer_name}` has no provider_id configured"
-            )
         if not analyzer_config.prompt_file:
             raise MemoryAnalyzerConfigurationError(
                 f"memory analyzer `{analyzer_name}` has no prompt_file configured"
             )
         return analyzer_config
 
-    async def _resolve_provider(
+    def _resolve_provider_id(
         self,
         analyzer_name: str,
         analyzer_config: MemoryAnalyzerConfig,
+    ) -> tuple[str, str]:
+        if analyzer_name in self.analysis_config.advanced_analyzers:
+            if self.analysis_config.advanced_provider_id:
+                return self.analysis_config.advanced_provider_id, "advanced"
+            if self.analysis_config.standard_provider_id:
+                return self.analysis_config.standard_provider_id, "standard_fallback"
+            if analyzer_config.provider_id:
+                return analyzer_config.provider_id, "legacy_custom"
+            raise MemoryAnalyzerConfigurationError(
+                "memory advanced analyzer provider is not configured; "
+                "please set memory.analysis.advanced_provider_id or "
+                "memory.analysis.standard_provider_id"
+            )
+
+        if self.analysis_config.standard_provider_id:
+            return self.analysis_config.standard_provider_id, "standard"
+        if analyzer_config.provider_id:
+            return analyzer_config.provider_id, "legacy_custom"
+        raise MemoryAnalyzerConfigurationError(
+            "memory standard analyzer provider is not configured; "
+            "please set memory.analysis.standard_provider_id"
+        )
+
+    async def _resolve_provider(
+        self,
+        analyzer_name: str,
+        provider_id: str,
     ) -> Provider:
         if self.provider_manager is None:
             raise MemoryAnalyzerProviderError(
                 "memory analyzer manager is not bound to ProviderManager"
             )
 
-        provider = await self.provider_manager.get_provider_by_id(
-            analyzer_config.provider_id
-        )
+        provider = await self.provider_manager.get_provider_by_id(provider_id)
         if provider is None:
             raise MemoryAnalyzerProviderError(
                 f"memory analyzer `{analyzer_name}` provider "
-                f"`{analyzer_config.provider_id}` was not found"
+                f"`{provider_id}` was not found"
             )
         if not isinstance(provider, Provider):
             raise MemoryAnalyzerProviderError(
                 f"memory analyzer `{analyzer_name}` provider "
-                f"`{analyzer_config.provider_id}` is not a chat provider"
+                f"`{provider_id}` is not a chat provider"
             )
         return provider
 

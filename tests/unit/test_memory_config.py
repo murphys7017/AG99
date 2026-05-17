@@ -83,6 +83,8 @@ def test_load_memory_config_creates_missing_file_and_uses_defaults(
         config.analysis.analyzers["topic_v1"].provider_id
         == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
     )
+    assert config.analysis.standard_provider_id == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
+    assert config.analysis.advanced_provider_id == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
     assert config.analysis.analyzers["topic_v1"].model is None
 
 
@@ -125,6 +127,8 @@ def test_load_memory_config_reads_explicit_values(temp_dir: Path, monkeypatch):
                 "analysis:",
                 "  enabled: true",
                 "  strict: true",
+                '  standard_provider_id: "memory-standard"',
+                '  advanced_provider_id: "memory-advanced"',
                 '  prompts_root: "custom/prompts"',
                 "  analyzers:",
                 "    emotion_v1:",
@@ -167,6 +171,8 @@ def test_load_memory_config_reads_explicit_values(temp_dir: Path, monkeypatch):
     assert config.keyword_extraction.top_k == 5
     assert config.analysis.enabled is True
     assert config.analysis.strict is True
+    assert config.analysis.standard_provider_id == "memory-standard"
+    assert config.analysis.advanced_provider_id == "memory-advanced"
     assert config.analysis.prompts_root == (
         temp_dir / "astrbot-root" / "custom/prompts"
     )
@@ -203,6 +209,14 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     assert payload["keyword_extraction"]["implementation"] == "jieba_tfidf"
     assert payload["keyword_extraction"]["top_k"] == 12
     assert payload["analysis"]["prompts_root"] == "data/memory/prompts"
+    assert (
+        payload["analysis"]["standard_provider_id"]
+        == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
+    )
+    assert (
+        payload["analysis"]["advanced_provider_id"]
+        == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
+    )
     assert (
         payload["short_term"]["recent_turns_window"]
         == default_config.short_term.recent_turns_window

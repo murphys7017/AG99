@@ -7,10 +7,12 @@ from pathlib import Path
 import yaml
 
 from astrbot.core.memory_config_defaults import (
+    DEFAULT_MEMORY_ADVANCED_ANALYZER_NAMES,
     DEFAULT_MEMORY_ANALYSIS_STAGES,
     DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
     DEFAULT_MEMORY_ANALYZER_SPECS,
     DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION,
+    DEFAULT_MEMORY_STANDARD_ANALYZER_NAMES,
     build_default_memory_config_payload,
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_root
@@ -298,6 +300,10 @@ class MemoryAnalysisStageConfig:
 class MemoryAnalysisConfig:
     enabled: bool = True
     strict: bool = True
+    standard_provider_id: str = DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
+    advanced_provider_id: str = DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
+    standard_analyzers: tuple[str, ...] = DEFAULT_MEMORY_STANDARD_ANALYZER_NAMES
+    advanced_analyzers: tuple[str, ...] = DEFAULT_MEMORY_ADVANCED_ANALYZER_NAMES
     prompts_root: Path = field(
         default_factory=lambda: resolve_memory_path("data/memory/prompts")
     )
@@ -679,6 +685,14 @@ def load_memory_config(
         analysis=MemoryAnalysisConfig(
             enabled=_as_bool(analysis_payload.get("enabled"), True),
             strict=_as_bool(analysis_payload.get("strict"), True),
+            standard_provider_id=_as_str(
+                analysis_payload.get("standard_provider_id"),
+                DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
+            ),
+            advanced_provider_id=_as_str(
+                analysis_payload.get("advanced_provider_id"),
+                DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
+            ),
             prompts_root=resolve_memory_path(
                 _as_str(analysis_payload.get("prompts_root"), "data/memory/prompts")
             ),

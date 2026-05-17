@@ -17,8 +17,8 @@ from astrbot.core.provider.provider import Provider
 
 
 class DummyProvider(Provider):
-    def __init__(self) -> None:
-        super().__init__({"id": "memory-lite", "type": "openai"}, {})
+    def __init__(self, provider_id: str = "memory-lite") -> None:
+        super().__init__({"id": provider_id, "type": "openai"}, {})
         self.last_prompt = ""
         self.last_model = None
         self.last_temperature = None
@@ -66,13 +66,20 @@ class DummyProvider(Provider):
 
 
 class DummyProviderManager:
-    def __init__(self, provider: Provider | None) -> None:
-        self.provider = provider
+    def __init__(self, provider: Provider | list[Provider] | None) -> None:
+        if isinstance(provider, list):
+            self.providers = {
+                item.provider_config.get("id"): item
+                for item in provider
+                if item.provider_config.get("id")
+            }
+        elif provider is None:
+            self.providers = {}
+        else:
+            self.providers = {provider.provider_config.get("id"): provider}
 
     async def get_provider_by_id(self, provider_id: str):
-        if self.provider and self.provider.provider_config.get("id") == provider_id:
-            return self.provider
-        return None
+        return self.providers.get(provider_id)
 
 
 def test_render_prompt_template_preserves_json_braces():
@@ -221,7 +228,7 @@ async def test_memory_analyzer_manager_requires_prompt_file(
 
 
 @pytest.mark.asyncio
-async def test_memory_analyzer_manager_requires_provider_id_configuration(
+async def test_memory_analyzer_manager_requires_standard_provider_configuration(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -252,9 +259,191 @@ async def test_memory_analyzer_manager_requires_provider_id_configuration(
 
     with pytest.raises(
         MemoryAnalyzerConfigurationError,
-        match="has no provider_id configured",
+        match="standard analyzer provider is not configured",
     ):
         await manager.dispatch_stage("short_term_update", payload={"text": "hello"})
+
+
+@pytest.mark.asyncio
+async def test_memory_analyzer_manager_uses_standard_provider_for_short_term(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir / "astrbot-root"))
+    config_path = temp_dir / "memory-config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  enabled: true",
+                '  standard_provider_id: "memory-standard"',
+                '  advanced_provider_id: "memory-advanced"',
+                '  prompts_root: "custom/prompts"',
+                "  analyzers:",
+                "    focus_v1:",
+                '      implementation: "prompt_json"',
+                '      prompt_file: "focus_v1.md"',
+                '      output_schema: "ShortTermFocusResult"',
+                "  stages:",
+                "    short_term_update:",
+                '      analyzers: ["focus_v1"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = load_memory_config(config_path)
+    prompt_path = config.analysis.prompts_root / "focus_v1.md"
+    prompt_path.write_text("Analyze focus: {text}", encoding="utf-8")
+    standard_provider = DummyProvider("memory-standard")
+    advanced_provider = DummyProvider("memory-advanced")
+    manager = MemoryAnalyzerManager(config.analysis)
+    manager.bind_provider_manager(
+        DummyProviderManager([standard_provider, advanced_provider])
+    )
+
+    results = await manager.dispatch_stage(
+        "short_term_update",
+        payload={"text": "hello"},
+    )
+
+    assert results["focus_v1"].provider_id == "memory-standard"
+    assert standard_provider.last_prompt.startswith("Analyze focus: hello")
+    assert advanced_provider.last_prompt == ""
+
+
+@pytest.mark.asyncio
+async def test_memory_analyzer_manager_uses_advanced_provider_for_heavy_analysis(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir / "astrbot-root"))
+    config_path = temp_dir / "memory-config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  enabled: true",
+                '  standard_provider_id: "memory-standard"',
+                '  advanced_provider_id: "memory-advanced"',
+                '  prompts_root: "custom/prompts"',
+                "  analyzers:",
+                "    session_insight_v1:",
+                '      implementation: "prompt_json"',
+                '      prompt_file: "session_insight_v1.md"',
+                '      output_schema: "SessionInsightResult"',
+                "  stages:",
+                "    session_insight_update:",
+                '      analyzers: ["session_insight_v1"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = load_memory_config(config_path)
+    prompt_path = config.analysis.prompts_root / "session_insight_v1.md"
+    prompt_path.write_text("Build insight: {text}", encoding="utf-8")
+    standard_provider = DummyProvider("memory-standard")
+    advanced_provider = DummyProvider("memory-advanced")
+    manager = MemoryAnalyzerManager(config.analysis)
+    manager.bind_provider_manager(
+        DummyProviderManager([standard_provider, advanced_provider])
+    )
+
+    results = await manager.dispatch_stage(
+        "session_insight_update",
+        payload={"text": "hello"},
+    )
+
+    assert results["session_insight_v1"].provider_id == "memory-advanced"
+    assert standard_provider.last_prompt == ""
+    assert advanced_provider.last_prompt.startswith("Build insight: hello")
+
+
+@pytest.mark.asyncio
+async def test_memory_analyzer_manager_falls_back_to_standard_provider_for_advanced(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir / "astrbot-root"))
+    config_path = temp_dir / "memory-config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  enabled: true",
+                '  standard_provider_id: "memory-standard"',
+                '  prompts_root: "custom/prompts"',
+                "  analyzers:",
+                "    experience_extract_v1:",
+                '      implementation: "prompt_json"',
+                '      prompt_file: "experience_extract_v1.md"',
+                '      output_schema: "ExperienceExtractResult"',
+                "  stages:",
+                "    experience_extract:",
+                '      analyzers: ["experience_extract_v1"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = load_memory_config(config_path)
+    prompt_path = config.analysis.prompts_root / "experience_extract_v1.md"
+    prompt_path.write_text("Extract: {text}", encoding="utf-8")
+    standard_provider = DummyProvider("memory-standard")
+    manager = MemoryAnalyzerManager(config.analysis)
+    manager.bind_provider_manager(DummyProviderManager(standard_provider))
+
+    results = await manager.dispatch_stage(
+        "experience_extract",
+        payload={"text": "hello"},
+    )
+
+    assert results["experience_extract_v1"].provider_id == "memory-standard"
+    assert standard_provider.last_prompt.startswith("Extract: hello")
+
+
+@pytest.mark.asyncio
+async def test_memory_analyzer_manager_keeps_legacy_per_analyzer_provider_fallback(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir / "astrbot-root"))
+    config_path = temp_dir / "memory-config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "enabled: true",
+                "analysis:",
+                "  enabled: true",
+                '  prompts_root: "custom/prompts"',
+                "  analyzers:",
+                "    focus_v1:",
+                '      implementation: "prompt_json"',
+                '      provider_id: "memory-custom"',
+                '      prompt_file: "focus_v1.md"',
+                '      output_schema: "ShortTermFocusResult"',
+                "  stages:",
+                "    short_term_update:",
+                '      analyzers: ["focus_v1"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = load_memory_config(config_path)
+    prompt_path = config.analysis.prompts_root / "focus_v1.md"
+    prompt_path.write_text("Analyze focus: {text}", encoding="utf-8")
+    custom_provider = DummyProvider("memory-custom")
+    manager = MemoryAnalyzerManager(config.analysis)
+    manager.bind_provider_manager(DummyProviderManager(custom_provider))
+
+    results = await manager.dispatch_stage(
+        "short_term_update",
+        payload={"text": "hello"},
+    )
+
+    assert results["focus_v1"].provider_id == "memory-custom"
+    assert custom_provider.last_prompt.startswith("Analyze focus: hello")
 
 
 @pytest.mark.asyncio

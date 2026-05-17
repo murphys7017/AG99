@@ -690,30 +690,28 @@ class TestConfigMetadataI18n:
         result = ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3)
 
         group = result["memory_group"]
-        assert sorted(group["metadata"]) == [
-            "advanced_paths",
-            "analyzers",
-            "general",
-            "jobs",
-            "keyword_extraction",
-            "schedule",
-            "vector_index",
-        ]
+        assert sorted(group["metadata"]) == ["advanced", "general", "models"]
         assert (
             group["metadata"]["general"]["items"]["memory.enabled"]["description"]
             == "memory_group.general.memory.enabled.description"
         )
         assert (
-            group["metadata"]["vector_index"]["items"][
+            group["metadata"]["models"]["items"][
+                "memory.analysis.standard_provider_id"
+            ]["_special"]
+            == "select_provider"
+        )
+        assert (
+            group["metadata"]["models"]["items"][
+                "memory.analysis.advanced_provider_id"
+            ]["_special"]
+            == "select_provider"
+        )
+        assert (
+            group["metadata"]["models"]["items"][
                 "memory.vector_index.provider_id"
             ]["_special"]
             == "select_provider_embedding"
-        )
-        assert (
-            group["metadata"]["analyzers"]["items"][
-                "memory.analysis.analyzers.topic_v1.provider_id"
-            ]["_special"]
-            == "select_provider"
         )
 
     def test_memory_defaults_match_exposed_metadata(self):

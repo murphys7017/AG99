@@ -4261,128 +4261,40 @@ CONFIG_METADATA_3 = {
         "name": "记忆",
         "metadata": {
             "general": {
-                "description": "总开关",
+                "description": "基础",
                 "type": "object",
-                "hint": "这些配置保存在主配置 JSON 的 memory 字段，Memory 运行时也从同一个字段读取。",
+                "hint": "Memory 会在对话后更新短期记忆，并按配置整理为长期记忆。",
                 "items": {
                     "memory.enabled": {
                         "description": "启用记忆模块",
-                        "type": "bool",
-                    },
-                    "memory.short_term.enabled": {
-                        "description": "启用短期记忆",
                         "type": "bool",
                     },
                     "memory.long_term.enabled": {
                         "description": "启用长期记忆",
                         "type": "bool",
                     },
-                    "memory.analysis.enabled": {
-                        "description": "启用记忆分析",
-                        "type": "bool",
-                    },
-                    "memory.analysis.strict": {
-                        "description": "严格分析模式",
-                        "type": "bool",
-                        "hint": "开启后，分析器配置错误或输出不合法会显式失败。",
-                    },
-                },
-            },
-            "schedule": {
-                "description": "触发条件",
-                "type": "object",
-                "items": {
-                    "memory.short_term.recent_turns_window": {
-                        "description": "短期分析窗口轮数",
-                        "type": "int",
-                    },
-                    "memory.consolidation.enabled": {
-                        "description": "启用记忆整理",
-                        "type": "bool",
-                    },
-                    "memory.consolidation.min_short_term_updates": {
-                        "description": "整理所需短期更新次数",
-                        "type": "int",
-                    },
-                    "memory.consolidation.batch_window_hours": {
-                        "description": "整理批次时间窗口",
-                        "type": "int",
-                    },
-                    "memory.long_term.min_experience_importance": {
-                        "description": "长期记忆最低重要性",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 1, "step": 0.05},
-                    },
-                    "memory.long_term.min_pending_experiences": {
-                        "description": "长期提升所需经验数量",
-                        "type": "int",
-                    },
-                },
-            },
-            "jobs": {
-                "description": "后台任务",
-                "type": "object",
-                "items": {
-                    "memory.identity.enabled": {
-                        "description": "启用身份映射",
-                        "type": "bool",
-                        "hint": "开启后，Memory 会按身份映射把不同平台账号归并到同一记忆身份。",
-                    },
-                    "memory.jobs.consolidation_enabled": {
-                        "description": "消息后触发整理任务",
-                        "type": "bool",
-                    },
-                    "memory.jobs.long_term_enabled": {
-                        "description": "整理后触发长期提升",
-                        "type": "bool",
-                    },
                     "memory.persona.enabled": {
                         "description": "启用人格反思",
                         "type": "bool",
                     },
-                    "memory.jobs.persona_reflection_enabled": {
-                        "description": "启用人格反思任务",
-                        "type": "bool",
-                        "condition": {"memory.persona.enabled": True},
-                    },
-                    "memory.persona.reflection_interval_hours": {
-                        "description": "人格反思间隔小时",
-                        "type": "int",
-                        "condition": {"memory.persona.enabled": True},
-                    },
                 },
             },
-            "keyword_extraction": {
-                "description": "关键词提取",
+            "models": {
+                "description": "模型",
                 "type": "object",
+                "hint": "普通模型处理高频轻量任务；高级模型处理整理、提取和长期记忆写入等复杂任务。高级模型留空时会使用普通模型。",
                 "items": {
-                    "memory.keyword_extraction.enabled": {
-                        "description": "启用关键词提取",
-                        "type": "bool",
-                    },
-                    "memory.keyword_extraction.implementation": {
-                        "description": "关键词提取实现",
+                    "memory.analysis.standard_provider_id": {
+                        "description": "普通记忆模型",
                         "type": "string",
-                        "options": ["jieba_tfidf"],
+                        "_special": "select_provider",
+                        "hint": "用于话题识别、关注点提取和短期摘要。",
                     },
-                    "memory.keyword_extraction.top_k": {
-                        "description": "关键词数量",
-                        "type": "int",
-                    },
-                },
-            },
-            "vector_index": {
-                "description": "向量索引",
-                "type": "object",
-                "items": {
-                    "memory.vector_index.enabled": {
-                        "description": "启用向量索引",
-                        "type": "bool",
-                    },
-                    "memory.vector_index.provider": {
-                        "description": "索引提供者",
+                    "memory.analysis.advanced_provider_id": {
+                        "description": "高级记忆模型",
                         "type": "string",
-                        "options": ["faiss"],
+                        "_special": "select_provider",
+                        "hint": "用于会话洞察、经验提取、长期记忆决策和撰写。留空时使用普通记忆模型。",
                     },
                     "memory.vector_index.provider_id": {
                         "description": "Embedding 提供商",
@@ -4390,151 +4302,37 @@ CONFIG_METADATA_3 = {
                         "_special": "select_provider_embedding",
                         "hint": "用于生成记忆向量的 provider 实例 ID。",
                     },
-                    "memory.vector_index.model": {
-                        "description": "Embedding 模型名称",
-                        "type": "string",
-                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
-                    },
-                    "memory.vector_index.experience_top_k": {
-                        "description": "经验检索数量",
-                        "type": "int",
-                    },
-                    "memory.vector_index.long_term_top_k": {
-                        "description": "长期记忆检索数量",
-                        "type": "int",
-                    },
                 },
             },
-            "analyzers": {
-                "description": "分析器",
+            "advanced": {
+                "description": "高级配置",
                 "type": "object",
-                "hint": "每个分析器使用对应 Prompt 和输出 Schema。模型由所选提供商决定。",
+                "hint": "通常不需要修改。仅在调试 Memory 行为、迁移数据目录或覆盖单个分析器时使用。",
                 "items": {
-                    "memory.analysis.analyzers.topic_v1.enabled": {
-                        "description": "启用话题分析器",
+                    "memory.analysis.enabled": {
+                        "description": "启用记忆分析",
                         "type": "bool",
+                        "collapsed": True,
                     },
-                    "memory.analysis.analyzers.topic_v1.provider_id": {
-                        "description": "话题分析提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.topic_v1.timeout_seconds": {
-                        "description": "话题分析超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.topic_v1.temperature": {
-                        "description": "话题分析温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "memory.analysis.analyzers.focus_v1.enabled": {
-                        "description": "启用关注点分析器",
+                    "memory.short_term.enabled": {
+                        "description": "启用短期记忆",
                         "type": "bool",
+                        "collapsed": True,
                     },
-                    "memory.analysis.analyzers.focus_v1.provider_id": {
-                        "description": "关注点分析提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.focus_v1.timeout_seconds": {
-                        "description": "关注点分析超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.focus_v1.temperature": {
-                        "description": "关注点分析温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "memory.analysis.analyzers.summary_v1.enabled": {
-                        "description": "启用短期摘要分析器",
+                    "memory.consolidation.enabled": {
+                        "description": "启用记忆整理",
                         "type": "bool",
+                        "collapsed": True,
                     },
-                    "memory.analysis.analyzers.summary_v1.provider_id": {
-                        "description": "短期摘要提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.summary_v1.timeout_seconds": {
-                        "description": "短期摘要超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.summary_v1.temperature": {
-                        "description": "短期摘要温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "memory.analysis.analyzers.session_insight_v1.enabled": {
-                        "description": "启用会话洞察分析器",
+                    "memory.identity.enabled": {
+                        "description": "启用身份映射",
                         "type": "bool",
+                        "collapsed": True,
                     },
-                    "memory.analysis.analyzers.session_insight_v1.provider_id": {
-                        "description": "会话洞察提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.session_insight_v1.timeout_seconds": {
-                        "description": "会话洞察超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.session_insight_v1.temperature": {
-                        "description": "会话洞察温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "memory.analysis.analyzers.experience_extract_v1.enabled": {
-                        "description": "启用经验提取分析器",
+                    "memory.vector_index.enabled": {
+                        "description": "启用向量索引",
                         "type": "bool",
-                    },
-                    "memory.analysis.analyzers.experience_extract_v1.provider_id": {
-                        "description": "经验提取提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.experience_extract_v1.timeout_seconds": {
-                        "description": "经验提取超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.experience_extract_v1.temperature": {
-                        "description": "经验提取温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "memory.analysis.analyzers.long_term_promote_v1.enabled": {
-                        "description": "启用长期提升决策分析器",
-                        "type": "bool",
-                    },
-                    "memory.analysis.analyzers.long_term_promote_v1.provider_id": {
-                        "description": "长期提升决策提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.long_term_promote_v1.timeout_seconds": {
-                        "description": "长期提升决策超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.long_term_promote_v1.temperature": {
-                        "description": "长期提升决策温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "memory.analysis.analyzers.long_term_compose_v1.enabled": {
-                        "description": "启用长期记忆撰写分析器",
-                        "type": "bool",
-                    },
-                    "memory.analysis.analyzers.long_term_compose_v1.provider_id": {
-                        "description": "长期记忆撰写提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                    },
-                    "memory.analysis.analyzers.long_term_compose_v1.timeout_seconds": {
-                        "description": "长期记忆撰写超时秒数",
-                        "type": "int",
-                    },
-                    "memory.analysis.analyzers.long_term_compose_v1.temperature": {
-                        "description": "长期记忆撰写温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                        "collapsed": True,
                     },
                     "memory.analysis.analyzers": {
                         "description": "分析器完整配置",
@@ -4546,13 +4344,6 @@ CONFIG_METADATA_3 = {
                         "type": "dict",
                         "collapsed": True,
                     },
-                },
-            },
-            "advanced_paths": {
-                "description": "高级路径",
-                "type": "object",
-                "hint": "这些路径决定 Memory 数据、Prompt 和索引文件的位置。仅在迁移数据目录或调试时修改。",
-                "items": {
                     "memory.identity.mappings_path": {
                         "description": "身份映射文件路径",
                         "type": "string",

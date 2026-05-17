@@ -1,4 +1,11 @@
 DEFAULT_MEMORY_ANALYZER_PROVIDER_ID = ""
+DEFAULT_MEMORY_STANDARD_ANALYZER_NAMES = ("topic_v1", "focus_v1", "summary_v1")
+DEFAULT_MEMORY_ADVANCED_ANALYZER_NAMES = (
+    "session_insight_v1",
+    "experience_extract_v1",
+    "long_term_promote_v1",
+    "long_term_compose_v1",
+)
 DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION = "jieba_tfidf"
 DEFAULT_MEMORY_ANALYZER_SPECS: dict[str, tuple[str, str]] = {
     "topic_v1": ("topic_v1.md", "TopicStateResult"),
@@ -70,6 +77,8 @@ def build_default_memory_config_payload() -> dict:
         "analysis": {
             "enabled": True,
             "strict": True,
+            "standard_provider_id": DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
+            "advanced_provider_id": DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
             "prompts_root": "data/memory/prompts",
             "analyzers": {
                 analyzer_name: {

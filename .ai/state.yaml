@@ -1,25 +1,27 @@
 task:
-  class: bugfix
+  class: feature
   risk: medium
   phase: validated
-  scope: memory analyzer provider-model selection and Web-config-only memory config
+  scope: memory standard/advanced provider split and simplified Web config
 context:
   confidence: high
   assumptions:
-    - Memory analyzers should use the model configured on the selected provider instance.
-    - Deprecated memory analyzer model overrides in existing main JSON config should be removed.
-    - data/memory/config.yaml is no longer a runtime configuration source; Web/main JSON config is authoritative.
+    - Short-term memory analyzers should use the standard memory provider.
+    - Consolidation and long-term memory analyzers should use the advanced memory provider.
+    - Advanced memory provider should fall back to standard provider when left empty.
+    - Existing per-analyzer provider_id values should remain as legacy fallbacks when standard/advanced providers are empty.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - Memory analyzer configs no longer expose or honor a per-analyzer model field.
-    - AstrBotConfig strips deprecated memory.analysis.analyzers.*.model entries from main config.
-    - Default memory config loading no longer creates or migrates data/memory/config.yaml.
+    - Memory analysis now supports standard_provider_id and advanced_provider_id.
+    - Analyzer provider resolution prefers standard/advanced providers and falls back to legacy per-analyzer provider_id values.
+    - Memory Web config now exposes a simplified basic/models/advanced layout.
 verification:
   checks_run:
+    - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py -q
+    - .venv\Scripts\python -m ruff check astrbot/core/config/default.py astrbot/core/memory/analyzer_manager.py astrbot/core/memory/config.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py
     - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_memory_store.py tests/unit/test_memory_identity.py tests/unit/test_memory_runtime.py tests/unit/test_config.py -q
-    - .venv\Scripts\python -m ruff check astrbot/core/config/astrbot_config.py astrbot/core/config/default.py astrbot/core/memory/analyzer_manager.py astrbot/core/memory/analyzers/prompt_json.py astrbot/core/memory/config.py astrbot/core/memory/__init__.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py
   checks_failed: []
   validation_gap: pytest still reports existing SwigPy* deprecation warnings
 runtime:
