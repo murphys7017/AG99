@@ -3,6 +3,76 @@
 This document records upstream changes that were reviewed but not merged into this fork.
 Keep appending to it when reviewing future upstream updates, so old merge decisions remain easy to revisit.
 
+## Dynamic Sync Board
+
+Last updated: 2026-05-18
+
+Current comparison baseline:
+
+- Local branch: `master`
+- Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
+- Last local upstream snapshot checked: `upstream/master` at `dceacd5a` (`docs: update release version instructions in AGENTS.md`)
+- Remote refresh status: `git fetch upstream --prune` and `git ls-remote upstream refs/heads/master` both failed with `Recv failure: Connection was reset`; numbers below are based on the existing local `upstream/master` snapshot.
+- Git-only divergence at this snapshot: local-only `272`, upstream-only `181`.
+- Patch-equivalence estimate from `git cherry`: `67` upstream commits appear already absorbed, `114` still appear unabsorbed.
+
+Important interpretation:
+
+- This fork often rewrites upstream changes instead of cherry-picking them.
+- A commit still shown as upstream-only may already be functionally absorbed if the local patch differs.
+- Before merging anything, compare by topic and behavior, not only by commit hash.
+
+Current local upstream-sync commits:
+
+- `e302356b` Add NVIDIA and Ollama embedding providers
+- `29e1e1f8` Improve provider response compatibility
+- `b4cb5545` Harden outbound media handling
+- `0da4b18c` Preserve plugin metadata and install cleanup
+- `6096253d` Polish dashboard input and status handling
+- `a1e4240d` Auto-select Shipyard Neo profiles by default
+- `8cbb60d4` Expose embedding input type setting
+
+Recently absorbed by rewrite:
+
+- Provider/runtime compatibility:
+  - OpenAI SDK httpx alignment, empty reasoning handling, DeepSeek v4 reasoning history, `None` tool arguments, context-length retry matching, MiniMax TTS timber-weight fallback, fallback `max_context_tokens`.
+- Embedding providers:
+  - NVIDIA NIM Embedding and Ollama Embedding source adapters, provider manager imports, default Web config templates, locale hints, and `input_type` metadata.
+- Outbound media and platform fixes:
+  - Active replies pass image inputs through LLM requests, Tencent SILK magic-byte detection, stricter `SendMessageToUserTool` path handling, Weixin OC media send failure surfacing.
+- Plugin/runtime metadata:
+  - Handler kwargs preservation, plugin `pages` metadata, repeated install cleanup/error-tracking behavior.
+- Dashboard and upload handling:
+  - Chat upload filename sanitization, IME Enter guard, provider status test error display, console auto-scroll sync, console log layout improvements.
+- Shipyard Neo:
+  - Empty profile now means auto-select; any non-empty explicit profile is honored.
+
+### Topic Merge Plan
+
+Use this table as the live working plan. Update `Status`, `Local action`, and `Next check` whenever upstream sync work is done.
+
+| Topic | Status | Upstream examples | Local action | Next check |
+| --- | --- | --- | --- | --- |
+| Security fixes | In progress | Upload path traversal, backup importer traversal, password policy, updater zip root path | Upload filename sanitization was absorbed; older backup-importer handling was previously marked absorbed. Password policy and updater behavior still need a dedicated review against local auth/updater changes. | Review `7ddf6371`, `d1059cd5`, and related auth/updater commits. |
+| Provider and model runtime | In progress | OpenAI http client, reasoning content, Claude no-arg tools, MiniMax TTS, Embedding providers, Anthropic compatibility | Several small compatibility fixes were rewritten locally. | Review remaining provider commits for Anthropic/custom headers, OpenRouter reasoning key, empty assistant streaming, default provider warning. |
+| Platform adapters and outbound media | In progress | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin send failure, and message-tool path handling were absorbed. | Prioritize Weixin session timeout, Telegram/Discord safety fixes, then evaluate KOOK/Dingtalk/Feishu as feature work. |
+| Dashboard UX and WebUI | In progress | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX | IME, console, upload sanitization, and provider test feedback were absorbed. Inline edit/regenerate remains intentionally deferred. | Review Noto Sans/font stack and initial password UX because they are low-risk user-facing polish. |
+| Plugin system | In progress | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Basic `pages` metadata and install cleanup were absorbed. | Review dynamic plugin API routes and plugin update/changelog/storage changes as one feature batch. |
+| Knowledge base and retrieval | Deferred | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, Firecrawl search tools | Firecrawl config/tool hook had been absorbed in the earlier review; FTS5/EPUB remain deferred due storage/retrieval impact. | Review blank-prompt skip as a small bugfix; keep FTS5/EPUB as a dedicated migration task. |
+| Computer use / sandbox | In progress | Shipyard profile selection, readiness gate, idle sandbox expiry, sandbox image download delivery | Explicit/auto Shipyard profile behavior was absorbed. | Review readiness gate, graceful cleanup, idle expiry, and sandbox image download behavior together. |
+| Auth, CLI, deployment, update | Not started | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts | Not yet absorbed in this pass. | Review auth/CLI/deploy as a separate operational batch. |
+| Docs, version bumps, dependency chores | Mostly skipped | Version bumps, README/docs URL updates, pnpm action bumps, release instructions | Usually skipped unless they affect this fork's docs or release process. | Keep version/chore commits out of functional sync unless preparing a release. |
+
+### Review Rules for Future Upstream Sync
+
+- Always update this `Dynamic Sync Board` before and after a sync batch.
+- Record the exact upstream ref used. If fetch fails, record that and use the latest local snapshot explicitly.
+- Prefer small topic batches over broad merges.
+- Mark each upstream topic as `Absorbed`, `Deferred`, `Skipped`, or `Needs review`.
+- For rewritten merges, record the local commit hash and the upstream commit or PR that inspired it.
+- Do not treat `git cherry` as authoritative for this fork; use it only as a triage aid.
+- Keep local prompt, memory, postprocess, and interaction architecture as the default source of truth unless an upstream change is explicitly chosen to replace it.
+
 ## How to Update
 
 - Add a new dated section for each upstream review.
