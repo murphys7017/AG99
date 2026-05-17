@@ -4408,7 +4408,7 @@ CONFIG_METADATA_3 = {
             "analyzers": {
                 "description": "分析器",
                 "type": "object",
-                "hint": "每个分析器使用对应 Prompt 和输出 Schema。模型名保留在完整配置编辑器中，常规页面只暴露 provider、超时和温度。",
+                "hint": "每个分析器使用对应 Prompt 和输出 Schema。模型由所选提供商决定。",
                 "items": {
                     "memory.analysis.analyzers.topic_v1.enabled": {
                         "description": "启用话题分析器",

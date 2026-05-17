@@ -108,7 +108,7 @@ class MemoryAnalyzerManager:
             prompt_path=prompt_path,
             provider=provider,
             provider_id=analyzer_config.provider_id,
-            model=analyzer_config.model or None,
+            model=None,
             output_schema=analyzer_config.output_schema,
             timeout_seconds=analyzer_config.timeout_seconds,
             temperature=analyzer_config.temperature,
@@ -117,20 +117,18 @@ class MemoryAnalyzerManager:
             conversation_id=conversation_id,
         )
         logger.info(
-            "memory analyzer execution started: analyzer=%s implementation=%s provider_id=%s model=%s stage=%s",
+            "memory analyzer execution started: analyzer=%s implementation=%s provider_id=%s stage=%s",
             analyzer_name,
             analyzer_config.implementation,
             analyzer_config.provider_id,
-            analyzer_config.model or None,
             stage,
         )
         result = await implementation.analyze(request)
         logger.info(
-            "memory analyzer execution finished: analyzer=%s keys=%s provider_id=%s model=%s",
+            "memory analyzer execution finished: analyzer=%s keys=%s provider_id=%s",
             analyzer_name,
             sorted(result.data),
             result.provider_id,
-            result.model,
         )
         return result
 
@@ -150,10 +148,6 @@ class MemoryAnalyzerManager:
         if not analyzer_config.provider_id:
             raise MemoryAnalyzerConfigurationError(
                 f"memory analyzer `{analyzer_name}` has no provider_id configured"
-            )
-        if not analyzer_config.model:
-            raise MemoryAnalyzerConfigurationError(
-                f"memory analyzer `{analyzer_name}` has no model configured"
             )
         if not analyzer_config.prompt_file:
             raise MemoryAnalyzerConfigurationError(

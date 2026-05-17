@@ -2,11 +2,8 @@ import enum
 import json
 import logging
 import os
-from pathlib import Path
 
-import yaml
-
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_root
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .default import DEFAULT_CONFIG, DEFAULT_VALUE_MAP
 
@@ -14,15 +11,21 @@ ASTRBOT_CONFIG_PATH = os.path.join(get_astrbot_data_path(), "cmd_config.json")
 logger = logging.getLogger("astrbot")
 
 
-def _load_legacy_memory_config() -> dict | None:
-    config_path = Path(get_astrbot_root()) / "data/memory/config.yaml"
-    if not config_path.exists():
-        return None
+def _strip_memory_analyzer_model_fields(config: dict) -> bool:
+    analyzers = (
+        config.get("analysis", {}).get("analyzers", {})
+        if isinstance(config.get("analysis"), dict)
+        else {}
+    )
+    if not isinstance(analyzers, dict):
+        return False
 
-    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(loaded, dict):
-        raise ValueError(f"memory config must be a mapping: {config_path}")
-    return loaded
+    changed = False
+    for analyzer_config in analyzers.values():
+        if isinstance(analyzer_config, dict) and "model" in analyzer_config:
+            analyzer_config.pop("model", None)
+            changed = True
+    return changed
 
 
 class RateLimitStrategy(enum.Enum):
@@ -58,15 +61,9 @@ class AstrBotConfig(dict):
         if schema:
             default_config = self._config_schema_to_default_config(schema)
 
-        legacy_memory_config = None
-        if "memory" in default_config:
-            legacy_memory_config = _load_legacy_memory_config()
-
         if not self.check_exist():
             """不存在时载入默认配置"""
             config_to_write = default_config.copy()
-            if legacy_memory_config is not None:
-                config_to_write["memory"] = legacy_memory_config
             with open(config_path, "w", encoding="utf-8-sig") as f:
                 json.dump(config_to_write, f, indent=4, ensure_ascii=False)
                 object.__setattr__(self, "first_deploy", True)  # 标记第一次部署
@@ -78,15 +75,16 @@ class AstrBotConfig(dict):
                 conf_str = conf_str[1:]
             conf = json.loads(conf_str)
 
-        if "memory" not in conf:
-            if legacy_memory_config is not None:
-                conf["memory"] = legacy_memory_config
-                logger.info("已从 data/memory/config.yaml 迁移 memory 配置到主配置")
+        stripped_memory_analyzer_models = False
+        if isinstance(conf.get("memory"), dict):
+            if _strip_memory_analyzer_model_fields(conf["memory"]):
+                logger.info("已移除 memory 分析器的独立模型名配置")
+                stripped_memory_analyzer_models = True
 
         # 检查配置完整性，并插入
         has_new = self.check_config_integrity(default_config, conf)
         self.update(conf)
-        if has_new:
+        if has_new or stripped_memory_analyzer_models:
             self.save_config()
 
         self.update(conf)

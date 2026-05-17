@@ -57,7 +57,6 @@ class PromptJsonMemoryAnalyzer(BaseMemoryAnalyzer):
         prompt = render_prompt_template(prompt_template, request.payload)
         llm_response = await request.provider.text_chat(
             prompt=prompt,
-            model=request.model,
             temperature=request.temperature,
             extra_body=request.extra_body,
         )
@@ -85,7 +84,7 @@ class PromptJsonMemoryAnalyzer(BaseMemoryAnalyzer):
             data=data,
             raw_text=raw_text,
             provider_id=request.provider_id,
-            model=request.model,
+            model=None,
         )
 
 

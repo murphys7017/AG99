@@ -2,23 +2,25 @@ task:
   class: bugfix
   risk: medium
   phase: validated
-  scope: interaction middleware TTS coverage and memory whitelist gating
+  scope: memory analyzer provider-model selection and Web-config-only memory config
 context:
   confidence: high
   assumptions:
-    - Memory postprocess should respect the same session/group whitelist used by the pipeline when session config is available.
-    - Streaming core chunks should remain text streaming; TTS should not be applied per chunk.
+    - Memory analyzers should use the model configured on the selected provider instance.
+    - Deprecated memory analyzer model overrides in existing main JSON config should be removed.
+    - data/memory/config.yaml is no longer a runtime configuration source; Web/main JSON config is authoritative.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - Interaction self-reply events now retain runtime config for postprocess consumers.
-    - Memory postprocessor now gates updates with platform session whitelist settings.
+    - Memory analyzer configs no longer expose or honor a per-analyzer model field.
+    - AstrBotConfig strips deprecated memory.analysis.analyzers.*.model entries from main config.
+    - Default memory config loading no longer creates or migrates data/memory/config.yaml.
 verification:
   checks_run:
-    - .venv\Scripts\python -m pytest tests/unit/test_interaction_output_controller.py tests/unit/test_interaction_middleware.py tests/unit/test_memory_runtime.py -q
-    - .venv\Scripts\python -m ruff check astrbot/core/interaction/output_controller.py astrbot/core/interaction/middleware.py astrbot/core/memory/postprocessor.py tests/unit/test_interaction_output_controller.py tests/unit/test_interaction_middleware.py tests/unit/test_memory_runtime.py
+    - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_memory_store.py tests/unit/test_memory_identity.py tests/unit/test_memory_runtime.py tests/unit/test_config.py -q
+    - .venv\Scripts\python -m ruff check astrbot/core/config/astrbot_config.py astrbot/core/config/default.py astrbot/core/memory/analyzer_manager.py astrbot/core/memory/analyzers/prompt_json.py astrbot/core/memory/config.py astrbot/core/memory/__init__.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py
   checks_failed: []
-  validation_gap: aiosqlite event-loop shutdown warnings remain in focused pytest run
+  validation_gap: pytest still reports existing SwigPy* deprecation warnings
 runtime:
   mode: minimal_v1

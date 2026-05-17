@@ -181,7 +181,7 @@ async def test_memory_analyzer_manager_dispatches_stage_with_configured_prompt(
     assert list(results) == ["emotion_v1"]
     assert results["emotion_v1"].data["emotion"] == "calm"
     assert provider.last_prompt == "Analyze text: how are you"
-    assert provider.last_model == "dummy-model"
+    assert provider.last_model is None
     assert provider.last_temperature == 0.3
 
 
@@ -258,7 +258,7 @@ async def test_memory_analyzer_manager_requires_provider_id_configuration(
 
 
 @pytest.mark.asyncio
-async def test_memory_analyzer_manager_requires_model_configuration(
+async def test_memory_analyzer_manager_uses_provider_model_configuration(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -289,11 +289,12 @@ async def test_memory_analyzer_manager_requires_model_configuration(
     manager = MemoryAnalyzerManager(config.analysis)
     manager.bind_provider_manager(DummyProviderManager(DummyProvider()))
 
-    with pytest.raises(
-        MemoryAnalyzerConfigurationError,
-        match="has no model configured",
-    ):
-        await manager.dispatch_stage("short_term_update", payload={"text": "hello"})
+    results = await manager.dispatch_stage(
+        "short_term_update",
+        payload={"text": "hello"},
+    )
+
+    assert results["emotion_v1"].model is None
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,6 @@ import yaml
 
 from astrbot.core.memory_config_defaults import (
     DEFAULT_MEMORY_ANALYSIS_STAGES,
-    DEFAULT_MEMORY_ANALYZER_MODEL,
     DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
     DEFAULT_MEMORY_ANALYZER_SPECS,
     DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION,
@@ -282,7 +281,7 @@ class MemoryAnalyzerConfig:
     enabled: bool = True
     implementation: str = "prompt_json"
     provider_id: str = DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
-    model: str = DEFAULT_MEMORY_ANALYZER_MODEL
+    model: str | None = None
     prompt_file: str = ""
     output_schema: str = ""
     timeout_seconds: int = 20
@@ -340,10 +339,6 @@ class MemoryConfig:
     analysis: MemoryAnalysisConfig = field(default_factory=MemoryAnalysisConfig)
 
 
-def get_default_memory_config_path() -> Path:
-    return resolve_memory_path("data/memory/config.yaml")
-
-
 def get_default_identity_mappings_path() -> Path:
     return resolve_memory_path("data/memory/identity_mappings.yaml")
 
@@ -358,7 +353,6 @@ def _build_default_analysis_analyzers() -> dict[str, MemoryAnalyzerConfig]:
             enabled=True,
             implementation="prompt_json",
             provider_id=DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
-            model=DEFAULT_MEMORY_ANALYZER_MODEL,
             prompt_file=prompt_file,
             output_schema=output_schema,
             timeout_seconds=20,
@@ -392,8 +386,8 @@ def _serialize_path_for_payload(path: Path | None) -> str | None:
         return path.as_posix()
 
 
-def load_memory_config_payload(path: Path | None = None) -> dict:
-    config_path = path or get_default_memory_config_path()
+def load_memory_config_payload(path: Path) -> dict:
+    config_path = path
     if not config_path.exists():
         ensure_memory_config_file(config_path)
 
@@ -404,11 +398,11 @@ def load_memory_config_payload(path: Path | None = None) -> dict:
 
 
 def ensure_memory_config_file(
-    path: Path | None = None,
+    path: Path,
     *,
     overwrite: bool = False,
 ) -> Path:
-    config_path = path or get_default_memory_config_path()
+    config_path = path
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     if config_path.exists() and not overwrite:
@@ -507,10 +501,6 @@ def _load_analyzer_configs(payload: object) -> dict[str, MemoryAnalyzerConfig]:
             provider_id=_as_str(
                 config_payload.get("provider_id"),
                 DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
-            ),
-            model=_as_str(
-                config_payload.get("model"),
-                DEFAULT_MEMORY_ANALYZER_MODEL,
             ),
             prompt_file=_as_str(config_payload.get("prompt_file"), ""),
             output_schema=_as_str(config_payload.get("output_schema"), ""),

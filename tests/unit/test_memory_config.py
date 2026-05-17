@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.config.default import DEFAULT_CONFIG
 from astrbot.core.memory.config import (
-    DEFAULT_MEMORY_ANALYZER_MODEL,
     DEFAULT_MEMORY_ANALYZER_PROMPTS,
     DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
     _build_default_memory_config,
@@ -39,7 +39,8 @@ def test_ensure_memory_config_file_creates_default_yaml(temp_dir: Path):
     assert "long_term_promote_v1:" in content
     assert "long_term_compose_v1:" in content
     assert "provider_id:" in content
-    assert "model:" in content
+    assert "  model:" in content
+    assert "      model:" not in content
 
 
 def test_load_memory_config_creates_missing_file_and_uses_defaults(
@@ -82,7 +83,7 @@ def test_load_memory_config_creates_missing_file_and_uses_defaults(
         config.analysis.analyzers["topic_v1"].provider_id
         == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
     )
-    assert config.analysis.analyzers["topic_v1"].model == DEFAULT_MEMORY_ANALYZER_MODEL
+    assert config.analysis.analyzers["topic_v1"].model is None
 
 
 def test_default_memory_analyzer_prompts_include_score_ranges():
@@ -223,10 +224,7 @@ def test_build_default_memory_config_payload_contains_expected_sections():
         payload["analysis"]["analyzers"]["topic_v1"]["provider_id"]
         == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
     )
-    assert (
-        payload["analysis"]["analyzers"]["topic_v1"]["model"]
-        == DEFAULT_MEMORY_ANALYZER_MODEL
-    )
+    assert "model" not in payload["analysis"]["analyzers"]["topic_v1"]
     assert payload["analysis"]["analyzers"]["focus_v1"]["prompt_file"] == "focus_v1.md"
     assert (
         payload["analysis"]["analyzers"]["summary_v1"]["prompt_file"] == "summary_v1.md"
@@ -269,47 +267,18 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     ]
 
 
-def test_astrbot_config_migrates_legacy_memory_yaml_values(
+def test_astrbot_config_strips_deprecated_memory_analyzer_model(
     temp_dir: Path,
     monkeypatch,
 ):
     monkeypatch.setenv("ASTRBOT_ROOT", str(temp_dir))
-    legacy_config_path = temp_dir / "data" / "memory" / "config.yaml"
-    legacy_config_path.parent.mkdir(parents=True)
-    legacy_config_path.write_text(
-        "\n".join(
-            [
-                "enabled: true",
-                "analysis:",
-                "  enabled: true",
-                "  strict: true",
-                "  prompts_root: data/memory/prompts",
-                "  analyzers:",
-                "    topic_v1:",
-                "      enabled: true",
-                "      implementation: prompt_json",
-                "      provider_id: volcengine_ark/Doubao-Seed-2.0-lite",
-                "      model: ep-20260307170657-rq64x",
-                "      prompt_file: topic_v1.md",
-                "      output_schema: TopicStateResult",
-                "      timeout_seconds: 20",
-                "      temperature: 0.0",
-                "      extra_body:",
-                "        thinking:",
-                "          type: disabled",
-                "  stages:",
-                "    short_term_update:",
-                "      analyzers:",
-                "        - topic_v1",
-            ]
-        ),
-        encoding="utf-8",
-    )
     main_config_path = temp_dir / "data" / "cmd_config.json"
     main_config_path.parent.mkdir(parents=True, exist_ok=True)
-    main_config = {
-        key: value for key, value in DEFAULT_CONFIG.items() if key != "memory"
-    }
+    main_config = deepcopy(DEFAULT_CONFIG)
+    analyzer_config = main_config["memory"]["analysis"]["analyzers"]["topic_v1"]
+    analyzer_config["provider_id"] = "volcengine_ark/Doubao-Seed-2.0-lite"
+    analyzer_config["model"] = "ep-20260307170657-rq64x"
+    analyzer_config["extra_body"] = {"thinking": {"type": "disabled"}}
     main_config_path.write_text(
         __import__("json").dumps(main_config, ensure_ascii=False),
         encoding="utf-8",
@@ -319,11 +288,11 @@ def test_astrbot_config_migrates_legacy_memory_yaml_values(
 
     analyzer_config = config["memory"]["analysis"]["analyzers"]["topic_v1"]
     assert analyzer_config["provider_id"] == "volcengine_ark/Doubao-Seed-2.0-lite"
-    assert analyzer_config["model"] == "ep-20260307170657-rq64x"
+    assert "model" not in analyzer_config
     assert analyzer_config["extra_body"]["thinking"]["type"] == "disabled"
 
 
-def test_astrbot_config_migrates_legacy_memory_yaml_when_main_config_is_created(
+def test_astrbot_config_ignores_legacy_memory_yaml_when_main_config_is_created(
     temp_dir: Path,
     monkeypatch,
 ):
@@ -348,8 +317,8 @@ def test_astrbot_config_migrates_legacy_memory_yaml_when_main_config_is_created(
     config = AstrBotConfig(config_path=str(main_config_path))
 
     analyzer_config = config["memory"]["analysis"]["analyzers"]["topic_v1"]
-    assert analyzer_config["provider_id"] == "memory-lite"
-    assert analyzer_config["model"] == "memory-model"
+    assert analyzer_config["provider_id"] == DEFAULT_MEMORY_ANALYZER_PROVIDER_ID
+    assert "model" not in analyzer_config
 
 
 def test_astrbot_config_does_not_migrate_legacy_memory_into_schema_config(

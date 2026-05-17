@@ -1,5 +1,4 @@
 DEFAULT_MEMORY_ANALYZER_PROVIDER_ID = ""
-DEFAULT_MEMORY_ANALYZER_MODEL = ""
 DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION = "jieba_tfidf"
 DEFAULT_MEMORY_ANALYZER_SPECS: dict[str, tuple[str, str]] = {
     "topic_v1": ("topic_v1.md", "TopicStateResult"),
@@ -77,7 +76,6 @@ def build_default_memory_config_payload() -> dict:
                     "enabled": True,
                     "implementation": "prompt_json",
                     "provider_id": DEFAULT_MEMORY_ANALYZER_PROVIDER_ID,
-                    "model": DEFAULT_MEMORY_ANALYZER_MODEL,
                     "prompt_file": prompt_file,
                     "output_schema": output_schema,
                     "timeout_seconds": 20,
