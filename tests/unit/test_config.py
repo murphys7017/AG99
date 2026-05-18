@@ -746,6 +746,55 @@ class TestConfigMetadataI18n:
         for item_key in exposed_keys:
             get_by_selector(DEFAULT_CONFIG, item_key)
 
+    def test_memory_metadata_i18n_keys_have_locale_entries(self):
+        """Memory metadata shown in WebUI should not render raw i18n keys."""
+        result = ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3)
+        memory_group = result["memory_group"]
+
+        expected_keys: set[str] = set()
+
+        def collect_i18n_keys(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if (
+                        key in {"name", "description", "hint", "labels"}
+                        and isinstance(item, str)
+                        and item.startswith("memory_group.")
+                    ):
+                        expected_keys.add(item)
+                    else:
+                        collect_i18n_keys(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect_i18n_keys(item)
+
+        def get_by_i18n_key(locale_payload: dict, key: str):
+            current = locale_payload
+            for part in key.split("."):
+                assert isinstance(current, dict), key
+                assert part in current, key
+                current = current[part]
+            return current
+
+        collect_i18n_keys(memory_group)
+
+        locale_root = (
+            os.path.dirname(__file__)
+            + "/../../dashboard/src/i18n/locales"
+        )
+        for locale in ("zh-CN", "en-US", "ru-RU"):
+            locale_path = os.path.join(
+                locale_root,
+                locale,
+                "features",
+                "config-metadata.json",
+            )
+            with open(locale_path, encoding="utf-8") as f:
+                locale_payload = json.load(f)
+
+            for key in expected_keys:
+                get_by_i18n_key(locale_payload, key)
+
 
 class TestConfigRouteMemoryReload:
     @pytest.mark.asyncio

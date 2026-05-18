@@ -1167,6 +1167,7 @@
     },
     "schedule": {
       "description": "Trigger Conditions",
+      "hint": "Controls how often short-term memory analysis runs. With a large prompt context, keep this lower-frequency so Memory focuses on long-term sedimentation.",
       "memory": {
         "short_term": {
           "recent_turns_window": {

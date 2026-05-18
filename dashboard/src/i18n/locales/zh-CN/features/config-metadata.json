@@ -1169,6 +1169,7 @@
     },
     "schedule": {
       "description": "触发条件",
+      "hint": "控制短期记忆分析的频率。大上下文配置下可以保持较低频率，让 Memory 更偏长期沉淀。",
       "memory": {
         "short_term": {
           "recent_turns_window": {
