@@ -11,8 +11,10 @@ from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
 from ..context_types import ContextPack, ContextSlot
+from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
 from .interfaces import RenderResult
+from .minimax_renderer import MiniMaxPromptRenderer
 from .prompt_tree import NodeRef, PromptBuilder
 from .selector import PassthroughPromptSelector, select_context_pack
 
@@ -108,7 +110,88 @@ class PromptRenderEngine:
         config=None,
         provider_request: ProviderRequest | None = None,
     ) -> BasePromptRenderer:
+        del pack
+        provider = self._resolve_provider_from_request(provider_request)
+        if provider is None:
+            provider = self._resolve_provider_from_event(event)
+        if provider is None:
+            provider = self._resolve_request_provider(plugin_context, config)
+        if self._is_anthropic_provider(provider):
+            return AnthropicPromptRenderer()
+        if self._is_minimax_provider(provider):
+            return MiniMaxPromptRenderer()
         return self.default_renderer
+
+    @staticmethod
+    def _is_anthropic_provider(provider) -> bool:
+        provider_config = getattr(provider, "provider_config", None)
+        if not isinstance(provider_config, dict):
+            return False
+        return str(provider_config.get("type", "") or "") == "anthropic_chat_completion"
+
+    @staticmethod
+    def _is_minimax_provider(provider) -> bool:
+        provider_config = getattr(provider, "provider_config", None)
+        if not isinstance(provider_config, dict):
+            return False
+        return str(provider_config.get("type", "") or "") == "minimax_token_plan"
+
+    @staticmethod
+    def _resolve_provider_from_request(provider_request: ProviderRequest | None):
+        if provider_request is None:
+            return None
+        provider = getattr(provider_request, "provider", None)
+        if provider is not None:
+            return provider
+        provider_type = getattr(provider_request, "provider_type", None)
+        if provider_type:
+            return _PromptRenderProviderProxy(str(provider_type))
+        return None
+
+    @staticmethod
+    def _resolve_provider_from_event(event: AstrMessageEvent | None):
+        if event is None:
+            return None
+        provider = event.get_extra("provider")
+        if provider is not None:
+            return provider
+        provider_type = event.get_extra("provider_type")
+        if provider_type:
+            return _PromptRenderProviderProxy(str(provider_type))
+        return None
+
+    @staticmethod
+    def _resolve_request_provider(
+        plugin_context: Context | None,
+        config,
+    ):
+        if plugin_context is None:
+            return None
+        provider_id = str(getattr(config, "provider_id", "") or "").strip()
+        if not provider_id:
+            provider_settings = getattr(config, "provider_settings", None)
+            if isinstance(provider_settings, dict):
+                provider_id = str(
+                    provider_settings.get("default_provider_id")
+                    or provider_settings.get("provider_id")
+                    or ""
+                ).strip()
+        if provider_id:
+            get_provider_by_id = getattr(plugin_context, "get_provider_by_id", None)
+            if callable(get_provider_by_id):
+                provider = get_provider_by_id(provider_id)
+                if provider is not None:
+                    return provider
+        get_using_provider = getattr(plugin_context, "get_using_provider", None)
+        if callable(get_using_provider):
+            try:
+                return get_using_provider()
+            except TypeError:
+                try:
+                    return get_using_provider(umo=None)
+                except TypeError:
+                    return None
+        return None
 
     def _build_prompt_tree(
         self,
@@ -348,3 +431,8 @@ class PromptRenderEngine:
             if isinstance(name, str) and name:
                 names.append(name)
         return names
+
+
+class _PromptRenderProviderProxy:
+    def __init__(self, provider_type: str) -> None:
+        self.provider_config = {"type": provider_type}

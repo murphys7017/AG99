@@ -67,6 +67,7 @@ from .persona_segments import (
     parse_legacy_persona_prompt,
 )
 from .render import (
+    AnthropicPromptRenderer,
     PROMPT_APPLY_RESULT_EXTRA_KEY,
     PROMPT_RENDER_RESULT_EXTRA_KEY,
     PROMPT_SELECTED_CONTEXT_PACK_EXTRA_KEY,
@@ -135,6 +136,7 @@ __all__ = [
     "ContextCollectorInterface",
     "PromptExtensionCollectorInterface",
     "BasePromptRenderer",
+    "AnthropicPromptRenderer",
     "PROMPT_APPLY_RESULT_EXTRA_KEY",
     "PROMPT_RENDER_RESULT_EXTRA_KEY",
     "PROMPT_SELECTED_CONTEXT_PACK_EXTRA_KEY",

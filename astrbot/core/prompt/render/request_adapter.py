@@ -164,6 +164,11 @@ class ProviderRequestAdapter:
                 if audio_part is not None:
                     converted_parts.append(audio_part)
                     continue
+            elif part_type == "image":
+                image_part = self._convert_anthropic_image_part(part.get("source"))
+                if image_part is not None:
+                    converted_parts.append(image_part)
+                    continue
 
             warnings.append(
                 f"Skipped unsupported or invalid content part of type: {part_type!r}",
@@ -183,6 +188,27 @@ class ProviderRequestAdapter:
         return ImageURLPart(
             image_url=ImageURLPart.ImageURL(url=url, id=image_id),
         )
+
+    def _convert_anthropic_image_part(self, payload: Any) -> ImageURLPart | None:
+        if not isinstance(payload, dict):
+            return None
+        source_type = payload.get("type")
+        if source_type == "url":
+            url = payload.get("url")
+            if isinstance(url, str) and url:
+                return ImageURLPart(image_url=ImageURLPart.ImageURL(url=url))
+            return None
+        if source_type == "base64":
+            data = payload.get("data")
+            media_type = payload.get("media_type")
+            if isinstance(data, str) and data:
+                media = media_type if isinstance(media_type, str) else "image/jpeg"
+                return ImageURLPart(
+                    image_url=ImageURLPart.ImageURL(
+                        url=f"data:{media};base64,{data}"
+                    )
+                )
+        return None
 
     def _convert_audio_part(self, payload: Any) -> AudioURLPart | None:
         if not isinstance(payload, dict):

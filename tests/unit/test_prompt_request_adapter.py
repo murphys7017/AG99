@@ -136,6 +136,49 @@ def test_request_adapter_maps_multimodal_user_content_into_request_parts():
     assert apply_result.warnings == []
 
 
+def test_request_adapter_maps_anthropic_image_content_into_request_parts():
+    result = RenderResult(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "QUJD",
+                        },
+                    },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "url": "https://example.com/demo.png",
+                        },
+                    },
+                ],
+            }
+        ]
+    )
+    request = ProviderRequest()
+
+    apply_result = apply_render_result_to_request(result, request)
+
+    assert request.prompt == "look"
+    assert request.extra_user_content_parts == [
+        ImageURLPart(
+            image_url=ImageURLPart.ImageURL(url="data:image/png;base64,QUJD")
+        ),
+        ImageURLPart(
+            image_url=ImageURLPart.ImageURL(url="https://example.com/demo.png")
+        ),
+    ]
+    assert apply_result.user_content_part_count == 3
+    assert apply_result.warnings == []
+
+
 def test_request_adapter_keeps_all_messages_as_history_when_no_final_user_exists():
     request = ProviderRequest(prompt="old")
     result = RenderResult(

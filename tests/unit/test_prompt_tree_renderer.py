@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import (
+    AnthropicPromptRenderer,
     BasePromptRenderer,
     PromptBuilder,
     PromptRenderEngine,
@@ -78,6 +79,122 @@ def test_base_prompt_renderer_returns_nested_node_structure():
     assert structure["capability"] == "system/capability"
     assert structure["memory"] == "context/memory"
     assert structure["extension"] == "system/extensions"
+
+
+def test_render_engine_selects_anthropic_renderer_from_event_provider():
+    class ProviderStub:
+        provider_config = {"type": "anthropic_chat_completion"}
+
+    extras = {"provider": ProviderStub()}
+
+    class EventStub:
+        def get_extra(self, key, default=None):
+            return extras.get(key, default)
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello Anthropic",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(pack, event=EventStub())
+
+    assert result.metadata["renderer_name"] == "anthropic"
+    assert result.messages == [
+        {"role": "user", "content": "Hello Anthropic"},
+    ]
+
+
+def test_anthropic_prompt_renderer_compiles_content_blocks_and_tool_schema():
+    renderer = AnthropicPromptRenderer()
+    pack = ContextPack(
+        slots={
+            "conversation.history": ContextSlot(
+                name="conversation.history",
+                value={
+                    "format": "turn_pairs",
+                    "turns": [
+                        {
+                            "user_message": {
+                                "role": "user",
+                                "content": "Earlier user",
+                            },
+                            "assistant_message": {
+                                "role": "assistant",
+                                "content": "Earlier answer",
+                            },
+                        }
+                    ],
+                },
+                category="memory",
+                source="test",
+            ),
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Look",
+                category="input",
+                source="test",
+            ),
+            "input.images": ContextSlot(
+                name="input.images",
+                value=[{"ref": "data:image/png;base64,QUJD"}],
+                category="input",
+                source="test",
+            ),
+            "capability.tools_schema": ContextSlot(
+                name="capability.tools_schema",
+                value={
+                    "format": "tool_inventory_v1",
+                    "tools": [
+                        {
+                            "name": "search_docs",
+                            "description": "Search docs",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                },
+                category="tools",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=renderer).render(pack)
+
+    assert result.metadata["renderer_name"] == "anthropic"
+    assert result.messages[0] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "Earlier user"}],
+    }
+    assert result.messages[1] == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "Earlier answer"}],
+    }
+    final_content = result.messages[-1]["content"]
+    assert {
+        "type": "text",
+        "text": "<user_input>\n  <text>Look</text>\n</user_input>",
+    } in final_content
+    assert {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "QUJD",
+        },
+    } in final_content
+    assert result.tool_schema == [
+        {
+            "name": "search_docs",
+            "description": "Search docs",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    ]
 
 
 def test_base_prompt_renderer_serializes_dict_slot_to_structured_object():

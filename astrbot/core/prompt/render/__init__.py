@@ -1,8 +1,10 @@
 """Prompt render-layer exports."""
 
+from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
 from .engine import PromptRenderEngine
 from .interfaces import PromptSelectorInterface, RenderResult, SerializedRenderValue
+from .minimax_renderer import MiniMaxPromptRenderer
 from .prompt_tree import NodeRef, PromptBuilder, PromptNode
 from .request_adapter import (
     PROMPT_APPLY_RESULT_EXTRA_KEY,
@@ -30,6 +32,8 @@ from .selector import (
 
 __all__ = [
     "BasePromptRenderer",
+    "AnthropicPromptRenderer",
+    "MiniMaxPromptRenderer",
     "NodeRef",
     "PROMPT_APPLY_RESULT_EXTRA_KEY",
     "PROMPT_RENDER_RESULT_EXTRA_KEY",

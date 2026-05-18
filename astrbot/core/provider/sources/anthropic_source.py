@@ -250,7 +250,9 @@ class ProviderAnthropic(Provider):
                 if isinstance(message.get("content"), list):
                     converted_content = []
                     for part in message["content"]:
-                        if part.get("type") == "image_url":
+                        if part.get("type") == "image":
+                            converted_content.append(part)
+                        elif part.get("type") == "image_url":
                             # Convert OpenAI image_url format to Anthropic image format
                             image_url_data = part.get("image_url", {})
                             url = image_url_data.get("url", "")
@@ -709,7 +711,12 @@ class ProviderAnthropic(Provider):
         """组装上下文，支持文本和图片"""
 
         async def resolve_image_url(image_url: str) -> dict | None:
-            if image_url.startswith("http"):
+            if image_url.startswith("data:") and ";base64," in image_url:
+                image_data = image_url
+                _, base64_data = image_url.split(",", 1)
+                image_bytes = base64.b64decode(base64_data)
+                mime_type = self._detect_image_mime_type(image_bytes)
+            elif image_url.startswith("http"):
                 image_path = await download_image_by_url(image_url)
                 image_data, mime_type = await self.encode_image_bs64(image_path)
             elif image_url.startswith("file:///"):

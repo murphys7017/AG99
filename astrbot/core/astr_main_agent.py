@@ -482,6 +482,7 @@ def _run_prompt_pipeline_shadow_mode(
     prompt_context_pack,
 ) -> None:
     """Execute the prompt pipeline in shadow mode without mutating the live request."""
+    event.set_extra("provider", provider)
     render_engine = PromptRenderEngine()
     render_result = render_engine.render(
         prompt_context_pack,
@@ -553,8 +554,11 @@ def _apply_prompt_pipeline_visible_mode(
     config: MainAgentBuildConfig,
     provider_request: ProviderRequest,
     prompt_context_pack,
+    provider: Provider | None = None,
 ) -> None:
     """Render collected prompt context and overwrite only model-visible request fields."""
+    if provider is not None:
+        event.set_extra("provider", provider)
     render_engine = PromptRenderEngine()
     render_result = render_engine.render(
         prompt_context_pack,
@@ -2215,6 +2219,7 @@ async def build_main_agent(
                 event=event,
                 plugin_context=plugin_context,
                 config=config,
+                provider=provider,
                 provider_request=req,
                 prompt_context_pack=selected_prompt_context_pack,
             )
