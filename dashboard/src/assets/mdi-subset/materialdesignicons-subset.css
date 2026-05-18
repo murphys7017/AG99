@@ -1,4 +1,4 @@
-/* Auto-generated MDI subset – 260 icons */
+/* Auto-generated MDI subset – 262 icons */
 /* Do not edit manually. Run: pnpm run subset-icons */
 
 @font-face {
@@ -210,6 +210,10 @@
 
 .mdi-circle::before {
   content: "\F0765";
+}
+
+.mdi-circle-outline::before {
+  content: "\F0766";
 }
 
 .mdi-circle-small::before {
@@ -982,6 +986,10 @@
 
 .mdi-timer-outline::before {
   content: "\F051B";
+}
+
+.mdi-timer-sand::before {
+  content: "\F051F";
 }
 
 .mdi-tools::before {
