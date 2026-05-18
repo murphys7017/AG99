@@ -69,12 +69,12 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 | --- | --- | --- | --- | --- |
 | Security fixes | In progress | Upload path traversal, backup importer traversal, password policy, updater zip root path, T2I SSTI validation | Upload filename sanitization, backup-importer handling, updater zip-root handling, and T2I template validation are already present. Password policy remains deferred because upstream `7ddf6371` is a broad auth/onboarding/storage migration, not a small patch. | Review password setup/password hashing as a dedicated auth migration batch. |
 | Provider and model runtime | In progress | OpenAI http client, reasoning content, Claude no-arg tools, MiniMax TTS, Embedding providers, Anthropic compatibility | Several small compatibility fixes were rewritten locally. This batch adds shared empty-assistant sanitization to both non-streaming and streaming OpenAI-compatible requests. | After commit, re-run `git cherry` triage and review provider warning/default-model edge cases only if behavior differs locally. |
-| Platform adapters and outbound media | In progress | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin send failure, Telegram media group logging, and message-tool path handling were absorbed. This batch adds Discord command-quota startup guard and Weixin OC session timeout cleanup. | Evaluate KOOK/Dingtalk/Feishu as feature work after stability fixes. |
+| Platform adapters and outbound media | In progress | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin send failure, Telegram media group logging, and message-tool path handling were absorbed. Dingtalk/Lark/Weixin OC one-click QR registration and polling mechanism absorbed. | Evaluate KOOK as feature work after stability fixes. |
 | Dashboard UX and WebUI | In progress | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX | IME, console, upload sanitization, provider test feedback, T2I template error feedback, and Baidu search-key visibility were absorbed. Inline edit/regenerate remains intentionally deferred. | Review Noto Sans/font stack and initial password UX because they are low-risk user-facing polish. |
 | Plugin system | In progress | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Basic `pages` metadata and install cleanup were absorbed. | Review dynamic plugin API routes and plugin update/changelog/storage changes as one feature batch. |
 | Knowledge base and retrieval | Deferred | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, Firecrawl search tools | Firecrawl config/tool hook had been absorbed in the earlier review; FTS5/EPUB remain deferred due storage/retrieval impact. | Review blank-prompt skip as a small bugfix; keep FTS5/EPUB as a dedicated migration task. |
 | Computer use / sandbox | In progress | Shipyard profile selection, readiness gate, idle sandbox expiry, sandbox image download delivery | Explicit/auto Shipyard profile behavior was absorbed. | Review readiness gate, graceful cleanup, idle expiry, and sandbox image download behavior together. |
-| Auth, CLI, deployment, update | Not started | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts | Not yet absorbed in this pass. | Review auth/CLI/deploy as a separate operational batch. |
+| Auth, CLI, deployment, update | Partially absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC) absorbed. Dashboard password policy, update progress dialog, and deploy scripts remain not started. | Review auth/CLI/deploy as a separate operational batch. |
 | Docs, version bumps, dependency chores | Mostly skipped | Version bumps, README/docs URL updates, pnpm action bumps, release instructions | Usually skipped unless they affect this fork's docs or release process. | Keep version/chore commits out of functional sync unless preparing a release. |
 
 ### Review Rules for Future Upstream Sync
@@ -86,6 +86,82 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 - For rewritten merges, record the local commit hash and the upstream commit or PR that inspired it.
 - Do not treat `git cherry` as authoritative for this fork; use it only as a triage aid.
 - Keep local prompt, memory, postprocess, and interaction architecture as the default source of truth unless an upstream change is explicitly chosen to replace it.
+
+## 2026-05-18 Platform QR Registration Merge
+
+Reviewed upstream commits: `c88025c2` (dingtalk QR registration), `aace90da` (feishu/lark QR registration), `b991e819` (weixin_oc QR login), `8dde2292` (lark bot info), `a1e95081` (random suffix for weixin/dingtalk id).
+
+### Absorbed
+
+#### Dingtalk One-Click QR Registration
+
+- New file: `astrbot/core/platform/sources/dingtalk/app_registration.py`
+- Implements device code flow: init → begin → poll
+- Returns `client_id` + `client_secret` on success
+- Dashboard endpoint: `POST /api/platform/registration/dingtalk`
+
+#### Lark/Feishu One-Click QR Registration
+
+- New file: `astrbot/core/platform/sources/lark/app_registration.py`
+- Supports Feishu (China) and Lark (Global) with automatic domain resolution
+- Device code flow with `client_secret` fallback polling for Lark
+- Returns `app_id` + `app_secret` + `tenant_brand` + `domain` on success
+- Dashboard endpoint: `POST /api/platform/registration/lark`
+
+#### Lark Bot Info Retrieval
+
+- New file: `astrbot/core/platform/sources/lark/bot_info.py`
+- After QR registration success, fetches bot name and open_id via tenant access token
+- Integrated into lark registration handler for enriched response
+
+#### Weixin OC QR Login
+
+- New file: `astrbot/core/platform/sources/weixin_oc/login_registration.py`
+- Uses existing `WeixinOCClient` for API calls
+- Returns `weixin_oc_token` + `account_id` + `base_url` + `user_id` on success
+- Dashboard endpoint: `POST /api/platform/registration/weixin_oc`
+
+#### Dashboard Registration Endpoint
+
+- Modified: `astrbot/dashboard/routes/platform.py`
+- Added `POST /api/platform/registration/<platform_type>` endpoint
+- Three handler methods: `_handle_lark_registration`, `_handle_dingtalk_registration`, `_handle_weixin_oc_registration`
+- Random 4-letter suffix appended to platform ID on success (prevents duplicate IDs)
+
+#### Frontend Registration Component
+
+- New file: `dashboard/src/components/platform/PlatformRegistrationAction.vue`
+- QR code display with polling state machine (idle → starting → pending → created/error)
+- Auto-fills platform config credentials on success
+- **Bug fix vs upstream**: local `QrCodeViewer` always re-encodes input as QR code via `QRCode.toDataURL()`. Weixin OC returns a base64 PNG image directly. Added `isBase64Image` computed property to bypass `QrCodeViewer` for base64 images.
+
+#### Frontend AddNewPlatform Integration
+
+- Modified: `dashboard/src/components/platform/AddNewPlatform.vue`
+- Lark/Dingtalk: scan vs manual creation mode radio switch
+- Weixin OC: direct QR display (no manual mode)
+- `canSave` requires mode selection for lark/dingtalk; requires `weixin_oc_token` for weixin_oc
+- `handlePlatformRegistrationCreated` appends suffix to platform ID on success
+- `resetForm` clears creation modes
+
+#### i18n
+
+- Modified: `dashboard/src/i18n/locales/zh-CN/features/platform.json`
+- Modified: `dashboard/src/i18n/locales/en-US/features/platform.json`
+- Modified: `dashboard/src/i18n/locales/ru-RU/features/platform.json`
+- Added `registrationAction` section with status texts, mode labels, and per-platform titles
+
+### Not Merged
+
+#### Test Files
+
+- `tests/test_dingtalk_app_registration.py`
+- `tests/test_lark_app_registration.py`
+- `tests/test_weixin_oc_login_registration.py`
+- `tests/test_discord_command_sync.py`
+- `tests/test_cli_init.py`
+
+Reason: Tests depend on upstream test fixtures and mock infrastructure that may not align with local test setup. Can be added later if test coverage becomes a priority.
 
 ## How to Update
 

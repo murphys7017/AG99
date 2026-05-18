@@ -130,6 +130,55 @@
     "waiting": "Ожидание QR",
     "close": "Закрыть"
   },
+  "registrationAction": {
+    "lark": {
+      "title": "QR-регистрация",
+      "show": "QR-регистрация",
+      "scanTitle": "Отсканируйте в приложении Feishu",
+      "feishu": "Feishu (Китай)",
+      "lark": "Lark (Мир)"
+    },
+    "weixinOc": {
+      "title": "Вход через QR WeChat",
+      "scanTitle": "Отсканируйте в WeChat",
+      "created": "Вход выполнен",
+      "status": {
+        "idle": "Не запущено",
+        "starting": "Получение QR",
+        "pending": "Ожидание сканирования",
+        "created": "Вход выполнен! Нажмите сохранить!",
+        "denied": "Отменено",
+        "expired": "Истекло",
+        "error": "Ошибка входа"
+      }
+    },
+    "dingtalk": {
+      "title": "QR-регистрация DingTalk",
+      "scanTitle": "Отсканируйте в DingTalk",
+      "created": "Регистрация завершена"
+    },
+    "start": "Начать",
+    "created": "Готово",
+    "startFailed": "Не удалось запустить QR-регистрацию",
+    "pollFailed": "Не удалось получить статус",
+    "mode": {
+      "title": "Способ создания",
+      "scan": "QR-регистрация",
+      "manual": "Вручную",
+      "larkManual": "Вручную (поддержка своего сервера Feishu)"
+    },
+    "scanTitle": "Отсканируйте в приложении Feishu",
+    "status": {
+      "idle": "Не запущено",
+      "starting": "Запуск",
+      "pending": "Ожидание сканирования",
+      "slow_down": "Замедление опроса",
+      "created": "Готово! Нажмите сохранить!",
+      "denied": "Отменено",
+      "expired": "Истекло",
+      "error": "Ошибка"
+    }
+  },
   "errorDialog": {
         "title": "Детали ошибки",
         "platformId": "ID платформы",
