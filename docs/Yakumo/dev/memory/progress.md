@@ -72,6 +72,8 @@ interaction turn 约束：
 - `analysis.prompts_root`
 - `analysis.analyzers.*`
 - `analysis.stages.short_term_update`
+- `short_term.update_interval_turns`
+- `short_term.update_min_chars`
 
 当前短期层支持两种运行模式：
 
@@ -91,6 +93,13 @@ interaction turn 约束：
 - `summary_v1`
   - `short_summary`
 
+当前短期更新节奏：
+
+- `TurnRecord` 每轮都会写入。
+- 第一次没有 `ShortTermMemory` 时会立即分析。
+- 之后按 `short_term.update_interval_turns` 或 `short_term.update_min_chars` 触发短期分析。
+- `TopicState` 与 `ShortTermMemory` 在一次 `short_term_update` stage 中同时更新，不再为同一轮重复运行短期 analyzer。
+
 ### 2.3 Snapshot 读取链路
 
 当前已落地：
@@ -109,6 +118,8 @@ interaction turn 约束：
 
 说明：
 
+- `MemoryService.get_snapshot(...)` 是 memory 的完整只读出口，默认不套用 prompt 注入裁剪策略。
+- Prompt 侧由 `MemoryCollector` 把 `memory.injection` 转换成 `MemorySnapshotReadOptions`，再决定读取多少中长期层数据以及最终注入哪些 slot。
 - `canonical_user_id` 只看当前 latest turn，不做历史 turn 回溯补全
 - latest turn 没有 `canonical_user_id` 时，snapshot 只返回短期层
 - 无 query 时：
@@ -118,7 +129,7 @@ interaction turn 约束：
   - `long_term_memories` 通过 `DocumentSearchService` 按 query 检索
   - `experiences` 优先通过命中 story 的 `LongTermMemoryLink` 回查
   - 不足部分再用最近经验补齐
-- 这里的中长期字段已进入 snapshot，但还不等于 prompt 消费链路已经完整收口
+- 这里的中长期字段已进入 snapshot；prompt 消费链路可通过 `memory.injection` 做轻量注入裁剪。
 
 ### 2.4 中期 consolidation 链路
 
@@ -147,6 +158,7 @@ interaction turn 约束：
 - 按 `canonical_user_id + conversation_id` 判断
 - 统计最新 `SessionInsight.window_end_at` 之后的新 turn 数
 - 达到 `consolidation.min_short_term_updates` 才触发
+- 该阈值仍按 raw turn 数触发，不按短期分析实际执行次数触发；短期分析降频后，consolidation 可能读取到较旧的 `ShortTermMemory`，但仍以 raw turns 作为主要整理材料。
 
 当前中期 analyzer 契约已经固定为：
 

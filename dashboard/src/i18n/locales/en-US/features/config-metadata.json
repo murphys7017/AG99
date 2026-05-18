@@ -1171,6 +1171,14 @@
         "short_term": {
           "recent_turns_window": {
             "description": "Short-Term Analysis Window"
+          },
+          "update_interval_turns": {
+            "description": "Short-Term Analysis Interval",
+            "hint": "The first turn is analyzed immediately; later updates run after this many accumulated turns."
+          },
+          "update_min_chars": {
+            "description": "Minimum Accumulated Characters",
+            "hint": "Set to 0 to trigger only by turn count. When greater than 0, accumulated text since the last short-term update can also trigger analysis."
           }
         },
         "consolidation": {
@@ -1178,7 +1186,8 @@
             "description": "Enable Consolidation"
           },
           "min_short_term_updates": {
-            "description": "Short-Term Updates Required"
+            "description": "Consolidation Trigger Turns",
+            "hint": "Currently based on raw conversation turns; the key name is kept for compatibility."
           },
           "batch_window_hours": {
             "description": "Batch Window Hours"
@@ -1190,6 +1199,50 @@
           },
           "min_pending_experiences": {
             "description": "Pending Experiences Required"
+          }
+        }
+      }
+    },
+    "injection": {
+      "description": "Injection",
+      "hint": "Controls which Memory content enters the prompt. For large-context setups, keep short-term state and a few relevant long-term memories.",
+      "memory": {
+        "injection": {
+          "enabled": {
+            "description": "Enable Memory Injection"
+          },
+          "topic_state": {
+            "description": "Inject Current Topic"
+          },
+          "short_term": {
+            "description": "Inject Short-Term Memory"
+          },
+          "experiences": {
+            "enabled": {
+              "description": "Inject Experiences"
+            },
+            "top_k": {
+              "description": "Experience Injection Count"
+            }
+          },
+          "long_term": {
+            "enabled": {
+              "description": "Inject Long-Term Memory"
+            },
+            "top_k": {
+              "description": "Long-Term Memory Injection Count"
+            },
+            "query_required": {
+              "description": "Require Query for Long-Term Memory",
+              "hint": "When enabled, long-term memory is searched and injected only when the current request provides query text."
+            }
+          },
+          "persona_state": {
+            "description": "Inject Persona State"
+          },
+          "include_debug_fields": {
+            "description": "Inject Debug Fields",
+            "hint": "When disabled, IDs, source refs, timestamps, and other engineering fields are removed to reduce prompt noise."
           }
         }
       }

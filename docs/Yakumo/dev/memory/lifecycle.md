@@ -41,6 +41,7 @@
 说明：
 
 - `TurnRecord` 是 memory 系统的原始输入材料。
+- 当前实现中 `TurnRecord` 每轮都会写入。
 - 这一层不直接生成长期记忆。
 - 这一层的目标是保证后续所有 memory 更新都有统一来源。
 
@@ -48,7 +49,7 @@
 
 触发时机：
 
-- `TurnRecord` 写入后立即执行
+- `TurnRecord` 写入后按配置判断是否执行
 - 仍然属于当前回合后的轻量更新
 
 输入：
@@ -66,6 +67,8 @@
 - `TopicState` 表示当前会话正在围绕什么继续聊。
 - `ShortTermMemory` 表示下一轮仍需要继续带着的短期上下文抽象。
 - 这一阶段只做轻量分析，不做深度人格更新。
+- 当前实现会在冷启动时立即分析；之后按 `short_term.update_interval_turns` 或 `short_term.update_min_chars` 节流。
+- 当前实现会用一次 `short_term_update` stage 同时更新 `TopicState` 与 `ShortTermMemory`。
 
 ## 4. 中期抽象阶段
 
@@ -164,6 +167,7 @@
 
 - `MemorySnapshot` 是给 Prompt System 消费的只读视图。
 - Prompt System 只读取 snapshot，不直接参与 memory update。
+- `MemoryService.get_snapshot(...)` 默认返回完整只读视图；Prompt 注入裁剪由 `MemoryCollector` 使用独立 read options 完成。
 - 当前 snapshot 只用 latest turn 的 `canonical_user_id` 判断是否允许读取中长期层。
 - latest turn 没有身份映射时，只返回短期层。
 - 有 query 时：
@@ -231,7 +235,7 @@
 当前 memory 生命周期可以收敛为：
 
 - 每轮先记录 `TurnRecord`
-- 每轮立即更新 `TopicState` 与 `ShortTermMemory`
+- 冷启动立即更新 `TopicState` 与 `ShortTermMemory`，之后按配置节流
 - 累计后批量生成 `SessionInsight` 与 `Experience`
 - 定时生成或更新 `LongTermMemory`
 - 定时更新 `PersonaState` 与 `PersonaEvolutionLog`

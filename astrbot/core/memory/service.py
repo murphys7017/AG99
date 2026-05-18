@@ -17,7 +17,7 @@ from .identity import MemoryIdentityMappingService, MemoryIdentityResolver
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
 from .short_term_service import ShortTermMemoryService
-from .snapshot_builder import MemorySnapshotBuilder
+from .snapshot_builder import MemorySnapshotBuilder, MemorySnapshotReadOptions
 from .store import MemoryStore
 from .turn_record_service import TurnRecordService
 from .types import (
@@ -159,6 +159,7 @@ class MemoryService:
         umo: str,
         conversation_id: str | None,
         query: str | None = None,
+        read_options: MemorySnapshotReadOptions | None = None,
     ) -> MemorySnapshot:
         await self.initialize()
         logger.info(
@@ -167,7 +168,12 @@ class MemoryService:
             conversation_id,
             query is not None,
         )
-        return await self.snapshot_builder.build_snapshot(umo, conversation_id, query)
+        return await self.snapshot_builder.build_snapshot(
+            umo,
+            conversation_id,
+            query,
+            read_options=read_options,
+        )
 
     async def run_consolidation(
         self,
@@ -383,6 +389,7 @@ def _build_memory_service(config: MemoryConfig) -> MemoryService:
         history_source,
         analyzer_manager=analyzer_manager,
         analysis_config=config.analysis,
+        short_term_config=config.short_term,
     )
     consolidation_service = ConsolidationService(
         store,
@@ -410,6 +417,7 @@ def _build_memory_service(config: MemoryConfig) -> MemoryService:
     snapshot_builder = MemorySnapshotBuilder(
         store,
         document_search_service=document_search_service,
+        config=config,
     )
     service = MemoryService(
         store,

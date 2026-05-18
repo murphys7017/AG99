@@ -690,10 +690,22 @@ class TestConfigMetadataI18n:
         result = ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3)
 
         group = result["memory_group"]
-        assert sorted(group["metadata"]) == ["advanced", "general", "models"]
+        assert sorted(group["metadata"]) == [
+            "advanced",
+            "general",
+            "injection",
+            "models",
+            "schedule",
+        ]
         assert (
             group["metadata"]["general"]["items"]["memory.enabled"]["description"]
             == "memory_group.general.memory.enabled.description"
+        )
+        assert (
+            group["metadata"]["injection"]["items"]["memory.injection.long_term.top_k"][
+                "description"
+            ]
+            == "memory_group.injection.memory.injection.long_term.top_k.description"
         )
         assert (
             group["metadata"]["models"]["items"][
@@ -708,9 +720,9 @@ class TestConfigMetadataI18n:
             == "select_provider"
         )
         assert (
-            group["metadata"]["models"]["items"][
-                "memory.vector_index.provider_id"
-            ]["_special"]
+            group["metadata"]["models"]["items"]["memory.vector_index.provider_id"][
+                "_special"
+            ]
             == "select_provider_embedding"
         )
 

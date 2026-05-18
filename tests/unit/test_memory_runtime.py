@@ -16,6 +16,7 @@ from astrbot.core.memory.analyzers.base import (
 )
 from astrbot.core.memory.config import (
     MemoryAnalysisConfig,
+    MemoryConfig,
     MemoryConsolidationConfig,
     MemoryLongTermConfig,
     load_memory_config,
@@ -43,7 +44,10 @@ from astrbot.core.memory.postprocessor import (
 from astrbot.core.memory.projection import ExperienceProjectionService
 from astrbot.core.memory.service import MemoryService
 from astrbot.core.memory.short_term_service import ShortTermMemoryService
-from astrbot.core.memory.snapshot_builder import MemorySnapshotBuilder
+from astrbot.core.memory.snapshot_builder import (
+    MemorySnapshotBuilder,
+    memory_injection_to_snapshot_read_options,
+)
 from astrbot.core.memory.store import MemoryStore
 from astrbot.core.memory.turn_record_service import TurnRecordService
 from astrbot.core.memory.types import (
@@ -1209,11 +1213,137 @@ async def test_short_term_memory_service_uses_analyzer_when_enabled(temp_dir: Pa
 
     assert analyzer_manager.calls
     assert analyzer_manager.calls[0]["stage"] == "short_term_update"
+    assert len(analyzer_manager.calls) == 1
     assert topic_state.current_topic == "Analyzer topic"
     assert topic_state.topic_summary == "Analyzer topic summary"
     assert topic_state.topic_confidence == 0.92
     assert short_term_memory.short_summary == "Analyzer short summary"
     assert short_term_memory.active_focus == "Analyzer focus"
+
+
+@pytest.mark.asyncio
+async def test_short_term_memory_service_skips_until_update_interval(temp_dir: Path):
+    config = MemoryConfig()
+    config.short_term.update_interval_turns = 3
+    store = MemoryStore(db_path=temp_dir / "memory.db", config=config)
+    history_source = RecentConversationSource(store, recent_turns_window=8)
+    analyzer_manager = StubShortTermAnalyzerManager()
+    short_term_service = ShortTermMemoryService(
+        store,
+        history_source,
+        analyzer_manager=analyzer_manager,  # type: ignore[arg-type]
+        analysis_config=MemoryAnalysisConfig(enabled=True, strict=True),
+        short_term_config=config.short_term,
+    )
+    turn_record_service = TurnRecordService(store)
+    base_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    history = _make_history()
+
+    try:
+        first_turn = await turn_record_service.ingest_turn(
+            _memory_update_request(
+                provider_request={"conversation_history": history},
+                user_message=history[-2],
+                assistant_message=history[-1],
+                message_timestamp=base_time,
+            )
+        )
+        await short_term_service.update_after_turn(
+            first_turn, conversation_history=history
+        )
+        assert len(analyzer_manager.calls) == 1
+
+        second_turn = await turn_record_service.ingest_turn(
+            _memory_update_request(
+                user_message={"role": "user", "content": "second"},
+                assistant_message={"role": "assistant", "content": "reply"},
+                message_timestamp=base_time + timedelta(minutes=1),
+            )
+        )
+        _, skipped_memory = await short_term_service.update_after_turn(second_turn)
+        assert len(analyzer_manager.calls) == 1
+        assert skipped_memory is not None
+        assert skipped_memory.updated_at == base_time.replace(tzinfo=None)
+
+        third_turn = await turn_record_service.ingest_turn(
+            _memory_update_request(
+                user_message={"role": "user", "content": "third"},
+                assistant_message={"role": "assistant", "content": "reply"},
+                message_timestamp=base_time + timedelta(minutes=2),
+            )
+        )
+        await short_term_service.update_after_turn(third_turn)
+        assert len(analyzer_manager.calls) == 1
+
+        fourth_turn = await turn_record_service.ingest_turn(
+            _memory_update_request(
+                user_message={"role": "user", "content": "fourth"},
+                assistant_message={"role": "assistant", "content": "reply"},
+                message_timestamp=base_time + timedelta(minutes=3),
+            )
+        )
+        _, updated_memory = await short_term_service.update_after_turn(fourth_turn)
+    finally:
+        await store.close()
+
+    assert len(analyzer_manager.calls) == 2
+    assert updated_memory is not None
+    assert updated_memory.updated_at == (base_time + timedelta(minutes=3)).replace(
+        tzinfo=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_short_term_memory_service_updates_when_min_chars_reached(
+    temp_dir: Path,
+):
+    config = MemoryConfig()
+    config.short_term.update_interval_turns = 99
+    config.short_term.update_min_chars = 10
+    store = MemoryStore(db_path=temp_dir / "memory.db", config=config)
+    history_source = RecentConversationSource(store, recent_turns_window=8)
+    analyzer_manager = StubShortTermAnalyzerManager()
+    short_term_service = ShortTermMemoryService(
+        store,
+        history_source,
+        analyzer_manager=analyzer_manager,  # type: ignore[arg-type]
+        analysis_config=MemoryAnalysisConfig(enabled=True, strict=True),
+        short_term_config=config.short_term,
+    )
+    turn_record_service = TurnRecordService(store)
+    base_time = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+    history = _make_history()
+
+    try:
+        first_turn = await turn_record_service.ingest_turn(
+            _memory_update_request(
+                provider_request={"conversation_history": history},
+                user_message=history[-2],
+                assistant_message=history[-1],
+                message_timestamp=base_time,
+            )
+        )
+        await short_term_service.update_after_turn(
+            first_turn, conversation_history=history
+        )
+        assert len(analyzer_manager.calls) == 1
+
+        second_turn = await turn_record_service.ingest_turn(
+            _memory_update_request(
+                user_message={"role": "user", "content": "hello"},
+                assistant_message={"role": "assistant", "content": "world"},
+                message_timestamp=base_time + timedelta(minutes=1),
+            )
+        )
+        _, updated_memory = await short_term_service.update_after_turn(second_turn)
+    finally:
+        await store.close()
+
+    assert len(analyzer_manager.calls) == 2
+    assert updated_memory is not None
+    assert updated_memory.updated_at == (base_time + timedelta(minutes=1)).replace(
+        tzinfo=None
+    )
 
 
 @pytest.mark.asyncio
@@ -1347,9 +1477,10 @@ async def test_memory_service_snapshot_keeps_query_as_debug_meta(temp_dir: Path)
 
 
 @pytest.mark.asyncio
-async def test_memory_service_snapshot_uses_query_search_for_long_term_memories(
+async def test_memory_snapshot_prompt_injection_uses_query_search_top_k(
     temp_dir: Path,
 ):
+    config = MemoryConfig()
     store = MemoryStore(db_path=temp_dir / "memory.db")
     document_search_service = StubSnapshotDocumentSearchService(
         ["ltm-query-2", "ltm-query-1"]
@@ -1415,6 +1546,7 @@ async def test_memory_service_snapshot_uses_query_search_for_long_term_memories(
             TEST_UMO,
             "conv-1",
             query="query driven snapshot",
+            read_options=memory_injection_to_snapshot_read_options(config.injection),
         )
     finally:
         await store.close()
@@ -1429,6 +1561,76 @@ async def test_memory_service_snapshot_uses_query_search_for_long_term_memories(
     assert document_search_service.calls[0].canonical_user_id == TEST_CANONICAL_USER_ID
     assert document_search_service.calls[0].scope_type == ScopeType.USER
     assert document_search_service.calls[0].scope_id == TEST_CANONICAL_USER_ID
+    assert document_search_service.calls[0].top_k == 3
+
+
+@pytest.mark.asyncio
+async def test_memory_snapshot_prompt_injection_skips_long_term_without_query(
+    temp_dir: Path,
+):
+    config = MemoryConfig()
+    store = MemoryStore(db_path=temp_dir / "memory.db")
+    document_search_service = StubSnapshotDocumentSearchService(["ltm-query-1"])
+    snapshot_builder = MemorySnapshotBuilder(
+        store,
+        document_search_service=document_search_service,  # type: ignore[arg-type]
+    )
+    memory_service = MemoryService(
+        store,
+        TurnRecordService(store),
+        _build_short_term_service(store, RecentConversationSource(store)),
+        snapshot_builder,
+    )
+    now = datetime.now(UTC)
+
+    try:
+        await store.save_turn_record(
+            TurnRecord(
+                turn_id="turn-no-query-1",
+                umo=TEST_UMO,
+                conversation_id="conv-1",
+                platform_id=TEST_PLATFORM_ID,
+                platform_user_key=TEST_PLATFORM_USER_KEY,
+                canonical_user_id=TEST_CANONICAL_USER_ID,
+                session_id="session-1",
+                user_message={"role": "user", "content": "hello"},
+                assistant_message={"role": "assistant", "content": "hi"},
+                message_timestamp=now,
+                source_refs=[],
+                created_at=now,
+            )
+        )
+        await store.upsert_long_term_memory_index(
+            _long_term_memory_index(
+                memory_id="ltm-no-query",
+                scope_type="user",
+                scope_id=TEST_CANONICAL_USER_ID,
+                category="project_progress",
+                title="No query memory",
+                summary="Should not be loaded without query by default.",
+                status="active",
+                doc_path=str(temp_dir / "ltm-no-query.md"),
+                importance=0.8,
+                confidence=0.9,
+                tags=[],
+                source_refs=[],
+                first_event_at=now,
+                last_event_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        snapshot = await memory_service.get_snapshot(
+            TEST_UMO,
+            "conv-1",
+            read_options=memory_injection_to_snapshot_read_options(config.injection),
+        )
+    finally:
+        await store.close()
+
+    assert snapshot.long_term_memories == []
+    assert document_search_service.calls == []
 
 
 @pytest.mark.asyncio

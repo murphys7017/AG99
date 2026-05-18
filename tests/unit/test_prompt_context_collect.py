@@ -17,6 +17,8 @@ from astrbot.core.astr_main_agent_resources import (
     LLM_SAFETY_MODE_SYSTEM_PROMPT,
     SANDBOX_MODE_PROMPT,
 )
+from astrbot.core.memory.config import MemoryConfig
+from astrbot.core.memory.snapshot_builder import MemorySnapshotReadOptions
 from astrbot.core.memory.types import (
     Experience,
     LongTermMemoryIndex,
@@ -189,6 +191,8 @@ def _patch_memory_service():
             conversation_id="conv-id",
         )
     )
+    memory_config = MemoryConfig()
+    service.memory_config = memory_config
 
     with (
         patch(
@@ -197,7 +201,7 @@ def _patch_memory_service():
         ),
         patch(
             "astrbot.core.prompt.collectors.memory_collector.get_memory_config",
-            return_value=MagicMock(enabled=True),
+            return_value=memory_config,
         ),
     ):
         yield service
@@ -1698,58 +1702,34 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
         collectors=[MemoryCollector()],
     )
 
-    _patch_memory_service.get_snapshot.assert_awaited_once_with(
-        umo=event.unified_msg_origin,
-        conversation_id="conv-id",
-        query="effective prompt",
-    )
+    _patch_memory_service.get_snapshot.assert_awaited_once()
+    snapshot_kwargs = _patch_memory_service.get_snapshot.await_args.kwargs
+    assert snapshot_kwargs["umo"] == event.unified_msg_origin
+    assert snapshot_kwargs["conversation_id"] == "conv-id"
+    assert snapshot_kwargs["query"] == "effective prompt"
+    assert isinstance(snapshot_kwargs["read_options"], MemorySnapshotReadOptions)
+    assert snapshot_kwargs["read_options"].long_term.top_k == 3
+    assert snapshot_kwargs["read_options"].long_term.query_required is True
 
     topic_slot = pack.get_slot("memory.topic_state")
     assert topic_slot is not None
     assert topic_slot.value == {
-        "umo": event.unified_msg_origin,
-        "conversation_id": "conv-id",
         "current_topic": "Prompt pipeline",
         "topic_summary": "We are designing a memory collector.",
         "topic_confidence": 0.92,
-        "last_active_at": "2026-04-05T12:30:00",
     }
     assert topic_slot.meta["snapshot_field"] == "topic_state"
 
     short_term_slot = pack.get_slot("memory.short_term")
     assert short_term_slot is not None
     assert short_term_slot.value == {
-        "umo": event.unified_msg_origin,
-        "conversation_id": "conv-id",
         "short_summary": "Discussed memory snapshot integration.",
         "active_focus": "MemoryCollector v1",
-        "updated_at": "2026-04-05T12:31:00",
     }
     assert short_term_slot.meta["snapshot_field"] == "short_term_memory"
 
     experiences_slot = pack.get_slot("memory.experiences")
-    assert experiences_slot is not None
-    assert experiences_slot.value == {
-        "count": 1,
-        "items": [
-            {
-                "experience_id": "exp-1",
-                "umo": event.unified_msg_origin,
-                "conversation_id": "conv-id",
-                "scope_type": "user",
-                "scope_id": "canonical-user-1",
-                "category": "project_progress",
-                "summary": "Implemented snapshot integration.",
-                "detail_summary": "The memory snapshot now returns more layers.",
-                "importance": 0.81,
-                "confidence": 0.9,
-                "event_time": "2026-04-05T12:20:00",
-                "updated_at": "2026-04-05T12:32:00",
-                "source_refs": ["turn:1"],
-            }
-        ],
-    }
-    assert experiences_slot.meta["snapshot_field"] == "experiences"
+    assert experiences_slot is None
 
     long_term_slot = pack.get_slot("memory.long_term_memories")
     assert long_term_slot is not None
@@ -1757,10 +1737,6 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
         "count": 1,
         "items": [
             {
-                "memory_id": "ltm-1",
-                "umo": event.unified_msg_origin,
-                "scope_type": "user",
-                "scope_id": "canonical-user-1",
                 "category": "project_progress",
                 "title": "Snapshot roadmap",
                 "summary": "The project is exposing long-term memory through snapshot.",
@@ -1768,30 +1744,13 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
                 "importance": 0.88,
                 "confidence": 0.91,
                 "tags": ["snapshot", "memory"],
-                "source_refs": ["exp:1"],
-                "first_event_at": "2026-04-05T12:00:00",
-                "last_event_at": "2026-04-05T12:20:00",
-                "updated_at": "2026-04-05T12:33:00",
             }
         ],
     }
     assert long_term_slot.meta["snapshot_field"] == "long_term_memories"
 
     persona_state_slot = pack.get_slot("memory.persona_state")
-    assert persona_state_slot is not None
-    assert persona_state_slot.value == {
-        "state_id": "persona-state-1",
-        "scope_type": "user",
-        "scope_id": "canonical-user-1",
-        "persona_id": None,
-        "familiarity": 0.6,
-        "trust": 0.72,
-        "warmth": 0.64,
-        "formality_preference": 0.35,
-        "directness_preference": 0.88,
-        "updated_at": "2026-04-05T12:34:00",
-    }
-    assert persona_state_slot.meta["snapshot_field"] == "persona_state"
+    assert persona_state_slot is None
 
 
 @pytest.mark.asyncio
@@ -1841,11 +1800,126 @@ async def test_collect_context_pack_memory_uses_none_conversation_id_without_req
         collectors=[MemoryCollector()],
     )
 
-    _patch_memory_service.get_snapshot.assert_awaited_once_with(
-        umo=event.unified_msg_origin,
-        conversation_id=None,
-        query="raw event text",
+    _patch_memory_service.get_snapshot.assert_awaited_once()
+    snapshot_kwargs = _patch_memory_service.get_snapshot.await_args.kwargs
+    assert snapshot_kwargs["umo"] == event.unified_msg_origin
+    assert snapshot_kwargs["conversation_id"] is None
+    assert snapshot_kwargs["query"] == "raw event text"
+    assert isinstance(snapshot_kwargs["read_options"], MemorySnapshotReadOptions)
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_memory_skips_when_injection_disabled(
+    _patch_memory_service,
+):
+    event, _ = _make_event()
+    context = _make_context()
+    req = ProviderRequest(prompt="hello")
+    req.conversation = _make_conversation()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
     )
+    _patch_memory_service.memory_config.injection.enabled = False
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[MemoryCollector()],
+    )
+
+    _patch_memory_service.get_snapshot.assert_not_awaited()
+    assert pack.get_slot("memory.topic_state") is None
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_memory_debug_fields_can_be_included(
+    _patch_memory_service,
+):
+    event, _ = _make_event()
+    context = _make_context()
+    req = ProviderRequest(prompt="effective prompt")
+    req.conversation = _make_conversation()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    _patch_memory_service.memory_config.injection.include_debug_fields = True
+    _patch_memory_service.memory_config.injection.experiences.enabled = True
+    _patch_memory_service.memory_config.injection.experiences.top_k = 1
+    _patch_memory_service.memory_config.injection.persona_state = True
+    _patch_memory_service.get_snapshot.return_value = MemorySnapshot(
+        umo=event.unified_msg_origin,
+        conversation_id="conv-id",
+        topic_state=TopicState(
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            current_topic="Prompt pipeline",
+            topic_summary="We are designing a memory collector.",
+            topic_confidence=0.92,
+            last_active_at=datetime(2026, 4, 5, 12, 30, 0),
+        ),
+        short_term_memory=ShortTermMemory(
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            short_summary="Discussed memory snapshot integration.",
+            active_focus="MemoryCollector v1",
+            updated_at=datetime(2026, 4, 5, 12, 31, 0),
+        ),
+        experiences=[
+            Experience(
+                experience_id="exp-1",
+                umo=event.unified_msg_origin,
+                conversation_id="conv-id",
+                platform_user_key="test:user-1",
+                canonical_user_id="canonical-user-1",
+                scope_type="user",
+                scope_id="canonical-user-1",
+                event_time=datetime(2026, 4, 5, 12, 20, 0),
+                category="project_progress",
+                summary="Implemented snapshot integration.",
+                detail_summary="The memory snapshot now returns more layers.",
+                importance=0.81,
+                confidence=0.9,
+                source_refs=["turn:1"],
+                updated_at=datetime(2026, 4, 5, 12, 32, 0),
+            )
+        ],
+        persona_state=PersonaState(
+            state_id="persona-state-1",
+            scope_type="user",
+            scope_id="canonical-user-1",
+            persona_id=None,
+            familiarity=0.6,
+            trust=0.72,
+            warmth=0.64,
+            formality_preference=0.35,
+            directness_preference=0.88,
+            updated_at=datetime(2026, 4, 5, 12, 34, 0),
+        ),
+    )
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[MemoryCollector()],
+    )
+
+    topic_slot = pack.get_slot("memory.topic_state")
+    assert topic_slot is not None
+    assert topic_slot.value["umo"] == event.unified_msg_origin
+    assert topic_slot.value["last_active_at"] == "2026-04-05T12:30:00"
+
+    experiences_slot = pack.get_slot("memory.experiences")
+    assert experiences_slot is not None
+    assert experiences_slot.value["items"][0]["experience_id"] == "exp-1"
+    assert experiences_slot.value["items"][0]["source_refs"] == ["turn:1"]
+
+    persona_slot = pack.get_slot("memory.persona_state")
+    assert persona_slot is not None
+    assert persona_slot.value["state_id"] == "persona-state-1"
 
 
 @pytest.mark.asyncio

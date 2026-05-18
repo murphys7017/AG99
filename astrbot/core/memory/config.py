@@ -230,6 +230,36 @@ class MemoryIdentityConfig:
 class MemoryShortTermConfig:
     enabled: bool = True
     recent_turns_window: int = 8
+    update_interval_turns: int = 6
+    update_min_chars: int = 0
+
+
+@dataclass(slots=True)
+class MemoryInjectionListConfig:
+    enabled: bool = True
+    top_k: int = 0
+
+
+@dataclass(slots=True)
+class MemoryLongTermInjectionConfig:
+    enabled: bool = True
+    top_k: int = 3
+    query_required: bool = True
+
+
+@dataclass(slots=True)
+class MemoryInjectionConfig:
+    enabled: bool = True
+    topic_state: bool = True
+    short_term: bool = True
+    experiences: MemoryInjectionListConfig = field(
+        default_factory=lambda: MemoryInjectionListConfig(enabled=False, top_k=0)
+    )
+    long_term: MemoryLongTermInjectionConfig = field(
+        default_factory=MemoryLongTermInjectionConfig
+    )
+    persona_state: bool = False
+    include_debug_fields: bool = False
 
 
 @dataclass(slots=True)
@@ -331,6 +361,7 @@ class MemoryConfig:
     )
     identity: MemoryIdentityConfig = field(default_factory=MemoryIdentityConfig)
     short_term: MemoryShortTermConfig = field(default_factory=MemoryShortTermConfig)
+    injection: MemoryInjectionConfig = field(default_factory=MemoryInjectionConfig)
     consolidation: MemoryConsolidationConfig = field(
         default_factory=MemoryConsolidationConfig
     )
@@ -558,6 +589,11 @@ def load_memory_config(
     short_term_payload = (
         payload.get("short_term", {}) if isinstance(payload, dict) else {}
     )
+    injection_payload = (
+        payload.get("injection", {}) if isinstance(payload, dict) else {}
+    )
+    injection_experiences_payload = _as_dict(injection_payload.get("experiences"))
+    injection_long_term_payload = _as_dict(injection_payload.get("long_term"))
     consolidation_payload = (
         payload.get("consolidation", {}) if isinstance(payload, dict) else {}
     )
@@ -616,6 +652,36 @@ def load_memory_config(
             recent_turns_window=_as_int(
                 short_term_payload.get("recent_turns_window"),
                 8,
+            ),
+            update_interval_turns=_as_int(
+                short_term_payload.get("update_interval_turns"),
+                6,
+            ),
+            update_min_chars=_as_int(
+                short_term_payload.get("update_min_chars"),
+                0,
+            ),
+        ),
+        injection=MemoryInjectionConfig(
+            enabled=_as_bool(injection_payload.get("enabled"), True),
+            topic_state=_as_bool(injection_payload.get("topic_state"), True),
+            short_term=_as_bool(injection_payload.get("short_term"), True),
+            experiences=MemoryInjectionListConfig(
+                enabled=_as_bool(injection_experiences_payload.get("enabled"), False),
+                top_k=_as_int(injection_experiences_payload.get("top_k"), 0),
+            ),
+            long_term=MemoryLongTermInjectionConfig(
+                enabled=_as_bool(injection_long_term_payload.get("enabled"), True),
+                top_k=_as_int(injection_long_term_payload.get("top_k"), 3),
+                query_required=_as_bool(
+                    injection_long_term_payload.get("query_required"),
+                    True,
+                ),
+            ),
+            persona_state=_as_bool(injection_payload.get("persona_state"), False),
+            include_debug_fields=_as_bool(
+                injection_payload.get("include_debug_fields"),
+                False,
             ),
         ),
         consolidation=MemoryConsolidationConfig(

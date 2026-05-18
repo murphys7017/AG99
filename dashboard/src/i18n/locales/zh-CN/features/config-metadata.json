@@ -1173,6 +1173,14 @@
         "short_term": {
           "recent_turns_window": {
             "description": "短期分析窗口轮数"
+          },
+          "update_interval_turns": {
+            "description": "短期分析间隔轮数",
+            "hint": "第一次会立即分析；之后每累计这么多轮对话才再次分析短期记忆。"
+          },
+          "update_min_chars": {
+            "description": "短期分析最小累计字符数",
+            "hint": "设为 0 表示只按轮数触发；大于 0 时，自上次短期分析后累计文本达到该值也会触发。"
           }
         },
         "consolidation": {
@@ -1180,7 +1188,8 @@
             "description": "启用记忆整理"
           },
           "min_short_term_updates": {
-            "description": "整理所需短期更新次数"
+            "description": "整理触发轮数",
+            "hint": "当前按原始对话轮数触发整理，名称保留兼容旧配置。"
           },
           "batch_window_hours": {
             "description": "整理批次时间窗口"
@@ -1192,6 +1201,50 @@
           },
           "min_pending_experiences": {
             "description": "长期提升所需经验数量"
+          }
+        }
+      }
+    },
+    "injection": {
+      "description": "注入配置",
+      "hint": "控制哪些 Memory 内容进入 Prompt。大上下文场景建议只注入短期状态和少量相关长期记忆。",
+      "memory": {
+        "injection": {
+          "enabled": {
+            "description": "启用记忆注入"
+          },
+          "topic_state": {
+            "description": "注入当前话题"
+          },
+          "short_term": {
+            "description": "注入短期记忆"
+          },
+          "experiences": {
+            "enabled": {
+              "description": "注入经验片段"
+            },
+            "top_k": {
+              "description": "经验注入数量"
+            }
+          },
+          "long_term": {
+            "enabled": {
+              "description": "注入长期记忆"
+            },
+            "top_k": {
+              "description": "长期记忆注入数量"
+            },
+            "query_required": {
+              "description": "长期记忆需要查询",
+              "hint": "开启后，只有当前请求能提供查询文本时才检索并注入长期记忆。"
+            }
+          },
+          "persona_state": {
+            "description": "注入人格状态"
+          },
+          "include_debug_fields": {
+            "description": "注入调试字段",
+            "hint": "关闭时会移除 ID、来源、时间戳等工程字段，减少 Prompt 噪声。"
           }
         }
       }

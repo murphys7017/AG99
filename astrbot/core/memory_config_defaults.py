@@ -30,6 +30,7 @@ def build_default_memory_config_payload() -> dict:
         "enabled": True,
         "identity": {
             "enabled": True,
+            "bindings": [],
             "mappings_path": "data/memory/identity_mappings.yaml",
         },
         "storage": {
@@ -40,6 +41,24 @@ def build_default_memory_config_payload() -> dict:
         "short_term": {
             "enabled": True,
             "recent_turns_window": 8,
+            "update_interval_turns": 6,
+            "update_min_chars": 0,
+        },
+        "injection": {
+            "enabled": True,
+            "topic_state": True,
+            "short_term": True,
+            "experiences": {
+                "enabled": False,
+                "top_k": 0,
+            },
+            "long_term": {
+                "enabled": True,
+                "top_k": 3,
+                "query_required": True,
+            },
+            "persona_state": False,
+            "include_debug_fields": False,
         },
         "consolidation": {
             "enabled": True,

@@ -16,6 +16,10 @@ from .config import (
     MemoryAnalysisStageConfig,
     MemoryAnalyzerConfig,
     MemoryConfig,
+    MemoryInjectionConfig,
+    MemoryInjectionListConfig,
+    MemoryLongTermInjectionConfig,
+    MemoryShortTermConfig,
     ensure_memory_config_file,
     get_memory_config,
     load_memory_config,
@@ -49,7 +53,11 @@ from .service import (
     shutdown_memory_service,
 )
 from .short_term_service import ShortTermMemoryService
-from .snapshot_builder import MemorySnapshotBuilder
+from .snapshot_builder import (
+    MemorySnapshotBuilder,
+    MemorySnapshotReadOptions,
+    memory_injection_to_snapshot_read_options,
+)
 from .store import MemoryStore
 from .turn_record_service import TurnRecordService
 from .types import (
@@ -100,6 +108,10 @@ __all__ = [
     "MemoryAnalyzerRequest",
     "MemoryAnalyzerResult",
     "MemoryConfig",
+    "MemoryInjectionConfig",
+    "MemoryInjectionListConfig",
+    "MemoryLongTermInjectionConfig",
+    "MemoryShortTermConfig",
     "ensure_memory_config_file",
     "BaseMemoryAnalyzer",
     "ConsolidationService",
@@ -121,6 +133,7 @@ __all__ = [
     "MemorySnapshot",
     "MemoryService",
     "MemorySnapshotBuilder",
+    "MemorySnapshotReadOptions",
     "MemoryStore",
     "MemoryUpdateRequest",
     "MessagePayload",
@@ -149,6 +162,7 @@ __all__ = [
     "get_memory_service",
     "get_memory_config",
     "load_memory_config",
+    "memory_injection_to_snapshot_read_options",
     "reset_memory_config",
     "register_memory_postprocessor",
     "reset_memory_postprocessor",

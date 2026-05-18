@@ -10,7 +10,7 @@ from .analyzers.base import (
     MemoryAnalyzerConfigurationError,
     MemoryAnalyzerExecutionError,
 )
-from .config import MemoryAnalysisConfig
+from .config import MemoryAnalysisConfig, MemoryShortTermConfig
 from .history_source import RecentConversationSource, extract_message_text
 from .store import MemoryStore
 from .types import ShortTermMemory, TopicState, TurnRecord
@@ -39,11 +39,17 @@ class ShortTermMemoryService:
         history_source: RecentConversationSource,
         analyzer_manager: MemoryAnalyzerManager | None = None,
         analysis_config: MemoryAnalysisConfig | None = None,
+        short_term_config: MemoryShortTermConfig | None = None,
     ) -> None:
         self.store = store
         self.history_source = history_source
         self.analyzer_manager = analyzer_manager
         self.analysis_config = analysis_config
+        self.short_term_config = short_term_config or getattr(
+            store.config,
+            "short_term",
+            MemoryShortTermConfig(),
+        )
 
     async def update_topic_state(
         self,
@@ -110,13 +116,106 @@ class ShortTermMemoryService:
         self,
         turn: TurnRecord,
         conversation_history: list[dict[str, Any]] | None = None,
-    ) -> tuple[TopicState, ShortTermMemory]:
-        topic_state = await self.update_topic_state(turn, conversation_history)
-        short_term_memory = await self.update_short_term_memory(
+    ) -> tuple[TopicState | None, ShortTermMemory | None]:
+        existing_short_term = await self.store.get_short_term_memory(
+            turn.umo,
+            turn.conversation_id,
+        )
+        if not await self._should_update_after_turn(turn, existing_short_term):
+            logger.info(
+                "memory short-term update skipped by frequency: umo=%s conversation_id=%s interval=%s min_chars=%s",
+                turn.umo,
+                turn.conversation_id,
+                self.short_term_config.update_interval_turns,
+                self.short_term_config.update_min_chars,
+            )
+            topic_state = await self.store.get_topic_state(
+                turn.umo,
+                turn.conversation_id,
+            )
+            return topic_state, existing_short_term
+
+        recent_payloads = await self.history_source.get_recent_turn_payloads(
+            conversation_history=conversation_history,
+            umo=turn.umo,
+            conversation_id=turn.conversation_id,
+        )
+        if not recent_payloads:
+            recent_payloads = [
+                {
+                    "user_message": turn.user_message,
+                    "assistant_message": turn.assistant_message,
+                }
+            ]
+
+        analysis_result = await self._run_short_term_analysis(
             turn,
-            conversation_history,
+            recent_payloads,
+        )
+
+        topic_state = await self.store.upsert_topic_state(
+            TopicState(
+                umo=turn.umo,
+                conversation_id=turn.conversation_id,
+                current_topic=analysis_result.get("current_topic") or None,
+                topic_summary=analysis_result.get("topic_summary") or None,
+                topic_confidence=self._validate_score(
+                    analyzer_name=TOPIC_ANALYZER_NAME,
+                    field_name="topic_confidence",
+                    value=analysis_result.get("topic_confidence"),
+                ),
+                last_active_at=turn.message_timestamp,
+            )
+        )
+        short_term_memory = await self.store.upsert_short_term_memory(
+            ShortTermMemory(
+                umo=turn.umo,
+                conversation_id=turn.conversation_id,
+                short_summary=analysis_result.get("short_summary") or None,
+                active_focus=analysis_result.get("active_focus") or None,
+                updated_at=turn.message_timestamp,
+            )
         )
         return topic_state, short_term_memory
+
+    async def _should_update_after_turn(
+        self,
+        turn: TurnRecord,
+        existing_short_term: ShortTermMemory | None,
+    ) -> bool:
+        if not self.short_term_config.enabled:
+            return False
+        if existing_short_term is None or existing_short_term.updated_at is None:
+            return True
+
+        interval = max(1, int(self.short_term_config.update_interval_turns))
+        turns_since_update = await self.store.count_turn_records_after(
+            turn.umo,
+            turn.conversation_id,
+            existing_short_term.updated_at,
+        )
+        if turns_since_update >= interval:
+            return True
+
+        min_chars = max(0, int(self.short_term_config.update_min_chars))
+        if min_chars <= 0:
+            return False
+
+        turns = await self.store.list_turn_records_by_time_range(
+            turn.umo,
+            turn.conversation_id,
+            existing_short_term.updated_at,
+            None,
+            start_exclusive=True,
+        )
+        return self._count_turn_chars(turns) >= min_chars
+
+    def _count_turn_chars(self, turns: list[TurnRecord]) -> int:
+        total = 0
+        for item in turns:
+            total += len(extract_message_text(item.user_message))
+            total += len(extract_message_text(item.assistant_message))
+        return total
 
     async def _run_short_term_analysis(
         self,

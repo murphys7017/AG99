@@ -4339,6 +4339,81 @@ CONFIG_METADATA_3 = {
                     },
                 },
             },
+            "schedule": {
+                "description": "触发条件",
+                "type": "object",
+                "hint": "控制短期记忆分析的频率。大上下文配置下可以保持较低频率，让 Memory 更偏长期沉淀。",
+                "items": {
+                    "memory.short_term.recent_turns_window": {
+                        "description": "短期分析窗口轮数",
+                        "type": "int",
+                    },
+                    "memory.short_term.update_interval_turns": {
+                        "description": "短期分析间隔轮数",
+                        "type": "int",
+                        "hint": "第一次会立即分析；之后每累计这么多轮对话才再次分析短期记忆。",
+                    },
+                    "memory.short_term.update_min_chars": {
+                        "description": "短期分析最小累计字符数",
+                        "type": "int",
+                        "hint": "设为 0 表示只按轮数触发；大于 0 时，自上次短期分析后累计文本达到该值也会触发。",
+                    },
+                    "memory.consolidation.min_short_term_updates": {
+                        "description": "整理触发轮数",
+                        "type": "int",
+                        "hint": "当前按原始对话轮数触发整理，名称保留兼容旧配置。",
+                    },
+                },
+            },
+            "injection": {
+                "description": "注入配置",
+                "type": "object",
+                "hint": "控制哪些 Memory 内容进入 Prompt。大上下文场景建议只注入短期状态和少量相关长期记忆。",
+                "items": {
+                    "memory.injection.enabled": {
+                        "description": "启用记忆注入",
+                        "type": "bool",
+                    },
+                    "memory.injection.topic_state": {
+                        "description": "注入当前话题",
+                        "type": "bool",
+                    },
+                    "memory.injection.short_term": {
+                        "description": "注入短期记忆",
+                        "type": "bool",
+                    },
+                    "memory.injection.experiences.enabled": {
+                        "description": "注入经验片段",
+                        "type": "bool",
+                    },
+                    "memory.injection.experiences.top_k": {
+                        "description": "经验注入数量",
+                        "type": "int",
+                    },
+                    "memory.injection.long_term.enabled": {
+                        "description": "注入长期记忆",
+                        "type": "bool",
+                    },
+                    "memory.injection.long_term.top_k": {
+                        "description": "长期记忆注入数量",
+                        "type": "int",
+                    },
+                    "memory.injection.long_term.query_required": {
+                        "description": "长期记忆需要查询",
+                        "type": "bool",
+                        "hint": "开启后，只有当前请求能提供查询文本时才检索并注入长期记忆。",
+                    },
+                    "memory.injection.persona_state": {
+                        "description": "注入人格状态",
+                        "type": "bool",
+                    },
+                    "memory.injection.include_debug_fields": {
+                        "description": "注入调试字段",
+                        "type": "bool",
+                        "hint": "关闭时会移除 ID、来源、时间戳等工程字段，减少 Prompt 噪声。",
+                    },
+                },
+            },
             "advanced": {
                 "description": "高级配置",
                 "type": "object",

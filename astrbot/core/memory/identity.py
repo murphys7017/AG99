@@ -42,9 +42,11 @@ class MemoryIdentityMappingService:
         return await self.store.sync_identity_mappings(bindings)
 
     def load_bindings(self) -> list[MemoryIdentityBinding]:
-        if self.config.identity.bindings is not None:
+        if self._has_configured_bindings(self.config.identity.bindings):
             return self._parse_bindings_payload(
-                {"bindings": self.config.identity.bindings}
+                {"bindings": self._filter_empty_template_bindings(
+                    self.config.identity.bindings
+                )}
             )
         return self.load_bindings_from_yaml()
 
@@ -97,7 +99,7 @@ class MemoryIdentityMappingService:
         canonical_user_id: str,
         nickname_hint: str | None = None,
     ) -> MemoryIdentityBinding:
-        if self.config.identity.bindings is not None:
+        if self._has_configured_bindings(self.config.identity.bindings):
             raise RuntimeError(
                 "memory identity mappings are configured in Web config; "
                 "edit memory.identity.bindings instead of the YAML file"
@@ -122,7 +124,7 @@ class MemoryIdentityMappingService:
         return binding
 
     def remove_binding_from_yaml(self, platform_user_key: str) -> bool:
-        if self.config.identity.bindings is not None:
+        if self._has_configured_bindings(self.config.identity.bindings):
             raise RuntimeError(
                 "memory identity mappings are configured in Web config; "
                 "edit memory.identity.bindings instead of the YAML file"
@@ -225,6 +227,43 @@ class MemoryIdentityMappingService:
             seen_keys.add(binding.platform_user_key)
             bindings.append(binding)
         return bindings
+
+    def _has_configured_bindings(
+        self,
+        raw_bindings: list[dict[str, str]] | None,
+    ) -> bool:
+        if not raw_bindings:
+            return False
+        return any(not self._is_empty_template_binding(item) for item in raw_bindings)
+
+    def _filter_empty_template_bindings(
+        self,
+        raw_bindings: list[dict[str, str]] | None,
+    ) -> list[dict[str, str]]:
+        if not raw_bindings:
+            return []
+        return [
+            item for item in raw_bindings if not self._is_empty_template_binding(item)
+        ]
+
+    @staticmethod
+    def _is_empty_template_binding(raw_binding: Any) -> bool:
+        if not isinstance(raw_binding, dict):
+            return False
+        return (
+            not MemoryIdentityMappingService._optional_string(
+                raw_binding.get("platform_id")
+            )
+            and not MemoryIdentityMappingService._optional_string(
+                raw_binding.get("sender_user_id")
+            )
+            and not MemoryIdentityMappingService._optional_string(
+                raw_binding.get("canonical_user_id")
+            )
+            and not MemoryIdentityMappingService._optional_string(
+                raw_binding.get("nickname_hint")
+            )
+        )
 
     @staticmethod
     def _required_string(value: Any, field_name: str) -> str:

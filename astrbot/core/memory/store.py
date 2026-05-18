@@ -487,6 +487,8 @@ class MemoryStore:
         conversation_id: str | None,
         start_at: datetime | None,
         end_at: datetime | None = None,
+        *,
+        start_exclusive: bool = False,
     ) -> list[TurnRecord]:
         async with self.get_db() as session:
             conditions = [col(MemoryTurnRecord.umo) == umo]
@@ -497,7 +499,14 @@ class MemoryStore:
                     col(MemoryTurnRecord.conversation_id) == conversation_id
                 )
             if start_at is not None:
-                conditions.append(col(MemoryTurnRecord.message_timestamp) >= start_at)
+                if start_exclusive:
+                    conditions.append(
+                        col(MemoryTurnRecord.message_timestamp) > start_at
+                    )
+                else:
+                    conditions.append(
+                        col(MemoryTurnRecord.message_timestamp) >= start_at
+                    )
             if end_at is not None:
                 conditions.append(col(MemoryTurnRecord.message_timestamp) <= end_at)
             stmt = (
@@ -507,6 +516,27 @@ class MemoryStore:
             )
             result = await session.execute(stmt)
             return [self._to_turn_record(item) for item in result.scalars().all()]
+
+    async def count_turn_records_after(
+        self,
+        umo: str,
+        conversation_id: str | None,
+        after: datetime,
+    ) -> int:
+        async with self.get_db() as session:
+            conditions = [
+                col(MemoryTurnRecord.umo) == umo,
+                col(MemoryTurnRecord.message_timestamp) > after,
+            ]
+            if conversation_id is None:
+                conditions.append(col(MemoryTurnRecord.conversation_id).is_(None))
+            else:
+                conditions.append(
+                    col(MemoryTurnRecord.conversation_id) == conversation_id
+                )
+            stmt = select(MemoryTurnRecord.id).where(and_(*conditions))
+            result = await session.execute(stmt)
+            return len(result.scalars().all())
 
     async def list_turn_records_by_canonical_user(
         self,

@@ -112,6 +112,21 @@ def test_load_memory_config_reads_explicit_values(temp_dir: Path, monkeypatch):
                 "short_term:",
                 "  enabled: false",
                 "  recent_turns_window: 16",
+                "  update_interval_turns: 4",
+                "  update_min_chars: 500",
+                "injection:",
+                "  enabled: true",
+                "  topic_state: false",
+                "  short_term: true",
+                "  experiences:",
+                "    enabled: true",
+                "    top_k: 2",
+                "  long_term:",
+                "    enabled: true",
+                "    top_k: 4",
+                "    query_required: false",
+                "  persona_state: true",
+                "  include_debug_fields: true",
                 "consolidation:",
                 "  min_short_term_updates: 20",
                 "vector_index:",
@@ -158,6 +173,18 @@ def test_load_memory_config_reads_explicit_values(temp_dir: Path, monkeypatch):
     )
     assert config.short_term.enabled is False
     assert config.short_term.recent_turns_window == 16
+    assert config.short_term.update_interval_turns == 4
+    assert config.short_term.update_min_chars == 500
+    assert config.injection.enabled is True
+    assert config.injection.topic_state is False
+    assert config.injection.short_term is True
+    assert config.injection.experiences.enabled is True
+    assert config.injection.experiences.top_k == 2
+    assert config.injection.long_term.enabled is True
+    assert config.injection.long_term.top_k == 4
+    assert config.injection.long_term.query_required is False
+    assert config.injection.persona_state is True
+    assert config.injection.include_debug_fields is True
     assert config.consolidation.min_short_term_updates == 20
     assert config.vector_index.enabled is False
     assert config.vector_index.provider_id == "embed-lite"
@@ -191,6 +218,7 @@ def test_build_default_memory_config_payload_contains_expected_sections():
         "identity",
         "storage",
         "short_term",
+        "injection",
         "consolidation",
         "long_term",
         "vector_index",
@@ -204,6 +232,7 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     assert payload["storage"]["docs_root"] == "data/memory/long_term"
     assert payload["storage"]["projections_root"] == "data/memory/projections"
     assert payload["identity"]["mappings_path"] == "data/memory/identity_mappings.yaml"
+    assert payload["identity"]["bindings"] == []
     assert payload["vector_index"]["root_dir"] == "data/memory/vector_index"
     assert payload["keyword_extraction"]["enabled"] is True
     assert payload["keyword_extraction"]["implementation"] == "jieba_tfidf"
@@ -221,6 +250,18 @@ def test_build_default_memory_config_payload_contains_expected_sections():
         payload["short_term"]["recent_turns_window"]
         == default_config.short_term.recent_turns_window
     )
+    assert payload["short_term"]["update_interval_turns"] == 6
+    assert payload["short_term"]["update_min_chars"] == 0
+    assert payload["injection"]["enabled"] is True
+    assert payload["injection"]["topic_state"] is True
+    assert payload["injection"]["short_term"] is True
+    assert payload["injection"]["experiences"]["enabled"] is False
+    assert payload["injection"]["experiences"]["top_k"] == 0
+    assert payload["injection"]["long_term"]["enabled"] is True
+    assert payload["injection"]["long_term"]["top_k"] == 3
+    assert payload["injection"]["long_term"]["query_required"] is True
+    assert payload["injection"]["persona_state"] is False
+    assert payload["injection"]["include_debug_fields"] is False
     assert (
         payload["consolidation"]["min_short_term_updates"]
         == default_config.consolidation.min_short_term_updates

@@ -215,6 +215,93 @@ async def test_identity_mappings_reload_uses_config_bindings_before_yaml(
     assert bindings[0].nickname_hint == "aki"
 
 
+@pytest.mark.asyncio
+async def test_identity_mappings_reload_ignores_empty_config_template_binding(
+    temp_dir: Path,
+):
+    config, mappings_path = _write_memory_config(temp_dir)
+    config.identity.bindings = [
+        {
+            "__template_key": "binding",
+            "platform_id": "",
+            "sender_user_id": "",
+            "canonical_user_id": "",
+            "nickname_hint": "",
+        }
+    ]
+    _write_identity_yaml(
+        mappings_path,
+        {
+            "bindings": [
+                {
+                    "platform_id": "qq",
+                    "sender_user_id": "10001",
+                    "canonical_user_id": "aki-from-yaml",
+                }
+            ]
+        },
+    )
+    store = MemoryStore(config=config)
+    mapping_service = MemoryIdentityMappingService(store, config=config)
+
+    try:
+        count = await mapping_service.reload_from_yaml()
+        bindings = await store.list_all_identity_mappings()
+    finally:
+        await store.close()
+
+    assert count == 1
+    assert len(bindings) == 1
+    assert bindings[0].platform_user_key == "qq:10001"
+    assert bindings[0].canonical_user_id == "aki-from-yaml"
+
+
+@pytest.mark.asyncio
+async def test_identity_mappings_reload_filters_empty_template_with_config_bindings(
+    temp_dir: Path,
+):
+    config, mappings_path = _write_memory_config(temp_dir)
+    config.identity.bindings = [
+        {
+            "__template_key": "binding",
+            "platform_id": "",
+            "sender_user_id": "",
+            "canonical_user_id": "",
+            "nickname_hint": "",
+        },
+        {
+            "platform_id": "qq",
+            "sender_user_id": "10001",
+            "canonical_user_id": "aki-from-config",
+        },
+    ]
+    _write_identity_yaml(
+        mappings_path,
+        {
+            "bindings": [
+                {
+                    "platform_id": "discord",
+                    "sender_user_id": "aki-user",
+                    "canonical_user_id": "aki-from-yaml",
+                }
+            ]
+        },
+    )
+    store = MemoryStore(config=config)
+    mapping_service = MemoryIdentityMappingService(store, config=config)
+
+    try:
+        count = await mapping_service.reload_from_yaml()
+        bindings = await store.list_all_identity_mappings()
+    finally:
+        await store.close()
+
+    assert count == 1
+    assert len(bindings) == 1
+    assert bindings[0].platform_user_key == "qq:10001"
+    assert bindings[0].canonical_user_id == "aki-from-config"
+
+
 def test_identity_mappings_validate_rejects_duplicate_platform_user_key(temp_dir: Path):
     config, mappings_path = _write_memory_config(temp_dir)
     _write_identity_yaml(
@@ -574,7 +661,13 @@ def test_identity_mapping_service_bind_rejects_yaml_write_for_config_bindings(
     temp_dir: Path,
 ):
     config, _ = _write_memory_config(temp_dir)
-    config.identity.bindings = []
+    config.identity.bindings = [
+        {
+            "platform_id": "qq",
+            "sender_user_id": "10001",
+            "canonical_user_id": "aki-from-config",
+        }
+    ]
     store = MemoryStore(config=config)
     mapping_service = MemoryIdentityMappingService(store, config=config)
 
@@ -585,6 +678,40 @@ def test_identity_mapping_service_bind_rejects_yaml_write_for_config_bindings(
             "aki",
             nickname_hint=None,
         )
+
+
+def test_identity_mapping_service_bind_allows_yaml_write_for_empty_config_template(
+    temp_dir: Path,
+):
+    config, mappings_path = _write_memory_config(temp_dir)
+    config.identity.bindings = [
+        {
+            "__template_key": "binding",
+            "platform_id": "",
+            "sender_user_id": "",
+            "canonical_user_id": "",
+            "nickname_hint": "",
+        }
+    ]
+    store = MemoryStore(config=config)
+    mapping_service = MemoryIdentityMappingService(store, config=config)
+
+    binding = mapping_service.upsert_binding_in_yaml(
+        "qq",
+        "10001",
+        "aki",
+        nickname_hint=None,
+    )
+
+    yaml_payload = yaml.safe_load(mappings_path.read_text(encoding="utf-8"))
+    assert binding.platform_user_key == "qq:10001"
+    assert yaml_payload["bindings"] == [
+        {
+            "platform_id": "qq",
+            "sender_user_id": "10001",
+            "canonical_user_id": "aki",
+        }
+    ]
 
 
 @pytest.mark.asyncio
