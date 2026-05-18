@@ -54,6 +54,7 @@
 - Agent 层直接感知 plugin context、persona、knowledge base、skills、cron、sandbox
 - Agent 内核和 AstrBot 业务实现没有明确隔离
 - 新的 `prompt` 模块已经完成 collect/select/render/apply 主链路，当前默认 `apply_visible` 会接管模型可见 `ProviderRequest` 字段；shadow/legacy 仍作为显式配置模式存在
+- `PromptRenderEngine` 已支持按 provider 类型自动选择 renderer（`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`），输出对应 API 原生格式
 - TODO: 将上下文预算改为显式可配置策略，按 provider/model 支持的 `max_context_tokens` 分配 history/system/tools/memory 的预算，补齐 1M context 模型适配；现阶段 token 统计仍主要依赖估算器，容易保守截断，尚未充分利用大窗口模型
 
 ### 2.5 Interaction Middleware

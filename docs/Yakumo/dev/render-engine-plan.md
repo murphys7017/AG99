@@ -30,7 +30,7 @@
 - collect 基本成型
 - selector 已有占位接口
 - render engine 基础骨架已落地
-- provider-specific renderer 留给后续扩展
+- provider-specific renderer 已实现（AnthropicPromptRenderer、MiniMaxPromptRenderer）
 
 ## 核心职责划分
 
@@ -171,10 +171,14 @@ render 层已经开始承担“通用序列化器”职责，而不是直接对�
 本轮 render 子系统明确不做：
 
 - 不替换 `astr_main_agent.py` 真实请求拼装逻辑
-- 不实现 provider-specific renderer
 - 不细化每个 section 的最终文案模板
 - 不在 collect 阶段回头修改 slot 协议
 - 不实现完整的 `llm_exposure` 过滤策略，只预留后续接口空间
+
+已完成的 provider-specific renderer：
+
+- `AnthropicPromptRenderer`：输出 Anthropic 原生 content blocks、tool schema（`input_schema`）、image source（base64/url）
+- `MiniMaxPromptRenderer`：继承 Anthropic renderer，适配 MiniMax Token Plan 的 Anthropic 兼容 API
 
 ## 下一步
 
@@ -184,7 +188,7 @@ render 层已经开始承担“通用序列化器”职责，而不是直接对�
 2. `conversation`
 3. `capability`
 4. `memory`
-5. provider-specific renderer
+5. 新增更多 provider-specific renderer（Gemini、VolcEngine Ark 等）
 
 总体原则保持不变：
 

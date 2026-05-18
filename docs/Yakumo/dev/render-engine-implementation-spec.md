@@ -306,8 +306,6 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 �
 
 - `llm_exposure` 的真正过滤策略
 - 各 section 的精细化渲染格式
-- provider-specific renderer
-- 将 `RenderResult` 接回真实主链路请求拼装
 - 针对 multimodal / tools / subagent 的专门输出形态优化
 
 ## 后续扩展点
@@ -322,4 +320,7 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 �
 - 覆盖 `render_xxx_context()`
 - 覆盖 `render_prompt_tree()` 生成 provider 更合适的结果
 
-也就是说，后续的重点不是推翻当前实现，而是在当前协议上继续细化各 provider 的规则。
+已落地的 provider-specific renderer：
+
+- `AnthropicPromptRenderer`：覆盖 `_compile_image_content_parts()` 输出 Anthropic 原生 image source，覆盖 `_compile_tool_nodes()` 输出 Anthropic tool schema（`input_schema` 而非 OpenAI `parameters`），覆盖 `_compile_context_message()` / `_compile_turn_messages()` 将字符串 content 转为 content blocks
+- `MiniMaxPromptRenderer`：继承 `AnthropicPromptRenderer`，通过 `PromptRenderEngine._is_minimax_provider()` 自动匹配

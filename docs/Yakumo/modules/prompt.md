@@ -27,6 +27,8 @@
 - `astrbot/core/prompt/render/engine.py`
 - `astrbot/core/prompt/render/interfaces.py`
 - `astrbot/core/prompt/render/request_adapter.py`
+- `astrbot/core/prompt/render/anthropic_renderer.py`
+- `astrbot/core/prompt/render/minimax_renderer.py`
 - `astrbot/core/prompt/extensions/*`
 - `data/config/prompt/context_catalog.yaml`
 - `astrbot/core/astr_main_agent.py`
@@ -68,7 +70,15 @@ selector 的输出会写入事件 extra：
 
 入口是 `PromptRenderEngine.render(...)`。
 
-当前默认 renderer 是 `BasePromptRenderer`，会把已选择的 `ContextPack` 编译为：
+`PromptRenderEngine._resolve_renderer(...)` 会根据当前 provider 类型自动选择 renderer：
+
+- `anthropic_chat_completion` → `AnthropicPromptRenderer`
+- `minimax_token_plan` → `MiniMaxPromptRenderer`
+- 其他 → `BasePromptRenderer`（默认 OpenAI 风格）
+
+各 provider-specific renderer 输出对应 API 原生格式（content blocks、tool schema、image source 等），`ProviderRequestAdapter` 会将不同 renderer 的输出统一适配回 `ProviderRequest` contract。
+
+`RenderResult` 包括：
 
 - `system_prompt`
 - history/context messages
@@ -138,6 +148,5 @@ interaction middleware 在 decision 阶段也复用 prompt render 能力。插�
 
 - `astr_main_agent.py` 仍承担过多能力装配逻辑，prompt pipeline 还没有把主 Agent 完全拆薄。
 - collect 阶段非严格模式仍有 fail-open 行为，后续需要按主链路要求继续收紧。
-- provider-specific render 规则仍主要依赖通用 renderer + 后续 provider 适配，尚未完全模块化。
 - selector 默认未启用 LLM 选择，当前多数场景仍是规则化/透传选择。
 - prompt trace、conversation save、attachment projection 仍需要结合真实平台日志继续验证。
