@@ -10,6 +10,7 @@ from astrbot.core.interaction.decision_agent import (
     _maybe_bypass_protocol_command,
     build_interaction_decision_contexts,
     build_interaction_decision_json_contract,
+    extract_interaction_decision_payload,
     validate_interaction_decision,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
@@ -82,6 +83,29 @@ def test_build_interaction_decision_contexts_strips_internal_runtime_fields():
         {"role": "user", "content": "<context />"},
     ]
     assert rendered_messages[1]["_no_save"] is True
+
+
+def test_extract_interaction_decision_payload_accepts_function_call_text():
+    raw = (
+        '<function_calls><invoke name="route_mode">'
+        '<parameter name="route_mode">self_reply</parameter>'
+        '<parameter name="should_emit_immediate_reply">true</parameter>'
+        '<parameter name="immediate_spoken_reply">哼，不是你技术不够，是你方向没找对。慢慢来嘛。</parameter>'
+        '<parameter name="confidence">0.95</parameter>'
+        '<parameter name="reason">用户表达优化难度，是轻松情感对话，无需工具执行</parameter>'
+        "</invoke></function_calls>"
+    )
+
+    payload = extract_interaction_decision_payload(raw)
+    decision = InteractionDecision.from_mapping(payload)
+    assert decision is not None
+    decision = validate_interaction_decision(decision, InteractionAgentConfig())
+
+    assert decision.route_mode == RouteMode.SELF_REPLY
+    assert decision.should_emit_immediate_reply is True
+    assert decision.immediate_spoken_reply == "哼，不是你技术不够，是你方向没找对。慢慢来嘛。"
+    assert decision.confidence == 0.95
+    assert decision.reason == "用户表达优化难度，是轻松情感对话，无需工具执行"
 
 
 def test_protocol_command_bypass_delegates_without_fallback_or_reply():

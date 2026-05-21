@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -108,6 +110,59 @@ def build_interaction_decision_contexts(
         context_message.pop("_no_save", None)
         contexts.append(context_message)
     return contexts
+
+
+def extract_interaction_decision_payload(text: object) -> dict[str, Any] | None:
+    payload = _extract_json_object(text)
+    if payload is not None:
+        return payload
+    return _extract_function_call_decision_payload(text)
+
+
+def _extract_function_call_decision_payload(text: object) -> dict[str, Any] | None:
+    if not isinstance(text, str):
+        return None
+    if "<function_calls" not in text or "<invoke" not in text:
+        return None
+
+    invoke_match = re.search(
+        r"<invoke\s+name=[\"']route_mode[\"'][^>]*>(.*?)</invoke>",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if invoke_match is None:
+        return None
+
+    payload: dict[str, Any] = {}
+    for parameter_match in re.finditer(
+        r"<parameter\s+name=[\"']([^\"']+)[\"'][^>]*>(.*?)</parameter>",
+        invoke_match.group(1),
+        flags=re.DOTALL | re.IGNORECASE,
+    ):
+        key = parameter_match.group(1).strip()
+        value = html.unescape(parameter_match.group(2).strip())
+        payload[key] = _coerce_function_call_parameter(key, value)
+
+    if not payload:
+        return None
+    return payload
+
+
+def _coerce_function_call_parameter(key: str, value: str) -> Any:
+    if key in {"should_emit_immediate_reply"}:
+        return value.strip().lower() in {"true", "1", "yes", "y", "on"}
+    if key in {"confidence"}:
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    if key in {"core_task_spec", "plugin_hints"}:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return value
 
 
 def build_protocol_bypass_decision(reason: str) -> InteractionDecision:
@@ -341,7 +396,7 @@ class InteractionDecisionAgent:
         except Exception as exc:  # noqa: BLE001
             raise InteractionDecisionError("model_error", str(exc)) from exc
 
-        payload = _extract_json_object(llm_resp.completion_text)
+        payload = extract_interaction_decision_payload(llm_resp.completion_text)
         if payload is None:
             message = f"non-json: raw={llm_resp.completion_text}"
             raise InteractionDecisionError("non_json", message)
