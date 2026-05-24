@@ -274,7 +274,6 @@ export default {
           }
         }
       } else {
-        this.hasUnsavedChanges = false;
         next();
       }
     } else {
@@ -291,11 +290,6 @@ export default {
         configApplied: this.tm('messages.configApplied'),
         configApplyError: this.tm('messages.configApplyError')
       };
-    },
-    // 检查配置是否变化
-    configHasChanges() {
-      if (!this.originalConfigData || !this.config_data) return false;
-      return JSON.stringify(this.originalConfigData) !== JSON.stringify(this.config_data);
     },
     configInfoNameList() {
       return this.configInfoList.map(info => info.name);
@@ -335,14 +329,6 @@ export default {
   watch: {
     config_data_str(val) {
       this.config_data_has_changed = true;
-    },
-    config_data: {
-      deep: true,
-      handler() {
-        if (this.fetched) {
-          this.hasUnsavedChanges = this.configHasChanges;
-        }
-      }
     },
     async '$route.fullPath'(newVal) {
       await this.syncConfigTypeFromHash(newVal);
@@ -397,8 +383,6 @@ export default {
       testChatDrawer: false,
       testConfigId: null,
 
-      // 未保存的更改状态
-      hasUnsavedChanges: false,
       // 存储原始配置
       originalConfigData: null,
     }
@@ -511,7 +495,6 @@ export default {
         // 获取配置后更新
           this.$nextTick(() => {
             this.originalConfigData = JSON.parse(JSON.stringify(this.config_data));
-            this.hasUnsavedChanges = false;
             if (!this.isSystemConfig) {
               this.currentConfigId = abconf_id || this.selectedConfigID;
             }
@@ -561,13 +544,12 @@ export default {
         postData.conf_id = this.selectedConfigID;
       }
 
-      return axios.post('/api/config/astrbot/update', postData).then((res) => {
+      return axios.post('/api/config/astrbot/update', postData).then(async (res) => {
         if (res.data.status === "ok") {
-          this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
           this.save_message = res.data.message || this.messages.saveSuccess;
           this.save_message_snack = true;
           this.save_message_success = "success";
-          this.onConfigSaved();
+          await this.onConfigSaved();
 
           if (this.isSystemConfig) {
             restartAstrBotRuntime(this.$refs.wfr).catch(() => {})
@@ -587,9 +569,22 @@ export default {
       });
     },
     // 重置未保存状态
-    onConfigSaved() {
-      this.hasUnsavedChanges = false;
+    async onConfigSaved() {
+      await this.refreshSavedConfig();
+    },
+    async refreshSavedConfig() {
+      const params = {};
+      if (this.isSystemConfig) {
+        params.system_config = '1';
+      } else {
+        params.id = this.selectedConfigID;
+      }
+      const res = await axios.get('/api/config/abconf', { params });
+      this.config_data = res.data.data.config;
+      this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
       this.originalConfigData = JSON.parse(JSON.stringify(this.config_data));
+      this.metadata = this.getVisibleMetadata(res.data.data.metadata);
+      this.configContentKey += 1;
     },
 
     configToString() {

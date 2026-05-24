@@ -14,7 +14,10 @@ from astrbot.core.config.default import (
     DEFAULT_VALUE_MAP,
 )
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
-from astrbot.dashboard.routes.config import ConfigRoute
+from astrbot.dashboard.routes.config import (
+    ConfigRoute,
+    preserve_server_managed_config_keys,
+)
 
 
 class AwaitableJsonRequest:
@@ -797,21 +800,47 @@ class TestConfigMetadataI18n:
 
 
 class TestConfigRouteMemoryReload:
+    def test_preserve_server_managed_config_keys_uses_current_target_config(self):
+        post_config = {
+            "provider_sources": ["client-value"],
+            "provider": ["client-value"],
+            "platform": ["client-value"],
+            "timezone": "UTC",
+        }
+        current_config = {
+            "provider_sources": ["current-source"],
+            "provider": ["current-provider"],
+            "platform": ["current-platform"],
+        }
+
+        preserve_server_managed_config_keys(post_config, current_config)
+
+        assert post_config == {
+            "provider_sources": ["current-source"],
+            "provider": ["current-provider"],
+            "platform": ["current-platform"],
+            "timezone": "UTC",
+        }
+
     @pytest.mark.asyncio
     async def test_save_resets_memory_runtime_when_memory_config_changes(self):
         route = object.__new__(ConfigRoute)
+        current_config = {
+            "memory": {
+                "enabled": True,
+            },
+            "provider_sources": ["current-source"],
+            "provider": ["current-provider"],
+            "platform": ["current-platform"],
+        }
         route.acm = SimpleNamespace(
             confs={
-                "default": {
-                    "memory": {
-                        "enabled": True,
-                    },
-                }
+                "default": current_config,
             },
             default_conf={
-                "provider_sources": [],
-                "provider": [],
-                "platform": [],
+                "provider_sources": ["stale-default-source"],
+                "provider": ["stale-default-provider"],
+                "platform": ["stale-default-platform"],
             },
         )
         route.core_lifecycle = SimpleNamespace(
@@ -854,9 +883,9 @@ class TestConfigRouteMemoryReload:
         assert shutdown_memory_service.await_args.args[0] is route.acm.confs["default"]
         route._save_astrbot_configs.assert_awaited_once()
         saved_config = route._save_astrbot_configs.await_args.args[0]
-        assert saved_config["provider_sources"] == []
-        assert saved_config["provider"] == []
-        assert saved_config["platform"] == []
+        assert saved_config["provider_sources"] == ["current-source"]
+        assert saved_config["provider"] == ["current-provider"]
+        assert saved_config["platform"] == ["current-platform"]
 
     @pytest.mark.asyncio
     async def test_save_does_not_reset_memory_runtime_when_memory_config_unchanged(

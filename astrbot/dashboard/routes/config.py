@@ -332,6 +332,18 @@ def save_config(
     config.save_config(post_config)
 
 
+def preserve_server_managed_config_keys(
+    post_config: dict,
+    current_config: dict | None,
+) -> None:
+    """Keep config sections that are managed by dedicated dashboard APIs."""
+    if current_config is None:
+        return
+    for key in ("provider_sources", "provider", "platform"):
+        if key in current_config:
+            post_config[key] = copy.deepcopy(current_config[key])
+
+
 class ConfigRoute(Route):
     def __init__(
         self,
@@ -1021,11 +1033,13 @@ class ConfigRoute(Route):
                 old_memory_config = copy.deepcopy(self.acm.confs[conf_id].get("memory"))
 
             # 不更新 provider_sources, provider, platform
-            # 这些配置有单独的接口进行更新
+            # 这些配置有单独的接口进行更新。必须从当前目标配置保留，
+            # 不能从模板或其他配置源取值，否则普通/系统配置保存会回滚。
             if conf_id == "default":
-                no_update_keys = ["provider_sources", "provider", "platform"]
-                for key in no_update_keys:
-                    config[key] = self.acm.default_conf[key]
+                preserve_server_managed_config_keys(
+                    config,
+                    self.acm.confs.get(conf_id),
+                )
 
             await self._save_astrbot_configs(config, conf_id)
             if config.get("memory") != old_memory_config:
