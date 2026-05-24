@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_dashboard_dist_batch
-  scope: upstream sync batches for simple provider/runtime fixes, skills-like requery, RST/ADOC upload support, and stale dashboard dist fallback
+  phase: upstream_webui_polish_batch
+  scope: upstream sync batches for simple provider/runtime fixes, skills-like requery, RST/ADOC upload support, stale dashboard dist fallback, and WebUI polish
 context:
   confidence: high
   assumptions:
@@ -10,11 +10,12 @@ context:
     - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
     - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
+    - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - None; current upstream sync batches keep changes to compatibility fixes, upload format support, dashboard asset selection, and documentation.
+    - None; current upstream sync batches keep changes to compatibility fixes, upload format support, dashboard asset selection, small WebUI polish, and documentation.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
