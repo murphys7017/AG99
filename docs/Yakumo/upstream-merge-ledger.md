@@ -118,6 +118,45 @@ Updated triage counts:
 - `git cherry -v master upstream/master`: `67` patch-equivalent absorbed, `127` still shown as unabsorbed.
 - Interpretation remains unchanged: `+` entries may still be functionally absorbed by local rewrites, so topic review is required before merging or rewriting.
 
+Phase-B sync strategy:
+
+- First planned pseudo-merge boundary: `67c7445d` (`v4.23.6`).
+- Rationale: this boundary already has a dedicated 2026-04-27 review, and the remaining `git cherry` positives before it are now classified below.
+- Do not pseudo-merge newer upstream history until each later boundary receives the same explicit classification.
+
+### Phase B Boundary: `67c7445d` / `v4.23.6`
+
+Remaining `git cherry +` entries up to this boundary were reviewed for whether a staged `git merge -s ours 67c7445d` would hide unprocessed work.
+
+| Upstream commit | Topic | Phase-B status | Notes |
+| --- | --- | --- | --- |
+| `1199b704` | KOOK role mentions | Absorbed | Confirmed in local KOOK adapter, role cache, data models, and tests. |
+| `ba1e2223` | Video attachment handling for LLM | Absorbed | Direct and quoted video attachments are already appended as text references. |
+| `e6b68e9b` | FileReadTool description and modality checking | Absorbed | Local file-read/tool-result modality handling already covers image/PDF/docx-style outputs. |
+| `36d6f3b` | WebUI inline edit/regenerate/thread flow | Deferred | Local ChatUI already has edited/regenerate/checkpoint paths, but upstream is a broad DB/history/thread rewrite. Keep as an intentional later feature review instead of importing before the first pseudo-merge. |
+| `0748f0a` | Attachment previews and file signatures | Absorbed | Local `useMediaHandling`, chat components, and docs include previews, attachment IDs, and duplicate/signature checks. |
+| `bb6619f` | Tool-call/reasoning display improvements | Absorbed/Deferred | Local ChatUI has reasoning panels, tool-call blocks, and message stats. Upstream's broader thread/live-chat rewrite remains tied to the deferred inline-edit batch. |
+| `aaec41e` | Upload path traversal | Absorbed | Local upload filename sanitization/path traversal protection was previously confirmed. |
+| `8d9ae55` | Clipboard utility and dialog copy fallbacks | Absorbed | Local `dashboard/src/utils/clipboard.ts` and copy actions include secure-context fallback behavior. |
+| `f0a1dd7` | Provider config UI | Absorbed | Local provider panels/workspace and model-add flow were rewritten and completed. |
+| `5d79c999` | WeCom duplicate text suppression | Absorbed | Local WeCom path has per-session duplicate text suppression. |
+| `5ce02da` | Certifi SSL context on Windows | Absorbed | Local SSL compatibility uses system trust store plus certifi fallback. |
+| `d4cdeeae` | Sandbox image download delivery | Absorbed | Local sandbox image downloads are delivered as images. |
+| `17aea1aa` | Firecrawl web search tools | Absorbed | Local provider settings and main-agent tool hook include Firecrawl. |
+| `55c15586` | Empty-assistant filter in streaming OpenAI path | Absorbed | Rewritten locally in the OpenAI-compatible streaming path. |
+| `d16ed4e5` | OpenRouter reasoning key override | Absorbed | Already present locally. |
+| `3c1d0cd` | MiniMax WAV default output | Absorbed | Local MiniMax/TTS media handling covers WAV/AMR fixes. |
+| `bbda1e67` | Oversized image downscale | Absorbed | Already present locally. |
+| `07b37b98` | DeepSeek v4 empty reasoning | Absorbed | Already present locally. |
+| `415da218` | Empty-string reasoning content | Absorbed | Already present locally. |
+| `c5ab4f72` | `/stats` conversation token command | Absorbed | Local builtin conversation command registers `/stats` and reports token totals. |
+| `1efe4fd6` | Stats TPM output-token counting | Absorbed | Local stats dashboard separates output-token totals and token trend data. |
+| `09ab45fc` | Version bump to `4.23.6` | Skipped | Version churn is not used as functional sync proof for this fork. |
+| `72f4e748` | T2I raw text template rendering | Absorbed | Local T2I rendering fix was already confirmed. |
+| `b711425b` | QQ Official message-level Markdown | Absorbed | Confirmed in `MessageChain`, respond stage metadata propagation, and QQ Official send path. |
+| `72d65680` | Pre-commit setup docs and minor component table text | Skipped | Development-process docs/chore; not required for runtime sync. |
+| `67c7445d` | IME Enter guard | Absorbed | Already present in customized ChatUI input handling. |
+
 New upstream commits since previous ledger baseline:
 
 | Upstream commit | Topic | Initial status | Notes |
