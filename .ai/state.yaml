@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_simple_batch_absorbed
-  scope: upstream simple sync batch for provider/runtime, T2I, stale hints, and sync ledger
+  phase: upstream_midlow_batch_absorbed
+  scope: upstream sync batches for simple provider/runtime fixes plus skills-like requery and RST/ADOC upload support
 context:
   confidence: high
   assumptions:
@@ -13,12 +13,15 @@ context:
 architecture:
   stability: stable
   boundary_changes:
-    - None; this batch keeps changes to small compatibility fixes and documentation.
+    - None; current upstream sync batches keep changes to compatibility fixes, upload format support, and documentation.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
     - .venv\Scripts\python -m pytest tests/test_openai_source.py::test_query_stream_extracts_usage_from_empty_choices_chunk tests/test_openai_source.py::test_query_stream_filters_empty_assistant_message -q
+    - .venv\Scripts\python -m pytest tests/test_tool_loop_agent_runner.py::test_skills_like_requery_passes_extra_user_content_parts tests/test_tool_loop_agent_runner.py::test_skills_like_requery_preserves_original_visible_reply tests/test_epub_parser.py -q
     - .venv\Scripts\python -m ruff check astrbot/core/provider/sources/openai_source.py astrbot/core/agent/context/compressor.py astrbot/core/utils/t2i/network_strategy.py astrbot/builtin_stars/astrbot/main.py astrbot/core/pipeline/result_decorate/stage.py astrbot/core/config/default.py tests/agent/test_context_manager.py tests/unit/test_message_tools.py
+    - .venv\Scripts\python -m ruff check astrbot/core/agent/runners/tool_loop_agent_runner.py astrbot/core/knowledge_base/parsers/util.py tests/test_tool_loop_agent_runner.py tests/test_epub_parser.py
+    - utf-8-sig JSON parse check for dashboard knowledge-base detail locales
     - git diff --check
   checks_failed: []
   validation_gap: .venv\Scripts\python -m pytest tests/test_openai_source.py -q still has existing unrelated failures around missing _summarize_* helpers and Windows file:// path expectations.

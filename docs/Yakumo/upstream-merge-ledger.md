@@ -111,13 +111,13 @@ New upstream commits since previous ledger baseline:
 | `5bbcdced` | Skip empty LLM summaries | Absorbed | Rewritten locally in `LLMSummaryCompressor`; empty or whitespace-only summaries now keep original history and log a warning. |
 | `de0a7afd` | pnpm action bump | Skipped | CI dependency chore; skip unless preparing CI/release maintenance. |
 | `7a9fb33d` | FAQ typo | Skipped | Docs-only upstream typo fix. |
-| `c4693fa6` | RST/ADOC knowledge uploads | Deferred | Useful KB parser feature, but belongs with knowledge-base upload/retrieval migration work. |
+| `c4693fa6` | RST/ADOC knowledge uploads | Absorbed | Rewritten locally as a narrow upload/parser whitelist update using existing `MarkitdownParser`, with WebUI accept/i18n/icon hints. |
 | `16593354` | Automated MDI subset generation | Needs review | Dashboard build workflow change; review only if icon subset maintenance becomes painful locally. |
 | `d15606d2` | Dashboard password CLI command | Deferred | Auth/CLI surface; keep with the existing auth/password migration batch. |
 | `0711172f` | Stale command hints | Absorbed | Removed stale slash-command hints in active-reply/T2I/tool-call warning paths and points users to WebUI instead. |
 | `3f20bbdf` | T2I Shiki issue | Absorbed | Rewritten locally; Shiki runtime template preparation now runs in the executor to avoid blocking the event loop. |
 | `1e48bab5` | Streaming `delta=None` handling | Absorbed | Rewritten locally in OpenAI streaming path; skips `delta=None` state updates and guards final completion extraction. |
-| `f5bd4f30` | Preserve original `completion_text` in skills-like tool re-query | Needs review | Touches tool/skills re-query semantics; must compare against local prompt and interaction behavior. |
+| `f5bd4f30` | Preserve original `completion_text` in skills-like tool re-query | Absorbed | Rewritten locally; second-stage skills-like re-query now updates tool-call fields without replacing already-visible assistant text. |
 | `fd4fe843` | Docs fix | Skipped | Docs-only unless it affects local Yakumo docs. |
 | `dcc99e6b` | ChatUI command suggestions | Deferred | User-facing dashboard feature; conflicts should be evaluated separately from stability fixes. |
 | `ff28eca9` | OpenAI streaming usage preservation | Absorbed | Rewritten locally; final usage chunks with `choices=[]` are still passed to stream state. |

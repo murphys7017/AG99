@@ -1274,6 +1274,73 @@ async def test_skills_like_requery_passes_extra_user_content_parts():
 
 
 @pytest.mark.asyncio
+async def test_skills_like_requery_preserves_original_visible_reply():
+    """skills-like re-query should only replace tool-call fields."""
+
+    class SkillsLikeProvider(MockProvider):
+        async def text_chat(self, **kwargs) -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="先告诉用户我会查一下",
+                    tools_call_name=["test_tool"],
+                    tools_call_args=[{"query": "light"}],
+                    tools_call_ids=["call_light"],
+                    usage=TokenUsage(input_other=10, output=5),
+                )
+            if self.call_count == 2:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="二次查询内部文本",
+                    tools_call_name=["test_tool"],
+                    tools_call_args=[{"query": "actual"}],
+                    tools_call_ids=["call_actual"],
+                    usage=TokenUsage(input_other=10, output=5),
+                )
+            return LLMResponse(
+                role="assistant",
+                completion_text="最终回复",
+                usage=TokenUsage(input_other=10, output=5),
+            )
+
+    provider = SkillsLikeProvider()
+    tool = FunctionTool(
+        name="test_tool",
+        description="测试",
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+        handler=AsyncMock(),
+    )
+    tool_set = ToolSet(tools=[tool])
+    runner = ToolLoopAgentRunner()
+
+    await runner.reset(
+        provider=provider,
+        request=ProviderRequest(prompt="run", func_tool=tool_set, contexts=[]),
+        run_context=ContextWrapper(
+            context=MockAgentContext(MockEvent("test_umo", "test_sender"))
+        ),
+        tool_executor=cast(Any, MockToolExecutor()),
+        agent_hooks=MockHooks(),
+        tool_schema_mode="skills_like",
+    )
+
+    responses = []
+    async for response in runner.step():
+        responses.append(response)
+
+    assistant_messages = [
+        message for message in runner.run_context.messages if message.role == "assistant"
+    ]
+    assert assistant_messages
+    assistant_message = assistant_messages[-1]
+    assert assistant_message.content[0].text == "先告诉用户我会查一下"
+    tool_call = assistant_message.tool_calls[0]
+    assert tool_call.id == "call_actual"
+    assert tool_call.function.arguments == '{"query": "actual"}'
+
+
+@pytest.mark.asyncio
 async def test_follow_up_accepted_when_active_and_not_stopping(
     runner, mock_provider, provider_request, mock_tool_executor, mock_hooks
 ):
