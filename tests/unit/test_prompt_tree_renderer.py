@@ -1,11 +1,13 @@
 """Tests for prompt tree building and base renderer routing."""
 
+import json
 from unittest.mock import patch
 
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import (
     AnthropicPromptRenderer,
     BasePromptRenderer,
+    MiniMaxPromptRenderer,
     PromptBuilder,
     PromptRenderEngine,
     SerializedRenderValue,
@@ -195,6 +197,119 @@ def test_anthropic_prompt_renderer_compiles_content_blocks_and_tool_schema():
             "input_schema": {"type": "object", "properties": {}},
         }
     ]
+
+
+def test_minimax_prompt_renderer_compiles_json_sections_and_tool_schema():
+    renderer = MiniMaxPromptRenderer()
+    pack = ContextPack(
+        slots={
+            "system.base": ContextSlot(
+                name="system.base",
+                value="Follow the system contract.",
+                category="system",
+                source="test",
+            ),
+            "session.user_info": ContextSlot(
+                name="session.user_info",
+                value={
+                    "user_id": "u1",
+                    "nickname": "Alice",
+                    "platform_name": "qq",
+                    "umo": "qq:private:u1",
+                    "is_group": False,
+                },
+                category="session",
+                source="test",
+            ),
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Return JSON please.",
+                category="input",
+                source="test",
+            ),
+            "input.images": ContextSlot(
+                name="input.images",
+                value=[{"ref": "file:///tmp/demo.png"}],
+                category="input",
+                source="test",
+            ),
+            "capability.tools_schema": ContextSlot(
+                name="capability.tools_schema",
+                value={
+                    "format": "tool_inventory_v1",
+                    "tools": [
+                        {
+                            "name": "search_docs",
+                            "description": "Search docs",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                },
+                category="tools",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=renderer).render(pack)
+
+    assert result.metadata["renderer_name"] == "minimax"
+    assert result.system_prompt is not None
+    system_payload = json.loads(result.system_prompt)
+    assert system_payload["format"] == "astrbot_minimax_system_v1"
+    assert system_payload["system"]["core"]["base"] == "Follow the system contract."
+    assert "<system>" not in result.system_prompt
+
+    final_message = result.messages[-1]
+    assert final_message["role"] == "user"
+    assert isinstance(final_message["content"], list)
+    user_payload = json.loads(final_message["content"][0]["text"])
+    assert user_payload["format"] == "astrbot_minimax_user_input_v1"
+    assert (
+        user_payload["request_context"]["session"]["user_info"]["nickname"] == "Alice"
+    )
+    assert (
+        user_payload["user_input"]["text"]["content"] == "Return JSON please."
+    )
+    assert "<user_input>" not in final_message["content"][0]["text"]
+    assert final_message["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "file:///tmp/demo.png"},
+    }
+    assert result.tool_schema == [
+        {
+            "name": "search_docs",
+            "description": "Search docs",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    ]
+
+
+def test_render_engine_selects_minimax_renderer_from_token_plan_provider():
+    class ProviderStub:
+        provider_config = {"type": "minimax_token_plan"}
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello MiniMax",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": ProviderStub()})(),
+    )
+
+    assert result.metadata["renderer_name"] == "minimax"
+    content = result.messages[-1]["content"]
+    assert isinstance(content, list)
+    payload = json.loads(content[0]["text"])
+    assert payload["user_input"]["text"]["content"] == "Hello MiniMax"
 
 
 def test_base_prompt_renderer_serializes_dict_slot_to_structured_object():
