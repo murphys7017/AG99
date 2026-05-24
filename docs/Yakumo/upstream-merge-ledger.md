@@ -167,6 +167,18 @@ Medium batch rewrite:
 - `37142fd2` (update progress tracking) absorbed by threading download progress callbacks through core/WebUI downloads, adding `/api/update/progress`, and showing per-stage progress inside the existing update dialog.
 - `16593354` (automated MDI subset generation) absorbed by running the subset generator in dashboard dev/build scripts and removing generated subset assets from version control.
 
+Simple follow-up review:
+
+- `fbe9a38c`/`fd2ca702` (dark-mode code blocks inside list items) were already present locally in `ThemeAwareMarkdownCodeBlock`.
+- `dd716e61` (thinking/response separator) was already present locally in result decoration.
+- `c9182c27` (console log level alignment and mobile layout) was already present locally in `ConsoleDisplayer`.
+- `224915fb` (plugin publishing 16MB size limit docs) was already present locally in English and Chinese docs.
+- `f86de988` (Discord command-sync daily quota handling) was already present locally in the Discord adapter.
+- `0830f48a`/`718449d6` path-conflict self-healing and GitHub dashboard fallback download behavior were already present locally.
+- `35f5d7e` (AMR audio quality and opus conversion simplification) was absorbed by routing opus conversion through `convert_audio_format` and adding AMR ffmpeg filters.
+- `f6a99a25` (SiliconFlow knowledge-base API key wording) was absorbed as a docs-only correction.
+- README-only Trendshift/contributor image updates remain skipped for this fork because they only affect upstream repository presentation.
+
 ## 2026-05-18 Platform QR Registration Merge
 
 Reviewed upstream commits: `c88025c2` (dingtalk QR registration), `aace90da` (feishu/lark QR registration), `b991e819` (weixin_oc QR login), `8dde2292` (lark bot info), `a1e95081` (random suffix for weixin/dingtalk id).
