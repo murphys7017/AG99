@@ -157,6 +157,41 @@ Remaining `git cherry +` entries up to this boundary were reviewed for whether a
 | `72d65680` | Pre-commit setup docs and minor component table text | Skipped | Development-process docs/chore; not required for runtime sync. |
 | `67c7445d` | IME Enter guard | Absorbed | Already present in customized ChatUI input handling. |
 
+### Phase B Boundary: `afe99955` / `v4.24.0`
+
+Remaining `git cherry +` entries from `v4.23.6` through this boundary were reviewed before considering a staged `git merge -s ours afe99955`.
+
+| Upstream commit | Topic | Phase-B status | Notes |
+| --- | --- | --- | --- |
+| `cb5c172e` | CUA computer-use sandbox | Absorbed | Local CUA booter, config metadata, GUI tools, sandbox routing, and unit tests are already present. |
+| `e218620a` | One-line deploy script | Skipped | Operational deploy helper; not part of this fork's runtime rewrite sync. |
+| `e4a9274b` | Deploy script path/gitignore fix | Skipped | Chore tied to skipped deploy scripts. |
+| `9016a3b2` | pnpm action bump | Skipped | CI dependency chore. |
+| `4d9340c` | Windows/Linux deploy scripts | Skipped | Operational install scripts are intentionally left out of functional sync. |
+| `1801834` | Remove BOM from install script | Skipped | Chore tied to skipped deploy scripts. |
+| `d8de0035` | Attachment saved events in WebChat/LiveChat | Absorbed | Rewritten locally in `chat.py` and `live_chat.py`; generated image/record/file/video attachments now emit `attachment_saved` with attachment ID/type before final message save. |
+| `6b36e1ab` | Comment out `tool_choice="required"` in skills-like re-query | Skipped | Upstream appears to be a temporary provider-debug compatibility change. Local skills-like re-query intentionally keeps `required` semantics and has tests for the re-query path. |
+| `eb69bf36` | Shipyard Neo readiness gate and cleanup | Absorbed | Local Shipyard Neo booter waits for ready status, deletes failed/timed-out sandboxes, and shuts down stale Neo sandboxes with `delete_sandbox=True`; tests cover these paths. |
+| `587286a9` | Warn when default chat provider is unset | Absorbed | Already present locally in core lifecycle provider initialization. |
+| `7c185f8e` | Plugin detail page | Absorbed | Local extension page includes `PluginDetailPage` and installed/market detail navigation. |
+| `938c2417` | OpenAI SDK httpx alignment | Absorbed | Already present locally via provider SDK httpx module selection in proxy client creation. |
+| `34dc91e4` | Skills WebUI editing and broad UI polish | Absorbed/Skipped | Skills routes and WebUI support list/upload/download/edit/delete plus Neo sync. Unrelated generated icon/font and broad layout churn remains skipped. |
+| `d72cb78f` | Plugin pinning | Absorbed | Local extension preference storage and installed plugin tab pin/unpin ordering are present. |
+| `2e49eb84` | Plugin internationalization | Absorbed | Plugin metadata includes i18n, dashboard config route exposes plugin i18n, and WebUI resolves localized plugin text. |
+| `6f839173` | Plugin detail/install i18n experience | Absorbed | Local market/install/detail flow carries plugin i18n, pages, components, and localized display fields. |
+| `a2335010` | Metrics batching/perf | Absorbed | Local metrics already batches counters, uploads asynchronously, stores platform stats, and supports config/env disabling. |
+| `ac5cb9b5` | Official plugin storage downloads | Absorbed | Local plugin install/update routes pass `download_url`, updater supports archive downloads, and WebUI selects official storage URLs. |
+| `bc1e7c95` | Plugin short description | Absorbed | Local plugin metadata/search/i18n handling includes short-description support. |
+| `aa0b7a2c` | Fallback max context tokens | Absorbed | Already present locally in default config, metadata i18n, and main-agent build path. |
+| `1f9c2c2b` | Anthropic custom headers/system prompt compatibility | Absorbed | Already present locally. |
+| `750597d` | Provider model-add flow | Absorbed | Rewritten locally by wiring available-model clicks to the model config dialog before save. |
+| `56ec44eb` | Logger cleanup | Skipped | Cosmetic log-churn; not needed for functional sync. |
+| `dee4f14a` | Ruff format | Skipped | Formatting-only upstream churn. |
+| `f2370cd1` | Plugins can add skills | Absorbed | Local `SkillManager` discovers plugin `skills/`, plugin changes sync skills to active sandboxes, and plugin components expose skill entries. |
+| `6eb8a51` | System prompt guide docs | Skipped | Upstream docs-only guide; not required for current Yakumo runtime sync. |
+| `fff9c8ee` | Plugin custom pages WebUI | Absorbed | Local plugin page bridge/auth/routes, page component serialization, docs, and `PluginPagePage` are present. |
+| `afe99955` | Version bump to `4.24.0` | Skipped | Version churn is not used as functional sync proof for this fork. |
+
 New upstream commits since previous ledger baseline:
 
 | Upstream commit | Topic | Initial status | Notes |
