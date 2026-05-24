@@ -63,6 +63,17 @@ Recently absorbed by rewrite:
   - Gemini chat provider managed `httpx.AsyncClient`.
   - GitHub dashboard fallback download URL using `AstrBot-{tag}-dashboard.zip`.
   - Baidu web search API key hidden unless web search is enabled.
+- 2026-05-24 simple-candidate review found these upstream fixes already present in this fork:
+  - SOCKS-compatible updater downloads via `httpx` with `trust_env=True`.
+  - MCP input schema normalization for property-level boolean `required` fields.
+  - `RegexFilter` accepts both strings and compiled `re.Pattern` instances.
+  - `rate_limit_count <= 0` no longer crashes rate-limit checking.
+  - Cron run timestamps are serialized with timezone information.
+  - Bocha search disables brotli response encoding for aiohttp compatibility.
+  - QQ Official API retries transient OS/timeout errors.
+  - Platform adapter filter types include newer adapters such as `webchat`, `weixin_oc`, and webhook variants.
+  - Metrics upload can be disabled by config or `ASTRBOT_DISABLE_METRICS`.
+  - Video attachments, oversized image compression, `None` system prompts, WeCom duplicate text events, file-read modalities, and register decorator kwargs fixes were already present.
 
 ### Topic Merge Plan
 
@@ -121,6 +132,21 @@ New upstream commits since previous ledger baseline:
 | `587286a9` | Warn when default chat provider is unset or invalid | Absorbed | Already present locally before this batch; lifecycle resets the warning guard after provider reload and warns on missing/invalid default provider ID. |
 | `1a030634`/`b3381c64` | Noto Sans Cyrillic WebUI font stack | Absorbed | Rewritten locally with Noto Sans loaded from Google Fonts, global body stack set to Outfit/Noto Sans before CJK fallbacks, and `.Outfit` sharing that stack. |
 | `f9cbe790` | Always show outlined action buttons | Absorbed | Rewritten locally by removing default hidden opacity from `OutlinedActionListItem` hover actions. |
+| `5be6536f` | SOCKS proxy updater support | Absorbed | Already present locally; updater requests use `httpx.AsyncClient(trust_env=True)` and cleanup partial downloads on failure. |
+| `43989471` | Normalize malformed MCP required flags | Absorbed | Already present locally in `_normalize_mcp_input_schema` with unit coverage. |
+| `662b1d36` | `RegexFilter` accepts compiled patterns | Absorbed | Already present locally; `regex_str` is derived from the compiled pattern. |
+| `29a449f9` | `rate_limit_count=0` guard | Absorbed | Already present locally; rate-limit loop exits when count is non-positive. |
+| `47f78be3` | Cron local/timezone display fix | Absorbed | Already present locally; cron next-run and route serialization attach UTC timezone information. |
+| `b2a95713` | Bocha brotli workaround | Absorbed | Already present locally; Bocha requests set `Accept-Encoding: gzip, deflate`. |
+| `00ebebb1` | QQ Official transient retry expansion | Absorbed | Already present locally; retries include `OSError` and `asyncio.TimeoutError` with five attempts. |
+| `2f479b52` | Missing platform adapter filter types | Absorbed | Already present locally; newer adapter names are mapped and `ALL` short-circuits. |
+| `e8d3e183` | Disable metrics config | Absorbed | Already present locally in default config, config metadata i18n, and `Metric._is_disabled()`. |
+| `ba1e2223` | Video attachment handling for LLM | Absorbed | Already present locally; direct and quoted video attachments are appended as text references. |
+| `bbda1e67` | Downscale oversized images | Absorbed | Already present locally; images exceeding max edge compress even when file size is below threshold. |
+| `433836d9` | Guard `None` system prompts | Absorbed | Already present locally before persona/skills prompt append paths. |
+| `5d79c999` | WeCom duplicate text message suppression | Absorbed | Already present locally with a 15-second per-session text dedup cache. |
+| `e6b68e9b` | File-read/modality handling | Absorbed | Already present locally; file read description and modality sanitization are implemented in the runner/provider utility path. |
+| `094aef62` | Preserve decorator kwargs in register helpers | Absorbed | Already present locally for platform adapter type, regex, and permission decorators. |
 | `0711172f` | Stale command hints | Absorbed | Removed stale slash-command hints in active-reply/T2I/tool-call warning paths and points users to WebUI instead. |
 | `3f20bbdf` | T2I Shiki issue | Absorbed | Rewritten locally; Shiki runtime template preparation now runs in the executor to avoid blocking the event loop. |
 | `1e48bab5` | Streaming `delta=None` handling | Absorbed | Rewritten locally in OpenAI streaming path; skips `delta=None` state updates and guards final completion extraction. |

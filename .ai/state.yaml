@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_webui_polish_batch
-  scope: upstream sync batches for simple provider/runtime fixes, skills-like requery, RST/ADOC upload support, stale dashboard dist fallback, and WebUI polish
+  phase: upstream_simple_candidate_review
+  scope: upstream sync batches for simple provider/runtime fixes, skills-like requery, RST/ADOC upload support, stale dashboard dist fallback, WebUI polish, and simple-candidate absorbed-status review
 context:
   confidence: high
   assumptions:
@@ -11,6 +11,7 @@ context:
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
     - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
     - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
+    - Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -25,6 +26,7 @@ verification:
     - .venv\Scripts\python -m ruff check astrbot/core/provider/sources/openai_source.py astrbot/core/agent/context/compressor.py astrbot/core/utils/t2i/network_strategy.py astrbot/builtin_stars/astrbot/main.py astrbot/core/pipeline/result_decorate/stage.py astrbot/core/config/default.py tests/agent/test_context_manager.py tests/unit/test_message_tools.py
     - .venv\Scripts\python -m ruff check astrbot/core/agent/runners/tool_loop_agent_runner.py astrbot/core/knowledge_base/parsers/util.py tests/test_tool_loop_agent_runner.py tests/test_epub_parser.py
     - .venv\Scripts\python -m ruff check astrbot/core/utils/io.py astrbot/dashboard/server.py main.py tests/test_main.py tests/test_dashboard.py
+    - pnpm --dir dashboard typecheck
     - utf-8-sig JSON parse check for dashboard knowledge-base detail locales
     - git diff --check
   checks_failed: []
