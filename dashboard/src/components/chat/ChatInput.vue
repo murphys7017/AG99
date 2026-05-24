@@ -112,10 +112,11 @@
         ref="inputField"
         v-model="localPrompt"
         @keydown="handleKeyDown"
+        @input="handleInput"
         @compositionstart="handleCompositionStart"
         @compositionend="handleCompositionEnd"
         @compositioncancel="handleCompositionEnd"
-        @blur="clearCompositionState()"
+        @blur="handleBlur"
         :disabled="disabled"
         placeholder="Ask AstrBot..."
         class="chat-textarea"
@@ -139,6 +140,14 @@
           transition: height 0.16s ease;
         "
       ></textarea>
+      <CommandSuggestion
+        :visible="showCommandSuggestion"
+        :commands="filteredCommands"
+        :selected-index="selectedCommandIndex"
+        :is-dark="isDark"
+        @select="handleCommandSelect"
+        @update-selected-index="selectedCommandIndex = $event"
+      />
       <div
         style="
           display: flex;
@@ -312,7 +321,12 @@ import { useDisplay } from "vuetify";
 import { useModuleI18n } from "@/i18n/composables";
 import { useCustomizerStore } from "@/stores/customizer";
 import { isComposingEnter } from "@/utils/imeInput.mjs";
+import axios from "axios";
+import type { CommandItem } from "@/components/extension/componentPanel/types";
 import ConfigSelector from "./ConfigSelector.vue";
+import CommandSuggestion, {
+  type SuggestionCommand,
+} from "./CommandSuggestion.vue";
 import ProviderModelMenu from "./ProviderModelMenu.vue";
 import StyledMenu from "@/components/shared/StyledMenu.vue";
 import type { Session } from "@/composables/useSessions";
@@ -386,11 +400,92 @@ const isReplyClosing = ref(false);
 const isDragging = ref(false);
 const isComposing = ref(false);
 const lastCompositionEndAt = ref<number | null>(null);
+const allCommands = ref<CommandItem[]>([]);
+const showCommandSuggestion = ref(false);
+const selectedCommandIndex = ref(0);
+const commandSuggestionLoading = ref(false);
 let dragLeaveTimeout: number | null = null;
+let blurTimer: number | null = null;
 
 const localPrompt = computed({
   get: () => props.prompt,
   set: (value) => emit("update:prompt", value),
+});
+
+function normalizedCommandText(value: string) {
+  return value.trim().replace(/^\/+/, "").toLowerCase();
+}
+
+const enabledCommands = computed<SuggestionCommand[]>(() => {
+  const result: SuggestionCommand[] = [];
+  const seen = new Set<string>();
+
+  function pushCommand(cmd: CommandItem, commandText: string) {
+    const effectiveCommand = commandText.startsWith("/")
+      ? commandText
+      : `/${commandText}`;
+    if (seen.has(effectiveCommand)) return;
+    seen.add(effectiveCommand);
+    result.push({
+      handler_full_name: cmd.handler_full_name,
+      effective_command: effectiveCommand,
+      description: cmd.description || "",
+      plugin_display_name: cmd.plugin_display_name,
+      enabled: cmd.enabled,
+      reserved: cmd.reserved,
+    });
+  }
+
+  function visit(cmd: CommandItem) {
+    if (!cmd.enabled) return;
+    if (cmd.type === "group") {
+      cmd.sub_commands?.forEach(visit);
+      return;
+    }
+
+    pushCommand(cmd, cmd.effective_command || cmd.original_command);
+    cmd.aliases?.forEach((alias) => {
+      const aliasText = cmd.parent_signature
+        ? `${cmd.parent_signature} ${alias}`
+        : alias;
+      pushCommand(cmd, aliasText);
+    });
+    cmd.sub_commands?.forEach(visit);
+  }
+
+  allCommands.value.forEach(visit);
+  return result;
+});
+
+function sortReservedFirst(commands: SuggestionCommand[]) {
+  return [...commands].sort((a, b) => {
+    if (a.reserved !== b.reserved) return Number(b.reserved) - Number(a.reserved);
+    return a.effective_command.localeCompare(b.effective_command);
+  });
+}
+
+const filteredCommands = computed<SuggestionCommand[]>(() => {
+  if (!props.prompt.startsWith("/")) return [];
+  const query = normalizedCommandText(props.prompt);
+  if (!query) return sortReservedFirst(enabledCommands.value);
+
+  const startsWith: SuggestionCommand[] = [];
+  const contains: SuggestionCommand[] = [];
+  for (const cmd of enabledCommands.value) {
+    const commandText = normalizedCommandText(cmd.effective_command);
+    const pluginText = normalizedCommandText(cmd.plugin_display_name || "");
+    const descriptionText = normalizedCommandText(cmd.description || "");
+    if (commandText.startsWith(query)) {
+      startsWith.push(cmd);
+    } else if (
+      commandText.includes(query) ||
+      pluginText.includes(query) ||
+      descriptionText.includes(query)
+    ) {
+      contains.push(cmd);
+    }
+  }
+  return [...sortReservedFirst(startsWith), ...sortReservedFirst(contains)];
 });
 
 const sessionPlatformId = computed(
@@ -501,9 +596,36 @@ function autoResize() {
 
 watch(localPrompt, () => {
   nextTick(autoResize);
+  updateCommandSuggestion();
 });
 
 function handleKeyDown(e: KeyboardEvent) {
+  if (showCommandSuggestion.value && filteredCommands.value.length) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      selectedCommandIndex.value =
+        (selectedCommandIndex.value + 1) % filteredCommands.value.length;
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      selectedCommandIndex.value =
+        (selectedCommandIndex.value - 1 + filteredCommands.value.length) %
+        filteredCommands.value.length;
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleCommandSelect(filteredCommands.value[selectedCommandIndex.value]);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      showCommandSuggestion.value = false;
+      return;
+    }
+  }
+
   const isEnter = e.key === "Enter";
   if (!isEnter) {
     // Ctrl+B 录音
@@ -541,6 +663,58 @@ function handleKeyDown(e: KeyboardEvent) {
       emit("send");
     }
     return;
+  }
+}
+
+function updateCommandSuggestion() {
+  if (props.prompt.startsWith("/") && !props.prompt.includes("\n")) {
+    showCommandSuggestion.value = filteredCommands.value.length > 0;
+    selectedCommandIndex.value = Math.min(
+      selectedCommandIndex.value,
+      Math.max(0, filteredCommands.value.length - 1),
+    );
+  } else {
+    showCommandSuggestion.value = false;
+  }
+}
+
+function handleInput() {
+  if (isComposing.value) return;
+  selectedCommandIndex.value = 0;
+  updateCommandSuggestion();
+}
+
+function handleBlur() {
+  clearCompositionState();
+  if (blurTimer) window.clearTimeout(blurTimer);
+  blurTimer = window.setTimeout(() => {
+    showCommandSuggestion.value = false;
+  }, 160);
+}
+
+function handleCommandSelect(cmd?: SuggestionCommand) {
+  if (!cmd) return;
+  localPrompt.value = `${cmd.effective_command} `;
+  showCommandSuggestion.value = false;
+  nextTick(() => {
+    inputField.value?.focus();
+    autoResize();
+  });
+}
+
+async function fetchCommands() {
+  if (commandSuggestionLoading.value) return;
+  commandSuggestionLoading.value = true;
+  try {
+    const res = await axios.get("/api/commands");
+    if (res.data?.status === "ok") {
+      allCommands.value = res.data.data?.items || [];
+      updateCommandSuggestion();
+    }
+  } catch (error) {
+    console.warn("Failed to fetch command suggestions:", error);
+  } finally {
+    commandSuggestionLoading.value = false;
   }
 }
 
@@ -656,11 +830,16 @@ onMounted(() => {
     inputField.value.addEventListener("paste", handlePaste);
   }
   document.addEventListener("keyup", handleKeyUp);
+  fetchCommands();
 });
 
 onBeforeUnmount(() => {
   if (inputField.value) {
     inputField.value.removeEventListener("paste", handlePaste);
+  }
+  if (blurTimer) {
+    window.clearTimeout(blurTimer);
+    blurTimer = null;
   }
   clearCompositionState();
   document.removeEventListener("keyup", handleKeyUp);

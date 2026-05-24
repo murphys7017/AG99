@@ -20,6 +20,13 @@
       "switching": "正在切换版本...",
       "updating": "正在更新..."
     },
+    "progress": {
+      "preparing": "正在准备更新...",
+      "target": "目标版本：",
+      "dashboard": "管理面板",
+      "core": "核心程序",
+      "failed": "更新失败"
+    },
     "tabs": {
       "release": "😊 正式版"
     },

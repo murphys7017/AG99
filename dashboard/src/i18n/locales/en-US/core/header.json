@@ -20,6 +20,13 @@
       "switching": "Switching version...",
       "updating": "Updating..."
     },
+    "progress": {
+      "preparing": "Preparing update...",
+      "target": "Target version: ",
+      "dashboard": "Dashboard",
+      "core": "Core",
+      "failed": "Update failed"
+    },
     "tabs": {
       "release": "😊 Release"
     },

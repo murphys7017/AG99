@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useCustomizerStore } from "@/stores/customizer";
 import axios from "axios";
 import Logo from "@/components/shared/Logo.vue";
@@ -49,6 +49,51 @@ let version = ref("");
 let releases = ref([]);
 let updatingDashboardLoading = ref(false);
 let installLoading = ref(false);
+interface UpdateStageProgress {
+  status: "pending" | "running" | "done" | "error";
+  downloaded: number;
+  total: number;
+  percent: number;
+  speed: number;
+}
+
+interface UpdateProgress {
+  id: string;
+  status: "idle" | "running" | "success" | "error";
+  stage: string;
+  version: string;
+  message: string;
+  overall_percent: number;
+  stages: Record<string, UpdateStageProgress>;
+}
+
+function emptyUpdateStage(status: UpdateStageProgress["status"] = "pending") {
+  return {
+    status,
+    downloaded: 0,
+    total: 0,
+    percent: 0,
+    speed: 0,
+  };
+}
+
+function createEmptyUpdateProgress(): UpdateProgress {
+  return {
+    id: "",
+    status: "idle",
+    stage: "idle",
+    version: "",
+    message: "",
+    overall_percent: 0,
+    stages: {
+      dashboard: emptyUpdateStage(),
+      core: emptyUpdateStage(),
+    },
+  };
+}
+
+const updateProgress = ref<UpdateProgress>(createEmptyUpdateProgress());
+let updateProgressTimer: ReturnType<typeof setInterval> | null = null;
 const isDesktopReleaseMode = ref(
   typeof window !== "undefined" && !!window.astrbotDesktop?.isDesktop,
 );
@@ -98,6 +143,19 @@ const releasesHeader = computed(() => [
   { title: t("core.header.updateDialog.table.content"), key: "body" },
   { title: t("core.header.updateDialog.table.sourceUrl"), key: "zipball_url" },
   { title: t("core.header.updateDialog.table.actions"), key: "switch" },
+]);
+const updateStageItems = computed(() => [
+  {
+    key: "dashboard",
+    title: t("core.header.updateDialog.progress.dashboard"),
+    progress:
+      updateProgress.value.stages.dashboard || emptyUpdateStage("pending"),
+  },
+  {
+    key: "core",
+    title: t("core.header.updateDialog.progress.core"),
+    progress: updateProgress.value.stages.core || emptyUpdateStage("pending"),
+  },
 ]);
 // Form validation
 const formValid = ref(true);
@@ -363,16 +421,110 @@ function getReleases() {
     });
 }
 
+function applyUpdateProgress(progress: Partial<UpdateProgress>) {
+  updateProgress.value = {
+    ...updateProgress.value,
+    ...progress,
+    stages: {
+      ...updateProgress.value.stages,
+      ...(progress.stages || {}),
+    },
+  };
+}
+
+function stopUpdateProgressPolling() {
+  if (updateProgressTimer) {
+    clearInterval(updateProgressTimer);
+    updateProgressTimer = null;
+  }
+}
+
+function startUpdateProgressPolling(progressId: string) {
+  stopUpdateProgressPolling();
+  const poll = () => {
+    axios
+      .get("/api/update/progress", { params: { id: progressId } })
+      .then((res) => {
+        if (res.data?.data) {
+          applyUpdateProgress(res.data.data);
+        }
+      })
+      .catch((err) => {
+        console.log(err);
+      });
+  };
+  poll();
+  updateProgressTimer = setInterval(poll, 800);
+}
+
+function createProgressId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatDownloadSize(bytes: number) {
+  if (!bytes) return "-";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatDownloadSpeed(kbPerSecond: number) {
+  if (!kbPerSecond) return "-";
+  if (kbPerSecond >= 1024) {
+    return `${(kbPerSecond / 1024).toFixed(1)} MB/s`;
+  }
+  return `${kbPerSecond.toFixed(0)} KB/s`;
+}
+
+function getStageStatusIcon(status: string) {
+  if (status === "done") return "mdi-check-circle-outline";
+  if (status === "running") return "mdi-progress-download";
+  if (status === "error") return "mdi-alert-circle-outline";
+  return "mdi-circle-outline";
+}
+
+function getStageStatusColor(status: string) {
+  if (status === "done") return "success";
+  if (status === "running") return "primary";
+  if (status === "error") return "error";
+  return "grey";
+}
+
 function switchVersion(version: string) {
+  const progressId = createProgressId();
+  updateProgress.value = {
+    ...createEmptyUpdateProgress(),
+    id: progressId,
+    status: "running",
+    version: version || "latest",
+    message: t("core.header.updateDialog.progress.preparing"),
+  };
   updateStatus.value = t("core.header.updateDialog.status.switching");
   installLoading.value = true;
+  startUpdateProgressPolling(progressId);
   axios
     .post("/api/update/do", {
       version: version,
       proxy: getSelectedGitHubProxy(),
+      progress_id: progressId,
     })
     .then((res) => {
       updateStatus.value = res.data.message;
+      updateProgress.value = {
+        ...updateProgress.value,
+        status: res.data.status === "ok" ? "success" : updateProgress.value.status,
+        message: res.data.message,
+        overall_percent:
+          res.data.status === "ok" ? 100 : updateProgress.value.overall_percent,
+      };
       if (res.data.status == "ok") {
         setTimeout(() => {
           window.location.reload();
@@ -382,9 +534,18 @@ function switchVersion(version: string) {
     .catch((err) => {
       console.log(err);
       updateStatus.value = err;
+      updateProgress.value = {
+        ...updateProgress.value,
+        status: "error",
+        message:
+          err?.response?.data?.message ||
+          err?.message ||
+          t("core.header.updateDialog.progress.failed"),
+      };
     })
     .finally(() => {
       installLoading.value = false;
+      stopUpdateProgressPolling();
     });
 }
 
@@ -438,6 +599,10 @@ checkUpdate();
 
 commonStore.createEventSource(); // log
 commonStore.getStartTime();
+
+onUnmounted(() => {
+  stopUpdateProgressPolling();
+});
 
 // 视图模式切换
 onMounted(() => {
@@ -837,13 +1002,75 @@ onMounted(async () => {
             <v-progress-linear
               v-show="installLoading"
               class="mb-4"
-              indeterminate
+              :indeterminate="updateProgress.status === 'idle'"
+              :model-value="updateProgress.overall_percent"
               color="primary"
             ></v-progress-linear>
 
             <div>
               <h1 style="display: inline-block">{{ botCurrVersion }}</h1>
               <small style="margin-left: 4px">{{ updateStatus }}</small>
+            </div>
+
+            <div
+              v-if="installLoading || updateProgress.status !== 'idle'"
+              class="update-progress-panel mb-4 mt-4"
+            >
+              <div class="update-progress-heading">
+                <div>
+                  <div class="text-subtitle-1 font-weight-medium">
+                    {{ updateProgress.message || updateStatus }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
+                    {{ t("core.header.updateDialog.progress.target") }}
+                    {{ updateProgress.version || "latest" }}
+                  </div>
+                </div>
+                <div class="text-h6 font-weight-bold">
+                  {{ updateProgress.overall_percent }}%
+                </div>
+              </div>
+              <v-progress-linear
+                :model-value="updateProgress.overall_percent"
+                height="8"
+                rounded
+                color="primary"
+                class="mt-3"
+              />
+
+              <div class="update-stage-list mt-4">
+                <div
+                  v-for="stage in updateStageItems"
+                  :key="stage.key"
+                  class="update-stage-row"
+                >
+                  <v-icon
+                    :icon="getStageStatusIcon(stage.progress.status)"
+                    :color="getStageStatusColor(stage.progress.status)"
+                    size="20"
+                  />
+                  <div class="update-stage-content">
+                    <div class="update-stage-title">
+                      <span>{{ stage.title }}</span>
+                      <span>{{ stage.progress.percent }}%</span>
+                    </div>
+                    <v-progress-linear
+                      :model-value="stage.progress.percent"
+                      height="5"
+                      rounded
+                      :color="getStageStatusColor(stage.progress.status)"
+                      class="mt-2"
+                    />
+                    <div class="update-stage-meta">
+                      <span>
+                        {{ formatDownloadSize(stage.progress.downloaded) }} /
+                        {{ formatDownloadSize(stage.progress.total) }}
+                      </span>
+                      <span>{{ formatDownloadSpeed(stage.progress.speed) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div
@@ -1398,6 +1625,49 @@ onMounted(async () => {
   align-items: center;
 }
 
+.update-progress-panel {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.update-progress-heading,
+.update-stage-title,
+.update-stage-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.update-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.update-stage-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.update-stage-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.update-stage-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.update-stage-meta {
+  margin-top: 6px;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 12px;
+}
+
 /* 移动端样式优化 */
 @media (max-width: 600px) {
   .logo-text {
@@ -1435,6 +1705,13 @@ onMounted(async () => {
 
   .v-btn-toggle .v-icon {
     font-size: 16px;
+  }
+
+  .update-progress-heading,
+  .update-stage-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 }
 </style>

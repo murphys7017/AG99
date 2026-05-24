@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_simple_candidate_review
-  scope: upstream sync batches for simple provider/runtime fixes, skills-like requery, RST/ADOC upload support, stale dashboard dist fallback, WebUI polish, and simple-candidate absorbed-status review
+  phase: upstream_medium_candidate_rewrite
+  scope: upstream sync rewrite for ChatUI command suggestions, update progress tracking, and automated MDI subset generation
 context:
   confidence: high
   assumptions:
@@ -12,11 +12,15 @@ context:
     - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
     - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
     - Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing.
+    - The current medium batch preserves local ChatUI and header layout customizations instead of replacing components with upstream versions.
+    - Dashboard MDI subset assets are generated at dev/build time and are no longer tracked in git.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - None; current upstream sync batches keep changes to compatibility fixes, upload format support, dashboard asset selection, small WebUI polish, and documentation.
+    - `/api/update/progress` exposes transient update progress keyed by `progress_id`.
+    - Updater/download helpers accept optional progress callbacks.
+    - ChatUI composer loads command suggestions from `/api/commands`.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -29,7 +33,10 @@ verification:
     - pnpm --dir dashboard typecheck
     - utf-8-sig JSON parse check for dashboard knowledge-base detail locales
     - git diff --check
+    - pnpm --dir dashboard exec node scripts/subset-mdi-font.mjs
+    - .venv\Scripts\python -m pytest tests/test_dashboard.py::test_do_update tests/unit/test_astr_main_agent.py::TestSelectProvider -q
+    - .venv\Scripts\python -m ruff check astrbot/core/astr_main_agent.py astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py astrbot/core/updator.py astrbot/core/utils/io.py astrbot/core/zip_updator.py astrbot/dashboard/routes/update.py tests/test_dashboard.py tests/unit/test_astr_main_agent.py
   checks_failed: []
-  validation_gap: .venv\Scripts\python -m pytest tests/test_openai_source.py -q still has existing unrelated failures around missing _summarize_* helpers and Windows file:// path expectations.
+  validation_gap: Full backend suite not rerun for this medium dashboard/update batch; prior known unrelated tests/test_openai_source.py failures remain.
 runtime:
   mode: minimal_v1

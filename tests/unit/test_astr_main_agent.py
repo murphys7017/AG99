@@ -182,6 +182,8 @@ class TestSelectProvider:
         result = module._select_provider(mock_event, mock_context)
 
         assert result is None
+        mock_event.set_extra.assert_called_once()
+        assert module.LLM_ERROR_MESSAGE_EXTRA_KEY in mock_event.set_extra.call_args.args
 
     def test_select_provider_invalid_type(self, mock_event, mock_context):
         """Test selecting provider when result is not a Provider instance."""
@@ -194,6 +196,8 @@ class TestSelectProvider:
         result = module._select_provider(mock_event, mock_context)
 
         assert result is None
+        mock_event.set_extra.assert_called_once()
+        assert module.LLM_ERROR_MESSAGE_EXTRA_KEY in mock_event.set_extra.call_args.args
 
     def test_select_provider_fallback(self, mock_event, mock_context, mock_provider):
         """Test provider selection fallback to using provider."""
@@ -217,6 +221,8 @@ class TestSelectProvider:
         result = module._select_provider(mock_event, mock_context)
 
         assert result is None
+        mock_event.set_extra.assert_called_once()
+        assert module.LLM_ERROR_MESSAGE_EXTRA_KEY in mock_event.set_extra.call_args.args
 
 
 class TestGetSessionConv:

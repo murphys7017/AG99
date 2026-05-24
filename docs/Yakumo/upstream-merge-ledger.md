@@ -88,7 +88,7 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 | Plugin system | In progress | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Basic `pages` metadata and install cleanup were absorbed. | Review dynamic plugin API routes and plugin update/changelog/storage changes as one feature batch. |
 | Knowledge base and retrieval | Deferred | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, Firecrawl search tools | Firecrawl config/tool hook had been absorbed in the earlier review; FTS5/EPUB remain deferred due storage/retrieval impact. | Review blank-prompt skip as a small bugfix; keep FTS5/EPUB as a dedicated migration task. |
 | Computer use / sandbox | In progress | Shipyard profile selection, readiness gate, idle sandbox expiry, sandbox image download delivery | Explicit/auto Shipyard profile behavior was absorbed. | Review readiness gate, graceful cleanup, idle expiry, and sandbox image download behavior together. |
-| Auth, CLI, deployment, update | Partially absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC) absorbed. Dashboard password policy, update progress dialog, and deploy scripts remain not started. | Review auth/CLI/deploy as a separate operational batch. |
+| Auth, CLI, deployment, update | Partially absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC) and update progress tracking/dialog were absorbed. Dashboard password policy and deploy scripts remain not started. | Review auth/password and deploy scripts as separate operational batches. |
 | Docs, version bumps, dependency chores | Mostly skipped | Version bumps, README/docs URL updates, pnpm action bumps, release instructions | Usually skipped unless they affect this fork's docs or release process. | Keep version/chore commits out of functional sync unless preparing a release. |
 
 ### Review Rules for Future Upstream Sync
@@ -126,7 +126,7 @@ New upstream commits since previous ledger baseline:
 | `de0a7afd` | pnpm action bump | Skipped | CI dependency chore; skip unless preparing CI/release maintenance. |
 | `7a9fb33d` | FAQ typo | Skipped | Docs-only upstream typo fix. |
 | `c4693fa6` | RST/ADOC knowledge uploads | Absorbed | Rewritten locally as a narrow upload/parser whitelist update using existing `MarkitdownParser`, with WebUI accept/i18n/icon hints. |
-| `16593354` | Automated MDI subset generation | Needs review | Dashboard build workflow change; review only if icon subset maintenance becomes painful locally. |
+| `16593354` | Automated MDI subset generation | Absorbed | Rewritten locally; dashboard dev/build scripts now generate the MDI subset before Vite, and generated subset assets are ignored instead of tracked. |
 | `d15606d2` | Dashboard password CLI command | Deferred | Auth/CLI surface; keep with the existing auth/password migration batch. |
 | `3290d755` | Prefer bundled dashboard over stale `data/dist` | Absorbed | Rewritten locally; version comparison now selects bundled WebUI when an older user `data/dist` would otherwise shadow it. |
 | `587286a9` | Warn when default chat provider is unset or invalid | Absorbed | Already present locally before this batch; lifecycle resets the warning guard after provider reload and warns on missing/invalid default provider ID. |
@@ -152,7 +152,7 @@ New upstream commits since previous ledger baseline:
 | `1e48bab5` | Streaming `delta=None` handling | Absorbed | Rewritten locally in OpenAI streaming path; skips `delta=None` state updates and guards final completion extraction. |
 | `f5bd4f30` | Preserve original `completion_text` in skills-like tool re-query | Absorbed | Rewritten locally; second-stage skills-like re-query now updates tool-call fields without replacing already-visible assistant text. |
 | `fd4fe843` | Docs fix | Skipped | Docs-only unless it affects local Yakumo docs. |
-| `dcc99e6b` | ChatUI command suggestions | Deferred | User-facing dashboard feature; conflicts should be evaluated separately from stability fixes. |
+| `dcc99e6b` | ChatUI command suggestions | Absorbed | Rewritten locally against the customized ChatUI; slash-command suggestions load from `/api/commands`, composer focus is restored after chat actions, and provider-selection failures now send a visible LLM error message. |
 | `ff28eca9` | OpenAI streaming usage preservation | Absorbed | Rewritten locally; final usage chunks with `choices=[]` are still passed to stream state. |
 
 Simple batch review:
@@ -160,6 +160,12 @@ Simple batch review:
 - `7a519d4d` (`websearch_firecrawl_key`) was already absorbed before this batch; `provider_settings.websearch_firecrawl_key` exists in `DEFAULT_CONFIG`.
 - `22ba831a` (`send_message_to_user` missing local/sandbox path handling) was already absorbed before this batch; missing paths stop message construction before send.
 - `720d384b` (console auto-scroll ref synchronization) was already absorbed before this batch; `ConsolePage` initializes `ConsoleDisplayer.autoScroll` on mount and keeps it synced.
+
+Medium batch rewrite:
+
+- `dcc99e6b` (ChatUI command suggestions) absorbed by adding a local `CommandSuggestion` composer panel, preserving the customized chat layout and adding visible provider-selection error replies.
+- `37142fd2` (update progress tracking) absorbed by threading download progress callbacks through core/WebUI downloads, adding `/api/update/progress`, and showing per-stage progress inside the existing update dialog.
+- `16593354` (automated MDI subset generation) absorbed by running the subset generator in dashboard dev/build scripts and removing generated subset assets from version control.
 
 ## 2026-05-18 Platform QR Registration Merge
 
