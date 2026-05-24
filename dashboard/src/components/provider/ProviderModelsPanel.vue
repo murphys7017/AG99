@@ -135,7 +135,7 @@
           <v-chip size="x-small" variant="tonal" label>{{ availableEntries.length }}</v-chip>
         </div>
 
-        <div v-if="availableEntries.length" class="provider-models-list">
+        <div v-if="availableEntries.length" class="provider-models-list provider-models-list--available">
           <v-tooltip
             v-for="entry in availableEntries"
             :key="entry.model"
@@ -368,6 +368,12 @@ const isProviderTesting = (providerId) => props.testingProviders.includes(provid
 .provider-models-list {
   display: flex;
   flex-direction: column;
+}
+
+.provider-models-list--available {
+  max-height: min(420px, 52vh);
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .provider-model-row {
