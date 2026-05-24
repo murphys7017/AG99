@@ -5,16 +5,16 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-05-18
+Last updated: 2026-05-24
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `dceacd5a` (`docs: update release version instructions in AGENTS.md`)
-- Remote refresh status: `git fetch upstream --prune` and `git ls-remote upstream refs/heads/master` both failed with `Recv failure: Connection was reset`; numbers below are based on the existing local `upstream/master` snapshot.
-- Git-only divergence at this snapshot: local-only `272`, upstream-only `181`.
-- Patch-equivalence estimate from `git cherry`: `67` upstream commits appear already absorbed, `114` still appear unabsorbed.
+- Last local upstream snapshot checked: `upstream/master` at `ff28eca9c` (`fix(openai): 修复流式响应末尾usage信息丢失问题 (#8306)`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` and `git ls-remote upstream refs/heads/master` failed on 2026-05-24 with `Failed to connect to github.com port 443 after 21110 ms`; SSH `git ls-remote git@github.com:AstrBotDevs/AstrBot.git refs/heads/master` succeeded and confirmed `ff28eca9c`, then `upstream/master` was refreshed from the SSH URL.
+- Git-only divergence at this snapshot: local-only `286`, upstream-only `194`.
+- Patch-equivalence estimate from `git cherry`: `67` upstream commits appear already absorbed, `127` still appear unabsorbed.
 
 Important interpretation:
 
@@ -86,6 +86,47 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 - For rewritten merges, record the local commit hash and the upstream commit or PR that inspired it.
 - Do not treat `git cherry` as authoritative for this fork; use it only as a triage aid.
 - Keep local prompt, memory, postprocess, and interaction architecture as the default source of truth unless an upstream change is explicitly chosen to replace it.
+
+## 2026-05-24 Upstream Snapshot Refresh
+
+Reviewed upstream delta: `dceacd5a..ff28eca9c`.
+
+Remote status:
+
+- HTTPS `git fetch upstream --prune` failed during this review due GitHub connection timeout.
+- HTTPS `git ls-remote upstream refs/heads/master` also failed due GitHub connection timeout.
+- SSH `git ls-remote git@github.com:AstrBotDevs/AstrBot.git refs/heads/master` succeeded and confirmed `ff28eca9c`.
+- `upstream/master` was refreshed from `git@github.com:AstrBotDevs/AstrBot.git` and remained at `ff28eca9c`.
+
+Updated triage counts:
+
+- Git-only divergence: local-only `286`, upstream-only `194`.
+- `git cherry -v master upstream/master`: `67` patch-equivalent absorbed, `127` still shown as unabsorbed.
+- Interpretation remains unchanged: `+` entries may still be functionally absorbed by local rewrites, so topic review is required before merging or rewriting.
+
+New upstream commits since previous ledger baseline:
+
+| Upstream commit | Topic | Initial status | Notes |
+| --- | --- | --- | --- |
+| `5bbcdced` | Skip empty LLM summaries | Absorbed | Rewritten locally in `LLMSummaryCompressor`; empty or whitespace-only summaries now keep original history and log a warning. |
+| `de0a7afd` | pnpm action bump | Skipped | CI dependency chore; skip unless preparing CI/release maintenance. |
+| `7a9fb33d` | FAQ typo | Skipped | Docs-only upstream typo fix. |
+| `c4693fa6` | RST/ADOC knowledge uploads | Deferred | Useful KB parser feature, but belongs with knowledge-base upload/retrieval migration work. |
+| `16593354` | Automated MDI subset generation | Needs review | Dashboard build workflow change; review only if icon subset maintenance becomes painful locally. |
+| `d15606d2` | Dashboard password CLI command | Deferred | Auth/CLI surface; keep with the existing auth/password migration batch. |
+| `0711172f` | Stale command hints | Absorbed | Removed stale slash-command hints in active-reply/T2I/tool-call warning paths and points users to WebUI instead. |
+| `3f20bbdf` | T2I Shiki issue | Absorbed | Rewritten locally; Shiki runtime template preparation now runs in the executor to avoid blocking the event loop. |
+| `1e48bab5` | Streaming `delta=None` handling | Absorbed | Rewritten locally in OpenAI streaming path; skips `delta=None` state updates and guards final completion extraction. |
+| `f5bd4f30` | Preserve original `completion_text` in skills-like tool re-query | Needs review | Touches tool/skills re-query semantics; must compare against local prompt and interaction behavior. |
+| `fd4fe843` | Docs fix | Skipped | Docs-only unless it affects local Yakumo docs. |
+| `dcc99e6b` | ChatUI command suggestions | Deferred | User-facing dashboard feature; conflicts should be evaluated separately from stability fixes. |
+| `ff28eca9` | OpenAI streaming usage preservation | Absorbed | Rewritten locally; final usage chunks with `choices=[]` are still passed to stream state. |
+
+Simple batch review:
+
+- `7a519d4d` (`websearch_firecrawl_key`) was already absorbed before this batch; `provider_settings.websearch_firecrawl_key` exists in `DEFAULT_CONFIG`.
+- `22ba831a` (`send_message_to_user` missing local/sandbox path handling) was already absorbed before this batch; missing paths stop message construction before send.
+- `720d384b` (console auto-scroll ref synchronization) was already absorbed before this batch; `ConsolePage` initializes `ConsoleDisplayer.autoScroll` on mount and keeps it synced.
 
 ## 2026-05-18 Platform QR Registration Merge
 

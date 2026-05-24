@@ -1,36 +1,26 @@
 task:
-  class: feature
+  class: maintenance
   risk: medium
-  phase: identity_bindings_config_validated
-  scope: memory standard/advanced provider split, simplified Web config, and Web-editable identity mappings
+  phase: upstream_simple_batch_absorbed
+  scope: upstream simple sync batch for provider/runtime, T2I, stale hints, and sync ledger
 context:
   confidence: high
   assumptions:
-    - Short-term memory analyzers should use the standard memory provider.
-    - Consolidation and long-term memory analyzers should use the advanced memory provider.
-    - Advanced memory provider should fall back to standard provider when left empty.
-    - Existing per-analyzer provider_id values should remain as legacy fallbacks when standard/advanced providers are empty.
-    - memory.identity.bindings should take precedence over the legacy identity_mappings.yaml file when present in Web config.
+    - Upstream sync should continue by topic rewrite, not broad merge.
+    - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
+    - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - Memory analysis now supports standard_provider_id and advanced_provider_id.
-    - Analyzer provider resolution prefers standard/advanced providers and falls back to legacy per-analyzer provider_id values.
-    - Memory Web config now exposes a simplified basic/models/advanced layout.
-    - Memory identity mappings can be edited through memory.identity.bindings while legacy YAML remains as a fallback.
+    - None; this batch keeps changes to small compatibility fixes and documentation.
 verification:
   checks_run:
-    - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py -q
-    - .venv\Scripts\python -m ruff check astrbot/core/config/default.py astrbot/core/memory/analyzer_manager.py astrbot/core/memory/config.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_config.py
-    - .venv\Scripts\python -m pytest tests/unit/test_memory_analyzer.py tests/unit/test_memory_config.py tests/unit/test_memory_store.py tests/unit/test_memory_identity.py tests/unit/test_memory_runtime.py tests/unit/test_config.py -q
-    - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/zh-CN/features/config-metadata.json
-    - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/en-US/features/config-metadata.json
-    - .venv\Scripts\python -m json.tool dashboard/src/i18n/locales/ru-RU/features/config-metadata.json
-    - .venv\Scripts\python -m pytest tests/unit/test_memory_identity.py tests/unit/test_memory_config.py -q
-    - .venv\Scripts\python -m ruff check astrbot/core/config/default.py astrbot/core/memory/config.py astrbot/core/memory/identity.py astrbot/core/memory_config_defaults.py tests/unit/test_memory_config.py tests/unit/test_memory_identity.py
-    - pnpm build
+    - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
+    - .venv\Scripts\python -m pytest tests/test_openai_source.py::test_query_stream_extracts_usage_from_empty_choices_chunk tests/test_openai_source.py::test_query_stream_filters_empty_assistant_message -q
+    - .venv\Scripts\python -m ruff check astrbot/core/provider/sources/openai_source.py astrbot/core/agent/context/compressor.py astrbot/core/utils/t2i/network_strategy.py astrbot/builtin_stars/astrbot/main.py astrbot/core/pipeline/result_decorate/stage.py astrbot/core/config/default.py tests/agent/test_context_manager.py tests/unit/test_message_tools.py
+    - git diff --check
   checks_failed: []
-  validation_gap: pytest still reports existing SwigPy* deprecation warnings
+  validation_gap: .venv\Scripts\python -m pytest tests/test_openai_source.py -q still has existing unrelated failures around missing _summarize_* helpers and Windows file:// path expectations.
 runtime:
   mode: minimal_v1

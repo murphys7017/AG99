@@ -156,9 +156,10 @@ class NetworkRenderStrategy(RenderStrategy):
         if options:
             default_options |= options
 
-        if SHIKI_RUNTIME_TEMPLATE_PATTERN.search(tmpl_str):
-            tmpl_data = {"shiki_runtime": get_shiki_runtime()} | tmpl_data
-        tmpl_str = inject_shiki_runtime(tmpl_str)
+        loop = asyncio.get_running_loop()
+        tmpl_str, tmpl_data = await loop.run_in_executor(
+            None, self._prepare_template_sync, tmpl_str, tmpl_data
+        )
         post_data = {
             "tmpl": tmpl_str,
             "json": return_url,
@@ -200,6 +201,13 @@ class NetworkRenderStrategy(RenderStrategy):
         # 全部失败
         logger.error(f"All endpoints failed: {last_exception}")
         raise RuntimeError(f"All endpoints failed: {last_exception}")
+
+    @staticmethod
+    def _prepare_template_sync(tmpl_str: str, tmpl_data: dict) -> tuple[str, dict]:
+        if SHIKI_RUNTIME_TEMPLATE_PATTERN.search(tmpl_str):
+            tmpl_data = {"shiki_runtime": get_shiki_runtime()} | tmpl_data
+        tmpl_str = inject_shiki_runtime(tmpl_str)
+        return tmpl_str, tmpl_data
 
     async def render(
         self,
