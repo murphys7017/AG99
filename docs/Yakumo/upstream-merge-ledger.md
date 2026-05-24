@@ -31,7 +31,9 @@ Current local upstream-sync commits:
 - `6096253d` Polish dashboard input and status handling
 - `a1e4240d` Auto-select Shipyard Neo profiles by default
 - `8cbb60d4` Expose embedding input type setting
-- Pending commit in current sync batch: provider streaming empty-assistant filtering, Discord command quota startup guard, Weixin OC session-timeout login-state reset.
+- `f1392a71` Absorb simple upstream stability updates
+- `08144459` Absorb upstream requery and upload format updates
+- Pending commit in current sync batch: bundled dashboard fallback for stale `data/dist`.
 
 Recently absorbed by rewrite:
 
@@ -44,7 +46,7 @@ Recently absorbed by rewrite:
 - Plugin/runtime metadata:
   - Handler kwargs preservation, plugin `pages` metadata, repeated install cleanup/error-tracking behavior.
 - Dashboard and upload handling:
-  - Chat upload filename sanitization, IME Enter guard, provider status test error display, console auto-scroll sync, console log layout improvements.
+  - Chat upload filename sanitization, IME Enter guard, provider status test error display, console auto-scroll sync, console log layout improvements, and bundled dashboard fallback when `data/dist` is stale.
 - Shipyard Neo:
   - Empty profile now means auto-select; any non-empty explicit profile is honored.
 - 2026-05-18 follow-up review found these upstream fixes already present in this fork before this batch:
@@ -70,7 +72,7 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 | Security fixes | In progress | Upload path traversal, backup importer traversal, password policy, updater zip root path, T2I SSTI validation | Upload filename sanitization, backup-importer handling, updater zip-root handling, and T2I template validation are already present. Password policy remains deferred because upstream `7ddf6371` is a broad auth/onboarding/storage migration, not a small patch. | Review password setup/password hashing as a dedicated auth migration batch. |
 | Provider and model runtime | In progress | OpenAI http client, reasoning content, Claude no-arg tools, MiniMax TTS, Embedding providers, Anthropic compatibility | Several small compatibility fixes were rewritten locally. This batch adds shared empty-assistant sanitization to both non-streaming and streaming OpenAI-compatible requests. | After commit, re-run `git cherry` triage and review provider warning/default-model edge cases only if behavior differs locally. |
 | Platform adapters and outbound media | In progress | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin send failure, Telegram media group logging, and message-tool path handling were absorbed. Dingtalk/Lark/Weixin OC one-click QR registration and polling mechanism absorbed. | Evaluate KOOK as feature work after stability fixes. |
-| Dashboard UX and WebUI | In progress | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX | IME, console, upload sanitization, provider test feedback, T2I template error feedback, and Baidu search-key visibility were absorbed. Inline edit/regenerate remains intentionally deferred. | Review Noto Sans/font stack and initial password UX because they are low-risk user-facing polish. |
+| Dashboard UX and WebUI | In progress | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX, stale `data/dist` fallback | IME, console, upload sanitization, provider test feedback, T2I template error feedback, Baidu search-key visibility, and bundled dashboard fallback for stale `data/dist` were absorbed. Inline edit/regenerate remains intentionally deferred. | Review Noto Sans/font stack and initial password UX because they are low-risk user-facing polish. |
 | Plugin system | In progress | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Basic `pages` metadata and install cleanup were absorbed. | Review dynamic plugin API routes and plugin update/changelog/storage changes as one feature batch. |
 | Knowledge base and retrieval | Deferred | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, Firecrawl search tools | Firecrawl config/tool hook had been absorbed in the earlier review; FTS5/EPUB remain deferred due storage/retrieval impact. | Review blank-prompt skip as a small bugfix; keep FTS5/EPUB as a dedicated migration task. |
 | Computer use / sandbox | In progress | Shipyard profile selection, readiness gate, idle sandbox expiry, sandbox image download delivery | Explicit/auto Shipyard profile behavior was absorbed. | Review readiness gate, graceful cleanup, idle expiry, and sandbox image download behavior together. |
@@ -114,6 +116,8 @@ New upstream commits since previous ledger baseline:
 | `c4693fa6` | RST/ADOC knowledge uploads | Absorbed | Rewritten locally as a narrow upload/parser whitelist update using existing `MarkitdownParser`, with WebUI accept/i18n/icon hints. |
 | `16593354` | Automated MDI subset generation | Needs review | Dashboard build workflow change; review only if icon subset maintenance becomes painful locally. |
 | `d15606d2` | Dashboard password CLI command | Deferred | Auth/CLI surface; keep with the existing auth/password migration batch. |
+| `3290d755` | Prefer bundled dashboard over stale `data/dist` | Absorbed | Rewritten locally; version comparison now selects bundled WebUI when an older user `data/dist` would otherwise shadow it. |
+| `587286a9` | Warn when default chat provider is unset or invalid | Absorbed | Already present locally before this batch; lifecycle resets the warning guard after provider reload and warns on missing/invalid default provider ID. |
 | `0711172f` | Stale command hints | Absorbed | Removed stale slash-command hints in active-reply/T2I/tool-call warning paths and points users to WebUI instead. |
 | `3f20bbdf` | T2I Shiki issue | Absorbed | Rewritten locally; Shiki runtime template preparation now runs in the executor to avoid blocking the event loop. |
 | `1e48bab5` | Streaming `delta=None` handling | Absorbed | Rewritten locally in OpenAI streaming path; skips `delta=None` state updates and guards final completion extraction. |

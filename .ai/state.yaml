@@ -1,26 +1,29 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_midlow_batch_absorbed
-  scope: upstream sync batches for simple provider/runtime fixes plus skills-like requery and RST/ADOC upload support
+  phase: upstream_dashboard_dist_batch
+  scope: upstream sync batches for simple provider/runtime fixes, skills-like requery, RST/ADOC upload support, and stale dashboard dist fallback
 context:
   confidence: high
   assumptions:
     - Upstream sync should continue by topic rewrite, not broad merge.
     - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
+    - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - None; current upstream sync batches keep changes to compatibility fixes, upload format support, and documentation.
+    - None; current upstream sync batches keep changes to compatibility fixes, upload format support, dashboard asset selection, and documentation.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
     - .venv\Scripts\python -m pytest tests/test_openai_source.py::test_query_stream_extracts_usage_from_empty_choices_chunk tests/test_openai_source.py::test_query_stream_filters_empty_assistant_message -q
     - .venv\Scripts\python -m pytest tests/test_tool_loop_agent_runner.py::test_skills_like_requery_passes_extra_user_content_parts tests/test_tool_loop_agent_runner.py::test_skills_like_requery_preserves_original_visible_reply tests/test_epub_parser.py -q
+    - .venv\Scripts\python -m pytest tests/test_main.py::test_should_use_bundled_dashboard_dist_when_data_dist_is_stale tests/test_main.py::test_should_keep_data_dist_when_version_file_is_malformed tests/test_main.py::test_check_dashboard_files_uses_bundled_dist_when_data_dist_is_stale tests/test_dashboard.py::test_dashboard_uses_bundled_dist_when_data_dist_is_stale -q
     - .venv\Scripts\python -m ruff check astrbot/core/provider/sources/openai_source.py astrbot/core/agent/context/compressor.py astrbot/core/utils/t2i/network_strategy.py astrbot/builtin_stars/astrbot/main.py astrbot/core/pipeline/result_decorate/stage.py astrbot/core/config/default.py tests/agent/test_context_manager.py tests/unit/test_message_tools.py
     - .venv\Scripts\python -m ruff check astrbot/core/agent/runners/tool_loop_agent_runner.py astrbot/core/knowledge_base/parsers/util.py tests/test_tool_loop_agent_runner.py tests/test_epub_parser.py
+    - .venv\Scripts\python -m ruff check astrbot/core/utils/io.py astrbot/dashboard/server.py main.py tests/test_main.py tests/test_dashboard.py
     - utf-8-sig JSON parse check for dashboard knowledge-base detail locales
     - git diff --check
   checks_failed: []
