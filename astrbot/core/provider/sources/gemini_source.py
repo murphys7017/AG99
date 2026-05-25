@@ -20,6 +20,7 @@ from astrbot.api.provider import Provider
 from astrbot.core.agent.message import AudioURLPart, ContentPart, ImageURLPart, TextPart
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse, TokenUsage
 from astrbot.core.provider.func_tool_manager import ToolSet
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
@@ -827,8 +828,15 @@ class ProviderGoogleGenAI(Provider):
         model=None,
         extra_user_content_parts=None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> LLMResponse:
+        self.ensure_output_contract_supported(
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+            allow_prompt_only_degrade=True,
+        )
         if contexts is None:
             contexts = []
         new_record = None
@@ -889,8 +897,15 @@ class ProviderGoogleGenAI(Provider):
         model=None,
         extra_user_content_parts=None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> AsyncGenerator[LLMResponse, None]:
+        self.ensure_output_contract_supported(
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+            allow_prompt_only_degrade=True,
+        )
         if contexts is None:
             contexts = []
         new_record = None

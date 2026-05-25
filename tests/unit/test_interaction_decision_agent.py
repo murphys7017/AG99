@@ -8,8 +8,9 @@ from astrbot.core.interaction.decision_agent import (
     InteractionDecisionError,
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
+    build_interaction_decision_output_contract,
+    build_interaction_decision_tool_parameters,
     build_interaction_decision_contexts,
-    build_interaction_decision_json_contract,
     extract_interaction_decision_payload,
     validate_interaction_decision,
 )
@@ -108,6 +109,52 @@ def test_extract_interaction_decision_payload_accepts_function_call_text():
     assert decision.reason == "用户表达优化难度，是轻松情感对话，无需工具执行"
 
 
+def test_extract_interaction_decision_payload_prefers_tool_call_payload():
+    llm_response = LLMResponse(
+        role="assistant",
+        completion_text="普通文本",
+        tools_call_name=["interaction_decision"],
+        tools_call_args=[
+            {
+                "route_mode": "self_reply",
+                "should_emit_immediate_reply": True,
+                "immediate_spoken_reply": "嗯。",
+                "confidence": 0.9,
+                "reason": "ok",
+            }
+        ],
+        tools_call_ids=["call-1"],
+    )
+
+    payload = extract_interaction_decision_payload(
+        llm_response.completion_text,
+        llm_response=llm_response,
+        output_contract=build_interaction_decision_output_contract(),
+    )
+
+    assert payload is not None
+    assert payload["route_mode"] == "self_reply"
+
+
+def test_extract_interaction_decision_payload_rejects_text_fallback_when_strict():
+    payload = extract_interaction_decision_payload(
+        json.dumps(
+            {
+                "route_mode": "self_reply",
+                "should_emit_immediate_reply": True,
+                "immediate_spoken_reply": "嗯。",
+                "confidence": 0.9,
+                "reason": "ok",
+            },
+            ensure_ascii=False,
+        ),
+        llm_response=LLMResponse(role="assistant", completion_text="普通文本"),
+        output_contract=build_interaction_decision_output_contract(),
+    )
+
+    assert payload is None
+
+
 def test_protocol_command_bypass_delegates_without_fallback_or_reply():
     class PluginContext:
         def get_config(self, umo=None):
@@ -204,6 +251,9 @@ class DummyEvent:
         self.unified_msg_origin = "webchat:FriendMessage:webchat!user!session123"
 
     def get_platform_id(self) -> str:
+        return "webchat"
+
+    def get_platform_name(self) -> str:
         return "webchat"
 
     def get_extra(self, key: str, default=None):
@@ -343,11 +393,17 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     event.set_extra("_turn_id", "turn-1")
     plugin_context = MagicMock()
     plugin_context.get_config.return_value = {}
-    plugin_context.get_provider_by_id.return_value = object()
+    provider = MagicMock()
+    provider.provider_config = {"type": "anthropic_chat_completion"}
+    provider.get_model.return_value = "claude-test"
+    plugin_context.get_provider_by_id.return_value = provider
     plugin_context.get_llm_tool_manager.return_value.func_list = []
     plugin_context.kb_manager = None
     plugin_context.subagent_orchestrator = None
     plugin_context.conversation_manager = DummyConversationManager()
+    plugin_context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
     plugin_context.list_interaction_prompt_contributors.return_value = [
         MiddlewarePromptContributor()
     ]
@@ -362,15 +418,25 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     captured: dict[str, object] = {}
 
     async def _capture_decision_call(*args, **kwargs):
-        captured["prompt"] = kwargs["prompt"]
-        captured["system_prompt"] = kwargs["system_prompt"]
-        captured["contexts"] = kwargs["contexts"]
+        render_result = kwargs["render_result"]
+        captured["prompt"] = "请根据以上上下文做一次完整决策。"
+        captured["system_prompt"] = render_result.system_prompt
+        captured["contexts"] = build_interaction_decision_contexts(render_result.messages)
+        captured["render_result"] = render_result
         return LLMResponse(
             role="assistant",
-            completion_text=(
-                '{"route_mode":"self_reply","should_emit_immediate_reply":true,'
-                '"immediate_spoken_reply":"嗯。","confidence":0.9,"reason":"ok"}'
-            ),
+            completion_text="普通文本",
+            tools_call_name=["interaction_decision"],
+            tools_call_args=[
+                {
+                    "route_mode": "self_reply",
+                    "should_emit_immediate_reply": True,
+                    "immediate_spoken_reply": "嗯。",
+                    "confidence": 0.9,
+                    "reason": "ok",
+                }
+            ],
+            tools_call_ids=["call-1"],
         )
 
     with (
@@ -384,19 +450,24 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
 
     assert decision.route_mode == RouteMode.SELF_REPLY
     assert "Interaction middleware decision policy" in captured["system_prompt"]
-    assert "Interaction output JSON contract" in captured["system_prompt"]
-    assert "route_mode" in captured["system_prompt"]
-    assert "<route_mode>" not in captured["system_prompt"]
-    assert "不能输出 Markdown、XML、HTML 或任何标签格式" in captured["system_prompt"]
+    assert "你必须严格输出 JSON" not in captured["system_prompt"]
+    assert "当前请求提供的结构化约束" in captured["system_prompt"]
+    assert "不能输出 Markdown、XML、HTML 或任何标签格式" not in captured["system_prompt"]
     assert "Core capabilities" not in captured["system_prompt"]
     assert "tools_available" not in captured["system_prompt"]
     assert "Motion Contract" in captured["system_prompt"]
     assert "motion" in captured["system_prompt"]
     assert "Core Only" not in captured["system_prompt"]
     assert "Interaction session" not in captured["system_prompt"]
-    assert captured["prompt"] == "请根据以上上下文做一次完整决策，并只返回 JSON。"
+    assert captured["prompt"] == "请根据以上上下文做一次完整决策。"
     render_result = event.get_extra("_interaction_prompt_render_result")
     assert render_result.metadata["engine"] == "PromptRenderEngine"
+    assert render_result.output_contract is not None
+    assert render_result.output_contract.mode == "tool_call"
+    assert render_result.compiled_output_contract is not None
+    assert render_result.compiled_output_contract.strategy == "protocol_tool_call"
+    assert render_result.metadata["output_contract_strategy"] == "protocol_tool_call"
+    assert render_result.metadata["output_contract_degraded"] is False
     assert "extension.system" in render_result.metadata["rendered_slots"]
     assert "extension.capability" in render_result.metadata["rendered_slots"]
     assert "extension.context" in render_result.metadata["rendered_slots"]
@@ -410,11 +481,11 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     assert context_slot is not None
     assert [item["title"] for item in system_slot.value["items"]] == [
         "Interaction middleware decision policy",
-        "Interaction output JSON contract",
+        "Interaction output contract",
     ]
-    assert system_slot.value["items"][1]["value_kind"] == "text"
+    assert system_slot.value["items"][1]["value_kind"] == "mapping"
     assert system_slot.value["items"][1]["value"] == (
-        build_interaction_decision_json_contract()
+        build_interaction_decision_output_contract().to_dict()
     )
     assert [item["title"] for item in capability_slot.value["items"]] == [
         "Motion Contract"
@@ -441,13 +512,18 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
         "user",
         "user",
     ]
-    assert rendered_messages[0]["content"] == "before user"
-    assert rendered_messages[1]["content"] == "before assistant"
+    assert rendered_messages[0]["content"] == [{"type": "text", "text": "before user"}]
+    assert rendered_messages[1]["content"] == [
+        {"type": "text", "text": "before assistant"}
+    ]
     assert "_no_save" not in rendered_messages[2]
-    assert "Core capabilities" in rendered_messages[2]["content"]
-    assert "tools_available" in rendered_messages[2]["content"]
-    assert "Interaction session" in rendered_messages[2]["content"]
-    assert "webchat!user!session123" in rendered_messages[2]["content"]
+    rendered_context_text = "\n".join(
+        part["text"] for part in rendered_messages[2]["content"] if part.get("type") == "text"
+    )
+    assert "Core capabilities" in rendered_context_text
+    assert "tools_available" in rendered_context_text
+    assert "Interaction session" in rendered_context_text
+    assert "webchat!user!session123" in rendered_context_text
     assert rendered_messages[-1]["role"] == "user"
     user_content = rendered_messages[-1]["content"]
     if isinstance(user_content, list):
@@ -459,3 +535,97 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     assert "Core capabilities" not in rendered_user_text
     assert "Interaction session" not in rendered_user_text
     assert "hello" in rendered_user_text
+
+
+@pytest.mark.asyncio
+async def test_decision_agent_prefers_tool_call_output_when_contract_enabled():
+    event = DummyEvent()
+    event.set_extra("_turn_id", "turn-1")
+    event.message_obj = MagicMock()
+    event.message_obj.message = []
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {}
+    provider = MagicMock()
+    provider.provider_config = {"type": "anthropic_chat_completion"}
+    provider.get_model.return_value = "claude-test"
+    plugin_context.get_provider_by_id.return_value = provider
+    plugin_context.get_llm_tool_manager.return_value.func_list = []
+    plugin_context.kb_manager = None
+    plugin_context.subagent_orchestrator = None
+    plugin_context.conversation_manager = DummyConversationManager()
+    plugin_context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    plugin_context.list_interaction_prompt_contributors.return_value = []
+    plugin_context.list_prompt_extension_collectors.return_value = []
+    config = InteractionAgentConfig(decision_provider_id="provider-1")
+    agent = InteractionDecisionAgent(InteractionMemoryStore())
+
+    captured: dict[str, object] = {}
+
+    async def _capture_decision_call(*args, **kwargs):
+        captured.update(kwargs)
+        return LLMResponse(
+            role="assistant",
+            completion_text="普通文本",
+            tools_call_name=["interaction_decision"],
+            tools_call_args=[
+                {
+                    "route_mode": "self_reply",
+                    "should_emit_immediate_reply": True,
+                    "immediate_spoken_reply": "嗯。",
+                    "confidence": 0.9,
+                    "reason": "ok",
+                }
+            ],
+            tools_call_ids=["call-1"],
+        )
+
+    with (
+        patch("astrbot.core.interaction.decision_agent.Provider", new=object),
+        patch(
+            "astrbot.core.interaction.decision_agent.call_decision_model",
+            new=AsyncMock(side_effect=_capture_decision_call),
+        ),
+    ):
+        decision = await agent.decide(event, plugin_context, config)
+
+    assert decision.route_mode == RouteMode.SELF_REPLY
+    render_result = captured["render_result"]
+    assert render_result.output_contract == build_interaction_decision_output_contract()
+    assert captured["render_result"].output_contract.schema == (
+        build_interaction_decision_tool_parameters()
+    )
+    assert render_result.compiled_output_contract is not None
+    assert render_result.compiled_output_contract.strategy == "protocol_tool_call"
+
+
+@pytest.mark.asyncio
+async def test_decision_agent_rejects_prompt_only_contract_for_high_constraint_scene():
+    event = DummyEvent()
+    event.set_extra("_turn_id", "turn-1")
+    event.message_obj = MagicMock()
+    event.message_obj.message = []
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {}
+    provider = MagicMock()
+    provider.provider_config = {"type": "gemini_chat_completion"}
+    provider.get_model.return_value = "gemini-test"
+    plugin_context.get_provider_by_id.return_value = provider
+    plugin_context.get_llm_tool_manager.return_value.func_list = []
+    plugin_context.kb_manager = None
+    plugin_context.subagent_orchestrator = None
+    plugin_context.conversation_manager = DummyConversationManager()
+    plugin_context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    plugin_context.list_interaction_prompt_contributors.return_value = []
+    plugin_context.list_prompt_extension_collectors.return_value = []
+    config = InteractionAgentConfig(decision_provider_id="provider-1")
+    agent = InteractionDecisionAgent(InteractionMemoryStore())
+
+    with patch("astrbot.core.interaction.decision_agent.Provider", new=object):
+        with pytest.raises(InteractionDecisionError) as exc_info:
+            await agent.decide(event, plugin_context, config)
+    assert exc_info.value.reason == "model_error"
+    assert "protocol_tool_call output contract" in str(exc_info.value)

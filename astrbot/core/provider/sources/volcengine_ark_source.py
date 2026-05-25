@@ -21,6 +21,7 @@ from astrbot.api.provider import Provider
 from astrbot.core.agent.message import ContentPart, ImageURLPart, Message, TextPart
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsResult
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_image_by_url
@@ -813,8 +814,15 @@ class ProviderVolcengineArk(Provider):
         tool_calls_result: ToolCallsResult | list[ToolCallsResult] | None = None,
         model: str | None = None,
         extra_user_content_parts: list[ContentPart] | None = None,
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> LLMResponse:
+        self.ensure_output_contract_supported(
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+            allow_prompt_only_degrade=True,
+        )
         payload = await self._prepare_payload(
             prompt,
             image_urls=image_urls,
@@ -873,8 +881,15 @@ class ProviderVolcengineArk(Provider):
         tool_calls_result: ToolCallsResult | list[ToolCallsResult] | None = None,
         model: str | None = None,
         extra_user_content_parts: list[ContentPart] | None = None,
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> AsyncGenerator[LLMResponse, None]:
+        self.ensure_output_contract_supported(
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+            allow_prompt_only_degrade=True,
+        )
         payload = await self._prepare_payload(
             prompt,
             image_urls=image_urls,

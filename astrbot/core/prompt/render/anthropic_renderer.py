@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from astrbot.core.output_contract import OutputContract
+
 from .base_renderer import BasePromptRenderer
 from .prompt_tree import PromptBuilder
 
@@ -14,6 +16,11 @@ class AnthropicPromptRenderer(BasePromptRenderer):
 
     def get_name(self) -> str:
         return "anthropic"
+
+    def resolve_output_contract_strategy(self, contract: OutputContract) -> str:
+        if contract.mode == "tool_call":
+            return "protocol_tool_call"
+        return "prompt_only"
 
     def _compile_context_message(
         self,

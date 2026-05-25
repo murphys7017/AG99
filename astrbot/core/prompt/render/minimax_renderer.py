@@ -6,6 +6,8 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from astrbot.core.output_contract import OutputContract
+
 from .base_renderer import BasePromptRenderer
 from .prompt_tree import PromptBuilder
 
@@ -35,6 +37,11 @@ class MiniMaxPromptRenderer(BasePromptRenderer):
 
     def get_name(self) -> str:
         return "minimax"
+
+    def resolve_output_contract_strategy(self, contract: OutputContract) -> str:
+        if contract.mode == "tool_call":
+            return "protocol_tool_call"
+        return "prompt_only"
 
     def _compile_system_prompt(self, prompt_tree: PromptBuilder) -> str | None:
         system_node = self._find_tag_path(prompt_tree, "system")

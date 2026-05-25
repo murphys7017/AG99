@@ -1,5 +1,7 @@
 """Prompt render-layer exports."""
 
+from astrbot.core.output_contract import OutputContract
+
 from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
 from .engine import PromptRenderEngine
@@ -35,6 +37,7 @@ __all__ = [
     "AnthropicPromptRenderer",
     "MiniMaxPromptRenderer",
     "NodeRef",
+    "OutputContract",
     "PROMPT_APPLY_RESULT_EXTRA_KEY",
     "PROMPT_RENDER_RESULT_EXTRA_KEY",
     "PROMPT_SELECTED_CONTEXT_PACK_EXTRA_KEY",

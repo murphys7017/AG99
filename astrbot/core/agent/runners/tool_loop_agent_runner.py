@@ -464,6 +464,8 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             "func_tool": self._func_tool_for_provider(),
             "session_id": self.req.session_id,
             "extra_user_content_parts": self.req.extra_user_content_parts,  # list[ContentPart]
+            "output_contract": self.req.output_contract,
+            "compiled_output_contract": self.req.compiled_output_contract,
             "abort_signal": self._abort_signal,
         }
         if include_model:

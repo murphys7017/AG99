@@ -9,6 +9,7 @@ from astrbot.core.agent.tool import ToolSet
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import (
     BasePromptRenderer,
+    OutputContract,
     PromptRenderEngine,
     ProviderRequestAdapter,
     RenderResult,
@@ -227,6 +228,62 @@ def test_request_adapter_preserves_runtime_only_fields_when_applying_visible_pro
     assert request.conversation is conversation
     assert request.tool_calls_result == tool_calls_result
     assert apply_result.used_user_message is True
+
+
+def test_request_adapter_applies_output_contract_to_provider_request():
+    request = ProviderRequest()
+    output_contract = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="interaction_decision",
+        allow_text_fallback=False,
+    )
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = output_contract.to_dict()
+    compiled_contract = PromptRenderEngine(
+        default_renderer=BasePromptRenderer()
+    ).render(pack).compiled_output_contract
+    result = RenderResult(
+        messages=[{"role": "user", "content": "new prompt"}],
+        output_contract=output_contract,
+        compiled_output_contract=compiled_contract,
+    )
+
+    apply_render_result_to_request(result, request)
+
+    assert request.output_contract is not None
+    assert request.output_contract.mode == "tool_call"
+    assert request.output_contract.preferred_tool_name == "interaction_decision"
+    assert request.compiled_output_contract == compiled_contract
+
+
+def test_base_renderer_compiles_prompt_only_output_contract_with_fallback():
+    output_contract = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="structured_output",
+        allow_text_fallback=False,
+    )
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = output_contract.to_dict()
+
+    result = PromptRenderEngine(default_renderer=BasePromptRenderer()).render(pack)
+
+    assert result.compiled_output_contract is not None
+    assert result.compiled_output_contract.strategy == "prompt_only"
+    assert result.compiled_output_contract.degraded is True
+    assert (
+        result.compiled_output_contract.degrade_reason
+        == "renderer_has_no_protocol_support"
+    )
+    assert "在无法使用协议级 tool call 时" in (
+        result.compiled_output_contract.fallback_prompt_text or ""
+    )
+    assert "`structured_output` 工具调用参数对应的单个 JSON object" in (
+        result.compiled_output_contract.fallback_prompt_text or ""
+    )
 
 
 def test_request_adapter_skips_invalid_user_parts_without_touching_tool_runtime():

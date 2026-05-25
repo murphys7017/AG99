@@ -25,6 +25,7 @@ from astrbot.core.agent.message import (
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.db.po import Conversation
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_file, download_image_by_url
 
@@ -117,6 +118,10 @@ class ProviderRequest:
     """附加的上次请求后工具调用的结果。参考: https://platform.openai.com/docs/guides/function-calling#handling-function-calls"""
     model: str | None = None
     """模型名称，为 None 时使用提供商的默认模型"""
+    output_contract: OutputContract | None = None
+    """Optional structured output contract produced by the prompt pipeline."""
+    compiled_output_contract: CompiledOutputContract | None = None
+    """Compiled provider-facing structured output binding."""
 
     def __repr__(self) -> str:
         return (

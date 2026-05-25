@@ -290,6 +290,8 @@ def _clone_provider_request_for_prompt_shadow(req: ProviderRequest) -> ProviderR
         conversation=req.conversation,
         tool_calls_result=copy.deepcopy(req.tool_calls_result),
         model=req.model,
+        output_contract=copy.deepcopy(req.output_contract),
+        compiled_output_contract=copy.deepcopy(req.compiled_output_contract),
     )
 
 
@@ -310,6 +312,14 @@ def _serialize_provider_request_for_prompt_shadow(
         "func_tool_names": req.func_tool.names() if req.func_tool else [],
         "model": req.model,
         "session_id": req.session_id,
+        "output_contract": (
+            req.output_contract.to_dict() if req.output_contract is not None else None
+        ),
+        "compiled_output_contract": (
+            req.compiled_output_contract.to_dict()
+            if req.compiled_output_contract is not None
+            else None
+        ),
     }
 
 
@@ -381,6 +391,14 @@ def _summarize_provider_request_for_prompt_log(
         "tool_count": len(req.func_tool.names()) if req.func_tool else 0,
         "model": req.model,
         "session_id": req.session_id,
+        "output_contract": (
+            req.output_contract.to_dict() if req.output_contract is not None else None
+        ),
+        "compiled_output_contract": (
+            req.compiled_output_contract.to_dict()
+            if req.compiled_output_contract is not None
+            else None
+        ),
     }
 
 

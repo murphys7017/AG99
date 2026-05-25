@@ -5,6 +5,7 @@ import pytest
 import astrbot.core.provider.sources.anthropic_source as anthropic_source
 import astrbot.core.provider.sources.kimi_code_source as kimi_code_source
 from astrbot.core.exceptions import EmptyModelOutputError
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse
 
 
@@ -416,3 +417,68 @@ def test_prepare_payload_does_not_merge_non_consecutive_tool_results():
             ],
         },
     ]
+
+
+def test_anthropic_output_contract_upgrades_strict_json_to_required_tool_call():
+    output_contract = OutputContract(
+        mode="json_object",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="interaction_decision",
+        allow_text_fallback=False,
+    )
+
+    func_tool, tool_choice = anthropic_source.ProviderAnthropic._resolve_output_contract(
+        output_contract,
+        None,
+        None,
+        "auto",
+    )
+
+    assert func_tool is not None
+    assert func_tool.get_tool("interaction_decision") is not None
+    assert tool_choice == "required"
+
+
+def test_anthropic_output_contract_prefers_compiled_binding():
+    compiled_output_contract = CompiledOutputContract(
+        contract=OutputContract(
+            mode="tool_call",
+            strict=True,
+            schema={"type": "object", "properties": {"value": {"type": "string"}}},
+            preferred_tool_name="interaction_decision",
+            allow_text_fallback=False,
+        ),
+        strategy="protocol_tool_call",
+        tool_name="interaction_decision",
+        tool_schema={"type": "object", "properties": {"value": {"type": "string"}}},
+    )
+
+    func_tool, tool_choice = anthropic_source.ProviderAnthropic._resolve_output_contract(
+        None,
+        compiled_output_contract,
+        None,
+        "auto",
+    )
+
+    assert func_tool is not None
+    assert func_tool.get_tool("interaction_decision") is not None
+    assert tool_choice == "required"
+
+
+def test_provider_requires_compiled_output_contract_for_structured_modes():
+    provider = anthropic_source.ProviderAnthropic(
+        provider_config={"model": "claude-test"},
+        provider_settings={},
+        use_api_key=False,
+    )
+    output_contract = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="interaction_decision",
+        allow_text_fallback=False,
+    )
+
+    with pytest.raises(ValueError, match="compiled_output_contract_required"):
+        provider.ensure_output_contract_supported(output_contract=output_contract)

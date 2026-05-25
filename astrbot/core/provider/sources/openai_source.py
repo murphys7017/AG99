@@ -35,6 +35,11 @@ from astrbot.core.agent.message import (
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
+from astrbot.core.prompt.render.output_contract_tools import (
+    build_single_tool_set_from_compiled_contract,
+    build_single_tool_set_from_contract,
+)
 from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsResult
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_file, download_image_by_url
@@ -55,6 +60,45 @@ from ..register import register_provider_adapter
 )
 class ProviderOpenAIOfficial(Provider):
     _ERROR_TEXT_CANDIDATE_MAX_CHARS = 4096
+
+    def supports_output_contract_strategy(self, strategy: str) -> bool:
+        return strategy in {"prompt_only", "protocol_tool_call"}
+
+    @staticmethod
+    def _resolve_output_contract(
+        output_contract: OutputContract | None,
+        compiled_output_contract: CompiledOutputContract | None,
+        func_tool: ToolSet | None,
+        tool_choice: Literal["auto", "required"],
+    ) -> tuple[ToolSet | None, Literal["auto", "required"]]:
+        if isinstance(compiled_output_contract, CompiledOutputContract):
+            func_tool = build_single_tool_set_from_compiled_contract(
+                compiled_output_contract,
+                description="Return structured output.",
+            ) or func_tool
+            if compiled_output_contract.strategy == "protocol_tool_call":
+                tool_choice = "required"
+            return func_tool, tool_choice
+        if not isinstance(output_contract, OutputContract):
+            return func_tool, tool_choice
+        # Compatibility path for legacy callers without compiled bindings. Delete after migration.
+        normalized_contract = output_contract
+        if output_contract.mode == "json_object" and output_contract.strict:
+            normalized_contract = OutputContract(
+                mode="tool_call",
+                strict=True,
+                schema=output_contract.schema,
+                preferred_tool_name=output_contract.preferred_tool_name,
+                allow_text_fallback=output_contract.allow_text_fallback,
+            )
+        if normalized_contract.mode == "tool_call":
+            func_tool = build_single_tool_set_from_contract(
+                normalized_contract,
+                description="Return structured output.",
+            ) or func_tool
+            if normalized_contract.strict:
+                tool_choice = "required"
+        return func_tool, tool_choice
 
     @classmethod
     def _truncate_error_text_candidate(cls, text: str) -> str:
@@ -1173,6 +1217,8 @@ class ProviderOpenAIOfficial(Provider):
         model=None,
         extra_user_content_parts=None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> LLMResponse:
         payloads, context_query = await self._prepare_chat_payload(
@@ -1185,6 +1231,16 @@ class ProviderOpenAIOfficial(Provider):
             model=model,
             extra_user_content_parts=extra_user_content_parts,
             **kwargs,
+        )
+        self.ensure_output_contract_supported(
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+        )
+        func_tool, tool_choice = self._resolve_output_contract(
+            output_contract,
+            compiled_output_contract,
+            func_tool,
+            tool_choice,
         )
         if func_tool and not func_tool.empty():
             payloads["tool_choice"] = tool_choice
@@ -1245,6 +1301,8 @@ class ProviderOpenAIOfficial(Provider):
         tool_calls_result=None,
         model=None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> AsyncGenerator[LLMResponse, None]:
         """流式对话，与服务商交互并逐步返回结果"""
@@ -1257,6 +1315,16 @@ class ProviderOpenAIOfficial(Provider):
             tool_calls_result,
             model=model,
             **kwargs,
+        )
+        self.ensure_output_contract_supported(
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+        )
+        func_tool, tool_choice = self._resolve_output_contract(
+            output_contract,
+            compiled_output_contract,
+            func_tool,
+            tool_choice,
         )
         if func_tool and not func_tool.empty():
             payloads["tool_choice"] = tool_choice

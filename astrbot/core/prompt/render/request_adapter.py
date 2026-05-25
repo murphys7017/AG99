@@ -44,6 +44,8 @@ class ProviderRequestAdapter:
         )
 
         request.system_prompt = result.system_prompt or ""
+        request.output_contract = result.output_contract
+        request.compiled_output_contract = result.compiled_output_contract
         apply_result.applied_system_prompt = bool(result.system_prompt)
 
         history_messages, user_message = self._split_rendered_messages(result.messages)

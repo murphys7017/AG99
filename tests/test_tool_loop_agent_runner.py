@@ -20,6 +20,7 @@ from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunne
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.exceptions import EmptyModelOutputError
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest, TokenUsage
 from astrbot.core.provider.provider import Provider
 
@@ -169,6 +170,26 @@ class CapturingProvider(MockProvider):
         self.call_count += 1
         self.received_contexts.append(kwargs.get("contexts"))
         self.received_func_tools.append(kwargs.get("func_tool"))
+        return LLMResponse(
+            role="assistant",
+            completion_text="final",
+            usage=TokenUsage(input_other=10, output=5),
+        )
+
+
+class OutputContractCapturingProvider(MockProvider):
+    def __init__(self):
+        super().__init__()
+        self.received_output_contracts = []
+        self.received_compiled_output_contracts = []
+        self.should_call_tools = False
+
+    async def text_chat(self, **kwargs) -> LLMResponse:
+        self.call_count += 1
+        self.received_output_contracts.append(kwargs.get("output_contract"))
+        self.received_compiled_output_contracts.append(
+            kwargs.get("compiled_output_contract")
+        )
         return LLMResponse(
             role="assistant",
             completion_text="final",
@@ -1338,6 +1359,82 @@ async def test_skills_like_requery_preserves_original_visible_reply():
     tool_call = assistant_message.tool_calls[0]
     assert tool_call.id == "call_actual"
     assert tool_call.function.arguments == '{"query": "actual"}'
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_passes_output_contract_to_provider():
+    provider = OutputContractCapturingProvider()
+    runner = ToolLoopAgentRunner()
+    output_contract = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="interaction_decision",
+        allow_text_fallback=False,
+    )
+
+    await runner.reset(
+        provider=provider,
+        request=ProviderRequest(
+            prompt="run",
+            contexts=[],
+            output_contract=output_contract,
+        ),
+        run_context=ContextWrapper(
+            context=MockAgentContext(MockEvent("test_umo", "test_sender"))
+        ),
+        tool_executor=cast(Any, MockToolExecutor()),
+        agent_hooks=MockHooks(),
+        streaming=False,
+    )
+
+    async for _ in runner.step():
+        pass
+
+    assert provider.received_output_contracts == [output_contract]
+    assert provider.received_compiled_output_contracts == [None]
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_passes_compiled_output_contract_to_provider():
+    provider = OutputContractCapturingProvider()
+    runner = ToolLoopAgentRunner()
+    output_contract = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="interaction_decision",
+        allow_text_fallback=False,
+    )
+    compiled_output_contract = CompiledOutputContract(
+        contract=output_contract,
+        strategy="protocol_tool_call",
+        degraded=False,
+        tool_name="interaction_decision",
+        tool_schema=output_contract.schema,
+    )
+
+    await runner.reset(
+        provider=provider,
+        request=ProviderRequest(
+            prompt="run",
+            contexts=[],
+            output_contract=output_contract,
+            compiled_output_contract=compiled_output_contract,
+        ),
+        run_context=ContextWrapper(
+            context=MockAgentContext(MockEvent("test_umo", "test_sender"))
+        ),
+        tool_executor=cast(Any, MockToolExecutor()),
+        agent_hooks=MockHooks(),
+        streaming=False,
+    )
+
+    async for _ in runner.step():
+        pass
+
+    assert provider.received_output_contracts == [output_contract]
+    assert provider.received_compiled_output_contracts == [compiled_output_contract]
 
 
 @pytest.mark.asyncio

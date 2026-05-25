@@ -18,6 +18,11 @@ from astrbot.core.star.context import Context
 
 from ..context_types import ContextPack, ContextSlot
 from ..input_annotations import SUPPORTED_INPUT_ANNOTATION_FIELDS
+from astrbot.core.output_contract import (
+    CompiledOutputContract,
+    OutputContract,
+    build_output_contract_fallback_prompt,
+)
 
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
@@ -33,6 +38,8 @@ class RenderResult:
     system_prompt: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     tool_schema: list[dict[str, Any]] | None = None
+    output_contract: OutputContract | None = None
+    compiled_output_contract: CompiledOutputContract | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -157,17 +164,29 @@ class BasePromptRenderer:
         system_prompt = self._compile_system_prompt(prompt_tree)
         messages = self._compile_messages(prompt_tree)
         tool_schema = self._compile_tool_schema(prompt_tree)
+        compiled_output_contract = self._compile_output_contract(prompt_tree)
+        system_prompt = self._merge_output_contract_fallback_prompt(
+            system_prompt,
+            compiled_output_contract,
+        )
         return RenderResult(
             prompt_tree=prompt_tree,
             system_prompt=system_prompt,
             messages=messages,
             tool_schema=tool_schema,
+            output_contract=(
+                compiled_output_contract.contract
+                if compiled_output_contract is not None
+                else None
+            ),
+            compiled_output_contract=compiled_output_contract,
             metadata=self._build_render_metadata(
                 prompt_tree=prompt_tree,
                 rendered_groups=rendered_groups,
                 rendered_slots=rendered_slots,
                 compiled_message_count=len(messages),
                 compiled_tool_count=len(tool_schema or []),
+                compiled_output_contract=compiled_output_contract,
             ),
         )
 
@@ -2467,6 +2486,7 @@ class BasePromptRenderer:
         rendered_slots: list[str],
         compiled_message_count: int = 0,
         compiled_tool_count: int = 0,
+        compiled_output_contract: CompiledOutputContract | None = None,
     ) -> dict[str, Any]:
         """Build shared renderer metadata for render results."""
         return {
@@ -2476,5 +2496,72 @@ class BasePromptRenderer:
             "tree_root": prompt_tree._root_node.meta.get("tag", self.get_root_tag()),
             "compiled_message_count": compiled_message_count,
             "compiled_tool_count": compiled_tool_count,
+            "output_contract_requested": compiled_output_contract.contract.to_dict()
+            if compiled_output_contract is not None
+            else None,
+            "output_contract_strategy": (
+                compiled_output_contract.strategy
+                if compiled_output_contract is not None
+                else None
+            ),
+            "output_contract_degraded": (
+                compiled_output_contract.degraded
+                if compiled_output_contract is not None
+                else False
+            ),
+            "output_contract_degrade_reason": (
+                compiled_output_contract.degrade_reason
+                if compiled_output_contract is not None
+                else None
+            ),
             "debug_prompt_tree": prompt_tree.build(),
         }
+
+    def _compile_output_contract(
+        self,
+        prompt_tree: PromptBuilder,
+    ) -> CompiledOutputContract | None:
+        root_meta = getattr(prompt_tree._root_node, "meta", {})
+        payload = root_meta.get("output_contract")
+        contract = OutputContract.from_mapping(payload)
+        if contract is None:
+            return None
+        strategy = self.resolve_output_contract_strategy(contract)
+        if strategy == "protocol_tool_call":
+            tool_name = (contract.preferred_tool_name or "").strip() or None
+            return CompiledOutputContract(
+                contract=contract,
+                strategy=strategy,
+                degraded=False,
+                tool_name=tool_name,
+                tool_schema=contract.schema if isinstance(contract.schema, dict) else None,
+            )
+        return CompiledOutputContract(
+            contract=contract,
+            strategy="prompt_only",
+            degraded=contract.strict,
+            degrade_reason=(
+                "renderer_has_no_protocol_support" if contract.strict else None
+            ),
+            fallback_prompt_text=build_output_contract_fallback_prompt(contract),
+        )
+
+    def resolve_output_contract_strategy(self, contract: OutputContract) -> str:
+        del contract
+        return "prompt_only"
+
+    def _merge_output_contract_fallback_prompt(
+        self,
+        system_prompt: str | None,
+        compiled_output_contract: CompiledOutputContract | None,
+    ) -> str | None:
+        if compiled_output_contract is None:
+            return system_prompt
+        fallback_prompt = compiled_output_contract.fallback_prompt_text or ""
+        if compiled_output_contract.strategy != "prompt_only" or not fallback_prompt:
+            return system_prompt
+        if not system_prompt:
+            return fallback_prompt
+        if fallback_prompt in system_prompt:
+            return system_prompt
+        return f"{system_prompt}\n\n{fallback_prompt}"

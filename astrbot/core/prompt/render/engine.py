@@ -253,6 +253,10 @@ class PromptRenderEngine:
         prompt_tree._root_node.meta["rendered_groups"] = rendered_groups
         prompt_tree._root_node.meta["renderer"] = renderer.get_name()
         prompt_tree._root_node.meta["enabled_slot_groups"] = list(enabled_groups)
+        if isinstance(getattr(pack, "meta", None), dict) and "output_contract" in pack.meta:
+            prompt_tree._root_node.meta["output_contract"] = pack.meta.get(
+                "output_contract"
+            )
         return prompt_tree
 
     def _render_group_context(

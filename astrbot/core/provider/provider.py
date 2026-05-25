@@ -6,6 +6,7 @@ from typing import Literal, TypeAlias, Union
 
 from astrbot.core.agent.message import ContentPart, Message, is_checkpoint_message
 from astrbot.core.agent.tool import ToolSet
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import (
     LLMResponse,
     ProviderMeta,
@@ -74,6 +75,40 @@ class Provider(AbstractProvider):
         super().__init__(provider_config)
         self.provider_settings = provider_settings
 
+    def supports_output_contract_strategy(
+        self,
+        strategy: str,
+    ) -> bool:
+        return strategy == "prompt_only"
+
+    def ensure_output_contract_supported(
+        self,
+        *,
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
+        allow_prompt_only_degrade: bool = True,
+    ) -> CompiledOutputContract | None:
+        compiled = compiled_output_contract
+        if compiled is None and isinstance(output_contract, OutputContract):
+            if output_contract.mode == "text":
+                return None
+            raise ValueError(
+                "unsupported_output_contract: "
+                f"provider_type={self.provider_config.get('type')} "
+                "reason=compiled_output_contract_required"
+            )
+        if compiled is None:
+            return None
+        if self.supports_output_contract_strategy(compiled.strategy):
+            return compiled
+        if compiled.strategy == "prompt_only" and allow_prompt_only_degrade:
+            return compiled
+        raise ValueError(
+            "unsupported_output_contract: "
+            f"provider_type={self.provider_config.get('type')} "
+            f"strategy={compiled.strategy}"
+        )
+
     @abc.abstractmethod
     def get_current_key(self) -> str:
         raise NotImplementedError
@@ -106,6 +141,8 @@ class Provider(AbstractProvider):
         model: str | None = None,
         extra_user_content_parts: list[ContentPart] | None = None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> LLMResponse:
         """获得 LLM 的文本对话结果。会使用当前的模型进行对话。
@@ -142,6 +179,8 @@ class Provider(AbstractProvider):
         tool_calls_result: ToolCallsResult | list[ToolCallsResult] | None = None,
         model: str | None = None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_contract: OutputContract | None = None,
+        compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
     ) -> AsyncGenerator[LLMResponse, None]:
         """获得 LLM 的流式文本对话结果。会使用当前的模型进行对话。在生成的最后会返回一次完整的结果。

@@ -11,6 +11,8 @@ from astrbot import logger
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render import PromptRenderEngine
+from astrbot.core.prompt.render.interfaces import RenderResult
+from astrbot.core.output_contract import OutputContract
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
@@ -59,7 +61,7 @@ def build_interaction_agent_system_prompt() -> str:
         "普通寒暄、情绪回应、轻量对话，优先选择 self_reply。\n"
         "你的 immediate_spoken_reply 必须是自然、简短、口语化的中文，不要把它写成最终答案，也不要讲一长串流程说明。\n"
         "执行类请求的 immediate_spoken_reply 只能表达“我知道了/我来看看/等我一下”，不能说已经完成，不能汇报工具步骤。\n"
-        "你必须严格输出 JSON，不要输出 JSON 之外的任何文字。"
+        "你的输出必须严格遵循当前请求提供的结构化约束。"
     )
 
 
@@ -88,7 +90,7 @@ def build_interaction_decision_json_contract() -> str:
         indent=2,
     )
     return (
-        "你必须只输出一个 JSON object，不能输出 Markdown、XML、HTML 或任何标签格式。\n"
+        "当协议级结构化输出不可用时，你必须只输出一个 JSON object，不能输出 Markdown、XML、HTML 或任何标签格式。\n"
         "字段名必须使用 JSON 字符串键，例如 route_mode 和 confidence。\n"
         "JSON object 必须符合下面的字段结构：\n"
         f"{schema_text}"
@@ -96,7 +98,54 @@ def build_interaction_decision_json_contract() -> str:
 
 
 def build_interaction_decision_prompt() -> str:
-    return "请根据以上上下文做一次完整决策，并只返回 JSON。"
+    return "请根据以上上下文做一次完整决策。"
+
+
+def build_interaction_decision_tool_parameters() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "route_mode": {
+                "type": "string",
+                "enum": ["self_reply", "delegate_to_core", "hybrid"],
+            },
+            "should_emit_immediate_reply": {"type": "boolean"},
+            "immediate_spoken_reply": {"type": "string"},
+            "core_task_spec": {
+                "type": "object",
+                "properties": {
+                    "task_intent": {"type": "string"},
+                    "task_summary": {"type": "string"},
+                    "execution_prompt": {"type": "string"},
+                    "suggested_capabilities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "metadata": {"type": "object"},
+                },
+                "required": ["task_intent", "task_summary", "execution_prompt"],
+            },
+            "plugin_hints": {"type": "object"},
+            "confidence": {"type": "number"},
+            "reason": {"type": "string"},
+        },
+        "required": [
+            "route_mode",
+            "should_emit_immediate_reply",
+            "confidence",
+            "reason",
+        ],
+    }
+
+
+def build_interaction_decision_output_contract() -> OutputContract:
+    return OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema=build_interaction_decision_tool_parameters(),
+        preferred_tool_name="interaction_decision",
+        allow_text_fallback=False,
+    )
 
 
 def build_interaction_decision_contexts(
@@ -112,11 +161,56 @@ def build_interaction_decision_contexts(
     return contexts
 
 
-def extract_interaction_decision_payload(text: object) -> dict[str, Any] | None:
+def extract_interaction_decision_payload(
+    text: object,
+    *,
+    llm_response=None,
+    output_contract: OutputContract | None = None,
+) -> dict[str, Any] | None:
+    tool_payload = _extract_tool_call_decision_payload(
+        llm_response,
+        output_contract=output_contract,
+    )
+    if tool_payload is not None:
+        return tool_payload
+    if _should_disallow_text_fallback(output_contract):
+        return None
     payload = _extract_json_object(text)
     if payload is not None:
         return payload
     return _extract_function_call_decision_payload(text)
+
+
+def _extract_tool_call_decision_payload(
+    llm_response,
+    *,
+    output_contract: OutputContract | None = None,
+) -> dict[str, Any] | None:
+    if llm_response is None:
+        return None
+    tool_names = list(getattr(llm_response, "tools_call_name", []) or [])
+    tool_args = list(getattr(llm_response, "tools_call_args", []) or [])
+    if not tool_names or not tool_args:
+        return None
+    preferred_name = (
+        output_contract.preferred_tool_name
+        if isinstance(output_contract, OutputContract)
+        else None
+    )
+    for tool_name, tool_arg in zip(tool_names, tool_args, strict=False):
+        if preferred_name and tool_name != preferred_name:
+            continue
+        if isinstance(tool_arg, dict):
+            return tool_arg
+    return None
+
+
+def _should_disallow_text_fallback(output_contract: OutputContract | None) -> bool:
+    return (
+        isinstance(output_contract, OutputContract)
+        and output_contract.strict
+        and not output_contract.allow_text_fallback
+    )
 
 
 def _extract_function_call_decision_payload(text: object) -> dict[str, Any] | None:
@@ -206,12 +300,19 @@ async def call_decision_model(
     *,
     provider: Provider,
     provider_id: str,
-    prompt: str,
-    contexts: list[dict[str, Any]],
-    system_prompt: str,
+    render_result: RenderResult,
     temperature: float,
     timeout: float,
 ):
+    compiled_output_contract = render_result.compiled_output_contract
+    if (
+        compiled_output_contract is None
+        or compiled_output_contract.strategy != "protocol_tool_call"
+    ):
+        raise InteractionDecisionError(
+            "unsupported_output_contract",
+            "interaction decision requires protocol_tool_call output contract",
+        )
     logger.debug(
         "Interaction decision model request: provider_id=%s model=%s timeout=%s",
         provider_id,
@@ -220,12 +321,25 @@ async def call_decision_model(
     )
     return await asyncio.wait_for(
         provider.text_chat(
-            prompt=prompt,
-            contexts=contexts,
-            system_prompt=system_prompt,
+            prompt=build_interaction_decision_prompt(),
+            contexts=build_interaction_decision_contexts(render_result.messages),
+            system_prompt=render_result.system_prompt or "",
             temperature=temperature,
+            tool_choice="required"
+            if _should_require_tool_choice(render_result.output_contract)
+            else "auto",
+            output_contract=render_result.output_contract,
+            compiled_output_contract=compiled_output_contract,
         ),
         timeout=timeout,
+    )
+
+
+def _should_require_tool_choice(output_contract: OutputContract | None) -> bool:
+    return (
+        isinstance(output_contract, OutputContract)
+        and output_contract.mode == "tool_call"
+        and output_contract.strict
     )
 
 
@@ -328,6 +442,7 @@ class InteractionDecisionAgent:
         if not isinstance(provider, Provider):
             message = f"provider unavailable: provider_id={interaction_config.decision_provider_id}"
             raise InteractionDecisionError("provider_unavailable", message)
+        event.set_extra("provider", provider)
 
         build_config = _build_decision_build_config(plugin_context, event)
         material = await self._build_or_reuse_context_material(
@@ -379,15 +494,12 @@ class InteractionDecisionAgent:
             ),
             render_result.metadata.get("rendered_slots", []),
         )
-        prompt = build_interaction_decision_prompt()
         try:
             llm_resp = await call_decision_model(
                 plugin_context,
                 provider=provider,
                 provider_id=interaction_config.decision_provider_id,
-                prompt=prompt,
-                contexts=build_interaction_decision_contexts(render_result.messages),
-                system_prompt=render_result.system_prompt or "",
+                render_result=render_result,
                 temperature=interaction_config.decision_temperature,
                 timeout=interaction_config.decision_timeout,
             )
@@ -396,7 +508,11 @@ class InteractionDecisionAgent:
         except Exception as exc:  # noqa: BLE001
             raise InteractionDecisionError("model_error", str(exc)) from exc
 
-        payload = extract_interaction_decision_payload(llm_resp.completion_text)
+        payload = extract_interaction_decision_payload(
+            llm_resp.completion_text,
+            llm_response=llm_resp,
+            output_contract=render_result.output_contract,
+        )
         if payload is None:
             message = f"non-json: raw={llm_resp.completion_text}"
             raise InteractionDecisionError("non_json", message)
@@ -519,13 +635,13 @@ def add_interaction_decision_slots_to_pack(
         PromptExtension(
             plugin_id="astrbot.interaction",
             mount="system",
-            title="Interaction output JSON contract",
-            value_kind="text",
-            value=build_interaction_decision_json_contract(),
+            title="Interaction output contract",
+            value_kind="mapping",
+            value=build_interaction_decision_output_contract().to_dict(),
             order=1,
             meta={
                 "scope": "static",
-                "node_type": "interaction_output_schema",
+                "node_type": "interaction_output_contract",
             },
         ),
         PromptExtension(
@@ -563,3 +679,4 @@ def add_interaction_decision_slots_to_pack(
     ):
         pack.add_slot(slot)
     pack.meta["slot_count"] = len(pack.slots)
+    pack.meta["output_contract"] = build_interaction_decision_output_contract().to_dict()
