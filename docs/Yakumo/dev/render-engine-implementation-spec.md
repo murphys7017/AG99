@@ -48,6 +48,12 @@
    - 序列化单个 slot，生成 `SerializedRenderValue`
 9. `render_serialized_value()`
    - 将结构化中间值转成节点文本
+10. `_compile_output_contract(...)`
+   - 从 prompt tree root meta 读取 `output_contract`
+   - 编译为 `CompiledOutputContract`
+   - base renderer 对非 text strict 契约默认产出 `prompt_only + degraded`
+11. `resolve_output_contract_strategy(...)`
+   - 派生 renderer 用它声明协议级支持能力
 
 ### `SerializedRenderValue`
 
@@ -91,7 +97,7 @@
 1. `_select_context_pack(...)`
    - 调用 selector，当前默认 passthrough
 2. `_resolve_renderer(...)`
-   - 选择 renderer，当前默认 `BasePromptRenderer`
+   - 根据 provider metadata / proxy / request provider 选择 renderer，当前默认 `BasePromptRenderer`
 3. `_group_slots(...)`
    - 按 slot name 前缀分组
 4. `_build_prompt_tree(...)`
@@ -106,6 +112,16 @@ engine 当前明确不负责：
 - 不定义 section 样式
 - 不决定 slot 的文本格式
 - 不处理 provider-specific payload 细节
+- 不把输出契约直接翻译成 provider 私有请求参数
+
+renderer 选择当前通过 provider 注册元数据 `prompt_renderer_family` 完成：
+
+- `openai` -> `OpenAIPromptRenderer`
+- `anthropic` -> `AnthropicPromptRenderer`
+- `minimax` -> `MiniMaxPromptRenderer`
+- `base` / unknown -> `BasePromptRenderer`
+
+provider 实例上的 `provider_config["prompt_renderer_family"]` 可作为显式 override；未知 family 会回落到 `base`。
 
 ### `PromptBuilder` / `PromptNode` / `NodeRef`
 
@@ -152,12 +168,17 @@ engine 当前明确不负责：
 - `system_prompt`
 - `messages`
 - `tool_schema`
+- `output_contract`
+- `compiled_output_contract`
 - `metadata`
 
 当前阶段里，最主要的输出仍然是：
 
 - `prompt_tree`
 - `system_prompt`
+- `messages`
+- `output_contract`
+- `compiled_output_contract`
 - `metadata`
 
 ### `PassthroughPromptSelector`
@@ -297,6 +318,9 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 �
 - `dict` / `list` slot 先进入结构化序列化路径
 - `PromptRenderEngine` 能按 renderer 定义构建 prompt tree
 - 派生 renderer 可以覆写 serializer，而不需要修改 engine
+- `PromptRenderEngine` 能按 provider family 选择 OpenAI / Anthropic / MiniMax renderer
+- output contract 能在 render 层编译为 `CompiledOutputContract`
+- OpenAI / Anthropic / MiniMax renderer 对 `tool_call` contract 产出 `protocol_tool_call`
 
 ## 当前限制
 
@@ -307,6 +331,7 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 �
 - `llm_exposure` 的真正过滤策略
 - 各 section 的精细化渲染格式
 - 针对 multimodal / tools / subagent 的专门输出形态优化
+- Gemini / VolcEngine Ark 等 provider-specific renderer 仍未实现，strict contract 到达这些 provider 时只能显式失败或受控降级，不能静默吞掉
 
 ## 后续扩展点
 
@@ -322,5 +347,28 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 �
 
 已落地的 provider-specific renderer：
 
+- `OpenAIPromptRenderer`：继承 `BasePromptRenderer`，保持 OpenAI-compatible message、`image_url` 和 function tool schema 形态；对 `tool_call` output contract 产出 `protocol_tool_call`
 - `AnthropicPromptRenderer`：覆盖 `_compile_image_content_parts()` 输出 Anthropic 原生 image source，覆盖 `_compile_tool_nodes()` 输出 Anthropic tool schema（`input_schema` 而非 OpenAI `parameters`），覆盖 `_compile_context_message()` / `_compile_turn_messages()` 将字符串 content 转为 content blocks
-- `MiniMaxPromptRenderer`：继承 `AnthropicPromptRenderer`，通过 `PromptRenderEngine._is_minimax_provider()` 自动匹配
+- `MiniMaxPromptRenderer`：继承 `BasePromptRenderer`，输出 MiniMax Token Plan 友好的 JSON sections，并输出 Anthropic 兼容 tool schema；通过 provider metadata 的 `prompt_renderer_family="minimax"` 自动匹配
+
+## Output Contract V2
+
+输出契约已经从业务 prompt 文本提升为 render/request/provider 链路中的一等数据：
+
+- `OutputContract` 声明模式：`text` / `json_object` / `tool_call`
+- `CompiledOutputContract` 承载 renderer 编译结果：`strategy`、`degraded`、`degrade_reason`、`tool_name`、`tool_schema`、`fallback_prompt_text`
+- `RenderResult.metadata` 会记录 `output_contract_requested`、`output_contract_strategy`、`output_contract_degraded`、`output_contract_degrade_reason`
+- `ProviderRequestAdapter` 会同步投影 `output_contract` 与 `compiled_output_contract`
+- provider 侧优先消费 compiled binding；裸 `OutputContract` 只作为旧入口兼容兜底
+
+策略边界：
+
+- `protocol_tool_call`：当前 strict 结构化输出的主实现。
+- `protocol_native_json`：保留策略名，尚未作为通用 provider 实现。
+- `prompt_only`：仅表示受控降级；fallback 文本由统一 compiler 生成，不应由业务模块散落手写。
+
+`interaction decision` 是首个高约束消费者：
+
+- 默认 contract 为 `tool_call + strict + preferred_tool_name="interaction_decision" + allow_text_fallback=false`
+- render 结果必须是 `protocol_tool_call`
+- 解析优先读 tool call；strict 且不允许 fallback 时，裸文本 JSON 不算成功

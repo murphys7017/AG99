@@ -27,8 +27,10 @@
 - `astrbot/core/prompt/render/engine.py`
 - `astrbot/core/prompt/render/interfaces.py`
 - `astrbot/core/prompt/render/request_adapter.py`
+- `astrbot/core/prompt/render/openai_renderer.py`
 - `astrbot/core/prompt/render/anthropic_renderer.py`
 - `astrbot/core/prompt/render/minimax_renderer.py`
+- `astrbot/core/output_contract.py`
 - `astrbot/core/prompt/extensions/*`
 - `data/config/prompt/context_catalog.yaml`
 - `astrbot/core/astr_main_agent.py`
@@ -72,9 +74,12 @@ selector 的输出会写入事件 extra：
 
 `PromptRenderEngine._resolve_renderer(...)` 会根据当前 provider 类型自动选择 renderer：
 
-- `anthropic_chat_completion` → `AnthropicPromptRenderer`
-- `minimax_token_plan` → `MiniMaxPromptRenderer`
-- 其他 → `BasePromptRenderer`（默认 OpenAI 风格）
+- `prompt_renderer_family="openai"` → `OpenAIPromptRenderer`
+- `prompt_renderer_family="anthropic"` → `AnthropicPromptRenderer`
+- `prompt_renderer_family="minimax"` → `MiniMaxPromptRenderer`
+- 其他或未知 family → `BasePromptRenderer`
+
+`prompt_renderer_family` 来自 provider 注册元数据；`ProviderRequest.provider_type` 和 event extra 里的 provider proxy 也会通过同一元数据解析。provider 实例若显式提供 `provider_config["prompt_renderer_family"]`，engine 会优先使用该值；未知 family 会回落到 `base`，不静默伪装成已支持协议能力。
 
 各 provider-specific renderer 输出对应 API 原生格式（content blocks、tool schema、image source 等），`ProviderRequestAdapter` 会将不同 renderer 的输出统一适配回 `ProviderRequest` contract。
 
@@ -84,7 +89,27 @@ selector 的输出会写入事件 extra：
 - history/context messages
 - 当前 user message
 - tool schema 相关输出
+- `output_contract`
+- `compiled_output_contract`
 - prompt tree / trace 信息
+
+### 输出契约
+
+输出约束不再只依赖“请输出 JSON”这类业务 prompt 文本，而是通过通用契约进入 prompt pipeline：
+
+1. prompt/context pack 通过 `meta["output_contract"]` 声明 `OutputContract`
+2. renderer 编译为 `CompiledOutputContract`
+3. `ProviderRequestAdapter` 投影到 `ProviderRequest.output_contract` 和 `ProviderRequest.compiled_output_contract`
+4. provider 优先消费 compiled binding，按自身协议生成 tool call / native JSON / prompt-only 降级
+5. parser 按契约决定是否允许文本 fallback
+
+当前策略边界：
+
+- `protocol_tool_call` 是 strict 结构化输出的主要协议级落地方式。
+- `prompt_only` 只是受控降级，会写入 metadata 的 `output_contract_degraded` / `output_contract_degrade_reason`，不能被视为 provider 正式支持。
+- `BasePromptRenderer` 默认对非 text 输出契约走 `prompt_only` 降级，并使用统一 fallback compiler 生成最小约束文本。
+- `OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer` 对 `tool_call` 输出契约编译为 `protocol_tool_call`，但不直接构造 provider payload。
+- `interaction decision` 属于高约束场景，要求 `protocol_tool_call`，不允许 `prompt_only` 成功，也不允许 strict 且 `allow_text_fallback=false` 时把裸文本 JSON 当成功。
 
 extension mount 的当前语义：
 
@@ -107,6 +132,8 @@ extension mount 的当前语义：
 - `request.extra_user_content_parts`
 - `request.image_urls`
 - `request.audio_urls`
+- `request.output_contract`
+- `request.compiled_output_contract`
 
 它只负责把 `RenderResult` 投影到 AstrBot 现有 `ProviderRequest` contract，不负责 provider-specific 发送细节。后续的 modalities 修正、provider 适配、工具执行仍在主 Agent 和 provider source 链路中完成。
 

@@ -30,7 +30,8 @@
 - collect 基本成型
 - selector 已有占位接口
 - render engine 基础骨架已落地
-- provider-specific renderer 已实现（AnthropicPromptRenderer、MiniMaxPromptRenderer）
+- provider-specific renderer 已实现（OpenAIPromptRenderer、AnthropicPromptRenderer、MiniMaxPromptRenderer）
+- 输出约束已作为 `OutputContract -> CompiledOutputContract` 进入 render/request/provider 链路
 
 ## 核心职责划分
 
@@ -48,9 +49,10 @@
 
 后续如果需要面向不同模型提供商做差异优化，可以继续派生：
 
-- `OpenAIRenderer`
-- `AnthropicRenderer`
-- `GeminiRenderer`
+- `OpenAIPromptRenderer`
+- `AnthropicPromptRenderer`
+- `MiniMaxPromptRenderer`
+- `GeminiRenderer` / `VolcEngineArkRenderer` 等后续 renderer
 
 这些派生 renderer 的主要扩展方式应该是：
 
@@ -66,7 +68,7 @@
 它负责：
 
 - 调用 selector
-- 选择 renderer
+- 根据 provider metadata 的 `prompt_renderer_family` 选择 renderer
 - 按 slot name 前缀分组
 - 根据 renderer 提供的 node structure 建树
 - 调用 renderer 的 group render 方法
@@ -116,6 +118,8 @@ builder 不承担策略定义职责，也不关心某个 slot 应该如何渲染
 - `RenderResult`
 - `SerializedRenderValue`
 - `PassthroughPromptSelector`
+- `OutputContract`
+- `CompiledOutputContract`
 
 ### 当前启用的逻辑分组
 
@@ -177,8 +181,15 @@ render 层已经开始承担“通用序列化器”职责，而不是直接对�
 
 已完成的 provider-specific renderer：
 
+- `OpenAIPromptRenderer`：保留 OpenAI-compatible message、image_url 和 function tool schema 形态，同时把 `tool_call` 输出契约编译为 `protocol_tool_call`
 - `AnthropicPromptRenderer`：输出 Anthropic 原生 content blocks、tool schema（`input_schema`）、image source（base64/url）
-- `MiniMaxPromptRenderer`：继承 Anthropic renderer，适配 MiniMax Token Plan 的 Anthropic 兼容 API
+- `MiniMaxPromptRenderer`：输出 MiniMax Token Plan 友好的 JSON sections，并使用 Anthropic 兼容 tool schema 形态
+
+输出契约边界：
+
+- renderer 只编译契约，不直接拼 provider 私有 payload。
+- `protocol_tool_call` 是当前 strict 结构化输出的主协议级落地。
+- `prompt_only` 只作为受控降级；高约束场景（当前为 interaction decision）不得把 `prompt_only` 当成功路径。
 
 ## 下一步
 
@@ -189,6 +200,7 @@ render 层已经开始承担“通用序列化器”职责，而不是直接对�
 3. `capability`
 4. `memory`
 5. 新增更多 provider-specific renderer（Gemini、VolcEngine Ark 等）
+6. 继续消除业务层手写输出格式 prompt，把降级文本统一收口到 output contract fallback compiler
 
 总体原则保持不变：
 
