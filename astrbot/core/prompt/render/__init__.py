@@ -7,6 +7,7 @@ from .base_renderer import BasePromptRenderer
 from .engine import PromptRenderEngine
 from .interfaces import PromptSelectorInterface, RenderResult, SerializedRenderValue
 from .minimax_renderer import MiniMaxPromptRenderer
+from .openai_renderer import OpenAIPromptRenderer
 from .prompt_tree import NodeRef, PromptBuilder, PromptNode
 from .request_adapter import (
     PROMPT_APPLY_RESULT_EXTRA_KEY,
@@ -36,6 +37,7 @@ __all__ = [
     "BasePromptRenderer",
     "AnthropicPromptRenderer",
     "MiniMaxPromptRenderer",
+    "OpenAIPromptRenderer",
     "NodeRef",
     "OutputContract",
     "PROMPT_APPLY_RESULT_EXTRA_KEY",

@@ -7,6 +7,7 @@ import logging
 
 from astrbot.core import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.provider.register import provider_cls_map
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
@@ -15,8 +16,11 @@ from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
 from .interfaces import RenderResult
 from .minimax_renderer import MiniMaxPromptRenderer
+from .openai_renderer import OpenAIPromptRenderer
 from .prompt_tree import NodeRef, PromptBuilder
 from .selector import PassthroughPromptSelector, select_context_pack
+
+_PROMPT_RENDERER_FAMILIES = {"base", "openai", "anthropic", "minimax"}
 
 
 class PromptRenderEngine:
@@ -116,25 +120,39 @@ class PromptRenderEngine:
             provider = self._resolve_provider_from_event(event)
         if provider is None:
             provider = self._resolve_request_provider(plugin_context, config)
-        if self._is_anthropic_provider(provider):
+        renderer_family = self._resolve_prompt_renderer_family(provider)
+        if renderer_family == "anthropic":
             return AnthropicPromptRenderer()
-        if self._is_minimax_provider(provider):
+        if renderer_family == "openai":
+            return OpenAIPromptRenderer()
+        if renderer_family == "minimax":
             return MiniMaxPromptRenderer()
         return self.default_renderer
 
     @staticmethod
-    def _is_anthropic_provider(provider) -> bool:
+    def _resolve_prompt_renderer_family(provider) -> str:
         provider_config = getattr(provider, "provider_config", None)
         if not isinstance(provider_config, dict):
-            return False
-        return str(provider_config.get("type", "") or "") == "anthropic_chat_completion"
-
-    @staticmethod
-    def _is_minimax_provider(provider) -> bool:
-        provider_config = getattr(provider, "provider_config", None)
-        if not isinstance(provider_config, dict):
-            return False
-        return str(provider_config.get("type", "") or "") == "minimax_token_plan"
+            return "base"
+        configured_family = str(
+            provider_config.get("prompt_renderer_family", "") or ""
+        ).strip()
+        if configured_family:
+            return (
+                configured_family
+                if configured_family in _PROMPT_RENDERER_FAMILIES
+                else "base"
+            )
+        provider_type = str(provider_config.get("type", "") or "").strip()
+        if not provider_type:
+            return "base"
+        metadata = provider_cls_map.get(provider_type)
+        if metadata is None:
+            return "base"
+        metadata_family = str(
+            getattr(metadata, "prompt_renderer_family", "base") or "base"
+        )
+        return metadata_family if metadata_family in _PROMPT_RENDERER_FAMILIES else "base"
 
     @staticmethod
     def _resolve_provider_from_request(provider_request: ProviderRequest | None):
@@ -439,4 +457,13 @@ class PromptRenderEngine:
 
 class _PromptRenderProviderProxy:
     def __init__(self, provider_type: str) -> None:
-        self.provider_config = {"type": provider_type}
+        metadata = provider_cls_map.get(provider_type)
+        renderer_family = (
+            getattr(metadata, "prompt_renderer_family", "base")
+            if metadata is not None
+            else "base"
+        )
+        self.provider_config = {
+            "type": provider_type,
+            "prompt_renderer_family": renderer_family,
+        }

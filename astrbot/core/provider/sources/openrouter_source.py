@@ -3,7 +3,9 @@ from .openai_source import ProviderOpenAIOfficial
 
 
 @register_provider_adapter(
-    "openrouter_chat_completion", "OpenRouter Chat Completion Provider Adapter"
+    "openrouter_chat_completion",
+    "OpenRouter Chat Completion Provider Adapter",
+    prompt_renderer_family="openai",
 )
 class ProviderOpenRouter(ProviderOpenAIOfficial):
     def __init__(

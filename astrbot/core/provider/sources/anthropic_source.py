@@ -34,6 +34,7 @@ from ..register import register_provider_adapter
 @register_provider_adapter(
     "anthropic_chat_completion",
     "Anthropic Claude API 提供商适配器",
+    prompt_renderer_family="anthropic",
 )
 class ProviderAnthropic(Provider):
     def supports_output_contract_strategy(self, strategy: str) -> bool:

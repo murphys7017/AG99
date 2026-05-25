@@ -9,6 +9,7 @@ KIMI_CODE_USER_AGENT = "claude-code/0.1.0"
 @register_provider_adapter(
     "kimi_code_chat_completion",
     "Kimi Code Provider Adapter",
+    prompt_renderer_family="anthropic",
 )
 class ProviderKimiCode(ProviderAnthropic):
     def __init__(

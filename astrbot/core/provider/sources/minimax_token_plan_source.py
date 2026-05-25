@@ -17,6 +17,7 @@ MINIMAX_TOKEN_PLAN_MODELS = [
 @register_provider_adapter(
     "minimax_token_plan",
     "MiniMax Token Plan Provider Adapter",
+    prompt_renderer_family="minimax",
 )
 class ProviderMiniMaxTokenPlan(ProviderAnthropic):
     """MiniMax Token Plan provider.

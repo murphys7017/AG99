@@ -3,7 +3,9 @@ from .openai_source import ProviderOpenAIOfficial
 
 
 @register_provider_adapter(
-    "aihubmix_chat_completion", "AIHubMix Chat Completion Provider Adapter"
+    "aihubmix_chat_completion",
+    "AIHubMix Chat Completion Provider Adapter",
+    prompt_renderer_family="openai",
 )
 class ProviderAIHubMix(ProviderOpenAIOfficial):
     def __init__(

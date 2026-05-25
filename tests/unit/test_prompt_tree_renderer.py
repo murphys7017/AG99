@@ -8,10 +8,14 @@ from astrbot.core.prompt.render import (
     AnthropicPromptRenderer,
     BasePromptRenderer,
     MiniMaxPromptRenderer,
+    OpenAIPromptRenderer,
     PromptBuilder,
     PromptRenderEngine,
     SerializedRenderValue,
 )
+from astrbot.core.provider.sources.kimi_code_source import ProviderKimiCode
+from astrbot.core.provider.sources.openrouter_source import ProviderOpenRouter
+from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 from astrbot.core.prompt.render.engine import logger as render_logger
 
 
@@ -286,8 +290,18 @@ def test_minimax_prompt_renderer_compiles_json_sections_and_tool_schema():
 
 
 def test_render_engine_selects_minimax_renderer_from_token_plan_provider():
-    class ProviderStub:
-        provider_config = {"type": "minimax_token_plan"}
+    from astrbot.core.provider.sources.minimax_token_plan_source import (
+        ProviderMiniMaxTokenPlan,
+    )
+
+    provider = ProviderMiniMaxTokenPlan(
+        provider_config={
+            "id": "minimax-test",
+            "type": "minimax_token_plan",
+            "key": ["test-key"],
+        },
+        provider_settings={},
+    )
 
     pack = ContextPack(
         slots={
@@ -302,7 +316,7 @@ def test_render_engine_selects_minimax_renderer_from_token_plan_provider():
 
     result = PromptRenderEngine().render(
         pack,
-        provider_request=type("RequestStub", (), {"provider": ProviderStub()})(),
+        provider_request=type("RequestStub", (), {"provider": provider})(),
     )
 
     assert result.metadata["renderer_name"] == "minimax"
@@ -310,6 +324,245 @@ def test_render_engine_selects_minimax_renderer_from_token_plan_provider():
     assert isinstance(content, list)
     payload = json.loads(content[0]["text"])
     assert payload["user_input"]["text"]["content"] == "Hello MiniMax"
+
+
+def test_openai_prompt_renderer_preserves_openai_messages_and_tool_schema():
+    renderer = OpenAIPromptRenderer()
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Look",
+                category="input",
+                source="test",
+            ),
+            "input.images": ContextSlot(
+                name="input.images",
+                value=[{"ref": "file:///tmp/demo.png"}],
+                category="input",
+                source="test",
+            ),
+            "capability.tools_schema": ContextSlot(
+                name="capability.tools_schema",
+                value={
+                    "format": "tool_inventory_v1",
+                    "tools": [
+                        {
+                            "name": "search_docs",
+                            "description": "Search docs",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                },
+                category="tools",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=renderer).render(pack)
+
+    assert result.metadata["renderer_name"] == "openai"
+    final_content = result.messages[-1]["content"]
+    assert {
+        "type": "text",
+        "text": "<user_input>\n  <text>Look</text>\n</user_input>",
+    } in final_content
+    assert {
+        "type": "image_url",
+        "image_url": {"url": "file:///tmp/demo.png"},
+    } in final_content
+    assert result.tool_schema == [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_docs",
+                "description": "Search docs",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+
+def test_render_engine_selects_openai_renderer_for_openai_provider_instance():
+    provider = ProviderOpenAIOfficial(
+        provider_config={
+            "id": "openai-test",
+            "type": "openai_chat_completion",
+            "model": "gpt-test",
+            "key": ["test-key"],
+            "api_base": "https://api.openai.com/v1",
+        },
+        provider_settings={},
+    )
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello OpenAI",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": provider})(),
+    )
+
+    assert result.metadata["renderer_name"] == "openai"
+    assert result.messages == [
+        {"role": "user", "content": "Hello OpenAI"},
+    ]
+
+
+def test_render_engine_selects_anthropic_renderer_for_kimi_code_provider_instance():
+    provider = ProviderKimiCode(
+        provider_config={
+            "id": "kimi-test",
+            "type": "kimi_code_chat_completion",
+            "key": ["test-key"],
+        },
+        provider_settings={},
+    )
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello Kimi",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": provider})(),
+    )
+
+    assert result.metadata["renderer_name"] == "anthropic"
+    assert result.messages == [
+        {"role": "user", "content": "Hello Kimi"},
+    ]
+
+
+def test_render_engine_selects_renderer_from_provider_type_metadata_proxy():
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello Proxy",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    openai_result = PromptRenderEngine().render(
+        pack,
+        provider_request=type(
+            "RequestStub",
+            (),
+            {"provider_type": "openrouter_chat_completion"},
+        )(),
+    )
+    anthropic_result = PromptRenderEngine().render(
+        pack,
+        provider_request=type(
+            "RequestStub",
+            (),
+            {"provider_type": "kimi_code_chat_completion"},
+        )(),
+    )
+    minimax_result = PromptRenderEngine().render(
+        pack,
+        provider_request=type(
+            "RequestStub",
+            (),
+            {"provider_type": "minimax_token_plan"},
+        )(),
+    )
+
+    assert openai_result.metadata["renderer_name"] == "openai"
+    assert anthropic_result.metadata["renderer_name"] == "anthropic"
+    assert minimax_result.metadata["renderer_name"] == "minimax"
+
+
+def test_render_engine_respects_provider_config_renderer_family_override():
+    class ProviderStub:
+        provider_config = {
+            "type": "unknown_chat_completion",
+            "prompt_renderer_family": "openai",
+        }
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello Override",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": ProviderStub()})(),
+    )
+
+    assert result.metadata["renderer_name"] == "openai"
+
+
+def test_render_engine_ignores_unknown_provider_config_renderer_family():
+    class ProviderStub:
+        provider_config = {
+            "type": "unknown_chat_completion",
+            "prompt_renderer_family": "typo",
+        }
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello Typo",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": ProviderStub()})(),
+    )
+
+    assert result.metadata["renderer_name"] == "base"
+
+
+def test_render_engine_defaults_to_base_renderer_for_unregistered_provider_stub():
+    class ProviderStub:
+        provider_config = {"type": "unknown_chat_completion"}
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Hello Stub",
+                category="input",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": ProviderStub()})(),
+    )
+
+    assert result.metadata["renderer_name"] == "base"
 
 
 def test_base_prompt_renderer_serializes_dict_slot_to_structured_object():

@@ -3,7 +3,9 @@ from .openai_source import ProviderOpenAIOfficial
 
 
 @register_provider_adapter(
-    "longcat_chat_completion", "LongCat Chat Completion Provider Adapter"
+    "longcat_chat_completion",
+    "LongCat Chat Completion Provider Adapter",
+    prompt_renderer_family="openai",
 )
 class ProviderLongCat(ProviderOpenAIOfficial):
     def __init__(

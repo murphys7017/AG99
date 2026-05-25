@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from anthropic.types import Message as AnthropicMessage
@@ -38,6 +38,9 @@ class ProviderType(enum.Enum):
     RERANK = "rerank"
 
 
+PromptRendererFamily = Literal["base", "openai", "anthropic", "minimax"]
+
+
 @dataclass
 class ProviderMeta:
     """The basic metadata of a provider instance."""
@@ -64,6 +67,8 @@ class ProviderMetaData(ProviderMeta):
     """the default configuration template of the provider adapter"""
     provider_display_name: str | None = None
     """the display name of the provider shown in the WebUI configuration page; if empty, the type is used"""
+    prompt_renderer_family: PromptRendererFamily = "base"
+    """the prompt renderer family used by PromptRenderEngine"""
 
 
 @dataclass

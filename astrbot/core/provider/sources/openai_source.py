@@ -57,6 +57,7 @@ from ..register import register_provider_adapter
 @register_provider_adapter(
     "openai_chat_completion",
     "OpenAI API Chat Completion 提供商适配器",
+    prompt_renderer_family="openai",
 )
 class ProviderOpenAIOfficial(Provider):
     _ERROR_TEXT_CANDIDATE_MAX_CHARS = 4096
