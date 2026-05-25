@@ -88,9 +88,10 @@ WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 2. `docs/Yakumo/modules/README.md`
 3. `docs/Yakumo/modules/prompt.md`
 4. `docs/Yakumo/modules/interaction.md`
-5. `docs/Yakumo/dev/memory/index.md`
-6. `docs/Yakumo/dev/memory/progress.md`
-7. `docs/Yakumo/upstream-merge-ledger.md`
+5. `docs/Yakumo/dev/output-contract.md`
+6. `docs/Yakumo/dev/memory/index.md`
+7. `docs/Yakumo/dev/memory/progress.md`
+8. `docs/Yakumo/upstream-merge-ledger.md`
 
 以下文档只建议在追溯设计背景时阅读，不应直接当作当前实现说明：
 

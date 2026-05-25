@@ -353,22 +353,18 @@ collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 �
 
 ## Output Contract V2
 
-输出契约已经从业务 prompt 文本提升为 render/request/provider 链路中的一等数据：
+输出契约已经从业务 prompt 文本提升为 render/request/provider 链路中的一等数据。跨层 source of truth 见 `docs/Yakumo/dev/output-contract.md`。
+
+本文件只记录 render 层当前事实：
 
 - `OutputContract` 声明模式：`text` / `json_object` / `tool_call`
 - `CompiledOutputContract` 承载 renderer 编译结果：`strategy`、`degraded`、`degrade_reason`、`tool_name`、`tool_schema`、`fallback_prompt_text`
 - `RenderResult.metadata` 会记录 `output_contract_requested`、`output_contract_strategy`、`output_contract_degraded`、`output_contract_degrade_reason`
-- `ProviderRequestAdapter` 会同步投影 `output_contract` 与 `compiled_output_contract`
-- provider 侧优先消费 compiled binding；裸 `OutputContract` 只作为旧入口兼容兜底
+- renderer 只负责编译契约，不直接构造 provider 私有 payload
 
-策略边界：
+当前 renderer 策略：
 
-- `protocol_tool_call`：当前 strict 结构化输出的主实现。
-- `protocol_native_json`：保留策略名，尚未作为通用 provider 实现。
-- `prompt_only`：仅表示受控降级；fallback 文本由统一 compiler 生成，不应由业务模块散落手写。
-
-`interaction decision` 是首个高约束消费者：
-
-- 默认 contract 为 `tool_call + strict + preferred_tool_name="interaction_decision" + allow_text_fallback=false`
-- render 结果必须是 `protocol_tool_call`
-- 解析优先读 tool call；strict 且不允许 fallback 时，裸文本 JSON 不算成功
+- `BasePromptRenderer`: 非 text 输出契约默认 `prompt_only + degraded`
+- `OpenAIPromptRenderer`: `tool_call -> protocol_tool_call`
+- `AnthropicPromptRenderer`: `tool_call -> protocol_tool_call`
+- `MiniMaxPromptRenderer`: `tool_call -> protocol_tool_call`

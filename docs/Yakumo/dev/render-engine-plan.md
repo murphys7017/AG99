@@ -121,36 +121,6 @@ builder 不承担策略定义职责，也不关心某个 slot 应该如何渲染
 - `OutputContract`
 - `CompiledOutputContract`
 
-### 当前启用的逻辑分组
-
-`BasePromptRenderer` 默认启用全部已收集的大类：
-
-- `system`
-- `persona`
-- `policy`
-- `input`
-- `session`
-- `conversation`
-- `knowledge`
-- `capability`
-- `memory`
-
-### 当前默认节点结构
-
-当前基础结构保持一组一节点：
-
-- `system -> system`
-- `persona -> persona`
-- `policy -> policy`
-- `input -> input`
-- `session -> session`
-- `conversation -> conversation`
-- `knowledge -> knowledge`
-- `capability -> capability`
-- `memory -> memory`
-
-这只是基础骨架，不代表最终 provider 最优结构已经确定。
-
 ## 当前序列化方向
 
 render 层已经开始承担“通用序列化器”职责，而不是直接对所有 slot 值执行 `str(value)`。
@@ -190,6 +160,8 @@ render 层已经开始承担“通用序列化器”职责，而不是直接对�
 - renderer 只编译契约，不直接拼 provider 私有 payload。
 - `protocol_tool_call` 是当前 strict 结构化输出的主协议级落地。
 - `prompt_only` 只作为受控降级；高约束场景（当前为 interaction decision）不得把 `prompt_only` 当成功路径。
+
+输出契约的跨层设计见 `docs/Yakumo/dev/output-contract.md`。本 plan 只保留 render 侧原则：renderer 负责策略编译，provider 负责协议落地。
 
 ## 下一步
 

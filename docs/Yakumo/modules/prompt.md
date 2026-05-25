@@ -30,11 +30,12 @@
 - `astrbot/core/prompt/render/openai_renderer.py`
 - `astrbot/core/prompt/render/anthropic_renderer.py`
 - `astrbot/core/prompt/render/minimax_renderer.py`
-- `astrbot/core/output_contract.py`
 - `astrbot/core/prompt/extensions/*`
 - `data/config/prompt/context_catalog.yaml`
 - `astrbot/core/astr_main_agent.py`
 - `astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py`
+
+结构化输出契约的跨层细节见 `docs/Yakumo/dev/output-contract.md`。
 
 ## Collect 阶段
 
@@ -93,24 +94,6 @@ selector 的输出会写入事件 extra：
 - `compiled_output_contract`
 - prompt tree / trace 信息
 
-### 输出契约
-
-输出约束不再只依赖“请输出 JSON”这类业务 prompt 文本，而是通过通用契约进入 prompt pipeline：
-
-1. prompt/context pack 通过 `meta["output_contract"]` 声明 `OutputContract`
-2. renderer 编译为 `CompiledOutputContract`
-3. `ProviderRequestAdapter` 投影到 `ProviderRequest.output_contract` 和 `ProviderRequest.compiled_output_contract`
-4. provider 优先消费 compiled binding，按自身协议生成 tool call / native JSON / prompt-only 降级
-5. parser 按契约决定是否允许文本 fallback
-
-当前策略边界：
-
-- `protocol_tool_call` 是 strict 结构化输出的主要协议级落地方式。
-- `prompt_only` 只是受控降级，会写入 metadata 的 `output_contract_degraded` / `output_contract_degrade_reason`，不能被视为 provider 正式支持。
-- `BasePromptRenderer` 默认对非 text 输出契约走 `prompt_only` 降级，并使用统一 fallback compiler 生成最小约束文本。
-- `OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer` 对 `tool_call` 输出契约编译为 `protocol_tool_call`，但不直接构造 provider payload。
-- `interaction decision` 属于高约束场景，要求 `protocol_tool_call`，不允许 `prompt_only` 成功，也不允许 strict 且 `allow_text_fallback=false` 时把裸文本 JSON 当成功。
-
 extension mount 的当前语义：
 
 - `system`：稳定系统规则。
@@ -136,6 +119,22 @@ extension mount 的当前语义：
 - `request.compiled_output_contract`
 
 它只负责把 `RenderResult` 投影到 AstrBot 现有 `ProviderRequest` contract，不负责 provider-specific 发送细节。后续的 modalities 修正、provider 适配、工具执行仍在主 Agent 和 provider source 链路中完成。
+
+## 输出契约
+
+输出约束是横跨 prompt、render、request、provider 和 parser 的公共机制，不属于某一个 render 阶段的私有能力。
+
+当前链路为：
+
+`OutputContract -> CompiledOutputContract -> ProviderRequest -> provider -> parser`
+
+prompt module 的职责是声明与编译契约，并把 `output_contract` / `compiled_output_contract` 投影到 `ProviderRequest`。provider 负责协议级落地，parser 负责按契约判断是否允许 fallback。
+
+详细策略边界见 `docs/Yakumo/dev/output-contract.md`。这里需要记住的当前事实是：
+
+- `protocol_tool_call` 是 strict 结构化输出的主要协议级落地。
+- `prompt_only` 只是受控降级，不是正式支持声明。
+- `interaction decision` 是高约束场景，必须走 `protocol_tool_call`，不能把裸文本 JSON 当成功。
 
 ## 主 Agent 接入方式
 
