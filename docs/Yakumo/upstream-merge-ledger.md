@@ -196,12 +196,12 @@ New upstream commits since previous ledger baseline:
 
 | Upstream commit | Topic | Initial status | Notes |
 | --- | --- | --- | --- |
-| `2d786268` | SQLAlchemy compatibility on macOS | Needs review | Touches DB/FTS/document storage; keep with the knowledge-base storage/retrieval batch. |
+| `2d786268` | SQLAlchemy compatibility on macOS | Absorbed | Rewritten locally with SQLite `NullPool`, connect-time PRAGMAs, SQLModel document table creation via compiled SQLite DDL, and a guarded unique `documents.doc_id` index migration. |
 | `7ff58f29` | FAQ hard-refresh note | Skipped | Docs-only upstream FAQ note; not required for local Yakumo docs unless dashboard troubleshooting docs are refreshed. |
 | `000d638c` | QQ Official WebSocket docs typo | Skipped | Docs-only typo fix. |
-| `bc35daa1` | Restore mobile provider-source deletion | Needs review | Small WebUI fix, but check against local provider-source panel customizations before rewriting. |
+| `bc35daa1` | Restore mobile provider-source deletion | Absorbed | Rewritten locally in the customized provider-source panel; mobile layout now exposes a selected-source delete button and delete actions have accessible labels/titles. |
 | `284c4082` | GitHub Actions dependency bump | Skipped | CI chore; skip unless preparing CI/release maintenance. |
-| `ae44163b` | Smooth markdown streaming | Needs review | WebUI rendering behavior; review against local ChatUI markdown/reasoning stream components. |
+| `ae44163b` | Smooth markdown streaming | Absorbed | Rewritten locally by threading existing message streaming state into `MarkdownRender` and upgrading `markstream-vue`/`stream-markdown` through `pnpm install --lockfile-only`. |
 | `23d70dbd` | Plugin card direct access and embedded page height | Needs review | Plugin WebUI UX; keep with plugin-page experience batch. |
 | `538772c3` | Xiaomi and Xiaomi Token Plan LLM providers | Deferred | New provider surface; review as a dedicated provider-add batch with config metadata and WebUI mapping. |
 | `89153fdf` | MiMo reasoning content compatibility | Absorbed | Rewritten locally in the OpenAI-compatible provider: assistant messages with `reasoning_content` are preserved by sanitization, and MiMo reasoning models receive empty `reasoning_content` on assistant history when missing. |
