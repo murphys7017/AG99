@@ -43,6 +43,7 @@
     "viewInfo": "Handlers",
     "viewDocs": "Documentation",
     "viewRepo": "Repository",
+    "openWebui": "Open Plugin UI",
     "close": "Close",
     "save": "Save",
     "saveAndClose": "Save and Close",

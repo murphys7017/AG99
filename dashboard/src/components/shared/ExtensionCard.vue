@@ -36,6 +36,7 @@ const emit = defineEmits([
   "view-handlers",
   "view-readme",
   "view-changelog",
+  "open-webui",
   "toggle-pin",
 ]);
 
@@ -118,6 +119,17 @@ const viewReadme = () => {
 
 const viewChangelog = () => {
   emit("view-changelog", props.extension);
+};
+
+const pages = computed(() => {
+  const value = props.extension?.pages;
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+});
+
+const hasPages = computed(() => pages.value.length > 0);
+
+const openWebui = () => {
+  emit("open-webui", props.extension);
 };
 
 const togglePin = () => {
@@ -327,6 +339,20 @@ const togglePin = () => {
               variant="tonal"
               color="primary"
               @click="configure"
+            ></v-btn>
+          </template>
+        </v-tooltip>
+
+        <v-tooltip v-if="hasPages" location="top" :text="tm('buttons.openWebui')">
+          <template v-slot:activator="{ props: actionProps }">
+            <v-btn
+              v-bind="actionProps"
+              icon="mdi-application-brackets"
+              size="small"
+              variant="tonal"
+              color="primary"
+              :disabled="!extension.activated"
+              @click="openWebui"
             ></v-btn>
           </template>
         </v-tooltip>

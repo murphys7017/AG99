@@ -311,7 +311,7 @@ def test_plugin_page_content_path_escapes_plugin_name():
 
 
 @pytest.mark.asyncio
-async def test_plugin_get_excludes_scanned_pages(
+async def test_plugin_get_includes_scanned_page_names(
     app: Quart,
     authenticated_header: dict,
     registered_plugin_page: StarMetadata,
@@ -327,7 +327,7 @@ async def test_plugin_get_excludes_scanned_pages(
     )
     assert plugin["activated"] is True
     assert "page" not in plugin
-    assert "pages" not in plugin
+    assert plugin["pages"] == [PLUGIN_PAGE_DEMO_PAGE_NAME]
 
 
 @pytest.mark.asyncio
@@ -392,6 +392,7 @@ async def test_plugin_detail_includes_scanned_page_component(
             "name": PLUGIN_PAGE_DEMO_PAGE_NAME,
             "title": PLUGIN_PAGE_DEMO_PAGE_NAME,
             "page_name": PLUGIN_PAGE_DEMO_PAGE_NAME,
+            "i18n_key": f"pages.{PLUGIN_PAGE_DEMO_PAGE_NAME}",
             "description": "Plugin Page entry",
             "plugin_name": PLUGIN_PAGE_DEMO_NAME,
         }

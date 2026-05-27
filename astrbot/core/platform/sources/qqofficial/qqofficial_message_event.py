@@ -183,9 +183,67 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         ret_id = getattr(ret, "id", None)
         return str(ret_id) if ret_id is not None else None
 
+    @staticmethod
+    def _split_message_chain_by_media(message: MessageChain) -> list[MessageChain]:
+        media_types = (Image, Record, Video, File)
+        chunks: list[MessageChain] = []
+        current_chain = []
+        has_media = False
+
+        for component in message.chain:
+            is_media = isinstance(component, media_types)
+            if is_media and has_media:
+                chunks.append(message.derive(current_chain))
+                current_chain = []
+                has_media = False
+
+            current_chain.append(component)
+            if is_media:
+                has_media = True
+
+        if current_chain:
+            chunks.append(message.derive(current_chain))
+
+        return chunks
+
     async def _post_send(self, stream: dict | None = None):
         if not self.send_buffer:
             return None
+
+        source = self.message_obj.raw_message
+        if not isinstance(
+            source,
+            botpy.message.Message
+            | botpy.message.GroupMessage
+            | botpy.message.DirectMessage
+            | botpy.message.C2CMessage,
+        ):
+            logger.warning(f"[QQOfficial] 不支持的消息源类型: {type(source)}")
+            return None
+
+        message_chains = self._split_message_chain_by_media(self.send_buffer)
+        ret = None
+        attempted = False
+        for message_chain in message_chains:
+            chunk_attempted, chunk_ret = await self._post_send_one(
+                message_chain,
+                stream=stream if len(message_chains) == 1 else None,
+            )
+            attempted = attempted or chunk_attempted
+            ret = chunk_ret
+
+        if attempted:
+            await super().send(self.send_buffer)
+        self.send_buffer = None
+        return ret
+
+    async def _post_send_one(
+        self,
+        message_to_send: MessageChain,
+        stream: dict | None = None,
+    ) -> tuple[bool, object | None]:
+        if not message_to_send.chain:
+            return False, None
 
         source = self.message_obj.raw_message
 
@@ -197,7 +255,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             | botpy.message.C2CMessage,
         ):
             logger.warning(f"[QQOfficial] 不支持的消息源类型: {type(source)}")
-            return None
+            return False, None
 
         (
             plain_text,
@@ -207,10 +265,15 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             video_file_source,
             file_source,
             file_name,
-        ) = await QQOfficialMessageEvent._parse_to_qqofficial(self.send_buffer)
+        ) = await QQOfficialMessageEvent._parse_to_qqofficial(message_to_send)
 
         # C2C 流式仅用于文本分片，富媒体时降级为普通发送，避免平台侧流式校验报错。
-        if stream and (image_base64 or record_file_path):
+        if stream and (
+            image_base64
+            or record_file_path
+            or video_file_source
+            or file_source
+        ):
             logger.debug("[QQOfficial] 检测到富媒体，降级为非流式发送。")
             stream = None
 
@@ -222,7 +285,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             and not video_file_source
             and not file_source
         ):
-            return None
+            return False, None
 
         # QQ C2C 流式 API 说明：
         # - 开始/中间分片（state=1）：增量追加内容，不需要 \n（加了会导致强制换行）
@@ -236,7 +299,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             plain_text = plain_text + "\n"
 
         # 根据消息链的 use_markdown_ 标记决定发送模式
-        use_md = getattr(self.send_buffer, "use_markdown_", None)
+        use_md = getattr(message_to_send, "use_markdown_", None)
         if use_md is False:
             payload: dict = {
                 "content": plain_text,
@@ -259,7 +322,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             case botpy.message.GroupMessage():
                 if not source.group_openid:
                     logger.error("[QQOfficial] GroupMessage 缺少 group_openid")
-                    return None
+                    return False, None
 
                 if image_base64:
                     media = await self.upload_group_and_c2c_image(
@@ -416,11 +479,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             case _:
                 pass
 
-        await super().send(self.send_buffer)
-
-        self.send_buffer = None
-
-        return ret
+        return True, ret
 
     async def _send_with_markdown_fallback(
         self,

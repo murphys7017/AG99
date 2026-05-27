@@ -196,7 +196,10 @@ class QQOfficialPlatformAdapter(Platform):
         session: MessageSesion,
         message_chain: MessageChain,
     ) -> None:
-        await self._send_by_session_common(session, message_chain)
+        for chunk in QQOfficialMessageEvent._split_message_chain_by_media(
+            message_chain,
+        ):
+            await self._send_by_session_common(session, chunk)
 
     async def _send_by_session_common(
         self,

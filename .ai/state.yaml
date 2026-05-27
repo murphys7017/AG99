@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_dashboard_kb_candidate_rewrite
-  scope: upstream sync rewrite for provider-source mobile delete, SQLite/FTS compatibility, and smooth markdown streaming
+  phase: upstream_plugin_qqofficial_candidate_rewrite
+  scope: upstream sync rewrite for plugin page direct-open UX and QQ Official media-chain splitting
 context:
   confidence: high
   assumptions:
@@ -12,8 +12,8 @@ context:
     - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
     - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
     - Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing.
-    - The current batch keeps local provider-source panel and ChatUI structure while absorbing targeted upstream UI fixes.
-    - SQLite compatibility changes should preserve the local database timeout behavior while using NullPool and connect-time PRAGMAs.
+    - The current batch keeps local plugin page detail/component boundaries: plugin list responses expose only lightweight page names, while full page component metadata stays in plugin detail.
+    - QQ Official media splitting should preserve local MessageChain metadata via derive instead of rebuilding chains manually.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -21,6 +21,8 @@ architecture:
     - SQLite async engines now use NullPool and connect-time PRAGMAs in core and knowledge-base DB paths.
     - `documents.doc_id` now gets a guarded unique index migration when no duplicate legacy IDs exist.
     - Dashboard markdown rendering receives streaming state for smooth incremental output.
+    - Plugin list responses now include lightweight `pages` names for direct WebUI entry buttons.
+    - QQ Official outgoing messages are split into one-media chunks for both event replies and proactive session sends.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -44,8 +46,12 @@ verification:
     - .venv\Scripts\python -m pytest tests/unit/test_document_storage_fts.py -q
     - pnpm --dir dashboard typecheck
     - git diff --check
+    - .venv\Scripts\python -m pytest tests/test_dashboard.py::test_plugin_get_includes_scanned_page_names tests/test_dashboard.py::test_plugin_detail_includes_scanned_page_component tests/unit/test_qqofficial_message_split.py -q
+    - .venv\Scripts\python -m ruff check astrbot/dashboard/routes/plugin.py astrbot/core/platform/sources/qqofficial/qqofficial_message_event.py astrbot/core/platform/sources/qqofficial/qqofficial_platform_adapter.py tests/test_dashboard.py tests/unit/test_qqofficial_message_split.py
+    - pnpm --dir dashboard typecheck
+    - git diff --check
   checks_failed:
-    - .venv\Scripts\python -m pytest tests/test_mimo_api_sources.py tests/test_openai_source.py::test_query_filters_empty_assistant_message_without_tool_calls tests/test_openai_source.py::test_query_stream_filters_empty_assistant_message tests/test_openai_source.py::test_query_stream_extracts_usage_from_empty_choices_chunk tests/unit/test_astr_main_agent.py::TestBuildMainAgent::test_build_main_agent_with_images tests/test_dashboard.py::test_plugin_get_excludes_scanned_pages tests/test_dashboard.py::test_plugin_detail_includes_scanned_page_component -q
-  validation_gap: Full backend suite and browser visual checks were not rerun for this dashboard/KB upstream-sync batch. The prior broader related test command had one pre-existing dashboard assertion mismatch: `test_plugin_detail_includes_scanned_page_component` expects no `i18n_key`, while the current route includes it in page components. `git diff --check` emitted only CRLF working-copy warnings.
+    - None for the current plugin/QQ Official batch.
+  validation_gap: Full backend suite and browser visual checks were not rerun for this plugin/QQ Official upstream-sync batch. `git diff --check` emitted only CRLF working-copy warnings.
 runtime:
   mode: minimal_v1

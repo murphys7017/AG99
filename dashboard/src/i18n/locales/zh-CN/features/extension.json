@@ -43,6 +43,7 @@
     "viewInfo": "行为",
     "viewDocs": "文档",
     "viewRepo": "仓库",
+    "openWebui": "打开插件UI界面",
     "close": "关闭",
     "save": "保存",
     "saveAndClose": "保存并关闭",
