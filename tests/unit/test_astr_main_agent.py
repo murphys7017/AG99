@@ -116,6 +116,58 @@ def _setup_conversation_for_build(conv_mgr, cid: str = "conv-id") -> MagicMock:
     return conversation
 
 
+def test_provider_supports_modality_requires_explicit_list():
+    provider = MagicMock(spec=Provider)
+
+    provider.provider_config = {"modalities": ["text", "image"]}
+    assert ama._provider_supports_modality(provider, "image")
+
+    provider.provider_config = {"modalities": ["text"]}
+    assert not ama._provider_supports_modality(provider, "image")
+
+    provider.provider_config = {}
+    assert not ama._provider_supports_modality(provider, "image")
+
+    provider.provider_config = {"modalities": "image"}
+    assert not ama._provider_supports_modality(provider, "image")
+
+
+def test_select_image_chat_provider_uses_image_fallback():
+    text_provider = MagicMock(spec=Provider)
+    text_provider.provider_config = {
+        "id": "text-provider",
+        "modalities": ["text", "tool_use"],
+    }
+    image_provider = MagicMock(spec=Provider)
+    image_provider.provider_config = {
+        "id": "image-provider",
+        "modalities": ["text", "image", "tool_use"],
+    }
+    req = ProviderRequest(prompt="describe", image_urls=["/tmp/image.jpg"])
+
+    selected = ama._select_image_chat_provider(text_provider, req, [image_provider])
+
+    assert selected is image_provider
+
+
+def test_select_image_chat_provider_keeps_provider_without_image_fallback():
+    text_provider = MagicMock(spec=Provider)
+    text_provider.provider_config = {
+        "id": "text-provider",
+        "modalities": ["text", "tool_use"],
+    }
+    fallback_provider = MagicMock(spec=Provider)
+    fallback_provider.provider_config = {
+        "id": "fallback-provider",
+        "modalities": ["text", "tool_use"],
+    }
+    req = ProviderRequest(prompt="describe", image_urls=["/tmp/image.jpg"])
+
+    selected = ama._select_image_chat_provider(text_provider, req, [fallback_provider])
+
+    assert selected is text_provider
+
+
 class TestMainAgentBuildConfig:
     """Tests for MainAgentBuildConfig dataclass."""
 

@@ -5,16 +5,16 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-05-24
+Last updated: 2026-05-28
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `ff28eca9c` (`fix(openai): 修复流式响应末尾usage信息丢失问题 (#8306)`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` and `git ls-remote upstream refs/heads/master` failed on 2026-05-24 with `Failed to connect to github.com port 443 after 21110 ms`; SSH `git ls-remote git@github.com:AstrBotDevs/AstrBot.git refs/heads/master` succeeded and confirmed `ff28eca9c`, then `upstream/master` was refreshed from the SSH URL.
-- Git-only divergence at this snapshot: local-only `286`, upstream-only `194`.
-- Patch-equivalence estimate from `git cherry`: `67` upstream commits appear already absorbed, `127` still appear unabsorbed.
+- Last local upstream snapshot checked: `upstream/master` at `26e867cc6` (`fix(core): route image requests to vision fallback (#8089)`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-05-28 and moved `upstream/master` from `ff28eca9c` to `26e867cc6`.
+- Git-only divergence at this snapshot: local-only `302`, upstream-only `148`.
+- Patch-equivalence estimate from `git cherry`: `115` upstream commits still appear unabsorbed after patch-equivalence filtering.
 
 Important interpretation:
 
@@ -196,6 +196,20 @@ New upstream commits since previous ledger baseline:
 
 | Upstream commit | Topic | Initial status | Notes |
 | --- | --- | --- | --- |
+| `2d786268` | SQLAlchemy compatibility on macOS | Needs review | Touches DB/FTS/document storage; keep with the knowledge-base storage/retrieval batch. |
+| `7ff58f29` | FAQ hard-refresh note | Skipped | Docs-only upstream FAQ note; not required for local Yakumo docs unless dashboard troubleshooting docs are refreshed. |
+| `000d638c` | QQ Official WebSocket docs typo | Skipped | Docs-only typo fix. |
+| `bc35daa1` | Restore mobile provider-source deletion | Needs review | Small WebUI fix, but check against local provider-source panel customizations before rewriting. |
+| `284c4082` | GitHub Actions dependency bump | Skipped | CI chore; skip unless preparing CI/release maintenance. |
+| `ae44163b` | Smooth markdown streaming | Needs review | WebUI rendering behavior; review against local ChatUI markdown/reasoning stream components. |
+| `23d70dbd` | Plugin card direct access and embedded page height | Needs review | Plugin WebUI UX; keep with plugin-page experience batch. |
+| `538772c3` | Xiaomi and Xiaomi Token Plan LLM providers | Deferred | New provider surface; review as a dedicated provider-add batch with config metadata and WebUI mapping. |
+| `89153fdf` | MiMo reasoning content compatibility | Absorbed | Rewritten locally in the OpenAI-compatible provider: assistant messages with `reasoning_content` are preserved by sanitization, and MiMo reasoning models receive empty `reasoning_content` on assistant history when missing. |
+| `465a685b` | EULA hint for first notification | Skipped | Product/legal first-notification UX; not part of this fork's current runtime sync. |
+| `85f9c4df` | MiMo voice-design TTS payload | Absorbed | Rewritten locally; `voicedesign` TTS models omit unsupported `audio.voice`, while regular TTS models still include it. |
+| `7f94bce3` | QQ Official split message chain by media | Deferred | Platform send semantics; review as a dedicated QQ Official media delivery batch with local respond-stage/postprocess behavior. |
+| `a221c74b` | Plugin metadata repo type guard | Absorbed | Rewritten locally by serializing plugin `repo` as a string in plugin list and detail responses. |
+| `26e867cc` | Image requests route to vision fallback | Absorbed | Rewritten locally in `build_main_agent`: image requests switch to the first configured fallback chat provider that explicitly supports `image`, preserving the local prompt pipeline and existing modality downgrade fallback. |
 | `5bbcdced` | Skip empty LLM summaries | Absorbed | Rewritten locally in `LLMSummaryCompressor`; empty or whitespace-only summaries now keep original history and log a warning. |
 | `de0a7afd` | pnpm action bump | Skipped | CI dependency chore; skip unless preparing CI/release maintenance. |
 | `7a9fb33d` | FAQ typo | Skipped | Docs-only upstream typo fix. |

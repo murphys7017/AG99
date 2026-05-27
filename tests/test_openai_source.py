@@ -1467,6 +1467,43 @@ async def test_query_filters_empty_assistant_message_without_tool_calls(monkeypa
         await provider.terminate()
 
 
+def test_sanitize_keeps_reasoning_only_assistant_message():
+    payloads = {
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "", "reasoning_content": "thinking"},
+        ],
+    }
+
+    ProviderOpenAIOfficial._sanitize_assistant_messages(payloads)
+
+    assert payloads["messages"] == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "", "reasoning_content": "thinking"},
+    ]
+
+
+def test_mimo_reasoning_model_adds_empty_reasoning_content_to_assistant_history():
+    provider = ProviderOpenAIOfficial.__new__(ProviderOpenAIOfficial)
+    provider.client = SimpleNamespace(base_url=SimpleNamespace(host="example.com"))
+    payloads = {
+        "model": "mimo-v2.5-pro",
+        "messages": [
+            {"role": "assistant", "content": "previous reply"},
+            {
+                "role": "assistant",
+                "content": "kept",
+                "reasoning_content": "existing",
+            },
+        ],
+    }
+
+    provider._finally_convert_payload(payloads)
+
+    assert payloads["messages"][0]["reasoning_content"] == ""
+    assert payloads["messages"][1]["reasoning_content"] == "existing"
+
+
 @pytest.mark.asyncio
 async def test_query_filters_null_content_assistant_message_without_tool_calls(
     monkeypatch,

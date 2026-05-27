@@ -331,6 +331,42 @@ async def test_plugin_get_excludes_scanned_pages(
 
 
 @pytest.mark.asyncio
+async def test_plugin_get_stringifies_non_string_repo(
+    app: Quart,
+    authenticated_header: dict,
+    registered_plugin_page: StarMetadata,
+):
+    registered_plugin_page.repo = 12345
+    test_client = app.test_client()
+    response = await test_client.get("/api/plugin/get", headers=authenticated_header)
+    assert response.status_code == 200
+    data = await response.get_json()
+
+    plugin = next(
+        item for item in data["data"] if item["name"] == PLUGIN_PAGE_DEMO_NAME
+    )
+    assert plugin["repo"] == "12345"
+
+
+@pytest.mark.asyncio
+async def test_plugin_detail_stringifies_non_string_repo(
+    app: Quart,
+    authenticated_header: dict,
+    registered_plugin_page: StarMetadata,
+):
+    registered_plugin_page.repo = 12345
+    test_client = app.test_client()
+    response = await test_client.get(
+        f"/api/plugin/detail?name={PLUGIN_PAGE_DEMO_NAME}",
+        headers=authenticated_header,
+    )
+    assert response.status_code == 200
+    data = await response.get_json()
+
+    assert data["data"]["repo"] == "12345"
+
+
+@pytest.mark.asyncio
 async def test_plugin_detail_includes_scanned_page_component(
     app: Quart,
     authenticated_header: dict,

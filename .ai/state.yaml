@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_medium_candidate_rewrite
-  scope: upstream sync rewrite for ChatUI command suggestions, update progress tracking, and automated MDI subset generation
+  phase: upstream_small_candidate_rewrite
+  scope: upstream sync rewrite for vision fallback, MiMo compatibility, and plugin repo metadata guard
 context:
   confidence: high
   assumptions:
@@ -12,15 +12,13 @@ context:
     - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
     - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
     - Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing.
-    - The current medium batch preserves local ChatUI and header layout customizations instead of replacing components with upstream versions.
-    - Dashboard MDI subset assets are generated at dev/build time and are no longer tracked in git.
+    - The current small batch preserves local prompt/render/interaction flow and only rewrites low-impact provider/dashboard guards.
+    - Image fallback selection should happen before local modality downgrade so configured image-capable fallback providers can receive image requests.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
-    - `/api/update/progress` exposes transient update progress keyed by `progress_id`.
-    - Updater/download helpers accept optional progress callbacks.
-    - ChatUI composer loads command suggestions from `/api/commands`.
+    - Image requests may switch from the selected chat provider to an image-capable fallback chat provider for the current request.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -36,7 +34,11 @@ verification:
     - pnpm --dir dashboard exec node scripts/subset-mdi-font.mjs
     - .venv\Scripts\python -m pytest tests/test_dashboard.py::test_do_update tests/unit/test_astr_main_agent.py::TestSelectProvider -q
     - .venv\Scripts\python -m ruff check astrbot/core/astr_main_agent.py astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py astrbot/core/updator.py astrbot/core/utils/io.py astrbot/core/zip_updator.py astrbot/dashboard/routes/update.py tests/test_dashboard.py tests/unit/test_astr_main_agent.py
-  checks_failed: []
-  validation_gap: Full backend suite not rerun for this medium dashboard/update batch; prior known unrelated tests/test_openai_source.py failures remain.
+    - .venv\Scripts\python -m pytest tests/test_mimo_api_sources.py::test_mimo_tts_voicedesign_model_omits_voice_param tests/test_mimo_api_sources.py::test_mimo_tts_regular_model_includes_voice_param tests/test_openai_source.py::test_sanitize_keeps_reasoning_only_assistant_message tests/test_openai_source.py::test_mimo_reasoning_model_adds_empty_reasoning_content_to_assistant_history tests/unit/test_astr_main_agent.py::test_provider_supports_modality_requires_explicit_list tests/unit/test_astr_main_agent.py::test_select_image_chat_provider_uses_image_fallback tests/unit/test_astr_main_agent.py::test_select_image_chat_provider_keeps_provider_without_image_fallback tests/test_dashboard.py::test_plugin_get_stringifies_non_string_repo tests/test_dashboard.py::test_plugin_detail_stringifies_non_string_repo -q
+    - .venv\Scripts\python -m ruff check astrbot/core/astr_main_agent.py astrbot/core/provider/sources/mimo_tts_api_source.py astrbot/core/provider/sources/openai_source.py astrbot/dashboard/routes/plugin.py tests/test_mimo_api_sources.py tests/test_openai_source.py tests/unit/test_astr_main_agent.py tests/test_dashboard.py
+    - git diff --check
+  checks_failed:
+    - .venv\Scripts\python -m pytest tests/test_mimo_api_sources.py tests/test_openai_source.py::test_query_filters_empty_assistant_message_without_tool_calls tests/test_openai_source.py::test_query_stream_filters_empty_assistant_message tests/test_openai_source.py::test_query_stream_extracts_usage_from_empty_choices_chunk tests/unit/test_astr_main_agent.py::TestBuildMainAgent::test_build_main_agent_with_images tests/test_dashboard.py::test_plugin_get_excludes_scanned_pages tests/test_dashboard.py::test_plugin_detail_includes_scanned_page_component -q
+  validation_gap: Full backend suite not rerun for this small upstream-sync batch. The broader related test command had one pre-existing dashboard assertion mismatch: `test_plugin_detail_includes_scanned_page_component` expects no `i18n_key`, while the current route includes it in page components. `git diff --check` emitted only CRLF working-copy warnings.
 runtime:
   mode: minimal_v1

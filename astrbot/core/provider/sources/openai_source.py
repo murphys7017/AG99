@@ -589,8 +589,9 @@ class ProviderOpenAIOfficial(Provider):
 
             content = msg.get("content")
             tool_calls = msg.get("tool_calls")
+            reasoning_content = msg.get("reasoning_content")
 
-            if _is_empty(content) and not tool_calls:
+            if _is_empty(content) and not tool_calls and not reasoning_content:
                 logger.warning(f"过滤第 {idx} 条空 assistant 消息 (无工具调用)")
                 continue
 
@@ -1050,6 +1051,14 @@ class ProviderOpenAIOfficial(Provider):
             or model.startswith("deepseek-v4")
             or "api.deepseek.com" in self.client.base_url.host
         )
+        mimo_reasoning_models = {
+            "mimo-v2.5-pro",
+            "mimo-v2.5",
+            "mimo-v2-pro",
+            "mimo-v2-omni",
+            "mimo-v2-flash",
+        }
+        is_mimo_reasoning = model in mimo_reasoning_models
 
         for message in payloads.get("messages", []):
             if message.get("role") == "assistant" and isinstance(
@@ -1072,10 +1081,10 @@ class ProviderOpenAIOfficial(Provider):
 
             if (
                 message.get("role") == "assistant"
-                and is_deepseek_v4_reasoning
+                and (is_deepseek_v4_reasoning or is_mimo_reasoning)
                 and "reasoning_content" not in message
             ):
-                # DeepSeek v4 reasoning models require the field on assistant
+                # DeepSeek v4 and MiMo reasoning models require the field on assistant
                 # history messages, even when the reasoning content is empty.
                 message["reasoning_content"] = ""
 
