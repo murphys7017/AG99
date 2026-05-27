@@ -1,10 +1,36 @@
 import asyncio
+import copy
+import json
+import os
 from pathlib import Path
 
 import click
 from filelock import FileLock, Timeout
 
 from ..utils import check_dashboard, get_astrbot_root
+from .cmd_conf import _validate_dashboard_password
+
+DASHBOARD_INITIAL_PASSWORD_ENV = "ASTRBOT_DASHBOARD_INITIAL_PASSWORD"
+
+
+def _initialize_config_from_env(astrbot_root: Path) -> None:
+    initial_password = os.environ.get(DASHBOARD_INITIAL_PASSWORD_ENV)
+    if initial_password is None:
+        return
+
+    config_path = astrbot_root / "data" / "cmd_config.json"
+    if config_path.exists():
+        return
+
+    from astrbot.core.config.default import DEFAULT_CONFIG
+
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["dashboard"]["password"] = _validate_dashboard_password(initial_password)
+    config_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2),
+        encoding="utf-8-sig",
+    )
+    click.echo("Initialized data/cmd_config.json with dashboard initial password.")
 
 
 async def initialize_astrbot(astrbot_root: Path) -> None:
@@ -30,6 +56,8 @@ async def initialize_astrbot(astrbot_root: Path) -> None:
     for name, path in paths.items():
         path.mkdir(parents=True, exist_ok=True)
         click.echo(f"{'Created' if not path.exists() else 'Directory exists'}: {path}")
+
+    _initialize_config_from_env(astrbot_root)
 
     await check_dashboard(astrbot_root / "data")
 
