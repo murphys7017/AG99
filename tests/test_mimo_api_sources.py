@@ -6,6 +6,7 @@ import pytest
 from astrbot.core.provider.sources.mimo_api_common import MiMoAPIError, build_headers
 from astrbot.core.provider.sources.mimo_stt_api_source import ProviderMiMoSTTAPI
 from astrbot.core.provider.sources.mimo_tts_api_source import ProviderMiMoTTSAPI
+from astrbot.core.provider.sources.minimax_tts_api_source import ProviderMiniMaxTTSAPI
 
 
 def _make_tts_provider(overrides: dict | None = None) -> ProviderMiMoTTSAPI:
@@ -33,6 +34,20 @@ def _make_stt_provider(overrides: dict | None = None) -> ProviderMiMoSTTAPI:
     if overrides:
         provider_config.update(overrides)
     return ProviderMiMoSTTAPI(provider_config=provider_config, provider_settings={})
+
+
+def _make_minimax_tts_provider(overrides: dict | None = None) -> ProviderMiniMaxTTSAPI:
+    provider_config = {
+        "id": "test-minimax-tts",
+        "type": "minimax_tts_api",
+        "model": "speech-02-hd",
+        "api_key": "test-key",
+        "minimax-group-id": "group-id",
+        "minimax-is-timber-weight": True,
+    }
+    if overrides:
+        provider_config.update(overrides)
+    return ProviderMiniMaxTTSAPI(provider_config=provider_config, provider_settings={})
 
 
 def test_mimo_tts_user_prompt_returns_seed_text():
@@ -163,6 +178,22 @@ def test_mimo_headers_use_single_authorization_method():
         "Content-Type": "application/json",
         "Authorization": "Bearer test-key",
     }
+
+
+def test_minimax_tts_empty_timber_weight_uses_default():
+    provider = _make_minimax_tts_provider({"minimax-timber-weight": ""})
+
+    body = provider._build_tts_stream_body("hello")
+
+    assert '"timber_weights": [{"voice_id": "Chinese (Mandarin)_Warm_Girl", "weight": 1}]' in body
+
+
+def test_minimax_tts_invalid_timber_weight_uses_default():
+    provider = _make_minimax_tts_provider({"minimax-timber-weight": "not-json"})
+
+    body = provider._build_tts_stream_body("hello")
+
+    assert '"timber_weights": [{"voice_id": "Chinese (Mandarin)_Warm_Girl", "weight": 1}]' in body
 
 
 @pytest.mark.asyncio

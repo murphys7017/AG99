@@ -257,6 +257,14 @@ New upstream commits since previous ledger baseline:
 | `f02845eb`/`3036a3f1` | CUA idle timeout config exposure | Absorbed | Present locally; `cua_idle_timeout` is the dashboard-exposed CUA lifecycle knob, while `cua_ttl` remains hidden from configurable metadata. |
 | `1b09132e`/`a1e4240d` | Shipyard Neo profile selection | Absorbed | Present locally; a non-empty configured profile is honored exactly, while an empty profile auto-selects the best available Bay profile and falls back to `python-default`. |
 | `eb69bf36`/`f9644946` | Shipyard Neo readiness gate and cleanup | Absorbed | Present locally; `ShipyardNeoBooter` waits for ready status, deletes failed/expired/timed-out sandboxes, closes clients on shutdown, and stale Neo booters are evicted with `delete_sandbox=True`. |
+| `3a1d6c8f` | `None` tool-call arguments | Absorbed | Present locally in the OpenAI-compatible completion parser and tool-loop runner; `None` arguments from providers are normalized to `{}` for no-parameter tools. |
+| `a09657e6` | MiniMax TTS timber-weight parsing | Absorbed | Present locally; empty or invalid `minimax-timber-weight` config falls back to a default timber-weight payload instead of crashing JSON parsing. |
+| `871b9327` | Tencent SILK magic-byte detection | Absorbed | Present locally; audio magic detection recognizes both standard `#!SILK_V3` and Tencent `\x02#!SILK_V3`, and `ensure_wav` routes SILK through the Tencent converter. |
+| `22ba831a` | Send-message missing path guard | Absorbed | Present locally; missing local/sandbox media paths return an error before constructing/sending message components, with component-specific path error text. |
+| `1d696264` | Active reply image passthrough | Absorbed | Present locally; active reply calls collect image components from the triggering message and pass them through `event.request_llm(..., image_urls=...)`. |
+| `d1059cd5` | Windows updater zip root normalization | Absorbed | Present locally; updater zip extraction normalizes archive roots and test coverage exercises Windows-style archive-root behavior. |
+| `116c66b5` | Blank-prompt KB retrieval skip | Absorbed | Present locally; main-agent build skips KB retrieval when prompt text is blank and no image inputs are present. |
+| `041c35c3` | Plugin install temp cleanup and failed-tracking guard | Absorbed | Present locally; repeated file installs that conflict with an existing plugin skip failed-plugin tracking and remove temporary `plugin_upload_*` directories. Current plugin install flow tests remain focused on dependency install behavior. |
 
 Simple batch review:
 
