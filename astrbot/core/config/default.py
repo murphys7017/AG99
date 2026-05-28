@@ -175,7 +175,7 @@ DEFAULT_CONFIG = {
             "shipyard_max_sessions": 10,
             "shipyard_neo_endpoint": "",
             "shipyard_neo_access_token": "",
-            "shipyard_neo_profile": "python-default",
+            "shipyard_neo_profile": "",
             "shipyard_neo_ttl": 3600,
             "cua_image": CUA_DEFAULT_CONFIG["image"],
             "cua_os_type": CUA_DEFAULT_CONFIG["os_type"],

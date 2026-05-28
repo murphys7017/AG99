@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: medium
-  phase: upstream_xiaomi_plugin_auth_cli_rewrite
-  scope: upstream sync rewrite for Xiaomi providers, plugin-system confirmations, and MD5-compatible auth CLI helpers
+  phase: upstream_kb_sandbox_status_audit
+  scope: upstream sync audit for knowledge-base retrieval/uploads and computer-use sandbox parity
 context:
   confidence: high
   assumptions:
@@ -16,6 +16,8 @@ context:
     - Xiaomi Token Plan should follow the existing token-plan pattern by injecting Authorization as a default custom header instead of introducing a separate auth path.
     - The auth CLI subset must remain compatible with the current WebUI login contract, where the frontend sends an MD5 password and backend compares it to `dashboard.password`.
     - Upstream PBKDF2/setup/login-protocol migration remains deferred until backend and WebUI auth can be changed together.
+    - Knowledge-base and sandbox upstream positives may remain visible in `git cherry` even when current local code already contains equivalent rewrites.
+    - The current pass updates the merge ledger when code is already equivalent; it does not rewrite working implementation unnecessarily.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -28,6 +30,8 @@ architecture:
     - Xiaomi OpenAI-compatible and Xiaomi Token Plan Anthropic-compatible LLM providers are now registered and exposed through provider templates/WebUI icons.
     - CLI initialization can seed `dashboard.password` from `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` without overwriting existing configs.
     - `astrbot password` now provides an MD5-compatible dashboard password helper and optional username update path.
+    - Knowledge-base sparse retrieval uses FTS5 when available and falls back to BM25; EPUB/RST/ADOC uploads and blank-prompt retrieval skip are present locally.
+    - Computer-use sandbox behavior includes CUA native upload/write fallback, CUA idle expiry, CUA idle-timeout config exposure, Shipyard Neo explicit/auto profile handling, and readiness/cleanup guards.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -63,8 +67,12 @@ verification:
     - .venv\Scripts\python -m ruff check tests/test_plugin_manager.py docs/Yakumo/upstream-merge-ledger.md
     - .venv\Scripts\python -m pytest tests/test_cli_init.py tests/test_cli_password.py -q
     - .venv\Scripts\python -m ruff check astrbot/cli/commands/cmd_init.py astrbot/cli/commands/cmd_password.py astrbot/cli/commands/__init__.py astrbot/cli/__main__.py tests/test_cli_init.py tests/test_cli_password.py
+    - .venv\Scripts\python -m pytest tests/unit/test_document_storage_fts.py tests/unit/test_sparse_retriever.py tests/test_epub_parser.py tests/test_computer_fs_tools.py::test_file_read_tool_reads_epub_via_parser_and_magic tests/unit/test_cua_computer_use.py::test_cua_idle_timeout_shuts_down_session_proactively tests/unit/test_cua_computer_use.py::test_cua_idle_timeout_refreshes_on_reuse tests/unit/test_cua_computer_use.py::test_cua_idle_timeout_zero_disables_proactive_shutdown tests/unit/test_cua_computer_use.py::test_cua_upload_file_prefers_native_files_upload tests/unit/test_cua_computer_use.py::test_cua_upload_file_uses_native_write_bytes_when_upload_missing tests/unit/test_cua_computer_use.py::test_cua_upload_file_fallback_rejects_non_posix_os_type tests/test_shipyard_neo_booter.py tests/test_profile_aware_tools.py -q
+    - .venv\Scripts\python -m ruff check astrbot/core/config/default.py tests/test_profile_aware_tools.py docs/Yakumo/upstream-merge-ledger.md astrbot/core/db/vec_db/faiss_impl/document_storage.py astrbot/core/knowledge_base/retrieval/sparse_retriever.py astrbot/core/knowledge_base/parsers/epub_parser.py astrbot/core/computer/computer_client.py astrbot/core/computer/booters/cua.py astrbot/core/computer/booters/shipyard_neo.py
+    - pnpm --dir dashboard typecheck
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
-  validation_gap: Full backend suite, live provider calls, and the deferred PBKDF2/WebUI login migration were not run for this upstream-sync batch. `git diff --check` emitted only CRLF working-copy warnings in earlier checks.
+    - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
+  validation_gap: Full backend suite, live provider calls, live sandbox backends, and the deferred PBKDF2/WebUI login migration were not run. The current knowledge-base/sandbox pass was validated with targeted tests, ruff, and dashboard typecheck.
 runtime:
   mode: minimal_v1

@@ -86,8 +86,8 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 | Platform adapters and outbound media | Mostly absorbed | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, QQ Official markdown/send fixes, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin OC send failure/session timeout, Telegram media group logging, Discord command-sync quota handling, QQ Official markdown/active-push fixes, KOOK role mentions, message-tool path handling, and Dingtalk/Lark/Weixin OC one-click QR registration were absorbed. | Re-check only when new upstream platform adapter commits appear; remaining platform `git cherry` positives in this snapshot are rewrite-equivalent. |
 | Dashboard UX and WebUI | In progress | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX, stale `data/dist` fallback | IME, console, upload sanitization, provider test feedback, provider config panel/model-add flow, T2I template error feedback, Baidu search-key visibility, bundled dashboard fallback for stale `data/dist`, Noto Sans Cyrillic font stack, and always-visible outlined action buttons were absorbed. Inline edit/regenerate remains intentionally deferred. | Review initial password UX because it has backend auth-policy implications; keep larger plugin/dashboard features separate. |
 | Plugin system | Mostly absorbed | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Dynamic plugin Web API routing, plugin page i18n bridge/context, plugin changelog/readme surfaces, update download URLs, basic `pages` metadata, and install cleanup are absorbed. | Re-check only if later upstream adds new plugin runtime surfaces beyond the current page/API/update paths. |
-| Knowledge base and retrieval | Deferred | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, Firecrawl search tools | Firecrawl config/tool hook had been absorbed in the earlier review; FTS5/EPUB remain deferred due storage/retrieval impact. | Review blank-prompt skip as a small bugfix; keep FTS5/EPUB as a dedicated migration task. |
-| Computer use / sandbox | In progress | Shipyard profile selection, readiness gate, idle sandbox expiry, sandbox image download delivery | Explicit/auto Shipyard profile behavior was absorbed. | Review readiness gate, graceful cleanup, idle expiry, and sandbox image download behavior together. |
+| Knowledge base and retrieval | Mostly absorbed | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, RST/ADOC upload, Firecrawl search tools | FTS5 sparse retrieval with BM25 fallback, EPUB parser/upload/read support, RST/ADOC upload support, blank-prompt KB retrieval skip, and Firecrawl config/tool hook are absorbed. | Re-check only if later upstream changes retrieval ranking/storage semantics or adds new document formats. |
+| Computer use / sandbox | Mostly absorbed | Shipyard profile selection, readiness gate, idle sandbox expiry, CUA native upload, sandbox image download delivery | CUA runtime, native file upload/write fallback, idle timeout cleanup, WebUI idle-timeout config, explicit/auto Shipyard Neo profile behavior, readiness gate, stale sandbox cleanup, and sandbox image download delivery are absorbed. | Re-check only if later upstream changes sandbox lifecycle, capability contracts, or CUA SDK compatibility. |
 | Auth, CLI, deployment, update | Partially absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC), update progress tracking/dialog, MD5-compatible initial dashboard password env support for CLI init, and an `astrbot password` CLI helper were absorbed. Broad dashboard password policy/PBKDF2 setup and deploy scripts remain deferred. | Review deploy scripts separately; only revisit auth when ready for a coordinated backend/WebUI login-protocol migration. |
 | Docs, version bumps, dependency chores | Mostly skipped | Version bumps, README/docs URL updates, pnpm action bumps, release instructions | Usually skipped unless they affect this fork's docs or release process. | Keep version/chore commits out of functional sync unless preparing a release. |
 
@@ -214,6 +214,9 @@ New upstream commits since previous ledger baseline:
 | `de0a7afd` | pnpm action bump | Skipped | CI dependency chore; skip unless preparing CI/release maintenance. |
 | `7a9fb33d` | FAQ typo | Skipped | Docs-only upstream typo fix. |
 | `c4693fa6` | RST/ADOC knowledge uploads | Absorbed | Rewritten locally as a narrow upload/parser whitelist update using existing `MarkitdownParser`, with WebUI accept/i18n/icon hints. |
+| `a38e9881`/`35245519` | FTS5 sparse knowledge retrieval | Absorbed | Present locally in `DocumentStorage` and `SparseRetriever`: contentless FTS5 index creation/rebuild/search is used when available, with in-memory BM25 fallback when FTS5 is unavailable. Unit coverage exists in `tests/unit/test_document_storage_fts.py` and `tests/unit/test_sparse_retriever.py`. |
+| `c2aeeac4`/`d9ab3534` | Legacy `documents_fts` recovery | Absorbed | Present locally; startup validates the `documents_fts` virtual table, recreates invalid legacy non-FTS tables, and tests cover recovery. |
+| `e852e906`/`76ee4f27` | EPUB knowledge upload support | Absorbed | Present locally via `EpubParser`, parser selection for `.epub`, dashboard upload accept/i18n, file-read EPUB support, and parser/file-read tests. |
 | `16593354` | Automated MDI subset generation | Absorbed | Rewritten locally; dashboard dev/build scripts now generate the MDI subset before Vite, and generated subset assets are ignored instead of tracked. |
 | `d15606d2` | Dashboard password CLI command | Absorbed | Rewritten locally as an MD5-compatible `astrbot password` command that reuses current `cmd_conf` validation/storage behavior and can optionally update the dashboard username. It intentionally does not introduce upstream PBKDF2/setup state. |
 | `0e6ad1c` | CLI initial dashboard password env | Absorbed | Rewritten locally for the current MD5 login architecture: `astrbot init` creates `data/cmd_config.json` from defaults with `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` hashed into `dashboard.password`, and does not overwrite an existing config. |
@@ -249,6 +252,11 @@ New upstream commits since previous ledger baseline:
 | `fd4fe843` | Docs fix | Skipped | Docs-only unless it affects local Yakumo docs. |
 | `dcc99e6b` | ChatUI command suggestions | Absorbed | Rewritten locally against the customized ChatUI; slash-command suggestions load from `/api/commands`, composer focus is restored after chat actions, and provider-selection failures now send a visible LLM error message. |
 | `ff28eca9` | OpenAI streaming usage preservation | Absorbed | Rewritten locally; final usage chunks with `choices=[]` are still passed to stream state. |
+| `5745ce5b`/`24bb25c6` | CUA native file upload interfaces | Absorbed | Present locally; `CuaBooter.upload_file` prefers sandbox/native `upload_file`, then `files.upload`, then `files.write_bytes`, with POSIX shell/base64 fallback only when native APIs are unavailable. Tests cover native upload, write-bytes fallback, native failure propagation, shell quoting, and non-POSIX rejection. |
+| `49cd4d2a`/`5115f112` | CUA idle sandbox expiry | Absorbed | Present locally; `computer_client` tracks per-session CUA idle state, refreshes expiry on reuse, shuts down idle CUA sandboxes proactively, and leaves non-CUA booters unscheduled. |
+| `f02845eb`/`3036a3f1` | CUA idle timeout config exposure | Absorbed | Present locally; `cua_idle_timeout` is the dashboard-exposed CUA lifecycle knob, while `cua_ttl` remains hidden from configurable metadata. |
+| `1b09132e`/`a1e4240d` | Shipyard Neo profile selection | Absorbed | Present locally; a non-empty configured profile is honored exactly, while an empty profile auto-selects the best available Bay profile and falls back to `python-default`. |
+| `eb69bf36`/`f9644946` | Shipyard Neo readiness gate and cleanup | Absorbed | Present locally; `ShipyardNeoBooter` waits for ready status, deletes failed/expired/timed-out sandboxes, closes clients on shutdown, and stale Neo booters are evicted with `delete_sandbox=True`. |
 
 Simple batch review:
 
@@ -541,13 +549,13 @@ Main affected areas:
 - `astrbot/core/knowledge_base/parsers/**`
 - dashboard knowledge-base upload UI
 
-Reason:
+Current status:
 
-Both are valuable knowledge-base features, but they touch retrieval/storage behavior and dependencies. They should be evaluated separately from prompt pipeline merging, especially because the fork already has local KB caching in prompt collection.
+Absorbed after later review. Current local code includes FTS5-backed sparse retrieval with BM25 fallback, legacy `documents_fts` recovery, EPUB parser/upload/read support, blank-prompt KB retrieval skip, and RST/ADOC upload support.
 
 Revisit if:
 
-Knowledge-base retrieval quality or EPUB upload support becomes a current priority. Merge with storage migration and retrieval tests.
+Upstream later changes retrieval ranking/storage semantics, adds a new document format, or introduces a migration that conflicts with local prompt KB caching.
 
 #### `/stats` Command and WebUI Stats Feature Expansion
 
