@@ -3,6 +3,7 @@ import click
 from .cmd_conf import (
     _load_config,
     _save_config,
+    _set_dashboard_password,
     _set_nested_item,
     _validate_dashboard_password,
     _validate_dashboard_username,
@@ -23,8 +24,8 @@ def password(username: str | None) -> None:
         hide_input=True,
         confirmation_prompt=True,
     )
-    password_hash = _validate_dashboard_password(new_password)
-    _set_nested_item(config, "dashboard.password", password_hash)
+    validated_password = _validate_dashboard_password(new_password)
+    _set_dashboard_password(config, validated_password)
 
     if username is not None:
         validated_username = _validate_dashboard_username(username.strip())

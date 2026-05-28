@@ -1,8 +1,8 @@
 task:
   class: feature
-  risk: medium
-  phase: upstream_runtime_media_tool_parity
-  scope: upstream sync audit and coverage for runtime, media, and message-tool parity fixes
+  risk: high
+  phase: upstream_auth_parity
+  scope: coordinated dashboard auth storage, setup, WebUI login, CLI, and config migration
 context:
   confidence: high
   assumptions:
@@ -11,11 +11,13 @@ context:
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
     - "Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists."
     - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
-    - Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing.
+    - "Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing."
     - "The current batch keeps provider prompt-renderer boundaries explicit: Xiaomi standard API is OpenAI-compatible, Xiaomi Token Plan is Anthropic-compatible."
     - Xiaomi Token Plan should follow the existing token-plan pattern by injecting Authorization as a default custom header instead of introducing a separate auth path.
-    - The auth CLI subset must remain compatible with the current WebUI login contract, where the frontend sends an MD5 password and backend compares it to `dashboard.password`.
-    - Upstream PBKDF2/setup/login-protocol migration remains deferred until backend and WebUI auth can be changed together.
+    - Dashboard auth migration must change backend and WebUI login protocol together; frontend login now sends plaintext password for PBKDF2/legacy verification.
+    - Existing legacy MD5 configs should remain recoverable by logging in with the real plaintext password, but the stored MD5 string itself must not authenticate.
+    - "`dashboard.password` is retained as a legacy compatibility hash while `dashboard.pbkdf2_password` is the upgraded storage path."
+    - "First-use empty dashboard passwords should be replaced with a generated or `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` password and require setup/change before normal use."
     - Knowledge-base and sandbox upstream positives may remain visible in `git cherry` even when current local code already contains equivalent rewrites.
     - The current pass updates the merge ledger when code is already equivalent; it does not rewrite working implementation unnecessarily.
     - Runtime/media/message-tool upstream positives should be absorbed by confirming existing local behavior and adding focused tests where coverage is missing.
@@ -30,12 +32,15 @@ architecture:
     - Plugin list responses now include lightweight `pages` names for direct WebUI entry buttons.
     - QQ Official outgoing messages are split into one-media chunks for both event replies and proactive session sends.
     - Xiaomi OpenAI-compatible and Xiaomi Token Plan Anthropic-compatible LLM providers are now registered and exposed through provider templates/WebUI icons.
-    - "CLI initialization can seed `dashboard.password` from `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` without overwriting existing configs."
-    - "`astrbot password` now provides an MD5-compatible dashboard password helper and optional username update path."
+    - "CLI initialization can seed PBKDF2 and legacy dashboard password hashes from `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` without overwriting existing configs."
+    - "`astrbot password` now writes PBKDF2 plus legacy dashboard password hashes and can optionally update the dashboard username."
+    - Dashboard login/setup routes now expose setup status, authenticated setup completion, legacy password hints, and password-upgrade hints.
+    - Dashboard account-edit UI now sends plaintext current/new passwords to match the PBKDF2 backend verification path.
     - Knowledge-base sparse retrieval uses FTS5 when available and falls back to BM25; EPUB/RST/ADOC uploads and blank-prompt retrieval skip are present locally.
     - Computer-use sandbox behavior includes CUA native upload/write fallback, CUA idle expiry, CUA idle-timeout config exposure, Shipyard Neo explicit/auto profile handling, and readiness/cleanup guards.
     - Media conversion recognizes Tencent SILK magic bytes, MiniMax TTS timber weights tolerate empty/bad config, send_message_to_user fails closed on missing media paths, and no-parameter tool calls tolerate `None` arguments.
     - NVIDIA and Ollama embedding providers are already available locally through provider sources, provider manager registration, and default config templates.
+    - Dashboard auth now uses PBKDF2 storage with legacy MD5 migration compatibility; WebUI login and account edit send plaintext passwords, while setup page handles required password changes.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -77,10 +82,17 @@ verification:
     - .venv\Scripts\python -m pytest tests/test_media_utils.py tests/test_mimo_api_sources.py::test_minimax_tts_empty_timber_weight_uses_default tests/test_mimo_api_sources.py::test_minimax_tts_invalid_timber_weight_uses_default tests/unit/test_message_tools.py::test_send_message_missing_image_path_stops_before_send tests/test_openai_source.py::test_parse_openai_completion_raises_empty_model_output_error -q
     - .venv\Scripts\python -m ruff check tests/test_media_utils.py tests/test_mimo_api_sources.py tests/unit/test_message_tools.py docs/Yakumo/upstream-merge-ledger.md astrbot/core/utils/media_utils.py astrbot/core/provider/sources/minimax_tts_api_source.py astrbot/core/tools/message_tools.py astrbot/core/provider/sources/openai_source.py astrbot/core/agent/runners/tool_loop_agent_runner.py
     - .venv\Scripts\python -m pytest tests/test_media_utils.py tests/test_mimo_api_sources.py::test_minimax_tts_empty_timber_weight_uses_default tests/test_mimo_api_sources.py::test_minimax_tts_invalid_timber_weight_uses_default tests/unit/test_message_tools.py::test_send_message_missing_image_path_stops_before_send tests/test_openai_source.py::test_parse_openai_completion_raises_empty_model_output_error tests/test_updator_socks.py::test_repo_unzip_file_normalizes_windows_extended_length_paths tests/test_updator_socks.py::test_plugin_unzip_file_normalizes_windows_extended_length_paths tests/test_updator_socks.py::test_repo_unzip_file_rejects_archive_roots_outside_target_dir tests/test_updator_socks.py::test_repo_unzip_file_handles_archives_without_explicit_root_dir_entry -q
+    - .venv\Scripts\python -m py_compile astrbot\core\utils\auth_password.py astrbot\dashboard\password_state.py astrbot\dashboard\routes\auth.py astrbot\dashboard\routes\stat.py astrbot\dashboard\server.py astrbot\cli\commands\cmd_conf.py astrbot\cli\commands\cmd_init.py astrbot\cli\commands\cmd_password.py
+    - .venv\Scripts\python -m pytest tests\test_cli_init.py tests\test_cli_password.py tests\unit\test_config.py tests\test_dashboard.py tests\test_api_key_open_api.py tests\test_kb_import.py -q
+    - .venv\Scripts\python -m ruff check astrbot/core/utils/auth_password.py astrbot/dashboard/password_state.py astrbot/dashboard/routes/auth.py astrbot/dashboard/routes/stat.py astrbot/dashboard/server.py astrbot/dashboard/routes/static_file.py astrbot/core/config/astrbot_config.py astrbot/core/config/default.py astrbot/cli/commands/cmd_conf.py astrbot/cli/commands/cmd_init.py astrbot/cli/commands/cmd_password.py tests/test_dashboard.py tests/test_api_key_open_api.py tests/test_kb_import.py tests/test_cli_init.py tests/test_cli_password.py tests/unit/test_config.py
+    - pnpm --dir dashboard typecheck
+    - JSON parse check for dashboard auth and header locale files
+    - YAML parse check for .ai/state.yaml
+    - git diff --check
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.
-  validation_gap: Full backend suite, live provider calls, live sandbox backends, and the deferred PBKDF2/WebUI login migration were not run. The current knowledge-base/sandbox pass was validated with targeted tests, ruff, and dashboard typecheck.
+  validation_gap: Full backend suite, live provider calls, live sandbox backends, and browser manual setup flow were not run. The auth migration was validated with targeted backend/config/CLI/dashboard/API/KB tests, ruff, dashboard typecheck, and diff checks.
 runtime:
   mode: minimal_v1

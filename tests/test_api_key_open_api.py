@@ -11,8 +11,11 @@ from werkzeug.datastructures import FileStorage
 from astrbot.core import LogBroker
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db.sqlite import SQLiteDatabase
+from astrbot.dashboard.password_state import set_dashboard_password_hashes
 from astrbot.dashboard.routes.route import Response
 from astrbot.dashboard.server import AstrBotDashboard
+
+TEST_DASHBOARD_PASSWORD = "AstrbotTest123"
 
 
 def _get_open_api_route(app: Quart):
@@ -54,6 +57,10 @@ async def core_lifecycle_td(tmp_path_factory):
     log_broker = LogBroker()
     core_lifecycle = AstrBotCoreLifecycle(log_broker, db)
     await core_lifecycle.initialize()
+    set_dashboard_password_hashes(
+        core_lifecycle.astrbot_config,
+        TEST_DASHBOARD_PASSWORD,
+    )
     try:
         yield core_lifecycle
     finally:
@@ -76,12 +83,12 @@ def app(core_lifecycle_td: AstrBotCoreLifecycle):
 async def authenticated_header(app: Quart, core_lifecycle_td: AstrBotCoreLifecycle):
     test_client = app.test_client()
     response = await test_client.post(
-        "/api/auth/login",
-        json={
-            "username": core_lifecycle_td.astrbot_config["dashboard"]["username"],
-            "password": core_lifecycle_td.astrbot_config["dashboard"]["password"],
-        },
-    )
+            "/api/auth/login",
+            json={
+                "username": core_lifecycle_td.astrbot_config["dashboard"]["username"],
+                "password": TEST_DASHBOARD_PASSWORD,
+            },
+        )
     data = await response.get_json()
     token = data["data"]["token"]
     return {"Authorization": f"Bearer {token}"}

@@ -8,6 +8,7 @@ class StaticFileRoute(Route):
         index_ = [
             "/",
             "/auth/login",
+            "/auth/setup",
             "/config",
             "/logs",
             "/extension",

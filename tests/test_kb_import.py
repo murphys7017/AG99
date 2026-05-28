@@ -11,8 +11,11 @@ from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.exceptions import KnowledgeBaseUploadError
 from astrbot.core.knowledge_base.kb_helper import KBHelper
 from astrbot.core.knowledge_base.models import KBDocument
+from astrbot.dashboard.password_state import set_dashboard_password_hashes
 from astrbot.dashboard.routes.knowledge_base import KnowledgeBaseRoute
 from astrbot.dashboard.server import AstrBotDashboard
+
+TEST_DASHBOARD_PASSWORD = "AstrbotTest123"
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -23,6 +26,10 @@ async def core_lifecycle_td(tmp_path_factory):
     log_broker = LogBroker()
     core_lifecycle = AstrBotCoreLifecycle(log_broker, db)
     await core_lifecycle.initialize()
+    set_dashboard_password_hashes(
+        core_lifecycle.astrbot_config,
+        TEST_DASHBOARD_PASSWORD,
+    )
 
     # Mock kb_manager and kb_helper
     kb_manager = MagicMock()
@@ -71,12 +78,12 @@ async def authenticated_header(app: Quart, core_lifecycle_td: AstrBotCoreLifecyc
     """Handles login and returns an authenticated header."""
     test_client = app.test_client()
     response = await test_client.post(
-        "/api/auth/login",
-        json={
-            "username": core_lifecycle_td.astrbot_config["dashboard"]["username"],
-            "password": core_lifecycle_td.astrbot_config["dashboard"]["password"],
-        },
-    )
+            "/api/auth/login",
+            json={
+                "username": core_lifecycle_td.astrbot_config["dashboard"]["username"],
+                "password": TEST_DASHBOARD_PASSWORD,
+            },
+        )
     data = await response.get_json()
     assert data["status"] == "ok"
     token = data["data"]["token"]
