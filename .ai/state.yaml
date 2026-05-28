@@ -9,31 +9,33 @@ context:
     - Upstream sync should continue by topic rewrite, not broad merge.
     - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
-    - Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists.
+    - "Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists."
     - WebUI font stack polish is limited to existing global Sass variables and does not change app routing or component behavior.
     - Several remaining `git cherry +` commits are functionally present by local rewrites; ledger entries are needed to avoid re-reviewing them as missing.
-    - The current batch keeps provider prompt-renderer boundaries explicit: Xiaomi standard API is OpenAI-compatible, Xiaomi Token Plan is Anthropic-compatible.
+    - "The current batch keeps provider prompt-renderer boundaries explicit: Xiaomi standard API is OpenAI-compatible, Xiaomi Token Plan is Anthropic-compatible."
     - Xiaomi Token Plan should follow the existing token-plan pattern by injecting Authorization as a default custom header instead of introducing a separate auth path.
     - The auth CLI subset must remain compatible with the current WebUI login contract, where the frontend sends an MD5 password and backend compares it to `dashboard.password`.
     - Upstream PBKDF2/setup/login-protocol migration remains deferred until backend and WebUI auth can be changed together.
     - Knowledge-base and sandbox upstream positives may remain visible in `git cherry` even when current local code already contains equivalent rewrites.
     - The current pass updates the merge ledger when code is already equivalent; it does not rewrite working implementation unnecessarily.
     - Runtime/media/message-tool upstream positives should be absorbed by confirming existing local behavior and adding focused tests where coverage is missing.
+    - Remaining version, CI, README, and broad docs churn should be classified in the ledger instead of copied into this fork's runtime sync.
   unresolved_questions: []
 architecture:
   stability: stable
   boundary_changes:
     - SQLite async engines now use NullPool and connect-time PRAGMAs in core and knowledge-base DB paths.
-    - `documents.doc_id` now gets a guarded unique index migration when no duplicate legacy IDs exist.
+    - "`documents.doc_id` now gets a guarded unique index migration when no duplicate legacy IDs exist."
     - Dashboard markdown rendering receives streaming state for smooth incremental output.
     - Plugin list responses now include lightweight `pages` names for direct WebUI entry buttons.
     - QQ Official outgoing messages are split into one-media chunks for both event replies and proactive session sends.
     - Xiaomi OpenAI-compatible and Xiaomi Token Plan Anthropic-compatible LLM providers are now registered and exposed through provider templates/WebUI icons.
-    - CLI initialization can seed `dashboard.password` from `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` without overwriting existing configs.
-    - `astrbot password` now provides an MD5-compatible dashboard password helper and optional username update path.
+    - "CLI initialization can seed `dashboard.password` from `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` without overwriting existing configs."
+    - "`astrbot password` now provides an MD5-compatible dashboard password helper and optional username update path."
     - Knowledge-base sparse retrieval uses FTS5 when available and falls back to BM25; EPUB/RST/ADOC uploads and blank-prompt retrieval skip are present locally.
     - Computer-use sandbox behavior includes CUA native upload/write fallback, CUA idle expiry, CUA idle-timeout config exposure, Shipyard Neo explicit/auto profile handling, and readiness/cleanup guards.
     - Media conversion recognizes Tencent SILK magic bytes, MiniMax TTS timber weights tolerate empty/bad config, send_message_to_user fails closed on missing media paths, and no-parameter tool calls tolerate `None` arguments.
+    - NVIDIA and Ollama embedding providers are already available locally through provider sources, provider manager registration, and default config templates.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q

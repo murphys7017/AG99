@@ -265,6 +265,13 @@ New upstream commits since previous ledger baseline:
 | `d1059cd5` | Windows updater zip root normalization | Absorbed | Present locally; updater zip extraction normalizes archive roots and test coverage exercises Windows-style archive-root behavior. |
 | `116c66b5` | Blank-prompt KB retrieval skip | Absorbed | Present locally; main-agent build skips KB retrieval when prompt text is blank and no image inputs are present. |
 | `041c35c3` | Plugin install temp cleanup and failed-tracking guard | Absorbed | Present locally; repeated file installs that conflict with an existing plugin skip failed-plugin tracking and remove temporary `plugin_upload_*` directories. Current plugin install flow tests remain focused on dependency install behavior. |
+| `7d402fa1` | NVIDIA and Ollama embedding providers | Absorbed | Rewritten locally before this pass; `nvidia_embedding_source.py` and `ollama_embedding_source.py` are registered in provider manager, exposed in default config templates, and NVIDIA embedding has `input_type` metadata. |
+| `010e6d2e`/`39386eeb`/`989cc0d6`/`c4810804`/`c77cb0f4`/`02291a32`/`d609f23b` | Version bumps and changelogs | Skipped | Version/changelog churn is not used as functional sync proof for this fork; keep out unless preparing a release boundary. |
+| `4bcaaab4`/`1d3f54ca` | GitHub Actions dependency bumps | Skipped | CI chore; skip unless refreshing CI/release maintenance. |
+| `9165278d`/`77fa0e46` | README contributor/Trendshift image updates | Skipped | Repository-presentation docs only; not required for local runtime sync. |
+| `942dcdfc`/`bd9aade8`/`cb90de75`/`ef73d2da` | General upstream docs corrections | Skipped | Docs-only upstream cleanup; local Yakumo/runtime docs are maintained separately unless the content affects current fork behavior. |
+| `48e111e4` | Remove upstream-only test | Skipped | Test-churn only; no local runtime behavior to absorb. |
+| `37d61592`/`7d72e3a9`/`2d6f5e64`/`4672a04e` | Random initial password docs/messages | Deferred | Tied to the upstream PBKDF2/random-first-login migration, which this fork has not adopted. Revisit with the coordinated auth migration only. |
 
 Simple batch review:
 
