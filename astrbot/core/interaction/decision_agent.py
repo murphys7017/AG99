@@ -173,11 +173,11 @@ def extract_interaction_decision_payload(
     )
     if tool_payload is not None:
         return tool_payload
-    if _should_disallow_text_fallback(output_contract):
-        return None
     payload = _extract_json_object(text)
     if payload is not None:
         return payload
+    if _should_disallow_text_fallback(output_contract):
+        return None
     return _extract_function_call_decision_payload(text)
 
 

@@ -39,8 +39,8 @@ class MiniMaxPromptRenderer(BasePromptRenderer):
         return "minimax"
 
     def resolve_output_contract_strategy(self, contract: OutputContract) -> str:
-        # MiniMax Anthropic-compatible API does not properly support tool_use blocks.
-        # Use prompt_only so the model receives the JSON schema via text instruction.
+        # MiniMax Token Plan does not reliably obey Anthropic tool_use forcing.
+        # Use prompt_only so strict callers can parse the requested JSON shape.
         return "prompt_only"
 
     def _compile_system_prompt(self, prompt_tree: PromptBuilder) -> str | None:

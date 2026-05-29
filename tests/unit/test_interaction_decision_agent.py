@@ -136,7 +136,7 @@ def test_extract_interaction_decision_payload_prefers_tool_call_payload():
     assert payload["route_mode"] == "self_reply"
 
 
-def test_extract_interaction_decision_payload_rejects_text_fallback_when_strict():
+def test_extract_interaction_decision_payload_accepts_text_json_fallback():
     payload = extract_interaction_decision_payload(
         json.dumps(
             {
@@ -148,6 +148,17 @@ def test_extract_interaction_decision_payload_rejects_text_fallback_when_strict(
             },
             ensure_ascii=False,
         ),
+        llm_response=LLMResponse(role="assistant", completion_text="普通文本"),
+        output_contract=build_interaction_decision_output_contract(),
+    )
+
+    assert payload is not None
+    assert payload["route_mode"] == "self_reply"
+
+
+def test_extract_interaction_decision_payload_rejects_plain_text_fallback():
+    payload = extract_interaction_decision_payload(
+        "中文本来就很好啊，你这不废话吗。",
         llm_response=LLMResponse(role="assistant", completion_text="普通文本"),
         output_contract=build_interaction_decision_output_contract(),
     )
@@ -601,7 +612,7 @@ async def test_decision_agent_prefers_tool_call_output_when_contract_enabled():
 
 
 @pytest.mark.asyncio
-async def test_decision_agent_rejects_prompt_only_contract_for_high_constraint_scene():
+async def test_decision_agent_accepts_prompt_only_contract_with_text_json_fallback():
     event = DummyEvent()
     event.set_extra("_turn_id", "turn-1")
     event.message_obj = MagicMock()
@@ -624,8 +635,29 @@ async def test_decision_agent_rejects_prompt_only_contract_for_high_constraint_s
     config = InteractionAgentConfig(decision_provider_id="provider-1")
     agent = InteractionDecisionAgent(InteractionMemoryStore())
 
-    with patch("astrbot.core.interaction.decision_agent.Provider", new=object):
-        with pytest.raises(InteractionDecisionError) as exc_info:
-            await agent.decide(event, plugin_context, config)
-    assert exc_info.value.reason == "model_error"
-    assert "protocol_tool_call output contract" in str(exc_info.value)
+    with (
+        patch("astrbot.core.interaction.decision_agent.Provider", new=object),
+        patch(
+            "astrbot.core.interaction.decision_agent.call_decision_model",
+            new=AsyncMock(
+                return_value=LLMResponse(
+                    role="assistant",
+                    completion_text=json.dumps(
+                        {
+                            "route_mode": "self_reply",
+                            "should_emit_immediate_reply": True,
+                            "immediate_spoken_reply": "嗯。",
+                            "confidence": 0.9,
+                            "reason": "ok",
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            ),
+        ),
+    ):
+        decision = await agent.decide(event, plugin_context, config)
+
+    assert decision.route_mode == RouteMode.SELF_REPLY
+    render_result = event.get_extra("_interaction_prompt_render_result")
+    assert render_result.compiled_output_contract.strategy == "prompt_only"
