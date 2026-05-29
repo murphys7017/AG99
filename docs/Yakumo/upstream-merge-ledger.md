@@ -88,8 +88,8 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 | Plugin system | Mostly absorbed | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup | Dynamic plugin Web API routing, plugin page i18n bridge/context, plugin changelog/readme surfaces, update download URLs, basic `pages` metadata, and install cleanup are absorbed. | Re-check only if later upstream adds new plugin runtime surfaces beyond the current page/API/update paths. |
 | Knowledge base and retrieval | Mostly absorbed | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, RST/ADOC upload, Firecrawl search tools | FTS5 sparse retrieval with BM25 fallback, EPUB parser/upload/read support, RST/ADOC upload support, blank-prompt KB retrieval skip, and Firecrawl config/tool hook are absorbed. | Re-check only if later upstream changes retrieval ranking/storage semantics or adds new document formats. |
 | Computer use / sandbox | Mostly absorbed | Shipyard profile selection, readiness gate, idle sandbox expiry, CUA native upload, sandbox image download delivery | CUA runtime, native file upload/write fallback, idle timeout cleanup, WebUI idle-timeout config, explicit/auto Shipyard Neo profile behavior, readiness gate, stale sandbox cleanup, and sandbox image download delivery are absorbed. | Re-check only if later upstream changes sandbox lifecycle, capability contracts, or CUA SDK compatibility. |
-| Auth, CLI, deployment, update | Partially absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC), update progress tracking/dialog, PBKDF2 dashboard password storage/setup flow, core and CLI initial password env support, and `astrbot password` were absorbed. Deploy scripts remain deferred. | Review deploy scripts separately. |
-| Docs, version bumps, dependency chores | Mostly skipped | Version bumps, README/docs URL updates, pnpm action bumps, release instructions | Usually skipped unless they affect this fork's docs or release process. | Keep version/chore commits out of functional sync unless preparing a release. |
+| Auth, CLI, deployment, update | Mostly absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC), update progress tracking/dialog, PBKDF2 dashboard password storage/setup flow, core and CLI initial password env support, `astrbot password`, and the final docs-public install scripts were absorbed. | Re-check only if later upstream changes install/update operational contracts. |
+| Docs, version bumps, dependency chores | Mostly absorbed | Version bumps, README/docs URL updates, pnpm action bumps, release instructions | User-approved release-maintenance pass aligned core/CLI/package versions to `4.25.1`, added upstream changelogs through `v4.25.1`, refreshed README badge/contributor URLs where still stale, bumped pnpm/docker GitHub Actions, and updated source-deploy docs for generated initial passwords. | Keep broad docs translations and process-only docs separate unless the user asks for another docs sweep. |
 
 ### Review Rules for Future Upstream Sync
 
@@ -151,7 +151,7 @@ Remaining `git cherry +` entries up to this boundary were reviewed for whether a
 | `415da218` | Empty-string reasoning content | Absorbed | Already present locally. |
 | `c5ab4f72` | `/stats` conversation token command | Absorbed | Local builtin conversation command registers `/stats` and reports token totals. |
 | `1efe4fd6` | Stats TPM output-token counting | Absorbed | Local stats dashboard separates output-token totals and token trend data. |
-| `09ab45fc` | Version bump to `4.23.6` | Skipped | Version churn is not used as functional sync proof for this fork. |
+| `09ab45fc` | Version bump to `4.23.6` | Absorbed/Superseded | Superseded by the user-approved `4.25.1` version alignment pass. |
 | `72f4e748` | T2I raw text template rendering | Absorbed | Local T2I rendering fix was already confirmed. |
 | `b711425b` | QQ Official message-level Markdown | Absorbed | Confirmed in `MessageChain`, respond stage metadata propagation, and QQ Official send path. |
 | `72d65680` | Pre-commit setup docs and minor component table text | Skipped | Development-process docs/chore; not required for runtime sync. |
@@ -164,11 +164,11 @@ Remaining `git cherry +` entries from `v4.23.6` through this boundary were revie
 | Upstream commit | Topic | Phase-B status | Notes |
 | --- | --- | --- | --- |
 | `cb5c172e` | CUA computer-use sandbox | Absorbed | Local CUA booter, config metadata, GUI tools, sandbox routing, and unit tests are already present. |
-| `e218620a` | One-line deploy script | Skipped | Operational deploy helper; not part of this fork's runtime rewrite sync. |
-| `e4a9274b` | Deploy script path/gitignore fix | Skipped | Chore tied to skipped deploy scripts. |
-| `9016a3b2` | pnpm action bump | Skipped | CI dependency chore. |
-| `4d9340c` | Windows/Linux deploy scripts | Skipped | Operational install scripts are intentionally left out of functional sync. |
-| `1801834` | Remove BOM from install script | Skipped | Chore tied to skipped deploy scripts. |
+| `e218620a` | One-line deploy script | Absorbed | Final install script assets were absorbed as docs-public install helpers without importing the broad startup/config churn from the initial upstream patch. |
+| `e4a9274b` | Deploy script path/gitignore fix | Absorbed | Covered by adding the final `docs/public/install.ps1` and `docs/public/install.sh` paths. |
+| `9016a3b2` | pnpm action bump | Absorbed/Superseded | Superseded by the user-approved pnpm/action-setup `v6.0.7` alignment pass. |
+| `4d9340c` | Windows/Linux deploy scripts | Absorbed | Added final Windows/Linux docs-public install scripts. |
+| `1801834` | Remove BOM from install script | Absorbed | Absorbed by using the final upstream `install.ps1` content after the BOM removal. |
 | `d8de0035` | Attachment saved events in WebChat/LiveChat | Absorbed | Rewritten locally in `chat.py` and `live_chat.py`; generated image/record/file/video attachments now emit `attachment_saved` with attachment ID/type before final message save. |
 | `6b36e1ab` | Comment out `tool_choice="required"` in skills-like re-query | Skipped | Upstream appears to be a temporary provider-debug compatibility change. Local skills-like re-query intentionally keeps `required` semantics and has tests for the re-query path. |
 | `eb69bf36` | Shipyard Neo readiness gate and cleanup | Absorbed | Local Shipyard Neo booter waits for ready status, deletes failed/timed-out sandboxes, and shuts down stale Neo sandboxes with `delete_sandbox=True`; tests cover these paths. |
@@ -190,7 +190,7 @@ Remaining `git cherry +` entries from `v4.23.6` through this boundary were revie
 | `f2370cd1` | Plugins can add skills | Absorbed | Local `SkillManager` discovers plugin `skills/`, plugin changes sync skills to active sandboxes, and plugin components expose skill entries. |
 | `6eb8a51` | System prompt guide docs | Skipped | Upstream docs-only guide; not required for current Yakumo runtime sync. |
 | `fff9c8ee` | Plugin custom pages WebUI | Absorbed | Local plugin page bridge/auth/routes, page component serialization, docs, and `PluginPagePage` are present. |
-| `afe99955` | Version bump to `4.24.0` | Skipped | Version churn is not used as functional sync proof for this fork. |
+| `afe99955` | Version bump to `4.24.0` | Absorbed/Superseded | Superseded by the user-approved `4.25.1` version alignment pass. |
 
 New upstream commits since previous ledger baseline:
 
@@ -200,7 +200,7 @@ New upstream commits since previous ledger baseline:
 | `7ff58f29` | FAQ hard-refresh note | Skipped | Docs-only upstream FAQ note; not required for local Yakumo docs unless dashboard troubleshooting docs are refreshed. |
 | `000d638c` | QQ Official WebSocket docs typo | Skipped | Docs-only typo fix. |
 | `bc35daa1` | Restore mobile provider-source deletion | Absorbed | Rewritten locally in the customized provider-source panel; mobile layout now exposes a selected-source delete button and delete actions have accessible labels/titles. |
-| `284c4082` | GitHub Actions dependency bump | Skipped | CI chore; skip unless preparing CI/release maintenance. |
+| `284c4082` | GitHub Actions dependency bump | Absorbed | User requested dependency/version maintenance; docker setup-buildx/login/build-push actions were bumped to upstream versions. |
 | `ae44163b` | Smooth markdown streaming | Absorbed | Rewritten locally by threading existing message streaming state into `MarkdownRender` and upgrading `markstream-vue`/`stream-markdown` through `pnpm install --lockfile-only`. |
 | `23d70dbd` | Plugin card direct access and embedded page height | Absorbed | Rewritten locally: plugin list exposes lightweight `pages` names only, card opens the first Plugin Page directly, and embedded page/state height uses the upstream smaller viewport offset. Full page components remain detail-only. |
 | `538772c3` | Xiaomi and Xiaomi Token Plan LLM providers | Absorbed | Rewritten locally as two explicit provider adapters: OpenAI-compatible Xiaomi uses the OpenAI prompt renderer and MiMo endpoint/model fallback; Xiaomi Token Plan uses the Anthropic prompt renderer, fixed Token Plan endpoint, and Bearer authorization header. Default config templates, provider manager dynamic imports, WebUI icons, and focused tests were added. |
@@ -211,7 +211,7 @@ New upstream commits since previous ledger baseline:
 | `a221c74b` | Plugin metadata repo type guard | Absorbed | Rewritten locally by serializing plugin `repo` as a string in plugin list and detail responses. |
 | `26e867cc` | Image requests route to vision fallback | Absorbed | Rewritten locally in `build_main_agent`: image requests switch to the first configured fallback chat provider that explicitly supports `image`, preserving the local prompt pipeline and existing modality downgrade fallback. |
 | `5bbcdced` | Skip empty LLM summaries | Absorbed | Rewritten locally in `LLMSummaryCompressor`; empty or whitespace-only summaries now keep original history and log a warning. |
-| `de0a7afd` | pnpm action bump | Skipped | CI dependency chore; skip unless preparing CI/release maintenance. |
+| `de0a7afd` | pnpm action bump | Absorbed/Superseded | Superseded by the user-approved pnpm/action-setup `v6.0.7` alignment pass. |
 | `7a9fb33d` | FAQ typo | Skipped | Docs-only upstream typo fix. |
 | `c4693fa6` | RST/ADOC knowledge uploads | Absorbed | Rewritten locally as a narrow upload/parser whitelist update using existing `MarkitdownParser`, with WebUI accept/i18n/icon hints. |
 | `a38e9881`/`35245519` | FTS5 sparse knowledge retrieval | Absorbed | Present locally in `DocumentStorage` and `SparseRetriever`: contentless FTS5 index creation/rebuild/search is used when available, with in-memory BM25 fallback when FTS5 is unavailable. Unit coverage exists in `tests/unit/test_document_storage_fts.py` and `tests/unit/test_sparse_retriever.py`. |
@@ -266,12 +266,12 @@ New upstream commits since previous ledger baseline:
 | `116c66b5` | Blank-prompt KB retrieval skip | Absorbed | Present locally; main-agent build skips KB retrieval when prompt text is blank and no image inputs are present. |
 | `041c35c3` | Plugin install temp cleanup and failed-tracking guard | Absorbed | Present locally; repeated file installs that conflict with an existing plugin skip failed-plugin tracking and remove temporary `plugin_upload_*` directories. Current plugin install flow tests remain focused on dependency install behavior. |
 | `7d402fa1` | NVIDIA and Ollama embedding providers | Absorbed | Rewritten locally before this pass; `nvidia_embedding_source.py` and `ollama_embedding_source.py` are registered in provider manager, exposed in default config templates, and NVIDIA embedding has `input_type` metadata. |
-| `010e6d2e`/`39386eeb`/`989cc0d6`/`c4810804`/`c77cb0f4`/`02291a32`/`d609f23b` | Version bumps and changelogs | Skipped | Version/changelog churn is not used as functional sync proof for this fork; keep out unless preparing a release boundary. |
-| `4bcaaab4`/`1d3f54ca` | GitHub Actions dependency bumps | Skipped | CI chore; skip unless refreshing CI/release maintenance. |
-| `9165278d`/`77fa0e46` | README contributor/Trendshift image updates | Skipped | Repository-presentation docs only; not required for local runtime sync. |
+| `010e6d2e`/`39386eeb`/`989cc0d6`/`c4810804`/`c77cb0f4`/`02291a32`/`d609f23b` | Version bumps and changelogs | Absorbed | User requested version/changelog maintenance; CLI/package/core versions are aligned to `4.25.1`, and release changelogs `v4.24.3`, `v4.24.5`, `v4.25.0`, and `v4.25.1` were added. |
+| `4bcaaab4`/`1d3f54ca` | GitHub Actions dependency bumps | Absorbed | User requested dependency maintenance; pnpm/action-setup was bumped to `v6.0.7` in docs/dashboard/release workflows. |
+| `9165278d`/`77fa0e46` | README contributor/Trendshift image updates | Absorbed | User requested README maintenance; stale localized README contributor/Trendshift badges were updated to the upstream values. English README was already current. |
 | `942dcdfc`/`bd9aade8`/`cb90de75`/`ef73d2da` | General upstream docs corrections | Skipped | Docs-only upstream cleanup; local Yakumo/runtime docs are maintained separately unless the content affects current fork behavior. |
 | `48e111e4` | Remove upstream-only test | Skipped | Test-churn only; no local runtime behavior to absorb. |
-| `37d61592`/`7d72e3a9`/`2d6f5e64`/`4672a04e` | Random initial password docs/messages | Partially absorbed | Runtime behavior and WebUI startup/setup messaging were absorbed through random generated first-use credentials and setup flow. Broad upstream deployment/FAQ docs were not copied because local Yakumo docs are maintained separately. |
+| `37d61592`/`7d72e3a9`/`2d6f5e64`/`4672a04e` | Random initial password docs/messages | Absorbed | Runtime behavior and WebUI startup/setup messaging were absorbed through random generated first-use credentials and setup flow; source-deploy docs now point users to console-generated credentials and `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` instead of fixed defaults. |
 
 Simple batch review:
 

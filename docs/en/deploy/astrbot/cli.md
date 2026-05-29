@@ -86,7 +86,7 @@ If there are no errors, you will see a log message similar to `🌈 Dashboard st
 > [!TIP]
 > If you are deploying AstrBot on a server, you need to replace `localhost` with your server's IP address.
 >
-> The default username and password are `astrbot` and `astrbot`.
+> On first startup, AstrBot generates the initial Dashboard password. Use the account and password printed in the console logs. Automated deployments can set the initial password with the `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` environment variable.
 
 
 Next, you need to deploy any messaging platform to use AstrBot on that platform.

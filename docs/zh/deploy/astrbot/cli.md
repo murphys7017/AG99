@@ -86,7 +86,7 @@ python main.py
 > [!TIP]
 > 如果你正在服务器上部署 AstrBot，需要将 `localhost` 替换为你的服务器 IP 地址。
 >
-> 默认用户名和密码是 `astrbot` 和 `astrbot`。
+> 首次启动会生成 Dashboard 初始密码，请以控制台日志中打印的账号和密码为准。也可以通过 `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` 环境变量为自动化部署指定初始密码。
 
 
 接下来，你需要部署任何一个消息平台，才能够实现在消息平台上使用 AstrBot。

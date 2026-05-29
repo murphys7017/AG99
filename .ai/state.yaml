@@ -1,8 +1,8 @@
 task:
-  class: feature
-  risk: high
-  phase: upstream_auth_parity
-  scope: coordinated dashboard auth storage, setup, WebUI login, CLI, and config migration
+  class: maintenance
+  risk: medium
+  phase: upstream_release_maintenance_parity
+  scope: version, changelog, README badge, CI dependency, deploy-script, and source-deploy docs parity
 context:
   confidence: high
   assumptions:
@@ -21,7 +21,7 @@ context:
     - Knowledge-base and sandbox upstream positives may remain visible in `git cherry` even when current local code already contains equivalent rewrites.
     - The current pass updates the merge ledger when code is already equivalent; it does not rewrite working implementation unnecessarily.
     - Runtime/media/message-tool upstream positives should be absorbed by confirming existing local behavior and adding focused tests where coverage is missing.
-    - Remaining version, CI, README, and broad docs churn should be classified in the ledger instead of copied into this fork's runtime sync.
+    - User explicitly requested the previously skipped version, CI dependency, README, and deploy-script/docs items; this pass absorbs the low-risk release-maintenance subset without broad docs rewrites.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -41,6 +41,8 @@ architecture:
     - Media conversion recognizes Tencent SILK magic bytes, MiniMax TTS timber weights tolerate empty/bad config, send_message_to_user fails closed on missing media paths, and no-parameter tool calls tolerate `None` arguments.
     - NVIDIA and Ollama embedding providers are already available locally through provider sources, provider manager registration, and default config templates.
     - Dashboard auth now uses PBKDF2 storage with legacy MD5 migration compatibility; WebUI login and account edit send plaintext passwords, while setup page handles required password changes.
+    - CLI package version, core runtime version, and `pyproject.toml` project version are aligned to upstream `4.25.1`.
+    - Docs-public install scripts are now present as operational documentation assets and do not change local runtime startup/config behavior.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -52,6 +54,10 @@ verification:
     - .venv\Scripts\python -m ruff check astrbot/core/utils/io.py astrbot/dashboard/server.py main.py tests/test_main.py tests/test_dashboard.py
     - pnpm --dir dashboard typecheck
     - utf-8-sig JSON parse check for dashboard knowledge-base detail locales
+    - git diff --check
+    - .venv\Scripts\python -m ruff check astrbot/cli/__init__.py astrbot/core/config/default.py
+    - .venv\Scripts\python -m pytest tests/unit/test_config.py tests/test_main.py::test_should_use_bundled_dashboard_dist_when_data_dist_is_stale tests/test_main.py::test_should_keep_data_dist_when_version_file_is_malformed -q
+    - TOML/YAML parse and install-script BOM check
     - git diff --check
     - pnpm --dir dashboard exec node scripts/subset-mdi-font.mjs
     - .venv\Scripts\python -m pytest tests/test_dashboard.py::test_do_update tests/unit/test_astr_main_agent.py::TestSelectProvider -q
@@ -93,6 +99,6 @@ verification:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.
-  validation_gap: Full backend suite, live provider calls, live sandbox backends, and browser manual setup flow were not run. The auth migration was validated with targeted backend/config/CLI/dashboard/API/KB tests, ruff, dashboard typecheck, and diff checks.
+  validation_gap: Full backend suite, live provider calls, live sandbox backends, browser manual setup flow, dashboard typecheck/build, and GitHub Actions execution were not run. Current release-maintenance changes were validated with targeted config/dashboard-dist tests, ruff, TOML/YAML parsing, install-script BOM checks, and diff checks.
 runtime:
   mode: minimal_v1
