@@ -144,7 +144,7 @@ def build_interaction_decision_output_contract() -> OutputContract:
         strict=True,
         schema=build_interaction_decision_tool_parameters(),
         preferred_tool_name="interaction_decision",
-        allow_text_fallback=False,
+        allow_text_fallback=True,
     )
 
 
@@ -305,13 +305,10 @@ async def call_decision_model(
     timeout: float,
 ):
     compiled_output_contract = render_result.compiled_output_contract
-    if (
-        compiled_output_contract is None
-        or compiled_output_contract.strategy != "protocol_tool_call"
-    ):
+    if compiled_output_contract is None:
         raise InteractionDecisionError(
             "unsupported_output_contract",
-            "interaction decision requires protocol_tool_call output contract",
+            "interaction decision requires a compiled output contract",
         )
     logger.debug(
         "Interaction decision model request: provider_id=%s model=%s timeout=%s",
