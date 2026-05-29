@@ -103,6 +103,7 @@
     "notFound": "Plugin not found",
     "docsTitle": "Documentation",
     "docsEmpty": "No documentation",
+    "subCommandsCount": "{count} sub-commands",
     "handlerGroups": {
       "commands": "Commands / Command Groups",
       "hooks": "Hooks",

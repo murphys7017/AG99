@@ -103,6 +103,7 @@
     "notFound": "未找到该插件",
     "docsTitle": "文档",
     "docsEmpty": "暂无文档",
+    "subCommandsCount": "{count} 个子指令",
     "handlerGroups": {
       "commands": "指令/指令组",
       "hooks": "钩子",

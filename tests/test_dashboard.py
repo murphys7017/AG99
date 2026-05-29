@@ -423,6 +423,7 @@ async def test_plugin_get_includes_scanned_page_names(
         item for item in data["data"] if item["name"] == PLUGIN_PAGE_DEMO_NAME
     )
     assert plugin["activated"] is True
+    assert plugin["marketplace_name"] == PLUGIN_PAGE_DEMO_NAME.replace("_", "-")
     assert "page" not in plugin
     assert plugin["pages"] == [PLUGIN_PAGE_DEMO_PAGE_NAME]
 
@@ -461,6 +462,7 @@ async def test_plugin_detail_stringifies_non_string_repo(
     data = await response.get_json()
 
     assert data["data"]["repo"] == "12345"
+    assert data["data"]["marketplace_name"] == PLUGIN_PAGE_DEMO_NAME.replace("_", "-")
 
 
 @pytest.mark.asyncio
@@ -492,6 +494,7 @@ async def test_plugin_detail_includes_scanned_page_component(
             "i18n_key": f"pages.{PLUGIN_PAGE_DEMO_PAGE_NAME}",
             "description": "Plugin Page entry",
             "plugin_name": PLUGIN_PAGE_DEMO_NAME,
+            "plugin_marketplace_name": PLUGIN_PAGE_DEMO_NAME.replace("_", "-"),
         }
     ]
 
@@ -1117,6 +1120,8 @@ async def test_commands_api(app: Quart, authenticated_header: dict):
     assert data["status"] == "ok"
     assert "items" in data["data"]
     assert "summary" in data["data"]
+    assert isinstance(data["data"]["wake_prefix"], list)
+    assert "/" in data["data"]["wake_prefix"]
     summary = data["data"]["summary"]
     assert "total" in summary
     assert "disabled" in summary
@@ -1131,6 +1136,39 @@ async def test_commands_api(app: Quart, authenticated_header: dict):
     assert data["status"] == "ok"
     # conflicts is a list
     assert isinstance(data["data"], list)
+
+
+@pytest.mark.asyncio
+async def test_commands_api_returns_config_wake_prefix(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    config_id = next(iter(core_lifecycle_td.astrbot_config_mgr.confs.keys()))
+    missing = object()
+    original = core_lifecycle_td.astrbot_config_mgr.confs[config_id].get(
+        "wake_prefix", missing
+    )
+    core_lifecycle_td.astrbot_config_mgr.confs[config_id]["wake_prefix"] = ["!", "！"]
+    try:
+        response = await test_client.get(
+            f"/api/commands?config_id={config_id}",
+            headers=authenticated_header,
+        )
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+        assert data["data"]["wake_prefix"] == ["!", "！"]
+    finally:
+        if original is missing:
+            core_lifecycle_td.astrbot_config_mgr.confs[config_id].pop(
+                "wake_prefix", None
+            )
+        else:
+            core_lifecycle_td.astrbot_config_mgr.confs[config_id]["wake_prefix"] = (
+                original
+            )
 
 
 @pytest.mark.asyncio

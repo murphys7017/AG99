@@ -41,6 +41,7 @@ def mock_context():
     )
     ctx.persona_manager.get_persona_v3_by_id = MagicMock(return_value=None)
     tool_mgr = MagicMock()
+    tool_mgr.get_full_tool_set.return_value = ToolSet()
     tool_mgr.get_builtin_tool.side_effect = lambda cls, **kwargs: cls(**kwargs)
     ctx.get_llm_tool_manager.return_value = tool_mgr
     ctx.subagent_orchestrator = None
@@ -1063,6 +1064,124 @@ class TestBuildMainAgent:
             "[Video Attachment in quoted message: "
             "name quoted-video.mp4, path path/to/quoted-video.mp4]"
         ) in [part.text for part in result.provider_request.extra_user_content_parts]
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_skips_quoted_image_caption_for_vision_provider(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Quoted images should not be captioned when the main provider sees images."""
+        module = ama
+        mock_image = Image(file="/tmp/quoted.jpg")
+        mock_reply = Reply(
+            id="reply-1",
+            chain=[mock_image],
+            sender_nickname="",
+            message_str="quoted message",
+        )
+        mock_event.message_obj.message = [Plain(text="Hello"), mock_reply]
+
+        caption_provider = MagicMock(spec=Provider)
+        caption_provider.provider_config = {
+            "id": "caption-provider",
+            "modalities": ["text", "image"],
+        }
+        caption_provider.text_chat = AsyncMock()
+
+        mock_context.get_provider_by_id.return_value = caption_provider
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "default_image_caption_provider_id": "caption-provider",
+            }
+        }
+
+        conv_mgr = mock_context.conversation_manager
+        _setup_conversation_for_build(conv_mgr)
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch.object(
+                Image,
+                "convert_to_file_path",
+                AsyncMock(return_value="/tmp/quoted.jpg"),
+            ),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(tool_call_timeout=60),
+            )
+
+        assert result is not None
+        assert not any(
+            "Image Caption" in text or "<image_caption>" in text
+            for text in (
+                getattr(part, "text", "")
+                for part in result.provider_request.extra_user_content_parts
+            )
+        )
+        caption_provider.text_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_skips_quoted_image_caption_without_caption_provider(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Quoted images should not be sent to the main provider for captions."""
+        module = ama
+        mock_provider.provider_config = {
+            "id": "text-provider",
+            "modalities": ["text", "tool_use"],
+        }
+        mock_provider.text_chat = AsyncMock()
+        mock_image = Image(file="/tmp/quoted.jpg")
+        mock_reply = Reply(
+            id="reply-1",
+            chain=[mock_image],
+            sender_nickname="",
+            message_str="quoted message",
+        )
+        mock_event.message_obj.message = [Plain(text="Hello"), mock_reply]
+
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {"provider_settings": {}}
+
+        conv_mgr = mock_context.conversation_manager
+        _setup_conversation_for_build(conv_mgr)
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch.object(
+                Image,
+                "convert_to_file_path",
+                AsyncMock(return_value="/tmp/quoted.jpg"),
+            ),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(tool_call_timeout=60),
+            )
+
+        assert result is not None
+        assert not any(
+            "Image Caption" in text or "<image_caption>" in text
+            for text in (
+                getattr(part, "text", "")
+                for part in result.provider_request.extra_user_content_parts
+            )
+        )
+        mock_provider.text_chat.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_build_main_agent_skips_video_attachment_when_conversion_fails(

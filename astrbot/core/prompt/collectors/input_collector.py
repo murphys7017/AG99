@@ -176,6 +176,7 @@ class InputCollector(ContextCollectorInterface):
             quoted_image_captions = await self._collect_quoted_image_captions(
                 event=event,
                 plugin_context=plugin_context,
+                provider_request=provider_request,
                 provider_settings=provider_settings,
                 quoted_images=reply_payload.images,
             )
@@ -610,6 +611,11 @@ class InputCollector(ContextCollectorInterface):
             or getattr(provider_request, "conversation", None) is None
         ):
             return []
+        if self._request_provider_supports_modality(provider_request, "image"):
+            logger.debug(
+                "Skip current image caption collection because the main provider supports image input."
+            )
+            return []
 
         provider = self._resolve_provider_by_id(plugin_context, provider_id)
         if provider is None:
@@ -646,26 +652,33 @@ class InputCollector(ContextCollectorInterface):
         *,
         event: AstrMessageEvent,
         plugin_context: Context,
+        provider_request: ProviderRequest | None,
         provider_settings: dict[str, Any],
         quoted_images: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         if not quoted_images:
             return []
+        if self._request_provider_supports_modality(provider_request, "image"):
+            logger.debug(
+                "Skip quoted image caption collection because the main provider supports image input."
+            )
+            return []
 
         provider_id = provider_settings.get("default_image_caption_provider_id")
-        provider = self._resolve_provider_by_id(
-            plugin_context,
-            provider_id if isinstance(provider_id, str) else None,
-        )
-        resolved_provider_id = provider_id if isinstance(provider_id, str) else None
-
-        if provider is None:
-            provider = self._resolve_current_provider(event, plugin_context)
-            if provider is None:
-                return []
-            resolved_provider_id = (
-                resolved_provider_id or self._resolve_provider_config_id(provider)
+        if not isinstance(provider_id, str) or not provider_id:
+            logger.debug(
+                "No dedicated image caption provider configured. "
+                "Skipping quoted image caption collection."
             )
+            return []
+        provider = self._resolve_provider_by_id(plugin_context, provider_id)
+        resolved_provider_id = provider_id
+        if provider is None:
+            logger.warning(
+                "Skip quoted image caption collection because provider `%s` is unavailable",
+                provider_id,
+            )
+            return []
 
         records: list[dict[str, Any]] = []
         for image in quoted_images:
@@ -734,6 +747,20 @@ class InputCollector(ContextCollectorInterface):
             return None
         provider_id = provider_config.get("id")
         return provider_id if isinstance(provider_id, str) and provider_id else None
+
+    def _request_provider_supports_modality(
+        self,
+        provider_request: ProviderRequest | None,
+        modality: str,
+    ) -> bool:
+        if provider_request is None:
+            return False
+        provider = getattr(provider_request, "provider", None)
+        provider_config = getattr(provider, "provider_config", None)
+        if not isinstance(provider_config, dict):
+            return False
+        modalities = provider_config.get("modalities")
+        return isinstance(modalities, list) and modality in modalities
 
     async def _request_image_caption(
         self,

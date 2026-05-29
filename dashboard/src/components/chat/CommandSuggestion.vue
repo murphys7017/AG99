@@ -12,7 +12,9 @@
         class="command-suggestion-item"
         :class="{ active: index === selectedIndex }"
         @mousedown.prevent="selectCommand(index)"
-        @mouseenter="$emit('updateSelectedIndex', index)"
+        @mouseenter="handleMouseEnter(index)"
+        @mousemove="handleMouseMove"
+        @mouseleave="handleMouseLeave"
       >
         <span class="command-main">
           <span class="command-name">{{ cmd.effective_command }}</span>
@@ -31,9 +33,20 @@
       <span>Esc {{ tm("commandSuggestion.close") }}</span>
     </div>
   </div>
+  <Teleport to="body">
+    <div
+      v-if="tooltip.visible"
+      class="command-tooltip"
+      :class="{ 'is-dark': isDark }"
+      :style="tooltipStyle"
+    >
+      {{ tooltip.text }}
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
+import { computed, reactive } from "vue";
 import { useModuleI18n } from "@/i18n/composables";
 
 export interface SuggestionCommand {
@@ -58,12 +71,41 @@ const emit = defineEmits<{
 }>();
 
 const { tm } = useModuleI18n("features/chat");
+const tooltip = reactive({
+  visible: false,
+  text: "",
+  x: 0,
+  y: 0,
+});
+
+const tooltipStyle = computed(() => ({
+  left: `${tooltip.x + 12}px`,
+  top: `${tooltip.y + 12}px`,
+}));
 
 function selectCommand(index: number) {
   const command = props.commands[index];
   if (command) {
     emit("select", command);
   }
+}
+
+function handleMouseEnter(index: number) {
+  emit("updateSelectedIndex", index);
+  const command = props.commands[index];
+  if (command?.description) {
+    tooltip.text = command.description;
+    tooltip.visible = true;
+  }
+}
+
+function handleMouseMove(event: MouseEvent) {
+  tooltip.x = event.clientX;
+  tooltip.y = event.clientY;
+}
+
+function handleMouseLeave() {
+  tooltip.visible = false;
 }
 </script>
 
@@ -170,5 +212,31 @@ function selectCommand(index: number) {
     right: 8px;
     max-height: 44vh;
   }
+}
+</style>
+
+<style>
+.command-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: 360px;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #333333;
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: none;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.command-tooltip.is-dark {
+  border-color: #404040;
+  background: #2d2d2d;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  color: #e0e0e0;
 }
 </style>

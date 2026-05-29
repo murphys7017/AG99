@@ -1,8 +1,8 @@
 task:
   class: maintenance
   risk: medium
-  phase: upstream_release_maintenance_parity
-  scope: version, changelog, README badge, CI dependency, deploy-script, and source-deploy docs parity
+  phase: upstream_small_fix_parity
+  scope: file component sanitize, quoted image caption de-dupe, segmented reply trim, command suggestion wake-prefix tooltip, and plugin marketplace matching
 context:
   confidence: high
   assumptions:
@@ -22,6 +22,7 @@ context:
     - The current pass updates the merge ledger when code is already equivalent; it does not rewrite working implementation unnecessarily.
     - Runtime/media/message-tool upstream positives should be absorbed by confirming existing local behavior and adding focused tests where coverage is missing.
     - User explicitly requested the previously skipped version, CI dependency, README, and deploy-script/docs items; this pass absorbs the low-risk release-maintenance subset without broad docs rewrites.
+    - The current pass absorbs the latest small upstream fixes by local rewrite while preserving the fork's customized chat, plugin, and provider request paths.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -43,6 +44,10 @@ architecture:
     - Dashboard auth now uses PBKDF2 storage with legacy MD5 migration compatibility; WebUI login and account edit send plaintext passwords, while setup page handles required password changes.
     - CLI package version, core runtime version, and `pyproject.toml` project version are aligned to upstream `4.25.1`.
     - Docs-public install scripts are now present as operational documentation assets and do not change local runtime startup/config behavior.
+    - File component downloads now sanitize remote filenames before writing to temp storage.
+    - Quoted images are no longer captioned twice when the selected chat provider supports image input, and the main provider is no longer used as an implicit quoted-image caption fallback without a configured caption provider.
+    - Command APIs expose normalized per-config wake prefixes for dashboard command suggestions.
+    - Plugin APIs expose `marketplace_name` so local plugin entries can match marketplace names that differ only by underscore/hyphen normalization.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -95,10 +100,15 @@ verification:
     - JSON parse check for dashboard auth and header locale files
     - YAML parse check for .ai/state.yaml
     - git diff --check
+    - .venv\Scripts\python -m pytest tests/unit/test_file_message_component.py tests/unit/test_astr_main_agent.py::TestBuildMainAgent::test_build_main_agent_skips_quoted_image_caption_for_vision_provider tests/unit/test_astr_main_agent.py::TestBuildMainAgent::test_build_main_agent_skips_quoted_image_caption_without_caption_provider tests/test_dashboard.py::test_plugin_get_includes_scanned_page_names tests/test_dashboard.py::test_plugin_detail_stringifies_non_string_repo tests/test_dashboard.py::test_plugin_detail_includes_scanned_page_component tests/test_dashboard.py::test_commands_api tests/test_dashboard.py::test_commands_api_returns_config_wake_prefix -q
+    - .venv\Scripts\python -m ruff check astrbot/core/message/components.py astrbot/core/astr_main_agent.py astrbot/core/prompt/collectors/input_collector.py astrbot/core/pipeline/result_decorate/stage.py astrbot/dashboard/routes/command.py astrbot/dashboard/routes/plugin.py astrbot/dashboard/server.py tests/unit/test_file_message_component.py tests/unit/test_astr_main_agent.py tests/test_dashboard.py
+    - pnpm --dir dashboard typecheck
+    - YAML parse check for .ai/state.yaml and JSON parse check for extension locale files
+    - git diff --check
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.
-  validation_gap: Full backend suite, live provider calls, live sandbox backends, browser manual setup flow, dashboard typecheck/build, and GitHub Actions execution were not run. Current release-maintenance changes were validated with targeted config/dashboard-dist tests, ruff, TOML/YAML parsing, install-script BOM checks, and diff checks.
+  validation_gap: Full backend suite, live provider calls, live sandbox backends, browser manual setup flow, dashboard build, and GitHub Actions execution were not run. Current small-fix upstream parity changes were validated with targeted message/main-agent/dashboard tests, ruff, dashboard typecheck, YAML/JSON parsing, and diff checks.
 runtime:
   mode: minimal_v1

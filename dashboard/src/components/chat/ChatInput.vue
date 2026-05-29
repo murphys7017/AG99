@@ -404,6 +404,8 @@ const allCommands = ref<CommandItem[]>([]);
 const showCommandSuggestion = ref(false);
 const selectedCommandIndex = ref(0);
 const commandSuggestionLoading = ref(false);
+const wakePrefixes = ref<string[]>(["/"]);
+const currentConfigId = ref((props.configId as string) || "default");
 let dragLeaveTimeout: number | null = null;
 let blurTimer: number | null = null;
 
@@ -412,18 +414,34 @@ const localPrompt = computed({
   set: (value) => emit("update:prompt", value),
 });
 
+function hasWakePrefix(text: string) {
+  return wakePrefixes.value.some((prefix) => prefix && text.startsWith(prefix));
+}
+
+function stripWakePrefix(text: string) {
+  let result = text;
+  for (const prefix of wakePrefixes.value) {
+    if (prefix && result.startsWith(prefix)) {
+      result = result.slice(prefix.length);
+      break;
+    }
+  }
+  return result;
+}
+
 function normalizedCommandText(value: string) {
-  return value.trim().replace(/^\/+/, "").toLowerCase();
+  return stripWakePrefix(value.trim()).toLowerCase();
 }
 
 const enabledCommands = computed<SuggestionCommand[]>(() => {
   const result: SuggestionCommand[] = [];
   const seen = new Set<string>();
+  const displayPrefix = wakePrefixes.value[0] || "/";
 
   function pushCommand(cmd: CommandItem, commandText: string) {
-    const effectiveCommand = commandText.startsWith("/")
+    const effectiveCommand = hasWakePrefix(commandText)
       ? commandText
-      : `/${commandText}`;
+      : `${displayPrefix}${commandText}`;
     if (seen.has(effectiveCommand)) return;
     seen.add(effectiveCommand);
     result.push({
@@ -465,7 +483,7 @@ function sortReservedFirst(commands: SuggestionCommand[]) {
 }
 
 const filteredCommands = computed<SuggestionCommand[]>(() => {
-  if (!props.prompt.startsWith("/")) return [];
+  if (!hasWakePrefix(props.prompt)) return [];
   const query = normalizedCommandText(props.prompt);
   if (!query) return sortReservedFirst(enabledCommands.value);
 
@@ -667,7 +685,7 @@ function handleKeyDown(e: KeyboardEvent) {
 }
 
 function updateCommandSuggestion() {
-  if (props.prompt.startsWith("/") && !props.prompt.includes("\n")) {
+  if (hasWakePrefix(props.prompt) && !props.prompt.includes("\n")) {
     showCommandSuggestion.value = filteredCommands.value.length > 0;
     selectedCommandIndex.value = Math.min(
       selectedCommandIndex.value,
@@ -706,9 +724,18 @@ async function fetchCommands() {
   if (commandSuggestionLoading.value) return;
   commandSuggestionLoading.value = true;
   try {
-    const res = await axios.get("/api/commands");
+    const params: Record<string, string> = {};
+    const configId = currentConfigId.value;
+    if (configId && configId !== "default") {
+      params.config_id = configId;
+    }
+    const res = await axios.get("/api/commands", { params });
     if (res.data?.status === "ok") {
       allCommands.value = res.data.data?.items || [];
+      const prefixes = res.data.data?.wake_prefix;
+      if (Array.isArray(prefixes) && prefixes.length > 0) {
+        wakePrefixes.value = prefixes.map(String).filter(Boolean);
+      }
       updateCommandSuggestion();
     }
   } catch (error) {
@@ -811,6 +838,10 @@ function handleConfigChange(payload: {
   const runnerType = (payload.agentRunnerType || "").toLowerCase();
   const isInternal = runnerType === "internal" || runnerType === "local";
   showProviderSelector.value = isInternal;
+  if (payload.configId && payload.configId !== currentConfigId.value) {
+    currentConfigId.value = payload.configId;
+    fetchCommands();
+  }
 }
 
 function getCurrentSelection() {

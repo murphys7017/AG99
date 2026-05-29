@@ -11,8 +11,8 @@ Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `26e867cc6` (`fix(core): route image requests to vision fallback (#8089)`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-05-28 and moved `upstream/master` from `ff28eca9c` to `26e867cc6`.
+- Last local upstream snapshot checked: `upstream/master` at `adae1f359` (`feat(dashboard): enhance command suggestion (#8147)`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-05-29 and moved `upstream/master` from `26e867cc6` to `adae1f359`.
 - Git-only divergence at this snapshot: local-only `302`, upstream-only `148`.
 - Patch-equivalence estimate from `git cherry`: `115` upstream commits still appear unabsorbed after patch-equivalence filtering.
 
@@ -272,6 +272,13 @@ New upstream commits since previous ledger baseline:
 | `942dcdfc`/`bd9aade8`/`cb90de75`/`ef73d2da` | General upstream docs corrections | Skipped | Docs-only upstream cleanup; local Yakumo/runtime docs are maintained separately unless the content affects current fork behavior. |
 | `48e111e4` | Remove upstream-only test | Skipped | Test-churn only; no local runtime behavior to absorb. |
 | `37d61592`/`7d72e3a9`/`2d6f5e64`/`4672a04e` | Random initial password docs/messages | Absorbed | Runtime behavior and WebUI startup/setup messaging were absorbed through random generated first-use credentials and setup flow; source-deploy docs now point users to console-generated credentials and `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` instead of fixed defaults. |
+| `8b16e4d6` | File component filename sanitization | Absorbed | Rewritten locally in `File._download_file`; remote names are reduced to a safe basename, dangerous characters/NULs are replaced or removed, and downloads stay under AstrBot temp storage. |
+| `9688a64c` | Plugin detail sub-command count label | Absorbed | Rewritten locally in the extension detail i18n files for English, Chinese, and Russian. |
+| `e960c149` | Duplicate plugin display guard | Absorbed/No-op | Local plugin list code did not contain the duplicate append path, so the upstream fix is already functionally satisfied. |
+| `022a5dd9` | Avoid duplicate quoted-image captioning | Absorbed | Rewritten locally so quoted images are not captioned when the main provider supports image input, and the main provider is not used as an implicit caption fallback when no caption provider is configured. |
+| `9bd38cad` | Trim segmented reply text | Absorbed | Rewritten locally in result decoration so split plain segments are stripped before being appended. |
+| `e087b9de` | Marketplace/local plugin name matching | Absorbed | Rewritten locally by exposing `marketplace_name` from plugin APIs and matching extension market entries by normalized repo or marketplace name with local-name fallback. |
+| `adae1f359` | Command suggestion wake words and hover info | Absorbed | Rewritten locally against the customized chat input: `/api/commands` returns per-config `wake_prefix`, suggestions trigger/display with configured prefixes, and command descriptions are shown in a hover tooltip. |
 
 Simple batch review:
 

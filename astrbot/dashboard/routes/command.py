@@ -18,8 +18,9 @@ from .route import Response, Route, RouteContext
 
 
 class CommandRoute(Route):
-    def __init__(self, context: RouteContext) -> None:
+    def __init__(self, context: RouteContext, core_lifecycle=None) -> None:
         super().__init__(context)
+        self.core_lifecycle = core_lifecycle
         self.routes = {
             "/commands": ("GET", self.get_commands),
             "/commands/conflicts": ("GET", self.get_conflicts),
@@ -36,7 +37,21 @@ class CommandRoute(Route):
             "disabled": len([cmd for cmd in commands if not cmd["enabled"]]),
             "conflicts": len([cmd for cmd in commands if cmd.get("has_conflict")]),
         }
-        return Response().ok({"items": commands, "summary": summary}).__dict__
+        config_id = request.args.get("config_id", "").strip()
+        wake_prefix = self.config.get("wake_prefix", ["/"])
+        if config_id and self.core_lifecycle:
+            acm = getattr(self.core_lifecycle, "astrbot_config_mgr", None)
+            if acm and config_id in acm.confs:
+                wake_prefix = acm.confs[config_id].get("wake_prefix", wake_prefix)
+        if isinstance(wake_prefix, str):
+            wake_prefix = [wake_prefix]
+        elif not isinstance(wake_prefix, list):
+            wake_prefix = ["/"]
+        return (
+            Response()
+            .ok({"items": commands, "summary": summary, "wake_prefix": wake_prefix})
+            .__dict__
+        )
 
     async def get_conflicts(self):
         conflicts = await list_command_conflicts()

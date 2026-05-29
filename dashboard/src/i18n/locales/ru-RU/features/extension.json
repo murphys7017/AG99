@@ -103,6 +103,7 @@
         "notFound": "Плагин не найден",
         "docsTitle": "Документация",
         "docsEmpty": "Документация отсутствует",
+        "subCommandsCount": "{count} подкоманд",
         "handlerGroups": {
             "commands": "Команды / группы команд",
             "hooks": "Хуки",

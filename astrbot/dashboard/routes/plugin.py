@@ -1282,6 +1282,7 @@ class PluginRoute(Route):
                 pages = []
             _t = {
                 "name": plugin.name,
+                "marketplace_name": (plugin.name or "").replace("_", "-"),
                 "repo": "" if plugin.repo is None else str(plugin.repo),
                 "author": plugin.author,
                 "desc": plugin.desc,
@@ -1333,6 +1334,7 @@ class PluginRoute(Route):
                 .ok(
                     {
                         "name": plugin.name,
+                        "marketplace_name": (plugin.name or "").replace("_", "-"),
                         "repo": "" if plugin.repo is None else str(plugin.repo),
                         "author": plugin.author,
                         "desc": plugin.desc,
@@ -1385,6 +1387,7 @@ class PluginRoute(Route):
                 "i18n_key": page["i18n_key"],
                 "description": "Plugin Page entry",
                 "plugin_name": plugin.name,
+                "plugin_marketplace_name": (plugin.name or "").replace("_", "-"),
             }
             for page in pages
         ]
