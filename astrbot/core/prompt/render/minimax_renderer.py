@@ -39,8 +39,8 @@ class MiniMaxPromptRenderer(BasePromptRenderer):
         return "minimax"
 
     def resolve_output_contract_strategy(self, contract: OutputContract) -> str:
-        # MiniMax Token Plan does not reliably obey Anthropic tool_use forcing.
-        # Use prompt_only so strict callers can parse the requested JSON shape.
+        if contract.mode == "tool_call":
+            return "protocol_tool_call"
         return "prompt_only"
 
     def _compile_system_prompt(self, prompt_tree: PromptBuilder) -> str | None:
