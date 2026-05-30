@@ -8,6 +8,7 @@ from astrbot.core.interaction.decision_agent import (
     InteractionDecisionError,
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
+    build_interaction_agent_system_prompt,
     build_interaction_decision_output_contract,
     build_interaction_decision_tool_parameters,
     build_interaction_decision_contexts,
@@ -69,6 +70,19 @@ def test_validate_interaction_decision_rejects_hybrid_without_reply():
 
     with pytest.raises(InteractionDecisionError, match="hybrid decision"):
         validate_interaction_decision(decision, config)
+
+
+def test_interaction_decision_tool_schema_requires_immediate_reply_field():
+    parameters = build_interaction_decision_tool_parameters()
+
+    assert "immediate_spoken_reply" in parameters["required"]
+
+
+def test_interaction_decision_prompt_requires_reply_for_self_and_hybrid():
+    system_prompt = build_interaction_agent_system_prompt()
+
+    assert "选择 self_reply 或 hybrid 时，必须提供非空 immediate_spoken_reply" in system_prompt
+    assert "选择 delegate_to_core 且不先说话时" in system_prompt
 
 
 def test_build_interaction_decision_contexts_strips_internal_runtime_fields():
