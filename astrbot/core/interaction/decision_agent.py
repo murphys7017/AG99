@@ -59,6 +59,8 @@ def build_interaction_agent_system_prompt() -> str:
         "如果这类执行请求适合先回应用户一声，请选择 hybrid，并给出一句短的 immediate_spoken_reply。\n"
         "只有当不应该先说话、或者这是一条硬控制/静默委托请求时，才选择 delegate_to_core 且不发 immediate_spoken_reply。\n"
         "普通寒暄、情绪回应、轻量对话，优先选择 self_reply。\n"
+        "选择 self_reply 或 hybrid 时，必须提供非空 immediate_spoken_reply，且 should_emit_immediate_reply 必须为 true。\n"
+        "选择 delegate_to_core 且不先说话时，immediate_spoken_reply 填空字符串，should_emit_immediate_reply 为 false。\n"
         "你的 immediate_spoken_reply 必须是自然、简短、口语化的中文，不要把它写成最终答案，也不要讲一长串流程说明。\n"
         "执行类请求的 immediate_spoken_reply 只能表达“我知道了/我来看看/等我一下”，不能说已经完成，不能汇报工具步骤。\n"
         "你的输出必须严格遵循当前请求提供的结构化约束。"
@@ -69,7 +71,7 @@ def build_interaction_decision_schema() -> dict[str, Any]:
     return {
         "route_mode": "self_reply | delegate_to_core | hybrid",
         "should_emit_immediate_reply": True,
-        "immediate_spoken_reply": "短句口语中文",
+        "immediate_spoken_reply": "self_reply/hybrid 必填短句口语中文；delegate_to_core 且不先说话时为空字符串",
         "core_task_spec": {
             "task_intent": "任务意图",
             "task_summary": "任务摘要",
@@ -132,6 +134,7 @@ def build_interaction_decision_tool_parameters() -> dict[str, Any]:
         "required": [
             "route_mode",
             "should_emit_immediate_reply",
+            "immediate_spoken_reply",
             "confidence",
             "reason",
         ],
@@ -511,8 +514,26 @@ class InteractionDecisionAgent:
             output_contract=render_result.output_contract,
         )
         if payload is None:
-            message = f"non-json: raw={llm_resp.completion_text}"
-            raise InteractionDecisionError("non_json", message)
+            raw_text = (llm_resp.completion_text or "").strip()
+            if raw_text and render_result.output_contract is not None and render_result.output_contract.allow_text_fallback:
+                logger.info(
+                    "Interaction decision non-json text fallback: platform_id=%s session_id=%s raw=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    raw_text[:80],
+                )
+                payload = {
+                    "route_mode": "self_reply",
+                    "should_emit_immediate_reply": True,
+                    "immediate_spoken_reply": raw_text[:60],
+                    "core_task_spec": None,
+                    "plugin_hints": {},
+                    "confidence": 0.6,
+                    "reason": "non_json_text_fallback",
+                }
+            else:
+                message = f"non-json: raw={raw_text or llm_resp.completion_text}"
+                raise InteractionDecisionError("non_json", message)
         decision = InteractionDecision.from_mapping(payload)
         if decision is None:
             raise InteractionDecisionError("invalid_payload")
