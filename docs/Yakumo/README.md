@@ -11,9 +11,24 @@
 
 如果你想看这个分支到底改了什么、现在做到哪一步、后面准备怎么改，再看 `docs/Yakumo`。
 
+## 最终目标
+
+Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是把它从
+`session-centric bot runtime` 演进成 `persona-centric interaction runtime`。
+
+在这个目标下：
+
+- `session` 是输入来源、权限隔离和平台上下文，不是长期对话主体。
+- `conversation` 是某段具体 episode，不承载全部人格连续性。
+- `persona` 是真正持续存在并被长期互动塑造的主体。
+- `memory` 和 `persona state` 用于塑造本轮 `Effective Persona`，但不直接覆盖 base persona。
+- `interaction middleware` 负责一次交互回合的输入、输出和 finalized material，而不是替代 persona。
+
+更完整的目标态见 `docs/Yakumo/target-state.md`。
+
 ## 和官方主线的区别
 
-当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”。其中 `current-state.md`、`modules/*` 和本 README 优先维护为当前事实；`dev/*`、`target-state.md`、`prompt-development-plan.md` 以及早期中文详解文档只作为设计记录或历史参考。
+当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”。其中 `current-state.md`、`modules/*` 和本 README 优先维护为当前事实；`target-state.md` 记录 Yakumo 最终目标；`dev/*`、`prompt-development-plan.md` 以及早期中文详解文档只作为设计记录或历史参考。
 
 因此和官方主线有几个关键差异：
 

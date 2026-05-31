@@ -1,6 +1,112 @@
 # Yakumo Target State
 
-目标是将当前单体式 AstrBot 重构为“主 Agent 平台 + 多能力平台”的架构。
+Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是把它从
+`session-centric bot runtime` 演进成 `persona-centric interaction runtime`。
+
+原版 AstrBot 的主组织方式更接近：
+
+```text
+平台适配器 -> session / conversation -> 选择 provider / persona -> 生成回复
+```
+
+Yakumo 的目标组织方式是：
+
+```text
+平台输入 -> 交互场景识别 -> 有效人格主体 -> 记忆 / 状态 / 能力编排 -> 对外表达
+```
+
+也就是说，`session` 不再是系统里的对话主体，而是输入来源、权限隔离和平台上下文；
+`conversation` 不再承载全部人格连续性，而是一段具体 episode；真正持续存在并被长期互动塑造的主体应是
+`persona`。
+
+## 核心目标
+
+Yakumo 的核心目标是让 AstrBot 中的人格成为稳定、可解释、可控制的对话主体。
+
+最终系统应形成以下链路：
+
+```text
+Base Persona
+    + Persona State
+    + Memory Snapshot
+    + Topic / Relationship / Interaction State
+    + Current Input
+    -> Effective Persona
+    -> Response
+```
+
+其中：
+
+- `Base Persona` 是用户配置的人格底座，包括静态 prompt、begin dialogs、工具和 skills 白名单。
+- `Persona State` 是长期互动沉淀出的动态人格状态，例如熟悉度、信任、温度、正式程度偏好、直接程度偏好。
+- `Memory Snapshot` 是 memory 系统在本轮请求前提供的只读记忆视图。
+- `Topic / Relationship / Interaction State` 描述当前话题、关系状态和本轮交互状态。
+- `Effective Persona` 是本轮真正参与响应生成的人格结果，不应直接覆盖原始 persona 配置。
+
+## 边界原则
+
+### 1. Session 是隔离边界，不是人格主体
+
+`unified_msg_origin` 仍然必须存在。
+
+它负责：
+
+- 标识消息来源
+- 区分平台、群聊、私聊、WebUI 等输入入口
+- 承载平台权限、配置、provider 选择和会话级策略
+- 防止不同平台或不同窗口的上下文互相污染
+
+但它不应继续被当作长期人格连续性的核心。
+
+### 2. Conversation 是 episode，不是完整记忆
+
+`conversation_id` 仍然有价值。
+
+它负责：
+
+- 保存某一段具体对话历史
+- 支持标题、切换、删除和 UI 展示
+- 为 memory / postprocess 提供原始材料和来源引用
+
+但 conversation history 只是材料，不等于记忆；它不应承担全部长期关系、偏好和人格状态。
+
+### 3. Persona 是连续主体
+
+persona 不应只被视为一段 system prompt。
+
+它应逐步演进为：
+
+- 静态人格配置的持有者
+- 工具 / skills / 能力边界的声明者
+- memory 和 state 的消费主体
+- 跨 episode 维持连续表达的中心
+
+同一个 base persona 面对不同用户、不同群体或不同场景时，可以形成不同的 `Persona State`。
+因此长期状态的 key 不应只有 `persona_id`，还需要结合 `canonical_user_id`、scope、session 或 conversation 等边界。
+
+### 4. Memory 塑造人格，但不直接改写人格底座
+
+memory 系统的目标不是把更多历史塞进 prompt，而是让 persona 在长期互动中形成连续性。
+
+约束：
+
+- 不在 prompt collect 阶段生成或写入 memory。
+- 不让 LLM 自由改写 base persona prompt。
+- 不把长期成长结果直接覆盖回 `system_prompt`。
+- 通过 `Persona State`、`Memory Snapshot` 和 render 阶段的受控组合影响本轮表达。
+
+### 5. Interaction 负责本轮表达闭环
+
+Interaction middleware 的职责不是替代 persona，而是承载一次 interaction turn：
+
+- 输入 materialization
+- route decision
+- turn owner
+- output materialization
+- finalized material
+- postprocess handoff
+
+它应围绕 `Effective Persona` 执行本轮表达，而不是把本轮交互状态混入 base persona。
 
 ## 目标结构
 
@@ -13,12 +119,13 @@
 - 统一网关
 - 对外 API
 - 主 Agent
-- 会话路由
+- 会话路由和输入隔离
+- Effective Persona 解析
 - provider/stt/tts/message platform/persona/database 的基础接口访问
 - subagent 调度
 - 认证、配置、观测、状态管理
 
-这一层负责“决策、编排、路由”，不负责承载所有具体能力实现。
+这一层负责“输入隔离、人格解析、决策、编排、路由”，不负责承载所有具体能力实现。
 
 ### 2. Capability Platforms
 
@@ -59,15 +166,17 @@
 - `ToolRegistry`
 - `CapabilityRegistry`
 - `PersonaResolver`
+- `EffectivePersonaContext`
 - `ConversationStore`
 - `ProviderGateway`
 - `MessageGateway`
+- `MemorySnapshotReader`
 
 ### 3. 主 Agent 只关注编排
 
 主 Agent 的目标不是直接承载所有逻辑，而是：
 
-- 判断是否直接回答
+- 基于 Effective Persona 判断是否直接回答
 - 判断是否委派给子 Agent
 - 判断是否调用插件/技能/工具
 - 汇总外部能力返回结果
@@ -100,7 +209,7 @@
 
 - 主 Agent
 - API gateway
-- 会话、人格、provider、消息平台接口
+- 会话、Effective Persona、provider、消息平台接口
 - orchestration
 
 ### 3. Capability Layer
@@ -120,6 +229,7 @@
 
 - 主 Agent 与能力实现解耦
 - 插件、技能、工具不再直接侵入内核
+- session / conversation / persona / memory 的职责边界更清晰
 - 系统边界更清晰
 
 ### 2. 工程收益
@@ -131,6 +241,8 @@
 
 ### 3. 产品收益
 
+- 人格可以跨 episode 保持连续性
+- 不同用户或场景下的人格状态可解释、可回滚、可调试
 - 能支持多 Agent 协作
 - 能支持不同能力节点独立扩容
 - 能支持后续演进成真正的平台化架构
@@ -141,6 +253,8 @@
 
 第一阶段只要求做到：
 
+- 把 session、conversation、persona、memory 的语义边界写清楚并在代码中逐步收口
+- 抽出 Effective Persona 的解析边界，避免主链路继续散落解析 persona / memory / state
 - 把 Agent 基础接口抽出来
 - 把主 Agent 平台和能力平台的代码边界拆出来
 - 让插件、skills、tools、subagent 可以通过统一边界接入
