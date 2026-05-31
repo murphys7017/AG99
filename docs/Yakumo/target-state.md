@@ -12,7 +12,7 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 Yakumo 的目标组织方式是：
 
 ```text
-平台输入 -> 交互场景识别 -> 有效人格主体 -> 记忆 / 状态 / 能力编排 -> 对外表达
+平台输入 -> 交互场景识别 -> Persona Runtime Shell -> 有效人格主体 -> 记忆 / 状态 / 能力编排 -> 对外表达
 ```
 
 也就是说，`session` 不再是系统里的对话主体，而是输入来源、权限隔离和平台上下文；
@@ -42,6 +42,9 @@ Base Persona
 - `Memory Snapshot` 是 memory 系统在本轮请求前提供的只读记忆视图。
 - `Topic / Relationship / Interaction State` 描述当前话题、关系状态和本轮交互状态。
 - `Effective Persona` 是本轮真正参与响应生成的人格结果，不应直接覆盖原始 persona 配置。
+
+Interaction middleware 在这个目标里应定位为 `Persona Runtime Shell`：它不是 persona
+数据本体，也不是 memory / provider / capability 的所有者，而是一次交互中人格接收、判断、委派和表达的运行外壳。
 
 ## 边界原则
 
@@ -97,16 +100,73 @@ memory 系统的目标不是把更多历史塞进 prompt，而是让 persona 在
 
 ### 5. Interaction 负责本轮表达闭环
 
-Interaction middleware 的职责不是替代 persona，而是承载一次 interaction turn：
+Interaction middleware 的职责不是替代 persona，而是承载一次 interaction turn，并作为
+`Persona Runtime Shell` 编排本轮人格运行：
 
 - 输入 materialization
+- observation / route decision
 - route decision
 - turn owner
+- core delegation
 - output materialization
 - finalized material
 - postprocess handoff
 
 它应围绕 `Effective Persona` 执行本轮表达，而不是把本轮交互状态混入 base persona。
+
+长期人格状态、记忆、能力注册、provider 选择等不应内聚进 middleware。middleware 应调用独立服务：
+
+- `EffectivePersonaResolver`
+- `PersonaStateService`
+- `MemorySnapshotReader`
+- `RelationshipStateService`
+- `CapabilityPolicy`
+- `BodyOutputPolicy`
+
+这样它是人格层的运行外壳，而不是新的全局大对象。
+
+### 6. Desktop Body 是本地身体表现层
+
+Yakumo 可以有一个或多个本地 presence client。AG99live 的目标定位是：
+
+```text
+AG99live = Yakumo Persona 的 Desktop Body / Presence Client
+```
+
+它不是某个聊天 session 的镜像，也不是直接监听群聊原文后自行吐槽。它应消费 Core 已经裁剪、授权和降噪后的身体表达意图：
+
+```text
+外部会话事件
+  -> Input Runtime / Observation
+  -> Persona Runtime Shell / Core
+  -> visibility / privacy / importance / cooldown 判断
+  -> Body Expression Intent
+  -> AG99live Adapter
+  -> AG99live Frontend
+```
+
+Desktop Body Output 是普通聊天输出之外的表现通道，用于本地可见的旁白、吐槽、状态、提醒和任务进度。
+它不应自动泄露其他 session 的原文，也不应替代群聊或私聊中的正式回复。
+
+推荐输出类型：
+
+- `body.commentary`
+- `body.state`
+- `body.notification`
+- `body.task_status`
+- `body.attention_shift`
+- `body.reflex`
+
+每个 body intent 至少应能表达：
+
+- `visibility`
+- `privacy`
+- `source_scope`
+- `audience`
+- `importance`
+- `cooldown`
+- `text` 或结构化状态
+- `motion_hint` / `voice_hint` / `expression_hint`
 
 ## 目标结构
 
@@ -121,11 +181,13 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 - 主 Agent
 - 会话路由和输入隔离
 - Effective Persona 解析
+- Persona Runtime Shell / interaction middleware
+- Desktop Body Output 调度
 - provider/stt/tts/message platform/persona/database 的基础接口访问
 - subagent 调度
 - 认证、配置、观测、状态管理
 
-这一层负责“输入隔离、人格解析、决策、编排、路由”，不负责承载所有具体能力实现。
+这一层负责“输入隔离、人格解析、人格运行、决策、编排、路由和输出调度”，不负责承载所有具体能力实现。
 
 ### 2. Capability Platforms
 
@@ -171,6 +233,9 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 - `ProviderGateway`
 - `MessageGateway`
 - `MemorySnapshotReader`
+- `RelationshipStateService`
+- `BodyOutputPolicy`
+- `BodyExpressionIntent`
 
 ### 3. 主 Agent 只关注编排
 
@@ -179,6 +244,7 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 - 基于 Effective Persona 判断是否直接回答
 - 判断是否委派给子 Agent
 - 判断是否调用插件/技能/工具
+- 判断是否产出 Desktop Body Output
 - 汇总外部能力返回结果
 - 生成最终输出
 
@@ -210,6 +276,8 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 - 主 Agent
 - API gateway
 - 会话、Effective Persona、provider、消息平台接口
+- Persona Runtime Shell
+- Desktop Body Output
 - orchestration
 
 ### 3. Capability Layer
@@ -243,6 +311,8 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 
 - 人格可以跨 episode 保持连续性
 - 不同用户或场景下的人格状态可解释、可回滚、可调试
+- AG99live 等本地 presence client 可以成为 persona 的身体表现层
+- 群聊、私聊、任务和远程执行器状态可以被 Core 授权后转成本地身体表达
 - 能支持多 Agent 协作
 - 能支持不同能力节点独立扩容
 - 能支持后续演进成真正的平台化架构
@@ -255,6 +325,8 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 
 - 把 session、conversation、persona、memory 的语义边界写清楚并在代码中逐步收口
 - 抽出 Effective Persona 的解析边界，避免主链路继续散落解析 persona / memory / state
+- 将 interaction middleware 明确收口为 Persona Runtime Shell，而不是新的全局大对象
+- 定义 Desktop Body Output / Body Expression Intent 的输出边界
 - 把 Agent 基础接口抽出来
 - 把主 Agent 平台和能力平台的代码边界拆出来
 - 让插件、skills、tools、subagent 可以通过统一边界接入

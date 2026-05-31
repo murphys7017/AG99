@@ -11,6 +11,35 @@
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
 
+在 Yakumo 的目标态里，interaction middleware 应进一步收口为
+`Persona Runtime Shell`。它是人格层的一轮运行外壳，负责把输入 observation、route/reflex
+判断、core delegation、输出 materialization、body output intent 和 finalized material 串起来。
+
+它不应拥有整个人格层的数据本体：
+
+- base persona 仍由 persona repository / manager 管理。
+- persona state 由 `PersonaStateService` 这类状态服务管理。
+- memory 由 memory service 负责写入、检索和 snapshot。
+- provider、tools、skills、subagent 仍应通过 gateway / capability registry 接入。
+
+middleware 的职责是组合这些服务，并在一个 interaction turn 内形成可观测、可扩展、可回滚的执行现场。
+
+目标链路：
+
+```text
+Input Runtime / Observation
+  -> Interaction Middleware / Persona Runtime Shell
+      -> Effective Persona Resolver
+      -> Reflex / Route Decision
+      -> Core Agent / Tools / Capabilities
+      -> Output Gateway
+          -> Chat Reply
+          -> Desktop Body Output
+          -> Voice / TTS
+      -> Finalized Turn Material
+  -> Postprocess / Memory Update
+```
+
 ## 当前主模块
 
 ### `middleware.py`
@@ -20,9 +49,11 @@
 - 创建 `InteractionTurnState`
 - 入站媒体 materialization
 - interaction STT
+- observation / reflex 前置判断
 - route decision
 - SELF_REPLY / HYBRID / DELEGATE_TO_CORE 编排
 - live audio protocol route
+- Desktop Body Output intent 调度点
 - finalized material 校验
 - 调度 `AFTER_TURN_COMPLETED` postprocess
 
@@ -118,6 +149,59 @@ InteractionOutputController
 - memory 只消费 finalized material，不从 visible outputs 临时推断完整 turn 语义
 - `stream_interjection` 默认 `memory_relevant=False`
 - Record/Image/Audio 投递形态记录在 utterance metadata 中，memory 使用 semantic assistant text
+
+## Desktop Body Output 边界
+
+Desktop Body Output 是普通聊天输出之外的本地身体表现通道。AG99live 这类客户端应被视为
+Yakumo persona 的 `Desktop Body / Presence Client`，而不是某个 session 的镜像。
+
+它适合表现：
+
+- 群聊或私聊 observation 经 Core 授权后的本地吐槽 / 摘要提醒
+- 远程执行器、sandbox、工具任务的状态
+- persona 的等待、分心、思考、失败、注意力转移等本地 presence
+- 不应发送回原聊天窗口的低声反应或旁白
+
+它不适合：
+
+- 直接监听群聊原文并自行吐槽
+- 自动把所有 session 内容搬到本地桌面
+- 绕过 Core 的 visibility / privacy / importance / cooldown 判断
+- 替代正式群聊或私聊回复
+
+推荐 intent 形态：
+
+```json
+{
+  "type": "body.commentary",
+  "source": {
+    "platform": "qq",
+    "session": "group_123"
+  },
+  "visibility": "local_user_only",
+  "privacy": "summary_only",
+  "importance": 0.45,
+  "audience": "local_user",
+  "text": "那边群里又开始讨论部署问题了，看起来他们卡在环境变量上。",
+  "tone": "casual",
+  "motion_hint": {
+    "emotion": "thinking",
+    "intensity": 0.45
+  }
+}
+```
+
+推荐输出类型：
+
+- `body.commentary`
+- `body.state`
+- `body.notification`
+- `body.task_status`
+- `body.attention_shift`
+- `body.reflex`
+
+这一路径应由 Core / middleware 产出 body intent，再由 AG99live Adapter 转成桌宠协议；
+AG99live Frontend 只负责身体表现，例如气泡、语音、动作、表情、待机状态和任务状态。
 
 ## 插件侧两个接口
 
@@ -311,6 +395,9 @@ motion/audio/image 等物理投递结果伪装成成功文本；中间件的输�
 ## 仍需继续收口
 
 - 正式 output gateway 替换当前 send interception 形态
+- observation contributor / reflex contributor / body output contributor 扩展点
+- relationship scope resolver、visibility/privacy policy、attention/cooldown policy
+- Effective Persona Resolver 与 middleware decision 的明确接缝
 - live audio 缺 provider / 文本降级 / completion diagnostics
 - 真实平台日志断点，验证 payload、ledger、material、postprocess 输入一致
 - `event.extra["_interaction_turn_state"]` 作为兼容承载的长期替代方案
