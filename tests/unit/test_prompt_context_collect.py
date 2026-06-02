@@ -26,6 +26,7 @@ from astrbot.core.memory.types import (
     PersonaState,
     ShortTermMemory,
     TopicState,
+    TurnRecord,
 )
 from astrbot.core.message.components import File, Image, Plain, Reply
 from astrbot.core.prompt.collectors import (
@@ -191,10 +192,19 @@ def _patch_memory_service():
             conversation_id="conv-id",
         )
     )
+    service.store.get_recent_turn_records = AsyncMock(return_value=[])
     memory_config = MemoryConfig()
     service.memory_config = memory_config
 
     with (
+        patch(
+            "astrbot.core.prompt.collectors.conversation_history_collector.get_memory_service",
+            return_value=service,
+        ),
+        patch(
+            "astrbot.core.prompt.collectors.conversation_history_collector.get_memory_config",
+            return_value=memory_config,
+        ),
         patch(
             "astrbot.core.prompt.collectors.memory_collector.get_memory_service",
             return_value=service,
@@ -1986,6 +1996,104 @@ async def test_collect_context_pack_collects_conversation_history_from_conversat
     }
     assert history_slot.meta["format"] == "turn_pairs"
     assert history_slot.meta["turn_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_conversation_history_prefers_memory_turn_records(
+    _patch_memory_service,
+):
+    event, _ = _make_event()
+    context = _make_context()
+    req = ProviderRequest(prompt="hello")
+    req.conversation = _make_conversation()
+    req.conversation.history = (
+        '[{"role":"user","content":"legacy user"},'
+        '{"role":"assistant","content":"legacy assistant"}]'
+    )
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    _patch_memory_service.store.get_recent_turn_records.return_value = [
+        TurnRecord(
+            turn_id="turn-2",
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            platform_id="test_platform",
+            platform_user_key="test_platform:user123",
+            canonical_user_id="canonical-user-1",
+            session_id=event.unified_msg_origin,
+            user_message={"role": "user", "content": "memory user 2"},
+            assistant_message={"role": "assistant", "content": "memory assistant 2"},
+            message_timestamp=datetime(2026, 4, 5, 12, 2, 0),
+        ),
+        TurnRecord(
+            turn_id="turn-1",
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            platform_id="test_platform",
+            platform_user_key="test_platform:user123",
+            canonical_user_id="canonical-user-1",
+            session_id=event.unified_msg_origin,
+            user_message={"role": "user", "content": "memory user 1"},
+            assistant_message={"role": "assistant", "content": "memory assistant 1"},
+            message_timestamp=datetime(2026, 4, 5, 12, 1, 0),
+        ),
+    ]
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[ConversationHistoryCollector()],
+    )
+
+    history_slot = pack.get_slot("conversation.history")
+    assert history_slot is not None
+    assert history_slot.value["source"] == "memory.turn_records"
+    assert history_slot.value["turn_count"] == 2
+    assert [
+        turn["user_message"]["content"] for turn in history_slot.value["turns"]
+    ] == ["memory user 1", "memory user 2"]
+    _patch_memory_service.store.get_recent_turn_records.assert_awaited_once_with(
+        event.unified_msg_origin,
+        8,
+        conversation_id="conv-id",
+    )
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_truncates_conversation_history_by_config():
+    event, _ = _make_event()
+    context = _make_context()
+    req = ProviderRequest(prompt="hello")
+    req.conversation = _make_conversation()
+    req.conversation.history = (
+        '[{"role":"user","content":"u1"},{"role":"assistant","content":"a1"},'
+        '{"role":"user","content":"u2"},{"role":"assistant","content":"a2"},'
+        '{"role":"user","content":"u3"},{"role":"assistant","content":"a3"}]'
+    )
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60, max_context_length=2),
+        provider_request=req,
+        collectors=[ConversationHistoryCollector()],
+    )
+
+    history_slot = pack.get_slot("conversation.history")
+    assert history_slot is not None
+    assert history_slot.value["turn_count"] == 2
+    assert [
+        turn["user_message"]["content"] for turn in history_slot.value["turns"]
+    ] == ["u2", "u3"]
+    assert history_slot.meta["turn_count"] == 2
+    assert history_slot.meta["pre_truncate_turn_count"] == 3
+    assert history_slot.meta["collector_truncated"] is True
 
 
 @pytest.mark.asyncio
