@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -81,9 +82,7 @@ class InteractionDecision:
         if immediate_spoken_reply is not None:
             immediate_spoken_reply = str(immediate_spoken_reply)
         core_task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
-        plugin_hints = payload.get("plugin_hints", {})
-        if not isinstance(plugin_hints, dict):
-            plugin_hints = {}
+        plugin_hints = _coerce_mapping(payload.get("plugin_hints", {}))
         try:
             confidence = float(payload.get("confidence", 0.0) or 0.0)
         except (TypeError, ValueError):
@@ -112,6 +111,22 @@ class InteractionDecision:
             "confidence": self.confidence,
             "reason": self.reason,
         }
+
+
+def _coerce_mapping(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {}
+
+    raw_value = value.strip()
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 @dataclass(slots=True)
