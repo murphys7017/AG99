@@ -18,6 +18,7 @@
         "refresh": "Обновить",
         "delete": "Удалить",
         "cancel": "Отмена",
+        "runNow": "Запустить сейчас",
         "save": "Сохранить",
         "submit": "Создать"
     },
@@ -87,7 +88,7 @@
         "cron": "Cron-выражения",
         "cronPlaceholder": "0 9 * * *",
         "runAt": "Время запуска",
-        "session": "Целевая сессия (platform_id:message_type:session_id)",
+        "session": "Доставить в (необязательно, platform_id:message_type:session_id)",
         "timezone": "Часовой пояс (опционально, напр. Europe/Moscow)",
         "enabled": "Включено"
     },
@@ -102,6 +103,8 @@
         "cronRequired": "Укажите Cron-выражение",
         "runAtRequired": "Выберите время запуска",
         "createSuccess": "Задача создана",
-        "createFailed": "Ошибка создания"
+        "createFailed": "Ошибка создания",
+        "runStarted": "Запущено",
+        "runFailed": "Ошибка запуска"
     }
 }

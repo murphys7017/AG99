@@ -117,6 +117,7 @@
                 </td>
                 <td>
                   <div class="task-text">{{ formatTime(item.last_run_at) }}</div>
+                  <div v-if="item.last_error" class="task-error">{{ item.last_error }}</div>
                 </td>
                 <td class="actions-col">
                   <div class="table-actions">
@@ -132,6 +133,16 @@
                       />
                     </div>
                     <div class="table-actions-buttons">
+                      <v-btn
+                        size="small"
+                        variant="text"
+                        color="primary"
+                        prepend-icon="mdi-play-circle-outline"
+                        :loading="runningJobIds.has(item.job_id)"
+                        @click="runJobNow(item)"
+                      >
+                        {{ tm('actions.runNow') }}
+                      </v-btn>
                       <v-btn
                         v-if="item.job_type === 'active_agent'"
                         size="small"
@@ -229,6 +240,7 @@ const proactivePlatforms = ref<{ id: string; name: string; display_name?: string
 const createDialog = ref(false)
 const creating = ref(false)
 const editingJobId = ref('')
+const runningJobIds = ref(new Set<string>())
 const newJob = ref({
   run_once: false,
   name: '',
@@ -376,6 +388,28 @@ async function deleteJob(job: any) {
   }
 }
 
+async function runJobNow(job: any) {
+  const jobId = String(job.job_id || '')
+  if (!jobId || runningJobIds.value.has(jobId)) return
+
+  runningJobIds.value = new Set([...runningJobIds.value, jobId])
+  try {
+    const res = await axios.post(`/api/cron/jobs/${jobId}/run`)
+    if (res.data.status === 'ok') {
+      toast(tm('messages.runStarted'))
+      await loadJobs()
+    } else {
+      toast(res.data.message || tm('messages.runFailed'), 'error')
+    }
+  } catch (e: any) {
+    toast(e?.response?.data?.message || tm('messages.runFailed'), 'error')
+  } finally {
+    const next = new Set(runningJobIds.value)
+    next.delete(jobId)
+    runningJobIds.value = next
+  }
+}
+
 function openCreate() {
   editingJobId.value = ''
   resetNewJob()
@@ -426,10 +460,6 @@ function openEdit(job: any) {
 }
 
 async function createJob() {
-  if (!newJob.value.session) {
-    toast(tm('messages.sessionRequired'), 'warning')
-    return
-  }
   if (!newJob.value.note) {
     toast(tm('messages.noteRequired'), 'warning')
     return
@@ -468,10 +498,6 @@ async function createJob() {
 
 async function updateJob() {
   if (!editingJobId.value) {
-    return
-  }
-  if (!newJob.value.session) {
-    toast(tm('messages.sessionRequired'), 'warning')
     return
   }
   if (!newJob.value.note) {
@@ -629,6 +655,14 @@ onMounted(() => {
 .task-subline {
   margin-top: 6px;
   color: var(--dashboard-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.task-error {
+  margin-top: 6px;
+  color: rgb(var(--v-theme-error));
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;

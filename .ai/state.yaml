@@ -28,7 +28,8 @@ context:
     - Empty `modalities=[]` is intentionally treated as text-only in this fork, diverging from upstream's empty-as-unconfigured compatibility patch.
     - Reply components emit a strict OneBot V11 `{"type":"reply","data":{"id":str(id)}}` payload so aiocqhttp stops returning `retcode=100`.
     - Plugin page security headers (X-Frame-Options/frame-ancestors) are relaxed only when `ASTRBOT_LAUNCHER` env is set, leaving standalone deployments' CSP posture unchanged.
-    - Follow-up 4/5/6 upstream rewrite absorbs MiniMax Token Plan model discovery/M3 default, Anthropic tool_choice schema conversion, selected platform/plugin/template/provider fixes, and only the backend subset of future-task cron behavior; the broad CronJobPage UI rewrite remains deferred.
+    - Follow-up 4/5/6 upstream rewrite absorbs MiniMax Token Plan model discovery/M3 default, Anthropic tool_choice schema conversion, selected platform/plugin/template/provider fixes, and the future-task cron backend/manual-run contract.
+    - The current follow-up absorbs upstream version 4.25.2, Markdown-aware KB chunking, LLM compression prompt polish, ChatUI recording staging, FIRST_NOTICE EULA/ru-RU notice, and the existing local CronJobPage frontend wiring for manual run/optional delivery session.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -48,9 +49,12 @@ architecture:
     - Media conversion recognizes Tencent SILK magic bytes, MiniMax TTS timber weights tolerate empty/bad config, send_message_to_user fails closed on missing media paths, and no-parameter tool calls tolerate `None` arguments.
     - NVIDIA and Ollama embedding providers are already available locally through provider sources, provider manager registration, and default config templates.
     - Dashboard auth now uses PBKDF2 storage with legacy MD5 migration compatibility; WebUI login and account edit send plaintext passwords, while setup page handles required password changes.
-    - CLI package version, core runtime version, and `pyproject.toml` project version are aligned to upstream `4.25.1`.
+    - CLI package version, core runtime version, and `pyproject.toml` project version are aligned to upstream `4.25.2`.
     - Docs-public install scripts are now present as operational documentation assets and do not change local runtime startup/config behavior.
     - File component downloads now sanitize remote filenames before writing to temp storage.
+    - Markdown knowledge-base uploads use a heading-aware chunker for `.md`, `.markdown`, `.mkd`, and `.mdx` files while other formats keep the configured default chunker.
+    - WebUI voice recordings now stage as `record` attachments through the common chat file upload path.
+    - The existing local future-task page can manually run jobs, surfaces last errors, and allows empty delivery session to match cron runtime fallback behavior.
     - Quoted images are no longer captioned twice when the selected chat provider supports image input, and the main provider is no longer used as an implicit quoted-image caption fallback without a configured caption provider.
     - Command APIs expose normalized per-config wake prefixes for dashboard command suggestions.
     - Plugin APIs expose `marketplace_name` so local plugin entries can match marketplace names that differ only by underscore/hyphen normalization.

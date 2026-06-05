@@ -18,6 +18,7 @@
     "refresh": "Refresh",
     "delete": "Delete",
     "cancel": "Cancel",
+    "runNow": "Run now",
     "save": "Save",
     "submit": "Create"
   },
@@ -87,7 +88,7 @@
     "cron": "Cron expression",
     "cronPlaceholder": "0 9 * * *",
     "runAt": "Run at",
-    "session": "Target session (platform_id:message_type:session_id)",
+    "session": "Deliver to (optional, platform_id:message_type:session_id)",
     "timezone": "Timezone (optional, e.g. Asia/Shanghai)",
     "enabled": "Enabled"
   },
@@ -102,6 +103,8 @@
     "cronRequired": "Cron expression is required",
     "runAtRequired": "Please select run time",
     "createSuccess": "Created successfully",
-    "createFailed": "Failed to create"
+    "createFailed": "Failed to create",
+    "runStarted": "Started",
+    "runFailed": "Failed to run"
   }
 }

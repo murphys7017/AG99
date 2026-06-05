@@ -104,7 +104,13 @@ Recently absorbed by rewrite:
   - `90a3a2171`: template-list config validation and schema lookup now support file fields under `<field>.templates.<template>.*`; the dashboard editor supports `display_item`, hidden list hints, and `file` defaults.
   - `cea37707a`: configured provider model entries can derive capability metadata from the saved provider config when static model metadata is missing.
   - `0da17485b`: plugin failed-load cleanup now removes exact plugin module paths, stale metadata, handlers, tools, and plugin-registered platform adapters; legacy unregistered plugins fail with a clear error instead of `IndexError`.
-  - `24f568b14`: only the backend/run-contract subset was absorbed in this pass: active-agent cron jobs can be run manually, disabled jobs can be run on demand, run-once jobs are not deleted by manual runs, and delivery session is optional. The large CronJobPage/future-task UI rewrite remains deferred for a separate frontend review.
+  - `24f568b14`: active-agent cron jobs can be run manually, disabled jobs can be run on demand, run-once jobs are not deleted by manual runs, and delivery session is optional. The follow-up frontend pass wires the existing local `CronJobPage.vue` to manual run, last-error visibility, and optional delivery session without taking upstream's broad page rewrite.
+- 2026-06-05 follow-up batch 3/4/5/version:
+  - `0e973bd4`: project/core/CLI versions are aligned to `4.25.2`; local `changelogs/v4.25.2.md` documents only the features actually absorbed in this fork.
+  - `e26fe1c3f`: Markdown-aware knowledge-base chunking was absorbed with a local `MarkdownChunker`, `.md/.markdown/.mkd/.mdx` upload selection in `KBHelper`, and focused tests for heading context and fenced-code heading avoidance.
+  - `0ffdf544`: default LLM context-compression prompts now emphasize seamless continuation and list useful read materials/files for future work.
+  - `b8cf2ef`: ChatUI recording now returns a `File` from `useRecording` and stages it through the common upload path so record previews, clearing, and attachment send behavior are consistent with other files.
+  - `465a685b`: FIRST_NOTICE files include the EULA hint, and `FIRST_NOTICE.ru-RU.md` is present.
 
 ### Topic Merge Plan
 

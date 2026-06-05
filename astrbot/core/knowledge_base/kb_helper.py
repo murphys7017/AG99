@@ -21,6 +21,7 @@ from astrbot.core.provider.provider import (
 )
 
 from .chunking.base import BaseChunker
+from .chunking.markdown import MarkdownChunker
 from .chunking.recursive import RecursiveCharacterChunker
 from .kb_db_sqlite import KBSQLiteDatabase
 from .models import KBDocument, KBMedia, KnowledgeBase
@@ -111,6 +112,19 @@ Text chunk to process:
 
 def _compact_chunks(chunks: list[str]) -> list[str]:
     return [chunk.strip() for chunk in chunks if chunk and chunk.strip()]
+
+
+def _select_chunker_for_file(file_name: str, file_type: str, default: BaseChunker):
+    suffix = Path(file_name).suffix.lower()
+    normalized_type = file_type.lower().lstrip(".")
+    if suffix in {".md", ".markdown", ".mkd", ".mdx"} or normalized_type in {
+        "md",
+        "markdown",
+        "mkd",
+        "mdx",
+    }:
+        return MarkdownChunker()
+    return default
 
 
 class KBHelper:
@@ -315,7 +329,12 @@ class KBHelper:
                     await progress_callback("chunking", 0, 100)
 
                 try:
-                    chunks_text = await self.chunker.chunk(
+                    chunker = _select_chunker_for_file(
+                        file_name,
+                        file_type,
+                        self.chunker,
+                    )
+                    chunks_text = await chunker.chunk(
                         text_content,
                         chunk_size=chunk_size,
                         chunk_overlap=chunk_overlap,
