@@ -110,6 +110,11 @@ Recently absorbed by rewrite:
   - `e26fe1c3f`: Markdown-aware knowledge-base chunking was absorbed with a local `MarkdownChunker`, `.md/.markdown/.mkd/.mdx` upload selection in `KBHelper`, and focused tests for heading context and fenced-code heading avoidance.
   - `0ffdf544`: default LLM context-compression prompts now emphasize seamless continuation and list useful read materials/files for future work.
   - `b8cf2ef`: ChatUI recording now returns a `File` from `useRecording` and stages it through the common upload path so record previews, clearing, and attachment send behavior are consistent with other files.
+- 2026-06-05 context/LTM compatibility rewrite:
+  - `95d80578`/`df6eef052`/`d2f555151`: upstream group-chat LTM was absorbed as a new local `GroupChatContext` compatibility layer. It keeps one in-memory group-record buffer, ignores wake commands when recording, supports active-reply gating, and exposes two output surfaces: a prompt-extension collector for the Yakumo prompt pipeline and a legacy `on_llm_request` fallback for non-visible prompt modes. It does not replace or write to `astrbot/core/memory/*`.
+  - `1daa0e336`: upstream context compression improvements were absorbed into the runner-level context manager. LLM compression now splits by logical rounds, keeps recent exact context by token ratio, always preserves the active user round, appends a continuation-oriented summary instruction, and sanitizes the compression payload by the compression provider's modalities.
+  - Local policy intentionally preserved: `modalities=[]` remains text-only in this fork. The upstream empty-list-as-unconfigured behavior was not imported.
+  - Compatibility note: old `llm_compress_keep_recent` remains accepted; new config `llm_compress_keep_recent_ratio` is the preferred control.
   - `465a685b`: FIRST_NOTICE files include the EULA hint, and `FIRST_NOTICE.ru-RU.md` is present.
 
 ### Topic Merge Plan

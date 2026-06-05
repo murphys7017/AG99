@@ -31,10 +31,18 @@ class ContextManager:
         if config.custom_compressor:
             self.compressor = config.custom_compressor
         elif config.llm_compress_provider:
+            keep_recent_ratio = config.llm_compress_keep_recent_ratio
+            legacy_keep_recent = config.llm_compress_keep_recent
+            kwargs = (
+                {"keep_recent": legacy_keep_recent}
+                if keep_recent_ratio is None
+                else {"keep_recent_ratio": keep_recent_ratio}
+            )
             self.compressor = LLMSummaryCompressor(
                 provider=config.llm_compress_provider,
-                keep_recent=config.llm_compress_keep_recent,
                 instruction_text=config.llm_compress_instruction,
+                token_counter=self.token_counter,
+                **kwargs,
             )
         else:
             self.compressor = TruncateByTurnsCompressor(

@@ -17,7 +17,7 @@ from astrbot.core.utils.session_waiter import (
     session_waiter,
 )
 
-from .long_term_memory import LongTermMemory
+from .group_chat_context import GroupChatContext
 
 
 def _iter_message_components(event: AstrMessageEvent):
@@ -30,9 +30,13 @@ def _iter_message_components(event: AstrMessageEvent):
 class Main(star.Star):
     def __init__(self, context: star.Context) -> None:
         self.context = context
-        self.ltm = None
+        self.group_chat_context = None
         try:
-            self.ltm = LongTermMemory(self.context.astrbot_config_mgr, self.context)
+            self.group_chat_context = GroupChatContext(
+                self.context.astrbot_config_mgr,
+                self.context,
+            )
+            self.context.register_prompt_extension_collector(self.group_chat_context)
         except BaseException as e:
             logger.error(f"聊天增强 err: {e}")
 
@@ -149,8 +153,8 @@ class Main(star.Star):
                 has_image_or_plain = True
                 break
 
-        if self.ltm_enabled(event) and self.ltm and has_image_or_plain:
-            need_active = await self.ltm.need_active_reply(event)
+        if self.ltm_enabled(event) and self.group_chat_context and has_image_or_plain:
+            need_active = await self.group_chat_context.need_active_reply(event)
 
             group_icl_enable = self.context.get_config(umo=event.unified_msg_origin)[
                 "provider_ltm_settings"
@@ -158,7 +162,7 @@ class Main(star.Star):
             if group_icl_enable:
                 """记录对话"""
                 try:
-                    await self.ltm.handle_message(event)
+                    await self.group_chat_context.handle_message(event)
                 except BaseException as e:
                     logger.error(e)
 
@@ -217,9 +221,9 @@ class Main(star.Star):
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
         """在请求 LLM 前注入人格信息、Identifier、时间、回复内容等 System Prompt"""
-        if self.ltm and self.ltm_enabled(event):
+        if self.group_chat_context and self.ltm_enabled(event):
             try:
-                await self.ltm.on_req_llm(event, req)
+                await self.group_chat_context.on_req_llm(event, req)
             except BaseException as e:
                 logger.error(f"ltm: {e}")
 
@@ -228,19 +232,19 @@ class Main(star.Star):
         self, event: AstrMessageEvent, resp: LLMResponse
     ) -> None:
         """在 LLM 响应后记录对话"""
-        if self.ltm and self.ltm_enabled(event):
-            try:
-                await self.ltm.after_req_llm(event, resp)
-            except Exception as e:
-                logger.error(f"ltm: {e}")
+        del event, resp
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
         """消息发送后处理"""
-        if self.ltm and self.ltm_enabled(event):
+        if self.group_chat_context and self.ltm_enabled(event):
             try:
-                clean_session = event.get_extra("_clean_ltm_session", False)
+                clean_session = event.get_extra("_clean_group_context_session", False)
+                clean_session = clean_session or event.get_extra(
+                    "_clean_ltm_session",
+                    False,
+                )
                 if clean_session:
-                    await self.ltm.remove_session(event)
+                    await self.group_chat_context.remove_session(event)
             except Exception as e:
                 logger.error(f"ltm: {e}")

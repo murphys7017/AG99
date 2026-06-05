@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from astrbot.core.agent.context.config import ContextConfig
 from astrbot.core.agent.context.manager import ContextManager
-from astrbot.core.agent.message import Message, TextPart
+from astrbot.core.agent.message import ImageURLPart, Message, TextPart
 from astrbot.core.provider.entities import LLMResponse
 
 
@@ -614,6 +614,7 @@ class TestContextManager:
             enforce_max_turns=5,
             truncate_turns=2,
             llm_compress_keep_recent=3,
+            llm_compress_keep_recent_ratio=0.15,
         )
         manager = ContextManager(config)
 
@@ -622,6 +623,7 @@ class TestContextManager:
         assert manager.config.enforce_max_turns == 5
         assert manager.config.truncate_turns == 2
         assert manager.config.llm_compress_keep_recent == 3
+        assert manager.config.llm_compress_keep_recent_ratio == 0.15
 
     # ==================== Run Compression Tests ====================
 
@@ -791,3 +793,98 @@ class TestContextManager:
         # Recent should start with user
         if len(recent) > 0:
             assert recent[0].role == "user"
+
+    def test_split_into_rounds_keeps_tools_in_current_round(self):
+        from astrbot.core.agent.context.round_utils import split_into_rounds
+
+        messages = [
+            self.create_message("user", "search"),
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
+                ],
+            ),
+            Message(role="tool", content="result", tool_call_id="call_1"),
+            self.create_message("assistant", "done"),
+            self.create_message("user", "next"),
+        ]
+
+        rounds = split_into_rounds(messages)
+
+        assert len(rounds) == 2
+        assert [seg.role for seg in rounds[0]] == [
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+        ]
+        assert rounds[1][0].role == "user"
+
+    def test_llm_summary_compressor_splits_recent_rounds_by_token_ratio(self):
+        from astrbot.core.agent.context.compressor import LLMSummaryCompressor
+
+        provider = MockProvider()
+        compressor = LLMSummaryCompressor(
+            provider=provider,  # type: ignore[arg-type]
+            keep_recent_ratio=0.3,
+        )
+        rounds = [
+            [self.create_message("user", "a" * 100)],
+            [self.create_message("user", "b" * 100)],
+            [self.create_message("user", "c" * 100)],
+        ]
+        total_tokens = compressor.token_counter.count_tokens(
+            [msg for rnd in rounds for msg in rnd]
+        )
+
+        old_rounds, recent_rounds = compressor._split_recent_rounds_by_token_ratio(
+            rounds,
+            total_tokens,
+        )
+
+        assert old_rounds
+        assert recent_rounds
+        assert recent_rounds[-1][0].content == "c" * 100
+
+    @pytest.mark.asyncio
+    async def test_llm_compressor_sanitizes_payload_by_compression_provider_modalities(
+        self,
+    ):
+        from astrbot.core.agent.context.compressor import LLMSummaryCompressor
+
+        provider = MockProvider()
+        provider.provider_config["modalities"] = []
+        provider.text_chat = AsyncMock(
+            return_value=LLMResponse(role="assistant", completion_text="summary")
+        )
+        compressor = LLMSummaryCompressor(
+            provider=provider,  # type: ignore[arg-type]
+            keep_recent_ratio=0,
+        )
+        messages = [
+            self.create_message("system", "system"),
+            Message(
+                role="user",
+                content=[
+                    TextPart(text="look"),
+                    ImageURLPart(
+                        image_url=ImageURLPart.ImageURL(url="file:///tmp/a.png")
+                    ),
+                ],
+            ),
+            self.create_message("assistant", "ok"),
+            self.create_message("user", "continue"),
+        ]
+
+        await compressor(messages)
+
+        contexts = provider.text_chat.await_args.kwargs["contexts"]
+        serialized = str(contexts)
+        assert "[Image]" in serialized
+        assert "image_url" not in serialized

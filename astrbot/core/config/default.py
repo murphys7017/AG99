@@ -132,6 +132,7 @@ DEFAULT_CONFIG = {
             "5. Write the summary in the user's language.\n"
         ),
         "llm_compress_keep_recent": 6,
+        "llm_compress_keep_recent_ratio": 0.15,
         "llm_compress_provider_id": "",
         "max_context_length": -1,
         "dequeue_context_length": 1,
@@ -3600,9 +3601,18 @@ CONFIG_METADATA_3 = {
                         },
                     },
                     "provider_settings.llm_compress_keep_recent": {
-                        "description": "压缩时保留最近对话轮数",
+                        "description": "压缩时保留最近对话轮数（兼容旧配置）",
                         "type": "int",
-                        "hint": "始终保留的最近 N 轮对话。",
+                        "hint": "旧配置项。新压缩器会优先使用“保留最近上下文比例”。",
+                        "condition": {
+                            "provider_settings.context_limit_reached_strategy": "llm_compress",
+                            "provider_settings.agent_runner_type": "local",
+                        },
+                    },
+                    "provider_settings.llm_compress_keep_recent_ratio": {
+                        "description": "压缩时保留最近上下文比例",
+                        "type": "float",
+                        "hint": "按当前上下文 token 比例保留最近完整对话轮，范围 0 到 0.3，默认 0.15。",
                         "condition": {
                             "provider_settings.context_limit_reached_strategy": "llm_compress",
                             "provider_settings.agent_runner_type": "local",
