@@ -40,7 +40,7 @@ def sanitize_contexts_by_modalities(
 ) -> tuple[list[dict[str, Any]], ContextSanitizeStats]:
     if not contexts:
         return [], ContextSanitizeStats()
-    if not modalities or not isinstance(modalities, list):
+    if not isinstance(modalities, list):
         copied_contexts = []
         for msg in contexts:
             copied_msg = _message_to_dict(msg)

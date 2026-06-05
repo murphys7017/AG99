@@ -621,7 +621,9 @@ async def test_tool_result_includes_all_calltoolresult_content(
                 "mime_type": mime_type,
             }
         )
-        return SimpleNamespace(file_path=f"/tmp/{tool_call_id}_{index}.png")
+        return SimpleNamespace(
+            file_path=f"/tmp/{tool_call_id}_{index}.png", mime_type=mime_type
+        )
 
     monkeypatch.setattr(tool_image_cache, "save_image", fake_save_image)
 
@@ -747,6 +749,32 @@ async def test_runner_clears_tools_for_provider_without_tool_use(
         pass
 
     assert provider.received_func_tools == [None]
+
+
+@pytest.mark.asyncio
+async def test_runner_treats_empty_modalities_as_text_only(
+    runner, provider_request, mock_hooks, mock_tool_executor
+):
+    provider = CapturingProvider(modalities=[])
+    provider_request.image_urls = ["/path/that/should/not-be-read.jpg"]
+
+    await runner.reset(
+        provider=provider,
+        request=provider_request,
+        run_context=ContextWrapper(context=None),
+        tool_executor=mock_tool_executor,
+        agent_hooks=mock_hooks,
+        streaming=False,
+    )
+
+    async for _ in runner.step_until_done(1):
+        pass
+
+    assert provider.received_func_tools == [None]
+    assert provider.received_contexts[0][-1]["content"] == [
+        {"type": "text", "text": provider_request.prompt},
+        {"type": "text", "text": "[Image]"},
+    ]
 
 
 @pytest.mark.asyncio

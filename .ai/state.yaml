@@ -2,7 +2,7 @@ task:
   class: maintenance
   risk: medium
   phase: upstream_small_fix_parity
-  scope: file component sanitize, quoted image caption de-dupe, segmented reply trim, command suggestion wake-prefix tooltip, and plugin marketplace matching
+  scope: v4.25.2 small/compatibility parity batch (20 upstream commits rewritten locally)
 context:
   confidence: high
   assumptions:
@@ -23,6 +23,11 @@ context:
     - Runtime/media/message-tool upstream positives should be absorbed by confirming existing local behavior and adding focused tests where coverage is missing.
     - User explicitly requested the previously skipped version, CI dependency, README, and deploy-script/docs items; this pass absorbs the low-risk release-maintenance subset without broad docs rewrites.
     - The current pass absorbs the latest small upstream fixes by local rewrite while preserving the fork's customized chat, plugin, and provider request paths.
+    - The current pass absorbs 20 v4.25.2 upstream commits (file→mtime 2026-05-30..2026-06-05) via topic rewrite; yakumo's prompt/memory/postprocess/interaction architecture is preserved.
+    - Provider stats persistence retries transient SQLite `database is locked` errors with bounded exponential backoff instead of dropping usage records.
+    - Empty `modalities=[]` is treated as unconfigured in five call sites so providers whose config migrated to an empty list still pass images, quoted images, and tools.
+    - Reply components emit a strict OneBot V11 `{"type":"reply","data":{"id":str(id)}}` payload so aiocqhttp stops returning `retcode=100`.
+    - Plugin page security headers (X-Frame-Options/frame-ancestors) are relaxed only when `ASTRBOT_LAUNCHER` env is set, leaving standalone deployments' CSP posture unchanged.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -105,10 +110,15 @@ verification:
     - pnpm --dir dashboard typecheck
     - YAML parse check for .ai/state.yaml and JSON parse check for extension locale files
     - git diff --check
+    - .venv\Scripts\python -m ruff check astrbot/dashboard/routes/file.py astrbot/core/tools/message_tools.py astrbot/core/provider/sources/whisper_api_source.py astrbot/core/utils/media_utils.py astrbot/core/config/default.py astrbot/dashboard/routes/static_file.py astrbot/core/provider/sources/gemini_embedding_source.py astrbot/core/provider/sources/openai_embedding_source.py astrbot/core/provider/sources/openai_source.py astrbot/core/message/components.py tests/test_openai_source.py tests/unit/test_aiocqhttp_reply.py astrbot/core/platform/sources/wecom_ai_bot/wecomai_event.py astrbot/core/astr_main_agent.py astrbot/core/agent/runners/tool_loop_agent_runner.py astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py astrbot/dashboard/routes/plugin.py
+    - .venv\Scripts\python -m pytest tests/test_openai_source.py::test_resolve_image_part_preserves_base64_png_mime_type tests/test_openai_source.py::test_resolve_image_part_supports_base64_scheme tests/test_openai_source.py::test_encode_image_bs64_supports_base64_scheme tests/test_openai_source.py::test_encode_image_bs64_supports_file_uri tests/test_openai_source.py::test_image_ref_to_data_url_mode_controls_invalid_file_behavior tests/test_openai_source.py::test_encode_image_bs64_invalid_file_raises tests/test_openai_source.py::test_encode_image_bs64_missing_file_raises tests/test_media_utils.py tests/unit/test_aiocqhttp_reply.py tests/test_tool_loop_agent_runner.py::test_tool_result_includes_all_calltoolresult_content -q
+    - .venv\Scripts\python -m pytest tests/ -q --ignore=tests/test_openai_source.py --ignore=tests/test_anthropic_source.py --ignore=tests/test_aiocqhttp_platform.py -p no:cacheprovider
+    - vue-tsc dashboard typecheck (no errors in any touched dashboard files)
+    - git diff --check
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.
-  validation_gap: Full backend suite, live provider calls, live sandbox backends, browser manual setup flow, dashboard build, and GitHub Actions execution were not run. Current small-fix upstream parity changes were validated with targeted message/main-agent/dashboard tests, ruff, dashboard typecheck, YAML/JSON parsing, and diff checks.
+  validation_gap: "Full backend suite, live provider calls, live sandbox backends, browser manual setup flow, dashboard build, and GitHub Actions execution were not run. Current small-fix upstream parity changes were validated with targeted message/main-agent/dashboard tests, ruff, dashboard typecheck, YAML/JSON parsing, and diff checks. 6 baseline `test_openai_source.py` failures (Windows path normalization `_file_uri_to_path` tests + 2 pre-existing `_summarize_*` AttributeError) are unrelated to this pass and remain on master. Baseline 33 -> 31 failed after the batch: 1 broken upstream-style test fixed (`test_whisper_api_source.py` opus test via `ensure_wav` guard, the `test_tool_result_includes_all_calltoolresult_content` mock was completed with `mime_type` per upstream 4b097011c); 1 new test added (`test_resolve_image_part_preserves_base64_png_mime_type`) and passes; 2 new Reply tests added (`test_aiocqhttp_reply.py`) and pass."
 runtime:
   mode: minimal_v1

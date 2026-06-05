@@ -1495,7 +1495,7 @@ def _get_user_content_part_type(part: object) -> str | None:
 
 def _modalities_fix(provider: Provider, req: ProviderRequest) -> None:
     modalities = provider.provider_config.get("modalities")
-    modalities_unknown = not isinstance(modalities, list) or len(modalities) == 0
+    modalities_unknown = not isinstance(modalities, list)
     supports_image = modalities_unknown or "image" in modalities
     supports_audio = modalities_unknown or "audio" in modalities
     supports_tool_use = modalities_unknown or "tool_use" in modalities
@@ -1584,7 +1584,7 @@ def _sanitize_context_by_modalities(
     if not isinstance(req.contexts, list) or not req.contexts:
         return
     modalities = provider.provider_config.get("modalities", None)
-    if not modalities or not isinstance(modalities, list):
+    if not isinstance(modalities, list):
         return
     supports_image = bool("image" in modalities)
     supports_audio = bool("audio" in modalities)
@@ -2175,8 +2175,10 @@ async def build_main_agent(
         except Exception as exc:  # noqa: BLE001
             logger.error("Error occurred while applying file extract: %s", exc)
 
+    has_reply = any(isinstance(comp, Reply) for comp in event.message_obj.message)
+
     if not req.prompt and not req.image_urls and not req.audio_urls:
-        if not event.get_group_id() and req.extra_user_content_parts:
+        if has_reply or req.extra_user_content_parts:
             req.prompt = "<attachment>"
         else:
             return None

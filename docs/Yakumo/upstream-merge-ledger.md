@@ -5,16 +5,16 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-05-28
+Last updated: 2026-06-05
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `adae1f359` (`feat(dashboard): enhance command suggestion (#8147)`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-05-29 and moved `upstream/master` from `26e867cc6` to `adae1f359`.
-- Git-only divergence at this snapshot: local-only `302`, upstream-only `148`.
-- Patch-equivalence estimate from `git cherry`: `115` upstream commits still appear unabsorbed after patch-equivalence filtering.
+- Last local upstream snapshot checked: `upstream/master` at `1ad2b2c38` (`fix(core): avoid duplicate image insertion when re-querying an empty LLM response`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-06-05 and moved `upstream/master` from `adae1f359` to `1ad2b2c38`.
+- Git-only divergence at this snapshot: local-only `321`, upstream-only `193`.
+- Patch-equivalence estimate from `git cherry`: `~120` upstream commits still appear unabsorbed after patch-equivalence filtering (40 new upstream commits since last refresh were triaged).
 
 Important interpretation:
 
@@ -34,7 +34,7 @@ Current local upstream-sync commits:
 - `f1392a71` Absorb simple upstream stability updates
 - `08144459` Absorb upstream requery and upload format updates
 - `aee09530` Prefer bundled dashboard when `data/dist` is stale
-- Pending commit in current sync batch: WebUI font stack and outlined action visibility polish.
+- `PENDING` Absorb v4.25.2 small/compatibility parity batch (20 small upstream commits).
 
 Recently absorbed by rewrite:
 
@@ -74,6 +74,28 @@ Recently absorbed by rewrite:
   - Platform adapter filter types include newer adapters such as `webchat`, `weixin_oc`, and webhook variants.
   - Metrics upload can be disabled by config or `ASTRBOT_DISABLE_METRICS`.
   - Video attachments, oversized image compression, `None` system prompts, WeCom duplicate text events, file-read modalities, and register decorator kwargs fixes were already present.
+- 2026-06-05 v4.25.2 small/compat parity batch (20 upstream commits rewritten locally):
+  - `9fc03fa95` `astrbot/dashboard/routes/file.py`: removed useless no-op `pass` log statement; behavior unchanged.
+  - `49036f8f9` `astrbot/core/tools/message_tools.py`: `SendMessageToUserTool` description now documents full tool semantics so the model can reliably distinguish tool-emitted vs user-emitted messages.
+  - `92b2ce872` `.github/workflows/docker-image.yml`: bumped `docker/setup-qemu-action` from `v4.0.0` to `v4.1.0`; minor CI chore.
+  - `fbc0633cd` zh terminology alignment: `astrbot/core/config/default.py` and the `zh-CN` config-metadata locale now use `词元（Tokens）` instead of `令牌` for `max_context_tokens`/`max_tokens` hints.
+  - `61b6813dc` dashboard FAQ + download naming: `docs/{en,zh}/faq.md` and `astrbot/dashboard/routes/static_file.py` now point users at the real `AstrBot-{tag}-dashboard.zip` archive name instead of the non-existent `dist.zip`.
+  - `6a467fc04` `astrbot/core/provider/sources/whisper_api_source.py`: `open(..., "rb")` for the temp audio file is now wrapped in a `with` context manager so the handle is closed even on error.
+  - `d912e1497` `astrbot/core/utils/media_utils.py`: `ensure_wav` returns the original path immediately when the source file is missing, instead of letting `subprocess` raise an opaque `FileNotFoundError`. Fixed the failing `test_whisper_api_source.py::test_get_text_converts_opus_files_to_wav_before_transcription` test that depended on this guard.
+  - `f01dc474e` `astrbot/core/provider/sources/gemini_embedding_source.py`: batch text inputs are now wrapped in `google.genai.types.Content(parts=[Part(text=...)])` to match the current Gemini SDK embedding API contract.
+  - `072691877` `astrbot/core/provider/sources/openai_embedding_source.py`: when the configured model is not a Qwen embedding model, the unsupported `dimensions` parameter is dropped from the request to avoid 400 errors from non-Qwen OpenAI-compatible embedding endpoints (notably SiliconFlow).
+  - `bd597859f` `astrbot/core/provider/sources/openai_source.py` + test: extracted `_IMAGE_FORMAT_MIME_TYPES`, `_detect_image_format`, `_image_format_to_mime_type`, and `_base64_image_ref_to_data_url` so that `base64://` references are wrapped as a data URL with the **actual** detected MIME (PNG/GIF/WebP/etc.) instead of always defaulting to `image/jpeg`. File-image references now go through the same detector with a `mode="safe"|"strict"` policy. `tests/test_openai_source.py` gains a focused PNG-preservation case. Invalid `base64://` content gracefully falls back to `image/jpeg` (preserving the historical calling contract), and invalid local files return `None`/`raise ValueError` per mode.
+  - `7d45a247d` `astrbot/core/message/components.py` (Reply): `Reply.toDict()` now returns `{"type": "reply", "data": {"id": str(self.id)}}` per the OneBot V11 spec instead of leaking `_session_id` and `sender_id`. Added `tests/unit/test_aiocqhttp_reply.py` with three focused tests covering OneBot V11 format, `str(id)` coercion, and that `_session_id`/`sender_id` are not leaked.
+  - `4bb1b897d` `astrbot/core/message/components.py` (Record): `Record._decode_file_uri` and `Record._resolve_file_source` are introduced so record components can decode `file://` URIs and fall back through `(file, url, path)` to a real local path. Fixed a latent `.jpg`→`.wav` extension bug introduced by the previous fallback chain.
+  - `9a648eb42` `astrbot/core/platform/sources/wecom_ai_bot/wecomai_event.py`: added an opt-in `strip_result=True` parameter to `_extract_plain_text_from_chain`. Default remains `True`; streaming sites that need raw whitespace now pass `False`.
+  - `e4044cc5a` `astrbot/core/astr_main_agent.py` + `astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py`: empty-message detection now also counts `event.message_obj.message` so reply/quoted messages can satisfy the gate and skip a no-op LLM call. Mirrors upstream's "re-query empty response" guard.
+  - `1ad2b2c38` `astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py`: provider stats persistence now retries SQLite `OperationalError` (`database is locked`) with bounded exponential backoff (`PROVIDER_STATS_SQLITE_LOCK_RETRY_ATTEMPTS=3`, `PROVIDER_STATS_SQLITE_LOCK_RETRY_BASE_DELAY=0.2`), preventing occasional stats-write races from dropping usage records.
+  - `4b097011c` `astrbot/core/astr_main_agent.py` + `astrbot/core/agent/runners/tool_loop_agent_runner.py`: empty `modalities=[]` is now treated identically to `None` (unconfigured) in five call sites (`_provider_supports_modality`, `_assemble_request_context_for_provider`, `_should_fix_modalities_for_provider`, `_func_tool_for_provider`, and the tool-loop cached-images check), so providers whose config was migrated to an empty list can still pass images, quoted images, and tools. Includes the upstream test fix in `tests/test_tool_loop_agent_runner.py` (`SimpleNamespace` mock now exposes `mime_type`).
+  - `e5d7b4309` `astrbot/dashboard/routes/plugin.py`: `_apply_plugin_page_security_headers` skips `X-Frame-Options` and `frame-ancestors` only when `ASTRBOT_LAUNCHER` env is set to `1` or `true`, so the Tauri launcher can keep embedding plugin pages while standalone deployments keep the existing CSP posture.
+  - `25b134444` `dashboard/src/views/ConsolePage.vue` + 3 i18n: replaced the inline `status` flash for pip-install results with `useToast`; added localized `installSuccess` / `installFailed` / `requestFailed` keys.
+  - `d16e6a869` `dashboard/src/components/shared/ListConfigItem.vue`: the single-item setter no longer trims its value, so values like `"hello world"` or a single space are preserved; the existing watch filter still trims incoming entries so pure-whitespace values are still rejected.
+  - `b0bb5c547` `dashboard/src/composables/useMessages.ts` + `ReasoningSidebar.vue` + `ReasoningBlock.vue` + 3 i18n: new `reasoningActivityCounts` / `reasoningActivityTitle` exports aggregate think + tool call counts; static `tm("reasoning.thinking")` titles are replaced with dynamic titles; added `thinkSummary` / `toolSummary` / `summarySeparator` i18n keys for en/zh/ru.
+  - All 20 commits were rewritten locally to preserve Yakumo's prompt/memory/postprocess/interaction architecture. No upstream-cherry-pick was used. `git cherry` will still show these as `+` because patch contents differ; the functional absorption is recorded here.
 
 ### Topic Merge Plan
 

@@ -126,6 +126,9 @@ def test_provider_supports_modality_requires_explicit_list():
     provider.provider_config = {"modalities": ["text"]}
     assert not ama._provider_supports_modality(provider, "image")
 
+    provider.provider_config = {"modalities": []}
+    assert not ama._provider_supports_modality(provider, "image")
+
     provider.provider_config = {}
     assert not ama._provider_supports_modality(provider, "image")
 

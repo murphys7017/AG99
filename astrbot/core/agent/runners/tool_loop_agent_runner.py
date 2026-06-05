@@ -902,7 +902,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             # append a user message with images so LLM can see them
             if cached_images:
                 modalities = self.provider.provider_config.get("modalities", [])
-                supports_image = "image" in modalities
+                supports_image = not isinstance(modalities, list) or "image" in modalities
                 if supports_image:
                     # Build user message with images for LLM to review
                     image_parts = []
