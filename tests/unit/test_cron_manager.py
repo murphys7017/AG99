@@ -447,6 +447,22 @@ class TestRunJob:
         # Should not update status
         mock_db.update_cron_job.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_run_job_now_ignores_disabled_and_keeps_run_once(
+        self, cron_manager, mock_db, sample_cron_job
+    ):
+        sample_cron_job.enabled = False
+        sample_cron_job.run_once = True
+        mock_db.get_cron_job.return_value = sample_cron_job
+        cron_manager._basic_handlers["test-job-id"] = AsyncMock()
+
+        await cron_manager.run_job_now("test-job-id")
+
+        cron_manager._basic_handlers["test-job-id"].assert_awaited_once_with(
+            key="value"
+        )
+        mock_db.delete_cron_job.assert_not_called()
+
 
 class TestRunBasicJob:
     """Tests for _run_basic_job method."""

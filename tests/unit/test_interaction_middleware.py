@@ -21,7 +21,7 @@ from astrbot.core.interaction.types import (
     InteractionDecision,
     RouteMode,
 )
-from astrbot.core.message.components import Plain, Record
+from astrbot.core.message.components import Plain, Record, Reply
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.preprocess_stage.stage import PreProcessStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -1405,6 +1405,55 @@ class TestInteractionMiddleware:
 
         assert stt_provider.calls == []
         assert voice_event.message_str == ""
+
+    @pytest.mark.asyncio
+    async def test_preprocess_transcribes_record_inside_reply_chain(
+        self,
+        webchat_event,
+        tmp_path,
+        monkeypatch,
+    ):
+        audio_path = tmp_path / "reply.wav"
+        audio_path.write_bytes(b"fake-wav")
+        reply = Reply(id="reply-1")
+        reply.chain = [Record.fromFileSystem(str(audio_path))]
+        webchat_event.message_str = ""
+        webchat_event.message_obj.message_str = ""
+        webchat_event.message_obj.message = [reply]
+
+        async def fake_ensure_wav(path):
+            return path
+
+        async def fake_transcribe_record(ctx, event, record, provider, stage):
+            assert stage == "pipeline.preprocess_stt"
+            return type("Result", (), {"text": "引用语音"})()
+
+        context = MagicMock()
+        context.get_using_stt_provider.return_value = FakeSTTProvider("unused")
+        stage = PreProcessStage()
+        await stage.initialize(
+            MagicMock(
+                astrbot_config={
+                    "provider_stt_settings": {"enable": True},
+                    "platform_settings": {},
+                },
+                plugin_manager=MagicMock(context=context),
+            )
+        )
+        monkeypatch.setattr(
+            "astrbot.core.pipeline.preprocess_stage.stage.ensure_wav",
+            fake_ensure_wav,
+        )
+        monkeypatch.setattr(
+            "astrbot.core.pipeline.preprocess_stage.stage.transcribe_record",
+            fake_transcribe_record,
+        )
+
+        await stage.process(webchat_event)
+
+        assert isinstance(reply.chain[0], Plain)
+        assert reply.chain[0].text == "引用语音"
+        assert webchat_event.message_str == "引用语音"
 
 
 class TestCoreInputGateway:

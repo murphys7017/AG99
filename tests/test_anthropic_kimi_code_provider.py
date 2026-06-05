@@ -482,3 +482,18 @@ def test_provider_requires_compiled_output_contract_for_structured_modes():
 
     with pytest.raises(ValueError, match="compiled_output_contract_required"):
         provider.ensure_output_contract_supported(output_contract=output_contract)
+
+
+def test_anthropic_normalize_tool_choice_values():
+    normalize = anthropic_source.ProviderAnthropic._normalize_tool_choice
+
+    assert normalize("required") == {"type": "any"}
+    assert normalize("auto") == {"type": "auto"}
+    assert normalize("any") == {"type": "any"}
+    assert normalize("none") == {"type": "none"}
+    assert normalize({"type": "tool", "name": "search"}) == {
+        "type": "tool",
+        "name": "search",
+    }
+    assert normalize("tool") == {"type": "auto"}
+    assert normalize("unknown") == {"type": "auto"}

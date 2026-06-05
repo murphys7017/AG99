@@ -45,8 +45,8 @@ class ProviderAnthropic(Provider):
         output_contract: OutputContract | None,
         compiled_output_contract: CompiledOutputContract | None,
         func_tool: ToolSet | None,
-        tool_choice: Literal["auto", "required"],
-    ) -> tuple[ToolSet | None, Literal["auto", "required"]]:
+        tool_choice: Literal["auto", "any", "tool", "none", "required"] | dict[str, str],
+    ) -> tuple[ToolSet | None, Literal["auto", "any", "tool", "none", "required"] | dict[str, str]]:
         if isinstance(compiled_output_contract, CompiledOutputContract):
             func_tool = build_single_tool_set_from_compiled_contract(
                 compiled_output_contract,
@@ -365,15 +365,27 @@ class ProviderAnthropic(Provider):
         if usage.output_tokens is not None:
             token_usage.output = usage.output_tokens
 
+    @staticmethod
+    def _normalize_tool_choice(tool_choice: Any) -> dict[str, str]:
+        if isinstance(tool_choice, dict):
+            return tool_choice
+        if tool_choice == "required":
+            return {"type": "any"}
+        if tool_choice in {"auto", "any", "none"}:
+            return {"type": tool_choice}
+        if tool_choice == "tool":
+            logger.warning("tool_choice='tool' requires a tool name; falling back to auto.")
+            return {"type": "auto"}
+        logger.warning("Unknown Anthropic tool_choice %r; falling back to auto.", tool_choice)
+        return {"type": "auto"}
+
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         if tools:
             if tool_list := tools.get_func_desc_anthropic_style():
                 payloads["tools"] = tool_list
-                payloads["tool_choice"] = {
-                    "type": "any"
-                    if payloads.get("tool_choice") == "required"
-                    else "auto"
-                }
+                payloads["tool_choice"] = self._normalize_tool_choice(
+                    payloads.get("tool_choice", "auto")
+                )
 
         extra_body = self.provider_config.get("custom_extra_body", {})
 
@@ -456,11 +468,9 @@ class ProviderAnthropic(Provider):
         if tools:
             if tool_list := tools.get_func_desc_anthropic_style():
                 payloads["tools"] = tool_list
-                payloads["tool_choice"] = {
-                    "type": "any"
-                    if payloads.get("tool_choice") == "required"
-                    else "auto"
-                }
+                payloads["tool_choice"] = self._normalize_tool_choice(
+                    payloads.get("tool_choice", "auto")
+                )
 
         # 用于累积工具调用信息
         tool_use_buffer = {}
@@ -616,7 +626,7 @@ class ProviderAnthropic(Provider):
         tool_calls_result=None,
         model=None,
         extra_user_content_parts=None,
-        tool_choice: Literal["auto", "required"] = "auto",
+        tool_choice: Literal["auto", "any", "tool", "none", "required"] | dict[str, str] = "auto",
         output_contract: OutputContract | None = None,
         compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
@@ -647,8 +657,8 @@ class ProviderAnthropic(Provider):
             if not isinstance(tool_calls_result, list):
                 context_query.extend(tool_calls_result.to_openai_messages())
             else:
-                for tcr in tool_calls_result:
-                    context_query.extend(tcr.to_openai_messages())
+                for tool_call_result in tool_calls_result:
+                    context_query.extend(tool_call_result.to_openai_messages())
 
         system_prompt, new_messages = self._prepare_payload(context_query)
 
@@ -696,7 +706,7 @@ class ProviderAnthropic(Provider):
         tool_calls_result=None,
         model=None,
         extra_user_content_parts=None,
-        tool_choice: Literal["auto", "required"] = "auto",
+        tool_choice: Literal["auto", "any", "tool", "none", "required"] | dict[str, str] = "auto",
         output_contract: OutputContract | None = None,
         compiled_output_contract: CompiledOutputContract | None = None,
         **kwargs,
@@ -726,8 +736,8 @@ class ProviderAnthropic(Provider):
             if not isinstance(tool_calls_result, list):
                 context_query.extend(tool_calls_result.to_openai_messages())
             else:
-                for tcr in tool_calls_result:
-                    context_query.extend(tcr.to_openai_messages())
+                for tool_call_result in tool_calls_result:
+                    context_query.extend(tool_call_result.to_openai_messages())
 
         system_prompt, new_messages = self._prepare_payload(context_query)
 

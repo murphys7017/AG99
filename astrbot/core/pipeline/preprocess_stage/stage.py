@@ -4,7 +4,7 @@ import traceback
 from collections.abc import AsyncGenerator
 
 from astrbot.core import logger
-from astrbot.core.message.components import Image, Plain, Record
+from astrbot.core.message.components import Image, Plain, Record, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.media_utils import ensure_wav
 from astrbot.core.voice import (
@@ -73,20 +73,36 @@ class PreProcessStage(Stage):
                             logger.debug(f"路径映射: {url} -> {component.url}")
                     message_chain[idx] = component
 
+        async def _materialize_record(record: Record) -> Record:
+            original_path = await record.convert_to_file_path()
+            record_path = await ensure_wav(original_path)
+            if record_path != original_path:
+                event.track_temporary_local_file(record_path)
+            record.file = record_path
+            record.path = record_path
+            return record
+
+        def _iter_reply_records(reply: Reply):
+            if not reply.chain:
+                return
+            for idx, reply_comp in enumerate(reply.chain):
+                if isinstance(reply_comp, Record):
+                    yield idx, reply_comp
+
         # In here, we convert all Record components to wav format and update the file path.
         message_chain = event.get_messages()
         for idx, component in enumerate(message_chain):
             if isinstance(component, Record):
                 try:
-                    original_path = await component.convert_to_file_path()
-                    record_path = await ensure_wav(original_path)
-                    if record_path != original_path:
-                        event.track_temporary_local_file(record_path)
-                    component.file = record_path
-                    component.path = record_path
-                    message_chain[idx] = component
+                    message_chain[idx] = await _materialize_record(component)
                 except Exception as e:
                     logger.warning(f"Voice processing failed: {e}")
+            elif isinstance(component, Reply) and component.chain:
+                for reply_idx, reply_comp in _iter_reply_records(component):
+                    try:
+                        component.chain[reply_idx] = await _materialize_record(reply_comp)
+                    except Exception as e:
+                        logger.warning(f"Voice processing in reply chain failed: {e}")
 
         # STT
         if self.stt_settings.get("enable", False):
@@ -102,35 +118,56 @@ class PreProcessStage(Stage):
                     f"会话 {event.unified_msg_origin} 未配置语音转文本模型。",
                 )
                 return
+            async def _transcribe_record_to_plain(
+                record: Record,
+                *,
+                is_reply: bool = False,
+            ) -> Plain | None:
+                prefix = "引用消息" if is_reply else ""
+                retry = 5
+                for i in range(retry):
+                    try:
+                        result = await transcribe_record(
+                            ctx,
+                            event,
+                            record,
+                            provider=stt_provider,
+                            stage="pipeline.preprocess_stt",
+                        )
+                        suffix = "(引用消息)" if is_reply else ""
+                        logger.info(f"语音转文本{suffix}结果: " + result.text)
+                        return Plain(result.text)
+                    except VoiceServiceError as e:
+                        if e.reason != "source_unavailable":
+                            logger.error(traceback.format_exc())
+                            logger.error(f"{prefix}语音转文本失败: {e}")
+                            break
+                        # napcat workaround
+                        logger.warning(e)
+                        logger.warning(f"重试中: {i + 1}/{retry}")
+                        await asyncio.sleep(0.5)
+                        continue
+                    except BaseException as e:
+                        logger.error(traceback.format_exc())
+                        logger.error(f"{prefix}语音转文本失败: {e}")
+                        break
+                return None
+
             message_chain = event.get_messages()
             for idx, component in enumerate(message_chain):
                 if isinstance(component, Record):
-                    retry = 5
-                    for i in range(retry):
-                        try:
-                            result = await transcribe_record(
-                                ctx,
-                                event,
-                                component,
-                                provider=stt_provider,
-                                stage="pipeline.preprocess_stt",
-                            )
-                            logger.info("语音转文本结果: " + result.text)
-                            message_chain[idx] = Plain(result.text)
-                            event.message_str += result.text
-                            event.message_obj.message_str += result.text
-                            break
-                        except VoiceServiceError as e:
-                            if e.reason != "source_unavailable":
-                                logger.error(traceback.format_exc())
-                                logger.error(f"语音转文本失败: {e}")
-                                break
-                            # napcat workaround
-                            logger.warning(e)
-                            logger.warning(f"重试中: {i + 1}/{retry}")
-                            await asyncio.sleep(0.5)
-                            continue
-                        except BaseException as e:
-                            logger.error(traceback.format_exc())
-                            logger.error(f"语音转文本失败: {e}")
-                            break
+                    plain_comp = await _transcribe_record_to_plain(component)
+                    if plain_comp:
+                        message_chain[idx] = plain_comp
+                        event.message_str += plain_comp.text
+                        event.message_obj.message_str += plain_comp.text
+                elif isinstance(component, Reply) and component.chain:
+                    for reply_idx, reply_comp in _iter_reply_records(component):
+                        plain_comp = await _transcribe_record_to_plain(
+                            reply_comp,
+                            is_reply=True,
+                        )
+                        if plain_comp:
+                            component.chain[reply_idx] = plain_comp
+                            event.message_str += plain_comp.text
+                            event.message_obj.message_str += plain_comp.text

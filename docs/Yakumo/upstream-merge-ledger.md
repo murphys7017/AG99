@@ -34,7 +34,7 @@ Current local upstream-sync commits:
 - `f1392a71` Absorb simple upstream stability updates
 - `08144459` Absorb upstream requery and upload format updates
 - `aee09530` Prefer bundled dashboard when `data/dist` is stale
-- `PENDING` Absorb v4.25.2 small/compatibility parity batch (20 small upstream commits).
+- `1505cbd81` Absorb v4.25.2 small/compatibility parity batch with local `modalities=[]` text-only policy.
 
 Recently absorbed by rewrite:
 
@@ -90,12 +90,21 @@ Recently absorbed by rewrite:
   - `9a648eb42` `astrbot/core/platform/sources/wecom_ai_bot/wecomai_event.py`: added an opt-in `strip_result=True` parameter to `_extract_plain_text_from_chain`. Default remains `True`; streaming sites that need raw whitespace now pass `False`.
   - `e4044cc5a` `astrbot/core/astr_main_agent.py` + `astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py`: empty-message detection now also counts `event.message_obj.message` so reply/quoted messages can satisfy the gate and skip a no-op LLM call. Mirrors upstream's "re-query empty response" guard.
   - `1ad2b2c38` `astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py`: provider stats persistence now retries SQLite `OperationalError` (`database is locked`) with bounded exponential backoff (`PROVIDER_STATS_SQLITE_LOCK_RETRY_ATTEMPTS=3`, `PROVIDER_STATS_SQLITE_LOCK_RETRY_BASE_DELAY=0.2`), preventing occasional stats-write races from dropping usage records.
-  - `4b097011c` `astrbot/core/astr_main_agent.py` + `astrbot/core/agent/runners/tool_loop_agent_runner.py`: empty `modalities=[]` is now treated identically to `None` (unconfigured) in five call sites (`_provider_supports_modality`, `_assemble_request_context_for_provider`, `_should_fix_modalities_for_provider`, `_func_tool_for_provider`, and the tool-loop cached-images check), so providers whose config was migrated to an empty list can still pass images, quoted images, and tools. Includes the upstream test fix in `tests/test_tool_loop_agent_runner.py` (`SimpleNamespace` mock now exposes `mime_type`).
+  - `4b097011c` reviewed but intentionally diverged: upstream treats empty `modalities=[]` as unconfigured/full capability, while this fork keeps `modalities=[]` as text-only. The local policy is implemented consistently across main-agent modality checks, tool-loop request/context sanitization, cached tool images, and shared context sanitizers. The upstream test fix in `tests/test_tool_loop_agent_runner.py` (`SimpleNamespace` mock exposes `mime_type`) was absorbed.
   - `e5d7b4309` `astrbot/dashboard/routes/plugin.py`: `_apply_plugin_page_security_headers` skips `X-Frame-Options` and `frame-ancestors` only when `ASTRBOT_LAUNCHER` env is set to `1` or `true`, so the Tauri launcher can keep embedding plugin pages while standalone deployments keep the existing CSP posture.
   - `25b134444` `dashboard/src/views/ConsolePage.vue` + 3 i18n: replaced the inline `status` flash for pip-install results with `useToast`; added localized `installSuccess` / `installFailed` / `requestFailed` keys.
   - `d16e6a869` `dashboard/src/components/shared/ListConfigItem.vue`: the single-item setter no longer trims its value, so values like `"hello world"` or a single space are preserved; the existing watch filter still trims incoming entries so pure-whitespace values are still rejected.
   - `b0bb5c547` `dashboard/src/composables/useMessages.ts` + `ReasoningSidebar.vue` + `ReasoningBlock.vue` + 3 i18n: new `reasoningActivityCounts` / `reasoningActivityTitle` exports aggregate think + tool call counts; static `tm("reasoning.thinking")` titles are replaced with dynamic titles; added `thinkSummary` / `toolSummary` / `summarySeparator` i18n keys for en/zh/ru.
   - All 20 commits were rewritten locally to preserve Yakumo's prompt/memory/postprocess/interaction architecture. No upstream-cherry-pick was used. `git cherry` will still show these as `+` because patch contents differ; the functional absorption is recorded here.
+- 2026-06-05 follow-up batch 4/5/6:
+  - `c89ac6189` / `def81530b`: MiniMax Token Plan now defaults to `MiniMax-M3` and fetches `/v1/models` dynamically when an API key is available, with a local fallback list so tests/offline startup remain deterministic.
+  - `8353fe160`: Anthropic `tool_choice` is normalized to the native Anthropic schema (`auto`/`any`/`none`/dict tool choice), while OpenAI-style `required` maps to `any`; unsupported string `tool` falls back to `auto`.
+  - `01a47b836`: QQ Official Webhook caches selected raw webhook extra fields (`union_openid`, `message_scene`) by message ID and attaches them to the committed event.
+  - `85ec7a969`: preprocess now materializes and STT-transcribes `Record` components inside `Reply.chain`, using the local shared `transcribe_record` path instead of duplicating provider calls.
+  - `90a3a2171`: template-list config validation and schema lookup now support file fields under `<field>.templates.<template>.*`; the dashboard editor supports `display_item`, hidden list hints, and `file` defaults.
+  - `cea37707a`: configured provider model entries can derive capability metadata from the saved provider config when static model metadata is missing.
+  - `0da17485b`: plugin failed-load cleanup now removes exact plugin module paths, stale metadata, handlers, tools, and plugin-registered platform adapters; legacy unregistered plugins fail with a clear error instead of `IndexError`.
+  - `24f568b14`: only the backend/run-contract subset was absorbed in this pass: active-agent cron jobs can be run manually, disabled jobs can be run on demand, run-once jobs are not deleted by manual runs, and delivery session is optional. The large CronJobPage/future-task UI rewrite remains deferred for a separate frontend review.
 
 ### Topic Merge Plan
 

@@ -75,15 +75,18 @@ class botClient(Client):
 
     def _commit(self, abm: AstrBotMessage) -> None:
         self.platform.remember_session_message_id(abm.session_id, abm.message_id)
-        self.platform.commit_event(
-            QQOfficialWebhookMessageEvent(
-                abm.message_str,
-                abm,
-                self.platform.meta(),
-                abm.session_id,
-                self,
-            ),
+        event = QQOfficialWebhookMessageEvent(
+            abm.message_str,
+            abm,
+            self.platform.meta(),
+            abm.session_id,
+            self,
         )
+        webhook_helper = getattr(self.platform, "webhook_helper", None)
+        if webhook_helper and abm.message_id:
+            for key, value in webhook_helper.pop_extra_data(abm.message_id).items():
+                event.set_extra(key, value)
+        self.platform.commit_event(event)
 
 
 @register_platform_adapter("qq_official_webhook", "QQ 机器人官方 API 适配器(Webhook)")

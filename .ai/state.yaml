@@ -25,9 +25,10 @@ context:
     - The current pass absorbs the latest small upstream fixes by local rewrite while preserving the fork's customized chat, plugin, and provider request paths.
     - The current pass absorbs 20 v4.25.2 upstream commits (file→mtime 2026-05-30..2026-06-05) via topic rewrite; yakumo's prompt/memory/postprocess/interaction architecture is preserved.
     - Provider stats persistence retries transient SQLite `database is locked` errors with bounded exponential backoff instead of dropping usage records.
-    - Empty `modalities=[]` is treated as unconfigured in five call sites so providers whose config migrated to an empty list still pass images, quoted images, and tools.
+    - Empty `modalities=[]` is intentionally treated as text-only in this fork, diverging from upstream's empty-as-unconfigured compatibility patch.
     - Reply components emit a strict OneBot V11 `{"type":"reply","data":{"id":str(id)}}` payload so aiocqhttp stops returning `retcode=100`.
     - Plugin page security headers (X-Frame-Options/frame-ancestors) are relaxed only when `ASTRBOT_LAUNCHER` env is set, leaving standalone deployments' CSP posture unchanged.
+    - Follow-up 4/5/6 upstream rewrite absorbs MiniMax Token Plan model discovery/M3 default, Anthropic tool_choice schema conversion, selected platform/plugin/template/provider fixes, and only the backend subset of future-task cron behavior; the broad CronJobPage UI rewrite remains deferred.
   unresolved_questions: []
 architecture:
   stability: stable
