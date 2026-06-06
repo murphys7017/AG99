@@ -117,15 +117,18 @@
                             <div class="umo-source-cell">
                                 <div class="umo-source-content">
                                     <template v-if="umoDisplayMode === 'parsed'">
-                                        <v-chip size="x-small" label>
-                                            {{ item.sessionInfo.platform || tm('status.unknown') }}
-                                        </v-chip>
-                                        <span class="umo-separator">:</span>
-                                        <v-chip size="x-small" label>
-                                            {{ getMessageTypeDisplay(item.sessionInfo.messageType) }}
-                                        </v-chip>
-                                        <span class="umo-separator">:</span>
-                                        <span class="umo-session-id">{{ item.sessionInfo.sessionId || tm('status.unknown') }}</span>
+                                        <span v-if="hasReadableUmoName(item)" class="umo-session-id">{{ formatUmoDisplayName(item) }}</span>
+                                        <template v-else>
+                                            <v-chip size="x-small" label>
+                                                {{ item.sessionInfo.platform || tm('status.unknown') }}
+                                            </v-chip>
+                                            <span class="umo-separator">:</span>
+                                            <v-chip size="x-small" label>
+                                                {{ getMessageTypeDisplay(item.sessionInfo.messageType) }}
+                                            </v-chip>
+                                            <span class="umo-separator">:</span>
+                                            <span class="umo-session-id">{{ item.sessionInfo.sessionId || tm('status.unknown') }}</span>
+                                        </template>
                                     </template>
                                     <span v-else class="umo-raw-text">{{ item.user_id || tm('status.unknown') }}</span>
                                 </div>
@@ -664,6 +667,16 @@ export default {
             return `${platform}:${messageType}:${sessionId}`;
         },
 
+        formatUmoDisplayName(item) {
+            const info = item?.umo_info || {};
+            return info.display_name || item?.user_id || this.tm('status.unknown');
+        },
+
+        hasReadableUmoName(item) {
+            const info = item?.umo_info || {};
+            return Boolean(info.display_name && info.display_name !== item?.user_id);
+        },
+
         async copyUmoSource(item) {
             const ok = await copyToClipboard(this.formatUmoSource(item));
             if (ok) {
@@ -729,7 +742,14 @@ export default {
                         // 处理会话数据，解析sessionId
                         this.conversations = (data.conversations || []).map(conv => {
                             // 为每个会话添加会话信息
-                            conv.sessionInfo = this.parseSessionId(conv.user_id);
+                            const info = conv.umo_info;
+                            conv.sessionInfo = info
+                                ? {
+                                    platform: info.platform || 'default',
+                                    messageType: info.message_type || 'default',
+                                    sessionId: info.session_id || conv.user_id
+                                }
+                                : this.parseSessionId(conv.user_id);
                             return conv;
                         });
 

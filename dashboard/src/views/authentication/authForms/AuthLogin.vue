@@ -33,11 +33,11 @@ async function validate(values: any, { setErrors }: any) {
 <template>
   <Form @submit="validate" class="mt-4 login-form" v-slot="{ errors, isSubmitting }">
     <v-text-field v-model="username" :label="t('username')" class="mb-6 input-field" required hide-details="auto"
-      variant="outlined" prepend-inner-icon="mdi-account" :disabled="loading"></v-text-field>
+      variant="outlined" prepend-inner-icon="mdi-account" autocomplete="username" :disabled="loading"></v-text-field>
 
     <v-text-field v-model="password" :label="t('password')" required variant="outlined" hide-details="auto"
       :append-inner-icon="show1 ? 'mdi-eye' : 'mdi-eye-off'" :type="show1 ? 'text' : 'password'"
-      @click:append-inner="show1 = !show1" class="pwd-input" prepend-inner-icon="mdi-lock" :disabled="loading"></v-text-field>
+      @click:append-inner="show1 = !show1" class="pwd-input" prepend-inner-icon="mdi-lock" autocomplete="current-password" :disabled="loading"></v-text-field>
 
     <div class="mt-2">
       <small style="color: grey;">{{ t('defaultHint') }}</small>

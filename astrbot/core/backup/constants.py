@@ -18,6 +18,7 @@ from astrbot.core.db.po import (
     PlatformStat,
     Preference,
     SessionProjectRelation,
+    UmoAlias,
     WebChatThread,
 )
 from astrbot.core.knowledge_base.models import (
@@ -53,6 +54,7 @@ MAIN_DB_MODELS: dict[str, type[SQLModel]] = {
     "attachments": Attachment,
     "command_configs": CommandConfig,
     "command_conflicts": CommandConflict,
+    "umo_aliases": UmoAlias,
 }
 
 # 知识库元数据模型类映射

@@ -6,7 +6,7 @@ from astrbot.core.computer.booters.cua_defaults import CUA_DEFAULT_CONFIG
 from astrbot.core.memory_config_defaults import build_default_memory_config_payload
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-VERSION = "4.25.2"
+VERSION = "4.25.3"
 DB_PATH = os.path.join(get_astrbot_data_path(), "data_v4.db")
 PERSONAL_WECHAT_CONFIG_METADATA = {
     "weixin_oc_base_url": {

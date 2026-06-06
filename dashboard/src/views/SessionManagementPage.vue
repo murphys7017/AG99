@@ -39,7 +39,7 @@
                   <v-chip size="x-small" :color="getPlatformColor(item.platform)" class="mr-2">
                     {{ item.platform || 'unknown' }}
                   </v-chip>
-                  <span class="text-truncate" style="max-width: 300px;">{{ item.umo }}</span>
+                  <span class="text-truncate" style="max-width: 300px;">{{ formatUmoDisplay(item) }}</span>
                   <div class="d-flex align-center" v-if="item.rules?.session_service_config?.custom_name || true">
                     <span class="ml-2" style="color: gray; font-size: 10px;"
                       v-if="item.rules?.session_service_config?.custom_name">
@@ -59,6 +59,8 @@
                       <p v-if="item.platform">平台: {{ item.platform }}</p>
                       <p v-if="item.message_type">消息类型: {{ item.message_type }}</p>
                       <p v-if="item.session_id">会话 ID: {{ item.session_id }}</p>
+                      <p v-if="item.auto_name">自动名称: {{ item.auto_name }}</p>
+                      <p v-if="item.user_alias">别名: {{ item.user_alias }}</p>
                     </div>
                   </v-tooltip>
                 </div>
@@ -222,6 +224,7 @@
                       <v-icon size="small" color="grey">mdi-plus</v-icon>
                     </template>
                     <v-list-item-title class="text-caption">{{ formatUmoShort(umo) }}</v-list-item-title>
+                    <v-list-item-subtitle v-if="formatUmoShort(umo) !== umo" class="text-caption">{{ umo }}</v-list-item-subtitle>
                   </v-list-item>
                   <v-list-item v-if="filteredUnselectedUmos.length === 0 && !loadingUmos">
                     <v-list-item-title class="text-caption text-grey text-center">{{ tm('groups.noMatch') }}</v-list-item-title>
@@ -250,6 +253,7 @@
                       <v-icon size="small" color="error">mdi-minus</v-icon>
                     </template>
                     <v-list-item-title class="text-caption">{{ formatUmoShort(umo) }}</v-list-item-title>
+                    <v-list-item-subtitle v-if="formatUmoShort(umo) !== umo" class="text-caption">{{ umo }}</v-list-item-subtitle>
                   </v-list-item>
                   <v-list-item v-if="editingGroup.umos.length === 0">
                     <v-list-item-title class="text-caption text-grey text-center">{{ tm('groups.noMembers') }}</v-list-item-title>
@@ -283,7 +287,8 @@
             </v-alert>
 
             <v-autocomplete v-model="selectedNewUmo" :items="availableUmos" :loading="loadingUmos"
-              :label="tm('addRule.selectUmo')" variant="outlined" clearable :no-data-text="tm('addRule.noUmos')" />
+              :item-title="formatUmoShort" :label="tm('addRule.selectUmo')" variant="outlined" clearable
+              :no-data-text="tm('addRule.noUmos')" />
           </v-card-text>
 
           <v-card-actions class="px-4 pb-4">
@@ -479,7 +484,7 @@
             {{ tm('batchDeleteConfirm.message', { count: selectedItems.length }) }}
             <div class="mt-3" style="max-height: 200px; overflow-y: auto;">
               <v-chip v-for="item in selectedItems" :key="item.umo" size="small" class="ma-1" variant="outlined">
-                {{ item.rules?.session_service_config?.custom_name || item.umo }}
+                {{ formatUmoDisplay(item) }}
               </v-chip>
             </div>
           </v-card-text>
@@ -568,6 +573,7 @@ export default {
       // 添加规则
       addRuleDialog: false,
       availableUmos: [],
+      umoInfoMap: {},
       selectedNewUmo: null,
 
       // 规则编辑
@@ -837,6 +843,7 @@ export default {
         if (response.data.status === 'ok') {
           const data = response.data.data
           this.rulesList = data.rules
+          this.mergeUmoInfos(data.rules || [])
           this.totalItems = data.total
           this.availablePersonas = data.available_personas
           this.availableChatProviders = data.available_chat_providers
@@ -873,7 +880,9 @@ export default {
         if (response.data.status === 'ok') {
           // 过滤掉已有规则的 umo
           const existingUmos = new Set(this.rulesList.map(r => r.umo))
-          this.availableUmos = response.data.data.umos.filter(umo => !existingUmos.has(umo))
+          const data = response.data.data || {}
+          this.mergeUmoInfos(data.umo_infos || [])
+          this.availableUmos = (data.umos || []).filter(umo => !existingUmos.has(umo))
         }
       } catch (error) {
         this.showError(error.response?.data?.message || this.tm('messages.loadError'))
@@ -908,13 +917,7 @@ export default {
         umo: this.selectedNewUmo,
         rules: {},
       }
-      // 解析 umo 格式
-      const parts = this.selectedNewUmo.split(':')
-      if (parts.length >= 3) {
-        newItem.platform = parts[0]
-        newItem.message_type = parts[1]
-        newItem.session_id = parts[2]
-      }
+      Object.assign(newItem, this.normalizeUmoInfo(this.selectedNewUmo))
 
       this.addRuleDialog = false
       this.openRuleEditor(newItem)
@@ -1460,7 +1463,9 @@ export default {
       try {
         const response = await axios.get('/api/session/active-umos')
         if (response.data.status === 'ok') {
-          this.availableUmos = response.data.data.umos || []
+          const data = response.data.data || {}
+          this.mergeUmoInfos(data.umo_infos || [])
+          this.availableUmos = data.umos || []
         }
       } catch (error) {
         console.error('加载会话列表失败:', error)
@@ -1511,12 +1516,50 @@ export default {
     },
 
     formatUmoShort(umo) {
+      const info = this.umoInfoMap[umo]
+      if (info?.display_name && info.display_name !== umo) {
+        return info.display_name
+      }
       // 简化显示：平台:类型:ID -> 只显示ID部分
       const parts = umo.split(':')
       if (parts.length >= 3) {
         return `${parts[0]}:${parts[2]}`
       }
       return umo
+    },
+
+    formatUmoDisplay(item) {
+      if (!item) return ''
+      const customName = item.rules?.session_service_config?.custom_name
+      if (customName) return customName
+      if (item.display_name && item.display_name !== item.umo) return item.display_name
+      return this.formatUmoShort(item.umo)
+    },
+
+    normalizeUmoInfo(umo) {
+      const stored = this.umoInfoMap[umo]
+      if (stored) return { ...stored }
+
+      const parts = umo.split(':')
+      return {
+        umo,
+        platform: parts[0] || 'unknown',
+        message_type: parts[1] || 'unknown',
+        session_id: parts.length >= 3 ? parts.slice(2).join(':') : umo,
+        auto_name: '',
+        user_alias: '',
+        display_name: umo,
+        creator_sender_id: '',
+      }
+    },
+
+    mergeUmoInfos(infos) {
+      const nextMap = { ...this.umoInfoMap }
+      for (const info of infos || []) {
+        if (!info?.umo) continue
+        nextMap[info.umo] = { ...this.normalizeUmoInfo(info.umo), ...info }
+      }
+      this.umoInfoMap = nextMap
     },
 
     async saveGroup() {
