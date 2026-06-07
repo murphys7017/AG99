@@ -5,16 +5,16 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-06-05
+Last updated: 2026-06-07
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `1ad2b2c38` (`fix(core): avoid duplicate image insertion when re-querying an empty LLM response`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-06-05 and moved `upstream/master` from `adae1f359` to `1ad2b2c38`.
-- Git-only divergence at this snapshot: local-only `321`, upstream-only `193`.
-- Patch-equivalence estimate from `git cherry`: `~120` upstream commits still appear unabsorbed after patch-equivalence filtering (40 new upstream commits since last refresh were triaged).
+- Last local upstream snapshot checked: `upstream/master` at `1a0499878` (`perf: handle Anthropic usage=None on content-filtered responses`)
+- Remote refresh status: HTTPS `git fetch upstream` succeeded on 2026-06-07 and moved `upstream/master` from `1ad2b2c38` to `1a0499878`.
+- Git-only divergence at this snapshot before the local rewrite: local-only `327`, upstream-only `207`.
+- Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-07 v4.25.3/v4.25.4 batches below record the current topic decisions.
 
 Important interpretation:
 
@@ -35,6 +35,7 @@ Current local upstream-sync commits:
 - `08144459` Absorb upstream requery and upload format updates
 - `aee09530` Prefer bundled dashboard when `data/dist` is stale
 - `1505cbd81` Absorb v4.25.2 small/compatibility parity batch with local `modalities=[]` text-only policy.
+- `50a64e7a` Absorb upstream session alias and Dingtalk updates.
 
 Recently absorbed by rewrite:
 
@@ -116,6 +117,17 @@ Recently absorbed by rewrite:
   - Local policy intentionally preserved: `modalities=[]` remains text-only in this fork. The upstream empty-list-as-unconfigured behavior was not imported.
   - Compatibility note: old `llm_compress_keep_recent` remains accepted; new config `llm_compress_keep_recent_ratio` is the preferred control.
   - `465a685b`: FIRST_NOTICE files include the EULA hint, and `FIRST_NOTICE.ru-RU.md` is present.
+- 2026-06-07 v4.25.3/v4.25.4 small stability and compatibility batches:
+  - `7e22a07e0`: `/name` and UMO alias support were rewritten locally with a dedicated `umo_aliases` DB model, backup coverage, dashboard API exposure, and local UI display integration that preserves raw UMO values for operations/copy behavior.
+  - `ef53a933e`: DingTalk stream reconnect was rewritten with bounded exponential backoff, termination wake-up, and cancellation of the running SDK start future.
+  - `fde0ea923`/`6ae103a24`: project/core/CLI versioning reached `4.25.3`, `changelogs/v4.25.3.md` was added, and Dashboard login fields gained credential autocomplete hints.
+  - `556903c1`: `EventBus` now keeps strong references to active pipeline tasks until completion and logs uncaught task exceptions.
+  - `c7e9d5b4`: WebChat web-search citation instructions are appended once during main-agent request construction instead of repeatedly from `on_tool_end`, preserving local prompt pipeline behavior and avoiding repeated system-message mutation.
+  - `66a10c08`: personal WeChat API timeout defaults were raised from 15 seconds to 120 seconds.
+  - `1a0499878`: Anthropic usage extraction accepts `usage=None` for content-filtered responses and returns zero usage instead of raising.
+  - `c4251e82`: project/core/CLI versions are aligned to `4.25.4`, with local changelog text reflecting only the absorbed local changes.
+  - `0db7fc9b`: dashboard `pnpm-lock.yaml` overrides were already present locally and needed no code change.
+  - Deferred: plugin page theme sync (`65fe0574`) and plugin WebUI sidebar entries (`c58916b8`) remain useful but are separate frontend feature work; upstream SQLAlchemy/provider-stats revert commits (`c70a1924`, `bdc32bb7`) remain under review because local DB/prompt-runtime choices differ.
 
 ### Topic Merge Plan
 

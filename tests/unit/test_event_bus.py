@@ -57,6 +57,7 @@ class TestEventBusInit:
         assert bus.event_queue == event_queue
         assert bus.pipeline_scheduler_mapping == {"test": mock_pipeline_scheduler}
         assert bus.astrbot_config_mgr == mock_config_manager
+        assert bus._pending_tasks == set()
 
 
 class TestEventBusDispatch:
@@ -100,6 +101,44 @@ class TestEventBusDispatch:
         mock_config_manager.get_conf_info.assert_called_once_with(
             "test-platform:group:123"
         )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_keeps_task_strong_reference_until_done(
+        self, event_bus, event_queue, mock_pipeline_scheduler
+    ):
+        """Test that dispatch keeps pending pipeline tasks strongly referenced."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def execute_and_wait(event):  # noqa: ARG001
+            started.set()
+            await release.wait()
+
+        mock_pipeline_scheduler.execute.side_effect = execute_and_wait
+
+        mock_event = MagicMock()
+        mock_event.unified_msg_origin = "test-platform:group:123"
+        mock_event.get_platform_id.return_value = "test-platform"
+        mock_event.get_platform_name.return_value = "Test Platform"
+        mock_event.get_sender_name.return_value = "TestUser"
+        mock_event.get_sender_id.return_value = "user123"
+        mock_event.get_message_outline.return_value = "Hello"
+
+        await event_queue.put(mock_event)
+
+        task = asyncio.create_task(event_bus.dispatch())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1.0)
+            assert len(event_bus._pending_tasks) == 1
+
+            pending_task = next(iter(event_bus._pending_tasks))
+            release.set()
+            await asyncio.wait_for(pending_task, timeout=1.0)
+            assert event_bus._pending_tasks == set()
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     @pytest.mark.asyncio
     async def test_dispatch_handles_missing_scheduler(

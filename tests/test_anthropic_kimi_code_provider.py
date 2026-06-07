@@ -440,6 +440,21 @@ def test_anthropic_output_contract_upgrades_strict_json_to_required_tool_call():
     assert tool_choice == "required"
 
 
+def test_anthropic_extract_usage_accepts_none():
+    provider = anthropic_source.ProviderAnthropic(
+        provider_config={"model": "claude-test"},
+        provider_settings={},
+        use_api_key=False,
+    )
+
+    usage = provider._extract_usage(None)
+
+    assert usage.input_other == 0
+    assert usage.input_cached == 0
+    assert usage.output == 0
+    assert usage.total == 0
+
+
 def test_anthropic_output_contract_prefers_compiled_binding():
     compiled_output_contract = CompiledOutputContract(
         contract=OutputContract(

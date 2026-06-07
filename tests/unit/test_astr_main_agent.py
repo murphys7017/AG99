@@ -460,6 +460,33 @@ class TestBuiltinToolInjection:
         assert req.func_tool is not None
         assert req.func_tool.get_tool("web_search_baidu") is builtin_tool
 
+    def test_apply_web_search_citation_prompt_appends_once(self, mock_event):
+        """Test web search citation prompt is appended once before agent run."""
+        module = ama
+        mock_event.get_platform_name.return_value = "webchat"
+        req = ProviderRequest(system_prompt="base prompt", func_tool=ToolSet())
+        web_search_tool = MagicMock(spec=FunctionTool)
+        web_search_tool.name = "web_search_baidu"
+        req.func_tool.add_tool(web_search_tool)
+
+        module._apply_web_search_citation_prompt(mock_event, req)
+        module._apply_web_search_citation_prompt(mock_event, req)
+
+        assert req.system_prompt.count(module.WEB_SEARCH_CITATION_PROMPT) == 1
+
+    def test_apply_web_search_citation_prompt_skips_non_webchat(self, mock_event):
+        """Test citation prompt remains WebChat-only."""
+        module = ama
+        mock_event.get_platform_name.return_value = "test_platform"
+        req = ProviderRequest(system_prompt="base prompt", func_tool=ToolSet())
+        web_search_tool = MagicMock(spec=FunctionTool)
+        web_search_tool.name = "web_search_baidu"
+        req.func_tool.add_tool(web_search_tool)
+
+        module._apply_web_search_citation_prompt(mock_event, req)
+
+        assert req.system_prompt == "base prompt"
+
     def test_proactive_cron_job_tools_uses_builtin_tool_manager(self, mock_context):
         """Test cron tool injection through the builtin tool manager."""
         module = ama
