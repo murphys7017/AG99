@@ -5,11 +5,13 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from astrbot.core import logger
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.postprocess import register_postprocessor, unregister_postprocessor
 from astrbot.core.postprocess.types import PostProcessContext, PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
+from .analyzers.base import MemoryAnalyzerError
 from .config import get_memory_config
 from .history_source import RecentConversationSource, parse_conversation_history
 from .service import MemoryService, get_memory_service
@@ -109,7 +111,21 @@ class MemoryPostProcessor:
                 _describe_skip_reason(ctx),
             )
             return
-        await self.memory_service.update_from_postprocess(req)
+        try:
+            await self.memory_service.update_from_postprocess(req)
+        except MemoryAnalyzerError as exc:
+            ctx.event.set_extra(
+                "_memory_postprocess_skipped_reason",
+                f"memory_analyzer_failed:{exc.__class__.__name__}",
+            )
+            ctx.event.set_extra("_memory_postprocess_error", str(exc))
+            logger.warning(
+                "memory postprocess skipped after analyzer failure: platform_id=%s session_id=%s error=%s",
+                ctx.event.get_platform_id(),
+                getattr(ctx.event, "session_id", None),
+                exc,
+            )
+            return
 
 
 _MEMORY_POSTPROCESSOR: MemoryPostProcessor | None = None

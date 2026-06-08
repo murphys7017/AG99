@@ -696,3 +696,50 @@ async def test_decision_agent_accepts_prompt_only_contract_with_text_json_fallba
     assert decision.route_mode == RouteMode.SELF_REPLY
     render_result = event.get_extra("_interaction_prompt_render_result")
     assert render_result.compiled_output_contract.strategy == "prompt_only"
+
+
+@pytest.mark.asyncio
+async def test_decision_agent_delegates_prompt_only_plain_text_to_core():
+    event = DummyEvent()
+    event.set_extra("_turn_id", "turn-1")
+    event.message_obj = MagicMock()
+    event.message_obj.message = []
+    plugin_context = MagicMock()
+    plugin_context.get_config.return_value = {}
+    provider = MagicMock()
+    provider.provider_config = {"type": "gemini_chat_completion"}
+    provider.get_model.return_value = "gemini-test"
+    plugin_context.get_provider_by_id.return_value = provider
+    plugin_context.get_llm_tool_manager.return_value.func_list = []
+    plugin_context.kb_manager = None
+    plugin_context.subagent_orchestrator = None
+    plugin_context.conversation_manager = DummyConversationManager()
+    plugin_context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    plugin_context.list_interaction_prompt_contributors.return_value = []
+    plugin_context.list_prompt_extension_collectors.return_value = []
+    config = InteractionAgentConfig(decision_provider_id="provider-1")
+    agent = InteractionDecisionAgent(InteractionMemoryStore())
+
+    with (
+        patch("astrbot.core.interaction.decision_agent.Provider", new=object),
+        patch(
+            "astrbot.core.interaction.decision_agent.call_decision_model",
+            new=AsyncMock(
+                return_value=LLMResponse(
+                    role="assistant",
+                    completion_text="你这是让我看看问题吧。",
+                )
+            ),
+        ),
+    ):
+        decision = await agent.decide(event, plugin_context, config)
+
+    assert decision.route_mode == RouteMode.DELEGATE_TO_CORE
+    assert decision.should_emit_immediate_reply is False
+    assert decision.immediate_spoken_reply == ""
+    assert decision.reason == "non_json_delegate_to_core"
+    assert decision.core_task_spec is not None
+    assert decision.core_task_spec.task_intent == "interaction_decision_recovery"
+    assert decision.core_task_spec.metadata["decision_failure_reason"] == "non_json_text"

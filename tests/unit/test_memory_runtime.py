@@ -4,7 +4,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -5199,6 +5199,54 @@ async def test_memory_postprocessor_skips_invalid_conversation_history():
     assert event.set_extra.call_args_list[-1].args == (
         "_memory_postprocess_skipped_reason",
         "no_turn_pair",
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_postprocessor_skips_memory_analyzer_failures():
+    history = _make_history()
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.session_id = "session-1"
+    memory_service = MagicMock()
+    memory_service.update_from_postprocess = AsyncMock(
+        side_effect=MemoryAnalyzerExecutionError(
+            "analyzer `summary_v1` returned empty completion text"
+        )
+    )
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = Conversation(
+        platform_id="test",
+        user_id="test:private:user",
+        cid="conv-1",
+        history=json.dumps(history),
+    )
+    ctx.provider_request = ProviderRequest(prompt="hello", session_id="session-1")
+    ctx.timestamp = datetime.now(UTC)
+
+    with patch(
+        "astrbot.core.memory.postprocessor.resolve_memory_service_for_event",
+        return_value=memory_service,
+    ):
+        await processor.run(ctx)
+
+    memory_service.update_from_postprocess.assert_awaited_once()
+    event.set_extra.assert_any_call(
+        "_memory_postprocess_skipped_reason",
+        "memory_analyzer_failed:MemoryAnalyzerExecutionError",
+    )
+    event.set_extra.assert_any_call(
+        "_memory_postprocess_error",
+        "analyzer `summary_v1` returned empty completion text",
     )
 
 

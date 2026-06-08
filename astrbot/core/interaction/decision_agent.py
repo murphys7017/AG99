@@ -517,19 +517,32 @@ class InteractionDecisionAgent:
             raw_text = (llm_resp.completion_text or "").strip()
             if raw_text and render_result.output_contract is not None and render_result.output_contract.allow_text_fallback:
                 logger.info(
-                    "Interaction decision non-json text fallback: platform_id=%s session_id=%s raw=%s",
+                    "Interaction decision non-json output delegated to core: platform_id=%s session_id=%s raw=%s",
                     event.get_platform_id(),
                     event.session_id,
                     raw_text[:80],
                 )
                 payload = {
-                    "route_mode": "self_reply",
-                    "should_emit_immediate_reply": True,
-                    "immediate_spoken_reply": raw_text[:60],
-                    "core_task_spec": None,
+                    "route_mode": "delegate_to_core",
+                    "should_emit_immediate_reply": False,
+                    "immediate_spoken_reply": "",
+                    "core_task_spec": {
+                        "task_intent": "interaction_decision_recovery",
+                        "task_summary": "Interaction decision model returned non-JSON text.",
+                        "execution_prompt": (
+                            "The interaction decision model failed to return structured JSON. "
+                            "Handle the original user request normally. Do not treat the "
+                            "decision model's raw text as a completed answer."
+                        ),
+                        "suggested_capabilities": [],
+                        "metadata": {
+                            "decision_failure_reason": "non_json_text",
+                            "decision_raw_text": raw_text[:500],
+                        },
+                    },
                     "plugin_hints": {},
-                    "confidence": 0.6,
-                    "reason": "non_json_text_fallback",
+                    "confidence": 0.0,
+                    "reason": "non_json_delegate_to_core",
                 }
             else:
                 message = f"non-json: raw={raw_text or llm_resp.completion_text}"

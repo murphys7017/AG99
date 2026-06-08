@@ -326,6 +326,20 @@ def test_render_engine_selects_minimax_renderer_from_token_plan_provider():
     assert payload["user_input"]["text"]["content"] == "Hello MiniMax"
 
 
+def test_minimax_renderer_degrades_tool_call_output_contract_to_prompt_only():
+    from astrbot.core.output_contract import OutputContract
+    from astrbot.core.prompt.render.minimax_renderer import MiniMaxPromptRenderer
+
+    renderer = MiniMaxPromptRenderer()
+
+    assert (
+        renderer.resolve_output_contract_strategy(
+            OutputContract(mode="tool_call", strict=True)
+        )
+        == "prompt_only"
+    )
+
+
 def test_openai_prompt_renderer_preserves_openai_messages_and_tool_schema():
     renderer = OpenAIPromptRenderer()
     pack = ContextPack(
