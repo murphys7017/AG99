@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import contextmanager
+from copy import deepcopy
 from typing import Any
 
 from astrbot import logger
@@ -141,6 +143,37 @@ def build_core_capability_payload(plugin_context: Context, event) -> dict[str, A
         "subagent_available": plugin_context.subagent_orchestrator is not None,
         "platform_id": event.get_platform_id(),
     }
+
+
+def clone_interaction_context_pack(pack: ContextPack) -> ContextPack:
+    return ContextPack(
+        slots=deepcopy(pack.slots),
+        provider_request_ref=pack.provider_request_ref,
+        meta=deepcopy(pack.meta),
+    )
+
+
+@contextmanager
+def temporary_event_extra(event, key: str, value: Any):
+    extras = getattr(event, "_extras", None)
+    if not isinstance(extras, dict):
+        event.set_extra(key, value)
+        try:
+            yield
+        finally:
+            event.set_extra(key, None)
+        return
+
+    sentinel = object()
+    previous = extras.get(key, sentinel)
+    event.set_extra(key, value)
+    try:
+        yield
+    finally:
+        if previous is sentinel:
+            extras.pop(key, None)
+        else:
+            event.set_extra(key, previous)
 
 
 async def collect_interaction_prompt_extensions(

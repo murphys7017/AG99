@@ -12,6 +12,11 @@ class RouteMode(str, Enum):
     HYBRID = "hybrid"
 
 
+class FastRouteMode(str, Enum):
+    SELF_REPLY = "self_reply"
+    HYBRID = "hybrid"
+
+
 class FinalizerMode(str, Enum):
     OFF = "off"
     AUTO = "auto"
@@ -106,6 +111,44 @@ class InteractionDecision:
         }
 
 
+@dataclass(slots=True)
+class InteractionRouteDecision:
+    mode: FastRouteMode = FastRouteMode.HYBRID
+
+    @classmethod
+    def from_mapping(cls, payload: object) -> InteractionRouteDecision | None:
+        if not isinstance(payload, dict):
+            return None
+        raw_mode = str(payload.get("mode", "") or payload.get("route_mode", ""))
+        if raw_mode == RouteMode.DELEGATE_TO_CORE.value:
+            raw_mode = FastRouteMode.HYBRID.value
+        try:
+            mode = FastRouteMode(raw_mode)
+        except ValueError:
+            return None
+        return cls(mode=mode)
+
+    def to_interaction_decision(
+        self,
+        *,
+        first_response: str | None,
+    ) -> InteractionDecision:
+        reply = (first_response or "").strip() or None
+        route_mode = (
+            RouteMode.SELF_REPLY
+            if self.mode == FastRouteMode.SELF_REPLY
+            else RouteMode.HYBRID
+        )
+        return InteractionDecision(
+            route_mode=route_mode,
+            should_emit_immediate_reply=bool(reply),
+            immediate_spoken_reply=reply,
+            core_task_spec=None,
+            plugin_hints={},
+            reason="fast_route",
+        )
+
+
 def _coerce_mapping(value: object) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -130,6 +173,15 @@ class InteractionAgentConfig:
     decision_provider_id: str = ""
     decision_temperature: float = 0.5
     decision_timeout: float = 15.0
+    expression_provider_id: str = ""
+    expression_model: str = ""
+    expression_temperature: float = 0.6
+    expression_timeout: float = 8.0
+    router_provider_id: str = ""
+    router_model: str = ""
+    router_temperature: float = 0.0
+    router_timeout: float = 3.0
+    parallel_expression_router: bool = True
     finalizer_provider_id: str = ""
     finalizer_model: str = ""
     finalizer_temperature: float = 0.6

@@ -3,6 +3,13 @@ from typing import Any
 from .types import FinalizerMode, InteractionAgentConfig
 
 
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _int_or_default(value: Any, default: int) -> int:
     try:
         return int(value)
@@ -36,20 +43,54 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         finalizer_mode = FinalizerMode(finalizer_mode_raw)
     except ValueError:
         finalizer_mode = FinalizerMode.AUTO
+    decision_provider_id = str(
+        interaction_config.get("decision_provider_id", "") or ""
+    )
+    decision_temperature = _float_or_default(
+        interaction_config.get("decision_temperature", 0.5),
+        0.5,
+    )
+    decision_timeout = _float_or_default(
+        interaction_config.get("decision_timeout", 15.0),
+        15.0,
+    )
+    expression_provider_id = str(
+        interaction_config.get("expression_provider_id", "") or ""
+    ) or decision_provider_id
+    router_provider_id = str(
+        interaction_config.get("router_provider_id", "") or ""
+    ) or decision_provider_id
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", False)),
         default_enabled_for_platforms=list(
             interaction_config.get("default_enabled_for_platforms", [])
         ),
         platforms=dict(interaction_config.get("platforms", {})),
-        decision_provider_id=str(
-            interaction_config.get("decision_provider_id", "") or ""
+        decision_provider_id=decision_provider_id,
+        decision_temperature=decision_temperature,
+        decision_timeout=decision_timeout,
+        expression_provider_id=expression_provider_id,
+        expression_model=str(interaction_config.get("expression_model", "") or ""),
+        expression_temperature=_float_or_default(
+            interaction_config.get("expression_temperature", decision_temperature),
+            decision_temperature,
         ),
-        decision_temperature=float(
-            interaction_config.get("decision_temperature", 0.5) or 0.5
+        expression_timeout=_float_or_default(
+            interaction_config.get("expression_timeout", decision_timeout),
+            decision_timeout,
         ),
-        decision_timeout=float(
-            interaction_config.get("decision_timeout", 15.0) or 15.0
+        router_provider_id=router_provider_id,
+        router_model=str(interaction_config.get("router_model", "") or ""),
+        router_temperature=_float_or_default(
+            interaction_config.get("router_temperature", 0.0),
+            0.0,
+        ),
+        router_timeout=_float_or_default(
+            interaction_config.get("router_timeout", 3.0),
+            3.0,
+        ),
+        parallel_expression_router=bool(
+            interaction_config.get("parallel_expression_router", True)
         ),
         finalizer_provider_id=str(
             interaction_config.get("finalizer_provider_id", "") or ""

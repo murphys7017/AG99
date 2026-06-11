@@ -36,7 +36,7 @@ from .contributors import (
 )
 from .core_bridge import get_interaction_decision
 from .decision_agent import _build_decision_build_config
-from .finalizer import finalize_response
+from .finalizer import InteractionFinalizerError, finalize_response
 from .memory_store import (
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
@@ -1069,23 +1069,26 @@ class InteractionOutputController:
         interaction_config = self._get_interaction_config(event)
         core_result_text = message.get_plain_text()
         immediate_reply = get_interaction_turn_immediate_reply(event)
-        final_text = await finalize_response(
-            event=event,
-            plugin_context=self.plugin_context,
-            config=interaction_config,
-            core_result_text=core_result_text,
-            immediate_reply=immediate_reply,
-        )
-        if (
-            interaction_config.finalizer_mode == FinalizerMode.FORCE
-            and final_text is None
-            and event.get_extra("_interaction_finalizer_failed")
-        ):
+        try:
+            final_text = await finalize_response(
+                event=event,
+                plugin_context=self.plugin_context,
+                config=interaction_config,
+                core_result_text=core_result_text,
+                immediate_reply=immediate_reply,
+            )
+        except InteractionFinalizerError as exc:
+            final_text = None
             record_interaction_turn_completion_failure(
                 event,
                 "finalizer_failed",
             )
-            raise RuntimeError("Interaction finalizer failed")
+            logger.warning(
+                "Interaction finalizer failed; sending raw core result: platform_id=%s session_id=%s reason=%s",
+                event.get_platform_id(),
+                event.session_id,
+                exc.reason,
+            )
         final_message = message
         if final_text:
             final_message = message.derive([Plain(final_text)])
@@ -1384,18 +1387,40 @@ class InteractionOutputController:
             materialized,
         )
         materialization.update(reasoning_metadata)
-        materialized, tts_metadata = await self._apply_interaction_tts(
-            event,
-            materialized,
-            result_is_model_result=result_is_model_result,
-        )
+        try:
+            materialized, tts_metadata = await self._apply_interaction_tts(
+                event,
+                materialized,
+                result_is_model_result=result_is_model_result,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Interaction TTS failed; sending text fallback.",
+                exc_info=True,
+            )
+            tts_metadata = {
+                "tts_failed": True,
+                "tts_fallback": "text",
+                "tts_failure_reason": str(exc),
+            }
         materialization.update(tts_metadata)
         if tts_metadata.get("delivered_as") == "record":
             return materialized, materialization
-        materialized, t2i_metadata = await self._apply_interaction_t2i(
-            event,
-            materialized,
-        )
+        try:
+            materialized, t2i_metadata = await self._apply_interaction_t2i(
+                event,
+                materialized,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Interaction t2i failed; sending text fallback.",
+                exc_info=True,
+            )
+            t2i_metadata = {
+                "t2i_failed": True,
+                "t2i_fallback": "text",
+                "t2i_failure_reason": str(exc),
+            }
         materialization.update(t2i_metadata)
         return materialized, materialization
 

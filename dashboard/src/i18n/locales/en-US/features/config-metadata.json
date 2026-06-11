@@ -1023,7 +1023,7 @@
     "name": "Interaction Middleware",
     "general": {
       "description": "General",
-      "hint": "Controls the new interaction middleware main path. Internal development paths do not expose fallback configuration; missing providers or invalid outputs fail explicitly.",
+      "hint": "Controls the new interaction middleware main path. Fast Expression failures use a local first_response, and Router failures conservatively enter hybrid.",
       "interaction_middleware": {
         "enabled": {
           "description": "Enable Interaction Middleware"
@@ -1038,32 +1038,73 @@
         },
         "memory_window_size": {
           "description": "Memory Window Size",
-          "hint": "Number of interaction memory turns read when building the decision context."
+          "hint": "Number of interaction memory turns read when building middleware context."
         }
       }
     },
-    "decision": {
-      "description": "Reply Handoff Strategy",
-      "hint": "The decision agent chooses whether the middleware replies directly, speaks briefly before handing off to core, or silently delegates to core.",
+    "expression": {
+      "description": "Fast Expression",
+      "hint": "Generates the first_response that is sent every turn. It only handles persona expression and does not decide whether to enter core.",
+      "interaction_middleware": {
+        "expression_provider_id": {
+          "description": "Expression Model Provider",
+          "hint": "Empty uses the compatibility decision_provider_id field."
+        },
+        "expression_model": {
+          "description": "Expression Model Name",
+          "hint": "Optional. Empty uses the selected provider's own model name."
+        },
+        "expression_temperature": {
+          "description": "Expression Temperature"
+        },
+        "expression_timeout": {
+          "description": "Expression Timeout Seconds"
+        },
+        "parallel_expression_router": {
+          "description": "Parallel Expression and Router",
+          "hint": "When enabled, Fast Expression and Router request at the same time to balance first-response speed and routing accuracy."
+        }
+      }
+    },
+    "router": {
+      "description": "Router",
+      "hint": "Only decides self_reply / hybrid. Router does not generate replies, decompose tasks, or output reasons or confidence.",
+      "interaction_middleware": {
+        "router_provider_id": {
+          "description": "Router Model Provider",
+          "hint": "Empty uses the compatibility decision_provider_id field."
+        },
+        "router_model": {
+          "description": "Router Model Name",
+          "hint": "Optional. Empty uses the selected provider's own model name."
+        },
+        "router_temperature": {
+          "description": "Router Temperature"
+        },
+        "router_timeout": {
+          "description": "Router Timeout Seconds"
+        }
+      }
+    },
+    "decision_compat": {
+      "description": "Compatibility Fields",
+      "hint": "Legacy Fast Response decision fields kept for old configuration migration and new-field fallback.",
       "interaction_middleware": {
         "decision_provider_id": {
-          "description": "Decision Model Provider",
-          "hint": "If empty, the middleware path fails explicitly instead of falling back to the default model."
+          "description": "Legacy Decision Model Provider",
+          "hint": "For compatibility. Used when expression_provider_id or router_provider_id is empty."
         },
         "decision_temperature": {
-          "description": "Decision Temperature"
+          "description": "Legacy Decision Temperature"
         },
         "decision_timeout": {
-          "description": "Decision Timeout Seconds"
-        },
-        "decision_confidence_threshold": {
-          "description": "Decision Confidence Threshold"
+          "description": "Legacy Decision Timeout Seconds"
         }
       }
     },
     "finalizer": {
-      "description": "Final Reply Cleanup",
-      "hint": "Cleans up core output before delivery. During development, cleanup failure terminates the current turn and does not send replacement text.",
+      "description": "Output Expression",
+      "hint": "Cleans up core output before delivery. Cleanup failure falls back to sending the raw core result.",
       "interaction_middleware": {
         "finalizer_mode": {
           "description": "Cleanup Mode",

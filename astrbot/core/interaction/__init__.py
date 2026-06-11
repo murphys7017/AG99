@@ -20,10 +20,12 @@ from .core_bridge import (
     get_core_task_spec,
     get_interaction_decision,
 )
+from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .input_gateway import CoreInputGateway
 from .memory_store import InteractionMemorySnapshot, InteractionMemoryStore
 from .middleware import InteractionMiddleware
 from .output_controller import InteractionOutputController
+from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
     InteractionContextMaterial,
@@ -36,15 +38,18 @@ from .turn_state import (
 )
 from .types import (
     CoreTaskSpec,
+    FastRouteMode,
     FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
+    InteractionRouteDecision,
     RouteMode,
 )
 
 __all__ = [
     "CoreInputGateway",
     "CoreTaskSpec",
+    "FastRouteMode",
     "FinalizerMode",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
     "INTERACTION_DECISION_EXTRA_KEY",
@@ -54,6 +59,8 @@ __all__ = [
     "InteractionContextMaterial",
     "InteractionDecision",
     "InteractionDecisionView",
+    "InteractionExpressionAgent",
+    "InteractionExpressionError",
     "InteractionMiddleware",
     "InteractionMemorySnapshot",
     "InteractionMemoryStore",
@@ -67,6 +74,9 @@ __all__ = [
     "InteractionUtterance",
     "InteractionResultContribution",
     "InteractionResultView",
+    "InteractionRouteDecision",
+    "InteractionRouterAgent",
+    "InteractionRouterError",
     "RouteMode",
     "apply_interaction_core_task_spec",
     "ensure_interaction_turn_state",

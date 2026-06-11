@@ -22,6 +22,7 @@ from .context_builder import (
     append_interaction_prompt_extensions_to_pack,
     build_core_capability_payload,
     build_interaction_context_pack,
+    clone_interaction_context_pack,
     collect_interaction_prompt_extensions,
     extract_input_payload,
     extract_interaction_memory_payload,
@@ -463,8 +464,14 @@ class InteractionDecisionAgent:
                 prompt_extensions,
             )
             material.prompt_extensions_collected = True
+        decision_pack = clone_interaction_context_pack(material.prompt_context_pack)
+        add_interaction_decision_slots_to_pack(
+            pack=decision_pack,
+            event=event,
+            capability_payload=capability_payload,
+        )
         render_result = PromptRenderEngine().render(
-            material.prompt_context_pack,
+            decision_pack,
             event=event,
             plugin_context=plugin_context,
             config=build_config,
@@ -606,11 +613,6 @@ class InteractionDecisionAgent:
         )
         input_payload = extract_input_payload(prompt_context_pack)
         capability_payload = build_core_capability_payload(plugin_context, event)
-        add_interaction_decision_slots_to_pack(
-            pack=prompt_context_pack,
-            event=event,
-            capability_payload=capability_payload,
-        )
         material = InteractionContextMaterial(
             prompt_context_pack=prompt_context_pack,
             persona_payload=persona_payload,

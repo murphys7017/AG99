@@ -1024,7 +1024,7 @@
         "name": "Interaction Middleware",
         "general": {
             "description": "Основные настройки",
-            "hint": "Управляет новым основным путем interaction middleware. Во время разработки внутренний путь не предоставляет fallback-конфигурацию: отсутствие провайдера или некорректный вывод завершаются явной ошибкой.",
+            "hint": "Управляет новым основным путем interaction middleware. Ошибки Fast Expression используют локальный first_response, а ошибки Router консервативно переходят в hybrid.",
             "interaction_middleware": {
                 "enabled": {
                     "description": "Включить Interaction Middleware"
@@ -1039,32 +1039,73 @@
                 },
                 "memory_window_size": {
                     "description": "Размер окна памяти",
-                    "hint": "Количество ходов interaction memory, читаемых при построении decision context."
+                    "hint": "Количество ходов interaction memory, читаемых при построении контекста middleware."
                 }
             }
         },
-        "decision": {
-            "description": "Стратегия передачи ответа",
-            "hint": "Decision agent выбирает: отвечает ли middleware напрямую, говорит короткую фразу перед передачей в core или молча делегирует выполнение core.",
+        "expression": {
+            "description": "Fast Expression",
+            "hint": "Генерирует first_response, который отправляется в каждом turn. Отвечает только за выражение персоны и не решает, входить ли в core.",
+            "interaction_middleware": {
+                "expression_provider_id": {
+                    "description": "Провайдер модели выражения",
+                    "hint": "Если пусто, используется совместимое поле decision_provider_id."
+                },
+                "expression_model": {
+                    "description": "Имя модели выражения",
+                    "hint": "Необязательно. Если пусто, используется имя модели выбранного провайдера."
+                },
+                "expression_temperature": {
+                    "description": "Температура выражения"
+                },
+                "expression_timeout": {
+                    "description": "Таймаут выражения (сек)"
+                },
+                "parallel_expression_router": {
+                    "description": "Параллельные Expression и Router",
+                    "hint": "Если включено, Fast Expression и Router запрашиваются одновременно, чтобы совместить скорость первого ответа и точность маршрутизации."
+                }
+            }
+        },
+        "router": {
+            "description": "Router",
+            "hint": "Только выбирает self_reply / hybrid. Router не генерирует ответы, не декомпозирует задачи и не выводит причины или уверенность.",
+            "interaction_middleware": {
+                "router_provider_id": {
+                    "description": "Провайдер модели маршрутизации",
+                    "hint": "Если пусто, используется совместимое поле decision_provider_id."
+                },
+                "router_model": {
+                    "description": "Имя модели маршрутизации",
+                    "hint": "Необязательно. Если пусто, используется имя модели выбранного провайдера."
+                },
+                "router_temperature": {
+                    "description": "Температура маршрутизации"
+                },
+                "router_timeout": {
+                    "description": "Таймаут маршрутизации (сек)"
+                }
+            }
+        },
+        "decision_compat": {
+            "description": "Поля совместимости",
+            "hint": "Старые поля решения Fast Response сохранены для миграции старых конфигураций и fallback новых полей.",
             "interaction_middleware": {
                 "decision_provider_id": {
-                    "description": "Провайдер модели решения",
-                    "hint": "Если пусто, путь middleware завершится явной ошибкой вместо fallback к модели по умолчанию."
+                    "description": "Старый провайдер модели решения",
+                    "hint": "Для совместимости. Используется, если expression_provider_id или router_provider_id пусты."
                 },
                 "decision_temperature": {
-                    "description": "Температура решения"
+                    "description": "Старая температура решения"
                 },
                 "decision_timeout": {
-                    "description": "Таймаут решения (сек)"
-                },
-                "decision_confidence_threshold": {
-                    "description": "Порог уверенности решения"
+                    "description": "Старый таймаут решения (сек)"
                 }
             }
         },
         "finalizer": {
-            "description": "Финальная обработка ответа",
-            "hint": "Обрабатывает вывод core перед отправкой. Во время разработки ошибка обработки завершает текущий turn и не отправляет заменяющий текст.",
+            "description": "Output Expression",
+            "hint": "Обрабатывает вывод core перед отправкой. При ошибке обработки отправляется исходный результат core.",
             "interaction_middleware": {
                 "finalizer_mode": {
                     "description": "Режим обработки",

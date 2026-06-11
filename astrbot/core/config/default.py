@@ -216,6 +216,15 @@ DEFAULT_CONFIG = {
         "decision_provider_id": "",
         "decision_temperature": 0.5,
         "decision_timeout": 15.0,
+        "expression_provider_id": "",
+        "expression_model": "",
+        "expression_temperature": 0.6,
+        "expression_timeout": 8.0,
+        "router_provider_id": "",
+        "router_model": "",
+        "router_temperature": 0.0,
+        "router_timeout": 3.0,
+        "parallel_expression_router": True,
         "finalizer_mode": "auto",
         "finalizer_provider_id": "",
         "finalizer_model": "",
@@ -4277,7 +4286,7 @@ CONFIG_METADATA_3 = {
             "general": {
                 "description": "基础开关",
                 "type": "object",
-                "hint": "控制新的交互中间件主链路。开发期内部链路不提供 fallback 配置，缺失 provider 或非法输出会显式失败。",
+                "hint": "控制新的交互中间件主链路。Fast Expression 失败会使用本地 first_response，Router 失败会保守进入 hybrid。",
                 "items": {
                     "interaction_middleware.enabled": {
                         "description": "启用交互中间件",
@@ -4297,36 +4306,95 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",
                         "type": "int",
-                        "hint": "构建 decision context 时读取的 interaction memory 轮数。",
+                        "hint": "构建中间件上下文时读取的 interaction memory 轮数。",
                     },
                 },
             },
-            "decision": {
-                "description": "回复接管策略",
+            "expression": {
+                "description": "Fast Expression",
                 "type": "object",
-                "hint": "决策 Agent 负责判断当前 turn 是由中间件直接回复、先说一句再交给核心、还是静默交给核心执行。",
+                "hint": "生成每轮必发的 first_response，只负责人格化即时表达，不判断是否进入核心。",
                 "items": {
-                    "interaction_middleware.decision_provider_id": {
-                        "description": "决策模型提供商",
+                    "interaction_middleware.expression_provider_id": {
+                        "description": "表达模型提供商",
                         "type": "string",
                         "_special": "select_provider",
-                        "hint": "留空时会在中间件链路显式报错，不会回退到默认模型。",
+                        "hint": "留空时沿用兼容字段 decision_provider_id。",
+                    },
+                    "interaction_middleware.expression_model": {
+                        "description": "表达模型名称",
+                        "type": "string",
+                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
+                    },
+                    "interaction_middleware.expression_temperature": {
+                        "description": "表达温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "interaction_middleware.expression_timeout": {
+                        "description": "表达超时秒数",
+                        "type": "float",
+                    },
+                    "interaction_middleware.parallel_expression_router": {
+                        "description": "并发表达和路由",
+                        "type": "bool",
+                        "hint": "开启后 Fast Expression 和 Router 同时请求，以兼顾首响速度和路由准确性。",
+                    },
+                },
+            },
+            "router": {
+                "description": "Router",
+                "type": "object",
+                "hint": "只判断 self_reply / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
+                "items": {
+                    "interaction_middleware.router_provider_id": {
+                        "description": "路由模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "留空时沿用兼容字段 decision_provider_id。",
+                    },
+                    "interaction_middleware.router_model": {
+                        "description": "路由模型名称",
+                        "type": "string",
+                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
+                    },
+                    "interaction_middleware.router_temperature": {
+                        "description": "路由温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "interaction_middleware.router_timeout": {
+                        "description": "路由超时秒数",
+                        "type": "float",
+                    },
+                },
+            },
+            "decision_compat": {
+                "description": "兼容字段",
+                "type": "object",
+                "hint": "旧 Fast Response 决策字段，保留用于旧配置迁移和新字段 fallback。",
+                "items": {
+                    "interaction_middleware.decision_provider_id": {
+                        "description": "旧决策模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "兼容旧配置。expression_provider_id 或 router_provider_id 留空时会使用该字段。",
                     },
                     "interaction_middleware.decision_temperature": {
-                        "description": "决策温度",
+                        "description": "旧决策温度",
                         "type": "float",
                         "slider": {"min": 0, "max": 2, "step": 0.05},
                     },
                     "interaction_middleware.decision_timeout": {
-                        "description": "决策超时秒数",
+                        "description": "旧决策超时秒数",
                         "type": "float",
                     },
                 },
             },
             "finalizer": {
-                "description": "最终回复整理",
+                "description": "Output Expression",
                 "type": "object",
-                "hint": "整理核心输出后再发送。开发期整理失败会终止当前 turn，不发送替代文本。",
+                "hint": "整理核心输出后再发送。整理失败时降级发送核心原始结果。",
                 "items": {
                     "interaction_middleware.finalizer_mode": {
                         "description": "整理模式",

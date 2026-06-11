@@ -736,9 +736,11 @@ class TestConfigMetadataI18n:
 
         group = result["interaction_middleware_group"]
         assert sorted(group["metadata"]) == [
-            "decision",
+            "decision_compat",
+            "expression",
             "finalizer",
             "general",
+            "router",
             "stream",
         ]
         assert (
@@ -748,8 +750,14 @@ class TestConfigMetadataI18n:
             == "interaction_middleware_group.general.interaction_middleware.enabled.description"
         )
         assert (
-            group["metadata"]["decision"]["items"][
-                "interaction_middleware.decision_provider_id"
+            group["metadata"]["expression"]["items"][
+                "interaction_middleware.expression_provider_id"
+            ]["_special"]
+            == "select_provider"
+        )
+        assert (
+            group["metadata"]["router"]["items"][
+                "interaction_middleware.router_provider_id"
             ]["_special"]
             == "select_provider"
         )

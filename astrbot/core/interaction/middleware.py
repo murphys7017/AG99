@@ -23,12 +23,14 @@ from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
 )
-from .decision_agent import InteractionDecisionAgent
+from .decision_agent import InteractionDecisionAgent, _maybe_bypass_protocol_command
+from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .memory_store import (
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
 )
 from .output_controller import InteractionOutputController
+from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     ensure_interaction_turn_state,
     get_interaction_turn_finalized_material,
@@ -42,7 +44,10 @@ from .turn_state import (
     set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
 )
-from .types import InteractionDecision, RouteMode
+from .types import FastRouteMode, InteractionDecision, InteractionRouteDecision, RouteMode
+
+
+LOCAL_FAST_EXPRESSION_FALLBACK = "我先看一下。"
 
 
 def _merge_runtime_config(base: Any, override: Any) -> Any:
@@ -76,6 +81,8 @@ class InteractionMiddleware:
         self.interaction_config = load_interaction_agent_config(config)
         self.memory_store = InteractionMemoryStore()
         self.decision_agent = InteractionDecisionAgent(self.memory_store)
+        self.expression_agent = InteractionExpressionAgent(self.memory_store)
+        self.router_agent = InteractionRouterAgent(self.memory_store)
         self.output_controller.interaction_config = self.interaction_config
         self.output_controller.interaction_memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
@@ -267,9 +274,29 @@ class InteractionMiddleware:
         await self._materialize_inbound_media(event)
         if self._is_live_mode_event(event):
             decision = self._build_live_mode_decision(event)
+            self.attach_event_context(
+                event,
+                turn_id=turn_state.turn_id,
+                decision=decision,
+            )
         else:
-            decision = await self._decide_interaction_route(event, interaction_config)
-        self.attach_event_context(event, turn_id=turn_state.turn_id, decision=decision)
+            decision = await self._maybe_build_legacy_decision_override(
+                event,
+                interaction_config,
+            )
+            if decision is None:
+                decision = self._maybe_build_protocol_command_bypass(event)
+            if decision is None:
+                first_response, route = await self._build_fast_response_and_route(
+                    event,
+                    interaction_config,
+                )
+                decision = route.to_interaction_decision(first_response=first_response)
+            self.attach_event_context(
+                event,
+                turn_id=turn_state.turn_id,
+                decision=decision,
+            )
         if decision.route_mode == RouteMode.SELF_REPLY:
             if not decision.should_emit_immediate_reply:
                 event.set_extra("_interaction_self_reply_invalid", True)
@@ -290,11 +317,7 @@ class InteractionMiddleware:
                     user_visible_action="none",
                 )
                 raise RuntimeError("Interaction self reply decision missing reply")
-            if decision.should_emit_immediate_reply:
-                await self._emit_immediate_reply_or_record_failure(
-                    event,
-                    decision,
-                )
+            await self._emit_immediate_reply_or_record_failure(event, decision)
             completed = await self._complete_visible_turn_or_record_failure(
                 event,
             )
@@ -306,8 +329,7 @@ class InteractionMiddleware:
                 await self._finalize_turn(event)
             return
         if decision.route_mode == RouteMode.HYBRID:
-            if decision.should_emit_immediate_reply:
-                await self._emit_immediate_reply_or_record_failure(event, decision)
+            await self._emit_immediate_reply_or_record_failure(event, decision)
             self._forward_to_core(event)
             return
         if decision.should_emit_immediate_reply:
@@ -335,6 +357,132 @@ class InteractionMiddleware:
             immediate_spoken_reply=None,
             reason="live_mode_requires_audio_chunk_stream",
         )
+
+    async def _maybe_build_legacy_decision_override(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> InteractionDecision | None:
+        if type(self.decision_agent) is InteractionDecisionAgent:
+            return None
+        return await self._decide_interaction_route(event, interaction_config)
+
+    def _maybe_build_protocol_command_bypass(
+        self,
+        event: AstrMessageEvent,
+    ) -> InteractionDecision | None:
+        if self.plugin_context is None:
+            return None
+        return _maybe_bypass_protocol_command(event, self.plugin_context)
+
+    async def _build_fast_response_and_route(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> tuple[str, InteractionRouteDecision]:
+        if interaction_config.parallel_expression_router:
+            expression_task = asyncio.create_task(
+                self._generate_first_response(event, interaction_config),
+                name="interaction_fast_expression",
+            )
+            route_task = asyncio.create_task(
+                self._route_interaction(event, interaction_config),
+                name="interaction_router",
+            )
+            first_response, route = await asyncio.gather(expression_task, route_task)
+            return first_response, route
+
+        first_response = await self._generate_first_response(event, interaction_config)
+        route = await self._route_interaction(event, interaction_config)
+        return first_response, route
+
+    async def _generate_first_response(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> str:
+        if self.plugin_context is None:
+            event.set_extra("_interaction_expression_failed", True)
+            event.set_extra(
+                "_interaction_expression_failure_reason",
+                "plugin_context_unavailable",
+            )
+            return LOCAL_FAST_EXPRESSION_FALLBACK
+        try:
+            return await self.expression_agent.generate_first_response(
+                event,
+                self.plugin_context,
+                interaction_config,
+            )
+        except InteractionExpressionError as exc:
+            reason = exc.reason
+            error: Exception = exc
+        except Exception as exc:  # noqa: BLE001
+            reason = "expression_pipeline_error"
+            error = exc
+
+        event.set_extra("_interaction_expression_failed", True)
+        event.set_extra("_interaction_expression_failure_reason", str(error))
+        record_interaction_turn_failure(
+            event,
+            stage="fast_expression",
+            reason=reason,
+            exception=error,
+            user_visible_action="fallback_first_response",
+        )
+        logger.warning(
+            "Interaction fast expression failed; using local fallback: platform_id=%s session_id=%s reason=%s error=%s",
+            event.get_platform_id(),
+            event.session_id,
+            reason,
+            error,
+            exc_info=True,
+        )
+        return LOCAL_FAST_EXPRESSION_FALLBACK
+
+    async def _route_interaction(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> InteractionRouteDecision:
+        if self.plugin_context is None:
+            event.set_extra("_interaction_router_failed", True)
+            event.set_extra(
+                "_interaction_router_failure_reason",
+                "plugin_context_unavailable",
+            )
+            return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
+        try:
+            return await self.router_agent.route(
+                event,
+                self.plugin_context,
+                interaction_config,
+            )
+        except InteractionRouterError as exc:
+            reason = exc.reason
+            error: Exception = exc
+        except Exception as exc:  # noqa: BLE001
+            reason = "router_pipeline_error"
+            error = exc
+
+        event.set_extra("_interaction_router_failed", True)
+        event.set_extra("_interaction_router_failure_reason", str(error))
+        record_interaction_turn_failure(
+            event,
+            stage="router",
+            reason=reason,
+            exception=error,
+            user_visible_action="fallback_hybrid",
+        )
+        logger.warning(
+            "Interaction router failed; falling back to hybrid: platform_id=%s session_id=%s reason=%s error=%s",
+            event.get_platform_id(),
+            event.session_id,
+            reason,
+            error,
+            exc_info=True,
+        )
+        return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
 
     async def _decide_interaction_route(
         self,
@@ -652,6 +800,10 @@ class InteractionMiddleware:
             )
 
     def _forward_to_core(self, event: AstrMessageEvent) -> None:
+        event.set_extra("_interaction_delegate_to_core", True)
+        event.is_wake = True
+        event.is_at_or_wake_command = True
+        event._extras.pop("provider", None)
         turn_state = get_interaction_turn_state(event)
         decision = turn_state.decision if turn_state is not None else None
         if (

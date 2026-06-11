@@ -234,5 +234,10 @@ class WakingCheckStage(Stage):
         event.set_extra("activated_handlers", activated_handlers)
         event.set_extra("handlers_parsed_params", handlers_parsed_params)
 
+        if event.get_extra("_interaction_delegate_to_core", False):
+            is_wake = True
+            event.is_wake = True
+            event.is_at_or_wake_command = True
+
         if not is_wake:
             event.stop_event()

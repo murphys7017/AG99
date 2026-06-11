@@ -8,7 +8,6 @@ from astrbot.core.interaction.contributors import (
     InteractionResultContribution,
     InteractionResultView,
 )
-from astrbot.core.interaction.finalizer import InteractionFinalizerError
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
@@ -1118,7 +1117,7 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
 
 
 @pytest.mark.asyncio
-async def test_force_finalizer_failure_fail_fast_does_not_send_raw_core_result(
+async def test_force_finalizer_failure_sends_raw_core_result(
     webchat_event,
 ):
     queue = asyncio.Queue()
@@ -1143,12 +1142,13 @@ async def test_force_finalizer_failure_fail_fast_does_not_send_raw_core_result(
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
-        with pytest.raises(RuntimeError, match="provider_unavailable"):
-            await controller.capture_message_chain(
-                MessageChain([Plain("raw core result")]),
-                webchat_event,
-            )
+        await controller.capture_message_chain(
+            MessageChain([Plain("raw core result")]),
+            webchat_event,
+        )
 
+    payload = queue.get_nowait()
+    assert payload["data"] == "raw core result"
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_finalizer_failed") is True
     assert (
@@ -1162,7 +1162,7 @@ async def test_force_finalizer_failure_fail_fast_does_not_send_raw_core_result(
 
 
 @pytest.mark.asyncio
-async def test_force_finalizer_failure_observable_protect_does_not_send_notice(
+async def test_force_finalizer_failure_records_failure_without_notice(
     webchat_event,
 ):
     queue = asyncio.Queue()
@@ -1187,12 +1187,13 @@ async def test_force_finalizer_failure_observable_protect_does_not_send_notice(
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
-        with pytest.raises(InteractionFinalizerError, match="provider_unavailable"):
-            await controller.capture_message_chain(
-                MessageChain([Plain("raw core result")]),
-                webchat_event,
-            )
+        await controller.capture_message_chain(
+            MessageChain([Plain("raw core result")]),
+            webchat_event,
+        )
 
+    payload = queue.get_nowait()
+    assert payload["data"] == "raw core result"
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_finalizer_failed") is True
     assert (
@@ -2129,7 +2130,7 @@ async def test_t2i_materialization_records_image_delivery_but_memory_uses_text(
 
 
 @pytest.mark.asyncio
-async def test_tts_materialization_failure_is_not_downgraded_to_text(webchat_event):
+async def test_tts_materialization_failure_falls_back_to_text(webchat_event):
     queue = asyncio.Queue()
     plugin_context = MagicMock()
     plugin_context.get_config.return_value = {
@@ -2164,13 +2165,14 @@ async def test_tts_materialization_failure_is_not_downgraded_to_text(webchat_eve
             "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
             new=AsyncMock(return_value=True),
         ),
-        pytest.raises(RuntimeError, match="Voice TTS provider unavailable"),
     ):
         await controller.capture_message_chain(
             MessageChain([Plain("semantic answer")]),
             webchat_event,
         )
 
+    payload = queue.get_nowait()
+    assert payload["data"] == "semantic answer"
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_outbound_materialization_failed") is True
     assert webchat_event.get_extra("_interaction_outbound_materialization_stage") == "tts"
@@ -2181,7 +2183,7 @@ async def test_tts_materialization_failure_is_not_downgraded_to_text(webchat_eve
 
 
 @pytest.mark.asyncio
-async def test_tts_file_registration_failure_is_not_downgraded_to_text(
+async def test_tts_file_registration_failure_falls_back_to_text(
     webchat_event,
 ):
     queue = asyncio.Queue()
@@ -2226,13 +2228,14 @@ async def test_tts_file_registration_failure_is_not_downgraded_to_text(
             "astrbot.core.voice.service.file_token_service.register_file",
             new=AsyncMock(side_effect=RuntimeError("registry down")),
         ),
-        pytest.raises(RuntimeError, match="registry down"),
     ):
         await controller.capture_message_chain(
             MessageChain([Plain("semantic answer")]),
             webchat_event,
         )
 
+    payload = queue.get_nowait()
+    assert payload["data"] == "semantic answer"
     assert queue.empty()
     assert webchat_event.get_extra("_interaction_outbound_materialization_failed") is True
     assert webchat_event.get_extra("_interaction_outbound_materialization_stage") == "tts"
@@ -2250,7 +2253,7 @@ async def test_tts_file_registration_failure_is_not_downgraded_to_text(
 
 
 @pytest.mark.asyncio
-async def test_tts_file_service_config_missing_is_not_downgraded_to_text(
+async def test_tts_file_service_config_missing_falls_back_to_text(
     webchat_event,
 ):
     queue = asyncio.Queue()
@@ -2291,13 +2294,14 @@ async def test_tts_file_service_config_missing_is_not_downgraded_to_text(
             "astrbot.core.interaction.output_controller.SessionServiceManager.should_process_tts_request",
             new=AsyncMock(return_value=True),
         ),
-        pytest.raises(RuntimeError, match="callback_api_base"),
     ):
         await controller.capture_message_chain(
             MessageChain([Plain("semantic answer")]),
             webchat_event,
         )
 
+    payload = queue.get_nowait()
+    assert payload["data"] == "semantic answer"
     assert queue.empty()
     assert (
         webchat_event.get_extra("_interaction_outbound_materialization_failure_reason")
