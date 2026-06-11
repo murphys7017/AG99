@@ -80,7 +80,6 @@ def build_interaction_decision_schema() -> dict[str, Any]:
             "metadata": {},
         },
         "plugin_hints": {},
-        "confidence": 0.0,
         "reason": "简短原因",
     }
 
@@ -93,7 +92,7 @@ def build_interaction_decision_json_contract() -> str:
     )
     return (
         "当协议级结构化输出不可用时，你必须只输出一个 JSON object，不能输出 Markdown、XML、HTML 或任何标签格式。\n"
-        "字段名必须使用 JSON 字符串键，例如 route_mode 和 confidence。\n"
+        "字段名必须使用 JSON 字符串键，例如 route_mode 和 reason。\n"
         "JSON object 必须符合下面的字段结构：\n"
         f"{schema_text}"
     )
@@ -128,14 +127,12 @@ def build_interaction_decision_tool_parameters() -> dict[str, Any]:
                 "required": ["task_intent", "task_summary", "execution_prompt"],
             },
             "plugin_hints": {"type": "object"},
-            "confidence": {"type": "number"},
             "reason": {"type": "string"},
         },
         "required": [
             "route_mode",
             "should_emit_immediate_reply",
             "immediate_spoken_reply",
-            "confidence",
             "reason",
         ],
     }
@@ -248,11 +245,6 @@ def _extract_function_call_decision_payload(text: object) -> dict[str, Any] | No
 def _coerce_function_call_parameter(key: str, value: str) -> Any:
     if key in {"should_emit_immediate_reply"}:
         return value.strip().lower() in {"true", "1", "yes", "y", "on"}
-    if key in {"confidence"}:
-        try:
-            return float(value)
-        except ValueError:
-            return 0.0
     if key in {"core_task_spec", "plugin_hints"}:
         try:
             parsed = json.loads(value)
@@ -269,7 +261,6 @@ def build_protocol_bypass_decision(reason: str) -> InteractionDecision:
         immediate_spoken_reply=None,
         core_task_spec=None,
         plugin_hints={},
-        confidence=1.0,
         reason=reason,
     )
 
@@ -541,7 +532,6 @@ class InteractionDecisionAgent:
                         },
                     },
                     "plugin_hints": {},
-                    "confidence": 0.0,
                     "reason": "non_json_delegate_to_core",
                 }
             else:
@@ -554,12 +544,11 @@ class InteractionDecisionAgent:
             decision.reason = "llm decision"
         decision = validate_interaction_decision(decision, interaction_config)
         logger.info(
-            "Interaction decision parsed: platform_id=%s session_id=%s route_mode=%s emit_immediate=%s confidence=%s reason=%s has_core_task_spec=%s",
+            "Interaction decision parsed: platform_id=%s session_id=%s route_mode=%s emit_immediate=%s reason=%s has_core_task_spec=%s",
             event.get_platform_id(),
             event.session_id,
             decision.route_mode.value,
             decision.should_emit_immediate_reply,
-            decision.confidence,
             decision.reason,
             decision.core_task_spec is not None,
         )

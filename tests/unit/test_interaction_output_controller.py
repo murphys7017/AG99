@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from astrbot.core.interaction.contributors import (
+    InteractionOutputContribution,
     InteractionResultContribution,
     InteractionResultView,
 )
@@ -44,6 +45,37 @@ from astrbot.core.platform.sources.webchat.webchat_event import WebChatMessageEv
 class ConcreteMessageEvent(AstrMessageEvent):
     async def send(self, message):
         await super().send(message)
+
+
+def test_output_contribution_converts_to_result_contribution():
+    contribution = InteractionOutputContribution(
+        plugin_id="plugin.motion",
+        stage="output_enrich",
+        client_objects=[{"type": "motion"}],
+        platform_extras={"visible": True},
+        tts_hints={"voice": "alice"},
+        motion_hints={"latency": "fast"},
+        delivery_hints={"dedupe": True},
+        metadata={"reason": "ok"},
+        latency_class="fast",
+        priority=40,
+    )
+
+    result = contribution.to_result_contribution()
+
+    assert isinstance(result, InteractionResultContribution)
+    assert result.plugin_id == "plugin.motion"
+    assert result.client_objects == [{"type": "motion"}]
+    assert result.platform_extras["visible"] is True
+    assert result.platform_extras["tts_hints"] == {"voice": "alice"}
+    assert result.platform_extras["motion_hints"] == {"latency": "fast"}
+    assert result.platform_extras["delivery_hints"] == {"dedupe": True}
+    assert result.metadata == {
+        "reason": "ok",
+        "stage": "output_enrich",
+        "latency_class": "fast",
+    }
+    assert result.priority == 40
 
 
 @pytest.fixture
@@ -107,6 +139,16 @@ class ResultContributor:
         assert result_view.turn_id == "turn-1"
         assert result_view.session_id == event.unified_msg_origin
         assert result_view.core_result == self.expected_core_result
+        assert result_view.output_draft["turn_id"] == "turn-1"
+        assert result_view.output_draft["source"] == "core"
+        assert result_view.output_draft["phase"] == "final"
+        assert result_view.output_draft["text"] == self.expected_core_result
+        assert result_view.output_draft["message_kind"] == "core_reply"
+        assert result_view.output_draft["latency_policy"] == "normal"
+        assert (
+            result_view.output_draft["metadata"]["text_stage"]
+            == "candidate_pre_contribution"
+        )
         return InteractionResultContribution(
             plugin_id=self.plugin_id,
             platform_extras={"adapter_object": {"ok": True}},
@@ -133,6 +175,16 @@ class ImmediateResultContributor:
         assert result_view.metadata["message_kind"] == "immediate_reply"
         assert result_view.metadata["is_immediate"] is True
         assert result_view.metadata["is_final"] is False
+        assert result_view.output_draft["turn_id"] == "turn-1"
+        assert result_view.output_draft["source"] == "interaction"
+        assert result_view.output_draft["phase"] == "immediate"
+        assert result_view.output_draft["text"] == "嗯，我来看看。"
+        assert result_view.output_draft["message_kind"] == "immediate_reply"
+        assert result_view.output_draft["latency_policy"] == "fast"
+        assert (
+            result_view.output_draft["metadata"]["text_stage"]
+            == "candidate_pre_contribution"
+        )
         assert result_view.final_candidate_material["visible_outputs"][-1] == {
             "turn_id": "turn-1",
             "kind": "immediate_reply",
@@ -165,6 +217,10 @@ class MutatingResultContributor:
             result_view.turn_material_snapshot["assistant"] = "changed"
         with pytest.raises(TypeError):
             result_view.final_candidate_material["assistant_text"] = "changed"
+        with pytest.raises(TypeError):
+            result_view.output_draft["text"] = "changed"
+        with pytest.raises(TypeError):
+            result_view.output_draft["metadata"]["text_stage"] = "changed"
         return None
 
 

@@ -28,6 +28,7 @@ from .context_builder import (
     extract_recent_messages,
 )
 from .contributors import (
+    InteractionOutputDraft,
     InteractionResultContribution,
     InteractionResultView,
     InteractionStreamView,
@@ -1198,15 +1199,35 @@ class InteractionOutputController:
         if not callable(list_contributors):
             return []
 
+        decision_obj = get_interaction_decision(event)
+        decision_payload = decision_obj.to_dict() if decision_obj is not None else None
+        route_mode = (
+            decision_obj.route_mode.value if decision_obj is not None else None
+        )
+        output_text = (final_result or core_result or "").strip()
+        output_draft = InteractionOutputDraft(
+            turn_id=str(event.get_extra("_turn_id", "") or ""),
+            source="core" if phase == "final" and core_result else "interaction",
+            route_mode=route_mode,
+            phase=phase,
+            text=output_text,
+            semantic_text=output_text,
+            message_kind=candidate_message_kind,
+            latency_policy="fast" if phase == "immediate" else "normal",
+            metadata={
+                "is_immediate": phase == "immediate",
+                "is_final": phase == "final",
+                "text_stage": "candidate_pre_contribution",
+                "text_may_change_by_legacy_override": True,
+            },
+        )
+
         view = InteractionResultView(
             turn_id=str(event.get_extra("_turn_id", "") or ""),
             platform_id=event.get_platform_id(),
             session_id=event.unified_msg_origin,
-            decision=(
-                decision.to_dict()
-                if (decision := get_interaction_decision(event)) is not None
-                else None
-            ),
+            decision=decision_payload,
+            output_draft=output_draft.to_mapping(),
             immediate_reply=get_interaction_turn_immediate_reply(event),
             core_result=core_result,
             final_result=final_result,

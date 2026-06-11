@@ -64,7 +64,6 @@ class InteractionDecision:
     immediate_spoken_reply: str | None = None
     core_task_spec: CoreTaskSpec | None = None
     plugin_hints: dict[str, Any] = field(default_factory=dict)
-    confidence: float = 0.0
     reason: str = ""
 
     @classmethod
@@ -83,10 +82,6 @@ class InteractionDecision:
             immediate_spoken_reply = str(immediate_spoken_reply)
         core_task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
         plugin_hints = _coerce_mapping(payload.get("plugin_hints", {}))
-        try:
-            confidence = float(payload.get("confidence", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
         return cls(
             route_mode=route_mode,
             should_emit_immediate_reply=bool(
@@ -95,7 +90,6 @@ class InteractionDecision:
             immediate_spoken_reply=immediate_spoken_reply,
             core_task_spec=core_task_spec,
             plugin_hints=plugin_hints,
-            confidence=confidence,
             reason=str(payload.get("reason", "") or ""),
         )
 
@@ -108,7 +102,6 @@ class InteractionDecision:
                 self.core_task_spec.to_dict() if self.core_task_spec else None
             ),
             "plugin_hints": dict(self.plugin_hints),
-            "confidence": self.confidence,
             "reason": self.reason,
         }
 

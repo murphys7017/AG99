@@ -182,7 +182,6 @@ class TestInteractionMiddleware:
             return_value=InteractionDecision(
                 route_mode=RouteMode.DELEGATE_TO_CORE,
                 should_emit_immediate_reply=False,
-                confidence=0.9,
                 reason="delegate",
             )
         )
@@ -226,7 +225,6 @@ class TestInteractionMiddleware:
             return_value=InteractionDecision(
                 route_mode=RouteMode.DELEGATE_TO_CORE,
                 should_emit_immediate_reply=False,
-                confidence=0.9,
                 reason="delegate",
             )
         )
@@ -308,7 +306,6 @@ class TestInteractionMiddleware:
             return_value=InteractionDecision(
                 route_mode=RouteMode.DELEGATE_TO_CORE,
                 should_emit_immediate_reply=False,
-                confidence=0.9,
                 reason="delegate",
             )
         )
@@ -348,7 +345,6 @@ class TestInteractionMiddleware:
             return_value=InteractionDecision(
                 route_mode=RouteMode.DELEGATE_TO_CORE,
                 should_emit_immediate_reply=False,
-                confidence=0.9,
                 reason="delegate",
             )
         )
@@ -395,7 +391,6 @@ class TestInteractionMiddleware:
             return_value=InteractionDecision(
                 route_mode=RouteMode.DELEGATE_TO_CORE,
                 should_emit_immediate_reply=False,
-                confidence=0.9,
                 reason="delegate",
             )
         )
@@ -491,7 +486,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.HYBRID,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯，我来处理。",
-                confidence=0.9,
                 reason="hybrid",
             )
         )
@@ -536,7 +530,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.HYBRID,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="等我看看。",
-                confidence=0.9,
                 reason="hybrid",
             )
         )
@@ -588,7 +581,6 @@ class TestInteractionMiddleware:
             return_value=InteractionDecision(
                 route_mode=RouteMode.DELEGATE_TO_CORE,
                 should_emit_immediate_reply=False,
-                confidence=0.9,
                 reason="delegate",
             )
         )
@@ -794,7 +786,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.HYBRID,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯，我来处理。",
-                confidence=0.9,
                 reason="hybrid",
             )
         )
@@ -876,7 +867,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.9,
                 reason="self",
             )
         )
@@ -916,7 +906,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=False,
                 immediate_spoken_reply=None,
-                confidence=0.9,
                 reason="invalid self reply",
             )
         )
@@ -966,7 +955,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.9,
                 reason="self",
             )
         )
@@ -1023,7 +1011,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.9,
                 reason="self",
             )
         )
@@ -1118,7 +1105,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.9,
                 reason="self",
             )
         )
@@ -1189,7 +1175,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.9,
                 reason="self",
             )
         )
@@ -1254,7 +1239,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.9,
                 reason="self",
             )
         )
@@ -1309,7 +1293,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.0,
                 reason="self",
             )
         )
@@ -1363,7 +1346,6 @@ class TestInteractionMiddleware:
                 route_mode=RouteMode.SELF_REPLY,
                 should_emit_immediate_reply=True,
                 immediate_spoken_reply="嗯。",
-                confidence=0.0,
                 reason="self",
             )
         )

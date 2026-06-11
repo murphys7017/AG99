@@ -1,10 +1,73 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from types import MappingProxyType
 from typing import Any
+
+
+@dataclass(slots=True)
+class InteractionOutputDraft:
+    turn_id: str
+    message_id: str | None = None
+    source: str = "interaction"
+    route_mode: str | None = None
+    phase: str = "final"
+    text: str = ""
+    semantic_text: str = ""
+    attachments: list[Any] = field(default_factory=list)
+    message_kind: str = "visible"
+    latency_policy: str = "normal"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "turn_id": self.turn_id,
+            "message_id": self.message_id,
+            "source": self.source,
+            "route_mode": self.route_mode,
+            "phase": self.phase,
+            "text": self.text,
+            "semantic_text": self.semantic_text,
+            "attachments": list(self.attachments),
+            "message_kind": self.message_kind,
+            "latency_policy": self.latency_policy,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(slots=True)
+class InteractionOutputContribution:
+    plugin_id: str
+    stage: str = "output_enrich"
+    client_objects: list[dict[str, Any]] = field(default_factory=list)
+    platform_extras: dict[str, Any] = field(default_factory=dict)
+    tts_hints: dict[str, Any] = field(default_factory=dict)
+    motion_hints: dict[str, Any] = field(default_factory=dict)
+    delivery_hints: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    latency_class: str = "fast"
+    priority: int = 100
+
+    def to_result_contribution(self) -> "InteractionResultContribution":
+        platform_extras = dict(self.platform_extras)
+        if self.tts_hints:
+            platform_extras["tts_hints"] = dict(self.tts_hints)
+        if self.motion_hints:
+            platform_extras["motion_hints"] = dict(self.motion_hints)
+        if self.delivery_hints:
+            platform_extras["delivery_hints"] = dict(self.delivery_hints)
+        metadata = dict(self.metadata)
+        metadata.setdefault("stage", self.stage)
+        metadata.setdefault("latency_class", self.latency_class)
+        return InteractionResultContribution(
+            plugin_id=self.plugin_id,
+            platform_extras=platform_extras,
+            client_objects=list(self.client_objects),
+            metadata=metadata,
+            priority=self.priority,
+        )
 
 
 @dataclass(slots=True)
@@ -168,6 +231,7 @@ class InteractionResultView:
     platform_id: str
     session_id: str
     decision: Any
+    output_draft: Mapping[str, Any] | None = None
     immediate_reply: str | None = None
     core_result: str | None = None
     final_result: str | None = None
@@ -185,6 +249,7 @@ class InteractionResultView:
                 "platform_id": self.platform_id,
                 "session_id": self.session_id,
                 "decision": freeze_interaction_snapshot(self.decision),
+                "output_draft": freeze_interaction_snapshot(self.output_draft),
                 "immediate_reply": self.immediate_reply,
                 "core_result": self.core_result,
                 "final_result": self.final_result,
@@ -207,6 +272,7 @@ class InteractionResultView:
         return replace(
             self,
             decision=freeze_interaction_snapshot(self.decision),
+            output_draft=freeze_interaction_snapshot(self.output_draft),
             visible_outputs=freeze_interaction_snapshot(self.visible_outputs),
             utterances=freeze_interaction_snapshot(self.utterances),
             turn_material_snapshot=freeze_interaction_snapshot(

@@ -333,7 +333,6 @@ class InteractionMiddleware:
             route_mode=RouteMode.DELEGATE_TO_CORE,
             should_emit_immediate_reply=False,
             immediate_spoken_reply=None,
-            confidence=1.0,
             reason="live_mode_requires_audio_chunk_stream",
         )
 

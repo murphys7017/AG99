@@ -36,7 +36,6 @@ def test_validate_interaction_decision_truncates_spoken_reply():
         route_mode=RouteMode.SELF_REPLY,
         should_emit_immediate_reply=True,
         immediate_spoken_reply="这是一段非常非常非常非常非常非常非常非常非常非常非常非常非常长的回复文本，需要被截断一下",
-        confidence=0.9,
         reason="ok",
     )
     validated = validate_interaction_decision(decision, config)
@@ -50,7 +49,6 @@ def test_validate_interaction_decision_rejects_self_reply_without_reply():
         route_mode=RouteMode.SELF_REPLY,
         should_emit_immediate_reply=False,
         immediate_spoken_reply=None,
-        confidence=0.9,
         reason="invalid",
     )
 
@@ -64,7 +62,6 @@ def test_validate_interaction_decision_rejects_hybrid_without_reply():
         route_mode=RouteMode.HYBRID,
         should_emit_immediate_reply=False,
         immediate_spoken_reply=None,
-        confidence=0.9,
         reason="invalid",
     )
 
@@ -76,6 +73,8 @@ def test_interaction_decision_tool_schema_requires_immediate_reply_field():
     parameters = build_interaction_decision_tool_parameters()
 
     assert "immediate_spoken_reply" in parameters["required"]
+    assert "confidence" not in parameters["required"]
+    assert "confidence" not in parameters["properties"]
 
 
 def test_interaction_decision_prompt_requires_reply_for_self_and_hybrid():
@@ -106,7 +105,6 @@ def test_extract_interaction_decision_payload_accepts_function_call_text():
         '<parameter name="route_mode">self_reply</parameter>'
         '<parameter name="should_emit_immediate_reply">true</parameter>'
         '<parameter name="immediate_spoken_reply">哼，不是你技术不够，是你方向没找对。慢慢来嘛。</parameter>'
-        '<parameter name="confidence">0.95</parameter>'
         '<parameter name="reason">用户表达优化难度，是轻松情感对话，无需工具执行</parameter>'
         "</invoke></function_calls>"
     )
@@ -119,7 +117,6 @@ def test_extract_interaction_decision_payload_accepts_function_call_text():
     assert decision.route_mode == RouteMode.SELF_REPLY
     assert decision.should_emit_immediate_reply is True
     assert decision.immediate_spoken_reply == "哼，不是你技术不够，是你方向没找对。慢慢来嘛。"
-    assert decision.confidence == 0.95
     assert decision.reason == "用户表达优化难度，是轻松情感对话，无需工具执行"
 
 
@@ -130,7 +127,6 @@ def test_interaction_decision_from_mapping_accepts_json_string_plugin_hints():
             "should_emit_immediate_reply": True,
             "immediate_spoken_reply": "嗯。",
             "plugin_hints": '{"ag99live_motion":{"mode":"expressive","axes":{"head_yaw":{"value":50}}}}',
-            "confidence": 0.9,
             "reason": "ok",
         }
     )
@@ -154,7 +150,6 @@ def test_extract_interaction_decision_payload_prefers_tool_call_payload():
                 "route_mode": "self_reply",
                 "should_emit_immediate_reply": True,
                 "immediate_spoken_reply": "嗯。",
-                "confidence": 0.9,
                 "reason": "ok",
             }
         ],
@@ -178,7 +173,6 @@ def test_extract_interaction_decision_payload_accepts_text_json_fallback():
                 "route_mode": "self_reply",
                 "should_emit_immediate_reply": True,
                 "immediate_spoken_reply": "嗯。",
-                "confidence": 0.9,
                 "reason": "ok",
             },
             ensure_ascii=False,
@@ -409,7 +403,7 @@ async def test_decision_agent_reuses_turn_state_context_material():
                     role="assistant",
                     completion_text=(
                         '{"route_mode":"self_reply","should_emit_immediate_reply":true,'
-                        '"immediate_spoken_reply":"嗯。","confidence":0.9,"reason":"ok"}'
+                        '"immediate_spoken_reply":"嗯。","reason":"ok"}'
                     ),
                 )
             ),
@@ -440,7 +434,10 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     plugin_context = MagicMock()
     plugin_context.get_config.return_value = {}
     provider = MagicMock()
-    provider.provider_config = {"type": "anthropic_chat_completion"}
+    provider.provider_config = {
+        "type": "anthropic_chat_completion",
+        "prompt_renderer_family": "anthropic",
+    }
     provider.get_model.return_value = "claude-test"
     plugin_context.get_provider_by_id.return_value = provider
     plugin_context.get_llm_tool_manager.return_value.func_list = []
@@ -478,7 +475,6 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
                     "route_mode": "self_reply",
                     "should_emit_immediate_reply": True,
                     "immediate_spoken_reply": "嗯。",
-                    "confidence": 0.9,
                     "reason": "ok",
                 }
             ],
@@ -592,7 +588,10 @@ async def test_decision_agent_prefers_tool_call_output_when_contract_enabled():
     plugin_context = MagicMock()
     plugin_context.get_config.return_value = {}
     provider = MagicMock()
-    provider.provider_config = {"type": "anthropic_chat_completion"}
+    provider.provider_config = {
+        "type": "anthropic_chat_completion",
+        "prompt_renderer_family": "anthropic",
+    }
     provider.get_model.return_value = "claude-test"
     plugin_context.get_provider_by_id.return_value = provider
     plugin_context.get_llm_tool_manager.return_value.func_list = []
@@ -620,7 +619,6 @@ async def test_decision_agent_prefers_tool_call_output_when_contract_enabled():
                     "route_mode": "self_reply",
                     "should_emit_immediate_reply": True,
                     "immediate_spoken_reply": "嗯。",
-                    "confidence": 0.9,
                     "reason": "ok",
                 }
             ],
@@ -682,7 +680,6 @@ async def test_decision_agent_accepts_prompt_only_contract_with_text_json_fallba
                             "route_mode": "self_reply",
                             "should_emit_immediate_reply": True,
                             "immediate_spoken_reply": "嗯。",
-                            "confidence": 0.9,
                             "reason": "ok",
                         },
                         ensure_ascii=False,
