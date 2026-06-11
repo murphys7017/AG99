@@ -3,6 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from astrbot.core.provider.sources.elevenlabs_tts_source import (
+    ElevenLabsTTSAPIError,
+    ProviderElevenLabsTTSAPI,
+)
 from astrbot.core.provider.sources.mimo_api_common import MiMoAPIError, build_headers
 from astrbot.core.provider.sources.mimo_stt_api_source import ProviderMiMoSTTAPI
 from astrbot.core.provider.sources.mimo_tts_api_source import ProviderMiMoTTSAPI
@@ -48,6 +52,28 @@ def _make_minimax_tts_provider(overrides: dict | None = None) -> ProviderMiniMax
     if overrides:
         provider_config.update(overrides)
     return ProviderMiniMaxTTSAPI(provider_config=provider_config, provider_settings={})
+
+
+def _make_elevenlabs_tts_provider(
+    overrides: dict | None = None,
+) -> ProviderElevenLabsTTSAPI:
+    provider_config = {
+        "id": "test-elevenlabs-tts",
+        "type": "elevenlabs_tts_api",
+        "model": "eleven_multilingual_v2",
+        "api_key": "test-key",
+        "api_base": "https://api.elevenlabs.io/v1",
+        "elevenlabs-tts-voice-id": "voice-id",
+        "elevenlabs-tts-output-format": "mp3_44100_128",
+        "elevenlabs-tts-use-speaker-boost": True,
+        "timeout": "20",
+    }
+    if overrides:
+        provider_config.update(overrides)
+    return ProviderElevenLabsTTSAPI(
+        provider_config=provider_config,
+        provider_settings={},
+    )
 
 
 def test_mimo_tts_user_prompt_returns_seed_text():
@@ -196,6 +222,97 @@ def test_minimax_tts_invalid_timber_weight_uses_default():
     assert '"timber_weights": [{"voice_id": "Chinese (Mandarin)_Warm_Girl", "weight": 1}]' in body
 
 
+def test_elevenlabs_tts_builds_payload_with_configured_voice_settings():
+    provider = _make_elevenlabs_tts_provider(
+        {
+            "elevenlabs-tts-stability": "0.3",
+            "elevenlabs-tts-similarity-boost": 0.7,
+            "elevenlabs-tts-style": "",
+        }
+    )
+    try:
+        payload = provider._build_payload("hello")
+        assert payload == {
+            "text": "hello",
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.3,
+                "similarity_boost": 0.7,
+                "use_speaker_boost": True,
+            },
+        }
+    finally:
+        asyncio.run(provider.terminate())
+
+
+def test_elevenlabs_tts_rejects_raw_audio_format():
+    with pytest.raises(ValueError, match="raw audio"):
+        provider = _make_elevenlabs_tts_provider(
+            {"elevenlabs-tts-output-format": "pcm_44100"}
+        )
+        asyncio.run(provider.terminate())
+
+
+def test_elevenlabs_tts_rejects_invalid_float_setting():
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        provider = _make_elevenlabs_tts_provider(
+            {"elevenlabs-tts-stability": "1.5"}
+        )
+        asyncio.run(provider.terminate())
+
+
+@pytest.mark.asyncio
+async def test_elevenlabs_tts_get_audio_writes_response_content():
+    provider = _make_elevenlabs_tts_provider(
+        {"elevenlabs-tts-output-format": "opus_48000_128"}
+    )
+
+    captured: dict = {}
+
+    class _Response:
+        status_code = 200
+        content = b"audio-bytes"
+        text = ""
+
+    async def fake_post(url, headers=None, params=None, json=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["params"] = params
+        captured["json"] = json
+        return _Response()
+
+    await provider.client.aclose()
+    provider.client = SimpleNamespace(post=fake_post, aclose=_fake_aclose())
+
+    path = await provider.get_audio("hello")
+
+    assert path.endswith(".opus")
+    with open(path, "rb") as file:
+        assert file.read() == b"audio-bytes"
+    assert captured["url"] == "https://api.elevenlabs.io/v1/text-to-speech/voice-id"
+    assert captured["headers"]["xi-api-key"] == "test-key"
+    assert captured["params"] == {"output_format": "opus_48000_128"}
+    assert captured["json"]["text"] == "hello"
+    await provider.terminate()
+
+
+@pytest.mark.asyncio
+async def test_elevenlabs_tts_get_audio_raises_on_http_error():
+    provider = _make_elevenlabs_tts_provider()
+
+    class _Response:
+        status_code = 401
+        content = b""
+        text = "unauthorized"
+
+    await provider.client.aclose()
+    provider.client = SimpleNamespace(post=_fake_post(_Response()), aclose=_fake_aclose())
+
+    with pytest.raises(ElevenLabsTTSAPIError, match="HTTP 401"):
+        await provider.get_audio("hello")
+    await provider.terminate()
+
+
 @pytest.mark.asyncio
 async def test_mimo_tts_get_audio_handles_empty_choices():
     provider = _make_tts_provider()
@@ -295,3 +412,10 @@ def _fake_post(response):
         return response
 
     return _post
+
+
+def _fake_aclose():
+    async def _aclose():
+        return None
+
+    return _aclose

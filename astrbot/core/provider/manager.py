@@ -431,6 +431,10 @@ class ProviderManager:
                 from .sources.mimo_tts_api_source import (
                     ProviderMiMoTTSAPI as ProviderMiMoTTSAPI,
                 )
+            case "elevenlabs_tts_api":
+                from .sources.elevenlabs_tts_source import (
+                    ProviderElevenLabsTTSAPI as ProviderElevenLabsTTSAPI,
+                )
             case "genie_tts":
                 from .sources.genie_tts import (
                     GenieTTSProvider as GenieTTSProvider,
