@@ -608,7 +608,7 @@ export const useExtensionPage = () => {
       const onlinePluginByName = onlinePluginsNameMap.get(
         normalizeStr(extension.marketplace_name || extension.name),
       );
-      const matchedPlugin = onlinePlugin || onlinePluginByName;
+      const matchedPlugin = repoKey ? onlinePlugin : onlinePluginByName;
   
       if (matchedPlugin) {
         extension.online_version = matchedPlugin.version;
@@ -616,6 +616,7 @@ export const useExtensionPage = () => {
           extension.version !== matchedPlugin.version &&
           matchedPlugin.version !== tm("status.unknown");
       } else {
+        extension.online_version = "";
         extension.has_update = false;
       }
     });
@@ -1152,28 +1153,24 @@ export const useExtensionPage = () => {
   
   const checkAlreadyInstalled = () => {
     const data = Array.isArray(extension_data?.data) ? extension_data.data : [];
-    const installedRepos = new Set(
-      data
-        .filter((ext) => ext.repo)
-        .map((ext) => normalizeInstallUrl(ext.repo).toLowerCase()),
-    );
-    const installedNames = new Set(
-      data.map((ext) => normalizeStr(ext.marketplace_name || ext.name)),
-    );
     const installedByRepo = new Map(
       data
         .filter((ext) => ext.repo)
         .map((ext) => [normalizeInstallUrl(ext.repo).toLowerCase(), ext]),
     );
     const installedByName = new Map(
-      data.map((ext) => [normalizeStr(ext.marketplace_name || ext.name), ext]),
+      data
+        .filter((ext) => !ext.repo)
+        .map((ext) => [normalizeStr(ext.marketplace_name || ext.name), ext]),
     );
   
     for (let i = 0; i < pluginMarketData.value.length; i++) {
       const plugin = pluginMarketData.value[i];
+      const repoKey = plugin.repo
+        ? normalizeInstallUrl(plugin.repo).toLowerCase()
+        : undefined;
       const matchedInstalled =
-        (plugin.repo &&
-          installedByRepo.get(normalizeInstallUrl(plugin.repo).toLowerCase())) ||
+        (repoKey && installedByRepo.get(repoKey)) ||
         installedByName.get(normalizeStr(plugin.name));
   
       // 兜底：市场源未提供字段时，回填本地已安装插件中的元数据，便于在市场页直接展示
@@ -1190,10 +1187,7 @@ export const useExtensionPage = () => {
         }
       }
       
-      plugin.installed =
-        (plugin.repo &&
-          installedRepos.has(normalizeInstallUrl(plugin.repo).toLowerCase())) ||
-        installedNames.has(normalizeStr(plugin.name));
+      plugin.installed = !!matchedInstalled;
     }
   
     let installed = [];

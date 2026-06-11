@@ -6,7 +6,7 @@ from astrbot.core.computer.booters.cua_defaults import CUA_DEFAULT_CONFIG
 from astrbot.core.memory_config_defaults import build_default_memory_config_payload
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-VERSION = "4.25.4"
+VERSION = "4.25.5"
 DB_PATH = os.path.join(get_astrbot_data_path(), "data_v4.db")
 PERSONAL_WECHAT_CONFIG_METADATA = {
     "weixin_oc_base_url": {
@@ -1659,6 +1659,25 @@ CONFIG_METADATA_2 = {
                         "timeout": "20",
                         "proxy": "",
                     },
+                    "ElevenLabs TTS(API)": {
+                        "hint": "API Key 从 https://elevenlabs.io/app/settings/api-keys 获取。Voice ID 可在 https://elevenlabs.io/app/voice-library 浏览选择。",
+                        "id": "elevenlabs_tts",
+                        "type": "elevenlabs_tts_api",
+                        "provider": "elevenlabs",
+                        "provider_type": "text_to_speech",
+                        "enable": False,
+                        "api_key": "",
+                        "api_base": "https://api.elevenlabs.io/v1",
+                        "model": "eleven_multilingual_v2",
+                        "elevenlabs-tts-voice-id": "JBFqnCBsd6RMkjVDRZzb",
+                        "elevenlabs-tts-output-format": "mp3_44100_128",
+                        "elevenlabs-tts-stability": "",
+                        "elevenlabs-tts-similarity-boost": "",
+                        "elevenlabs-tts-style": "",
+                        "elevenlabs-tts-use-speaker-boost": True,
+                        "timeout": "20",
+                        "proxy": "",
+                    },
                     "Genie TTS": {
                         "id": "genie_tts",
                         "provider": "genie_tts",
@@ -2637,6 +2656,36 @@ CONFIG_METADATA_2 = {
                         "description": "种子文本",
                         "type": "string",
                         "hint": "作为可选的 user 消息发送，用于辅助调节语气和风格，不会拼接到待合成文本中。",
+                    },
+                    "elevenlabs-tts-voice-id": {
+                        "description": "音色 ID",
+                        "type": "string",
+                        "hint": "ElevenLabs 音色 ID。可在 https://elevenlabs.io/app/voice-library 浏览并复制音色 ID。默认 'JBFqnCBsd6RMkjVDRZzb'（George）。",
+                    },
+                    "elevenlabs-tts-output-format": {
+                        "description": "输出格式",
+                        "type": "string",
+                        "hint": "音频输出格式，例如 'mp3_44100_128'、'mp3_22050_32'、'wav_44100'、'opus_48000_128'。不支持裸 PCM/u-law/a-law 格式。默认 'mp3_44100_128'。",
+                    },
+                    "elevenlabs-tts-stability": {
+                        "description": "稳定性",
+                        "type": "string",
+                        "hint": "音色稳定性，范围 [0, 1]。值越高越稳定，越低越富有表现力。留空则使用服务端默认值。",
+                    },
+                    "elevenlabs-tts-similarity-boost": {
+                        "description": "相似度增强",
+                        "type": "string",
+                        "hint": "输出与原始音色的接近程度，范围 [0, 1]。留空则使用服务端默认值。",
+                    },
+                    "elevenlabs-tts-style": {
+                        "description": "风格夸张度",
+                        "type": "string",
+                        "hint": "音色风格的夸张程度，范围 [0, 1]。值越高延迟越大。留空则使用服务端默认值。",
+                    },
+                    "elevenlabs-tts-use-speaker-boost": {
+                        "description": "说话人增强",
+                        "type": "bool",
+                        "hint": "增强与原始说话人的相似度，可能略微增加延迟。",
                     },
                     "fishaudio-tts-character": {
                         "description": "character",

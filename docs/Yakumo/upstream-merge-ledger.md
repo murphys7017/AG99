@@ -5,16 +5,16 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-06-07
+Last updated: 2026-06-11
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `1a0499878` (`perf: handle Anthropic usage=None on content-filtered responses`)
-- Remote refresh status: HTTPS `git fetch upstream` succeeded on 2026-06-07 and moved `upstream/master` from `1ad2b2c38` to `1a0499878`.
-- Git-only divergence at this snapshot before the local rewrite: local-only `327`, upstream-only `207`.
-- Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-07 v4.25.3/v4.25.4 batches below record the current topic decisions.
+- Last local upstream snapshot checked: `upstream/master` at `32cfcbf52` (`feat: show quoted message content in group chat context`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-06-11; upstream currently has tag `v4.25.5` at `af70151ff`, followed by additional commits through `32cfcbf52`.
+- Git-only divergence at this snapshot before the local rewrite: local-only `332`, upstream-only `223`.
+- Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
 
 Important interpretation:
 
@@ -128,6 +128,21 @@ Recently absorbed by rewrite:
   - `c4251e82`: project/core/CLI versions are aligned to `4.25.4`, with local changelog text reflecting only the absorbed local changes.
   - `0db7fc9b`: dashboard `pnpm-lock.yaml` overrides were already present locally and needed no code change.
   - Deferred: plugin page theme sync (`65fe0574`) and plugin WebUI sidebar entries (`c58916b8`) remain useful but are separate frontend feature work; upstream SQLAlchemy/provider-stats revert commits (`c70a1924`, `bdc32bb7`) remain under review because local DB/prompt-runtime choices differ.
+- 2026-06-11 v4.25.5 small/remaining batch:
+  - `8f5178d26`: Star Context typing restored locally with `TYPE_CHECKING` import of `Context`, preserving runtime import behavior.
+  - `4b562689e`: core shutdown now disposes the main DB engine after task settlement and memory/postprocessor shutdown.
+  - `0fb3f5eb9`: datetime system reminders now include a locale-independent English weekday field, with focused unit coverage.
+  - `bec0de2e2`: FAISS implementation no longer imports the FAISS C library at package/module import time; loading is deferred to `EmbeddingStorage` construction.
+  - `56d2b3fb5`: folder creation dialog submits on Enter and disables the form while creating.
+  - `fb8f4d68e`: backup directory coverage now includes Skills, and Dashboard backup/import copy reflects the new scope.
+  - `af70151ff`: core/CLI/package versions are aligned to `4.25.5`; local changelog text documents the subset actually absorbed in this fork.
+  - `66ec415e5`: `send_message_to_user` now restricts arbitrary local host file paths for non-admin local-runtime calls while preserving workspace/temp/system-tmp paths and existing admin/unrestricted behavior.
+  - `05c137eb2`: QQ Official Webhook signature verification and lazy restart-safe `BotHttp` setup were rewritten locally, preserving this fork's extra-data cache and dedup behavior.
+  - `a3c25ec2c`: plugin reinstall/update matching now prefers repository source identity and only falls back to names for installed plugins without repo metadata.
+  - `32cfcbf52`: `GroupChatContext` now includes quoted reply content in formatted group context while preserving the local Yakumo prompt-extension collector path.
+  - `ae44b912f`: per-tool permission management was absorbed with a local execution-entry guard, dashboard permission API, ToolTable permission controls, and focused tests. Builtin tools remain read-only and keep their own hardcoded permission checks.
+  - `0b2234936`: ElevenLabs TTS API provider was added with provider-manager registration, default config template, WebUI metadata, format validation, voice-settings handling, and offline unit coverage.
+  - Low-priority upstream chores were absorbed where relevant: LM Studio Docker wording typo (`60dfd565a`), Codecov action v7 (`b321499e0`), and pyupgrade cleanup for `shlex.join` / `AsyncGenerator[None]` (`eeabdb982`). `astrbot/utils/__init__.py` was already empty locally.
 
 ### Topic Merge Plan
 
