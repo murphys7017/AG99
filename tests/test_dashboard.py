@@ -142,6 +142,7 @@ window.renderTabs = renderTabs;
         desc="Plugin Page demo",
         version="1.0.0",
         display_name="Plugin Page Demo",
+        icon="mdi-view-dashboard",
         root_dir_name=PLUGIN_PAGE_DEMO_NAME,
         activated=True,
     )
@@ -426,6 +427,7 @@ async def test_plugin_get_includes_scanned_page_names(
     assert plugin["marketplace_name"] == PLUGIN_PAGE_DEMO_NAME.replace("_", "-")
     assert "page" not in plugin
     assert plugin["pages"] == [PLUGIN_PAGE_DEMO_PAGE_NAME]
+    assert plugin["icon"] == "mdi-view-dashboard"
 
 
 @pytest.mark.asyncio
@@ -463,6 +465,7 @@ async def test_plugin_detail_stringifies_non_string_repo(
 
     assert data["data"]["repo"] == "12345"
     assert data["data"]["marketplace_name"] == PLUGIN_PAGE_DEMO_NAME.replace("_", "-")
+    assert data["data"]["icon"] == "mdi-view-dashboard"
 
 
 @pytest.mark.asyncio
@@ -651,6 +654,88 @@ async def test_plugin_page_content_issues_scoped_asset_token(
         f"/api/plugin/page/content/{PLUGIN_PAGE_DEMO_NAME}/another-page/app.js?asset_token={asset_token}"
     )
     assert cross_page_response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_plugin_page_bridge_sdk_includes_is_dark_from_theme_param(
+    app: Quart,
+    authenticated_header: dict,
+    registered_plugin_page: StarMetadata,
+):
+    authorized_client = app.test_client()
+    response = await authorized_client.get(
+        f"/api/plugin/page/content/{PLUGIN_PAGE_DEMO_NAME}/{PLUGIN_PAGE_DEMO_PAGE_NAME}/",
+        headers=authenticated_header,
+    )
+    assert response.status_code == 200
+    html_text = (await response.get_data()).decode("utf-8")
+    bridge_sdk_url = re.search(r'src="([^"]+/bridge-sdk\.js[^"]*)"', html_text)
+    assert bridge_sdk_url is not None
+
+    anonymous_client = app.test_client()
+    dark_response = await anonymous_client.get(bridge_sdk_url.group(1) + "&theme=dark")
+    assert dark_response.status_code == 200
+    dark_js = (await dark_response.get_data()).decode("utf-8")
+    assert '"isDark": true' in dark_js
+
+    light_response = await anonymous_client.get(
+        bridge_sdk_url.group(1) + "&theme=light"
+    )
+    assert light_response.status_code == 200
+    light_js = (await light_response.get_data()).decode("utf-8")
+    assert '"isDark": false' in light_js
+
+
+@pytest.mark.asyncio
+async def test_plugin_page_content_propagates_theme_in_rewritten_urls(
+    app: Quart,
+    authenticated_header: dict,
+    registered_plugin_page: StarMetadata,
+):
+    test_client = app.test_client()
+    response = await test_client.get(
+        (
+            f"/api/plugin/page/content/{PLUGIN_PAGE_DEMO_NAME}/"
+            f"{PLUGIN_PAGE_DEMO_PAGE_NAME}/?theme=dark"
+        ),
+        headers=authenticated_header,
+    )
+    assert response.status_code == 200
+    html_text = (await response.get_data()).decode("utf-8")
+
+    bridge_sdk_url = re.search(r'src="([^"]+/bridge-sdk\.js[^"]*)"', html_text)
+    assert bridge_sdk_url is not None
+    bridge_query = parse_qs(urlsplit(bridge_sdk_url.group(1)).query)
+    assert bridge_query.get("theme") == ["dark"]
+
+    css_url = re.search(r'href="([^"]+/base\.css[^"]*)"', html_text)
+    assert css_url is not None
+    css_query = parse_qs(urlsplit(css_url.group(1)).query)
+    assert css_query.get("theme") == ["dark"]
+
+    assert 'data-theme="dark"' in html_text
+    assert '<meta name="color-scheme" content="dark">' in html_text
+
+    light_response = await test_client.get(
+        (
+            f"/api/plugin/page/content/{PLUGIN_PAGE_DEMO_NAME}/"
+            f"{PLUGIN_PAGE_DEMO_PAGE_NAME}/?theme=light"
+        ),
+        headers=authenticated_header,
+    )
+    assert light_response.status_code == 200
+    light_html = (await light_response.get_data()).decode("utf-8")
+    assert 'data-theme="light"' in light_html
+    assert '<meta name="color-scheme" content="light">' in light_html
+
+    no_theme_response = await test_client.get(
+        f"/api/plugin/page/content/{PLUGIN_PAGE_DEMO_NAME}/{PLUGIN_PAGE_DEMO_PAGE_NAME}/",
+        headers=authenticated_header,
+    )
+    assert no_theme_response.status_code == 200
+    no_theme_html = (await no_theme_response.get_data()).decode("utf-8")
+    assert "data-theme=" not in no_theme_html
+    assert "color-scheme" not in no_theme_html
 
 
 @pytest.mark.asyncio

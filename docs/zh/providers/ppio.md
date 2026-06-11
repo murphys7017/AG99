@@ -40,4 +40,4 @@ Error code: 400 - {'code': 400, 'message': '"auto" tool choice requires --enable
 ```
 
 
-请暂时使用 `/tool off_all` 禁用所有的函数调用工具即可使用，或者换用其他模型。
+请暂时在 WebUI 中关闭所有函数调用工具后再试；也可以换用其他模型。

@@ -70,8 +70,7 @@ sudo —E python3 main.py
 镜像可能会不定时间更新以提供更多的功能，因此请定期查看镜像的更新。如果需要更新镜像，可以使用 `/pi repull` 命令重新拉取镜像。
 
 > [!TIP]
-> 如果一开始没有正常启动此功能，在启动成功之后，需要执行 `/tool on python_interpreter` 来开启此功能。
-> 您可以通过 `/tool ls` 查看所有的工具以及它们的启用状态。
+> 如果一开始没有正常启动此功能，在启动成功之后，请在 WebUI 的工具管理页面确认代码执行器工具已启用。
 
 ![image](https://files.astrbot.app/docs/source/images/code-interpreter/image-3.png)
 

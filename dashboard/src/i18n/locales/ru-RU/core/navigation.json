@@ -8,6 +8,7 @@
     "subagent": "Субагенты",
     "toolUse": "Инструменты MCP",
     "extension": "Плагины",
+    "pluginWebui": "Страницы плагинов",
     "extensionTabs": {
         "installed": "Плагины AstrBot",
         "market": "Магазин плагинов",

@@ -38,7 +38,10 @@
           :placeholder="tm('thread.placeholder')"
           rows="1"
           :disabled="sending"
-          @keydown.enter.exact.prevent="send"
+          @keydown="handleKeyDown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
+          @compositioncancel="handleCompositionEnd"
         ></textarea>
         <v-btn
           class="thread-send-button"
@@ -57,6 +60,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import axios from "axios";
+import { isComposingEnter } from "@/utils/imeInput.mjs";
 import {
   appendPlain,
   appendReasoningPart,
@@ -91,6 +95,8 @@ const messages = ref<ChatRecord[]>([]);
 const draft = ref("");
 const sending = ref(false);
 const messagesEl = ref<HTMLElement | null>(null);
+const isComposing = ref(false);
+const lastCompositionEndAt = ref<number | null>(null);
 
 watch(
   () => props.thread?.thread_id,
@@ -182,6 +188,25 @@ async function send() {
   } finally {
     sending.value = false;
   }
+}
+
+function handleKeyDown(event: KeyboardEvent) {
+  if (event.key !== "Enter" || event.shiftKey) return;
+  if (isComposingEnter(event, isComposing.value, lastCompositionEndAt.value)) {
+    return;
+  }
+  event.preventDefault();
+  send();
+}
+
+function handleCompositionStart() {
+  isComposing.value = true;
+  lastCompositionEndAt.value = null;
+}
+
+function handleCompositionEnd(event: CompositionEvent) {
+  lastCompositionEndAt.value = event.timeStamp;
+  isComposing.value = false;
 }
 
 function normalizeRecord(record: any): ChatRecord {

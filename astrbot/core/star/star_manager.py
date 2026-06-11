@@ -505,6 +505,9 @@ class PluginManager:
                 version=metadata["version"],
                 repo=metadata["repo"] if "repo" in metadata else None,
                 display_name=metadata.get("display_name", None),
+                icon=(
+                    metadata["icon"] if isinstance(metadata.get("icon"), str) else None
+                ),
                 support_platforms=(
                     [
                         platform_id
@@ -1014,9 +1017,11 @@ class PluginManager:
                             metadata.version = metadata_yaml.version
                             metadata.repo = metadata_yaml.repo
                             metadata.display_name = metadata_yaml.display_name
+                            metadata.icon = metadata_yaml.icon
                             metadata.support_platforms = metadata_yaml.support_platforms
                             metadata.astrbot_version = metadata_yaml.astrbot_version
                             metadata.i18n = metadata_yaml.i18n
+                            metadata.pages = metadata_yaml.pages
                     except Exception as e:
                         logger.warning(
                             f"插件 {root_dir_name} 元数据载入失败: {e!s}。使用默认元数据。",

@@ -6,17 +6,43 @@
 
 在 [release](https://github.com/AstrBotDevs/AstrBot/releases) 页面下载 `AstrBot-vxxxxx-dashboard.zip`，解压拖到 `AstrBot/data` 下。还不行请重启电脑（来自群里的反馈）
 
+### 首次登录的账号和随机密码
+
+首次启动时，WebUI 用户名通常为 `astrbot`，初始密码会随机生成并打印在启动日志中。请使用日志中的 `Initial username` 和 `Initial password` 登录，登录后会进入账号设置流程。
+
+如果需要在自动化部署中指定初始密码，可以在首次生成配置前设置环境变量 `ASTRBOT_DASHBOARD_INITIAL_PASSWORD`。密码至少 8 位，并包含大小写字母和数字。
+
 ### 管理面板的密码忘记了
 
-如果你忘记了 AstrBot 管理面板的密码，你可以在 `AstrBot/data/cmd_config.json` 配置文件中找到 `"dashboard"` 字段进行修改，其中 `"username"` 是你的用户名，`"password"` 是你的密码（经过 MD5 加密）。
+如果你忘记了 AstrBot 管理面板的密码，推荐先在 AstrBot 根目录执行：
 
-如果想要修改账号密码，你可以这样做：
+```bash
+astrbot conf set dashboard.password 新密码
+```
 
-1. 修改 `"username"` 字段，注意保留 `""`；如果不想修改用户名，可以不修改
-2. 进入网站：[在线 MD5 生成](https://www.metools.info/code/c26.html)
-3. 在转换前文本框输入你的新密码
-4. 选择 MD5 加密（32 位），请确认选择 32 位选项
-5. 将转换后的字符粘贴至配置文件，注意保留 `""`, 且字母使用小写
+如果无法使用 CLI，可以停止 AstrBot 后编辑 `AstrBot/data/cmd_config.json`，在 `"dashboard"` 字段中删除以下键值：
+
+- `username`
+- `password`
+- `pbkdf2_password`
+- `password_storage_upgraded`
+- `password_change_required`
+- `jwt_secret`
+
+保存并重新启动后，AstrBot 会重新生成默认用户名和随机初始密码，请在启动日志中查看。旧版 MD5 密码字段仅用于兼容迁移，不建议手动生成或编辑。
+
+### 升级 AstrBot 后密码正确但无法登录
+
+如果你确认管理面板密码正确，但升级 AstrBot 后仍然无法登录，可能是旧版 WebUI 静态文件缓存与新版后端不兼容。
+
+解决方案：
+
+1. 停止 AstrBot。
+2. 删除 AstrBot 的 `data` 目录下的 `dist` 文件夹，即 `AstrBot/data/dist`。
+3. 重新启动 AstrBot。
+4. 访问管理面板后按 `Ctrl+Shift+R` 或 `Ctrl+F5`（macOS 用户请按 `Cmd+Shift+R`）强制刷新页面。
+
+重启后，AstrBot 会重新加载或下载匹配当前版本的 WebUI 文件。
 
 ## AstrBot 使用相关
 

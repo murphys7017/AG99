@@ -229,6 +229,52 @@ class PluginRoute(Route):
             return default
         return locale
 
+    @staticmethod
+    def _get_request_theme() -> str | None:
+        theme = request.args.get("theme", "").strip()
+        return theme if theme in ("dark", "light") else None
+
+    @staticmethod
+    def _apply_theme_to_html(html: str, theme: str) -> str:
+        def replace_html_tag(match: re.Match[str]) -> str:
+            attrs = match.group(1) or ""
+            attrs = re.sub(
+                r'\s+data-theme\s*=\s*["\'][^"\']*["\']',
+                "",
+                attrs,
+                flags=re.IGNORECASE,
+            )
+            return f'<html{attrs} data-theme="{theme}">'
+
+        html = re.sub(
+            r"<html(\b[^>]*)>",
+            replace_html_tag,
+            html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        meta_tag = f'<meta name="color-scheme" content="{theme}">'
+        html = re.sub(
+            r'<meta\s[^>]*name\s*=\s*["\']color-scheme["\'][^>]*>',
+            "",
+            html,
+            flags=re.IGNORECASE,
+        )
+        head_match = re.search(r"<head\b[^>]*>", html, re.IGNORECASE)
+        if head_match:
+            return html.replace(
+                head_match.group(0),
+                f"{head_match.group(0)}{meta_tag}",
+                1,
+            )
+        return re.sub(
+            r"(<html\b[^>]*>)",
+            rf"\1<head>{meta_tag}</head>",
+            html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
     def _get_plugin_page_initial_context(self) -> dict | None:
         asset_token = request.args.get("asset_token", "").strip()
         if not asset_token:
@@ -276,6 +322,7 @@ class PluginRoute(Route):
         page_title = (
             self._get_by_path(locale_data, f"pages.{page_name}.title") or page_name
         )
+        theme = self._get_request_theme()
 
         return {
             "pluginName": plugin.name,
@@ -284,6 +331,7 @@ class PluginRoute(Route):
             "pageTitle": page_title,
             "locale": locale,
             "i18n": plugin_i18n,
+            "isDark": theme == "dark",
         }
 
     @staticmethod
@@ -590,6 +638,9 @@ class PluginRoute(Route):
                 return match.group(0)
 
         rewritten_html = _HTML_ASSET_ATTR_RE.sub(replace_attr, html_text)
+        theme = self._get_request_theme()
+        if theme:
+            rewritten_html = self._apply_theme_to_html(rewritten_html, theme)
         if "/api/plugin/page/bridge-sdk.js" not in rewritten_html:
             bridge_tag = f'<script src="{self._get_plugin_page_bridge_sdk_url(extra_query_params)}"></script>'
             if "</body>" in rewritten_html:
@@ -774,7 +825,15 @@ class PluginRoute(Route):
             asset_token = (
                 self._issue_plugin_page_asset_token(plugin_name, page_name) or ""
             )
-        return {"asset_token": asset_token} if asset_token else None
+        theme = self._get_request_theme()
+        if not asset_token and not theme:
+            return None
+        params: dict[str, str] = {}
+        if asset_token:
+            params["asset_token"] = asset_token
+        if theme:
+            params["theme"] = theme
+        return params
 
     @staticmethod
     async def _plugin_page_error_response(status_code: int, message: str):
@@ -1298,6 +1357,7 @@ class PluginRoute(Route):
                 "activated": plugin.activated,
                 "online_vesion": "",
                 "display_name": plugin.display_name,
+                "icon": plugin.icon,
                 "logo": f"/api/file/{logo_url}" if logo_url else None,
                 "support_platforms": plugin.support_platforms,
                 "astrbot_version": plugin.astrbot_version,
@@ -1351,6 +1411,7 @@ class PluginRoute(Route):
                         "online_vesion": "",
                         "components": await self.get_plugin_components_info(plugin),
                         "display_name": plugin.display_name,
+                        "icon": plugin.icon,
                         "logo": f"/api/file/{logo_url}" if logo_url else None,
                         "support_platforms": plugin.support_platforms,
                         "astrbot_version": plugin.astrbot_version,

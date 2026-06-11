@@ -16,6 +16,7 @@ import {
 } from "@/utils/hashRouteTabs.mjs";
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { pluginSidebarState } from "@/composables/usePluginSidebarItems";
 
 const buildFailedPluginItems = (raw) => {
   return Object.entries(raw || {}).map(([dirName, info]) => {
@@ -475,6 +476,7 @@ export const useExtensionPage = () => {
     try {
       const res = await axios.get("/api/plugin/get");   
       Object.assign(extension_data, res.data);
+      pluginSidebarState.plugins = res.data?.data || [];
       
       const failRes = await axios.get("/api/plugin/source/get-failed-plugins");    
       failedPluginsDict.value = failRes.data.data || {};

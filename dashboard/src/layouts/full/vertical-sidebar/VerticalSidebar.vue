@@ -3,15 +3,36 @@ import { ref, shallowRef, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useTheme } from 'vuetify';
 import { useCustomizerStore } from '../../../stores/customizer';
 import { useI18n } from '@/i18n/composables';
-import sidebarItems from './sidebarItem';
+import sidebarItems, { MORE_GROUP_KEY } from './sidebarItem';
 import NavItem from './NavItem.vue';
 import { applySidebarCustomization } from '@/utils/sidebarCustomization';
 import ChangelogDialog from '@/components/shared/ChangelogDialog.vue';
+import { usePluginSidebarItems } from '@/composables/usePluginSidebarItems';
 
 const { t, locale } = useI18n();
 
 const customizer = useCustomizerStore();
 const theme = useTheme();
+const { pluginItems } = usePluginSidebarItems();
+
+function buildSidebarMenu() {
+  const base = applySidebarCustomization(sidebarItems);
+  if (!pluginItems.value?.children?.length) {
+    return base;
+  }
+
+  const result = [];
+  for (const item of base) {
+    if (item.title === MORE_GROUP_KEY) {
+      result.push(pluginItems.value);
+    }
+    result.push(item);
+  }
+  if (!base.some((item) => item.title === MORE_GROUP_KEY)) {
+    result.push(pluginItems.value);
+  }
+  return result;
+}
 
 function collectGroupValues(items, values = new Set()) {
   items.forEach((item) => {
@@ -41,7 +62,7 @@ function getInitialOpenedItems(menuItems) {
   }
 }
 
-const sidebarMenu = shallowRef(applySidebarCustomization(sidebarItems));
+const sidebarMenu = shallowRef(buildSidebarMenu());
 
 // 侧边栏分组展开状态持久化
 const openedItems = ref(getInitialOpenedItems(sidebarMenu.value));
@@ -50,9 +71,11 @@ watch(openedItems, (val) => {
 }, { deep: true });
 
 function refreshSidebarMenu() {
-  sidebarMenu.value = applySidebarCustomization(sidebarItems);
+  sidebarMenu.value = buildSidebarMenu();
   openedItems.value = sanitizeOpenedItems(openedItems.value, sidebarMenu.value);
 }
+
+watch(pluginItems, refreshSidebarMenu);
 
 // Apply customization on mount and listen for storage changes
 const handleStorageChange = (e) => {
@@ -232,6 +255,11 @@ function startSidebarResize(event) {
   isResizing.value = true;
   document.body.style.userSelect = 'none';
   document.body.style.cursor = 'ew-resize';
+
+  const iframes = document.querySelectorAll('.plugin-page-frame');
+  iframes.forEach((el) => {
+    el.style.pointerEvents = 'none';
+  });
   
   const startX = event.clientX;
   const startWidth = sidebarWidth.value;
@@ -248,6 +276,9 @@ function startSidebarResize(event) {
     isResizing.value = false;
     document.body.style.userSelect = '';
     document.body.style.cursor = '';
+    iframes.forEach((el) => {
+      el.style.pointerEvents = '';
+    });
     document.removeEventListener('mousemove', onMouseMoveResize);
     document.removeEventListener('mouseup', onMouseUpResize);
   }

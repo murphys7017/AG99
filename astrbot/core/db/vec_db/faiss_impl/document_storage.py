@@ -245,6 +245,7 @@ class DocumentStorage:
                 self.DATABASE_URL,
                 echo=False,
                 future=True,
+                connect_args={"timeout": 30},
                 poolclass=NullPool,
             )
             self.async_session_maker = sessionmaker(

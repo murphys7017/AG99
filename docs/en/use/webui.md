@@ -13,7 +13,7 @@ After starting AstrBot, you can access the admin panel by visiting `http://local
 
 ## Login
 
-The default username and password are both `astrbot`.
+On first login, AstrBot generates a random initial password and prints it in the startup logs. Use the username and password shown there; the username is usually `astrbot`. After logging in, follow the page prompt to set a new account password.
 
 ## ChatUI
 
@@ -85,7 +85,7 @@ When AstrBot starts, it automatically checks if the admin panel needs updating. 
 
 Use the `/dashboard_update` command to manually update the admin panel (admin command).
 
-Admin panel files are located in the data/dist directory. If you need to manually replace them, download `dist.zip` from https://github.com/AstrBotDevs/AstrBot/releases/ and extract it to the data directory.
+Admin panel files are located in the data/dist directory. If you need to manually replace them, download `AstrBot-vxxxxx-dashboard.zip` from https://github.com/AstrBotDevs/AstrBot/releases/ and extract it to the data directory.
 
 ## Customizing WebUI Port
 
@@ -93,4 +93,4 @@ Modify the `port` in the `dashboard` configuration in the data/cmd_config.json f
 
 ## Forgot Password
 
-Modify the `password` in the `dashboard` configuration in the data/cmd_config.json file and delete the entire password key-value pair.
+Run `astrbot conf set dashboard.password new-password` from the AstrBot root directory. If the CLI is unavailable, stop AstrBot, edit data/cmd_config.json, and delete `username`, `password`, `pbkdf2_password`, `password_storage_upgraded`, `password_change_required`, and `jwt_secret` under `dashboard`; after restart, check the startup logs for the regenerated initial password.

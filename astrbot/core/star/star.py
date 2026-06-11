@@ -63,6 +63,9 @@ class StarMetadata:
     logo_path: str | None = None
     """插件 Logo 的路径"""
 
+    icon: str | None = None
+    """插件 WebUI 侧边栏图标，支持 mdi- 前缀图标名。"""
+
     support_platforms: list[str] = field(default_factory=list)
     """插件声明支持的平台适配器 ID 列表（对应 ADAPTER_NAME_2_TYPE 的 key）"""
 

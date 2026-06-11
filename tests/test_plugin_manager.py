@@ -115,12 +115,14 @@ def test_load_plugin_metadata_includes_pages(tmp_path: Path):
     _write_local_test_plugin(plugin_path, TEST_PLUGIN_REPO)
     metadata_path = plugin_path / "metadata.yaml"
     metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+    metadata["icon"] = "mdi-view-dashboard"
     metadata["pages"] = [{"name": "dashboard", "title": "Dashboard"}]
     metadata_path.write_text(yaml.dump(metadata), encoding="utf-8")
 
     loaded_metadata = PluginManager._load_plugin_metadata(str(plugin_path))
 
     assert loaded_metadata is not None
+    assert loaded_metadata.icon == "mdi-view-dashboard"
     assert loaded_metadata.pages == [{"name": "dashboard", "title": "Dashboard"}]
 
 

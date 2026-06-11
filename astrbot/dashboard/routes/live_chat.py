@@ -635,18 +635,24 @@ class LiveChatRoute(Route):
                 if should_save:
                     saved_record = await flush_pending_bot_message()
                     if saved_record:
+                        saved_refs = (
+                            saved_record.content.get("refs")
+                            if isinstance(saved_record.content, dict)
+                            else None
+                        )
+                        saved_data = {
+                            "id": saved_record.id,
+                            "created_at": to_utc_isoformat(saved_record.created_at),
+                            "llm_checkpoint_id": llm_checkpoint_id,
+                        }
+                        if saved_refs:
+                            saved_data["refs"] = saved_refs
                         await self._send_chat_payload(
                             session,
                             {
                                 "ct": "chat",
                                 "type": "message_saved",
-                                "data": {
-                                    "id": saved_record.id,
-                                    "created_at": to_utc_isoformat(
-                                        saved_record.created_at
-                                    ),
-                                    "llm_checkpoint_id": llm_checkpoint_id,
-                                },
+                                "data": saved_data,
                             },
                         )
 

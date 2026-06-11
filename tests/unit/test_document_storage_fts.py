@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import text
 
 from astrbot.core.db.vec_db.faiss_impl.document_storage import DocumentStorage
 
@@ -136,4 +137,16 @@ async def test_document_storage_adds_unique_doc_id_index_to_existing_table(tmp_p
             metadata={},
         )
 
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_document_storage_sets_busy_timeout(tmp_path):
+    storage = DocumentStorage(str(tmp_path / "doc.db"))
+    await storage.initialize()
+
+    async with storage.get_session() as session:
+        result = await session.execute(text("PRAGMA busy_timeout"))
+
+    assert result.scalar_one() == 30000
     await storage.close()

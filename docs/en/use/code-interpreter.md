@@ -70,8 +70,7 @@ When the code interpreter is triggered for the first time, AstrBot will automati
 The image may be updated periodically to provide more features, so check for updates regularly. If you need to update the image, use the `/pi repull` command to re-pull it.
 
 > [!TIP]
-> If the feature doesn't start properly initially, after successful startup, execute `/tool on python_interpreter` to enable this feature.
-> You can use `/tool ls` to view all tools and their enabled status.
+> If the feature doesn't start properly initially, after successful startup, confirm in the WebUI tool management page that the code interpreter tool is enabled.
 
 ![image](https://files.astrbot.app/docs/source/images/code-interpreter/image-3.png)
 

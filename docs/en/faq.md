@@ -6,17 +6,43 @@
 
 Download `AstrBot-vxxxxx-dashboard.zip` from the [release](https://github.com/AstrBotDevs/AstrBot/releases) page, extract it, and move it to `AstrBot/data`. If it still doesn't work, try restarting your computer (based on community feedback).
 
+### First Login Account and Random Password
+
+On first startup, the WebUI username is usually `astrbot`, and AstrBot generates a random initial password in the startup logs. Log in with the `Initial username` and `Initial password` shown in the logs, then complete the account setup flow.
+
+For automated deployments, set `ASTRBOT_DASHBOARD_INITIAL_PASSWORD` before the first config file is generated. The password must be at least 8 characters and include uppercase letters, lowercase letters, and digits.
+
 ### Forgot Dashboard Password
 
-If you forgot your AstrBot dashboard password, you can modify the `"dashboard"` field in the `AstrBot/data/cmd_config.json` configuration file, where `"username"` is your username and `"password"` is your password encrypted with MD5.
+If you forgot your AstrBot dashboard password, first try running this from the AstrBot root directory:
 
-To modify your account credentials, follow these steps:
+```bash
+astrbot conf set dashboard.password new-password
+```
 
-1. Modify the `"username"` field, keeping the `""` quotation marks. If you don't want to change the username, skip this step
-2. Visit the website: [Online MD5 Generator](https://www.metools.info/code/c26.html)
-3. Enter your new password in the input text box
-4. Select MD5 encryption (32-bit), make sure to choose the 32-bit option
-5. Paste the converted string into the configuration file, keeping the `""` quotation marks
+If the CLI is unavailable, stop AstrBot and edit `AstrBot/data/cmd_config.json`. In the `"dashboard"` object, delete these keys:
+
+- `username`
+- `password`
+- `pbkdf2_password`
+- `password_storage_upgraded`
+- `password_change_required`
+- `jwt_secret`
+
+Save the file and restart AstrBot. AstrBot will regenerate the default username and a random initial password; check the startup logs. The legacy MD5 password field is kept only for migration compatibility and should not be generated or edited manually.
+
+### Correct Password Cannot Log In After Upgrading AstrBot
+
+If you are sure the dashboard password is correct but still cannot log in after upgrading AstrBot, the old WebUI static files may be incompatible with the newer backend.
+
+Solution:
+
+1. Stop AstrBot.
+2. Delete the `dist` folder under AstrBot's `data` directory: `AstrBot/data/dist`.
+3. Restart AstrBot.
+4. Open the dashboard in your browser, then press `Ctrl+Shift+R` or `Ctrl+F5` (or `Cmd+Shift+R` on macOS) to force refresh the page.
+
+After restart, AstrBot will reload or download WebUI files that match the current version.
 
 ## Bot Core Related
 

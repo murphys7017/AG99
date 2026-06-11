@@ -970,6 +970,11 @@ class ChatRoute(Route):
                             saved_record = await flush_pending_bot_message()
                             # 发送保存的消息信息给前端
                             if saved_record and not client_disconnected:
+                                saved_refs = (
+                                    saved_record.content.get("refs")
+                                    if isinstance(saved_record.content, dict)
+                                    else None
+                                )
                                 saved_info = {
                                     "type": "message_saved",
                                     "data": {
@@ -980,6 +985,8 @@ class ChatRoute(Route):
                                         "llm_checkpoint_id": llm_checkpoint_id,
                                     },
                                 }
+                                if saved_refs:
+                                    saved_info["data"]["refs"] = saved_refs
                                 try:
                                     yield f"data: {json.dumps(saved_info, ensure_ascii=False)}\n\n"
                                 except Exception:

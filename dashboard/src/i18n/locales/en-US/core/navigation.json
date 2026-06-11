@@ -11,6 +11,7 @@
   "chat": "Chat",
   "cron": "Future Tasks",
   "extension": "Extensions",
+  "pluginWebui": "Plugin Pages",
   "extensionTabs": {
     "installed": "AstrBot Plugins",
     "market": "Plugin Market",

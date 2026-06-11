@@ -64,10 +64,10 @@ MacOS 用户下载安装好后，可能会遇到 "已损坏，无法打开" 的�
 如果没有报错，你会看到一条日志显示类似 `🌈 管理面板已启动，可访问` 并附带了几条链接。打开其中一个链接即可访问 AstrBot 管理面板。
 
 > [!TIP]
-> 默认用户名和密码是 `astrbot` 和 `astrbot`。
+> 首次登录请使用启动日志中打印的随机初始密码（用户名通常为 `astrbot`）。登录后请立即修改密码。
 >
 > **当管理面板打开时遇到 404 错误：**
-> 在 [release](https://github.com/AstrBotDevs/AstrBot/releases) 页面下载dist.zip，解压拖到 AstrBot/data 下。还不行请重启电脑（来自群里的反馈）
+> 在 [release](https://github.com/AstrBotDevs/AstrBot/releases) 页面下载 `AstrBot-vxxxxx-dashboard.zip`，解压拖到 AstrBot/data 下。还不行请重启电脑（来自群里的反馈）
 
 接下来，你需要部署任何一个消息平台，才能够实现在消息平台上使用 AstrBot。
 

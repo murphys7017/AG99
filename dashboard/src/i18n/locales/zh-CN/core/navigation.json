@@ -8,6 +8,7 @@
   "subagent": "子代理编排",
   "toolUse": "MCP",
   "extension": "插件",
+  "pluginWebui": "插件页面",
   "extensionTabs": {
     "installed": "AstrBot 插件",
     "market": "插件市场",

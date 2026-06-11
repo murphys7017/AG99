@@ -24,6 +24,7 @@ def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA cache_size=20000")
         cursor.execute("PRAGMA temp_store=MEMORY")
@@ -89,6 +90,7 @@ class KBSQLiteDatabase:
 
             # 配置 SQLite 性能优化参数
             await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=30000"))
             await conn.execute(text("PRAGMA synchronous=NORMAL"))
             await conn.execute(text("PRAGMA cache_size=20000"))
             await conn.execute(text("PRAGMA temp_store=MEMORY"))

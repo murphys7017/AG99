@@ -13,7 +13,7 @@ AstrBot 管理面板具有管理插件、查看日志、可视化配置、查看
 
 ## 登录
 
-默认用户名和密码是 `astrbot` 和 `astrbot`。
+首次登录时，AstrBot 会生成随机初始密码并打印在启动日志中。请使用日志中的用户名和密码登录，用户名通常为 `astrbot`。登录后请按页面提示重新设置账号密码。
 
 ## ChatUI
 
@@ -85,7 +85,7 @@ ChatUI 支持以下常用能力：
 
 使用 `/dashboard_update` 命令可以手动更新管理面板（管理员指令）。
 
-管理面板文件在 data/dist 目录下。如果需要手动替换，请在 https://github.com/AstrBotDevs/AstrBot/releases/ 下载 `dist.zip` 然后解压到 data 目录下。
+管理面板文件在 data/dist 目录下。如果需要手动替换，请在 https://github.com/AstrBotDevs/AstrBot/releases/ 下载 `AstrBot-vxxxxx-dashboard.zip` 然后解压到 data 目录下。
 
 ## 自定义 WebUI 端口
 
@@ -93,4 +93,4 @@ ChatUI 支持以下常用能力：
 
 ## 忘记密码
 
-修改 data/cmd_config.json 文件内 `dashboard` 配置中的 `password`，将 password 整个键值对删除。
+推荐在 AstrBot 根目录执行 `astrbot conf set dashboard.password 新密码`。如果无法使用 CLI，可以停止 AstrBot 后编辑 data/cmd_config.json，删除 `dashboard` 配置中的 `username`、`password`、`pbkdf2_password`、`password_storage_upgraded`、`password_change_required` 和 `jwt_secret`，重启后在启动日志中查看重新生成的初始密码。

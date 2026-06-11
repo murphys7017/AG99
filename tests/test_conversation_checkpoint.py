@@ -164,3 +164,12 @@ def test_chat_route_find_turn_range():
 
     assert route._find_turn_range(history, "cp-2") == (3, 5)
     assert route._find_turn_range(history, "missing") is None
+
+
+def test_chat_route_thread_unified_origin_is_isolated_from_parent_webchat_session():
+    route = ChatRoute.__new__(ChatRoute)
+
+    assert (
+        route._build_thread_unified_msg_origin("alice", "thread-1")
+        == "webchat:FriendMessage:webchat!alice!thread-1"
+    )
