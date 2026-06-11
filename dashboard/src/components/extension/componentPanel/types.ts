@@ -112,6 +112,8 @@ export interface ToolItem {
   description: string;
   active: boolean;
   readonly?: boolean;
+  permission?: 'admin' | 'member';
+  permission_configured?: boolean;
   parameters?: {
     properties?: Record<string, ToolParameter>;
   };

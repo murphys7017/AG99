@@ -137,6 +137,16 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             AsyncGenerator[None | mcp.types.CallToolResult, None]
 
         """
+        permission_error = llm_tools._check_tool_permission(
+            tool.name,
+            run_context,
+        )
+        if permission_error is not None:
+            yield mcp.types.CallToolResult(
+                content=[mcp.types.TextContent(type="text", text=permission_error)]
+            )
+            return
+
         if isinstance(tool, HandoffTool):
             is_bg = tool_args.pop("background_task", False)
             if is_bg:

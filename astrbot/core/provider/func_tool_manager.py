@@ -32,6 +32,10 @@ DEFAULT_ENABLE_MCP_TIMEOUT_SECONDS = 180.0
 MCP_INIT_TIMEOUT_ENV = "ASTRBOT_MCP_INIT_TIMEOUT"
 ENABLE_MCP_TIMEOUT_ENV = "ASTRBOT_MCP_ENABLE_TIMEOUT"
 MAX_MCP_TIMEOUT_SECONDS = 300.0
+TOOL_PERMISSIONS_KEY = "tool_permissions"
+TOOL_PERMISSION_ADMIN = "admin"
+TOOL_PERMISSION_MEMBER = "member"
+TOOL_PERMISSION_VALUES = {TOOL_PERMISSION_ADMIN, TOOL_PERMISSION_MEMBER}
 
 
 class MCPInitError(Exception):
@@ -373,6 +377,91 @@ class FunctionToolManager:
     def is_builtin_tool(self, name: str) -> bool:
         ensure_builtin_tools_loaded()
         return get_builtin_tool_class(name) is not None
+
+    def _default_permission(self, tool_name: str) -> str:
+        return TOOL_PERMISSION_MEMBER
+
+    def get_tool_permission(self, tool_name: str) -> tuple[str, bool]:
+        """Return (effective_permission, configured) for a non-builtin tool."""
+        try:
+            permissions_store = sp.get(
+                TOOL_PERMISSIONS_KEY,
+                {},
+                scope="global",
+                scope_id="global",
+            )
+        except Exception:
+            permissions_store = {}
+
+        defaults = (
+            permissions_store.get("_default", {})
+            if isinstance(permissions_store, dict)
+            else {}
+        )
+        permission = defaults.get(tool_name) if isinstance(defaults, dict) else None
+        if permission in TOOL_PERMISSION_VALUES:
+            return permission, True
+        return self._default_permission(tool_name), False
+
+    def set_tool_permission(self, tool_name: str, permission: str) -> None:
+        if permission not in TOOL_PERMISSION_VALUES:
+            raise ValueError("permission must be 'admin' or 'member'")
+
+        permissions_store = sp.get(
+            TOOL_PERMISSIONS_KEY,
+            {},
+            scope="global",
+            scope_id="global",
+        )
+        if not isinstance(permissions_store, dict):
+            permissions_store = {}
+        defaults = permissions_store.get("_default", {})
+        if not isinstance(defaults, dict):
+            defaults = {}
+        defaults[tool_name] = permission
+        permissions_store["_default"] = defaults
+        sp.put(
+            TOOL_PERMISSIONS_KEY,
+            permissions_store,
+            scope="global",
+            scope_id="global",
+        )
+
+    @staticmethod
+    def _event_from_tool_context(context: Any) -> Any | None:
+        astr_context = getattr(context, "context", None)
+        event = getattr(astr_context, "event", None)
+        if event is not None:
+            return event
+        return getattr(context, "event", None)
+
+    def _check_tool_permission(
+        self,
+        tool_name: str,
+        context: Any,
+    ) -> str | None:
+        """Return an error string if a non-builtin tool is denied."""
+        if self.is_builtin_tool(tool_name):
+            return None
+
+        permission, _ = self.get_tool_permission(tool_name)
+        if permission != TOOL_PERMISSION_ADMIN:
+            return None
+
+        event = self._event_from_tool_context(context)
+        if event is not None and hasattr(event, "is_admin") and event.is_admin():
+            return None
+
+        sender_id = (
+            event.get_sender_id()
+            if event is not None and hasattr(event, "get_sender_id")
+            else "unknown"
+        )
+        return (
+            f"error: Permission denied. The tool '{tool_name}' requires admin "
+            f"privileges. Your ID: {sender_id}. "
+            "Ask an admin to configure tool permissions in WebUI."
+        )
 
     def get_full_tool_set(self) -> ToolSet:
         """获取完整工具集

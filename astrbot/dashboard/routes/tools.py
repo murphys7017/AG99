@@ -55,6 +55,7 @@ class ToolsRoute(Route):
             "/tools/mcp/test": ("POST", self.test_mcp_connection),
             "/tools/list": ("GET", self.get_tool_list),
             "/tools/toggle-tool": ("POST", self.toggle_tool),
+            "/tools/permission": ("POST", self.update_tool_permission),
             "/tools/mcp/sync-provider": ("POST", self.sync_provider),
         }
         self.register_routes()
@@ -504,6 +505,12 @@ class ToolsRoute(Route):
                     "builtin_config_statuses": builtin_config_statuses,
                     "builtin_config_tags": builtin_config_tags,
                 }
+                if not readonly:
+                    permission, configured = self.tool_mgr.get_tool_permission(
+                        tool.name
+                    )
+                    tool_info["permission"] = permission
+                    tool_info["permission_configured"] = configured
                 tools_dict.append(tool_info)
             return Response().ok(data=tools_dict).__dict__
         except Exception as e:
@@ -550,6 +557,42 @@ class ToolsRoute(Route):
         except Exception as e:
             logger.error(traceback.format_exc())
             return Response().error(f"Failed to operate tool: {e!s}").__dict__
+
+    async def update_tool_permission(self):
+        """Set the permission level of a registered non-builtin tool."""
+        try:
+            data = await request.json
+            tool_name = data.get("name")
+            permission = data.get("permission")
+
+            if not tool_name or permission not in ("admin", "member"):
+                return (
+                    Response()
+                    .error("name and permission (admin or member) are required")
+                    .__dict__
+                )
+
+            if self.tool_mgr.is_builtin_tool(tool_name):
+                return (
+                    Response()
+                    .error(
+                        "Builtin tools do not support per-tool permission configuration."
+                    )
+                    .__dict__
+                )
+
+            if not any(tool.name == tool_name for tool in self.tool_mgr.func_list):
+                return Response().error(f"Tool '{tool_name}' not found").__dict__
+
+            self.tool_mgr.set_tool_permission(tool_name, permission)
+            return (
+                Response()
+                .ok(None, f"Tool '{tool_name}' permission set to {permission}")
+                .__dict__
+            )
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response().error(f"Failed to update tool permission: {e!s}").__dict__
 
     async def sync_provider(self):
         """Sync MCP provider configuration."""

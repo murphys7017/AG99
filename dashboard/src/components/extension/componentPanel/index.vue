@@ -42,6 +42,7 @@ const { tm: tmTool } = useModuleI18n('features/tooluse');
 
 const viewMode = ref<'commands' | 'tools'>('commands');
 const toolSearch = ref('');
+const showBuiltinTools = ref(true);
 
 // 数据管理
 const { 
@@ -84,13 +85,23 @@ const {
 } = useCommandActions(toast, () => fetchCommands(tm('messages.loadFailed')));
 
 const filteredTools = computed(() => {
+  let result = tools.value;
+  if (!showBuiltinTools.value) {
+    result = result.filter(tool => tool.origin !== 'builtin');
+  }
   const query = normalizeTextInput(toolSearch.value).trim().toLowerCase();
-  if (!query) return tools.value;
-  return tools.value.filter(tool => 
+  if (!query) return result;
+  return result.filter(tool =>
     tool.name?.toLowerCase().includes(query) ||
     tool.description?.toLowerCase().includes(query)
   );
 });
+
+const toolSummary = computed(() => ({
+  total: tools.value.length,
+  active: tools.value.filter(tool => tool.active).length,
+  inactive: tools.value.filter(tool => !tool.active).length
+}));
 
 // 处理切换指令状态
 const handleToggleCommand = async (cmd: CommandItem) => {
@@ -122,6 +133,34 @@ const handleToggleTool = async (tool: ToolItem) => {
   } catch (error: any) {
     tool.active = previous;
     toast(error?.response?.data?.message || error?.message || tmTool('messages.toggleToolError', { error: '' }), 'error');
+  }
+};
+
+const handleUpdateToolPermission = async (tool: ToolItem, permission: 'admin' | 'member') => {
+  if (tool.readonly || tool.origin === 'builtin') {
+    toast(tmTool('messages.updateToolPermissionBuiltin'), 'info');
+    return;
+  }
+  const previous = tool.permission;
+  const previousConfigured = tool.permission_configured;
+  tool.permission = permission;
+  tool.permission_configured = true;
+  try {
+    const res = await axios.post('/api/tools/permission', {
+      name: tool.name,
+      permission
+    });
+    if (res.data.status === 'ok') {
+      toast(res.data.message || tmTool('messages.updateToolPermissionSuccess', { name: tool.name }));
+    } else {
+      tool.permission = previous;
+      tool.permission_configured = previousConfigured;
+      toast(res.data.message || tmTool('messages.updateToolPermissionFailed'), 'error');
+    }
+  } catch (error: any) {
+    tool.permission = previous;
+    tool.permission_configured = previousConfigured;
+    toast(error?.response?.data?.message || error?.message || tmTool('messages.updateToolPermissionFailed'), 'error');
   }
 };
 
@@ -268,12 +307,41 @@ watch(viewMode, async (mode) => {
                   clearable
                 />
               </div>
+
+              <div class="d-flex flex-wrap align-center ga-3">
+                <div class="d-flex align-center">
+                  <v-icon size="18" color="primary" class="mr-1">mdi-function-variant</v-icon>
+                  <span class="text-body-2 text-medium-emphasis mr-1">{{ tmTool('functionTools.summary.total') }}:</span>
+                  <span class="text-body-1 font-weight-bold text-primary">{{ toolSummary.total }}</span>
+                </div>
+                <v-divider vertical class="mx-1" style="height: 20px;" />
+                <div class="d-flex align-center">
+                  <v-icon size="18" color="success" class="mr-1">mdi-check-circle-outline</v-icon>
+                  <span class="text-body-2 text-medium-emphasis mr-1">{{ tmTool('functionTools.summary.active') }}:</span>
+                  <span class="text-body-1 font-weight-bold text-success">{{ toolSummary.active }}</span>
+                </div>
+                <v-divider vertical class="mx-1" style="height: 20px;" />
+                <div class="d-flex align-center">
+                  <v-icon size="18" color="error" class="mr-1">mdi-close-circle-outline</v-icon>
+                  <span class="text-body-2 text-medium-emphasis mr-1">{{ tmTool('functionTools.summary.inactive') }}:</span>
+                  <span class="text-body-1 font-weight-bold text-error">{{ toolSummary.inactive }}</span>
+                </div>
+                <v-divider vertical class="mx-1" style="height: 20px;" />
+                <v-checkbox
+                  v-model="showBuiltinTools"
+                  :label="tmTool('functionTools.filter.showBuiltin')"
+                  density="compact"
+                  hide-details
+                  class="builtin-tools-checkbox"
+                />
+              </div>
             </div>
 
             <ToolTable
               :items="filteredTools"
               :loading="toolsLoading"
               @toggle-tool="handleToggleTool"
+              @update-permission="handleUpdateToolPermission"
             />
           </div>
         </v-card-text>
@@ -306,3 +374,13 @@ watch(viewMode, async (mode) => {
     {{ snackbar.message }}
   </v-snackbar>
 </template>
+
+<style scoped>
+.builtin-tools-checkbox {
+  flex: none;
+}
+
+.builtin-tools-checkbox :deep(.v-selection-control) {
+  min-height: auto;
+}
+</style>

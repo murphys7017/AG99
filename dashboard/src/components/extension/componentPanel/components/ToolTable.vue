@@ -12,14 +12,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'toggle-tool', tool: ToolItem): void;
+  (e: 'update-permission', tool: ToolItem, permission: 'admin' | 'member'): void;
 }>();
 
 const toolHeaders = computed(() => [
   { title: tmTool('functionTools.title'), key: 'name', minWidth: '320px' },
   { title: tmTool('functionTools.description'), key: 'description' },
-  { title: tmTool('functionTools.table.origin'), key: 'origin', sortable: false, width: '120px' },
-  { title: tmTool('functionTools.table.originName'), key: 'origin_name', sortable: false, width: '160px' },
-  { title: tmTool('functionTools.table.actions'), key: 'actions', sortable: false, width: '120px' }
+  { title: tmTool('functionTools.table.origin'), key: 'origin', sortable: false, width: '110px' },
+  { title: tmTool('functionTools.table.originName'), key: 'origin_name', sortable: false, width: '150px' },
+  { title: tmTool('functionTools.table.permission'), key: 'permission', sortable: false, width: '130px' },
+  { title: tmTool('functionTools.table.actions'), key: 'actions', sortable: false, width: '110px' }
 ]);
 
 const parameterEntries = (tool: ToolItem) => Object.entries(tool.parameters?.properties || {});
@@ -68,6 +70,16 @@ const formatCondition = (condition: ToolConfigCondition) => {
 const enabledConfigTags = (tool: ToolItem): BuiltinToolConfigTag[] => {
   if (tool.origin !== 'builtin') return [];
   return (tool.builtin_config_tags || []).filter(tag => tag.enabled);
+};
+
+const getPermissionColor = (permission?: string): string => {
+  return permission === 'admin' ? 'error' : 'success';
+};
+
+const getPermissionLabel = (permission?: string): string => {
+  return permission === 'admin'
+    ? tmTool('functionTools.table.permissionAdmin')
+    : tmTool('functionTools.table.permissionMember');
 };
 </script>
 
@@ -136,6 +148,49 @@ const enabledConfigTags = (tool: ToolItem): BuiltinToolConfigTag[] => {
         <div class="text-body-2 text-medium-emphasis" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="item.origin_name">
           {{ item.origin_name || '-' }}
         </div>
+      </template>
+
+      <template #item.permission="{ item }">
+        <v-chip
+          v-if="item.origin === 'builtin'"
+          size="small"
+          variant="tonal"
+          class="font-weight-medium text-medium-emphasis"
+        >
+          {{ tmTool('functionTools.table.permissionBuiltin') }}
+        </v-chip>
+        <v-menu v-else location="bottom">
+          <template #activator="{ props: menuProps }">
+            <v-chip
+              v-bind="menuProps"
+              :color="getPermissionColor(item.permission)"
+              size="small"
+              class="font-weight-medium"
+              link
+            >
+              {{ getPermissionLabel(item.permission) }}
+              <v-icon end size="14">mdi-chevron-down</v-icon>
+            </v-chip>
+          </template>
+          <v-list density="compact">
+            <v-list-item
+              :active="item.permission !== 'admin'"
+              @click="emit('update-permission', item, 'member')"
+            >
+              <v-list-item-title>
+                {{ tmTool('functionTools.table.permissionMember') }}
+              </v-list-item-title>
+            </v-list-item>
+            <v-list-item
+              :active="item.permission === 'admin'"
+              @click="emit('update-permission', item, 'admin')"
+            >
+              <v-list-item-title>
+                {{ tmTool('functionTools.table.permissionAdmin') }}
+              </v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
       </template>
 
       <template #item.actions="{ item }">
