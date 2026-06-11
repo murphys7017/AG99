@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.api.platform import MessageType
 from astrbot.builtin_stars.astrbot.group_chat_context import (
     GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA,
@@ -196,6 +196,56 @@ async def test_handle_message_ignores_wake_commands():
     await group_context.handle_message(event)
 
     assert event.unified_msg_origin not in group_context.raw_records
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_formats_reply_message_content():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.message_obj.message = [
+        Reply(
+            id="reply-1",
+            sender_nickname="Bob",
+            message_str="quoted content",
+        ),
+        Plain("new message"),
+    ]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Quote(Bob: quoted content)]" in text
+    assert "new message" in text
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_describes_reply_chain_and_truncates_text():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.message_obj.message = [
+        Reply(
+            id="reply-1",
+            sender_nickname="Bob",
+            chain=[Plain("quoted chain"), Image(file="image.png")],
+            message_str="",
+        ),
+        Reply(
+            id="reply-2",
+            sender_nickname="Carol",
+            message_str="x" * 240,
+        ),
+    ]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Quote(Bob: quoted chain[Image])]" in text
+    assert f"[Quote(Carol: {'x' * 200}...)]" in text
+    assert "x" * 240 not in text
 
 
 @pytest.mark.asyncio

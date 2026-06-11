@@ -8,7 +8,18 @@ from typing import TYPE_CHECKING
 from astrbot import logger
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import At, Image, Plain
+from astrbot.api.message_components import (
+    At,
+    AtAll,
+    Face,
+    File,
+    Forward,
+    Image,
+    Plain,
+    Record,
+    Reply,
+    Video,
+)
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import Provider, ProviderRequest
 from astrbot.core.agent.message import TextPart
@@ -276,8 +287,58 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                 if is_at_self:
                     parts.insert(1, "[DIRECTED AT YOU] ")
                 parts.append(f" [At: {comp.name}]")
+            elif isinstance(comp, Reply):
+                if comp.message_str:
+                    parts.append(
+                        f" [Quote({comp.sender_nickname}: {_truncate_reply_text(comp.message_str)})]"
+                    )
+                elif comp.chain:
+                    chain_desc = _describe_chain(comp.chain)
+                    parts.append(f" [Quote({comp.sender_nickname}: {chain_desc})]")
+                else:
+                    parts.append(" [Quote]")
 
         return "".join(parts)
+
+
+_MAX_REPLY_TEXT_LENGTH = 200
+
+
+def _describe_chain(chain: list) -> str:
+    """Summarize message chain content for quoted reply display."""
+    desc = []
+    for comp in chain:
+        if isinstance(comp, Plain) and getattr(comp, "text", None):
+            desc.append(comp.text)
+        elif isinstance(comp, Image):
+            desc.append("[Image]")
+        elif isinstance(comp, At):
+            name = getattr(comp, "name", "") or getattr(comp, "qq", "")
+            desc.append(f"[At: {name}]")
+        elif isinstance(comp, Record):
+            desc.append("[Voice]")
+        elif isinstance(comp, Video):
+            desc.append("[Video]")
+        elif isinstance(comp, File):
+            desc.append(f"[File: {getattr(comp, 'name', '') or ''}]")
+        elif isinstance(comp, Forward):
+            desc.append("[Forward]")
+        elif isinstance(comp, AtAll):
+            desc.append("[At: All]")
+        elif isinstance(comp, Face):
+            desc.append(f"[Sticker: {getattr(comp, 'id', '')}]")
+        elif isinstance(comp, Reply):
+            desc.append("[Quote]")
+        else:
+            desc.append(f"[{comp.__class__.__name__}]")
+    return "".join(desc) or "[Unknown]"
+
+
+def _truncate_reply_text(text: str) -> str:
+    """Truncate overly long quoted reply text."""
+    if len(text) <= _MAX_REPLY_TEXT_LENGTH:
+        return text
+    return text[:_MAX_REPLY_TEXT_LENGTH] + "..."
 
 
 def _positive_int(value, fallback: int) -> int:
