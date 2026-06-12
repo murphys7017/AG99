@@ -227,9 +227,13 @@ DEFAULT_CONFIG = {
         "finalizer_provider_id": "",
         "finalizer_temperature": 0.6,
         "finalizer_max_tokens": 512,
+        "finalizer_timeout": 15.0,
         "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
+        "stream_interjection_provider_id": "",
+        "stream_interjection_temperature": 0.5,
+        "stream_interjection_timeout": 15.0,
         "stream_interjection_max_per_turn": 1,
     },
     "memory": build_default_memory_config_payload(),
@@ -4403,6 +4407,11 @@ CONFIG_METADATA_3 = {
                         "description": "整理最大 token",
                         "type": "int",
                     },
+                    "interaction_middleware.finalizer_timeout": {
+                        "description": "整理超时秒数",
+                        "type": "float",
+                        "hint": "留空或无效时沿用兼容字段 decision_timeout。",
+                    },
                 },
             },
             "stream": {
@@ -4422,6 +4431,22 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.stream_interjection_enabled": {
                         "description": "允许过程提示",
                         "type": "bool",
+                    },
+                    "interaction_middleware.stream_interjection_provider_id": {
+                        "description": "过程提示模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "留空时沿用兼容字段 decision_provider_id。",
+                    },
+                    "interaction_middleware.stream_interjection_temperature": {
+                        "description": "过程提示温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                    },
+                    "interaction_middleware.stream_interjection_timeout": {
+                        "description": "过程提示超时秒数",
+                        "type": "float",
+                        "hint": "留空或无效时沿用兼容字段 decision_timeout。",
                     },
                     "interaction_middleware.stream_interjection_max_per_turn": {
                         "description": "每轮最多提示次数",

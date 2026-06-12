@@ -60,6 +60,12 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     router_provider_id = str(
         interaction_config.get("router_provider_id", "") or ""
     ) or decision_provider_id
+    finalizer_provider_id = str(
+        interaction_config.get("finalizer_provider_id", "") or ""
+    )
+    stream_interjection_provider_id = str(
+        interaction_config.get("stream_interjection_provider_id", "") or ""
+    ) or decision_provider_id
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", False)),
         default_enabled_for_platforms=list(
@@ -90,14 +96,16 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         parallel_expression_router=bool(
             interaction_config.get("parallel_expression_router", True)
         ),
-        finalizer_provider_id=str(
-            interaction_config.get("finalizer_provider_id", "") or ""
-        ),
+        finalizer_provider_id=finalizer_provider_id,
         finalizer_temperature=float(
             interaction_config.get("finalizer_temperature", 0.6) or 0.6
         ),
         finalizer_max_tokens=int(
             interaction_config.get("finalizer_max_tokens", 512) or 512
+        ),
+        finalizer_timeout=_float_or_default(
+            interaction_config.get("finalizer_timeout", decision_timeout),
+            decision_timeout,
         ),
         finalizer_mode=finalizer_mode,
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
@@ -113,6 +121,18 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         ),
         stream_interjection_enabled=bool(
             interaction_config.get("stream_interjection_enabled", True)
+        ),
+        stream_interjection_provider_id=stream_interjection_provider_id,
+        stream_interjection_temperature=_float_or_default(
+            interaction_config.get(
+                "stream_interjection_temperature",
+                decision_temperature,
+            ),
+            decision_temperature,
+        ),
+        stream_interjection_timeout=_float_or_default(
+            interaction_config.get("stream_interjection_timeout", decision_timeout),
+            decision_timeout,
         ),
         stream_interjection_max_per_turn=max(
             0,

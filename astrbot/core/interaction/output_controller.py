@@ -709,7 +709,7 @@ class InteractionOutputController:
             )
             return StreamObservationDecision(reason="plugin_context_unavailable")
         provider = self.plugin_context.get_provider_by_id(
-            interaction_config.decision_provider_id
+            interaction_config.stream_interjection_provider_id
         )
         if not isinstance(provider, Provider):
             self._record_stream_interjection_failure(
@@ -719,7 +719,7 @@ class InteractionOutputController:
             )
             logger.warning(
                 "Interaction stream interjection skipped: provider unavailable provider_id=%s",
-                interaction_config.decision_provider_id,
+                interaction_config.stream_interjection_provider_id,
             )
             return StreamObservationDecision(reason="provider_unavailable")
 
@@ -735,9 +735,9 @@ class InteractionOutputController:
                 provider.text_chat(
                     prompt=prompt,
                     system_prompt="",
-                    temperature=interaction_config.decision_temperature,
+                    temperature=interaction_config.stream_interjection_temperature,
                 ),
-                timeout=interaction_config.decision_timeout,
+                timeout=interaction_config.stream_interjection_timeout,
             )
         except asyncio.TimeoutError:
             logger.warning(

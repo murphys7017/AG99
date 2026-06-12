@@ -11,6 +11,7 @@ from astrbot.core.interaction.contributors import (
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
+from astrbot.core.interaction.finalizer import finalize_response
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
@@ -39,11 +40,28 @@ from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.platform.sources.webchat.webchat_event import WebChatMessageEvent
+from astrbot.core.provider.entities import LLMResponse
 
 
 class ConcreteMessageEvent(AstrMessageEvent):
     async def send(self, message):
         await super().send(message)
+
+
+class FakeChatProvider:
+    def __init__(
+        self,
+        response_text: str = '{"should_interject": true, "reply": "还在看。"}',
+    ) -> None:
+        self.response_text = response_text
+        self.calls = []
+
+    def get_model(self):
+        return "fake-chat"
+
+    async def text_chat(self, **kwargs):
+        self.calls.append(kwargs)
+        return LLMResponse(role="assistant", completion_text=self.response_text)
 
 
 def test_output_contribution_converts_to_result_contribution():
@@ -1162,6 +1180,48 @@ async def test_force_finalizer_failure_sends_raw_core_result(
 
 
 @pytest.mark.asyncio
+async def test_finalizer_uses_role_specific_timeout(
+    webchat_event,
+    monkeypatch,
+):
+    provider = FakeChatProvider(response_text="final answer")
+    plugin_context = MagicMock()
+    plugin_context.get_provider_by_id.return_value = provider
+    captured = {}
+
+    async def fake_wait_for(awaitable, timeout):
+        captured["timeout"] = timeout
+        return await awaitable
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.finalizer.Provider",
+        FakeChatProvider,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.finalizer.asyncio.wait_for",
+        fake_wait_for,
+    )
+
+    result = await finalize_response(
+        event=webchat_event,
+        plugin_context=plugin_context,
+        config=InteractionAgentConfig(
+            finalizer_mode=FinalizerMode.FORCE,
+            finalizer_provider_id="finalizer_model",
+            finalizer_temperature=0.2,
+            finalizer_timeout=4.5,
+        ),
+        core_result_text="raw core result",
+        immediate_reply="等我看看。",
+    )
+
+    assert result == "final answer"
+    plugin_context.get_provider_by_id.assert_called_once_with("finalizer_model")
+    assert provider.calls[0]["temperature"] == 0.2
+    assert captured["timeout"] == 4.5
+
+
+@pytest.mark.asyncio
 async def test_force_finalizer_failure_records_failure_without_notice(
     webchat_event,
 ):
@@ -1730,6 +1790,55 @@ async def test_stream_interjection_provider_missing_records_turn_failure(
         for failure in turn_state.failures
         if failure.stage == "stream_interjection"
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_interjection_uses_role_specific_model_config(
+    webchat_event,
+    monkeypatch,
+):
+    provider = FakeChatProvider()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_stream_deciders.return_value = []
+    plugin_context.get_provider_by_id.return_value = provider
+    captured = {}
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(
+            stream_interjection_provider_id="stream_model",
+            stream_interjection_temperature=0.15,
+            stream_interjection_timeout=2.5,
+            stream_interjection_enabled=True,
+        ),
+    )
+    controller._build_stream_interjection_prompt = AsyncMock(return_value="prompt")
+
+    async def fake_wait_for(awaitable, timeout):
+        captured["timeout"] = timeout
+        return await awaitable
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.output_controller.Provider",
+        FakeChatProvider,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.output_controller.asyncio.wait_for",
+        fake_wait_for,
+    )
+
+    decision = await controller._decide_stream_interjection_with_model(
+        webchat_event,
+        observed_text="core is still working",
+        total_text="core is still working",
+        window_index=1,
+        is_final=False,
+    )
+
+    assert decision.should_interject is True
+    assert decision.reply == "还在看。"
+    plugin_context.get_provider_by_id.assert_called_once_with("stream_model")
+    assert provider.calls[0]["temperature"] == 0.15
+    assert captured["timeout"] == 2.5
 
 
 @pytest.mark.asyncio

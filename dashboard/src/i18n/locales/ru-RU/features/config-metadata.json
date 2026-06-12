@@ -1115,6 +1115,10 @@
                 },
                 "finalizer_max_tokens": {
                     "description": "Максимум токенов обработки"
+                },
+                "finalizer_timeout": {
+                    "description": "Таймаут обработки (сек)",
+                    "hint": "Пустые или некорректные значения используют совместимое поле decision_timeout."
                 }
             }
         },
@@ -1131,6 +1135,17 @@
                 },
                 "stream_interjection_enabled": {
                     "description": "Разрешить подсказки во время выполнения"
+                },
+                "stream_interjection_provider_id": {
+                    "description": "Провайдер модели подсказок во время выполнения",
+                    "hint": "Если пусто, используется совместимое поле decision_provider_id."
+                },
+                "stream_interjection_temperature": {
+                    "description": "Температура подсказок во время выполнения"
+                },
+                "stream_interjection_timeout": {
+                    "description": "Таймаут подсказок во время выполнения (сек)",
+                    "hint": "Пустые или некорректные значения используют совместимое поле decision_timeout."
                 },
                 "stream_interjection_max_per_turn": {
                     "description": "Максимум подсказок за turn"

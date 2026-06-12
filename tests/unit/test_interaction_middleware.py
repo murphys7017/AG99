@@ -188,6 +188,44 @@ class TestInteractionMiddlewareConfig:
         assert loaded.stream_observation_min_chars == 1
         assert loaded.stream_interjection_max_per_turn == 0
 
+    def test_role_specific_model_config_falls_back_to_decision_fields(self):
+        config = {
+            "interaction_middleware": {
+                "decision_provider_id": "legacy_decision",
+                "decision_temperature": 0.25,
+                "decision_timeout": 6.0,
+            }
+        }
+
+        loaded = load_interaction_agent_config(config)
+
+        assert loaded.expression_provider_id == "legacy_decision"
+        assert loaded.router_provider_id == "legacy_decision"
+        assert loaded.stream_interjection_provider_id == "legacy_decision"
+        assert loaded.stream_interjection_temperature == 0.25
+        assert loaded.stream_interjection_timeout == 6.0
+        assert loaded.finalizer_timeout == 6.0
+
+    def test_role_specific_model_config_uses_explicit_fields(self):
+        config = {
+            "interaction_middleware": {
+                "decision_provider_id": "legacy_decision",
+                "decision_temperature": 0.25,
+                "decision_timeout": 6.0,
+                "stream_interjection_provider_id": "stream_model",
+                "stream_interjection_temperature": 0.1,
+                "stream_interjection_timeout": 2.0,
+                "finalizer_timeout": 12.0,
+            }
+        }
+
+        loaded = load_interaction_agent_config(config)
+
+        assert loaded.stream_interjection_provider_id == "stream_model"
+        assert loaded.stream_interjection_temperature == 0.1
+        assert loaded.stream_interjection_timeout == 2.0
+        assert loaded.finalizer_timeout == 12.0
+
 
 class TestInteractionMiddleware:
     @pytest.mark.asyncio

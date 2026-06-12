@@ -1116,6 +1116,10 @@
         },
         "finalizer_max_tokens": {
           "description": "整理最大 token"
+        },
+        "finalizer_timeout": {
+          "description": "整理超时秒数",
+          "hint": "留空或无效时沿用兼容字段 decision_timeout。"
         }
       }
     },
@@ -1132,6 +1136,17 @@
         },
         "stream_interjection_enabled": {
           "description": "允许过程提示"
+        },
+        "stream_interjection_provider_id": {
+          "description": "过程提示模型提供商",
+          "hint": "留空时沿用兼容字段 decision_provider_id。"
+        },
+        "stream_interjection_temperature": {
+          "description": "过程提示温度"
+        },
+        "stream_interjection_timeout": {
+          "description": "过程提示超时秒数",
+          "hint": "留空或无效时沿用兼容字段 decision_timeout。"
         },
         "stream_interjection_max_per_turn": {
           "description": "每轮最多提示次数"

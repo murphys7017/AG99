@@ -1114,6 +1114,10 @@
         },
         "finalizer_max_tokens": {
           "description": "Cleanup Max Tokens"
+        },
+        "finalizer_timeout": {
+          "description": "Cleanup Timeout Seconds",
+          "hint": "Empty or invalid values use the compatibility decision_timeout field."
         }
       }
     },
@@ -1130,6 +1134,17 @@
         },
         "stream_interjection_enabled": {
           "description": "Allow In-Progress Prompts"
+        },
+        "stream_interjection_provider_id": {
+          "description": "In-Progress Prompt Model Provider",
+          "hint": "Empty uses the compatibility decision_provider_id field."
+        },
+        "stream_interjection_temperature": {
+          "description": "In-Progress Prompt Temperature"
+        },
+        "stream_interjection_timeout": {
+          "description": "In-Progress Prompt Timeout Seconds",
+          "hint": "Empty or invalid values use the compatibility decision_timeout field."
         },
         "stream_interjection_max_per_turn": {
           "description": "Max Prompts Per Turn"

@@ -183,11 +183,15 @@ class InteractionAgentConfig:
     finalizer_provider_id: str = ""
     finalizer_temperature: float = 0.6
     finalizer_max_tokens: int = 512
+    finalizer_timeout: float = 15.0
     finalizer_mode: FinalizerMode = FinalizerMode.AUTO
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200
     stream_interjection_enabled: bool = True
+    stream_interjection_provider_id: str = ""
+    stream_interjection_temperature: float = 0.5
+    stream_interjection_timeout: float = 15.0
     stream_interjection_max_per_turn: int = 1
 
 

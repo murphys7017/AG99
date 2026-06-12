@@ -194,7 +194,7 @@ async def finalize_response(
                 temperature=config.finalizer_temperature,
                 max_tokens=config.finalizer_max_tokens,
             ),
-            timeout=config.decision_timeout,
+            timeout=config.finalizer_timeout,
         )
     except asyncio.TimeoutError:
         logger.warning("Interaction finalizer timed out")
