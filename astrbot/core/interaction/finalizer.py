@@ -185,13 +185,12 @@ async def finalize_response(
         logger.debug(
             "Interaction finalizer model request: provider_id=%s model=%s",
             config.finalizer_provider_id,
-            config.finalizer_model or provider.get_model(),
+            provider.get_model(),
         )
         response = await asyncio.wait_for(
             provider.text_chat(
                 prompt=prompt,
                 system_prompt="",
-                model=config.finalizer_model or None,
                 temperature=config.finalizer_temperature,
                 max_tokens=config.finalizer_max_tokens,
             ),

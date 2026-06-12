@@ -761,6 +761,62 @@ class TestConfigMetadataI18n:
             ]["_special"]
             == "select_provider"
         )
+        exposed_keys = {
+            item_key
+            for section in group["metadata"].values()
+            for item_key in section["items"]
+        }
+        assert "interaction_middleware.expression_model" not in exposed_keys
+        assert "interaction_middleware.router_model" not in exposed_keys
+        assert "interaction_middleware.finalizer_model" not in exposed_keys
+
+    def test_interaction_middleware_metadata_i18n_keys_have_locale_entries(self):
+        """Interaction middleware metadata should not render raw i18n keys."""
+        result = ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3)
+        interaction_group = result["interaction_middleware_group"]
+
+        expected_keys: set[str] = set()
+
+        def collect_i18n_keys(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if (
+                        key in {"name", "description", "hint", "labels"}
+                        and isinstance(item, str)
+                        and item.startswith("interaction_middleware_group.")
+                    ):
+                        expected_keys.add(item)
+                    else:
+                        collect_i18n_keys(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect_i18n_keys(item)
+
+        def get_by_i18n_key(locale_payload: dict, key: str):
+            current = locale_payload
+            for part in key.split("."):
+                assert isinstance(current, dict), key
+                assert part in current, key
+                current = current[part]
+            return current
+
+        collect_i18n_keys(interaction_group)
+
+        locale_root = (
+            os.path.dirname(__file__)
+            + "/../../dashboard/src/i18n/locales"
+        )
+        for locale in ("zh-CN", "en-US", "ru-RU"):
+            locale_path = os.path.join(
+                locale_root,
+                locale,
+                "features",
+                "config-metadata.json",
+            )
+            with open(locale_path, encoding="utf-8") as f:
+                locale_payload = json.load(f)
+            for key in expected_keys:
+                assert get_by_i18n_key(locale_payload, key)
 
     def test_interaction_middleware_defaults_match_exposed_metadata(self):
         """All exposed interaction middleware config keys should have defaults."""

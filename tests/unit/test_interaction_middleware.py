@@ -7,7 +7,6 @@ from astrbot.core.interaction.config import (
     is_middleware_enabled_for_platform,
     load_interaction_agent_config,
 )
-from astrbot.core.interaction.decision_agent import InteractionDecisionAgent
 from astrbot.core.interaction.input_gateway import CoreInputGateway
 from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.output_controller import InteractionOutputController
@@ -16,9 +15,11 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_state,
 )
 from astrbot.core.interaction.types import (
+    FastRouteMode,
     FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
+    InteractionRouteDecision,
     RouteMode,
 )
 from astrbot.core.message.components import Plain, Record, Reply
@@ -56,6 +57,36 @@ class FakeSTTProvider:
 
 async def _call_original_visible_completion(event):
     await event.get_extra("_interaction_original_complete_visible_turn")()
+
+
+async def _drain_inbound_tasks(middleware: InteractionMiddleware) -> None:
+    for _ in range(20):
+        tasks = list(middleware._inflight_tasks)
+        if not tasks:
+            return
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0)
+
+
+def _stub_fast_response_route(
+    middleware: InteractionMiddleware,
+    *,
+    first_response: str = "嗯。",
+    mode: FastRouteMode = FastRouteMode.HYBRID,
+) -> None:
+    if not isinstance(
+        getattr(middleware.output_controller, "emit_immediate_spoken_reply", None),
+        AsyncMock,
+    ):
+        middleware.output_controller.emit_immediate_spoken_reply = AsyncMock()
+    middleware.expression_agent = MagicMock()
+    middleware.expression_agent.generate_first_response = AsyncMock(
+        return_value=first_response
+    )
+    middleware.router_agent = MagicMock()
+    middleware.router_agent.route = AsyncMock(
+        return_value=InteractionRouteDecision(mode=mode)
+    )
 
 
 @pytest.fixture
@@ -165,6 +196,7 @@ class TestInteractionMiddleware:
     ):
         queue = asyncio.Queue()
         controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -177,17 +209,11 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                should_emit_immediate_reply=False,
-                reason="delegate",
-            )
-        )
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
         assert webchat_event.get_extra("_interaction_enabled") is True
@@ -220,21 +246,14 @@ class TestInteractionMiddleware:
             controller,
             plugin_context=plugin_context,
         )
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                should_emit_immediate_reply=False,
-                reason="delegate",
-            )
-        )
+        _stub_fast_response_route(middleware)
 
         middleware.handle_inbound(voice_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         forwarded_event = queue.get_nowait()
-        middleware.decision_agent.decide.assert_awaited_once()
-        decision_event = middleware.decision_agent.decide.await_args.args[0]
+        middleware.expression_agent.generate_first_response.assert_awaited_once()
+        decision_event = middleware.expression_agent.generate_first_response.await_args.args[0]
         assert decision_event.message_str == "recognized voice text"
         assert forwarded_event.message_obj.message_str == "recognized voice text"
         assert isinstance(forwarded_event.message_obj.message[0], Plain)
@@ -266,14 +285,14 @@ class TestInteractionMiddleware:
             controller,
             plugin_context=plugin_context,
         )
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock()
+        _stub_fast_response_route(middleware)
 
         middleware.handle_inbound(voice_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
-        middleware.decision_agent.decide.assert_not_awaited()
+        middleware.expression_agent.generate_first_response.assert_not_awaited()
+        middleware.router_agent.route.assert_not_awaited()
         assert voice_event.get_extra("_interaction_stt_failed") is True
         assert (
             voice_event.get_extra("_interaction_stt_failure_reason")
@@ -301,17 +320,11 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                should_emit_immediate_reply=False,
-                reason="delegate",
-            )
-        )
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
         message = MessageChain([Plain("core reply")])
 
@@ -340,20 +353,14 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                should_emit_immediate_reply=False,
-                reason="delegate",
-            )
-        )
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
 
         async def generator():
             yield MessageChain([Plain("chunk")])
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
 
         await forwarded_event.send_streaming(generator(), use_fallback=True)
@@ -386,14 +393,7 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                should_emit_immediate_reply=False,
-                reason="delegate",
-            )
-        )
+        _stub_fast_response_route(middleware)
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
         async def generator():
@@ -404,10 +404,10 @@ class TestInteractionMiddleware:
             new=AsyncMock(),
         ) as dispatch:
             middleware.handle_inbound(streaming_event)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
             forwarded_event = queue.get_nowait()
             await forwarded_event.send_streaming(generator())
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
 
         turn_state = get_interaction_turn_state(forwarded_event)
         assert turn_state is not None
@@ -480,29 +480,25 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.HYBRID,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯，我来处理。",
-                reason="hybrid",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯，我来处理。",
+            mode=FastRouteMode.HYBRID,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock(
             side_effect=_wait_for_persist_release
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
+        await _drain_inbound_tasks(middleware)
 
         controller.emit_immediate_spoken_reply.assert_awaited_once()
         forwarded_event = queue.get_nowait()
         assert forwarded_event is webchat_event
         assert forwarded_event._has_send_oper is False
         release_persist.set()
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
     @pytest.mark.asyncio
     async def test_hybrid_immediate_reply_waits_for_core_before_turn_completion(
@@ -524,14 +520,10 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.HYBRID,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="等我看看。",
-                reason="hybrid",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="等我看看。",
+            mode=FastRouteMode.HYBRID,
         )
         persisted = asyncio.Event()
         middleware.memory_store.update_interaction_memory = AsyncMock(
@@ -539,7 +531,7 @@ class TestInteractionMiddleware:
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
         controller.emit_immediate_spoken_reply.assert_awaited_once()
@@ -576,20 +568,13 @@ class TestInteractionMiddleware:
             if umo == webchat_event.unified_msg_origin
             else default_config
         )
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.DELEGATE_TO_CORE,
-                should_emit_immediate_reply=False,
-                reason="delegate",
-            )
-        )
+        _stub_fast_response_route(middleware)
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
-        middleware.decision_agent.decide.assert_awaited_once()
-        decision_config = middleware.decision_agent.decide.await_args.args[2]
+        middleware.router_agent.route.assert_awaited_once()
+        decision_config = middleware.router_agent.route.await_args.args[2]
         assert decision_config.decision_provider_id == "runtime_provider"
         assert decision_config.memory_window_size == 3
         assert middleware.interaction_config.decision_provider_id == ""
@@ -618,10 +603,9 @@ class TestInteractionMiddleware:
         )
         middleware.plugin_context = MagicMock(spec=Context)
         middleware.plugin_context.get_config.return_value = {"wake_prefix": ["/"]}
-        middleware.decision_agent = InteractionDecisionAgent(middleware.memory_store)
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
         controller.emit_immediate_spoken_reply.assert_not_awaited()
@@ -630,12 +614,13 @@ class TestInteractionMiddleware:
         assert decision.reason == "protocol command bypass"
 
     @pytest.mark.asyncio
-    async def test_missing_plugin_context_fail_fast_records_failure(
+    async def test_missing_plugin_context_uses_local_reply_and_hybrid(
         self,
         webchat_event,
     ):
         queue = asyncio.Queue()
         controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -649,14 +634,17 @@ class TestInteractionMiddleware:
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
-        assert queue.empty()
-        assert webchat_event.get_extra("_interaction_decision_failed") is True
+        assert queue.get_nowait() is webchat_event
+        assert webchat_event.get_extra("_interaction_expression_failed") is True
+        assert webchat_event.get_extra("_interaction_router_failed") is True
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.failures[-1].stage == "decision"
-        assert turn_state.failures[-1].reason == "plugin_context_unavailable"
+        assert turn_state.failures == []
+        assert turn_state.decision is not None
+        assert turn_state.decision.route_mode == RouteMode.HYBRID
+        assert turn_state.decision.immediate_spoken_reply == "我先看一下。"
 
     def test_fallback_policy_is_rejected_during_development(
         self,
@@ -725,12 +713,13 @@ class TestInteractionMiddleware:
             middleware.refresh_interaction_config(webchat_event)
 
     @pytest.mark.asyncio
-    async def test_decision_pipeline_error_fail_fast_records_failure(
+    async def test_router_pipeline_error_falls_back_to_hybrid_records_failure(
         self,
         webchat_event,
-    ):
+        ):
         queue = asyncio.Queue()
         controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -743,20 +732,24 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            side_effect=RuntimeError("decision broken")
+        middleware.expression_agent = MagicMock()
+        middleware.expression_agent.generate_first_response = AsyncMock(
+            return_value="我先看一下。"
+        )
+        middleware.router_agent = MagicMock()
+        middleware.router_agent.route = AsyncMock(
+            side_effect=RuntimeError("router broken")
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
-        assert queue.empty()
-        assert webchat_event.get_extra("_interaction_decision_failed") is True
+        assert queue.get_nowait() is webchat_event
+        assert webchat_event.get_extra("_interaction_router_failed") is True
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.failures[-1].stage == "decision"
-        assert turn_state.failures[-1].reason == "decision_pipeline_error"
+        assert turn_state.failures[-1].stage == "router"
+        assert turn_state.failures[-1].reason == "router_pipeline_error"
 
     @pytest.mark.asyncio
     async def test_hybrid_immediate_reply_failure_fail_fast_records_failure(
@@ -780,18 +773,14 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.HYBRID,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯，我来处理。",
-                reason="hybrid",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯，我来处理。",
+            mode=FastRouteMode.HYBRID,
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
         assert webchat_event.get_extra("_interaction_immediate_reply_failed") is True
@@ -817,15 +806,18 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock()
+        middleware.expression_agent = MagicMock()
+        middleware.expression_agent.generate_first_response = AsyncMock()
+        middleware.router_agent = MagicMock()
+        middleware.router_agent.route = AsyncMock()
 
         middleware.handle_inbound(live_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is live_event
         assert queue.empty()
-        middleware.decision_agent.decide.assert_not_awaited()
+        middleware.expression_agent.generate_first_response.assert_not_awaited()
+        middleware.router_agent.route.assert_not_awaited()
         controller.emit_immediate_spoken_reply.assert_not_awaited()
         assert (
             live_event.get_extra("_interaction_live_mode_protocol_route")
@@ -861,18 +853,14 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
         assert webchat_event.get_extra("_interaction_immediate_reply_failed") is True
@@ -900,18 +888,14 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=False,
-                immediate_spoken_reply=None,
-                reason="invalid self reply",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="",
+            mode=FastRouteMode.SELF_REPLY,
         )
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
         assert webchat_event.get_extra("_interaction_self_reply_invalid") is True
@@ -949,14 +933,10 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
@@ -965,8 +945,8 @@ class TestInteractionMiddleware:
             new=AsyncMock(),
         ) as dispatch:
             middleware.handle_inbound(webchat_event)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
+            await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
         complete_visible_turn.assert_awaited_once()
@@ -1005,19 +985,15 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
         middleware.handle_inbound(webchat_event)
-        await asyncio.sleep(0)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
         complete_visible_turn.assert_awaited_once()
@@ -1099,14 +1075,10 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
@@ -1115,8 +1087,8 @@ class TestInteractionMiddleware:
             new=AsyncMock(),
         ) as dispatch:
             middleware.handle_inbound(webchat_event)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
+            await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
         controller.emit_immediate_spoken_reply.assert_awaited_once()
@@ -1169,14 +1141,10 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
         order: list[str] = []
@@ -1186,8 +1154,8 @@ class TestInteractionMiddleware:
             new=AsyncMock(side_effect=lambda **_kwargs: order.append("postprocess")),
         ):
             middleware.handle_inbound(webchat_event)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
+            await _drain_inbound_tasks(middleware)
 
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
         assert order == ["postprocess"]
@@ -1233,14 +1201,10 @@ class TestInteractionMiddleware:
             if umo == webchat_event.unified_msg_origin
             else default_config
         )
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
 
         with patch(
@@ -1248,8 +1212,8 @@ class TestInteractionMiddleware:
             new=AsyncMock(),
         ) as dispatch:
             middleware.handle_inbound(webchat_event)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
+            await _drain_inbound_tasks(middleware)
 
         assert webchat_event.get_extra("_astrbot_config") == runtime_config
         assert (
@@ -1287,14 +1251,10 @@ class TestInteractionMiddleware:
             spec=Context,
             conversation_manager=conversation_manager,
         )
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
 
         with patch(
@@ -1302,8 +1262,8 @@ class TestInteractionMiddleware:
             new=AsyncMock(),
         ):
             middleware.handle_inbound(webchat_event)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
+            await _drain_inbound_tasks(middleware)
 
         conversation_manager.get_curr_conversation_id.assert_not_awaited()
         conversation_manager.add_message_pair.assert_not_awaited()
@@ -1340,14 +1300,10 @@ class TestInteractionMiddleware:
             spec=Context,
             conversation_manager=conversation_manager,
         )
-        middleware.decision_agent = MagicMock(spec=InteractionDecisionAgent)
-        middleware.decision_agent.decide = AsyncMock(
-            return_value=InteractionDecision(
-                route_mode=RouteMode.SELF_REPLY,
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="嗯。",
-                reason="self",
-            )
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯。",
+            mode=FastRouteMode.SELF_REPLY,
         )
 
         with patch(
@@ -1355,8 +1311,8 @@ class TestInteractionMiddleware:
             new=AsyncMock(),
         ):
             middleware.handle_inbound(webchat_event)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await _drain_inbound_tasks(middleware)
+            await _drain_inbound_tasks(middleware)
 
         assert webchat_event.get_extra("_interaction_conversation_history_failed") is None
         turn_state = get_interaction_turn_state(webchat_event)

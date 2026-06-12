@@ -163,7 +163,6 @@ class InteractionRouterAgent:
                     ),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.router_temperature,
-                    model=interaction_config.router_model or None,
                     tool_choice="required"
                     if _should_require_tool_choice(render_result.output_contract)
                     else "auto",

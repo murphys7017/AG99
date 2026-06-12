@@ -217,17 +217,14 @@ DEFAULT_CONFIG = {
         "decision_temperature": 0.5,
         "decision_timeout": 15.0,
         "expression_provider_id": "",
-        "expression_model": "",
         "expression_temperature": 0.6,
         "expression_timeout": 8.0,
         "router_provider_id": "",
-        "router_model": "",
         "router_temperature": 0.0,
         "router_timeout": 3.0,
         "parallel_expression_router": True,
         "finalizer_mode": "auto",
         "finalizer_provider_id": "",
-        "finalizer_model": "",
         "finalizer_temperature": 0.6,
         "finalizer_max_tokens": 512,
         "stream_observation_enabled": True,
@@ -4321,11 +4318,6 @@ CONFIG_METADATA_3 = {
                         "_special": "select_provider",
                         "hint": "留空时沿用兼容字段 decision_provider_id。",
                     },
-                    "interaction_middleware.expression_model": {
-                        "description": "表达模型名称",
-                        "type": "string",
-                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
-                    },
                     "interaction_middleware.expression_temperature": {
                         "description": "表达温度",
                         "type": "float",
@@ -4352,11 +4344,6 @@ CONFIG_METADATA_3 = {
                         "type": "string",
                         "_special": "select_provider",
                         "hint": "留空时沿用兼容字段 decision_provider_id。",
-                    },
-                    "interaction_middleware.router_model": {
-                        "description": "路由模型名称",
-                        "type": "string",
-                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
                     },
                     "interaction_middleware.router_temperature": {
                         "description": "路由温度",
@@ -4406,11 +4393,6 @@ CONFIG_METADATA_3 = {
                         "description": "整理模型提供商",
                         "type": "string",
                         "_special": "select_provider",
-                    },
-                    "interaction_middleware.finalizer_model": {
-                        "description": "整理模型名称",
-                        "type": "string",
-                        "hint": "可选。留空时使用所选提供商自身的模型名称。",
                     },
                     "interaction_middleware.finalizer_temperature": {
                         "description": "整理温度",

@@ -1050,10 +1050,6 @@
           "description": "Expression Model Provider",
           "hint": "Empty uses the compatibility decision_provider_id field."
         },
-        "expression_model": {
-          "description": "Expression Model Name",
-          "hint": "Optional. Empty uses the selected provider's own model name."
-        },
         "expression_temperature": {
           "description": "Expression Temperature"
         },
@@ -1073,10 +1069,6 @@
         "router_provider_id": {
           "description": "Router Model Provider",
           "hint": "Empty uses the compatibility decision_provider_id field."
-        },
-        "router_model": {
-          "description": "Router Model Name",
-          "hint": "Optional. Empty uses the selected provider's own model name."
         },
         "router_temperature": {
           "description": "Router Temperature"
@@ -1116,10 +1108,6 @@
         },
         "finalizer_provider_id": {
           "description": "Cleanup Model Provider"
-        },
-        "finalizer_model": {
-          "description": "Cleanup Model Name",
-          "hint": "Optional. Empty uses the selected provider's own model name."
         },
         "finalizer_temperature": {
           "description": "Cleanup Temperature"

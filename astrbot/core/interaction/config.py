@@ -70,7 +70,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         decision_temperature=decision_temperature,
         decision_timeout=decision_timeout,
         expression_provider_id=expression_provider_id,
-        expression_model=str(interaction_config.get("expression_model", "") or ""),
         expression_temperature=_float_or_default(
             interaction_config.get("expression_temperature", decision_temperature),
             decision_temperature,
@@ -80,7 +79,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
             decision_timeout,
         ),
         router_provider_id=router_provider_id,
-        router_model=str(interaction_config.get("router_model", "") or ""),
         router_temperature=_float_or_default(
             interaction_config.get("router_temperature", 0.0),
             0.0,
@@ -95,7 +93,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         finalizer_provider_id=str(
             interaction_config.get("finalizer_provider_id", "") or ""
         ),
-        finalizer_model=str(interaction_config.get("finalizer_model", "") or ""),
         finalizer_temperature=float(
             interaction_config.get("finalizer_temperature", 0.6) or 0.6
         ),

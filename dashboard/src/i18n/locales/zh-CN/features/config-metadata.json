@@ -1052,10 +1052,6 @@
           "description": "表达模型提供商",
           "hint": "留空时沿用兼容字段 decision_provider_id。"
         },
-        "expression_model": {
-          "description": "表达模型名称",
-          "hint": "可选。留空时使用所选提供商自身的模型名称。"
-        },
         "expression_temperature": {
           "description": "表达温度"
         },
@@ -1075,10 +1071,6 @@
         "router_provider_id": {
           "description": "路由模型提供商",
           "hint": "留空时沿用兼容字段 decision_provider_id。"
-        },
-        "router_model": {
-          "description": "路由模型名称",
-          "hint": "可选。留空时使用所选提供商自身的模型名称。"
         },
         "router_temperature": {
           "description": "路由温度"
@@ -1118,10 +1110,6 @@
         },
         "finalizer_provider_id": {
           "description": "整理模型提供商"
-        },
-        "finalizer_model": {
-          "description": "整理模型名称",
-          "hint": "可选。留空时使用所选提供商自身的模型名称。"
         },
         "finalizer_temperature": {
           "description": "整理温度"

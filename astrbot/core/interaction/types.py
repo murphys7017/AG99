@@ -174,16 +174,13 @@ class InteractionAgentConfig:
     decision_temperature: float = 0.5
     decision_timeout: float = 15.0
     expression_provider_id: str = ""
-    expression_model: str = ""
     expression_temperature: float = 0.6
     expression_timeout: float = 8.0
     router_provider_id: str = ""
-    router_model: str = ""
     router_temperature: float = 0.0
     router_timeout: float = 3.0
     parallel_expression_router: bool = True
     finalizer_provider_id: str = ""
-    finalizer_model: str = ""
     finalizer_temperature: float = 0.6
     finalizer_max_tokens: int = 512
     finalizer_mode: FinalizerMode = FinalizerMode.AUTO

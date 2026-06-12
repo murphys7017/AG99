@@ -23,7 +23,7 @@ from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
 )
-from .decision_agent import InteractionDecisionAgent, _maybe_bypass_protocol_command
+from .decision_agent import _maybe_bypass_protocol_command
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .memory_store import (
     InteractionMemoryStore,
@@ -80,7 +80,6 @@ class InteractionMiddleware:
         self._reject_development_fallback_policy(config)
         self.interaction_config = load_interaction_agent_config(config)
         self.memory_store = InteractionMemoryStore()
-        self.decision_agent = InteractionDecisionAgent(self.memory_store)
         self.expression_agent = InteractionExpressionAgent(self.memory_store)
         self.router_agent = InteractionRouterAgent(self.memory_store)
         self.output_controller.interaction_config = self.interaction_config
@@ -280,12 +279,7 @@ class InteractionMiddleware:
                 decision=decision,
             )
         else:
-            decision = await self._maybe_build_legacy_decision_override(
-                event,
-                interaction_config,
-            )
-            if decision is None:
-                decision = self._maybe_build_protocol_command_bypass(event)
+            decision = self._maybe_build_protocol_command_bypass(event)
             if decision is None:
                 first_response, route = await self._build_fast_response_and_route(
                     event,
@@ -357,15 +351,6 @@ class InteractionMiddleware:
             immediate_spoken_reply=None,
             reason="live_mode_requires_audio_chunk_stream",
         )
-
-    async def _maybe_build_legacy_decision_override(
-        self,
-        event: AstrMessageEvent,
-        interaction_config,
-    ) -> InteractionDecision | None:
-        if type(self.decision_agent) is InteractionDecisionAgent:
-            return None
-        return await self._decide_interaction_route(event, interaction_config)
 
     def _maybe_build_protocol_command_bypass(
         self,
@@ -483,50 +468,6 @@ class InteractionMiddleware:
             exc_info=True,
         )
         return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
-
-    async def _decide_interaction_route(
-        self,
-        event: AstrMessageEvent,
-        interaction_config,
-    ) -> InteractionDecision:
-        if self.plugin_context is None:
-            event.set_extra("_interaction_decision_failed", True)
-            event.set_extra(
-                "_interaction_decision_failure_reason",
-                "plugin_context_unavailable",
-            )
-            record_interaction_turn_failure(
-                event,
-                stage="decision",
-                reason="plugin_context_unavailable",
-                user_visible_action="none",
-            )
-            raise RuntimeError("Interaction decision plugin context unavailable")
-        try:
-            decision = await self.decision_agent.decide(
-                event,
-                self.plugin_context,
-                interaction_config,
-            )
-        except Exception as exc:  # noqa: BLE001
-            event.set_extra("_interaction_decision_failed", True)
-            event.set_extra("_interaction_decision_failure_reason", str(exc))
-            record_interaction_turn_failure(
-                event,
-                stage="decision",
-                reason=getattr(exc, "reason", "decision_pipeline_error"),
-                exception=exc,
-                user_visible_action="none",
-            )
-            logger.error(
-                "Interaction decision failed: platform_id=%s session_id=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                exc,
-                exc_info=True,
-            )
-            raise
-        return decision
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:
         runtime_config = self._get_runtime_config(event)

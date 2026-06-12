@@ -95,7 +95,6 @@ class InteractionExpressionAgent:
                     ),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.expression_temperature,
-                    model=interaction_config.expression_model or None,
                 ),
                 timeout=interaction_config.expression_timeout,
             )
