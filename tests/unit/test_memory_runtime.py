@@ -1477,6 +1477,55 @@ async def test_memory_service_snapshot_keeps_query_as_debug_meta(temp_dir: Path)
 
 
 @pytest.mark.asyncio
+async def test_memory_snapshot_current_identity_does_not_inherit_previous_group_sender(
+    temp_dir: Path,
+):
+    store = MemoryStore(db_path=temp_dir / "memory.db")
+    memory_service = MemoryService(
+        store,
+        TurnRecordService(store),
+        _build_short_term_service(store, RecentConversationSource(store)),
+        MemorySnapshotBuilder(store),
+    )
+    previous_sender_request = MemoryUpdateRequest(
+        umo="test:group:group-1",
+        conversation_id="shared-conversation",
+        platform_id="test",
+        platform_user_key="test:user-b",
+        canonical_user_id="canonical-user-b",
+        session_id="group-1",
+        provider_request=None,
+        user_message={"role": "user", "content": "Message from Bob"},
+        assistant_message={"role": "assistant", "content": "Reply to Bob"},
+        message_timestamp=datetime.now(UTC),
+    )
+    current_identity = MemoryIdentity(
+        umo="test:group:group-1",
+        platform_id="test",
+        sender_user_id="user-a",
+        sender_nickname="Alice",
+        platform_user_key="test:user-a",
+        canonical_user_id=None,
+    )
+
+    try:
+        await memory_service.update_from_postprocess(previous_sender_request)
+        snapshot = await memory_service.get_snapshot(
+            "test:group:group-1",
+            "shared-conversation",
+            identity=current_identity,
+        )
+    finally:
+        await store.close()
+
+    assert snapshot.platform_user_key == "test:user-a"
+    assert snapshot.canonical_user_id is None
+    assert snapshot.experiences == []
+    assert snapshot.long_term_memories == []
+    assert snapshot.persona_state is None
+
+
+@pytest.mark.asyncio
 async def test_memory_snapshot_prompt_injection_uses_query_search_top_k(
     temp_dir: Path,
 ):

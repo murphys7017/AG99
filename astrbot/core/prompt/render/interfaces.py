@@ -11,6 +11,11 @@ from dataclasses import dataclass, field
 from hashlib import sha1
 from typing import TYPE_CHECKING, Any
 
+from astrbot.core.output_contract import (
+    CompiledOutputContract,
+    OutputContract,
+    build_output_contract_fallback_prompt,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo, build_skills_prompt
@@ -18,11 +23,6 @@ from astrbot.core.star.context import Context
 
 from ..context_types import ContextPack, ContextSlot
 from ..input_annotations import SUPPORTED_INPUT_ANNOTATION_FIELDS
-from astrbot.core.output_contract import (
-    CompiledOutputContract,
-    OutputContract,
-    build_output_contract_fallback_prompt,
-)
 
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
@@ -487,6 +487,11 @@ class BasePromptRenderer:
             )
             fields_rendered |= self._add_text_tag(
                 user_ref,
+                "role",
+                self._clean_text(payload.get("role")),
+            )
+            fields_rendered |= self._add_text_tag(
+                user_ref,
                 "platform_name",
                 self._clean_text(payload.get("platform_name")),
             )
@@ -501,6 +506,11 @@ class BasePromptRenderer:
                     "is_group",
                     "true" if payload["is_group"] else "false",
                 )
+            fields_rendered |= self._add_text_tag(
+                user_ref,
+                "conversation_scope",
+                self._clean_text(payload.get("conversation_scope")),
+            )
             if fields_rendered:
                 rendered_slot_names.append(user_info_slot.name)
 
@@ -1615,6 +1625,9 @@ class BasePromptRenderer:
             "nickname": self._extract_child_tag_text(
                 prompt_tree, user_info_node, "nickname"
             ),
+            "role": self._extract_child_tag_text(
+                prompt_tree, user_info_node, "role"
+            ),
             "platform_name": self._extract_child_tag_text(
                 prompt_tree,
                 user_info_node,
@@ -1630,6 +1643,11 @@ class BasePromptRenderer:
             "is_group": self._extract_child_tag_text(
                 prompt_tree, user_info_node, "is_group"
             ),
+            "conversation_scope": self._extract_child_tag_text(
+                prompt_tree,
+                user_info_node,
+                "conversation_scope",
+            ),
         }
         if not any(values.values()):
             return []
@@ -1638,11 +1656,13 @@ class BasePromptRenderer:
         for key in (
             "user_id",
             "nickname",
+            "role",
             "platform_name",
             "umo",
             "group_id",
             "group_name",
             "is_group",
+            "conversation_scope",
         ):
             value = self._clean_text(values.get(key))
             if value:

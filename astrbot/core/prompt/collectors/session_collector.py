@@ -186,11 +186,15 @@ class SessionCollector(ContextCollectorInterface):
         return {
             "user_id": user_id,
             "nickname": nickname,
+            "role": "current_speaker",
             "platform_name": platform_name,
             "umo": getattr(event, "unified_msg_origin", None),
             "group_id": group_id,
             "group_name": group_name,
             "is_group": group_id is not None,
+            "conversation_scope": (
+                "group_multi_user" if group_id is not None else "private_single_user"
+            ),
         }
 
     def _resolve_group_name(self, group: object | None) -> str | None:

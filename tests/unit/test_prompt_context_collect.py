@@ -22,6 +22,7 @@ from astrbot.core.memory.snapshot_builder import MemorySnapshotReadOptions
 from astrbot.core.memory.types import (
     Experience,
     LongTermMemoryIndex,
+    MemoryIdentity,
     MemorySnapshot,
     PersonaState,
     ShortTermMemory,
@@ -186,6 +187,8 @@ def _make_handoff_tool(
 @pytest.fixture(autouse=True)
 def _patch_memory_service():
     service = MagicMock()
+    service.initialize = AsyncMock()
+    service.identity_resolver = None
     service.get_snapshot = AsyncMock(
         return_value=MemorySnapshot(
             umo="test_platform:private:test-session",
@@ -1094,11 +1097,13 @@ async def test_collect_context_pack_collects_session_slots_for_private_chat():
     assert user_slot.value == {
         "user_id": "user123",
         "nickname": "Tester",
+        "role": "current_speaker",
         "platform_name": "test_platform",
         "umo": "test_platform:private:test-session",
         "group_id": None,
         "group_name": None,
         "is_group": False,
+        "conversation_scope": "private_single_user",
     }
 
 
@@ -1126,6 +1131,8 @@ async def test_collect_context_pack_collects_group_session_info():
     assert user_slot.value["group_id"] == "group-1"
     assert user_slot.value["group_name"] == "Test Group"
     assert user_slot.value["is_group"] is True
+    assert user_slot.value["role"] == "current_speaker"
+    assert user_slot.value["conversation_scope"] == "group_multi_user"
 
 
 @pytest.mark.asyncio
@@ -1631,6 +1638,18 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
+    current_identity = MemoryIdentity(
+        umo=event.unified_msg_origin,
+        platform_id="test_platform",
+        sender_user_id="user123",
+        sender_nickname="Tester",
+        platform_user_key="test_platform:user123",
+        canonical_user_id="canonical-user-1",
+    )
+    _patch_memory_service.identity_resolver = MagicMock()
+    _patch_memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=current_identity
+    )
     snapshot = MemorySnapshot(
         umo=event.unified_msg_origin,
         conversation_id="conv-id",
@@ -1717,6 +1736,7 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
     assert snapshot_kwargs["umo"] == event.unified_msg_origin
     assert snapshot_kwargs["conversation_id"] == "conv-id"
     assert snapshot_kwargs["query"] == "effective prompt"
+    assert snapshot_kwargs["identity"] is current_identity
     assert isinstance(snapshot_kwargs["read_options"], MemorySnapshotReadOptions)
     assert snapshot_kwargs["read_options"].long_term.top_k == 3
     assert snapshot_kwargs["read_options"].long_term.query_required is True

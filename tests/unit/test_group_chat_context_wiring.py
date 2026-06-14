@@ -32,7 +32,7 @@ def make_event(umo: str = "aiocqhttp:GroupMessage:user_123_group_456"):
     event.get_message_type.return_value = MessageType.GROUP_MESSAGE
     event.message_obj = SimpleNamespace(
         message=[Plain("hello")],
-        sender=SimpleNamespace(nickname="Alice"),
+        sender=SimpleNamespace(nickname="Alice", user_id="10001"),
     )
     event.get_messages.return_value = event.message_obj.message
     event.message_str = "hello"
@@ -101,7 +101,7 @@ async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_dou
     assert extension.mount == "context"
     assert extension.value_kind == "text"
     assert "previous" in extension.value
-    assert "current" not in extension.value
+    assert "[Alice/10:01:00]: current" not in extension.value
     assert event.get_extra(GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA) is True
     assert req.extra_user_content_parts == []
     assert list(group_context.raw_records[event.unified_msg_origin]) == []
@@ -153,7 +153,7 @@ async def test_group_chat_context_legacy_request_injects_when_prompt_pipeline_di
     assert len(req.extra_user_content_parts) == 1
     assert isinstance(req.extra_user_content_parts[0], TextPart)
     assert "previous" in req.extra_user_content_parts[0].text
-    assert "current" not in req.extra_user_content_parts[0].text
+    assert "[Alice/10:01:00]: current" not in req.extra_user_content_parts[0].text
     assert list(group_context.raw_records[event.unified_msg_origin]) == []
 
 
@@ -218,6 +218,29 @@ async def test_group_chat_context_formats_reply_message_content():
 
     assert "[Quote(Bob: quoted content)]" in text
     assert "new message" in text
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_includes_stable_sender_ids():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.message_obj.message = [
+        Reply(
+            id="reply-1",
+            sender_id="20002",
+            sender_nickname="Alice",
+            message_str="quoted content",
+        ),
+        Plain("new message"),
+    ]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Alice (user_id=10001)/" in text
+    assert "[Quote(Alice (user_id=20002): quoted content)]" in text
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from .types import (
     Experience,
     LongTermMemoryIndex,
     LongTermVectorSyncStatus,
+    MemoryIdentity,
     MemoryIdentityBinding,
     MemorySnapshot,
     MemoryUpdateRequest,
@@ -160,6 +161,7 @@ class MemoryService:
         conversation_id: str | None,
         query: str | None = None,
         read_options: MemorySnapshotReadOptions | None = None,
+        identity: MemoryIdentity | None = None,
     ) -> MemorySnapshot:
         await self.initialize()
         logger.info(
@@ -173,6 +175,7 @@ class MemoryService:
             conversation_id,
             query,
             read_options=read_options,
+            identity=identity,
         )
 
     async def run_consolidation(

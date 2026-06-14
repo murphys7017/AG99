@@ -32,7 +32,10 @@ if TYPE_CHECKING:
 GROUP_HISTORY_HEADER = (
     "<system_reminder>"
     "You are in a group chat. "
-    "Below is the group chat context after your last reply:\n"
+    "Each sender is a distinct person; never merge identities based on nickname. "
+    "Use user_id as the stable identity when available. "
+    "The current speaker is identified separately in request_context/user_info, "
+    "and the messages below are prior group messages after your last reply:\n"
     "--- BEGIN CONTEXT ---\n"
 )
 GROUP_HISTORY_FOOTER = "\n--- END CONTEXT ---\n</system_reminder>"
@@ -258,7 +261,13 @@ class GroupChatContext(PromptExtensionCollectorInterface):
 
     async def _format_message(self, event: AstrMessageEvent, cfg: dict) -> str:
         datetime_str = datetime.datetime.now().strftime("%H:%M:%S")
-        parts = [f"[{event.message_obj.sender.nickname}/{datetime_str}]: "]
+        sender = event.message_obj.sender
+        nickname = _normalize_identity_text(getattr(sender, "nickname", None))
+        user_id = _normalize_identity_text(getattr(sender, "user_id", None))
+        sender_label = nickname or "Unknown"
+        if user_id:
+            sender_label += f" (user_id={user_id})"
+        parts = [f"[{sender_label}/{datetime_str}]: "]
 
         for comp in event.get_messages():
             if isinstance(comp, Plain):
@@ -288,13 +297,14 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                     parts.insert(1, "[DIRECTED AT YOU] ")
                 parts.append(f" [At: {comp.name}]")
             elif isinstance(comp, Reply):
+                quoted_sender = _format_quoted_sender(comp)
                 if comp.message_str:
                     parts.append(
-                        f" [Quote({comp.sender_nickname}: {_truncate_reply_text(comp.message_str)})]"
+                        f" [Quote({quoted_sender}: {_truncate_reply_text(comp.message_str)})]"
                     )
                 elif comp.chain:
                     chain_desc = _describe_chain(comp.chain)
-                    parts.append(f" [Quote({comp.sender_nickname}: {chain_desc})]")
+                    parts.append(f" [Quote({quoted_sender}: {chain_desc})]")
                 else:
                     parts.append(" [Quote]")
 
@@ -302,6 +312,20 @@ class GroupChatContext(PromptExtensionCollectorInterface):
 
 
 _MAX_REPLY_TEXT_LENGTH = 200
+
+
+def _normalize_identity_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _format_quoted_sender(reply: Reply) -> str:
+    nickname = _normalize_identity_text(reply.sender_nickname) or "Unknown"
+    sender_id = _normalize_identity_text(reply.sender_id)
+    if sender_id and sender_id != "0":
+        return f"{nickname} (user_id={sender_id})"
+    return nickname
 
 
 def _describe_chain(chain: list) -> str:

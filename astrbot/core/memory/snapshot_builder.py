@@ -17,6 +17,7 @@ from .types import (
     DocumentSearchRequest,
     Experience,
     LongTermMemoryIndex,
+    MemoryIdentity,
     MemorySnapshot,
     ScopeType,
 )
@@ -79,6 +80,7 @@ class MemorySnapshotBuilder:
         conversation_id: str | None,
         query: str | None = None,
         read_options: MemorySnapshotReadOptions | None = None,
+        identity: MemoryIdentity | None = None,
     ) -> MemorySnapshot:
         options = read_options or MemorySnapshotReadOptions()
         topic_state = await self.store.get_topic_state(umo, conversation_id)
@@ -89,8 +91,12 @@ class MemorySnapshotBuilder:
             conversation_id=conversation_id,
         )
         latest_turn = recent_turns[0] if recent_turns else None
-        canonical_user_id = latest_turn.canonical_user_id if latest_turn else None
-        platform_user_key = latest_turn.platform_user_key if latest_turn else None
+        if identity is not None:
+            canonical_user_id = identity.canonical_user_id
+            platform_user_key = identity.platform_user_key
+        else:
+            canonical_user_id = latest_turn.canonical_user_id if latest_turn else None
+            platform_user_key = latest_turn.platform_user_key if latest_turn else None
         experiences = []
         long_term_memories = []
         persona_state = None

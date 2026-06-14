@@ -4,6 +4,7 @@ Memory context collector for prompt context packing.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -54,13 +55,25 @@ class MemoryCollector(ContextCollectorInterface):
         memory_config = get_memory_config(event_config)
         if not memory_config.enabled or not memory_config.injection.enabled:
             return []
-        snapshot = await get_memory_service(event_config).get_snapshot(
+        memory_service = get_memory_service(event_config)
+        await memory_service.initialize()
+        identity = None
+        if memory_service.identity_resolver is not None:
+            identity_result = memory_service.identity_resolver.resolve_from_event(event)
+            identity = (
+                await identity_result
+                if inspect.isawaitable(identity_result)
+                else identity_result
+            )
+
+        snapshot = await memory_service.get_snapshot(
             umo=umo,
             conversation_id=conversation_id,
             query=query,
             read_options=memory_injection_to_snapshot_read_options(
                 memory_config.injection
             ),
+            identity=identity,
         )
 
         slots: list[ContextSlot] = []

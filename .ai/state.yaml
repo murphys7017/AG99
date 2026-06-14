@@ -1,8 +1,8 @@
 task:
-  class: maintenance
+  class: bugfix
   risk: medium
-  phase: upstream_small_fix_parity
-  scope: v4.25.2 small/compatibility parity batch (20 upstream commits rewritten locally)
+  phase: group_identity_prompt_fix_complete
+  scope: Prevent cross-member identity and memory leakage in shared group-chat prompts
 context:
   confidence: high
   assumptions:
@@ -30,6 +30,8 @@ context:
     - Plugin page security headers (X-Frame-Options/frame-ancestors) are relaxed only when `ASTRBOT_LAUNCHER` env is set, leaving standalone deployments' CSP posture unchanged.
     - Follow-up 4/5/6 upstream rewrite absorbs MiniMax Token Plan model discovery/M3 default, Anthropic tool_choice schema conversion, selected platform/plugin/template/provider fixes, and the future-task cron backend/manual-run contract.
     - The current follow-up absorbs upstream version 4.25.2, Markdown-aware KB chunking, LLM compression prompt polish, ChatUI recording staging, FIRST_NOTICE EULA/ru-RU notice, and the existing local CronJobPage frontend wiring for manual run/optional delivery session.
+    - Prompt memory injection must resolve identity from the current event; a shared group conversation's latest stored turn is not a valid proxy for the current speaker.
+    - Group-chat prompt records use stable sender IDs when available, while nicknames remain display labels only.
   unresolved_questions: []
 architecture:
   stability: stable
@@ -60,6 +62,8 @@ architecture:
     - Plugin APIs expose `marketplace_name` so local plugin entries can match marketplace names that differ only by underscore/hyphen normalization.
     - Builtin group chat context now uses a shared `GroupChatContext` state with two exits: prompt-extension collection for Yakumo apply-visible prompt pipeline and legacy `on_llm_request` fallback for non-visible prompt modes.
     - LLM context compression now uses round-based token-ratio recent preservation and compression-provider modality sanitization; it remains a runner-level request/messages optimization and does not own Yakumo memory storage or retrieval.
+    - Memory snapshot reads accept an explicit current-event identity override; legacy callers without an identity retain latest-turn fallback behavior.
+    - Session prompt metadata marks the current speaker and distinguishes group multi-user scope from private single-user scope.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -126,12 +130,19 @@ verification:
     - .venv\Scripts\python -m pytest tests/ -q --ignore=tests/test_openai_source.py --ignore=tests/test_anthropic_source.py --ignore=tests/test_aiocqhttp_platform.py -p no:cacheprovider
     - vue-tsc dashboard typecheck (no errors in any touched dashboard files)
     - git diff --check
+    - .venv\Scripts\python -m pytest tests\unit\test_group_chat_context_wiring.py tests\unit\test_prompt_context_collect.py::test_collect_context_pack_collects_session_slots_for_private_chat tests\unit\test_prompt_context_collect.py::test_collect_context_pack_collects_group_session_info tests\unit\test_prompt_context_collect.py::test_collect_context_pack_memory_skips_empty_snapshot tests\unit\test_prompt_request_adapter.py::test_request_adapter_reconstructs_rendered_user_message_order tests\unit\test_prompt_tree_renderer.py::test_render_engine_escapes_markup_text_in_system_and_structured_input -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-identity\run
+    - .venv\Scripts\python -m pytest tests\unit\test_memory_runtime.py::test_memory_snapshot_current_identity_does_not_inherit_previous_group_sender -q -p no:cacheprovider --basetemp .tmp\pytest-memory-identity\run
+    - .venv\Scripts\python -m pytest tests\unit\test_prompt_context_collect.py::test_collect_context_pack_collects_memory_slots_from_snapshot -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-identity\collector-run
+    - .venv\Scripts\python -m ruff check astrbot\core\memory\snapshot_builder.py astrbot\core\memory\service.py astrbot\core\prompt\collectors\memory_collector.py astrbot\builtin_stars\astrbot\group_chat_context.py astrbot\core\prompt\collectors\session_collector.py astrbot\core\prompt\render\interfaces.py tests\unit\test_group_chat_context_wiring.py tests\unit\test_prompt_context_collect.py tests\unit\test_memory_runtime.py
+    - .venv\Scripts\python -m pytest tests\unit\test_prompt_pipeline_integration.py::test_apply_visible_pipeline_replaces_legacy_request_with_group_context_extension -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-owner
+    - .venv\Scripts\python -m ruff check tests\unit\test_prompt_pipeline_integration.py
+    - git diff --check
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
-  validation_gap: "Full backend suite, live provider calls, live sandbox backends, browser manual setup flow, dashboard build, and GitHub Actions execution were not run. Current small-fix upstream parity changes were validated with targeted message/main-agent/dashboard tests, ruff, dashboard typecheck, YAML/JSON parsing, and diff checks. 6 baseline `test_openai_source.py` failures (Windows path normalization `_file_uri_to_path` tests + 2 pre-existing `_summarize_*` AttributeError) are unrelated to this pass and remain on master. Baseline 33 -> 31 failed after the batch: 1 broken upstream-style test fixed (`test_whisper_api_source.py` opus test via `ensure_wav` guard, the `test_tool_result_includes_all_calltoolresult_content` mock was completed with `mime_type` per upstream 4b097011c); 1 new test added (`test_resolve_image_part_preserves_base64_png_mime_type`) and passes; 2 new Reply tests added (`test_aiocqhttp_reply.py`) and pass."
+  validation_gap: "Full backend suite, live QQ group testing, and live provider calls were not run for the group-identity fix. Targeted group-context, session prompt, memory collector, memory snapshot, request adapter, renderer, Ruff, and diff checks passed. The broader prompt-context run still contains the previously recorded quoted-image caption fixture drift, and the default Windows pytest temp directory remains inaccessible unless a workspace basetemp is supplied. Existing upstream-parity validation gaps and baseline provider failures remain unchanged."
 runtime:
   mode: minimal_v1

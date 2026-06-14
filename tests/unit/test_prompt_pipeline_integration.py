@@ -26,7 +26,11 @@ from astrbot.core.message.components import File, Image, Plain, Reply
 from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import (
     InternalAgentSubStage,
 )
-from astrbot.core.prompt.context_collect import collect_context_pack
+from astrbot.core.prompt.context_collect import (
+    build_prompt_extension_slots,
+    collect_context_pack,
+)
+from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces import PromptExtensionCollectorInterface
 from astrbot.core.prompt.render import (
@@ -711,3 +715,88 @@ async def test_collect_and_render_pipeline_includes_prompt_extensions(
     ]
     assert extension_text_parts
     assert "desktop.sidecar" in extension_text_parts[0]
+
+
+def test_apply_visible_pipeline_replaces_legacy_request_with_group_context_extension():
+    event, _ = _make_event()
+    context = _make_context()
+    config = ama.MainAgentBuildConfig(
+        tool_call_timeout=60,
+        prompt_pipeline_mode="apply_visible",
+    )
+    group_context = (
+        "<system_reminder>You are in a group chat.\n"
+        "[Bob (user_id=20002)/10:00:00]: previous message"
+        "</system_reminder>"
+    )
+    extension_slots = build_prompt_extension_slots(
+        [
+            PromptExtension(
+                plugin_id="astrbot_group_chat_context",
+                mount="context",
+                title="Group Chat Context",
+                value=group_context,
+                value_kind="text",
+            )
+        ]
+    )
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="current message",
+                category="input",
+                source="test",
+            ),
+            "session.user_info": ContextSlot(
+                name="session.user_info",
+                value={
+                    "user_id": "10001",
+                    "nickname": "Alice",
+                    "role": "current_speaker",
+                    "platform_name": "qq",
+                    "umo": "qq:group:1",
+                    "group_id": "1",
+                    "group_name": "Test Group",
+                    "is_group": True,
+                    "conversation_scope": "group_multi_user",
+                },
+                category="session",
+                source="test",
+            ),
+            **{slot.name: slot for slot in extension_slots},
+        }
+    )
+    request = ProviderRequest(
+        prompt="legacy prompt",
+        system_prompt="legacy system prompt",
+        contexts=[{"role": "user", "content": "legacy history"}],
+        extra_user_content_parts=[TextPart(text="legacy group injection")],
+    )
+
+    ama._apply_prompt_pipeline_visible_mode(
+        event=event,
+        plugin_context=context,
+        config=config,
+        provider_request=request,
+        prompt_context_pack=pack,
+    )
+
+    serialized_request = json.dumps(
+        {
+            "system_prompt": request.system_prompt,
+            "contexts": request.contexts,
+            "prompt": request.prompt,
+            "extra_user_content_parts": [
+                part.model_dump() for part in request.extra_user_content_parts
+            ],
+        },
+        ensure_ascii=False,
+    )
+    assert "legacy prompt" not in serialized_request
+    assert "legacy system prompt" not in serialized_request
+    assert "legacy history" not in serialized_request
+    assert "legacy group injection" not in serialized_request
+    assert serialized_request.count("previous message") == 1
+    assert "current_speaker" in serialized_request
+    assert "group_multi_user" in serialized_request
