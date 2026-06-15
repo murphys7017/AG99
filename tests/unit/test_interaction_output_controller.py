@@ -2518,6 +2518,41 @@ async def test_capture_plugin_output_persona_fallback_to_direct_on_error(
 
 
 @pytest.mark.asyncio
+async def test_capture_plugin_output_persona_uses_persona_renderer(webchat_event):
+    from astrbot.core.interaction.output_modes import PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY
+
+    queue = asyncio.Queue()
+    persona_renderer = AsyncMock(
+        return_value=MessageChain([Plain("人格化后的回复")])
+    )
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            persist_callback=_mark_completed_callback,
+            persona_output_renderer=persona_renderer,
+        )
+        await controller.capture_plugin_output(
+            MessageChain([Plain("hello from plugin")]),
+            webchat_event,
+            mode="persona",
+        )
+
+    persona_renderer.assert_awaited_once()
+    assert persona_renderer.await_args.args[0] is webchat_event
+    assert persona_renderer.await_args.args[1].get_plain_text() == "hello from plugin"
+    assert persona_renderer.await_args.args[2] is None
+    assert webchat_event.get_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY) == "plugin_persona"
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert any(
+        o.get("kind") == "plugin_persona" and o.get("text") == "人格化后的回复"
+        for o in outputs
+    )
+
+
+@pytest.mark.asyncio
 async def test_capture_plugin_output_does_not_set_model_result(webchat_event):
     """plugin output must not trigger result_is_model_result=True anywhere."""
     queue = asyncio.Queue()

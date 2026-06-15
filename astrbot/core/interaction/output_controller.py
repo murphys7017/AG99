@@ -108,12 +108,20 @@ class InteractionOutputController:
         interaction_memory_store: InteractionMemoryStore | None = None,
         platform_settings: dict[str, Any] | None = None,
         persist_callback: (Callable[[AstrMessageEvent], Awaitable[None]] | None) = None,
+        persona_output_renderer: (
+            Callable[
+                [AstrMessageEvent, MessageChain, dict[str, Any] | None],
+                Awaitable[MessageChain],
+            ]
+            | None
+        ) = None,
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
         self.interaction_memory_store = interaction_memory_store
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
+        self.persona_output_renderer = persona_output_renderer
         self._refresh_outbound_materialization_config()
 
     def _refresh_outbound_materialization_config(
@@ -367,8 +375,14 @@ class InteractionOutputController:
             plain = message.get_plain_text().strip()
             if plain:
                 try:
-                    message = await self._rewrite_plugin_output_via_persona(
-                        event, message, metadata=metadata
+                    if self.persona_output_renderer is None:
+                        raise RuntimeError(
+                            "plugin persona rewrite: persona_output_renderer unavailable"
+                        )
+                    message = await self.persona_output_renderer(
+                        event,
+                        message,
+                        metadata,
                     )
                     resolved_kind = "plugin_persona"
                 except Exception:  # noqa: BLE001
@@ -414,61 +428,6 @@ class InteractionOutputController:
         )
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
-
-    async def _rewrite_plugin_output_via_persona(
-        self,
-        event: AstrMessageEvent,
-        message: MessageChain,
-        metadata: dict[str, Any] | None = None,
-    ) -> MessageChain:
-        """Rewrite a plugin's plain-text output through the persona expression path.
-
-        Only handles plain text; multi-modal or empty-text messages are
-        returned unchanged.  The caller is responsible for fallback when
-        this method raises.
-        """
-        plain = message.get_plain_text().strip()
-        if not plain:
-            return message
-
-        expression_config = self._get_interaction_config(event)
-        expression_provider_id = expression_config.expression_provider_id
-        if not expression_provider_id:
-            raise RuntimeError("plugin persona rewrite: no expression_provider_id")
-
-        provider = None
-        if self.plugin_context is not None:
-            provider = self.plugin_context.get_provider_by_id(expression_provider_id)
-
-        if provider is None:
-            raise RuntimeError(
-                f"plugin persona rewrite: provider unavailable "
-                f"provider_id={expression_provider_id}"
-            )
-
-        rewrite_prompt = (
-            "请用当前角色的语气和风格改写下面这段插件消息。\n"
-            "不要增加事实，不要补充内容，只做人格化润色。\n"
-            "如果原文已经是口语化的中文，直接返回原文。\n\n"
-            f"插件消息：\n{plain}\n\n"
-            "改写结果："
-        )
-
-        response = await asyncio.wait_for(
-            provider.text_chat(
-                prompt=rewrite_prompt,
-                system_prompt="",
-                temperature=expression_config.expression_temperature,
-            ),
-            timeout=expression_config.expression_timeout,
-        )
-        rewritten = (response.completion_text or "").strip()
-        if not rewritten:
-            raise RuntimeError("plugin persona rewrite returned empty text")
-
-        from astrbot.core.message.components import Plain as PlainComp
-
-        return MessageChain([PlainComp(rewritten)])
 
     async def capture_visible_completion(
         self,

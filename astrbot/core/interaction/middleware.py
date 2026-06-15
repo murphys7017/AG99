@@ -31,6 +31,7 @@ from .memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
 from .output_controller import InteractionOutputController
+from .persona_runtime import InteractionPersonaRuntime
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     ensure_interaction_turn_state,
@@ -82,16 +83,36 @@ class InteractionMiddleware:
         self.interaction_config = load_interaction_agent_config(config)
         self.memory_store = InteractionMemoryStore()
         self.expression_agent = InteractionExpressionAgent(self.memory_store)
+        self.persona_runtime = InteractionPersonaRuntime(self.expression_agent)
         self.router_agent = InteractionRouterAgent(self.memory_store)
         self.output_controller.interaction_config = self.interaction_config
         self.output_controller.interaction_memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
         self.output_controller._persist_callback = self._on_output_persist_requested
+        self.output_controller.persona_output_renderer = (
+            self._render_plugin_output_via_persona
+        )
         self._inflight_tasks: set[asyncio.Task] = set()
 
     def set_plugin_context(self, plugin_context: Any) -> None:
         self.plugin_context = plugin_context
         self.output_controller.plugin_context = plugin_context
+
+    async def _render_plugin_output_via_persona(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        metadata: dict[str, Any] | None = None,
+    ) -> MessageChain:
+        return await self.persona_runtime.render_plugin_output(
+            event,
+            message,
+            plugin_context=self.plugin_context,
+            interaction_config=load_interaction_agent_config(
+                self._get_runtime_config(event)
+            ),
+            metadata=metadata,
+        )
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
         if self.plugin_context is None:

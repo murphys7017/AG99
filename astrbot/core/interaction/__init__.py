@@ -32,7 +32,9 @@ from .output_modes import (
     OutputOrigin,
     PluginOutputMode,
     PluginOutputRequest,
+    temporary_output_origin,
 )
+from .persona_runtime import InteractionPersonaRuntime
 from .middleware import InteractionMiddleware
 from .output_controller import InteractionOutputController
 from .router_agent import InteractionRouterAgent, InteractionRouterError
@@ -67,6 +69,7 @@ __all__ = [
     "PLUGIN_OUTPUT_MODE_EXTRA_KEY",
     "PluginOutputMode",
     "PluginOutputRequest",
+    "InteractionPersonaRuntime",
     "FastRouteMode",
     "FinalizerMode",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
@@ -105,5 +108,6 @@ __all__ = [
     "load_interaction_agent_config",
     "register_interaction_conversation_postprocessor",
     "reset_interaction_conversation_postprocessor",
+    "temporary_output_origin",
     "unregister_interaction_conversation_postprocessor",
 ]
