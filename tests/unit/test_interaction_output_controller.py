@@ -18,7 +18,9 @@ from astrbot.core.interaction.turn_state import (
     InteractionStreamState,
     InteractionTurnState,
     append_interaction_turn_visible_output,
+    get_interaction_turn_finalized_material,
     get_interaction_turn_state,
+    get_interaction_turn_visible_outputs,
     mark_interaction_turn_completed,
     set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
@@ -2452,3 +2454,128 @@ async def test_send_none_uses_event_visible_completion_and_propagates_failure(
         await controller.capture_message_chain(None, webchat_event)
 
     webchat_event.complete_visible_turn.assert_awaited_once()
+
+
+# ── Plugin output path tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_capture_plugin_output_direct_adds_visible_output(webchat_event):
+    """plugin_direct output must produce a visible output and not set model_result."""
+    from astrbot.core.interaction.output_modes import PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY
+
+    queue = asyncio.Queue()
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            persist_callback=_mark_completed_callback,
+        )
+        await controller.capture_plugin_output(
+            MessageChain([Plain("plugin says hi")]),
+            webchat_event,
+            mode="direct",
+        )
+
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert any(
+        o.get("kind") == "plugin_direct" and "plugin says hi" in o.get("text", "")
+        for o in outputs
+    ), f"plugin_direct not found in {outputs}"
+    assert webchat_event.get_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY) == "plugin_direct"
+
+
+@pytest.mark.asyncio
+async def test_capture_plugin_output_persona_fallback_to_direct_on_error(
+    webchat_event,
+):
+    """When persona rewrite raises, the output must degrade to plugin_direct."""
+    from astrbot.core.interaction.output_modes import (
+        PERSONA_REWRITE_FAILED_EXTRA_KEY,
+        PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
+    )
+
+    queue = asyncio.Queue()
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            persist_callback=_mark_completed_callback,
+        )
+        # No plugin_context means persona rewrite will fail
+        await controller.capture_plugin_output(
+            MessageChain([Plain("hello from plugin")]),
+            webchat_event,
+            mode="persona",
+        )
+
+    assert webchat_event.get_extra(PERSONA_REWRITE_FAILED_EXTRA_KEY) is True
+    assert webchat_event.get_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY) == "plugin_direct"
+
+
+@pytest.mark.asyncio
+async def test_capture_plugin_output_does_not_set_model_result(webchat_event):
+    """plugin output must not trigger result_is_model_result=True anywhere."""
+    queue = asyncio.Queue()
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            persist_callback=_mark_completed_callback,
+        )
+        await controller.capture_plugin_output(
+            MessageChain([Plain("just a test")]),
+            webchat_event,
+            mode="direct",
+        )
+
+    result = webchat_event.get_result()
+    assert result is None or not result.is_model_result()
+
+
+@pytest.mark.asyncio
+async def test_capture_plugin_output_records_visible_output_and_finalized_material(
+    webchat_event,
+):
+    """plugin_direct and plugin_persona must both be recorded in visible_outputs
+    and trigger finalized material."""
+    queue = asyncio.Queue()
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            persist_callback=_mark_completed_callback,
+        )
+        await controller.capture_plugin_output(
+            MessageChain([Plain("record me")]),
+            webchat_event,
+            mode="direct",
+        )
+
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert any("record me" in o.get("text", "") for o in outputs)
+
+    material = get_interaction_turn_finalized_material(webchat_event)
+    assert material is not None
+    assert "record me" in material.get("assistant_text", "")
+
+
+@pytest.mark.asyncio
+async def test_capture_plugin_output_skip_when_message_is_none(webchat_event):
+    """capture_plugin_output(None) should be a no-op."""
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        persist_callback=_mark_completed_callback,
+    )
+    await controller.capture_plugin_output(None, webchat_event, mode="direct")
+    # Should not crash; visible outputs should still be whatever they were.
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert isinstance(outputs, list)

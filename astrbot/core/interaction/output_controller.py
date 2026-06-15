@@ -71,6 +71,14 @@ from .turn_state import (
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
+from .output_modes import (
+    PERSONA_REWRITE_FAILED_EXTRA_KEY,
+    PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
+    PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
+    OutputOrigin,
+    PluginOutputMode,
+    temporary_output_origin,
+)
 from .types import FinalizerMode, InteractionAgentConfig, RouteMode
 
 
@@ -219,10 +227,11 @@ class InteractionOutputController:
         set_interaction_turn_immediate_reply(event, reply)
         event.set_extra("_interaction_emitting_immediate_reply", True)
         try:
-            await self.capture_message_chain(
-                MessageChain([Plain(reply)]),
-                event,
-            )
+            with temporary_output_origin(event, OutputOrigin.CORE.value):
+                await self.capture_message_chain(
+                    MessageChain([Plain(reply)]),
+                    event,
+                )
         finally:
             event.set_extra("_interaction_emitting_immediate_reply", False)
 
@@ -327,6 +336,139 @@ class InteractionOutputController:
         mark_interaction_turn_core_final_result_consumed(event)
         full_message = self._get_full_core_final_message(event, message)
         await self._deliver_core_reply(full_message, event)
+
+    async def capture_plugin_output(
+        self,
+        message: MessageChain | None,
+        event: AstrMessageEvent,
+        *,
+        mode: str = PluginOutputMode.DIRECT.value,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Entry point for plugin-origin output through the Output Runtime.
+
+        Two modes are supported:
+
+        * **direct** — deliver the message as-is.  No persona rewriting,
+          no finalizer, no ``result_is_model_result=True``.
+        * **persona** — extract plain text, run it through a lightweight
+          persona expression rewrite, then deliver the rewritten text.
+          If the rewrite fails, degrade to direct without swallowing the
+          message.
+        """
+        if message is None:
+            return
+
+        event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, mode)
+        resolved_kind = "plugin_direct"
+        resolved_mode = PluginOutputMode(mode)
+
+        if resolved_mode == PluginOutputMode.PERSONA:
+            plain = message.get_plain_text().strip()
+            if plain:
+                try:
+                    message = await self._rewrite_plugin_output_via_persona(
+                        event, message, metadata=metadata
+                    )
+                    resolved_kind = "plugin_persona"
+                except Exception:  # noqa: BLE001
+                    event.set_extra(PERSONA_REWRITE_FAILED_EXTRA_KEY, True)
+                    logger.warning(
+                        "Plugin persona rewrite failed; falling back to direct: "
+                        "platform_id=%s session_id=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        exc_info=True,
+                    )
+                    resolved_kind = "plugin_direct"
+            else:
+                # No plain text to rewrite — deliver as-is.
+                resolved_kind = "plugin_direct"
+
+        event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
+        semantic_text = message.get_plain_text()
+
+        (
+            message,
+            materialization,
+        ) = await self.materialize_interaction_outbound_message(
+            event,
+            message,
+            message_kind=resolved_kind,
+            result_is_model_result=False,
+        )
+        delivered_message_ids = await self._deliver_visible_message(
+            event,
+            message,
+            message_kind=resolved_kind,
+            allow_segmented_reply=True,
+            semantic_text=semantic_text,
+        )
+        self._record_visible_output(
+            event,
+            message_kind=resolved_kind,
+            text=semantic_text,
+            delivered_message_ids=delivered_message_ids,
+            metadata=materialization,
+            memory_relevant=True,
+        )
+        self._materialize_finalized_turn(event)
+        await self._persist_interaction_turn(event)
+
+    async def _rewrite_plugin_output_via_persona(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        metadata: dict[str, Any] | None = None,
+    ) -> MessageChain:
+        """Rewrite a plugin's plain-text output through the persona expression path.
+
+        Only handles plain text; multi-modal or empty-text messages are
+        returned unchanged.  The caller is responsible for fallback when
+        this method raises.
+        """
+        plain = message.get_plain_text().strip()
+        if not plain:
+            return message
+
+        expression_config = self._get_interaction_config(event)
+        expression_provider_id = expression_config.expression_provider_id
+        if not expression_provider_id:
+            raise RuntimeError("plugin persona rewrite: no expression_provider_id")
+
+        provider = None
+        if self.plugin_context is not None:
+            provider = self.plugin_context.get_provider_by_id(expression_provider_id)
+
+        if provider is None:
+            raise RuntimeError(
+                f"plugin persona rewrite: provider unavailable "
+                f"provider_id={expression_provider_id}"
+            )
+
+        rewrite_prompt = (
+            "请用当前角色的语气和风格改写下面这段插件消息。\n"
+            "不要增加事实，不要补充内容，只做人格化润色。\n"
+            "如果原文已经是口语化的中文，直接返回原文。\n\n"
+            f"插件消息：\n{plain}\n\n"
+            "改写结果："
+        )
+
+        response = await asyncio.wait_for(
+            provider.text_chat(
+                prompt=rewrite_prompt,
+                system_prompt="",
+                temperature=expression_config.expression_temperature,
+            ),
+            timeout=expression_config.expression_timeout,
+        )
+        rewritten = (response.completion_text or "").strip()
+        if not rewritten:
+            raise RuntimeError("plugin persona rewrite returned empty text")
+
+        from astrbot.core.message.components import Plain as PlainComp
+
+        return MessageChain([PlainComp(rewritten)])
 
     async def capture_visible_completion(
         self,

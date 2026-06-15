@@ -14,7 +14,7 @@ from astrbot.core.message.components import (
     Plain,
     Reply,
 )
-from astrbot.core.message.message_event_result import MessageEventResult
+from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
@@ -848,3 +848,81 @@ class TestDefensiveGetattr:
         astr_message_event.message_obj = DummyMessage()
         message_type = astr_message_event.get_message_type()
         assert isinstance(message_type, MessageType)
+
+
+class TestPluginOutputHelpers:
+    """Tests for emit_output, send_direct, send_persona."""
+
+    @pytest.mark.asyncio
+    async def test_emit_output_direct_fallback_when_no_controller(
+        self, astr_message_event
+    ):
+        """emit_output(mode='direct') should fall back to event.send() when
+        no output controller is attached."""
+        astr_message_event.send = AsyncMock()
+        await astr_message_event.emit_output(
+            MessageChain([Plain("direct test")]), mode="direct"
+        )
+        astr_message_event.send.assert_awaited_once()
+        sent = astr_message_event.send.await_args.args[0]
+        assert sent.get_plain_text() == "direct test"
+
+    @pytest.mark.asyncio
+    async def test_emit_output_persona_fallback_when_no_controller(
+        self, astr_message_event
+    ):
+        """emit_output(mode='persona') should fall back to event.send() when
+        no output controller is attached, and record a diagnostic extra."""
+        astr_message_event.send = AsyncMock()
+        await astr_message_event.emit_output(
+            MessageChain([Plain("persona test")]), mode="persona"
+        )
+        astr_message_event.send.assert_awaited_once()
+        assert (
+            astr_message_event.get_extra("_interaction_persona_rewrite_unavailable")
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_direct_calls_emit_output(self, astr_message_event):
+        """send_direct should delegate to emit_output with mode='direct'."""
+        astr_message_event.send = AsyncMock()
+        await astr_message_event.send_direct(MessageChain([Plain("direct send")]))
+        astr_message_event.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_send_persona_calls_emit_output(self, astr_message_event):
+        """send_persona should delegate to emit_output with mode='persona'."""
+        astr_message_event.send = AsyncMock()
+        await astr_message_event.send_persona(MessageChain([Plain("ps")]))
+        astr_message_event.send.assert_awaited_once()
+        assert (
+            astr_message_event.get_extra("_interaction_persona_rewrite_unavailable")
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_output_with_controller_delegates_to_capture_plugin_output(
+        self, astr_message_event
+    ):
+        """emit_output with a controller attached must call
+        capture_plugin_output instead of falling back to send."""
+        controller = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        astr_message_event.set_extra("_interaction_output_controller", controller)
+
+        await astr_message_event.emit_output(
+            MessageChain([Plain("via controller")]), mode="direct"
+        )
+        controller.capture_plugin_output.assert_awaited_once()
+        args = controller.capture_plugin_output.await_args
+        assert args.kwargs["mode"] == "direct"
+
+        # Reset and test persona mode
+        controller.reset_mock()
+        await astr_message_event.emit_output(
+            MessageChain([Plain("via controller persona")]), mode="persona"
+        )
+        controller.capture_plugin_output.assert_awaited_once()
+        args = controller.capture_plugin_output.await_args
+        assert args.kwargs["mode"] == "persona"

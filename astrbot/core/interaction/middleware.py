@@ -23,6 +23,7 @@ from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
 )
+from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .decision_agent import _maybe_bypass_protocol_command
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .memory_store import (
@@ -173,7 +174,18 @@ class InteractionMiddleware:
             wrapped_event: AstrMessageEvent,
             message: MessageChain | None,
         ) -> None:
-            await output_controller.capture_message_chain(message, wrapped_event)
+            origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
+            if origin == OutputOrigin.CORE.value:
+                await output_controller.capture_message_chain(message, wrapped_event)
+            else:
+                await output_controller.capture_plugin_output(
+                    message,
+                    wrapped_event,
+                    mode=wrapped_event.get_extra(
+                        "_interaction_plugin_output_mode",
+                        "direct",
+                    ),
+                )
             wrapped_event._has_send_oper = True
 
         async def send_streaming_wrapper(

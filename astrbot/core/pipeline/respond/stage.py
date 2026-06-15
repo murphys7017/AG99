@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from copy import copy
 
 from astrbot.core import logger
+from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
@@ -34,6 +35,23 @@ class RespondStage(Stage):
     @staticmethod
     async def _complete_visible_turn(event: AstrMessageEvent) -> None:
         await event.complete_visible_turn()
+
+    @staticmethod
+    async def _send_interaction_core_message(
+        event: AstrMessageEvent,
+        message,
+    ) -> None:
+        with temporary_output_origin(event, OutputOrigin.CORE.value):
+            await event.send(message)
+
+    @staticmethod
+    async def _send_interaction_core_stream(
+        event: AstrMessageEvent,
+        async_stream,
+        realtime_segmenting: bool,
+    ) -> None:
+        with temporary_output_origin(event, OutputOrigin.CORE.value):
+            await event.send_streaming(async_stream, realtime_segmenting)
 
     def _schedule_after_message_sent_postprocess(
         self,
@@ -174,7 +192,11 @@ class RespondStage(Stage):
                 == "realtime_segmenting"
             )
             logger.debug(f"应用流式输出({event.get_platform_id()})")
-            await event.send_streaming(result.async_stream, realtime_segmenting)
+            await self._send_interaction_core_stream(
+                event,
+                result.async_stream,
+                realtime_segmenting,
+            )
             sent_any = True
             await self._dispatch_after_message_sent(event)
             return
@@ -182,7 +204,10 @@ class RespondStage(Stage):
             sent_any = await deliver_message_chain(
                 event,
                 result.derive(result.chain),
-                send_message=event.send,
+                send_message=lambda chain: self._send_interaction_core_message(
+                    event,
+                    chain,
+                ),
                 platform_settings=self.platform_settings,
                 result_is_model_result=result.is_model_result(),
             )

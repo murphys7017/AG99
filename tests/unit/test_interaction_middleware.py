@@ -9,6 +9,7 @@ from astrbot.core.interaction.config import (
 )
 from astrbot.core.interaction.input_gateway import CoreInputGateway
 from astrbot.core.interaction.middleware import InteractionMiddleware
+from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionTurnState,
@@ -23,8 +24,9 @@ from astrbot.core.interaction.types import (
     RouteMode,
 )
 from astrbot.core.message.components import Plain, Record, Reply
-from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.pipeline.preprocess_stage.stage import PreProcessStage
+from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
@@ -342,10 +344,15 @@ class TestInteractionMiddleware:
         assert turn_state.failures[-1].reason == "provider_unavailable"
 
     @pytest.mark.asyncio
-    async def test_core_send_is_intercepted_after_forwarding(self, webchat_event):
+    async def test_plugin_send_defaults_to_plugin_output_after_forwarding(
+        self,
+        webchat_event,
+    ):
         queue = asyncio.Queue()
         controller = MagicMock()
         controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -368,11 +375,98 @@ class TestInteractionMiddleware:
 
         await forwarded_event.send(message)
 
+        controller.capture_plugin_output.assert_awaited_once_with(
+            message,
+            forwarded_event,
+            mode="direct",
+        )
+        controller.capture_message_chain.assert_not_awaited()
+        assert forwarded_event._has_send_oper is True
+
+    @pytest.mark.asyncio
+    async def test_core_send_is_intercepted_after_forwarding(self, webchat_event):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+        forwarded_event = queue.get_nowait()
+        message = MessageChain([Plain("core reply")])
+
+        with temporary_output_origin(forwarded_event, OutputOrigin.CORE.value):
+            await forwarded_event.send(message)
+
         controller.capture_message_chain.assert_awaited_once_with(
             message,
             forwarded_event,
         )
+        controller.capture_plugin_output.assert_not_awaited()
         assert forwarded_event._has_send_oper is True
+
+    @pytest.mark.asyncio
+    async def test_respond_stage_marks_interaction_send_as_core(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "default_enabled_for_platforms": ["webchat"],
+                    "platforms": {},
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+        forwarded_event = queue.get_nowait()
+        forwarded_event.set_result(
+            MessageEventResult().message("respond stage reply")
+        )
+
+        stage = RespondStage()
+        await stage.initialize(
+            MagicMock(
+                astrbot_config={"platform_settings": {}, "provider_settings": {}},
+                plugin_manager=MagicMock(context=MagicMock()),
+            )
+        )
+
+        await stage.process(forwarded_event)
+
+        controller.capture_message_chain.assert_awaited_once()
+        sent_message = controller.capture_message_chain.await_args.args[0]
+        assert sent_message.get_plain_text() == "respond stage reply"
+        assert controller.capture_plugin_output.await_count == 0
+        assert forwarded_event.get_extra("_interaction_output_origin") is None
 
     @pytest.mark.asyncio
     async def test_core_streaming_is_intercepted_after_forwarding(self, webchat_event):

@@ -23,6 +23,16 @@ from .core_bridge import (
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .input_gateway import CoreInputGateway
 from .memory_store import InteractionMemorySnapshot, InteractionMemoryStore
+from .output_modes import (
+    OUTPUT_ORIGIN_EXTRA_KEY,
+    PERSONA_REWRITE_FAILED_EXTRA_KEY,
+    PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
+    PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
+    PLUGIN_OUTPUT_MODE_EXTRA_KEY,
+    OutputOrigin,
+    PluginOutputMode,
+    PluginOutputRequest,
+)
 from .middleware import InteractionMiddleware
 from .output_controller import InteractionOutputController
 from .router_agent import InteractionRouterAgent, InteractionRouterError
@@ -49,6 +59,14 @@ from .types import (
 __all__ = [
     "CoreInputGateway",
     "CoreTaskSpec",
+    "OUTPUT_ORIGIN_EXTRA_KEY",
+    "OutputOrigin",
+    "PERSONA_REWRITE_FAILED_EXTRA_KEY",
+    "PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY",
+    "PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY",
+    "PLUGIN_OUTPUT_MODE_EXTRA_KEY",
+    "PluginOutputMode",
+    "PluginOutputRequest",
     "FastRouteMode",
     "FinalizerMode",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",

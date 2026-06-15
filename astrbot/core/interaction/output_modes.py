@@ -1,0 +1,72 @@
+"""
+Output mode definitions for the interaction middleware plugin output path.
+
+This module defines the minimal identity model for plugin output:
+
+    output_origin:  core | plugin   (who produced the output)
+    plugin_output_mode: direct | persona  (whether to persona-rewrite first)
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Iterator
+
+from astrbot.core.message.message_event_result import MessageChain
+
+
+class PluginOutputMode(str, Enum):
+    """Plugin output mode enumeration.
+
+    DIRECT:  deliver the message as-is without persona rewriting.
+    PERSONA: run the message through a persona expression path first.
+    """
+
+    DIRECT = "direct"
+    PERSONA = "persona"
+
+
+class OutputOrigin(str, Enum):
+    """Origin of an outbound message.
+
+    CORE:  output produced by the core agent / LLM / tool execution.
+    PLUGIN: output produced by a plugin calling event.send().
+    """
+
+    CORE = "core"
+    PLUGIN = "plugin"
+
+
+@dataclass(slots=True)
+class PluginOutputRequest:
+    """Encapsulates a plugin output request for the Output Runtime."""
+
+    message: MessageChain
+    mode: PluginOutputMode = PluginOutputMode.DIRECT
+    source: str = "plugin"
+    metadata: dict[str, Any] | None = None
+
+
+# Extra keys used on AstrMessageEvent for output-origin tracking.
+OUTPUT_ORIGIN_EXTRA_KEY = "_interaction_output_origin"
+PLUGIN_OUTPUT_MODE_EXTRA_KEY = "_interaction_plugin_output_mode"
+PLUGIN_OUTPUT_METADATA_EXTRA_KEY = "_interaction_plugin_output_metadata"
+PERSONA_REWRITE_FAILED_EXTRA_KEY = "_interaction_persona_rewrite_failed"
+PERSONA_REWRITE_UNAVAILABLE_EXTRA_KEY = "_interaction_persona_rewrite_unavailable"
+
+# Diagnostic extras (read-only, for testing / debugging).
+PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY = "_interaction_plugin_output_last_mode"
+PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY = "_interaction_plugin_output_last_kind"
+
+
+@contextmanager
+def temporary_output_origin(event: Any, origin: str) -> Iterator[None]:
+    """Temporarily set the outbound origin marker on an event-like object."""
+    previous = event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
+    event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, origin)
+    try:
+        yield
+    finally:
+        event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, previous)
