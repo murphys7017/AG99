@@ -84,10 +84,20 @@
 - interaction outbound phase 已迁入 `InteractionOutputController`
 - core 旧流程与 middleware 新流程共享 voice service
 - interaction 内部主链路开发期 fail-fast，不依赖 fallback 证明正确性
+- **新增** `output_modes.py`：定义 `PluginOutputMode`、`OutputOrigin`、`temporary_output_origin` 等输出身份模型
+- **新增** `persona_runtime.py`：`InteractionPersonaRuntime`，Persona Runtime 种子代码
+- **新增** `capture_plugin_output()`：插件输出的独立路径，支持 `direct` / `persona` 两种模式，
+  persona 改写失败降级 direct
+- **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的统一插件输出 helper
+- **新增** `_rewrite_plugin_output_via_persona()` → `expression_agent.rewrite_plugin_output()`，
+  复用完整 prompt 构建管线（persona / memory / context）进行人格化改写
+- **origin 路由**：`send_wrapper` 通过 `_interaction_output_origin` 区分 core/plugin 输出，
+  `respond/stage.py` 中的 event.send / event.send_streaming 调用已加 CORE origin 标记
 
 当前仍需继续收口：
 
-- 正式 output gateway 仍未替换当前 `event.send` / `event.send_streaming` interception 形态
+- output gateway：`capture_plugin_output()` 已建立，但 `event.send` / `event.send_streaming`
+  interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
 

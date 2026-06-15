@@ -70,15 +70,24 @@ Input Runtime / Observation
 
 - 捕获 interaction turn 的 `send` / `send_streaming`
 - 分类 immediate reply、passthrough、core reply、core stream、streaming finish marker
+- **新增** `capture_plugin_output()` — 插件输出的独立入口，支持 `direct` / `persona` 两种模式
 - 统一 result finalizer、result contributor、reply prefix、reasoning display、TTS、t2i
 - 记录 `InteractionUtterance` 与 visible output
 - 产出 finalized turn material 后请求 middleware finalization
+- 持有一个可注入的 `persona_output_renderer: Callable`，用于 persona 模式的文本改写；
+  output_controller 自身不直接调 provider
+
+输出分类中的新 message kind：
+
+- `plugin_direct` — 插件输出，不经人格改写
+- `plugin_persona` — 插件输出，经人格改写
 
 当前失败策略：
 
 - interaction outbound materialization 失败不降级成文本成功发送
 - TTS / t2i / finalizer 失败会写 failure ledger 并抛错
 - 缺 persist callback 是 turn finalization failure，不是 memory persist failure
+- plugin persona 改写失败降级为 direct，不吞消息
 
 ### `turn_state.py`
 
@@ -116,6 +125,33 @@ Input Runtime / Observation
 - legacy interaction cache
 - decision/context 构建阶段可读取
 - 不再作为 turn completion 写入 owner
+
+### `output_modes.py`
+
+新增模块。定义输出身份模型的最小类型集：
+
+- `PluginOutputMode` — `DIRECT` / `PERSONA` 枚举
+- `OutputOrigin` — `CORE` / `PLUGIN` 枚举，标识输出由谁产生
+- `PluginOutputRequest` — 插件输出请求的数据封装
+- `temporary_output_origin(event, origin)` — context manager，临时设置 `_interaction_output_origin` extra，退出时自动恢复
+
+相关 extra key 常量：
+
+- `OUTPUT_ORIGIN_EXTRA_KEY`（`_interaction_output_origin`）
+- `PLUGIN_OUTPUT_MODE_EXTRA_KEY`（`_interaction_plugin_output_mode`）
+- `PERSONA_REWRITE_FAILED_EXTRA_KEY` / `PERSONA_REWRITE_UNAVAILABLE_EXTRA_KEY`
+- `PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY` / `PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY`（诊断用）
+
+### `persona_runtime.py`
+
+新增模块。`InteractionPersonaRuntime` 是未来独立 Persona Runtime 层的种子代码。
+
+当前职责：
+
+- `render_plugin_output(event, message, plugin_context, interaction_config)` — 接收插件的原始消息，调用 expression_agent 的 rewrite 链路，返回改写后的 MessageChain
+- 本身不做 LLM 调用，只做编排
+
+它不属于 Output Runtime，也不属于 middleware 核心链路，而是 Persona 层的轻量入口。当前挂在 `InteractionMiddleware` 下由构造函数装配。
 
 ## Voice 边界
 
@@ -394,7 +430,9 @@ motion/audio/image 等物理投递结果伪装成成功文本；中间件的输�
 
 ## 仍需继续收口
 
-- 正式 output gateway 替换当前 send interception 形态
+- **output gateway**：`capture_plugin_output()` 已建立 `plugin_direct` / `plugin_persona` 路径，
+  origin 路由已接入 send_wrapper，但 `event.send` interception 仍为 MethodType 替换形态，
+  后续可演进为正式 Output Gateway
 - observation contributor / reflex contributor / body output contributor 扩展点
 - relationship scope resolver、visibility/privacy policy、attention/cooldown policy
 - Effective Persona Resolver 与 middleware decision 的明确接缝

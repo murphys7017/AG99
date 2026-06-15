@@ -245,14 +245,21 @@ plugin 输出默认 `direct`。
 
 ### 本轮尽量不动
 
-- `astrbot/core/pipeline/respond/stage.py`
 - `astrbot/core/pipeline/result_decorate/stage.py`
 - `astrbot/core/platform/sources/*/*event.py`
 - `astrbot/core/interaction/finalizer.py`
 - `astrbot/core/interaction/router_agent.py`
-- `astrbot/core/interaction/expression_agent.py`
 
-如果你发现自己已经开始批量改平台 event 子类、pipeline stage 或 finalizer，说明你已经超出本轮边界。
+**实际修改（必要修正，未超边界）**：
+
+- `respond/stage.py`：为 `deliver_message_chain` 中的 `event.send()` 和 `event.send_streaming()` 加了
+  CORE origin 标记（`temporary_output_origin(event, OutputOrigin.CORE)`），防止非 interaction 事件的
+  核心输出被误判为 plugin output。未改动 RespondStage 的基础发送顺序。
+- `expression_agent.py`：新增 `rewrite_plugin_output()` 和配套 prompt/helper 函数。这是将
+  persona rewrite 从 output_controller 迁入正确层的必要改动，属于 expression 层的正常扩展。
+
+如果你发现自己已经开始批量改平台 event 子类、pipeline stage 的发送顺序或 finalizer 的核心语义，
+说明你已经超出本轮边界。
 
 ## Layer 1 详细命令
 
@@ -679,6 +686,35 @@ async def capture_plugin_output(..., mode="direct", metadata=None):
 
 ### Step 5.1: persona rewrite helper 的边界
 
+**实现说明（与初始设计的差异）**：
+
+初始设计建议将 `_rewrite_plugin_output_via_persona()` 直接放在 `output_controller.py` 中。
+实际实现改为**依赖注入**方式，理由：
+
+1. Output Controller 不应知道 provider、prompt 管线或 expression 配置。
+2. 改写逻辑属于 Persona Runtime 的职责，不属 Output Runtime。
+
+因此实际实现为：
+
+- `output_controller.py` 删除了 `_rewrite_plugin_output_via_persona()`，改为持有
+  `persona_output_renderer: Callable`（由 middleware 在装配时注入）。
+- `persona_runtime.py` 新增 `InteractionPersonaRuntime`，作为未来独立 Persona Runtime 层的种子。
+- `expression_agent.py` 新增 `rewrite_plugin_output()`，复用完整的 prompt collect → render 管线
+  （persona、memory、session context）。
+- `middleware.py` 在构造函数中装配 `persona_runtime`，并将 `_render_plugin_output_via_persona`
+  注入 `output_controller.persona_output_renderer`。
+
+```text
+输入插件给出的语义文本
+  -> InteractionPersonaRuntime.render_plugin_output()
+    -> InteractionExpressionAgent.rewrite_plugin_output()
+      -> _prepare_render_result(mode="plugin_output_rewrite")
+        -> collect_context_pack() + render()
+      -> provider.text_chat() + rewrite prompt
+      -> return rewritten text
+  -> return MessageChain([Plain(rewritten_text)])
+```
+
 `_rewrite_plugin_output_via_persona(...)` 的职责只能是：
 
 ```text
@@ -898,9 +934,21 @@ async def send(
 `astrbot/core/interaction/output_controller.py`
 
 - 新增 `capture_plugin_output(...)`
-- 新增 `_rewrite_plugin_output_via_persona(...)`
+- 新增 `persona_output_renderer` 参数（依赖注入）
+- 删除原 `_rewrite_plugin_output_via_persona(...)`（移入 expression_agent）
 - 扩展 `_deliver_visible_message(...)`
 - 扩展 visible output / finalized material 记录逻辑
+
+`astrbot/core/interaction/persona_runtime.py`（新建）
+
+- 新增 `InteractionPersonaRuntime.render_plugin_output(...)`
+
+`astrbot/core/interaction/expression_agent.py`
+
+- 新增 `rewrite_plugin_output(...)`
+- 新增 `_prepare_render_result(..., mode="plugin_output_rewrite")`
+- 新增 `build_plugin_output_rewrite_system_prompt()` / `build_plugin_output_rewrite_prompt()`
+- 新增 `add_plugin_output_rewrite_slots_to_pack()`
 
 ### 本轮尽量不改
 
@@ -969,9 +1017,21 @@ _interaction_persona_rewrite_failed
 ### `output_controller.py`
 
 - 有没有新增 `capture_plugin_output(...)`
+- 有没有删除原 `_rewrite_plugin_output_via_persona(...)`（已移到 expression_agent）
+- 有没有接收 `persona_output_renderer` 参数注入
 - persona 失败是否降级 direct
 - plugin output 是否进入 visible output 记录
 - 有没有错误触发 finalizer / model_result 路径
+
+### `persona_runtime.py`
+
+- 有没有新增 `render_plugin_output(...)`
+- 是否只做编排而不直接调 provider
+
+### `expression_agent.py`
+
+- 有没有新增 `rewrite_plugin_output(...)`
+- `_prepare_render_result` 是否通过 `mode` 参数区分 fast_expression 和 plugin_output_rewrite
 
 ## 回滚条件
 
