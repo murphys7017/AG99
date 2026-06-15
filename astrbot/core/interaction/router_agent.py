@@ -18,14 +18,14 @@ from .context_builder import (
     InteractionPromptContributorError,
     append_interaction_prompt_extensions_to_pack,
     clone_interaction_context_pack,
-    collect_interaction_prompt_extensions,
+    get_or_collect_interaction_prompt_extensions,
     temporary_event_extra,
 )
 from .decision_agent import (
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
-    build_interaction_decision_contexts,
     _should_require_tool_choice,
+    build_interaction_decision_contexts,
 )
 from .memory_store import InteractionMemoryStore
 from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
@@ -210,22 +210,22 @@ class InteractionRouterAgent:
             event,
             material.persona_payload.get("persona_id", ""),
         )
-        if not material.prompt_extensions_collected:
-            try:
-                prompt_extensions = await collect_interaction_prompt_extensions(
-                    event,
-                    plugin_context,
-                    build_config,
-                    material.decision_context,
-                )
-            except InteractionPromptContributorError as exc:
-                raise InteractionRouterError(exc.reason, str(exc)) from exc
-            append_interaction_prompt_extensions_to_pack(
-                material.prompt_context_pack,
-                prompt_extensions,
+        try:
+            prompt_extensions = await get_or_collect_interaction_prompt_extensions(
+                event,
+                plugin_context,
+                build_config,
+                material.decision_context,
+                material,
+                purpose="router",
             )
-            material.prompt_extensions_collected = True
+        except InteractionPromptContributorError as exc:
+            raise InteractionRouterError(exc.reason, str(exc)) from exc
         route_pack = clone_interaction_context_pack(material.prompt_context_pack)
+        append_interaction_prompt_extensions_to_pack(
+            route_pack,
+            prompt_extensions,
+        )
         add_interaction_router_slots_to_pack(
             pack=route_pack,
             event=event,

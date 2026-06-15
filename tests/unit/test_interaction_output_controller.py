@@ -8,10 +8,10 @@ from astrbot.core.interaction.contributors import (
     InteractionResultContribution,
     InteractionResultView,
 )
+from astrbot.core.interaction.finalizer import finalize_response
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
-from astrbot.core.interaction.finalizer import finalize_response
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
@@ -468,6 +468,80 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
     assert turn_state is not None
     assert turn_state.immediate_reply == "嗯，我马上看。"
     assert turn_state.visible_outputs[0]["text"] == "嗯，我马上看。"
+
+
+@pytest.mark.asyncio
+async def test_result_contributor_sees_plugin_hints_only_after_selection(webchat_event):
+    queue = asyncio.Queue()
+
+    class PluginHintsContributor:
+        plugin_id = "plugin_hints"
+
+        async def collect(self, event, plugin_context, view):
+            assert view.purpose == "core_reply"
+            assert view.plugin_hints == {
+                "ag99live_motion": {
+                    "emotion_label": "tsundere",
+                    "duration_hint_ms": 1200,
+                }
+            }
+            assert event.get_extra("_interaction_plugin_hints") == {
+                "ag99live_motion": {
+                    "emotion_label": "tsundere",
+                    "duration_hint_ms": 1200,
+                }
+            }
+            return InteractionResultContribution(
+                plugin_id=self.plugin_id,
+                priority=1,
+            )
+
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_result_contributors.return_value = [
+        PluginHintsContributor()
+    ]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        persist_callback=_mark_completed_callback,
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("final answer")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+    set_interaction_turn_decision(
+        webchat_event,
+        InteractionDecision(
+            route_mode=RouteMode.HYBRID,
+            should_emit_immediate_reply=True,
+            immediate_spoken_reply="嗯。",
+            plugin_hints={
+                "ag99live_motion": {
+                    "emotion_label": "tsundere",
+                    "duration_hint_ms": 1200,
+                }
+            },
+        ),
+    )
+    assert webchat_event.get_extra("_interaction_plugin_hints") is None
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("final answer")]),
+            webchat_event,
+        )
+
+    assert webchat_event.get_extra("_interaction_plugin_hints") == {
+        "ag99live_motion": {
+            "emotion_label": "tsundere",
+            "duration_hint_ms": 1200,
+        }
+    }
 
 
 @pytest.mark.asyncio

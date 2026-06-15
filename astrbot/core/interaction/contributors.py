@@ -4,7 +4,9 @@ import copy
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
+
+PromptViewPurpose = Literal["unknown", "router", "persona_reply", "core_reply"]
 
 
 @dataclass(slots=True)
@@ -50,7 +52,7 @@ class InteractionOutputContribution:
     latency_class: str = "fast"
     priority: int = 100
 
-    def to_result_contribution(self) -> "InteractionResultContribution":
+    def to_result_contribution(self) -> InteractionResultContribution:
         platform_extras = dict(self.platform_extras)
         if self.tts_hints:
             platform_extras["tts_hints"] = dict(self.tts_hints)
@@ -112,6 +114,7 @@ class InteractionDecisionView:
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
     capabilities: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    purpose: PromptViewPurpose = "unknown"
 
     def as_read_only_mapping(self) -> MappingProxyType:
         return MappingProxyType(
@@ -119,6 +122,7 @@ class InteractionDecisionView:
                 "turn_id": self.turn_id,
                 "platform_id": self.platform_id,
                 "session_id": self.session_id,
+                "purpose": self.purpose,
                 "config": freeze_interaction_snapshot(self.config),
                 "decision_context": freeze_interaction_snapshot(self.decision_context),
                 "persona": freeze_interaction_snapshot(self.persona),
@@ -241,6 +245,8 @@ class InteractionResultView:
     final_candidate_material: dict[str, Any] | None = None
     finalized_turn_material: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    purpose: PromptViewPurpose = "unknown"
+    plugin_hints: dict[str, Any] = field(default_factory=dict)
 
     def as_read_only_mapping(self) -> MappingProxyType:
         return MappingProxyType(
@@ -248,11 +254,13 @@ class InteractionResultView:
                 "turn_id": self.turn_id,
                 "platform_id": self.platform_id,
                 "session_id": self.session_id,
+                "purpose": self.purpose,
                 "decision": freeze_interaction_snapshot(self.decision),
                 "output_draft": freeze_interaction_snapshot(self.output_draft),
                 "immediate_reply": self.immediate_reply,
                 "core_result": self.core_result,
                 "final_result": self.final_result,
+                "plugin_hints": freeze_interaction_snapshot(self.plugin_hints),
                 "visible_outputs": freeze_interaction_snapshot(self.visible_outputs),
                 "utterances": freeze_interaction_snapshot(self.utterances),
                 "turn_material_snapshot": freeze_interaction_snapshot(
@@ -273,6 +281,7 @@ class InteractionResultView:
             self,
             decision=freeze_interaction_snapshot(self.decision),
             output_draft=freeze_interaction_snapshot(self.output_draft),
+            plugin_hints=freeze_interaction_snapshot(self.plugin_hints),
             visible_outputs=freeze_interaction_snapshot(self.visible_outputs),
             utterances=freeze_interaction_snapshot(self.utterances),
             turn_material_snapshot=freeze_interaction_snapshot(

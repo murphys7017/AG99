@@ -41,6 +41,14 @@ from .memory_store import (
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
 )
+from .output_modes import (
+    PERSONA_REWRITE_FAILED_EXTRA_KEY,
+    PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
+    PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
+    OutputOrigin,
+    PluginOutputMode,
+    temporary_output_origin,
+)
 from .turn_state import (
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_visible_output,
@@ -71,15 +79,7 @@ from .turn_state import (
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
-from .output_modes import (
-    PERSONA_REWRITE_FAILED_EXTRA_KEY,
-    PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
-    PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
-    OutputOrigin,
-    PluginOutputMode,
-    temporary_output_origin,
-)
-from .types import FinalizerMode, InteractionAgentConfig, RouteMode
+from .types import InteractionAgentConfig, RouteMode
 
 
 def _merge_runtime_config(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -1308,6 +1308,14 @@ class InteractionOutputController:
         route_mode = (
             decision_obj.route_mode.value if decision_obj is not None else None
         )
+        purpose = "persona_reply" if phase == "immediate" else "core_reply"
+        plugin_hints = (
+            dict(decision_obj.plugin_hints)
+            if decision_obj is not None and isinstance(decision_obj.plugin_hints, dict)
+            else {}
+        )
+        if phase == "final":
+            event.set_extra("_interaction_plugin_hints", dict(plugin_hints))
         output_text = (final_result or core_result or "").strip()
         output_draft = InteractionOutputDraft(
             turn_id=str(event.get_extra("_turn_id", "") or ""),
@@ -1330,11 +1338,13 @@ class InteractionOutputController:
             turn_id=str(event.get_extra("_turn_id", "") or ""),
             platform_id=event.get_platform_id(),
             session_id=event.unified_msg_origin,
+            purpose=purpose,
             decision=decision_payload,
             output_draft=output_draft.to_mapping(),
             immediate_reply=get_interaction_turn_immediate_reply(event),
             core_result=core_result,
             final_result=final_result,
+            plugin_hints=plugin_hints,
             visible_outputs=self._snapshot_result_visible_outputs(event),
             utterances=self._snapshot_result_utterances(event),
             turn_material_snapshot=get_interaction_turn_finalized_material(event),
@@ -1346,6 +1356,7 @@ class InteractionOutputController:
             finalized_turn_material=get_interaction_turn_finalized_material(event),
             metadata={
                 "phase": phase,
+                "purpose": purpose,
                 "message_kind": candidate_message_kind,
                 "is_immediate": phase == "immediate",
                 "is_final": phase == "final",

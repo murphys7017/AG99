@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
@@ -14,7 +13,7 @@ from .context_builder import (
     InteractionPromptContributorError,
     append_interaction_prompt_extensions_to_pack,
     clone_interaction_context_pack,
-    collect_interaction_prompt_extensions,
+    get_or_collect_interaction_prompt_extensions,
     temporary_event_extra,
 )
 from .decision_agent import (
@@ -218,22 +217,22 @@ class InteractionExpressionAgent:
             event,
             material.persona_payload.get("persona_id", ""),
         )
-        if not material.prompt_extensions_collected:
-            try:
-                prompt_extensions = await collect_interaction_prompt_extensions(
-                    event,
-                    plugin_context,
-                    build_config,
-                    material.decision_context,
-                )
-            except InteractionPromptContributorError as exc:
-                raise InteractionExpressionError(exc.reason, str(exc)) from exc
-            append_interaction_prompt_extensions_to_pack(
-                material.prompt_context_pack,
-                prompt_extensions,
+        try:
+            prompt_extensions = await get_or_collect_interaction_prompt_extensions(
+                event,
+                plugin_context,
+                build_config,
+                material.decision_context,
+                material,
+                purpose="persona_reply",
             )
-            material.prompt_extensions_collected = True
+        except InteractionPromptContributorError as exc:
+            raise InteractionExpressionError(exc.reason, str(exc)) from exc
         expression_pack = clone_interaction_context_pack(material.prompt_context_pack)
+        append_interaction_prompt_extensions_to_pack(
+            expression_pack,
+            prompt_extensions,
+        )
         if mode == "plugin_output_rewrite":
             add_plugin_output_rewrite_slots_to_pack(expression_pack)
         else:

@@ -23,7 +23,6 @@ from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
 )
-from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .decision_agent import _maybe_bypass_protocol_command
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .memory_store import (
@@ -31,6 +30,7 @@ from .memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
 from .output_controller import InteractionOutputController
+from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
@@ -46,8 +46,12 @@ from .turn_state import (
     set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
 )
-from .types import FastRouteMode, InteractionDecision, InteractionRouteDecision, RouteMode
-
+from .types import (
+    FastRouteMode,
+    InteractionDecision,
+    InteractionRouteDecision,
+    RouteMode,
+)
 
 LOCAL_FAST_EXPRESSION_FALLBACK = "我先看一下。"
 
@@ -180,7 +184,6 @@ class InteractionMiddleware:
                     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
                     decision.core_task_spec,
                 )
-            event.set_extra("_interaction_plugin_hints", dict(decision.plugin_hints))
 
     def _install_core_output_interceptor(self, event: AstrMessageEvent) -> None:
         if event.get_extra("_interaction_output_interceptor_installed", False):

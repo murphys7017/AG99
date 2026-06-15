@@ -293,6 +293,7 @@ class ViewPromptContributor:
     async def collect(self, event, plugin_context, view):
         assert isinstance(view, InteractionDecisionView)
         assert view.turn_id == "turn-1"
+        assert view.purpose == "persona_reply"
         assert view["platform_id"] == "test-platform"
         assert view.config["provider_settings"]["name"] == "provider"
         assert view.decision_context["persona"]["name"] == "Yakumo"
@@ -389,6 +390,7 @@ async def test_prompt_contributor_receives_read_only_decision_view():
         plugin_context,
         config=config,
         decision_context=decision_context,
+        purpose="persona_reply",
     )
 
     assert [item.plugin_id for item in extensions] == ["view", "view"]

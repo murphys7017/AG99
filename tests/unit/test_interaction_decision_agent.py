@@ -9,9 +9,9 @@ from astrbot.core.interaction.decision_agent import (
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
     build_interaction_agent_system_prompt,
+    build_interaction_decision_contexts,
     build_interaction_decision_output_contract,
     build_interaction_decision_tool_parameters,
-    build_interaction_decision_contexts,
     extract_interaction_decision_payload,
     validate_interaction_decision,
 )
@@ -327,13 +327,25 @@ class MiddlewarePromptContributor:
     plugin_id = "middleware.motion"
 
     async def collect(self, event, plugin_context, view):
+        assert view.purpose == "persona_reply"
         return PromptExtension(
             plugin_id=self.plugin_id,
             mount="capability",
-            title="Motion Contract",
-            value={"motion": "available"},
+            title="AG99live Motion Prompt",
+            value={
+                "ag99live_motion": {
+                    "emotion_label": "tsundere",
+                    "duration_hint_ms": 1200,
+                    "fallback_pose_id": "温和摇晃",
+                    "axes": {
+                        "head_yaw": 35,
+                        "head_roll": 68,
+                        "body_yaw": 42,
+                    },
+                }
+            },
             order=10,
-            meta={"scope": "static", "node_type": "motion_contract"},
+            meta={"scope": "static", "node_type": "ag99live_motion_prompt"},
         )
 
 
@@ -424,7 +436,7 @@ async def test_decision_agent_reuses_turn_state_context_material():
     assert turn_state.context_material.prompt_extensions_collected is True
     render_result = event.get_extra("_interaction_prompt_render_result")
     assert render_result is not None
-    assert "Motion Contract" in render_result.system_prompt
+    assert "AG99live Motion Prompt" in render_result.system_prompt
 
 
 @pytest.mark.asyncio
@@ -497,8 +509,8 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     assert "不能输出 Markdown、XML、HTML 或任何标签格式" not in captured["system_prompt"]
     assert "Core capabilities" not in captured["system_prompt"]
     assert "tools_available" not in captured["system_prompt"]
-    assert "Motion Contract" in captured["system_prompt"]
-    assert "motion" in captured["system_prompt"]
+    assert "AG99live Motion Prompt" in captured["system_prompt"]
+    assert "ag99live_motion" in captured["system_prompt"]
     assert "Core Only" not in captured["system_prompt"]
     assert "Interaction session" not in captured["system_prompt"]
     assert captured["prompt"] == "请根据以上上下文做一次完整决策。"
@@ -515,34 +527,14 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     assert "extension.context" in render_result.metadata["rendered_slots"]
 
     pack = event.get_extra("_interaction_prompt_context_pack")
-    system_slot = pack.get_slot("extension.system")
-    capability_slot = pack.get_slot("extension.capability")
-    context_slot = pack.get_slot("extension.context")
-    assert system_slot is not None
-    assert capability_slot is not None
-    assert context_slot is not None
-    assert [item["title"] for item in system_slot.value["items"]] == [
-        "Interaction middleware decision policy",
-        "Interaction output contract",
-    ]
-    assert system_slot.value["items"][1]["value_kind"] == "mapping"
-    assert system_slot.value["items"][1]["value"] == (
-        build_interaction_decision_output_contract().to_dict()
-    )
-    assert [item["title"] for item in capability_slot.value["items"]] == [
-        "Motion Contract"
-    ]
-    context_items_by_title = {
-        item["title"]: item for item in context_slot.value["items"]
-    }
-    assert context_items_by_title["Core capabilities"]["meta"] == {
-        "scope": "dynamic",
-        "node_type": "interaction_core_capabilities",
-    }
-    assert context_items_by_title["Interaction session"]["meta"] == {
-        "scope": "dynamic",
-        "node_type": "interaction_session",
-    }
+    assert pack.get_slot("extension.system") is None
+    assert pack.get_slot("extension.capability") is None
+    assert pack.get_slot("extension.context") is None
+    assert "AG99live Motion Prompt" in render_result.system_prompt
+    assert "Interaction middleware decision policy" in render_result.system_prompt
+    assert "Interaction output contract" in render_result.system_prompt
+    assert "Core capabilities" not in render_result.system_prompt
+    assert "Interaction session" not in render_result.system_prompt
 
     rendered_messages = captured["contexts"]
     assert rendered_messages == build_interaction_decision_contexts(

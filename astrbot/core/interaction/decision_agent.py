@@ -8,11 +8,11 @@ from copy import deepcopy
 from typing import Any
 
 from astrbot import logger
+from astrbot.core.output_contract import OutputContract
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.interfaces import RenderResult
-from astrbot.core.output_contract import OutputContract
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
@@ -23,11 +23,11 @@ from .context_builder import (
     build_core_capability_payload,
     build_interaction_context_pack,
     clone_interaction_context_pack,
-    collect_interaction_prompt_extensions,
     extract_input_payload,
     extract_interaction_memory_payload,
     extract_persona_payload,
     extract_recent_messages,
+    get_or_collect_interaction_prompt_extensions,
 )
 from .memory_store import InteractionMemoryStore
 from .turn_state import (
@@ -127,7 +127,10 @@ def build_interaction_decision_tool_parameters() -> dict[str, Any]:
                 },
                 "required": ["task_intent", "task_summary", "execution_prompt"],
             },
-            "plugin_hints": {"type": "object"},
+            "plugin_hints": {
+                "type": "object",
+                "additionalProperties": True,
+            },
             "reason": {"type": "string"},
         },
         "required": [
@@ -449,22 +452,22 @@ class InteractionDecisionAgent:
         recent_messages = material.recent_messages
         capability_payload = material.capability_payload
         decision_context = material.decision_context
-        if not material.prompt_extensions_collected:
-            try:
-                prompt_extensions = await collect_interaction_prompt_extensions(
-                    event,
-                    plugin_context,
-                    build_config,
-                    decision_context,
-                )
-            except InteractionPromptContributorError as exc:
-                raise InteractionDecisionError(exc.reason, str(exc)) from exc
-            append_interaction_prompt_extensions_to_pack(
-                material.prompt_context_pack,
-                prompt_extensions,
+        try:
+            prompt_extensions = await get_or_collect_interaction_prompt_extensions(
+                event,
+                plugin_context,
+                build_config,
+                decision_context,
+                material,
+                purpose="persona_reply",
             )
-            material.prompt_extensions_collected = True
+        except InteractionPromptContributorError as exc:
+            raise InteractionDecisionError(exc.reason, str(exc)) from exc
         decision_pack = clone_interaction_context_pack(material.prompt_context_pack)
+        append_interaction_prompt_extensions_to_pack(
+            decision_pack,
+            prompt_extensions,
+        )
         add_interaction_decision_slots_to_pack(
             pack=decision_pack,
             event=event,

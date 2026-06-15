@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from astrbot.core.prompt.context_types import ContextPack
+from astrbot.core.prompt.extensions import PromptExtension
 
 from .types import InteractionDecision
 
@@ -47,6 +48,9 @@ class InteractionContextMaterial:
     capability_payload: dict[str, Any] = field(default_factory=dict)
     decision_context: dict[str, Any] = field(default_factory=dict)
     prompt_extensions_collected: bool = False
+    prompt_extensions_by_purpose: dict[str, list[PromptExtension]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(slots=True)

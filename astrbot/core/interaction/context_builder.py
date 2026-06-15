@@ -23,9 +23,9 @@ from .collectors import (
     InteractionConversationHistoryCollector,
     InteractionMemoryCollector,
 )
-from .contributors import InteractionDecisionView
+from .contributors import InteractionDecisionView, PromptViewPurpose
 from .memory_store import InteractionMemoryStore
-from .turn_state import get_interaction_turn_state
+from .turn_state import InteractionContextMaterial, get_interaction_turn_state
 
 
 class InteractionPromptContributorError(RuntimeError):
@@ -181,12 +181,15 @@ async def collect_interaction_prompt_extensions(
     plugin_context: Context,
     config,
     decision_context: dict[str, Any],
+    *,
+    purpose: PromptViewPurpose = "unknown",
 ) -> list[PromptExtension]:
     extensions: list[PromptExtension] = []
     view = _build_decision_view(
         event=event,
         config=config,
         decision_context=decision_context,
+        purpose=purpose,
     ).copy_read_only()
     for contributor in plugin_context.list_interaction_prompt_contributors():
         plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
@@ -221,6 +224,30 @@ async def collect_interaction_prompt_extensions(
             ) from exc
 
     extensions.sort(key=lambda item: (item.order, item.plugin_id))
+    return extensions
+
+
+async def get_or_collect_interaction_prompt_extensions(
+    event,
+    plugin_context: Context,
+    config,
+    decision_context: dict[str, Any],
+    material: InteractionContextMaterial,
+    *,
+    purpose: PromptViewPurpose,
+) -> list[PromptExtension]:
+    cached_extensions = material.prompt_extensions_by_purpose.get(purpose)
+    if cached_extensions is not None:
+        return cached_extensions
+    extensions = await collect_interaction_prompt_extensions(
+        event,
+        plugin_context,
+        config,
+        decision_context,
+        purpose=purpose,
+    )
+    material.prompt_extensions_by_purpose[purpose] = extensions
+    material.prompt_extensions_collected = True
     return extensions
 
 
@@ -309,6 +336,7 @@ def _build_decision_view(
     event,
     config,
     decision_context: dict[str, Any],
+    purpose: PromptViewPurpose,
 ) -> InteractionDecisionView:
     turn_state = get_interaction_turn_state(event)
     material = turn_state.context_material if turn_state is not None else None
@@ -327,6 +355,7 @@ def _build_decision_view(
         turn_id=str(event.get_extra("_turn_id", "") or ""),
         platform_id=platform_id,
         session_id=session_id,
+        purpose=purpose,
         config=config,
         decision_context=context,
         persona=(
