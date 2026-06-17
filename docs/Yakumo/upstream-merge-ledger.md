@@ -38,7 +38,7 @@ Current local upstream-sync commits:
 - `50a64e7a` Absorb upstream session alias and Dingtalk updates.
 - `77afdf864` Absorb upstream v4.26.0-beta.4 small repair batch.
 - `f40f3db4d` Absorb upstream update/restart fixes.
-- `9f0235081` Absorb upstream compatibility fixes.
+- `d070b4ccd` Absorb upstream compatibility fixes.
 
 ## 2026-06-18 post-v4.26.0-beta.4 small update/restart batch
 
@@ -71,7 +71,7 @@ Deferred / intentionally not merged in this batch:
 
 Reviewed upstream baseline: `upstream/master` at `2c5165e92`
 
-Local commit: `9f0235081`
+Local commit: `d070b4ccd`
 
 Absorbed by local rewrite:
 
