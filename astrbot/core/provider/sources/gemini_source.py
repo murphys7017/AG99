@@ -380,9 +380,9 @@ class ProviderGoogleGenAI(Provider):
                 append_or_extend(gemini_contents, parts, types.UserContent)
 
             elif role == "assistant":
+                parts = []
                 if isinstance(content, str):
-                    parts = [types.Part.from_text(text=content)]
-                    append_or_extend(gemini_contents, parts, types.ModelContent)
+                    parts.append(types.Part.from_text(text=content))
                 elif isinstance(content, list):
                     parts = []
                     thinking_signature = None
@@ -403,16 +403,24 @@ class ProviderGoogleGenAI(Provider):
                                 exc_info=True,
                             )
                             thinking_signature = None
-                    parts.append(
-                        types.Part(
-                            text=text,
-                            thought_signature=thinking_signature,
-                        )
+                    has_tool_signatures = any(
+                        isinstance(tool, dict)
+                        and isinstance(tool.get("extra_content"), dict)
+                        and isinstance(tool["extra_content"].get("google"), dict)
+                        and tool["extra_content"]["google"].get("thought_signature")
+                        for tool in message.get("tool_calls", [])
                     )
-                    append_or_extend(gemini_contents, parts, types.ModelContent)
+                    if not (
+                        not text and thinking_signature and "tool_calls" in message and has_tool_signatures
+                    ):
+                        parts.append(
+                            types.Part(
+                                text=text,
+                                thought_signature=thinking_signature,
+                            )
+                        )
 
-                elif not native_tool_enabled and "tool_calls" in message:
-                    parts = []
+                if not native_tool_enabled and "tool_calls" in message:
                     for tool in message["tool_calls"]:
                         part = types.Part.from_function_call(
                             name=tool["function"]["name"],
@@ -430,15 +438,15 @@ class ProviderGoogleGenAI(Provider):
                             if ts_bs64:
                                 part.thought_signature = base64.b64decode(ts_bs64)
                         parts.append(part)
-                    append_or_extend(gemini_contents, parts, types.ModelContent)
-                else:
+                if not parts:
                     logger.warning("assistant 角色的消息内容为空，已添加空格占位")
                     if native_tool_enabled and "tool_calls" in message:
                         logger.warning(
                             "检测到启用Gemini原生工具，且上下文中存在函数调用，建议使用 /reset 重置上下文",
                         )
                     parts = [types.Part.from_text(text=" ")]
-                    append_or_extend(gemini_contents, parts, types.ModelContent)
+
+                append_or_extend(gemini_contents, parts, types.ModelContent)
 
             elif role == "tool" and not native_tool_enabled:
                 func_name = message.get("name", message["tool_call_id"])

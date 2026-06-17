@@ -469,6 +469,34 @@ class TestConfigHotReload:
 
         assert config2.platform_settings["unique_session"] is True
 
+    def test_save_config_cleans_up_temp_file_when_replace_fails(
+        self,
+        temp_config_path,
+        minimal_default_config,
+        monkeypatch,
+    ):
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        def raise_replace(src, dst):
+            del dst
+            assert os.path.exists(src)
+            raise OSError("replace failed")
+
+        monkeypatch.setattr("astrbot.core.config.astrbot_config.os.replace", raise_replace)
+
+        with pytest.raises(OSError, match="replace failed"):
+            config.save_config()
+
+        temp_files = [
+            name
+            for name in os.listdir(os.path.dirname(temp_config_path))
+            if name.startswith(f".{os.path.basename(temp_config_path)}.")
+            and name.endswith(".tmp")
+        ]
+        assert temp_files == []
+
 
 class TestConfigSchemaToDefault:
     """Tests for schema to default config conversion."""

@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 from astrbot.core.exceptions import EmptyModelOutputError
@@ -27,3 +29,72 @@ def test_gemini_reasoning_only_output_is_allowed():
         response_id="resp_reasoning",
         finish_reason="STOP",
     )
+
+
+def test_prepare_conversation_preserves_tool_calls_with_assistant_text():
+    provider = object.__new__(ProviderGoogleGenAI)
+    provider.provider_config = {}
+
+    conversation = provider._prepare_conversation(
+        {
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Need to call a tool."}],
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "weather",
+                                "arguments": '{"city":"Shanghai"}',
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert len(conversation) == 2
+    assert conversation[1].role == "model"
+    parts = conversation[1].parts
+    assert parts is not None
+    assert parts[0].text == "Need to call a tool."
+    assert parts[1].function_call is not None
+    assert parts[1].function_call.name == "weather"
+
+
+def test_prepare_conversation_skips_duplicate_empty_thought_part_when_tool_signature_exists():
+    provider = object.__new__(ProviderGoogleGenAI)
+    provider.provider_config = {}
+    thought_signature = base64.b64encode(b"signature").decode("utf-8")
+
+    conversation = provider._prepare_conversation(
+        {
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "think", "encrypted": thought_signature}],
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "weather",
+                                "arguments": '{"city":"Shanghai"}',
+                            },
+                            "extra_content": {
+                                "google": {"thought_signature": thought_signature}
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert len(conversation) == 2
+    parts = conversation[1].parts
+    assert parts is not None
+    assert len(parts) == 1
+    assert parts[0].function_call is not None
+    assert parts[0].function_call.name == "weather"

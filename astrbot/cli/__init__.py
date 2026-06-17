@@ -1,1 +1,3 @@
-__version__ = "4.25.5"
+from astrbot.core.config.default import VERSION
+
+__version__ = VERSION

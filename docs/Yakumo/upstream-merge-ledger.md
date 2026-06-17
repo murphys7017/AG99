@@ -5,15 +5,15 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-06-12
+Last updated: 2026-06-17
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `32cfcbf52` (`feat: show quoted message content in group chat context`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-06-11; upstream currently has tag `v4.25.5` at `af70151ff`, followed by additional commits through `32cfcbf52`.
-- Git-only divergence at this snapshot before the local rewrite: local-only `332`, upstream-only `223`.
+- Last local upstream snapshot checked: `upstream/master` at `2c5165e92` (`chore(release): 4.26.0-beta.4`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-06-17; upstream currently includes `v4.26.0-beta.4` and follow-up commits through `2c5165e92`.
+- Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
 - Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
 
 Important interpretation:
@@ -36,6 +36,35 @@ Current local upstream-sync commits:
 - `aee09530` Prefer bundled dashboard when `data/dist` is stale
 - `1505cbd81` Absorb v4.25.2 small/compatibility parity batch with local `modalities=[]` text-only policy.
 - `50a64e7a` Absorb upstream session alias and Dingtalk updates.
+
+## 2026-06-17 v4.26.0-beta.4 small repair batch
+
+Reviewed upstream baseline: `upstream/master` at `2c5165e92`
+
+Absorbed by local rewrite:
+
+- Plugin/tool ownership and activation:
+  - `736bc93b2` / `3ca6f241a` / `992aea986`: subdirectory plugin tools now resolve back to the registered plugin root module instead of drifting to ambiguous handler paths; empty module-path edge cases are handled defensively.
+  - `fadada3d6`: plugin on/off now correctly matches tools under child modules such as `...main.tools.*`.
+  - `6f88ad9a3`: reviewed but not copied literally. This fork already enforces per-tool permissions at the executor entrypoint, so no wrapper rewrite was needed; focused coverage was kept on the local guard path instead of introducing wrapper/tool-type risk.
+- Provider/agent fixes:
+  - `690b184a6`: OpenAI embedding API base normalization now preserves explicit version suffixes like `/v1beta` or `/v1alpha1` while still appending `/v1` when the path is genuinely versionless.
+  - `33cab38c3`: Gemini multi-turn tool-call context now keeps assistant text/thinking parts alongside tool calls and avoids emitting a duplicate empty thought-only part when the thought signature already lives on tool-call entries.
+- Stability and ops:
+  - `12d4a613b`: config writes now use atomic temp-file replace semantics with cleanup on failure; initial config creation goes through the same path.
+  - `dd828c99f`: local Python execution now runs inside the per-session workspace for `LocalPythonTool`; sandbox `PythonTool` behavior was intentionally left unchanged.
+  - `898c800c9`: skills batch upload no longer forces a broken manual multipart header, allowing the browser boundary to be sent correctly.
+  - `80af9e0c1`: CLI version now reads from core `VERSION` instead of a stale hardcoded literal.
+  - `d0323196f` / `2eee83383`: GitHub proxy presets were refreshed to the current valid list.
+  - `f19f623a2`: changelog dialog now handles in-dialog anchor links by scrolling within the modal instead of jumping the whole page.
+- Documentation/governance:
+  - This ledger is now aligned to upstream baseline `2c5165e92`.
+  - Historical hash typo references should use `b0bb5c547` (not `b0bb5c747`).
+
+Validation for this batch:
+
+- Python targeted tests cover plugin tool ownership, Gemini conversation shaping, OpenAI embedding base normalization, config atomic-write cleanup, local Python workspace execution, and existing tool-permission guard behavior.
+- Frontend validation includes `pnpm --dir dashboard typecheck`.
 
 Recently absorbed by rewrite:
 

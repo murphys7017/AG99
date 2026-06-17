@@ -674,6 +674,17 @@ class PluginManager:
             )
         )
 
+    @staticmethod
+    def _tool_belongs_to_plugin(
+        tool_module_path: str | None,
+        plugin_module_path: str | None,
+    ) -> bool:
+        if not tool_module_path or not plugin_module_path:
+            return False
+        return tool_module_path == plugin_module_path or tool_module_path.startswith(
+            f"{plugin_module_path}."
+        )
+
     def _purge_modules(
         self,
         module_patterns: list[str] | None = None,
@@ -1733,9 +1744,7 @@ class PluginManager:
             for func_tool in llm_tools.func_list:
                 mp = func_tool.handler_module_path
                 if (
-                    plugin.module_path
-                    and mp
-                    and plugin.module_path.startswith(mp)
+                    self._tool_belongs_to_plugin(mp, plugin.module_path)
                     and not mp.endswith(("astrbot.builtin_stars", "data.plugins"))
                 ):
                     func_tool.active = False
@@ -1808,9 +1817,7 @@ class PluginManager:
         for func_tool in llm_tools.func_list:
             mp = func_tool.handler_module_path
             if (
-                plugin.module_path
-                and mp
-                and plugin.module_path.startswith(mp)
+                self._tool_belongs_to_plugin(mp, plugin.module_path)
                 and not mp.endswith(("astrbot.builtin_stars", "data.plugins"))
                 and func_tool.name in inactivated_llm_tools
             ):

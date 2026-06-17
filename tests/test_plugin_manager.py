@@ -2,11 +2,14 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 import yaml
 
+from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.provider.register import llm_tools
 from astrbot.core.star import star_manager as star_manager_module
 from astrbot.core.star.star_manager import PluginDependencyInstallError, PluginManager
 from astrbot.core.utils.pip_installer import PipInstallError
@@ -124,6 +127,107 @@ def test_load_plugin_metadata_includes_pages(tmp_path: Path):
     assert loaded_metadata is not None
     assert loaded_metadata.icon == "mdi-view-dashboard"
     assert loaded_metadata.pages == [{"name": "dashboard", "title": "Dashboard"}]
+
+
+@pytest.mark.asyncio
+async def test_turn_off_plugin_deactivates_subdirectory_tools(monkeypatch):
+    plugin = SimpleNamespace(
+        name="demo",
+        module_path="data.plugins.astrbot_plugin_demo.main",
+        activated=True,
+    )
+    tool = FunctionTool(
+        name="demo_tool",
+        description="demo",
+        parameters={"type": "object", "properties": {}},
+        handler=None,
+        handler_module_path="data.plugins.astrbot_plugin_demo.main.tools.extra",
+    )
+
+    manager = object.__new__(PluginManager)
+    manager._pm_lock = asyncio.Lock()
+    manager.context = SimpleNamespace(get_registered_star=lambda name: plugin)
+
+    original_func_list = llm_tools.func_list[:]
+    llm_tools.func_list = [tool]
+    try:
+        monkeypatch.setattr(
+            PluginManager,
+            "_terminate_plugin",
+            staticmethod(lambda star_metadata: asyncio.sleep(0)),
+        )
+
+        await PluginManager.turn_off_plugin(manager, "demo")
+
+        assert tool.active is False
+        assert plugin.activated is False
+    finally:
+        from astrbot.core import sp
+
+        sp.put("inactivated_plugins", [], scope="global", scope_id="global")
+        sp.put("inactivated_llm_tools", [], scope="global", scope_id="global")
+        llm_tools.func_list = original_func_list
+
+
+@pytest.mark.asyncio
+async def test_turn_on_plugin_reactivates_subdirectory_tools(monkeypatch):
+    plugin = SimpleNamespace(
+        name="demo",
+        module_path="data.plugins.astrbot_plugin_demo.main",
+        activated=False,
+    )
+    tool = FunctionTool(
+        name="demo_tool",
+        description="demo",
+        parameters={"type": "object", "properties": {}},
+        handler=None,
+        handler_module_path="data.plugins.astrbot_plugin_demo.main.tools.extra",
+        active=False,
+    )
+
+    manager = object.__new__(PluginManager)
+    manager.context = SimpleNamespace(get_registered_star=lambda name: plugin)
+
+    original_func_list = llm_tools.func_list[:]
+    llm_tools.func_list = [tool]
+    try:
+        monkeypatch.setattr(
+            manager,
+            "reload",
+            lambda plugin_name: asyncio.sleep(0),
+            raising=False,
+        )
+
+        from astrbot.core import sp
+
+        sp.put(
+            "inactivated_plugins",
+            [plugin.module_path],
+            scope="global",
+            scope_id="global",
+        )
+        sp.put(
+            "inactivated_llm_tools",
+            [tool.name],
+            scope="global",
+            scope_id="global",
+        )
+
+        await PluginManager.turn_on_plugin(manager, "demo")
+
+        assert tool.active is True
+        assert tool.name not in sp.get(
+            "inactivated_llm_tools",
+            [],
+            scope="global",
+            scope_id="global",
+        )
+    finally:
+        from astrbot.core import sp
+
+        sp.put("inactivated_plugins", [], scope="global", scope_id="global")
+        sp.put("inactivated_llm_tools", [], scope="global", scope_id="global")
+        llm_tools.func_list = original_func_list
 
 
 def test_loaded_metadata_can_copy_i18n_into_existing_star_metadata(tmp_path: Path):

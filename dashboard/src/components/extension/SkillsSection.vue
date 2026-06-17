@@ -1195,9 +1195,7 @@ export default {
           formData.append("files", item.file);
         }
 
-        const res = await axios.post("/api/skills/batch-upload", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
+        const res = await axios.post("/api/skills/batch-upload", formData);
 
         const payload = res?.data?.data || {};
         applyUploadResults(attemptedItems, payload);
