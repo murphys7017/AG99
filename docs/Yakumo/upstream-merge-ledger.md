@@ -5,7 +5,7 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-06-17
+Last updated: 2026-06-18
 
 Current comparison baseline:
 
@@ -36,6 +36,34 @@ Current local upstream-sync commits:
 - `aee09530` Prefer bundled dashboard when `data/dist` is stale
 - `1505cbd81` Absorb v4.25.2 small/compatibility parity batch with local `modalities=[]` text-only policy.
 - `50a64e7a` Absorb upstream session alias and Dingtalk updates.
+- `77afdf864` Absorb upstream v4.26.0-beta.4 small repair batch.
+
+## 2026-06-18 post-v4.26.0-beta.4 small update/restart batch
+
+Reviewed upstream baseline: `upstream/master` at `2c5165e92`
+
+Absorbed by local rewrite:
+
+- Update and dashboard delivery:
+  - `dd46cce09`: rewritten into the existing Quart update route as a staged local flow that downloads core and WebUI archives first, validates both zip packages, then applies core extraction and dashboard extraction separately. This keeps the local lifecycle/restart contract and avoids pulling in the upstream FastAPI/service refactor.
+  - The local updater now exposes `download_update_package(...)` and `apply_update_package(...)` so the dashboard route can keep the update process atomic at the archive/application boundary.
+  - Dashboard archive extraction is now isolated in `extract_dashboard(...)` with path traversal protection.
+- Runtime visibility:
+  - `a93862046`: dashboard startup log now reports when the WebUI static bundle is missing instead of always printing a misleading ready banner.
+- Frontend input/update UX:
+  - `f66215b36`: ChatInput now preserves IME-composed characters by deferring prompt emission until composition ends and then re-running input synchronization.
+  - The existing update dialog now keeps restart feedback visible across backend restarts, waits for `/api/stat/start-time` to change, and only auto-reloads after the process is back.
+
+Validation for this batch:
+
+- Python: focused `pytest tests/test_dashboard.py -q` plus targeted lint on touched backend files.
+- Frontend: `pnpm --dir dashboard typecheck`.
+- Final hygiene: `git diff --check`.
+
+Deferred / intentionally not merged in this batch:
+
+- Upstream FastAPI/OpenAPI migration and updater service split were not merged; behavior was rewritten into the current Quart route instead.
+- Settings-system restructuring, theme-mode refactors, auth/TOTP expansion, and other broad WebUI architecture changes remain out of scope for this batch.
 
 ## 2026-06-17 v4.26.0-beta.4 small repair batch
 

@@ -95,6 +95,14 @@ function createEmptyUpdateProgress(): UpdateProgress {
 
 const updateProgress = ref<UpdateProgress>(createEmptyUpdateProgress());
 let updateProgressTimer: ReturnType<typeof setInterval> | null = null;
+let restartWaiting = ref(false);
+let restartStartTime = ref<number | string | null>(null);
+let restartPollTimer: ReturnType<typeof setInterval> | null = null;
+let restartCompleted = ref(false);
+let restartObservedDowntime = ref(false);
+let restartReloadCountdown = ref(3);
+let restartReloadTimer: ReturnType<typeof setInterval> | null = null;
+const RESTART_FEEDBACK_DELAY_SECONDS = 3;
 const isDesktopReleaseMode = ref(
   typeof window !== "undefined" && !!window.astrbotDesktop?.isDesktop,
 );
@@ -467,6 +475,13 @@ function getReleases() {
 }
 
 function applyUpdateProgress(progress: Partial<UpdateProgress>) {
+  if (
+    progress.status === "idle" &&
+    progress.id === updateProgress.value.id &&
+    updateProgress.value.status !== "idle"
+  ) {
+    return;
+  }
   updateProgress.value = {
     ...updateProgress.value,
     ...progress,
@@ -475,6 +490,10 @@ function applyUpdateProgress(progress: Partial<UpdateProgress>) {
       ...(progress.stages || {}),
     },
   };
+  if (progress.stage === "restart") {
+    stopUpdateProgressPolling();
+    waitForAstrBotRestart(restartStartTime.value);
+  }
 }
 
 function stopUpdateProgressPolling() {
@@ -482,6 +501,99 @@ function stopUpdateProgressPolling() {
     clearInterval(updateProgressTimer);
     updateProgressTimer = null;
   }
+}
+
+function stopRestartPolling() {
+  if (restartPollTimer) {
+    clearInterval(restartPollTimer);
+    restartPollTimer = null;
+  }
+}
+
+function stopRestartReloadTimer() {
+  if (restartReloadTimer) {
+    clearInterval(restartReloadTimer);
+    restartReloadTimer = null;
+  }
+}
+
+function resetRestartFeedbackState() {
+  stopRestartReloadTimer();
+  stopRestartPolling();
+  restartCompleted.value = false;
+  restartObservedDowntime.value = false;
+  restartReloadCountdown.value = RESTART_FEEDBACK_DELAY_SECONDS;
+  restartWaiting.value = false;
+}
+
+async function fetchAstrBotStartTime() {
+  const res = await axios.get("/api/stat/start-time", { timeout: 3000 });
+  return res.data?.data?.start_time ?? null;
+}
+
+function reloadAfterUpdate() {
+  stopRestartReloadTimer();
+  window.location.reload();
+}
+
+function showRestartCompleted() {
+  if (restartCompleted.value) {
+    return;
+  }
+  stopRestartPolling();
+  stopRestartReloadTimer();
+  restartWaiting.value = false;
+  restartCompleted.value = true;
+  restartReloadCountdown.value = RESTART_FEEDBACK_DELAY_SECONDS;
+  updateProgress.value = {
+    ...updateProgress.value,
+    status: "success",
+    stage: "done",
+    message: t("core.header.updateDialog.progress.successReady"),
+    overall_percent: 100,
+  };
+  restartReloadTimer = setInterval(() => {
+    if (restartReloadCountdown.value <= 1) {
+      reloadAfterUpdate();
+      return;
+    }
+    restartReloadCountdown.value -= 1;
+  }, 1000);
+}
+
+function waitForAstrBotRestart(initialStartTime: number | string | null) {
+  if (restartWaiting.value || restartCompleted.value) {
+    return;
+  }
+  stopRestartPolling();
+  restartWaiting.value = true;
+  restartStartTime.value = initialStartTime;
+  restartObservedDowntime.value = false;
+  restartPollTimer = setInterval(async () => {
+    try {
+      const currentStartTime = await fetchAstrBotStartTime();
+      if (
+        currentStartTime !== null &&
+        initialStartTime !== null &&
+        currentStartTime !== initialStartTime
+      ) {
+        stopRestartPolling();
+        showRestartCompleted();
+        return;
+      }
+      if (
+        currentStartTime !== null &&
+        initialStartTime === null &&
+        restartObservedDowntime.value
+      ) {
+        stopRestartPolling();
+        showRestartCompleted();
+      }
+    } catch (_error) {
+      // Backend may be unavailable while the process is restarting.
+      restartObservedDowntime.value = true;
+    }
+  }, 1000);
 }
 
 function startUpdateProgressPolling(progressId: string) {
@@ -545,6 +657,7 @@ function getStageStatusColor(status: string) {
 
 function switchVersion(version: string) {
   const progressId = createProgressId();
+  resetRestartFeedbackState();
   updateProgress.value = {
     ...createEmptyUpdateProgress(),
     id: progressId,
@@ -555,6 +668,15 @@ function switchVersion(version: string) {
   updateStatus.value = t("core.header.updateDialog.status.switching");
   installLoading.value = true;
   startUpdateProgressPolling(progressId);
+  const cachedStartTime = commonStore.getStartTime();
+  restartStartTime.value = cachedStartTime !== -1 ? cachedStartTime : null;
+  fetchAstrBotStartTime()
+    .then((startTime) => {
+      if (startTime !== null) {
+        restartStartTime.value = startTime;
+      }
+    })
+    .catch(() => {});
   axios
     .post("/api/update/do", {
       version: version,
@@ -570,10 +692,14 @@ function switchVersion(version: string) {
         overall_percent:
           res.data.status === "ok" ? 100 : updateProgress.value.overall_percent,
       };
-      if (res.data.status == "ok") {
-        setTimeout(() => {
-          window.location.reload();
-        }, 1000);
+      if (res.data.status === "ok") {
+        if (updateProgress.value.stage === "restart") {
+          waitForAstrBotRestart(restartStartTime.value);
+        } else {
+          setTimeout(() => {
+            window.location.reload();
+          }, 1000);
+        }
       }
     })
     .catch((err) => {
@@ -590,7 +716,9 @@ function switchVersion(version: string) {
     })
     .finally(() => {
       installLoading.value = false;
-      stopUpdateProgressPolling();
+      if (!restartWaiting.value && !restartCompleted.value) {
+        stopUpdateProgressPolling();
+      }
     });
 }
 
@@ -648,6 +776,8 @@ commonStore.getStartTime();
 
 onUnmounted(() => {
   stopUpdateProgressPolling();
+  stopRestartPolling();
+  stopRestartReloadTimer();
 });
 
 // 视图模式切换
@@ -1062,61 +1192,101 @@ onMounted(async () => {
               v-if="installLoading || updateProgress.status !== 'idle'"
               class="update-progress-panel mb-4 mt-4"
             >
-              <div class="update-progress-heading">
-                <div>
-                  <div class="text-subtitle-1 font-weight-medium">
-                    {{ updateProgress.message || updateStatus }}
-                  </div>
-                  <div class="text-caption text-medium-emphasis">
-                    {{ t("core.header.updateDialog.progress.target") }}
-                    {{ updateProgress.version || "latest" }}
-                  </div>
+              <div v-if="restartCompleted" class="update-feedback-panel">
+                <v-icon
+                  icon="mdi-check-circle"
+                  color="success"
+                  size="46"
+                ></v-icon>
+                <div class="text-subtitle-1 font-weight-medium">
+                  {{ t("core.header.updateDialog.progress.successReady") }}
                 </div>
-                <div class="text-h6 font-weight-bold">
-                  {{ updateProgress.overall_percent }}%
+                <div class="text-caption text-medium-emphasis">
+                  {{
+                    t("core.header.updateDialog.progress.autoReloadIn", {
+                      seconds: restartReloadCountdown,
+                    })
+                  }}
                 </div>
-              </div>
-              <v-progress-linear
-                :model-value="updateProgress.overall_percent"
-                height="8"
-                rounded
-                color="primary"
-                class="mt-3"
-              />
-
-              <div class="update-stage-list mt-4">
-                <div
-                  v-for="stage in updateStageItems"
-                  :key="stage.key"
-                  class="update-stage-row"
+                <v-btn
+                  color="success"
+                  variant="elevated"
+                  size="small"
+                  @click="reloadAfterUpdate"
                 >
-                  <v-icon
-                    :icon="getStageStatusIcon(stage.progress.status)"
-                    :color="getStageStatusColor(stage.progress.status)"
-                    size="20"
-                  />
-                  <div class="update-stage-content">
-                    <div class="update-stage-title">
-                      <span>{{ stage.title }}</span>
-                      <span>{{ stage.progress.percent }}%</span>
+                  <v-icon class="mr-1" size="18">mdi-refresh</v-icon>
+                  {{ t("core.header.updateDialog.progress.reloadNow") }}
+                </v-btn>
+              </div>
+
+              <div v-else-if="restartWaiting" class="update-feedback-panel">
+                <v-progress-circular
+                  indeterminate
+                  color="primary"
+                  size="40"
+                ></v-progress-circular>
+                <div class="text-subtitle-1 font-weight-medium">
+                  {{ updateProgress.message || updateStatus }}
+                </div>
+              </div>
+
+              <template v-else>
+                <div class="update-progress-heading">
+                  <div>
+                    <div class="text-subtitle-1 font-weight-medium">
+                      {{ updateProgress.message || updateStatus }}
                     </div>
-                    <v-progress-linear
-                      :model-value="stage.progress.percent"
-                      height="5"
-                      rounded
+                    <div class="text-caption text-medium-emphasis">
+                      {{ t("core.header.updateDialog.progress.target") }}
+                      {{ updateProgress.version || "latest" }}
+                    </div>
+                  </div>
+                  <div class="text-h6 font-weight-bold">
+                    {{ updateProgress.overall_percent }}%
+                  </div>
+                </div>
+                <v-progress-linear
+                  :model-value="updateProgress.overall_percent"
+                  height="8"
+                  rounded
+                  color="primary"
+                  class="mt-3"
+                />
+
+                <div class="update-stage-list mt-4">
+                  <div
+                    v-for="stage in updateStageItems"
+                    :key="stage.key"
+                    class="update-stage-row"
+                  >
+                    <v-icon
+                      :icon="getStageStatusIcon(stage.progress.status)"
                       :color="getStageStatusColor(stage.progress.status)"
-                      class="mt-2"
+                      size="20"
                     />
-                    <div class="update-stage-meta">
-                      <span>
-                        {{ formatDownloadSize(stage.progress.downloaded) }} /
-                        {{ formatDownloadSize(stage.progress.total) }}
-                      </span>
-                      <span>{{ formatDownloadSpeed(stage.progress.speed) }}</span>
+                    <div class="update-stage-content">
+                      <div class="update-stage-title">
+                        <span>{{ stage.title }}</span>
+                        <span>{{ stage.progress.percent }}%</span>
+                      </div>
+                      <v-progress-linear
+                        :model-value="stage.progress.percent"
+                        height="5"
+                        rounded
+                        :color="getStageStatusColor(stage.progress.status)"
+                        class="mt-2"
+                      />
+                      <div class="update-stage-meta">
+                        <span>
+                          {{ formatDownloadSize(stage.progress.downloaded) }} /
+                          {{ formatDownloadSize(stage.progress.total) }}
+                        </span>
+                        <span>{{ formatDownloadSpeed(stage.progress.speed) }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              </template>
             </div>
 
             <div
@@ -1681,6 +1851,17 @@ onMounted(async () => {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 8px;
   padding: 16px;
+}
+
+.update-feedback-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 150px;
+  padding: 18px 0 22px;
+  text-align: center;
 }
 
 .update-progress-heading,

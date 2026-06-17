@@ -1,7 +1,6 @@
 import asyncio
 import copy
 import io
-import os
 import re
 import shutil
 import sys
@@ -52,6 +51,12 @@ def _strip_query(url: str) -> str:
     return urlunsplit(("", "", parsed.path, "", parsed.fragment))
 
 
+def _write_test_zip(path: Path, files: dict[str, str] | None = None) -> None:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in (files or {"placeholder.txt": "ok"}).items():
+            zf.writestr(name, content)
+
+
 def test_dashboard_uses_bundled_dist_when_data_dist_is_stale(
     core_lifecycle_td: AstrBotCoreLifecycle,
     monkeypatch,
@@ -80,6 +85,48 @@ def test_dashboard_uses_bundled_dist_when_data_dist_is_stale(
     server = AstrBotDashboard(core_lifecycle_td, core_lifecycle_td.db, shutdown_event)
 
     assert server.data_path == str(bundled_dist)
+
+
+def test_dashboard_ready_banner_reports_missing_assets(
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+    tmp_path,
+):
+    dashboard_dist = tmp_path / "missing-dist"
+    dashboard_dist.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "astrbot.dashboard.server.get_astrbot_data_path",
+        lambda: str(tmp_path / "data"),
+    )
+
+    shutdown_event = asyncio.Event()
+    server = AstrBotDashboard(
+        core_lifecycle_td,
+        core_lifecycle_td.db,
+        shutdown_event,
+        webui_dir=str(dashboard_dist),
+    )
+
+    monkeypatch.setattr(server, "check_port_in_use", lambda port: False)
+    monkeypatch.setattr(
+        "astrbot.dashboard.server.get_local_ip_addresses",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "astrbot.dashboard.server.logger.info",
+        lambda message, *args: captured.append(message % args if args else message),
+    )
+    monkeypatch.setattr(
+        "astrbot.dashboard.server.serve",
+        lambda *args, **kwargs: "serve-called",
+    )
+
+    captured = []
+    result = server.run()
+
+    assert result == "serve-called"
+    assert any("WebUI 未就绪" in message for message in captured)
 
 
 @pytest.fixture
@@ -1518,22 +1565,14 @@ async def test_do_update(
     authenticated_header: dict,
     core_lifecycle_td: AstrBotCoreLifecycle,
     monkeypatch,
-    tmp_path_factory,
+    tmp_path,
 ):
     test_client = app.test_client()
-
-    # Use a temporary path for the mock update to avoid side effects
-    temp_release_dir = tmp_path_factory.mktemp("release")
-    release_path = temp_release_dir / "astrbot"
     calls = []
-
-    async def mock_update(*args, **kwargs):
-        """Mocks the update process by creating a directory in the temp path."""
-        calls.append("core")
-        callback = kwargs.get("progress_callback")
-        if callback:
-            callback({"downloaded": 10, "total": 10, "percent": 1, "speed": 1})
-        os.makedirs(release_path, exist_ok=True)
+    dashboard_zip = tmp_path / "dashboard.zip"
+    _write_test_zip(dashboard_zip, {"dist/index.html": "<html></html>"})
+    core_zip = tmp_path / "core.zip"
+    _write_test_zip(core_zip)
 
     async def mock_download_dashboard(*args, **kwargs):
         """Mocks the dashboard download to prevent network access."""
@@ -1541,16 +1580,36 @@ async def test_do_update(
         callback = kwargs.get("progress_callback")
         if callback:
             callback({"downloaded": 10, "total": 10, "percent": 1, "speed": 1})
-        return
+        Path(kwargs["path"]).write_bytes(dashboard_zip.read_bytes())
+
+    async def mock_download_update_package(*args, **kwargs):
+        calls.append("core")
+        callback = kwargs.get("progress_callback")
+        if callback:
+            callback({"downloaded": 10, "total": 10, "percent": 1, "speed": 1})
+        Path(kwargs["path"]).write_bytes(core_zip.read_bytes())
+        return Path(kwargs["path"])
+
+    def mock_apply_update_package(zip_path):
+        del zip_path
 
     async def mock_pip_install(*args, **kwargs):
         """Mocks pip install to prevent actual installation."""
         return
 
-    monkeypatch.setattr(core_lifecycle_td.astrbot_updator, "update", mock_update)
     monkeypatch.setattr(
         "astrbot.dashboard.routes.update.download_dashboard",
         mock_download_dashboard,
+    )
+    monkeypatch.setattr(
+        core_lifecycle_td.astrbot_updator,
+        "download_update_package",
+        mock_download_update_package,
+    )
+    monkeypatch.setattr(
+        core_lifecycle_td.astrbot_updator,
+        "apply_update_package",
+        mock_apply_update_package,
     )
     monkeypatch.setattr(
         "astrbot.dashboard.routes.update.pip_installer.install",
@@ -1565,7 +1624,6 @@ async def test_do_update(
     assert response.status_code == 200
     data = await response.get_json()
     assert data["status"] == "ok"
-    assert os.path.exists(release_path)
     assert calls[:2] == ["dashboard", "core"]
 
     progress_response = await test_client.get(
@@ -1576,6 +1634,95 @@ async def test_do_update(
     assert progress_data["status"] == "ok"
     assert progress_data["data"]["status"] == "success"
     assert progress_data["data"]["overall_percent"] == 100
+
+
+@pytest.mark.asyncio
+async def test_do_update_uses_atomic_download_and_apply_flow(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+    tmp_path,
+):
+    test_client = app.test_client()
+    calls = []
+
+    dashboard_zip = tmp_path / "dashboard.zip"
+    _write_test_zip(dashboard_zip, {"dist/index.html": "<html></html>"})
+    core_zip = tmp_path / "core.zip"
+    _write_test_zip(core_zip)
+
+    async def mock_download_dashboard(*args, **kwargs):
+        calls.append(("dashboard_download", kwargs.get("path"), kwargs.get("extract")))
+        callback = kwargs.get("progress_callback")
+        if callback:
+            callback({"downloaded": 10, "total": 10, "percent": 1, "speed": 1})
+        Path(kwargs["path"]).write_bytes(dashboard_zip.read_bytes())
+
+    async def mock_download_update_package(*args, **kwargs):
+        calls.append(("core_download", kwargs.get("path")))
+        callback = kwargs.get("progress_callback")
+        if callback:
+            callback({"downloaded": 10, "total": 10, "percent": 1, "speed": 1})
+        Path(kwargs["path"]).write_bytes(core_zip.read_bytes())
+        return Path(kwargs["path"])
+
+    def mock_apply_update_package(zip_path):
+        calls.append(("core_apply", str(zip_path)))
+
+    def mock_extract_dashboard(zip_path, extract_path):
+        calls.append(("dashboard_extract", str(zip_path), str(extract_path)))
+
+    async def mock_pip_install(*args, **kwargs):
+        calls.append(("pip_install",))
+
+    monkeypatch.setattr(
+        "astrbot.dashboard.routes.update.download_dashboard",
+        mock_download_dashboard,
+    )
+    monkeypatch.setattr(
+        core_lifecycle_td.astrbot_updator,
+        "download_update_package",
+        mock_download_update_package,
+    )
+    monkeypatch.setattr(
+        core_lifecycle_td.astrbot_updator,
+        "apply_update_package",
+        mock_apply_update_package,
+    )
+    monkeypatch.setattr(
+        "astrbot.dashboard.routes.update.extract_dashboard",
+        mock_extract_dashboard,
+    )
+    monkeypatch.setattr(
+        "astrbot.dashboard.routes.update.pip_installer.install",
+        mock_pip_install,
+    )
+
+    response = await test_client.post(
+        "/api/update/do",
+        headers=authenticated_header,
+        json={"version": "v3.4.0", "reboot": False, "progress_id": "atomic-progress"},
+    )
+
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert calls[0][0] == "dashboard_download"
+    assert calls[0][2] is False
+    assert calls[1][0] == "core_download"
+    assert calls[2][0] == "core_apply"
+    assert calls[3][0] == "dashboard_extract"
+    assert calls[4][0] == "pip_install"
+
+    progress_response = await test_client.get(
+        "/api/update/progress?id=atomic-progress",
+        headers=authenticated_header,
+    )
+    progress_data = await progress_response.get_json()
+    assert progress_data["data"]["status"] == "success"
+    assert progress_data["data"]["stages"]["verify"]["status"] == "done"
+    assert progress_data["data"]["stages"]["apply"]["status"] == "done"
 
 
 @pytest.mark.asyncio

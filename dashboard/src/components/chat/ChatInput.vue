@@ -411,7 +411,9 @@ let blurTimer: number | null = null;
 
 const localPrompt = computed({
   get: () => props.prompt,
-  set: (value) => emit("update:prompt", value),
+  set: (value) => {
+    if (!isComposing.value) emit("update:prompt", value);
+  },
 });
 
 function hasWakePrefix(text: string) {
@@ -753,6 +755,18 @@ function handleCompositionStart() {
 function handleCompositionEnd(e: CompositionEvent) {
   lastCompositionEndAt.value = e.timeStamp;
   clearCompositionState({ keepLastEndAt: true });
+
+  const endValue = inputField.value?.value;
+
+  nextTick(() => {
+    const el = inputField.value;
+    if (el && el.value === endValue && el.value !== props.prompt) {
+      emit("update:prompt", el.value);
+      nextTick(() => {
+        handleInput();
+      });
+    }
+  });
 }
 
 function clearCompositionState({ keepLastEndAt = false } = {}) {

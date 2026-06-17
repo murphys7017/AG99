@@ -25,6 +25,9 @@
       "target": "Target version: ",
       "dashboard": "Dashboard",
       "core": "Core",
+      "successReady": "Update successful",
+      "autoReloadIn": "Refreshing automatically in {seconds}s",
+      "reloadNow": "Refresh now",
       "failed": "Update failed"
     },
     "tabs": {

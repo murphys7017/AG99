@@ -513,7 +513,11 @@ class AstrBotDashboard:
 
             raise Exception(f"端口 {port} 已被占用")
 
-        parts = [f"\n ✨✨✨\n  AstrBot v{VERSION} WebUI 已启动，可访问\n\n"]
+        if (Path(self.data_path) / "index.html").is_file():
+            webui_status = "WebUI 已启动，可访问"
+        else:
+            webui_status = f"WebUI 未就绪：静态文件缺失于 {self.data_path}"
+        parts = [f"\n ✨✨✨\n  AstrBot v{VERSION} {webui_status}\n\n"]
         parts.append(f"   ➜  本地: {scheme}://localhost:{port}\n")
         for ip in ip_addr:
             parts.append(f"   ➜  网络: {scheme}://{ip}:{port}\n")
