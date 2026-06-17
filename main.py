@@ -9,6 +9,24 @@ import runtime_bootstrap
 
 runtime_bootstrap.initialize_runtime_bootstrap()
 
+DASHBOARD_RESET_PASSWORD_ENV = "ASTRBOT_RESET_DASHBOARD_PASSWORD"
+
+
+def _apply_startup_env_flags(argv: list[str]) -> None:
+    """Apply startup flags that must take effect before core imports."""
+
+    if "-h" in argv or "--help" in argv:
+        return
+
+    startup_parser = argparse.ArgumentParser(add_help=False)
+    startup_parser.add_argument("--reset-password", action="store_true")
+    startup_args, _ = startup_parser.parse_known_args(argv)
+    if startup_args.reset_password:
+        os.environ[DASHBOARD_RESET_PASSWORD_ENV] = "1"
+
+
+_apply_startup_env_flags(sys.argv[1:])
+
 from astrbot.core import LogBroker, LogManager, db_helper, logger  # noqa: E402
 from astrbot.core.config.default import VERSION  # noqa: E402
 from astrbot.core.initial_loader import InitialLoader  # noqa: E402
@@ -137,6 +155,11 @@ if __name__ == "__main__":
         type=str,
         help="指定 WebUI 静态文件目录路径",
         default=None,
+    )
+    parser.add_argument(
+        "--reset-password",
+        action="store_true",
+        help="启动时重置 Dashboard 初始密码并在启动日志中输出",
     )
     args = parser.parse_args()
 

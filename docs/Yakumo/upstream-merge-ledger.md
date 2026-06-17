@@ -37,6 +37,8 @@ Current local upstream-sync commits:
 - `1505cbd81` Absorb v4.25.2 small/compatibility parity batch with local `modalities=[]` text-only policy.
 - `50a64e7a` Absorb upstream session alias and Dingtalk updates.
 - `77afdf864` Absorb upstream v4.26.0-beta.4 small repair batch.
+- `f40f3db4d` Absorb upstream update/restart fixes.
+- `9f0235081` Absorb upstream compatibility fixes.
 
 ## 2026-06-18 post-v4.26.0-beta.4 small update/restart batch
 
@@ -64,6 +66,33 @@ Deferred / intentionally not merged in this batch:
 
 - Upstream FastAPI/OpenAPI migration and updater service split were not merged; behavior was rewritten into the current Quart route instead.
 - Settings-system restructuring, theme-mode refactors, auth/TOTP expansion, and other broad WebUI architecture changes remain out of scope for this batch.
+
+## 2026-06-18 follow-up small compatibility fixes
+
+Reviewed upstream baseline: `upstream/master` at `2c5165e92`
+
+Local commit: `9f0235081`
+
+Absorbed by local rewrite:
+
+- Startup password reset:
+  - `4f5075e60`: local CLI `astrbot run` and direct `main.py` startup now accept `--reset-password`, setting a startup env flag early enough for config loading to rotate the generated dashboard password and reprint it through the existing startup path.
+- Persona tool-selection correctness:
+  - `fda516145`: this fork already had `NOT_GIVEN`-based persona update semantics in the DB/manager path, but persona creation still collapsed `tools=[]` / `skills=[]` into `None`. The Quart persona route now preserves explicit empty lists so “disable all tools/skills” no longer turns into “use all tools/skills”.
+- Backup/onboarding frontend repair:
+  - `d3b52356a`: the relevant local breakage was the backup chunk uploader forcing a manual `multipart/form-data` header, which can drop the browser-generated boundary and break Quart file parsing. The upload now lets the browser generate the correct multipart request.
+
+Reviewed and intentionally left unchanged:
+
+- `dashboard/src/views/WelcomePage.vue` did not need the upstream `systemConfigApi.runtime()` switch in this fork. The local page still uses Quart `/api/config/get` and `/api/config/abconf`, which are valid in the current architecture and do not reproduce the upstream FastAPI/OpenAPI adapter mismatch.
+
+Validation for this batch:
+
+- Python core/config/CLI: `pytest tests/test_main.py tests/test_cli_run.py tests/unit/test_config.py -q --basetemp .test-tmp\pytest-core-compat -p no:cacheprovider`
+- Dashboard route suite was also attempted with `tests/test_dashboard.py`; this environment currently fails while constructing `Quart("dashboard")` with a Flask namespace-package `StopIteration`, before the relevant route assertions run. The earlier no-`basetemp` attempt was additionally blocked by temp-directory permissions.
+- Frontend: `pnpm --dir dashboard typecheck`
+- Lint: focused `uv run ruff check` on touched Python files, with `UV_CACHE_DIR=.uv-cache`
+- Hygiene: `git diff --check`
 
 ## 2026-06-17 v4.26.0-beta.4 small repair batch
 

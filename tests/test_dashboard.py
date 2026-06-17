@@ -984,6 +984,55 @@ async def test_subagent_config_accepts_default_persona(
 
 
 @pytest.mark.asyncio
+async def test_create_persona_preserves_empty_tool_and_skill_lists(
+    app: Quart,
+    authenticated_header: dict,
+):
+    test_client = app.test_client()
+    persona_id = f"persona-empty-{uuid.uuid4().hex[:8]}"
+
+    response = await test_client.post(
+        "/api/persona/create",
+        headers=authenticated_header,
+        json={
+            "persona_id": persona_id,
+            "system_prompt": "This persona intentionally disables all tools and skills.",
+            "begin_dialogs": [],
+            "tools": [],
+            "skills": [],
+            "custom_error_message": "",
+        },
+    )
+    data = await response.get_json()
+
+    assert response.status_code == 200
+    assert data["status"] == "ok"
+    assert data["data"]["persona"]["tools"] == []
+    assert data["data"]["persona"]["skills"] == []
+
+    detail_response = await test_client.post(
+        "/api/persona/detail",
+        headers=authenticated_header,
+        json={"persona_id": persona_id},
+    )
+    detail_data = await detail_response.get_json()
+
+    assert detail_response.status_code == 200
+    assert detail_data["status"] == "ok"
+    assert detail_data["data"]["tools"] == []
+    assert detail_data["data"]["skills"] == []
+
+    delete_response = await test_client.post(
+        "/api/persona/delete",
+        headers=authenticated_header,
+        json={"persona_id": persona_id},
+    )
+    delete_data = await delete_response.get_json()
+    assert delete_response.status_code == 200
+    assert delete_data["status"] == "ok"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("payload", [[], "x"])
 async def test_batch_delete_sessions_rejects_non_object_payload(
     app: Quart, authenticated_header: dict, payload

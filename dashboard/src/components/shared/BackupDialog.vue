@@ -581,9 +581,7 @@ const uploadChunksInParallel = async (file, totalChunks, currentUploadId, curren
         formData.append('chunk_index', chunkIndex.toString())
         formData.append('chunk', chunk)
 
-        const response = await axios.post('/api/backup/upload/chunk', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        })
+        const response = await axios.post('/api/backup/upload/chunk', formData)
 
         if (response.data.status !== 'ok') {
             throw new Error(response.data.message)
