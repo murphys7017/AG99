@@ -297,6 +297,36 @@ def test_prepare_payload_merges_consecutive_tool_results_into_single_user_messag
     ]
 
 
+def test_prepare_payload_converts_local_file_image_url_to_anthropic_image(tmp_path):
+    provider = _make_anthropic_provider_for_payload_tests()
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+    )
+
+    _, new_messages = provider._prepare_payload(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_path.as_uri()},
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert new_messages[0]["content"][0] == {"type": "text", "text": "look"}
+    image_block = new_messages[0]["content"][1]
+    assert image_block["type"] == "image"
+    assert image_block["source"]["type"] == "base64"
+    assert image_block["source"]["media_type"] == "image/png"
+    assert image_block["source"]["data"]
+
+
 def test_prepare_payload_keeps_single_tool_result_as_single_user_message():
     provider = _make_anthropic_provider_for_payload_tests()
 

@@ -1,7 +1,9 @@
 import base64
 import json
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import unquote, urlparse
 
 import anthropic
 import httpx
@@ -301,32 +303,9 @@ class ProviderAnthropic(Provider):
                             # Convert OpenAI image_url format to Anthropic image format
                             image_url_data = part.get("image_url", {})
                             url = image_url_data.get("url", "")
-                            if url.startswith("data:"):
-                                try:
-                                    _, base64_data = url.split(",", 1)
-                                    # Detect actual image format from binary data
-                                    image_bytes = base64.b64decode(base64_data)
-                                    media_type = self._detect_image_mime_type(
-                                        image_bytes
-                                    )
-                                    converted_content.append(
-                                        {
-                                            "type": "image",
-                                            "source": {
-                                                "type": "base64",
-                                                "media_type": media_type,
-                                                "data": base64_data,
-                                            },
-                                        }
-                                    )
-                                except ValueError:
-                                    logger.warning(
-                                        f"Failed to parse image data URI: {url[:50]}..."
-                                    )
-                            else:
-                                logger.warning(
-                                    f"Unsupported image URL format for Anthropic: {url[:50]}..."
-                                )
+                            image_block = self._convert_context_image_url(url)
+                            if image_block is not None:
+                                converted_content.append(image_block)
                         elif part.get("type") == "audio_url":
                             converted_content.append(
                                 {
@@ -348,6 +327,58 @@ class ProviderAnthropic(Provider):
                 new_messages.append(message)
 
         return system_prompt, new_messages
+
+    def _convert_context_image_url(self, url: str) -> dict | None:
+        """Convert an OpenAI image_url context block to Anthropic base64 format."""
+        try:
+            if url.startswith("data:") and ";base64," in url:
+                _, base64_data = url.split(",", 1)
+                image_bytes = base64.b64decode(base64_data)
+            else:
+                image_path = self._resolve_local_image_path(url)
+                if image_path is None:
+                    logger.warning(
+                        "Unsupported image URL format for Anthropic contexts: %s...",
+                        url[:50],
+                    )
+                    return None
+                image_bytes = image_path.read_bytes()
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning(
+                "Failed to load Anthropic context image: url=%s error=%s",
+                url[:80],
+                exc,
+            )
+            return None
+
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": self._detect_image_mime_type(image_bytes),
+                "data": base64.b64encode(image_bytes).decode("utf-8"),
+            },
+        }
+
+    @staticmethod
+    def _resolve_local_image_path(url: str) -> Path | None:
+        if url.startswith("file:"):
+            parsed = urlparse(url)
+            raw_path = unquote(parsed.path or "")
+            if parsed.netloc:
+                raw_path = f"//{parsed.netloc}{raw_path}"
+            if (
+                len(raw_path) >= 3
+                and raw_path[0] == "/"
+                and raw_path[2] == ":"
+            ):
+                raw_path = raw_path[1:]
+            path = Path(raw_path)
+        elif "://" not in url:
+            path = Path(url)
+        else:
+            return None
+        return path if path.is_file() else None
 
     def _extract_usage(self, usage: Usage | None) -> TokenUsage:
         if usage is None:

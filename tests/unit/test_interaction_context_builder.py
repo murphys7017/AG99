@@ -7,6 +7,7 @@ import pytest
 from astrbot.core.interaction.collectors import InteractionMemoryCollector
 from astrbot.core.interaction.context_builder import (
     InteractionPromptContributorError,
+    _build_router_attachment_summary,
     append_interaction_prompt_extensions_to_pack,
     build_interaction_collectors,
     collect_interaction_prompt_extensions,
@@ -28,6 +29,7 @@ from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.profiles import (
     CORE_EXECUTION_PROMPT_PROFILE,
     PERSONA_PROMPT_PROFILE,
+    ROUTER_PROMPT_PROFILE,
 )
 
 
@@ -187,6 +189,36 @@ def test_core_profile_removes_persona_state_from_memory():
     assert "memory.short_term" in filtered.slots
     assert "memory.interaction" in filtered.slots
     assert "capability.tools_schema" in filtered.slots
+
+
+def test_router_attachment_summary_keeps_counts_without_media_refs():
+    pack = ContextPack()
+    pack.add_slot(
+        ContextSlot(
+            name="input.images",
+            value=[{"ref": "file:///secret/a.png"}],
+            category="input",
+            source="unit",
+        )
+    )
+    pack.add_slot(
+        ContextSlot(
+            name="input.files",
+            value=[
+                {"name": "a.txt", "ref": "C:/secret/a.txt"},
+                {"name": "b.txt", "ref": "C:/secret/b.txt"},
+            ],
+            category="input",
+            source="unit",
+        )
+    )
+
+    summary = _build_router_attachment_summary(pack)
+    filtered = filter_context_pack_for_profile(pack, ROUTER_PROMPT_PROFILE)
+
+    assert summary == {"images": 1, "files": 2}
+    assert "input.images" not in filtered.slots
+    assert "input.files" not in filtered.slots
 
 
 @pytest.mark.asyncio

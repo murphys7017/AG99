@@ -68,6 +68,7 @@ architecture:
     - Persona expression uses a structured output contract so spoken replies and plugin hints can be returned together.
     - Delegated Core execution reuses the middleware interaction-memory store and receives compact memory instead of full conversation history.
     - Router contributor views ignore shared Persona context material, Persona contributor caches are isolated by expression phase, and delegated Core retains plugin-supplied contexts while stripping conversation-history prefixes.
+    - Router prompts receive attachment counts instead of image/file payloads, while Anthropic Persona contexts convert local image URLs to base64 image blocks.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -148,6 +149,8 @@ verification:
     - .venv\Scripts\python.exe -m pytest tests/unit/test_interaction_expression_agent.py tests/unit/test_interaction_router_agent.py tests/unit/test_interaction_middleware.py tests/unit/test_interaction_decision_agent.py tests/unit/test_interaction_context_builder.py tests/unit/test_interaction_output_controller.py and focused interaction Core context tests -q
     - .venv\Scripts\python.exe -m ruff check on the Router view, Persona phase cache, Core profile, explicit-context compatibility, and related tests
     - .venv\Scripts\python.exe -m py_compile astrbot/core/astr_main_agent.py astrbot/core/interaction/contributors.py astrbot/core/interaction/context_builder.py astrbot/core/interaction/expression_agent.py astrbot/core/interaction/router_agent.py
+    - .venv\Scripts\python.exe -m pytest interaction prompt/runtime tests plus tests/test_anthropic_kimi_code_provider.py -q
+    - .venv\Scripts\python.exe -m ruff check Router attachment-summary and Anthropic local-context-image changes
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.

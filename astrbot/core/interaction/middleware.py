@@ -470,7 +470,7 @@ class InteractionMiddleware:
             event.session_id,
             reason,
             error,
-            exc_info=True,
+            exc_info=(type(error), error, error.__traceback__),
         )
         return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
 
@@ -514,7 +514,7 @@ class InteractionMiddleware:
             event.session_id,
             reason,
             error,
-            exc_info=True,
+            exc_info=(type(error), error, error.__traceback__),
         )
         return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
 

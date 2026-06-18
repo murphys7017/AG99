@@ -40,11 +40,6 @@ ROUTER_PROMPT_PROFILE = PromptProfile(
         {
             "input.text",
             "input.quoted_text",
-            "input.images",
-            "input.files",
-            "input.image_captions",
-            "input.quoted_images",
-            "input.quoted_image_captions",
         }
     ),
 )

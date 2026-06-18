@@ -11,6 +11,7 @@ from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
 from astrbot.core.prompt.context_collect import (
     build_prompt_extension_slots,
     collect_context_pack,
+    filter_context_pack_for_profile,
 )
 from astrbot.core.prompt.context_types import ContextPack
 from astrbot.core.prompt.extensions import PromptExtension
@@ -78,15 +79,61 @@ async def build_router_context_pack(
     config,
 ) -> ContextPack:
     """Router 专用最小 Pack：仅含输入内容，无人格/记忆/历史/工具。"""
-    return await collect_context_pack(
+    source_pack = await collect_context_pack(
         event=event,
         plugin_context=plugin_context,
         config=config,
         provider_request=event.get_extra("provider_request"),
         collectors=build_router_collectors(),
         include_prompt_extensions=False,
-        profile=ROUTER_PROMPT_PROFILE,
     )
+    router_pack = filter_context_pack_for_profile(source_pack, ROUTER_PROMPT_PROFILE)
+    attachment_summary = _build_router_attachment_summary(source_pack)
+    if attachment_summary:
+        for slot in build_prompt_extension_slots(
+            [
+                PromptExtension(
+                    plugin_id="astrbot.interaction",
+                    mount="context",
+                    title="Input attachments",
+                    value_kind="mapping",
+                    value=attachment_summary,
+                    order=0,
+                    meta={
+                        "scope": "dynamic",
+                        "node_type": "interaction_router_attachment_summary",
+                    },
+                )
+            ],
+            source="interaction_router",
+        ):
+            router_pack.add_slot(slot)
+        router_pack.meta["slot_count"] = len(router_pack.slots)
+    return router_pack
+
+
+def _build_router_attachment_summary(pack: ContextPack) -> dict[str, int]:
+    slot_names = {
+        "images": "input.images",
+        "quoted_images": "input.quoted_images",
+        "files": "input.files",
+        "quoted_files": "input.quoted_files",
+    }
+    summary: dict[str, int] = {}
+    for label, slot_name in slot_names.items():
+        slot = pack.get_slot(slot_name)
+        if slot is None:
+            continue
+        if isinstance(slot.value, list):
+            count = len(slot.value)
+        else:
+            try:
+                count = int(slot.meta.get("count", 0))
+            except (TypeError, ValueError):
+                count = 0
+        if count > 0:
+            summary[label] = count
+    return summary
 
 
 async def build_persona_context_pack(
