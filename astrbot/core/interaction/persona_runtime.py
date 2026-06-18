@@ -32,10 +32,15 @@ class InteractionPersonaRuntime:
         if plugin_context is None:
             raise InteractionExpressionError("plugin_context_unavailable")
 
-        rewritten = await self.expression_agent.rewrite_plugin_output(
+        result = await self.expression_agent.rewrite_plugin_output_result(
             event,
             plugin_context,
             interaction_config,
             plain,
         )
-        return message.derive([Plain(rewritten)])
+        if result.plugin_hints:
+            existing = event.get_extra("_interaction_plugin_hints", {})
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            merged.update(result.plugin_hints)
+            event.set_extra("_interaction_plugin_hints", merged)
+        return message.derive([Plain(result.spoken_reply)])

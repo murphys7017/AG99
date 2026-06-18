@@ -630,6 +630,7 @@ class InteractionDecisionAgent:
                 "input": input_payload,
                 "core_capabilities": capability_payload,
             },
+            context_packs_by_purpose={"persona_reply": prompt_context_pack},
         )
         event.set_extra("_interaction_prompt_context_pack", prompt_context_pack)
         event.set_extra("_interaction_decision_context", material.decision_context)

@@ -7,6 +7,16 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 PromptViewPurpose = Literal["unknown", "router", "persona_reply", "core_reply"]
+PromptViewPhase = Literal[
+    "unknown",
+    "route",
+    "first_response",
+    "executor_started",
+    "executor_progress",
+    "executor_result",
+    "plugin_output",
+    "final_response",
+]
 
 
 @dataclass(slots=True)
@@ -115,6 +125,7 @@ class InteractionDecisionView:
     capabilities: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     purpose: PromptViewPurpose = "unknown"
+    phase: PromptViewPhase = "unknown"
 
     def as_read_only_mapping(self) -> MappingProxyType:
         return MappingProxyType(
@@ -123,6 +134,7 @@ class InteractionDecisionView:
                 "platform_id": self.platform_id,
                 "session_id": self.session_id,
                 "purpose": self.purpose,
+                "phase": self.phase,
                 "config": freeze_interaction_snapshot(self.config),
                 "decision_context": freeze_interaction_snapshot(self.decision_context),
                 "persona": freeze_interaction_snapshot(self.persona),

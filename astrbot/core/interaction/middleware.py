@@ -24,8 +24,13 @@ from .core_bridge import (
     INTERACTION_DECISION_EXTRA_KEY,
 )
 from .decision_agent import _maybe_bypass_protocol_command
-from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
+from .expression_agent import (
+    InteractionExpressionAgent,
+    InteractionExpressionError,
+    PersonaExpressionResult,
+)
 from .memory_store import (
+    INTERACTION_MEMORY_STORE_EXTRA_KEY,
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
 )
@@ -53,7 +58,9 @@ from .types import (
     RouteMode,
 )
 
-LOCAL_FAST_EXPRESSION_FALLBACK = "我先看一下。"
+LOCAL_FAST_EXPRESSION_FALLBACK_RESULT = PersonaExpressionResult(
+    spoken_reply="我先看一下。"
+)
 
 
 def _merge_runtime_config(base: Any, override: Any) -> Any:
@@ -175,6 +182,7 @@ class InteractionMiddleware:
         event.set_extra("_interaction_enabled", True)
         event.set_extra("_turn_id", turn_id)
         event.set_extra("_output_controller", self.output_controller)
+        event.set_extra(INTERACTION_MEMORY_STORE_EXTRA_KEY, self.memory_store)
         self._install_core_output_interceptor(event)
         if decision is not None:
             set_interaction_turn_decision(event, decision)
@@ -317,11 +325,14 @@ class InteractionMiddleware:
         else:
             decision = self._maybe_build_protocol_command_bypass(event)
             if decision is None:
-                first_response, route = await self._build_fast_response_and_route(
+                expression, route = await self._build_fast_response_and_route(
                     event,
                     interaction_config,
                 )
-                decision = route.to_interaction_decision(first_response=first_response)
+                decision = route.to_interaction_decision(
+                    first_response=expression.spoken_reply,
+                    plugin_hints=expression.plugin_hints,
+                )
             self.attach_event_context(
                 event,
                 turn_id=turn_state.turn_id,
@@ -400,40 +411,42 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
         interaction_config,
-    ) -> tuple[str, InteractionRouteDecision]:
+    ) -> tuple[PersonaExpressionResult, InteractionRouteDecision]:
         if interaction_config.parallel_expression_router:
             expression_task = asyncio.create_task(
-                self._generate_first_response(event, interaction_config),
+                self._generate_expression(event, interaction_config),
                 name="interaction_fast_expression",
             )
             route_task = asyncio.create_task(
                 self._route_interaction(event, interaction_config),
                 name="interaction_router",
             )
-            first_response, route = await asyncio.gather(expression_task, route_task)
-            return first_response, route
+            expression, route = await asyncio.gather(expression_task, route_task)
+            return expression, route
 
-        first_response = await self._generate_first_response(event, interaction_config)
+        expression = await self._generate_expression(event, interaction_config)
         route = await self._route_interaction(event, interaction_config)
-        return first_response, route
+        return expression, route
 
-    async def _generate_first_response(
+    async def _generate_expression(
         self,
         event: AstrMessageEvent,
         interaction_config,
-    ) -> str:
+    ) -> PersonaExpressionResult:
         if self.plugin_context is None:
             event.set_extra("_interaction_expression_failed", True)
             event.set_extra(
                 "_interaction_expression_failure_reason",
                 "plugin_context_unavailable",
             )
-            return LOCAL_FAST_EXPRESSION_FALLBACK
+            return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
+        from .expression_agent import PersonaExpressionRequest
         try:
-            return await self.expression_agent.generate_first_response(
+            return await self.expression_agent.generate_expression(
                 event,
                 self.plugin_context,
                 interaction_config,
+                PersonaExpressionRequest(phase="first_response"),
             )
         except InteractionExpressionError as exc:
             reason = exc.reason
@@ -459,7 +472,7 @@ class InteractionMiddleware:
             error,
             exc_info=True,
         )
-        return LOCAL_FAST_EXPRESSION_FALLBACK
+        return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
 
     async def _route_interaction(
         self,

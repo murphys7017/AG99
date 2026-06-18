@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from copy import deepcopy
 
 from astrbot.core import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -32,6 +33,7 @@ from .extensions.types import (
     PromptExtension,
 )
 from .interfaces.context_collector_inferface import ContextCollectorInterface
+from .profiles import PromptProfile
 
 PROMPT_CONTEXT_PACK_EXTRA_KEY = "prompt_context_pack"
 PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
@@ -253,6 +255,7 @@ async def collect_context_pack(
     provider_request=None,
     collectors: Iterable[ContextCollectorInterface] | None = None,
     include_prompt_extensions: bool = True,
+    profile: PromptProfile | None = None,
 ) -> ContextPack:
     """
     Collect prompt context into a single pack.
@@ -328,7 +331,32 @@ async def collect_context_pack(
             pack.add_slot(slot)
 
     pack.meta["slot_count"] = len(pack.slots)
+    if profile is not None:
+        return filter_context_pack_for_profile(pack, profile)
     return pack
+
+
+def filter_context_pack_for_profile(
+    pack: ContextPack,
+    profile: PromptProfile,
+) -> ContextPack:
+    """返回新 ContextPack，只保留 profile 允许的槽位。不修改原始 pack。"""
+    new_pack = ContextPack(
+        provider_request_ref=pack.provider_request_ref,
+        meta=deepcopy(pack.meta),
+    )
+    for name, slot in pack.slots.items():
+        # 白名单优先：非空时只保留白名单内的槽
+        if profile.allowed_slots and name not in profile.allowed_slots:
+            continue
+        # 黑名单：始终过滤
+        if name in profile.blocked_slots:
+            continue
+        new_pack.add_slot(slot)
+    new_pack.meta["prompt_purpose"] = profile.purpose.value
+    new_pack.meta["filtered_slot_names"] = sorted(new_pack.slots.keys())
+    new_pack.meta["slot_count"] = len(new_pack.slots)
+    return new_pack
 
 
 def log_context_pack(

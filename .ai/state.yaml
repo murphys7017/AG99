@@ -1,8 +1,8 @@
 task:
-  class: bugfix
+  class: refactor
   risk: medium
-  phase: group_identity_prompt_fix_complete
-  scope: Prevent cross-member identity and memory leakage in shared group-chat prompts
+  phase: interaction_prompt_profiles_complete
+  scope: Separate Router, Persona, and delegated Core prompt contexts while preserving structured plugin hints
 context:
   confidence: high
   assumptions:
@@ -64,6 +64,10 @@ architecture:
     - LLM context compression now uses round-based token-ratio recent preservation and compression-provider modality sanitization; it remains a runner-level request/messages optimization and does not own Yakumo memory storage or retrieval.
     - Memory snapshot reads accept an explicit current-event identity override; legacy callers without an identity retain latest-turn fallback behavior.
     - Session prompt metadata marks the current speaker and distinguishes group multi-user scope from private single-user scope.
+    - Prompt profiles now isolate Router input, Persona expression context, and delegated Core execution context.
+    - Persona expression uses a structured output contract so spoken replies and plugin hints can be returned together.
+    - Delegated Core execution reuses the middleware interaction-memory store and receives compact memory instead of full conversation history.
+    - Router contributor views ignore shared Persona context material, Persona contributor caches are isolated by expression phase, and delegated Core retains plugin-supplied contexts while stripping conversation-history prefixes.
 verification:
   checks_run:
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
@@ -137,12 +141,20 @@ verification:
     - .venv\Scripts\python -m pytest tests\unit\test_prompt_pipeline_integration.py::test_apply_visible_pipeline_replaces_legacy_request_with_group_context_extension -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-owner
     - .venv\Scripts\python -m ruff check tests\unit\test_prompt_pipeline_integration.py
     - git diff --check
+    - .venv\Scripts\python.exe -m pytest tests/unit/test_interaction_expression_agent.py tests/unit/test_interaction_router_agent.py tests/unit/test_interaction_middleware.py tests/unit/test_interaction_decision_agent.py tests/unit/test_interaction_context_builder.py tests/unit/test_interaction_output_controller.py tests/unit/test_astr_main_agent.py::test_interaction_core_collectors_use_brief_memory_without_persona_or_history tests/unit/test_astr_main_agent.py::test_interaction_core_collectors_reuse_event_memory_store tests/unit/test_astr_main_agent.py::test_provider_supports_modality_requires_explicit_list -q
+    - .venv\Scripts\python.exe -m ruff check on all files changed by the interaction prompt-profile refactor
+    - .venv\Scripts\python.exe -m py_compile astrbot/core/astr_main_agent.py astrbot/core/interaction/expression_agent.py astrbot/core/interaction/router_agent.py astrbot/core/interaction/middleware.py astrbot/core/prompt/profiles.py
+    - git diff --check
+    - .venv\Scripts\python.exe -m pytest tests/unit/test_interaction_expression_agent.py tests/unit/test_interaction_router_agent.py tests/unit/test_interaction_middleware.py tests/unit/test_interaction_decision_agent.py tests/unit/test_interaction_context_builder.py tests/unit/test_interaction_output_controller.py and focused interaction Core context tests -q
+    - .venv\Scripts\python.exe -m ruff check on the Router view, Persona phase cache, Core profile, explicit-context compatibility, and related tests
+    - .venv\Scripts\python.exe -m py_compile astrbot/core/astr_main_agent.py astrbot/core/interaction/contributors.py astrbot/core/interaction/context_builder.py astrbot/core/interaction/expression_agent.py astrbot/core/interaction/router_agent.py
   checks_failed:
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
-  validation_gap: "Full backend suite, live QQ group testing, and live provider calls were not run for the group-identity fix. Targeted group-context, session prompt, memory collector, memory snapshot, request adapter, renderer, Ruff, and diff checks passed. The broader prompt-context run still contains the previously recorded quoted-image caption fixture drift, and the default Windows pytest temp directory remains inaccessible unless a workspace basetemp is supplied. Existing upstream-parity validation gaps and baseline provider failures remain unchanged."
+    - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
+  validation_gap: "Live provider calls and the full backend suite were not run. The focused interaction prompt-profile suite passed, Ruff and py_compile passed, and the expanded prompt-context run passed 246 tests with one previously existing quoted-image caption fixture failure."
 runtime:
   mode: minimal_v1

@@ -62,6 +62,19 @@ def test_route_decision_to_legacy_interaction_decision_omits_core_task_spec():
     assert legacy.core_task_spec is None
 
 
+def test_route_decision_keeps_selected_persona_plugin_hints():
+    decision = InteractionRouteDecision(mode=FastRouteMode.SELF_REPLY)
+
+    selected = decision.to_interaction_decision(
+        first_response="嗯。",
+        plugin_hints={"ag99live_motion": {"emotion_label": "happy"}},
+    )
+
+    assert selected.plugin_hints == {
+        "ag99live_motion": {"emotion_label": "happy"}
+    }
+
+
 class PurposeAwarePromptContributor:
     plugin_id = "ag99live.motion"
 
@@ -89,6 +102,8 @@ async def test_router_render_uses_scoped_provider_and_restores_event_provider(
     class Event:
         session_id = "session-1"
         unified_msg_origin = "webchat:friend:session-1"
+        message_str = "hello"
+        message_obj = type("Message", (), {"message": []})()
 
         def __init__(self):
             self._extras = {
@@ -116,6 +131,9 @@ async def test_router_render_uses_scoped_provider_and_restores_event_provider(
         def get_platform_id(self):
             return "webchat"
 
+        def get_platform_name(self):
+            return "webchat"
+
     class Provider:
         pass
 
@@ -123,7 +141,7 @@ async def test_router_render_uses_scoped_provider_and_restores_event_provider(
 
     class RenderEngine:
         def render(self, pack, *, event, **kwargs):
-            seen_providers.append(event.get_extra("provider"))
+            seen_providers.append(kwargs["provider_request"].provider)
             return RenderResult(messages=[], system_prompt="")
 
     event = Event()
@@ -163,6 +181,8 @@ async def test_router_prompt_excludes_persona_only_prompt_extensions(monkeypatch
     class Event:
         session_id = "session-1"
         unified_msg_origin = "webchat:friend:session-1"
+        message_str = "hello"
+        message_obj = type("Message", (), {"message": []})()
 
         def __init__(self):
             self._extras = {
@@ -186,6 +206,9 @@ async def test_router_prompt_excludes_persona_only_prompt_extensions(monkeypatch
             self._extras[key] = value
 
         def get_platform_id(self):
+            return "webchat"
+
+        def get_platform_name(self):
             return "webchat"
 
     class Provider:
@@ -230,4 +253,9 @@ async def test_router_prompt_excludes_persona_only_prompt_extensions(monkeypatch
     )
 
     assert contributor.views[0].purpose == "router"
+    assert contributor.views[0].phase == "route"
+    assert contributor.views[0].persona == {}
+    assert contributor.views[0].interaction_memory == {}
+    assert contributor.views[0].capabilities == {}
+    assert contributor.views[0].input["text"] == "hello"
     assert "AG99live Motion Prompt" not in render_result.system_prompt

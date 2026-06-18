@@ -170,6 +170,84 @@ def test_provider_supports_modality_requires_explicit_list():
     assert not ama._provider_supports_modality(provider, "image")
 
 
+def test_interaction_core_collectors_use_brief_memory_without_persona_or_history():
+    event = MagicMock()
+    event.get_extra.return_value = None
+    collectors = ama._build_interaction_core_collectors(event)
+    collector_names = [collector.__class__.__name__ for collector in collectors]
+
+    assert "PersonaCollector" not in collector_names
+    assert "ConversationHistoryCollector" not in collector_names
+    assert "SkillsCollector" in collector_names
+    assert "ToolsCollector" in collector_names
+    interaction_memory = next(
+        collector
+        for collector in collectors
+        if collector.__class__.__name__ == "InteractionMemoryCollector"
+    )
+    assert interaction_memory.recent_turn_limit == 2
+    assert interaction_memory.brief is True
+
+
+def test_interaction_core_collectors_reuse_event_memory_store():
+    event = MagicMock()
+    memory_store = ama.InteractionMemoryStore()
+    event.get_extra.return_value = memory_store
+
+    collectors = ama._build_interaction_core_collectors(event)
+
+    interaction_memory = next(
+        collector
+        for collector in collectors
+        if collector.__class__.__name__ == "InteractionMemoryCollector"
+    )
+    assert interaction_memory.store is memory_store
+
+
+def test_extract_interaction_explicit_contexts_removes_history_prefix():
+    history = [
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+    ]
+    plugin_context = {"role": "system", "content": "plugin supplied context"}
+    req = ProviderRequest(
+        contexts=[*history, plugin_context],
+        conversation=MagicMock(history=history),
+    )
+
+    explicit = ama._extract_interaction_explicit_contexts(req)
+
+    assert explicit == [plugin_context]
+
+
+def test_extract_interaction_explicit_contexts_keeps_replacement_contexts():
+    plugin_context = {"role": "system", "content": "plugin supplied context"}
+    req = ProviderRequest(
+        contexts=[plugin_context],
+        conversation=MagicMock(
+            history=[{"role": "user", "content": "old question"}]
+        ),
+    )
+
+    explicit = ama._extract_interaction_explicit_contexts(req)
+
+    assert explicit == [plugin_context]
+
+
+def test_prepend_explicit_contexts_preserves_rendered_contexts():
+    explicit = [{"role": "system", "content": "plugin supplied context"}]
+    req = ProviderRequest(
+        contexts=[{"role": "assistant", "content": "compact memory"}]
+    )
+
+    ama._prepend_explicit_contexts(req, explicit)
+
+    assert req.contexts == [
+        *explicit,
+        {"role": "assistant", "content": "compact memory"},
+    ]
+
+
 def test_select_image_chat_provider_uses_image_fallback():
     text_provider = MagicMock(spec=Provider)
     text_provider.provider_config = {

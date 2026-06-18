@@ -10,6 +10,8 @@ from typing import Any
 from astrbot import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
+INTERACTION_MEMORY_STORE_EXTRA_KEY = "_interaction_memory_store"
+
 
 @dataclass(slots=True)
 class InteractionMemorySnapshot:

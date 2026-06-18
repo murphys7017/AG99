@@ -540,19 +540,14 @@ async def test_decision_agent_renders_middleware_prompt_extensions_without_core_
     assert rendered_messages == build_interaction_decision_contexts(
         render_result.messages
     )
-    assert [message["role"] for message in rendered_messages] == [
-        "user",
-        "assistant",
-        "user",
-        "user",
-    ]
-    assert rendered_messages[0]["content"] == [{"type": "text", "text": "before user"}]
-    assert rendered_messages[1]["content"] == [
-        {"type": "text", "text": "before assistant"}
-    ]
-    assert "_no_save" not in rendered_messages[2]
+    assert all(message["role"] == "user" for message in rendered_messages)
+    assert "before user" not in str(rendered_messages)
+    assert "before assistant" not in str(rendered_messages)
+    assert "_no_save" not in rendered_messages[0]
     rendered_context_text = "\n".join(
-        part["text"] for part in rendered_messages[2]["content"] if part.get("type") == "text"
+        part["text"]
+        for part in rendered_messages[0]["content"]
+        if part.get("type") == "text"
     )
     assert "Core capabilities" in rendered_context_text
     assert "tools_available" in rendered_context_text

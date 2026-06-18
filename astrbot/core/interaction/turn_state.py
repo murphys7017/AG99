@@ -51,6 +51,8 @@ class InteractionContextMaterial:
     prompt_extensions_by_purpose: dict[str, list[PromptExtension]] = field(
         default_factory=dict
     )
+    # 按用途缓存各自独立的 ContextPack
+    context_packs_by_purpose: dict[str, ContextPack] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

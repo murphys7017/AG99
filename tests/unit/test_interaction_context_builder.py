@@ -1,14 +1,17 @@
 import asyncio
 from types import MappingProxyType
+from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot.core.interaction.collectors import InteractionMemoryCollector
 from astrbot.core.interaction.context_builder import (
     InteractionPromptContributorError,
     append_interaction_prompt_extensions_to_pack,
     build_interaction_collectors,
     collect_interaction_prompt_extensions,
     extract_recent_messages,
+    get_or_collect_interaction_prompt_extensions,
 )
 from astrbot.core.interaction.contributors import InteractionDecisionView
 from astrbot.core.interaction.memory_store import (
@@ -18,9 +21,14 @@ from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
     update_interaction_memory_from_turn,
 )
-from astrbot.core.interaction.types import InteractionPromptBuildConfig
+from astrbot.core.interaction.turn_state import InteractionContextMaterial
+from astrbot.core.prompt.context_collect import filter_context_pack_for_profile
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
+from astrbot.core.prompt.profiles import (
+    CORE_EXECUTION_PROMPT_PROFILE,
+    PERSONA_PROMPT_PROFILE,
+)
 
 
 def test_extract_recent_messages_includes_interaction_memory_turns():
@@ -118,46 +126,111 @@ def test_extract_recent_messages_uses_only_interaction_memory_turns():
 def test_build_interaction_collectors_uses_only_interaction_collectors():
     collectors = build_interaction_collectors(InteractionMemoryStore())
 
-    assert len(collectors) == 4
-    assert collectors[-2].__class__.__name__ == "InteractionConversationHistoryCollector"
+    assert len(collectors) == 3
+    assert all(
+        collector.__class__.__name__ != "InteractionConversationHistoryCollector"
+        for collector in collectors
+    )
     assert collectors[-1].__class__.__name__ == "InteractionMemoryCollector"
 
 
+def test_persona_profile_removes_history_tools_and_skills():
+    pack = ContextPack()
+    for name, category in (
+        ("persona.prompt", "persona"),
+        ("memory.interaction", "memory"),
+        ("input.text", "input"),
+        ("conversation.history", "memory"),
+        ("capability.tools_schema", "tools"),
+        ("capability.skills_prompt", "tools"),
+        ("system.tool_call_instruction", "system"),
+    ):
+        pack.add_slot(
+            ContextSlot(
+                name=name,
+                value={"name": name},
+                category=category,
+                source="unit",
+            )
+        )
+
+    filtered = filter_context_pack_for_profile(pack, PERSONA_PROMPT_PROFILE)
+
+    assert set(filtered.slots) == {
+        "persona.prompt",
+        "memory.interaction",
+        "input.text",
+    }
+    assert filtered.meta["prompt_purpose"] == "persona_reply"
+
+
+def test_core_profile_removes_persona_state_from_memory():
+    pack = ContextPack()
+    for name in (
+        "memory.short_term",
+        "memory.persona_state",
+        "memory.interaction",
+        "capability.tools_schema",
+    ):
+        pack.add_slot(
+            ContextSlot(
+                name=name,
+                value={"name": name},
+                category="memory",
+                source="unit",
+            )
+        )
+
+    filtered = filter_context_pack_for_profile(pack, CORE_EXECUTION_PROMPT_PROFILE)
+
+    assert "memory.persona_state" not in filtered.slots
+    assert "memory.short_term" in filtered.slots
+    assert "memory.interaction" in filtered.slots
+    assert "capability.tools_schema" in filtered.slots
+
+
 @pytest.mark.asyncio
-async def test_interaction_history_collector_raises_on_history_parse_failure_in_strict_mode(
-    monkeypatch,
-):
-    collector = build_interaction_collectors(InteractionMemoryStore())[-2]
-    event = _prompt_event()
-    provider_request = type(
-        "ProviderRequest",
+async def test_interaction_memory_collector_core_brief_limits_fields_and_turns():
+    snapshot = InteractionMemorySnapshot(
+        session_id="session",
+        recent_turns=[
+            {"user": "u1", "assistant": "a1"},
+            {"user": "u2", "assistant": "a2"},
+            {"user": "u3", "assistant": "a3"},
+        ],
+        speaking_style_notes=["warm"],
+        user_preferences=["concise"],
+        relationship_notes=["friend"],
+        recent_topics=["topic"],
+        ongoing_threads=["thread"],
+        last_impression_summary="summary",
+    )
+    store = type(
+        "Store",
         (),
-        {
-            "conversation": None,
-            "contexts": [{"role": "user", "content": "hello"}],
-        },
+        {"load_interaction_memory": AsyncMock(return_value=snapshot)},
     )()
-    plugin_context = type(
-        "PluginContext",
-        (),
-        {"conversation_manager": None},
-    )()
-
-    def _raise_parse_failure(raw_history):
-        raise ValueError("broken history")
-
-    monkeypatch.setattr(
-        "astrbot.core.interaction.collectors.parse_conversation_history",
-        _raise_parse_failure,
+    collector = InteractionMemoryCollector(
+        store,
+        recent_turn_limit=2,
+        brief=True,
     )
 
-    with pytest.raises(RuntimeError, match="broken history"):
-        await collector.collect(
-            event,
-            plugin_context,
-            InteractionPromptBuildConfig(),
-            provider_request=provider_request,
-        )
+    slots = await collector.collect(
+        _prompt_event(),
+        plugin_context=None,
+        config=None,
+    )
+
+    assert slots[0].value == {
+        "recent_turns": [
+            {"user": "u1", "assistant": "a1"},
+            {"user": "u2", "assistant": "a2"},
+        ],
+        "recent_topics": ["topic"],
+        "ongoing_threads": ["thread"],
+        "last_impression_summary": "summary",
+    }
 
 
 def test_update_interaction_memory_from_turn_keeps_structured_recent_turns():
@@ -412,6 +485,66 @@ async def test_prompt_contributor_receives_read_only_decision_view():
         "scope": "dynamic",
         "node_type": "runtime_state",
     }
+
+
+@pytest.mark.asyncio
+async def test_persona_prompt_extension_cache_is_isolated_by_phase():
+    event = _prompt_event()
+
+    class PhaseContributor:
+        plugin_id = "phase"
+
+        def __init__(self):
+            self.phases = []
+
+        async def collect(self, event, plugin_context, view):
+            self.phases.append(view.phase)
+            return PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="context",
+                value={"phase": view.phase},
+            )
+
+    contributor = PhaseContributor()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {"list_interaction_prompt_contributors": lambda self: [contributor]},
+    )()
+    material = InteractionContextMaterial()
+
+    first = await get_or_collect_interaction_prompt_extensions(
+        event,
+        plugin_context,
+        {},
+        _decision_context(),
+        material,
+        purpose="persona_reply",
+        phase="first_response",
+    )
+    plugin_output = await get_or_collect_interaction_prompt_extensions(
+        event,
+        plugin_context,
+        {},
+        _decision_context(),
+        material,
+        purpose="persona_reply",
+        phase="plugin_output",
+    )
+    first_again = await get_or_collect_interaction_prompt_extensions(
+        event,
+        plugin_context,
+        {},
+        _decision_context(),
+        material,
+        purpose="persona_reply",
+        phase="first_response",
+    )
+
+    assert contributor.phases == ["first_response", "plugin_output"]
+    assert first[0].value == {"phase": "first_response"}
+    assert plugin_output[0].value == {"phase": "plugin_output"}
+    assert first_again is first
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import contextmanager
-from copy import deepcopy
+from copy import copy, deepcopy
 from typing import Any
 
 from astrbot import logger
@@ -17,13 +17,21 @@ from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces.context_collector_inferface import (
     ContextCollectorInterface,
 )
+from astrbot.core.prompt.profiles import (
+    PERSONA_PROMPT_PROFILE,
+    ROUTER_PROMPT_PROFILE,
+)
+from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
 from .collectors import (
-    InteractionConversationHistoryCollector,
     InteractionMemoryCollector,
 )
-from .contributors import InteractionDecisionView, PromptViewPurpose
+from .contributors import (
+    InteractionDecisionView,
+    PromptViewPhase,
+    PromptViewPurpose,
+)
 from .memory_store import InteractionMemoryStore
 from .turn_state import InteractionContextMaterial, get_interaction_turn_state
 
@@ -37,12 +45,17 @@ class InteractionPromptContributorError(RuntimeError):
 def build_interaction_collectors(
     memory_store: InteractionMemoryStore,
 ) -> list[ContextCollectorInterface]:
+    """Persona / Decision 用的基础 collectors：含人格 + 输入 + 记忆，无完整对话历史。"""
     return [
         PersonaCollector(),
         InputCollector(),
-        InteractionConversationHistoryCollector(),
         InteractionMemoryCollector(memory_store),
     ]
+
+
+def build_router_collectors() -> list[ContextCollectorInterface]:
+    """Router 专用 collectors：仅输入内容。"""
+    return [InputCollector()]
 
 
 async def build_interaction_context_pack(
@@ -51,6 +64,38 @@ async def build_interaction_context_pack(
     config,
     memory_store: InteractionMemoryStore,
 ) -> ContextPack:
+    return await build_persona_context_pack(
+        event,
+        plugin_context,
+        config,
+        memory_store,
+    )
+
+
+async def build_router_context_pack(
+    event,
+    plugin_context: Context,
+    config,
+) -> ContextPack:
+    """Router 专用最小 Pack：仅含输入内容，无人格/记忆/历史/工具。"""
+    return await collect_context_pack(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
+        provider_request=event.get_extra("provider_request"),
+        collectors=build_router_collectors(),
+        include_prompt_extensions=False,
+        profile=ROUTER_PROMPT_PROFILE,
+    )
+
+
+async def build_persona_context_pack(
+    event,
+    plugin_context: Context,
+    config,
+    memory_store: InteractionMemoryStore,
+) -> ContextPack:
+    """Persona 专用 Pack：含人格 + 输入 + interaction memory，无完整历史和工具。"""
     return await collect_context_pack(
         event=event,
         plugin_context=plugin_context,
@@ -58,7 +103,16 @@ async def build_interaction_context_pack(
         provider_request=event.get_extra("provider_request"),
         collectors=build_interaction_collectors(memory_store),
         include_prompt_extensions=False,
+        profile=PERSONA_PROMPT_PROFILE,
     )
+
+
+def build_prompt_render_provider_request(event, provider) -> ProviderRequest:
+    """Build a branch-local render request without mutating shared event extras."""
+    source = event.get_extra("provider_request")
+    request = copy(source) if isinstance(source, ProviderRequest) else ProviderRequest()
+    request.provider = provider
+    return request
 
 
 def extract_recent_messages(
@@ -183,6 +237,7 @@ async def collect_interaction_prompt_extensions(
     decision_context: dict[str, Any],
     *,
     purpose: PromptViewPurpose = "unknown",
+    phase: PromptViewPhase = "unknown",
 ) -> list[PromptExtension]:
     extensions: list[PromptExtension] = []
     view = _build_decision_view(
@@ -190,6 +245,7 @@ async def collect_interaction_prompt_extensions(
         config=config,
         decision_context=decision_context,
         purpose=purpose,
+        phase=phase,
     ).copy_read_only()
     for contributor in plugin_context.list_interaction_prompt_contributors():
         plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
@@ -235,8 +291,10 @@ async def get_or_collect_interaction_prompt_extensions(
     material: InteractionContextMaterial,
     *,
     purpose: PromptViewPurpose,
+    phase: PromptViewPhase = "unknown",
 ) -> list[PromptExtension]:
-    cached_extensions = material.prompt_extensions_by_purpose.get(purpose)
+    cache_key = f"{purpose}:{phase}"
+    cached_extensions = material.prompt_extensions_by_purpose.get(cache_key)
     if cached_extensions is not None:
         return cached_extensions
     extensions = await collect_interaction_prompt_extensions(
@@ -245,8 +303,9 @@ async def get_or_collect_interaction_prompt_extensions(
         config,
         decision_context,
         purpose=purpose,
+        phase=phase,
     )
-    material.prompt_extensions_by_purpose[purpose] = extensions
+    material.prompt_extensions_by_purpose[cache_key] = extensions
     material.prompt_extensions_collected = True
     return extensions
 
@@ -337,6 +396,7 @@ def _build_decision_view(
     config,
     decision_context: dict[str, Any],
     purpose: PromptViewPurpose,
+    phase: PromptViewPhase,
 ) -> InteractionDecisionView:
     turn_state = get_interaction_turn_state(event)
     material = turn_state.context_material if turn_state is not None else None
@@ -351,37 +411,39 @@ def _build_decision_view(
         or ""
     )
     context = decision_context if isinstance(decision_context, dict) else {}
+    use_material = material is not None and purpose != "router"
     return InteractionDecisionView(
         turn_id=str(event.get_extra("_turn_id", "") or ""),
         platform_id=platform_id,
         session_id=session_id,
         purpose=purpose,
+        phase=phase,
         config=config,
         decision_context=context,
         persona=(
             material.persona_payload
-            if material is not None
+            if use_material
             else dict(context.get("persona", {}) or {})
         ),
         input=(
             material.input_payload
-            if material is not None
+            if use_material
             else dict(context.get("input", {}) or {})
         ),
         interaction_memory=(
             material.memory_payload
-            if material is not None
+            if use_material
             else dict(context.get("memory", {}) or {})
         ),
         recent_messages=(
             material.recent_messages
-            if material is not None
+            if use_material
             else list(context.get("recent_messages", []) or [])
         ),
         capabilities=(
             material.capability_payload
-            if material is not None
+            if use_material
             else dict(context.get("core_capabilities", {}) or {})
         ),
-        metadata={"prompt_context_cached": material is not None},
+        metadata={"prompt_context_cached": use_material},
     )

@@ -7,10 +7,11 @@ from astrbot.core.interaction.config import (
     is_middleware_enabled_for_platform,
     load_interaction_agent_config,
 )
+from astrbot.core.interaction.expression_agent import PersonaExpressionResult
 from astrbot.core.interaction.input_gateway import CoreInputGateway
 from astrbot.core.interaction.middleware import InteractionMiddleware
-from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
     InteractionTurnState,
     get_interaction_turn_state,
@@ -19,7 +20,6 @@ from astrbot.core.interaction.types import (
     FastRouteMode,
     FinalizerMode,
     InteractionAgentConfig,
-    InteractionDecision,
     InteractionRouteDecision,
     RouteMode,
 )
@@ -82,8 +82,8 @@ def _stub_fast_response_route(
     ):
         middleware.output_controller.emit_immediate_spoken_reply = AsyncMock()
     middleware.expression_agent = MagicMock()
-    middleware.expression_agent.generate_first_response = AsyncMock(
-        return_value=first_response
+    middleware.expression_agent.generate_expression = AsyncMock(
+        return_value=PersonaExpressionResult(spoken_reply=first_response)
     )
     middleware.router_agent = MagicMock()
     middleware.router_agent.route = AsyncMock(
@@ -292,8 +292,8 @@ class TestInteractionMiddleware:
         await _drain_inbound_tasks(middleware)
 
         forwarded_event = queue.get_nowait()
-        middleware.expression_agent.generate_first_response.assert_awaited_once()
-        decision_event = middleware.expression_agent.generate_first_response.await_args.args[0]
+        middleware.expression_agent.generate_expression.assert_awaited_once()
+        decision_event = middleware.expression_agent.generate_expression.await_args.args[0]
         assert decision_event.message_str == "recognized voice text"
         assert forwarded_event.message_obj.message_str == "recognized voice text"
         assert isinstance(forwarded_event.message_obj.message[0], Plain)
@@ -331,7 +331,7 @@ class TestInteractionMiddleware:
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
-        middleware.expression_agent.generate_first_response.assert_not_awaited()
+        middleware.expression_agent.generate_expression.assert_not_awaited()
         middleware.router_agent.route.assert_not_awaited()
         assert voice_event.get_extra("_interaction_stt_failed") is True
         assert (
@@ -865,8 +865,8 @@ class TestInteractionMiddleware:
         )
         middleware.plugin_context = MagicMock(spec=Context)
         middleware.expression_agent = MagicMock()
-        middleware.expression_agent.generate_first_response = AsyncMock(
-            return_value="我先看一下。"
+        middleware.expression_agent.generate_expression = AsyncMock(
+            return_value=PersonaExpressionResult(spoken_reply="我先看一下。")
         )
         middleware.router_agent = MagicMock()
         middleware.router_agent.route = AsyncMock(
@@ -939,7 +939,7 @@ class TestInteractionMiddleware:
         )
         middleware.plugin_context = MagicMock(spec=Context)
         middleware.expression_agent = MagicMock()
-        middleware.expression_agent.generate_first_response = AsyncMock()
+        middleware.expression_agent.generate_expression = AsyncMock()
         middleware.router_agent = MagicMock()
         middleware.router_agent.route = AsyncMock()
 
@@ -948,7 +948,7 @@ class TestInteractionMiddleware:
 
         assert queue.get_nowait() is live_event
         assert queue.empty()
-        middleware.expression_agent.generate_first_response.assert_not_awaited()
+        middleware.expression_agent.generate_expression.assert_not_awaited()
         middleware.router_agent.route.assert_not_awaited()
         controller.emit_immediate_spoken_reply.assert_not_awaited()
         assert (

@@ -26,8 +26,16 @@ if TYPE_CHECKING:
 
 
 class InteractionMemoryCollector(ContextCollectorInterface):
-    def __init__(self, store: InteractionMemoryStore) -> None:
+    def __init__(
+        self,
+        store: InteractionMemoryStore,
+        *,
+        recent_turn_limit: int | None = None,
+        brief: bool = False,
+    ) -> None:
         self.store = store
+        self.recent_turn_limit = recent_turn_limit
+        self.brief = brief
 
     async def collect(
         self,
@@ -42,10 +50,25 @@ class InteractionMemoryCollector(ContextCollectorInterface):
             event.unified_msg_origin,
             persona_id,
         )
+        payload = build_interaction_memory_payload(snapshot)
+        if self.recent_turn_limit is not None:
+            payload["recent_turns"] = payload["recent_turns"][
+                : max(self.recent_turn_limit, 0)
+            ]
+        if self.brief:
+            payload = {
+                key: payload[key]
+                for key in (
+                    "recent_turns",
+                    "recent_topics",
+                    "ongoing_threads",
+                    "last_impression_summary",
+                )
+            }
         return [
             ContextSlot(
                 name="memory.interaction",
-                value=build_interaction_memory_payload(snapshot),
+                value=payload,
                 category="memory",
                 source="interaction_memory",
                 render_mode="structured",

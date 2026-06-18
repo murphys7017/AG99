@@ -30,18 +30,33 @@ from astrbot.core.astr_main_agent_resources import (
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
 )
 from astrbot.core.conversation_mgr import Conversation
+from astrbot.core.interaction.collectors import InteractionMemoryCollector
 from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
+from astrbot.core.interaction.memory_store import (
+    INTERACTION_MEMORY_STORE_EXTRA_KEY,
+    InteractionMemoryStore,
+)
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
     set_persona_custom_error_message_on_event,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.prompt.collectors.input_collector import InputCollector
+from astrbot.core.prompt.collectors.knowledge_collector import KnowledgeCollector
+from astrbot.core.prompt.collectors.memory_collector import MemoryCollector
+from astrbot.core.prompt.collectors.policy_collector import PolicyCollector
+from astrbot.core.prompt.collectors.session_collector import SessionCollector
+from astrbot.core.prompt.collectors.skills_collector import SkillsCollector
+from astrbot.core.prompt.collectors.subagent_collector import SubagentCollector
+from astrbot.core.prompt.collectors.system_collector import SystemCollector
+from astrbot.core.prompt.collectors.tools_collector import ToolsCollector
 from astrbot.core.prompt.context_collect import (
     PROMPT_CONTEXT_PACK_EXTRA_KEY,
     collect_context_pack,
     log_context_pack,
 )
+from astrbot.core.prompt.profiles import CORE_EXECUTION_PROMPT_PROFILE
 from astrbot.core.prompt.render import (
     PROMPT_APPLY_RESULT_EXTRA_KEY,
     PROMPT_RENDER_RESULT_EXTRA_KEY,
@@ -432,6 +447,75 @@ def _clean_conversation_save_text(value: object) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def should_use_interaction_core_profile(event: AstrMessageEvent) -> bool:
+    """当事件由 interaction middleware 委托给 Core 时，使用紧凑 Profile（不含完整历史）。"""
+    return bool(event.get_extra("_interaction_delegate_to_core"))
+
+
+def _extract_interaction_explicit_contexts(req: ProviderRequest) -> list[dict]:
+    """保留插件显式上下文，同时剥离 conversation.history 的历史前缀。"""
+    contexts = [
+        copy.deepcopy(item) for item in (req.contexts or []) if isinstance(item, dict)
+    ]
+    if not contexts or req.conversation is None:
+        return contexts
+
+    raw_history = getattr(req.conversation, "history", None)
+    try:
+        history = json.loads(raw_history) if isinstance(raw_history, str) else raw_history
+    except (TypeError, ValueError):
+        history = None
+    if not isinstance(history, list):
+        return contexts
+    normalized_history = [item for item in history if isinstance(item, dict)]
+    if (
+        normalized_history
+        and len(contexts) >= len(normalized_history)
+        and contexts[: len(normalized_history)] == normalized_history
+    ):
+        return contexts[len(normalized_history) :]
+    if contexts == normalized_history:
+        return []
+    return contexts
+
+
+def _prepend_explicit_contexts(
+    req: ProviderRequest,
+    explicit_contexts: list[dict],
+) -> None:
+    if not explicit_contexts:
+        return
+    req.contexts = [
+        *copy.deepcopy(explicit_contexts),
+        *list(req.contexts or []),
+    ]
+
+
+_INTERACTION_CORE_MEMORY_STORE = InteractionMemoryStore()
+
+
+def _build_interaction_core_collectors(event: AstrMessageEvent):
+    memory_store = event.get_extra(INTERACTION_MEMORY_STORE_EXTRA_KEY)
+    if not isinstance(memory_store, InteractionMemoryStore):
+        memory_store = _INTERACTION_CORE_MEMORY_STORE
+    return [
+        SystemCollector(),
+        InputCollector(),
+        SessionCollector(),
+        PolicyCollector(),
+        MemoryCollector(),
+        InteractionMemoryCollector(
+            memory_store,
+            recent_turn_limit=2,
+            brief=True,
+        ),
+        SkillsCollector(),
+        ToolsCollector(),
+        SubagentCollector(),
+        KnowledgeCollector(),
+    ]
 
 
 def _get_context_pack_slot_value(prompt_context_pack: object, slot_name: str) -> Any:
@@ -2018,7 +2102,7 @@ async def build_main_agent(
             assert isinstance(req, ProviderRequest), (
                 "provider_request 必须是 ProviderRequest 类型。"
             )
-            if req.conversation:
+            if req.conversation and not should_use_interaction_core_profile(event):
                 req.contexts = json.loads(req.conversation.history)
             for comp in event.message_obj.message:
                 if isinstance(comp, Image):
@@ -2177,23 +2261,37 @@ async def build_main_agent(
 
             conversation = await _get_session_conv(event, plugin_context)
             req.conversation = conversation
-            req.contexts = json.loads(conversation.history)
+            if not should_use_interaction_core_profile(event):
+                req.contexts = json.loads(conversation.history)
             event.set_extra("provider_request", req)
     logger.debug(f"image_urls extracted for build_main_agent: {req.image_urls}")
     logger.debug(f"Constructed provider request: {req}")
     if isinstance(req.contexts, str):
         req.contexts = json.loads(req.contexts)
+    interaction_explicit_contexts: list[dict] = []
+    if should_use_interaction_core_profile(event):
+        interaction_explicit_contexts = _extract_interaction_explicit_contexts(req)
+        req.contexts = copy.deepcopy(interaction_explicit_contexts)
     req.image_urls = normalize_and_dedupe_strings(req.image_urls)
     req.audio_urls = normalize_and_dedupe_strings(req.audio_urls)
     req.provider = provider
     event.set_extra("provider_request", req)
 
     try:
+        _core_collectors = None
+        if should_use_interaction_core_profile(event):
+            _core_collectors = _build_interaction_core_collectors(event)
         prompt_context_pack = await collect_context_pack(
             event=event,
             plugin_context=plugin_context,
             config=config,
             provider_request=req,
+            collectors=_core_collectors,
+            profile=(
+                CORE_EXECUTION_PROMPT_PROFILE
+                if should_use_interaction_core_profile(event)
+                else None
+            ),
         )
         event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
         log_context_pack(prompt_context_pack, event=event)
@@ -2368,6 +2466,8 @@ async def build_main_agent(
                 provider_request=req,
                 prompt_context_pack=selected_prompt_context_pack,
             )
+            if should_use_interaction_core_profile(event):
+                _prepend_explicit_contexts(req, interaction_explicit_contexts)
             _modalities_fix(provider, req)
             _sanitize_context_by_modalities(config, provider, req)
         except Exception as exc:  # noqa: BLE001

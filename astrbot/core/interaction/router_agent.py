@@ -17,9 +17,11 @@ from astrbot.core.star.context import Context
 from .context_builder import (
     InteractionPromptContributorError,
     append_interaction_prompt_extensions_to_pack,
+    build_prompt_render_provider_request,
+    build_router_context_pack,
     clone_interaction_context_pack,
-    get_or_collect_interaction_prompt_extensions,
-    temporary_event_extra,
+    collect_interaction_prompt_extensions,
+    extract_input_payload,
 )
 from .decision_agent import (
     _build_decision_build_config,
@@ -28,7 +30,6 @@ from .decision_agent import (
     build_interaction_decision_contexts,
 )
 from .memory_store import InteractionMemoryStore
-from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
 from .types import (
     FastRouteMode,
     InteractionAgentConfig,
@@ -44,12 +45,10 @@ class InteractionRouterError(RuntimeError):
 
 def build_interaction_router_system_prompt() -> str:
     return (
-        "你是 AstrBot interaction middleware 的 Router。\n"
-        "你只判断当前用户输入是否需要核心执行层继续处理。\n"
-        "不要写回复，不要解释原因，不要拆解任务，不要输出置信度。\n\n"
-        "输出 self_reply：普通寒暄、情绪回应、轻量角色互动、无需事实核验的闲聊。\n"
-        "输出 hybrid：需要工具、检索、文件、代码、项目检查、外部动作、长推理、多步骤分析、准确事实核验，或你不确定时。\n"
-        "只输出符合当前结构化约束的 JSON。"
+        "只判断当前输入是否需要执行层。\n"
+        "self_reply：寒暄、情绪回应、轻量闲聊。\n"
+        "hybrid：工具、检索、文件、代码、外部动作、事实核验、复杂推理，或不确定。\n"
+        "不要生成用户回复，只返回 mode。"
     )
 
 
@@ -137,22 +136,13 @@ class InteractionRouterAgent:
                 f"provider unavailable: provider_id={interaction_config.router_provider_id}"
             )
             raise InteractionRouterError("provider_unavailable", message)
-        turn_state = get_interaction_turn_state(event)
-        if turn_state is not None:
-            async with turn_state.lock:
-                render_result = await self._prepare_render_result(
-                    event,
-                    plugin_context,
-                    interaction_config,
-                    provider,
-                )
-        else:
-            render_result = await self._prepare_render_result(
-                event,
-                plugin_context,
-                interaction_config,
-                provider,
-            )
+        # Router 不需要锁：它构建自己的独立最小 Pack，不写入共享 context_material
+        render_result = await self._prepare_render_result(
+            event,
+            plugin_context,
+            interaction_config,
+            provider,
+        )
         event.set_extra("_interaction_router_prompt_render_result", render_result)
         try:
             llm_resp = await asyncio.wait_for(
@@ -200,70 +190,40 @@ class InteractionRouterAgent:
         provider: Provider,
     ):
         build_config = _build_decision_build_config(plugin_context, event)
-        material = await self._build_or_reuse_context_material(
-            event=event,
-            plugin_context=plugin_context,
-            interaction_config=interaction_config,
-            build_config=build_config,
-        )
-        set_interaction_turn_persona_id(
-            event,
-            material.persona_payload.get("persona_id", ""),
-        )
+        # Router 直接构建最小 Pack，不触碰共享 context_material
+        router_pack = await build_router_context_pack(event, plugin_context, build_config)
+        # Router prompt extensions（purpose="router"），不缓存
+        input_payload = extract_input_payload(router_pack)
+        decision_context = {"input": input_payload}
         try:
-            prompt_extensions = await get_or_collect_interaction_prompt_extensions(
+            prompt_extensions = await collect_interaction_prompt_extensions(
                 event,
                 plugin_context,
                 build_config,
-                material.decision_context,
-                material,
+                decision_context,
                 purpose="router",
+                phase="route",
             )
         except InteractionPromptContributorError as exc:
             raise InteractionRouterError(exc.reason, str(exc)) from exc
-        route_pack = clone_interaction_context_pack(material.prompt_context_pack)
-        append_interaction_prompt_extensions_to_pack(
-            route_pack,
-            prompt_extensions,
-        )
+        route_pack = clone_interaction_context_pack(router_pack)
+        append_interaction_prompt_extensions_to_pack(route_pack, prompt_extensions)
         add_interaction_router_slots_to_pack(
             pack=route_pack,
-            event=event,
-            capability_payload=material.capability_payload,
         )
-        with temporary_event_extra(event, "provider", provider):
-            return PromptRenderEngine().render(
-                route_pack,
-                event=event,
-                plugin_context=plugin_context,
-                config=build_config,
-                provider_request=event.get_extra("provider_request"),
-            )
-
-    async def _build_or_reuse_context_material(
-        self,
-        *,
-        event,
-        plugin_context: Context,
-        interaction_config: InteractionAgentConfig,
-        build_config,
-    ):
-        from .decision_agent import InteractionDecisionAgent
-
-        helper = InteractionDecisionAgent(self.memory_store)
-        return await helper._build_or_reuse_context_material(
+        return PromptRenderEngine().render(
+            route_pack,
             event=event,
             plugin_context=plugin_context,
-            interaction_config=interaction_config,
-            build_config=build_config,
+            config=build_config,
+            provider_request=build_prompt_render_provider_request(event, provider),
         )
+
 
 
 def add_interaction_router_slots_to_pack(
     *,
     pack,
-    event,
-    capability_payload: dict[str, Any],
 ) -> None:
     extensions = [
         PromptExtension(
@@ -288,34 +248,6 @@ def add_interaction_router_slots_to_pack(
             meta={
                 "scope": "static",
                 "node_type": "interaction_router_output_contract",
-            },
-        ),
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="context",
-            title="Core capabilities",
-            value_kind="mapping",
-            value=capability_payload,
-            order=0,
-            meta={
-                "scope": "dynamic",
-                "node_type": "interaction_core_capabilities",
-            },
-        ),
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="context",
-            title="Interaction session",
-            value_kind="mapping",
-            value={
-                "platform_id": event.get_platform_id(),
-                "session_id": event.session_id,
-                "unified_msg_origin": event.unified_msg_origin,
-            },
-            order=1,
-            meta={
-                "scope": "dynamic",
-                "node_type": "interaction_session",
             },
         ),
     ]

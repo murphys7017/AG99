@@ -132,6 +132,7 @@ class InteractionRouteDecision:
         self,
         *,
         first_response: str | None,
+        plugin_hints: dict[str, Any] | None = None,
     ) -> InteractionDecision:
         reply = (first_response or "").strip() or None
         route_mode = (
@@ -144,7 +145,7 @@ class InteractionRouteDecision:
             should_emit_immediate_reply=bool(reply),
             immediate_spoken_reply=reply,
             core_task_spec=None,
-            plugin_hints={},
+            plugin_hints=dict(plugin_hints) if isinstance(plugin_hints, dict) else {},
             reason="fast_route",
         )
 
