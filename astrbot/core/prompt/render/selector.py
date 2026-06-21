@@ -9,6 +9,8 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
+from json_repair import repair_json
+
 from astrbot.core import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
@@ -796,13 +798,20 @@ def _extract_json_object(text: object) -> dict[str, Any] | None:
 
     start = cleaned.find("{")
     end = cleaned.rfind("}")
-    if start < 0 or end <= start:
-        return None
+    if start >= 0 and end > start:
+        try:
+            payload = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+        else:
+            return payload if isinstance(payload, dict) else None
+
     try:
-        payload = json.loads(cleaned[start : end + 1])
-    except json.JSONDecodeError:
+        repaired = repair_json(cleaned, return_objects=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("JSON repair failed: %s", exc)
         return None
-    return payload if isinstance(payload, dict) else None
+    return repaired if isinstance(repaired, dict) else None
 
 
 def _normalize_choice(value: object, allowed: set[str], default: str) -> str:

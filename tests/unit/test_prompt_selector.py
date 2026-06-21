@@ -14,6 +14,7 @@ from astrbot.core.prompt.render import (
     select_context_pack,
     select_context_pack_async,
 )
+from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.provider.provider import Provider
 
@@ -42,6 +43,29 @@ class _CustomSelector(PromptSelectorInterface):
             )
         )
         return selected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"a": 1', {"a": 1}),
+        ('{"spoken_reply":"ok","plugin_hints":{"motion":{"x":1}}', {
+            "spoken_reply": "ok",
+            "plugin_hints": {"motion": {"x": 1}},
+        }),
+        ("```json\n{'spoken_reply': 'ok',}\n```", {"spoken_reply": "ok"}),
+        (
+            'prefix {"spoken_reply":"ok","plugin_hints":{}} suffix',
+            {"spoken_reply": "ok", "plugin_hints": {}},
+        ),
+    ],
+)
+def test_extract_json_object_repairs_common_model_output(text, expected):
+    assert _extract_json_object(text) == expected
+
+
+def test_extract_json_object_does_not_treat_plain_text_as_json():
+    assert _extract_json_object("普通自然语言回复") is None
 
 
 class _FakeEvent:

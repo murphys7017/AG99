@@ -7,6 +7,7 @@ from astrbot.core.interaction.expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
     build_persona_expression_output_contract,
+    extract_persona_expression_result,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
 from astrbot.core.interaction.persona_runtime import InteractionPersonaRuntime
@@ -16,6 +17,29 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
+
+
+def test_persona_expression_repairs_truncated_json_from_provider():
+    text = (
+        '{"spoken_reply": "……你倒是说句话啊，发个问号是什么意思。", '
+        '"plugin_hints": {"ag99live_motion": {"axes": {"head_yaw": 40, '
+        '"head_pitch": 45, "head_roll": 50}, '
+        '"resource_id": "embarrassed_lookaway"}}'
+    )
+
+    result = extract_persona_expression_result(text)
+
+    assert result.spoken_reply == "……你倒是说句话啊，发个问号是什么意思。"
+    assert result.plugin_hints == {
+        "ag99live_motion": {
+            "axes": {
+                "head_yaw": 40,
+                "head_pitch": 45,
+                "head_roll": 50,
+            },
+            "resource_id": "embarrassed_lookaway",
+        }
+    }
 
 
 @pytest.mark.asyncio
