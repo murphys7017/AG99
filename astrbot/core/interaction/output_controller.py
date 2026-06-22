@@ -36,6 +36,7 @@ from .contributors import (
 )
 from .core_bridge import get_interaction_decision
 from .decision_agent import _build_decision_build_config
+from .effects import effect_calls_to_legacy_plugin_hints
 from .finalizer import InteractionFinalizerError, finalize_response
 from .memory_store import (
     InteractionMemoryStore,
@@ -1319,6 +1320,12 @@ class InteractionOutputController:
             if decision_obj is not None and isinstance(decision_obj.effect_calls, list)
             else ()
         )
+        legacy_effect_hints = effect_calls_to_legacy_plugin_hints(
+            effect_calls,
+            self._list_persona_effects_for_result_view(phase=phase),
+        )
+        for hint_name, hint_value in legacy_effect_hints.items():
+            plugin_hints.setdefault(hint_name, hint_value)
         logger.info(
             "DIAG result_view.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s",
             event.get_platform_id(),
@@ -1409,6 +1416,20 @@ class InteractionOutputController:
                 contributions.append(payload)
         contributions.sort(key=lambda item: (item.priority, item.plugin_id))
         return contributions
+
+    def _list_persona_effects_for_result_view(
+        self,
+        *,
+        phase: str,
+    ):
+        if self.plugin_context is None:
+            return []
+        list_effects = getattr(self.plugin_context, "list_persona_effects", None)
+        if not callable(list_effects):
+            return []
+        persona_phase = "first_response" if phase == "immediate" else "final_response"
+        effects = list_effects(phase=persona_phase)
+        return effects if isinstance(effects, list) else []
 
     @staticmethod
     def _build_result_final_candidate_material(

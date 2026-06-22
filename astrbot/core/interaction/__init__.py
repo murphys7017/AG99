@@ -18,6 +18,7 @@ from .effects import (
     PersonaEffectRegistryError,
     PersonaEffectSpec,
     PersonaEffectValidationError,
+    effect_calls_to_legacy_plugin_hints,
     legacy_plugin_hints_to_effect_calls,
     parse_persona_effect_calls,
 )
@@ -118,6 +119,7 @@ __all__ = [
     "get_interaction_decision",
     "is_middleware_enabled_for_platform",
     "load_interaction_agent_config",
+    "effect_calls_to_legacy_plugin_hints",
     "legacy_plugin_hints_to_effect_calls",
     "parse_persona_effect_calls",
     "register_interaction_conversation_postprocessor",

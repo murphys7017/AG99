@@ -8,7 +8,7 @@ from astrbot.core.interaction.contributors import (
     InteractionResultContribution,
     InteractionResultView,
 )
-from astrbot.core.interaction.effects import PersonaEffectCall
+from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.finalizer import finalize_response
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
@@ -569,6 +569,68 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
     plugin_context = MagicMock()
     plugin_context.list_interaction_result_contributors.return_value = [
         EffectCallsContributor()
+    ]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        persist_callback=_mark_completed_callback,
+    )
+    webchat_event.set_result(
+        MessageEventResult(
+            chain=[Plain("final answer")],
+            result_content_type=ResultContentType.LLM_RESULT,
+        )
+    )
+    set_interaction_turn_decision(
+        webchat_event,
+        InteractionDecision(
+            route_mode=RouteMode.HYBRID,
+            should_emit_immediate_reply=True,
+            immediate_spoken_reply="嗯。",
+            effect_calls=[effect_call],
+        ),
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_message_chain(
+            MessageChain([Plain("final answer")]),
+            webchat_event,
+        )
+
+
+@pytest.mark.asyncio
+async def test_effect_calls_are_exposed_as_legacy_plugin_hints(webchat_event):
+    queue = asyncio.Queue()
+    effect_call = PersonaEffectCall(
+        name="ag99live.motion",
+        arguments={"axes": {"head_yaw": 40}},
+        plugin_id="plugin_a",
+    )
+
+    class LegacyHintsContributor:
+        plugin_id = "legacy_hints"
+
+        async def collect(self, event, plugin_context, view):
+            assert view.plugin_hints == {
+                "ag99live_motion": {"axes": {"head_yaw": 40}}
+            }
+            return InteractionResultContribution(plugin_id=self.plugin_id)
+
+    plugin_context = MagicMock()
+    plugin_context.list_persona_effects.return_value = [
+        PersonaEffectSpec(
+            plugin_id="plugin_a",
+            name="ag99live.motion",
+            description="Live2D motion",
+            parameters={"type": "object", "properties": {}},
+            legacy_hint_names=("ag99live_motion",),
+        )
+    ]
+    plugin_context.list_interaction_result_contributors.return_value = [
+        LegacyHintsContributor()
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,

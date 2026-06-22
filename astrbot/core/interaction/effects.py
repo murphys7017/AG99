@@ -183,6 +183,30 @@ def legacy_plugin_hints_to_effect_calls(
     return calls
 
 
+def effect_calls_to_legacy_plugin_hints(
+    effect_calls: Sequence[PersonaEffectCall],
+    effects: Sequence[PersonaEffectSpec],
+) -> dict[str, Any]:
+    if not effect_calls:
+        return {}
+
+    effects_by_name = {
+        effect.name: effect
+        for effect in effects
+        if effect.enabled and effect.legacy_hint_names
+    }
+    hints: dict[str, Any] = {}
+    for call in effect_calls:
+        if not isinstance(call, PersonaEffectCall):
+            continue
+        effect = effects_by_name.get(call.name)
+        if effect is None:
+            continue
+        alias = effect.legacy_hint_names[0]
+        hints.setdefault(alias, copy.deepcopy(call.arguments))
+    return hints
+
+
 def parse_persona_effect_calls(
     raw_calls: object,
     effects: Sequence[PersonaEffectSpec],

@@ -4,6 +4,7 @@ from astrbot.core.interaction.effects import (
     PersonaEffectCall,
     PersonaEffectRegistryError,
     PersonaEffectSpec,
+    effect_calls_to_legacy_plugin_hints,
     legacy_plugin_hints_to_effect_calls,
     parse_persona_effect_calls,
 )
@@ -225,3 +226,26 @@ def test_parse_persona_effect_calls_keeps_valid_calls_and_drops_unknown_or_inval
             source="persona",
         )
     ]
+
+
+def test_effect_calls_convert_to_legacy_plugin_hints_by_explicit_alias():
+    hints = effect_calls_to_legacy_plugin_hints(
+        [
+            PersonaEffectCall(
+                name="ag99live.motion",
+                arguments={"axes": {"head_yaw": 40}},
+                plugin_id="plugin_a",
+            ),
+            PersonaEffectCall(
+                name="voice.emotion",
+                arguments={"emotion": "happy"},
+                plugin_id="plugin_b",
+            ),
+        ],
+        [
+            _effect("ag99live.motion", aliases=("ag99live_motion",)),
+            _effect("voice.emotion", plugin_id="plugin_b", aliases=()),
+        ],
+    )
+
+    assert hints == {"ag99live_motion": {"axes": {"head_yaw": 40}}}
