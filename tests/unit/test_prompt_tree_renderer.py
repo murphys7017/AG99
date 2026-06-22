@@ -340,6 +340,53 @@ def test_minimax_renderer_degrades_tool_call_output_contract_to_prompt_only():
     )
 
 
+def test_minimax_renderer_can_opt_in_to_protocol_tool_call():
+    from astrbot.core.output_contract import OutputContract
+    from astrbot.core.prompt.render.minimax_renderer import MiniMaxPromptRenderer
+
+    renderer = MiniMaxPromptRenderer(enable_tool_call=True)
+
+    assert (
+        renderer.resolve_output_contract_strategy(
+            OutputContract(mode="tool_call", strict=True)
+        )
+        == "protocol_tool_call"
+    )
+
+
+def test_render_engine_enables_minimax_tool_call_from_provider_config():
+    from astrbot.core.output_contract import OutputContract
+
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="persona_expression",
+        allow_text_fallback=True,
+    ).to_dict()
+    provider = type(
+        "Provider",
+        (),
+        {
+            "provider_config": {
+                "type": "minimax_token_plan",
+                "minimax_enable_tool_call": True,
+            }
+        },
+    )()
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": provider})(),
+    )
+
+    assert result.metadata["renderer_name"] == "minimax"
+    assert result.compiled_output_contract is not None
+    assert result.compiled_output_contract.strategy == "protocol_tool_call"
+    assert result.compiled_output_contract.tool_name == "persona_expression"
+
+
 def test_openai_prompt_renderer_preserves_openai_messages_and_tool_schema():
     renderer = OpenAIPromptRenderer()
     pack = ContextPack(

@@ -35,14 +35,19 @@ class MiniMaxPromptRenderer(BasePromptRenderer):
         "user_id",
     }
 
+    def __init__(self, *, enable_tool_call: bool = False) -> None:
+        super().__init__()
+        self.enable_tool_call = enable_tool_call
+
     def get_name(self) -> str:
         return "minimax"
 
     def resolve_output_contract_strategy(self, contract: OutputContract) -> str:
-        # MiniMax Token Plan's Anthropic-compatible path does not reliably obey
-        # forced tool_use. Keep strict callers on prompt-only JSON parsing.
-        if contract.mode == "tool_call":
-            return "prompt_only"
+        # MiniMax Token Plan's Anthropic-compatible path has historically been
+        # less reliable with forced tool_use, so keep prompt-only as the default
+        # and require an explicit provider-level opt-in.
+        if contract.mode == "tool_call" and self.enable_tool_call:
+            return "protocol_tool_call"
         return "prompt_only"
 
     def _compile_system_prompt(self, prompt_tree: PromptBuilder) -> str | None:

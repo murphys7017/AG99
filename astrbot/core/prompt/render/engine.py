@@ -126,7 +126,9 @@ class PromptRenderEngine:
         if renderer_family == "openai":
             return OpenAIPromptRenderer()
         if renderer_family == "minimax":
-            return MiniMaxPromptRenderer()
+            return MiniMaxPromptRenderer(
+                enable_tool_call=self._resolve_minimax_tool_call_enabled(provider)
+            )
         return self.default_renderer
 
     @staticmethod
@@ -153,6 +155,18 @@ class PromptRenderEngine:
             getattr(metadata, "prompt_renderer_family", "base") or "base"
         )
         return metadata_family if metadata_family in _PROMPT_RENDERER_FAMILIES else "base"
+
+    @staticmethod
+    def _resolve_minimax_tool_call_enabled(provider) -> bool:
+        provider_config = getattr(provider, "provider_config", None)
+        if not isinstance(provider_config, dict):
+            return False
+        value = provider_config.get("minimax_enable_tool_call", False)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return False
 
     @staticmethod
     def _resolve_provider_from_request(provider_request: ProviderRequest | None):
