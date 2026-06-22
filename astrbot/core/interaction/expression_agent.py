@@ -28,6 +28,7 @@ from .decision_agent import (
     build_interaction_decision_contexts,
 )
 from .effects import PersonaEffectSpec, PersonaExpressionPhase
+from .effects import PersonaEffectCall, parse_persona_effect_calls
 from .memory_store import InteractionMemoryStore
 from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
 from .types import InteractionAgentConfig
@@ -44,6 +45,7 @@ class PersonaExpressionRequest:
 @dataclass(slots=True)
 class PersonaExpressionResult:
     spoken_reply: str = ""
+    effect_calls: list[PersonaEffectCall] = field(default_factory=list)
     plugin_hints: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -69,7 +71,7 @@ def validate_persona_expression_result(
 ) -> None:
     if phase_requires_spoken_reply(phase) and not result.spoken_reply:
         raise InteractionExpressionError("empty_output")
-    if not result.spoken_reply:
+    if not result.spoken_reply and not result.effect_calls:
         raise InteractionExpressionError("empty_output")
 
 
@@ -124,10 +126,16 @@ def build_persona_expression_tool_parameters(
 
 
 def build_persona_expression_output_contract() -> OutputContract:
+    return build_persona_expression_output_contract_for_effects(())
+
+
+def build_persona_expression_output_contract_for_effects(
+    effects: Sequence[PersonaEffectSpec] = (),
+) -> OutputContract:
     return OutputContract(
         mode="tool_call",
         strict=False,
-        schema=build_persona_expression_tool_parameters(),
+        schema=build_persona_expression_tool_parameters(effects),
         preferred_tool_name="persona_expression",
         allow_text_fallback=True,
     )
@@ -151,6 +159,7 @@ def extract_persona_expression_result(
     *,
     llm_response=None,
     output_contract: OutputContract | None = None,
+    effects: Sequence[PersonaEffectSpec] = (),
 ) -> PersonaExpressionResult:
     """三级解析：tool call → JSON object → 纯文本兼容。"""
     preferred = (
@@ -170,6 +179,10 @@ def extract_persona_expression_result(
             if isinstance(tool_arg, dict):
                 return PersonaExpressionResult(
                     spoken_reply=str(tool_arg.get("spoken_reply", "") or ""),
+                    effect_calls=parse_persona_effect_calls(
+                        tool_arg.get("effect_calls", []),
+                        effects,
+                    ),
                     plugin_hints=_coerce_hints_dict(tool_arg.get("plugin_hints")),
                     metadata=_coerce_hints_dict(tool_arg.get("metadata")),
                 )
@@ -178,6 +191,10 @@ def extract_persona_expression_result(
     if isinstance(payload, dict) and "spoken_reply" in payload:
         return PersonaExpressionResult(
             spoken_reply=str(payload.get("spoken_reply", "") or ""),
+            effect_calls=parse_persona_effect_calls(
+                payload.get("effect_calls", []),
+                effects,
+            ),
             plugin_hints=_coerce_hints_dict(payload.get("plugin_hints")),
             metadata=_coerce_hints_dict(payload.get("metadata")),
         )
@@ -259,6 +276,12 @@ class InteractionExpressionAgent:
             )
         event.set_extra("_interaction_expression_prompt_render_result", render_result)
         output_contract = render_result.output_contract
+        persona_effect_specs = render_result.metadata.get(
+            "persona_effect_specs",
+            [],
+        )
+        if not isinstance(persona_effect_specs, list):
+            persona_effect_specs = []
         provider_config = getattr(provider, "provider_config", {})
         if not isinstance(provider_config, dict):
             provider_config = {}
@@ -312,23 +335,26 @@ class InteractionExpressionAgent:
             llm_resp.completion_text,
             llm_response=llm_resp,
             output_contract=output_contract,
+            effects=persona_effect_specs,
         )
         logger.info(
-            "DIAG expression.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s",
+            "DIAG expression.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             req.phase,
             sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
             bool(result.plugin_hints),
+            [call.name for call in result.effect_calls],
         )
         validate_persona_expression_result(req.phase, result)
         logger.info(
-            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s plugin_hints_keys=%s",
+            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s plugin_hints_keys=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             req.phase,
             len(result.spoken_reply),
             sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
+            [call.name for call in result.effect_calls],
         )
         return result
 
@@ -415,17 +441,38 @@ class InteractionExpressionAgent:
             expression_pack,
             prompt_extensions,
         )
+        persona_effect_specs = self._list_persona_effects(plugin_context, phase=phase)
         if mode == "plugin_output_rewrite":
-            add_plugin_output_rewrite_slots_to_pack(expression_pack)
+            add_plugin_output_rewrite_slots_to_pack(
+                expression_pack,
+                effects=persona_effect_specs,
+            )
         else:
-            add_fast_expression_slots_to_pack(expression_pack)
-        return PromptRenderEngine().render(
+            add_fast_expression_slots_to_pack(
+                expression_pack,
+                effects=persona_effect_specs,
+            )
+        render_result = PromptRenderEngine().render(
             expression_pack,
             event=event,
             plugin_context=plugin_context,
             config=build_config,
             provider_request=build_prompt_render_provider_request(event, provider),
         )
+        render_result.metadata["persona_effect_specs"] = persona_effect_specs
+        return render_result
+
+    @staticmethod
+    def _list_persona_effects(
+        plugin_context: Context,
+        *,
+        phase: PersonaExpressionPhase,
+    ) -> list[PersonaEffectSpec]:
+        list_effects = getattr(plugin_context, "list_persona_effects", None)
+        if not callable(list_effects):
+            return []
+        effects = list_effects(phase=phase)
+        return effects if isinstance(effects, list) else []
 
     async def _build_or_reuse_context_material(
         self,
@@ -446,7 +493,11 @@ class InteractionExpressionAgent:
         )
 
 
-def add_fast_expression_slots_to_pack(pack) -> None:
+def add_fast_expression_slots_to_pack(
+    pack,
+    *,
+    effects: Sequence[PersonaEffectSpec] = (),
+) -> None:
     extensions: list[PromptExtension] = [
         PromptExtension(
             plugin_id="astrbot.interaction",
@@ -461,10 +512,16 @@ def add_fast_expression_slots_to_pack(pack) -> None:
     for slot in build_prompt_extension_slots(extensions, source="interaction_fast_expression"):
         pack.add_slot(slot)
     pack.meta["slot_count"] = len(pack.slots)
-    pack.meta["output_contract"] = build_persona_expression_output_contract().to_dict()
+    pack.meta["output_contract"] = build_persona_expression_output_contract_for_effects(
+        effects
+    ).to_dict()
 
 
-def add_plugin_output_rewrite_slots_to_pack(pack) -> None:
+def add_plugin_output_rewrite_slots_to_pack(
+    pack,
+    *,
+    effects: Sequence[PersonaEffectSpec] = (),
+) -> None:
     extensions: list[PromptExtension] = [
         PromptExtension(
             plugin_id="astrbot.interaction",
@@ -479,4 +536,6 @@ def add_plugin_output_rewrite_slots_to_pack(pack) -> None:
     for slot in build_prompt_extension_slots(extensions, source="interaction_plugin_output_rewrite"):
         pack.add_slot(slot)
     pack.meta["slot_count"] = len(pack.slots)
-    pack.meta["output_contract"] = build_persona_expression_output_contract().to_dict()
+    pack.meta["output_contract"] = build_persona_expression_output_contract_for_effects(
+        effects
+    ).to_dict()

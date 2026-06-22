@@ -5,6 +5,7 @@ from astrbot.core.interaction.effects import (
     PersonaEffectRegistryError,
     PersonaEffectSpec,
     legacy_plugin_hints_to_effect_calls,
+    parse_persona_effect_calls,
 )
 from astrbot.core.interaction.expression_agent import (
     build_persona_expression_tool_parameters,
@@ -189,3 +190,38 @@ def test_context_returns_copies_and_unregisters_names_and_aliases_together():
     assert ctx.list_persona_effects() == []
     ctx.register_persona_effect(_effect("ag99live.motion", aliases=("ag99live_motion",)))
 
+
+def test_parse_persona_effect_calls_keeps_valid_calls_and_drops_unknown_or_invalid():
+    effect = _effect()
+    effect.parameters = {
+        "type": "object",
+        "properties": {
+            "axes": {"type": "object"},
+            "duration_ms": {"type": "integer"},
+        },
+        "required": ["axes"],
+    }
+
+    calls = parse_persona_effect_calls(
+        [
+            {
+                "name": "ag99live.motion",
+                "arguments": {"axes": {"head_yaw": 40}, "duration_ms": 1200},
+                "call_id": "call-1",
+            },
+            {"name": "unknown.effect", "arguments": {"axes": {}}},
+            {"name": "ag99live.motion", "arguments": {"duration_ms": 1200}},
+            {"name": "ag99live.motion", "arguments": {"axes": {}, "duration_ms": 1.5}},
+        ],
+        [effect],
+    )
+
+    assert calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"axes": {"head_yaw": 40}, "duration_ms": 1200},
+            call_id="call-1",
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]

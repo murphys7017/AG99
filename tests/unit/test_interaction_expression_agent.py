@@ -4,14 +4,15 @@ import pytest
 
 from astrbot.core.interaction.expression_agent import (
     InteractionExpressionAgent,
+    InteractionExpressionError,
     PersonaExpressionRequest,
     PersonaExpressionResult,
     build_persona_expression_output_contract,
     extract_persona_expression_result,
     phase_requires_spoken_reply,
     validate_persona_expression_result,
-    InteractionExpressionError,
 )
+from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
 from astrbot.core.interaction.persona_runtime import InteractionPersonaRuntime
 from astrbot.core.interaction.types import InteractionAgentConfig
@@ -51,7 +52,7 @@ def test_phase_requires_spoken_reply_matches_persona_phase_contract(
         "executor_progress",
     ],
 )
-def test_persona_expression_empty_result_is_rejected_until_effect_calls_exist(phase):
+def test_persona_expression_empty_result_without_effects_is_rejected(phase):
     with pytest.raises(InteractionExpressionError) as exc_info:
         validate_persona_expression_result(
             phase,
@@ -59,6 +60,37 @@ def test_persona_expression_empty_result_is_rejected_until_effect_calls_exist(ph
         )
 
     assert exc_info.value.reason == "empty_output"
+
+
+def test_persona_expression_allows_effect_only_for_progress_phases():
+    validate_persona_expression_result(
+        "executor_progress",
+        PersonaExpressionResult(
+            spoken_reply="",
+            effect_calls=[
+                PersonaEffectCall(
+                    name="ag99live.motion",
+                    arguments={"axes": {"head_yaw": 40}},
+                )
+            ],
+        ),
+    )
+
+
+def test_persona_expression_still_requires_reply_for_first_response_even_with_effect():
+    with pytest.raises(InteractionExpressionError):
+        validate_persona_expression_result(
+            "first_response",
+            PersonaExpressionResult(
+                spoken_reply="",
+                effect_calls=[
+                    PersonaEffectCall(
+                        name="ag99live.motion",
+                        arguments={"axes": {"head_yaw": 40}},
+                    )
+                ],
+            ),
+        )
 
 
 def test_persona_expression_repairs_truncated_json_from_provider():
@@ -82,6 +114,34 @@ def test_persona_expression_repairs_truncated_json_from_provider():
             "resource_id": "embarrassed_lookaway",
         }
     }
+
+
+def test_persona_expression_parses_effect_calls_from_json_fallback():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"axes": {"type": "object"}},
+            "required": ["axes"],
+        },
+    )
+
+    result = extract_persona_expression_result(
+        '{"spoken_reply":"嗯。","effect_calls":[{"name":"ag99live.motion","arguments":{"axes":{"head_yaw":40}}}]}',
+        effects=[effect],
+    )
+
+    assert result.spoken_reply == "嗯。"
+    assert result.effect_calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"axes": {"head_yaw": 40}},
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]
 
 
 @pytest.mark.asyncio

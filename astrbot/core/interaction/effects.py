@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -53,6 +54,10 @@ class PersonaEffectCall:
 
 class PersonaEffectRegistryError(ValueError):
     """Raised when a persona effect registration is invalid or conflicts."""
+
+
+class PersonaEffectValidationError(ValueError):
+    """Raised when a persona effect call does not match its registered schema."""
 
 
 def validate_persona_effect_spec(effect: PersonaEffectSpec) -> None:
@@ -143,6 +148,102 @@ def legacy_plugin_hints_to_effect_calls(
             )
         )
     return calls
+
+
+def parse_persona_effect_calls(
+    raw_calls: object,
+    effects: Sequence[PersonaEffectSpec],
+) -> list[PersonaEffectCall]:
+    if not isinstance(raw_calls, list):
+        return []
+
+    effects_by_name = {
+        effect.name: effect
+        for effect in effects
+        if effect.enabled
+    }
+    calls: list[PersonaEffectCall] = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+        name = str(raw_call.get("name", "") or "").strip()
+        effect = effects_by_name.get(name)
+        if effect is None:
+            continue
+        arguments = raw_call.get("arguments", {})
+        if not isinstance(arguments, dict):
+            continue
+        try:
+            validate_persona_effect_arguments(arguments, effect.parameters)
+        except PersonaEffectValidationError:
+            continue
+        calls.append(
+            PersonaEffectCall(
+                name=effect.name,
+                arguments=copy.deepcopy(arguments),
+                call_id=(
+                    str(raw_call.get("call_id"))
+                    if raw_call.get("call_id") is not None
+                    else None
+                ),
+                plugin_id=effect.plugin_id,
+                source="persona",
+            )
+        )
+    return calls
+
+
+def validate_persona_effect_arguments(
+    arguments: dict[str, Any],
+    schema: dict[str, Any],
+) -> None:
+    if not isinstance(arguments, dict):
+        raise PersonaEffectValidationError("arguments must be an object")
+    if not _is_valid_parameters_schema(schema):
+        raise PersonaEffectValidationError("schema must be an object schema")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        properties = {}
+    required = schema.get("required", [])
+    if not isinstance(required, list):
+        required = []
+    for key in required:
+        if key not in arguments:
+            raise PersonaEffectValidationError(f"missing required argument: {key}")
+    for key, value in arguments.items():
+        property_schema = properties.get(key)
+        if isinstance(property_schema, dict):
+            _validate_json_schema_type(value, property_schema, path=key)
+
+
+def _validate_json_schema_type(value: Any, schema: dict[str, Any], *, path: str) -> None:
+    schema_type = schema.get("type")
+    if schema_type is None:
+        return
+    if isinstance(schema_type, list):
+        if any(_json_schema_type_matches(value, item) for item in schema_type):
+            return
+        raise PersonaEffectValidationError(f"invalid type for {path}")
+    if isinstance(schema_type, str) and not _json_schema_type_matches(value, schema_type):
+        raise PersonaEffectValidationError(f"invalid type for {path}")
+
+
+def _json_schema_type_matches(value: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return True
 
 
 def _is_valid_parameters_schema(schema: object) -> bool:

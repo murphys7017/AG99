@@ -17,7 +17,9 @@ from .effects import (
     PersonaEffectCall,
     PersonaEffectRegistryError,
     PersonaEffectSpec,
+    PersonaEffectValidationError,
     legacy_plugin_hints_to_effect_calls,
+    parse_persona_effect_calls,
 )
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
@@ -78,6 +80,7 @@ __all__ = [
     "PersonaEffectCall",
     "PersonaEffectRegistryError",
     "PersonaEffectSpec",
+    "PersonaEffectValidationError",
     "InteractionPersonaRuntime",
     "FastRouteMode",
     "FinalizerMode",
@@ -116,6 +119,7 @@ __all__ = [
     "is_middleware_enabled_for_platform",
     "load_interaction_agent_config",
     "legacy_plugin_hints_to_effect_calls",
+    "parse_persona_effect_calls",
     "register_interaction_conversation_postprocessor",
     "reset_interaction_conversation_postprocessor",
     "temporary_output_origin",
