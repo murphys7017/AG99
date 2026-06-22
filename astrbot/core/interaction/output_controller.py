@@ -1314,6 +1314,14 @@ class InteractionOutputController:
             if decision_obj is not None and isinstance(decision_obj.plugin_hints, dict)
             else {}
         )
+        logger.info(
+            "DIAG result_view.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s",
+            event.get_platform_id(),
+            event.session_id,
+            phase,
+            sorted(plugin_hints.keys()) if plugin_hints else [],
+            bool(plugin_hints),
+        )
         if phase == "final":
             event.set_extra("_interaction_plugin_hints", dict(plugin_hints))
         output_text = (final_result or core_result or "").strip()

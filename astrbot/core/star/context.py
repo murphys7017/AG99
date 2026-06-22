@@ -49,6 +49,7 @@ logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
+    from astrbot.core.interaction.effects import PersonaEffectSpec
 
 WebApiHandler = Callable[..., Awaitable[Any]]
 RegisteredWebApi = tuple[str, WebApiHandler, list[str], str]
@@ -139,6 +140,16 @@ class _InteractionContributorRegistration:
     seq: int
 
 
+@dataclass(slots=True)
+class _PersonaEffectRegistration:
+    """Internal registration record for persona effects."""
+
+    effect: PersonaEffectSpec
+    definition_module_path: str
+    owner_module_path: str | None
+    seq: int
+
+
 class PlatformManagerProtocol(Protocol):
     platform_insts: list[Platform]
 
@@ -206,6 +217,8 @@ class Context:
             _InteractionContributorRegistration
         ] = []
         self._interaction_stream_decider_seq = 0
+        self._persona_effects: list[_PersonaEffectRegistration] = []
+        self._persona_effect_seq = 0
 
     async def llm_generate(
         self,
@@ -751,6 +764,106 @@ class Context:
             contributor_type="stream decider",
         )
 
+    def register_persona_effect(self, effect: PersonaEffectSpec) -> None:
+        from astrbot.core.interaction.effects import (
+            clone_persona_effect_spec,
+            validate_persona_effect_spec,
+        )
+
+        validate_persona_effect_spec(effect)
+        self._ensure_persona_effect_name_available(effect)
+
+        definition_module_path = getattr(type(effect), "__module__", "") or getattr(
+            effect,
+            "__module__",
+            "",
+        )
+        owner_module_path = self._normalize_plugin_owner_module(definition_module_path)
+        self._persona_effect_seq += 1
+        self._persona_effects.append(
+            _PersonaEffectRegistration(
+                effect=clone_persona_effect_spec(effect),
+                definition_module_path=str(definition_module_path),
+                owner_module_path=owner_module_path,
+                seq=self._persona_effect_seq,
+            )
+        )
+        logger.info(
+            "plugin(module_path %s) registered persona effect: plugin_id=%s name=%s",
+            owner_module_path or definition_module_path or "<unknown>",
+            effect.plugin_id,
+            effect.name,
+        )
+
+    def list_persona_effects(
+        self,
+        *,
+        phase: str | None = None,
+    ) -> list[PersonaEffectSpec]:
+        from astrbot.core.interaction.effects import (
+            clone_persona_effect_spec,
+            persona_effect_applies_to_phase,
+        )
+
+        registrations = [
+            registration
+            for registration in self._persona_effects
+            if self._is_persona_effect_active(registration)
+            and persona_effect_applies_to_phase(registration.effect, phase)
+        ]
+        registrations.sort(
+            key=lambda registration: (
+                int(registration.effect.priority),
+                registration.effect.name,
+                registration.seq,
+            )
+        )
+        return [
+            clone_persona_effect_spec(registration.effect)
+            for registration in registrations
+        ]
+
+    def unregister_persona_effects(
+        self,
+        *,
+        plugin_id: str | None = None,
+        module_prefix: str | None = None,
+    ) -> int:
+        clean_plugin_id = plugin_id.strip() if isinstance(plugin_id, str) else None
+        clean_module_prefix = (
+            module_prefix.strip() if isinstance(module_prefix, str) else None
+        )
+        if not clean_plugin_id and not clean_module_prefix:
+            return 0
+
+        kept: list[_PersonaEffectRegistration] = []
+        removed = 0
+        for registration in self._persona_effects:
+            matches_plugin = (
+                clean_plugin_id is not None
+                and registration.effect.plugin_id == clean_plugin_id
+            )
+            matches_module = (
+                clean_module_prefix is not None
+                and self._matches_persona_effect_module_prefix(
+                    registration,
+                    clean_module_prefix,
+                )
+            )
+            if matches_plugin or matches_module:
+                removed += 1
+                continue
+            kept.append(registration)
+        self._persona_effects = kept
+        if removed:
+            logger.info(
+                "removed %s persona effect(s) for plugin_id=%s module_prefix=%s",
+                removed,
+                clean_plugin_id or "",
+                clean_module_prefix or "",
+            )
+        return removed
+
     @staticmethod
     def _normalize_plugin_owner_module(module_path: str | None) -> str | None:
         if not isinstance(module_path, str) or not module_path:
@@ -826,6 +939,70 @@ class Context:
             )
         )
         return [registration.contributor for registration in active_registrations]
+
+    def _ensure_persona_effect_name_available(
+        self,
+        effect: PersonaEffectSpec,
+    ) -> None:
+        from astrbot.core.interaction.effects import PersonaEffectRegistryError
+
+        existing_names = {
+            registration.effect.name: registration.effect
+            for registration in self._persona_effects
+        }
+        existing_aliases: dict[str, PersonaEffectSpec] = {}
+        for registration in self._persona_effects:
+            for alias in registration.effect.legacy_hint_names:
+                existing_aliases[alias] = registration.effect
+
+        if effect.name in existing_names:
+            raise PersonaEffectRegistryError(
+                f"Persona effect name is already registered: {effect.name!r}"
+            )
+        if effect.name in existing_aliases:
+            raise PersonaEffectRegistryError(
+                f"Persona effect name conflicts with legacy alias: {effect.name!r}"
+            )
+        for alias in effect.legacy_hint_names:
+            if alias in existing_aliases:
+                raise PersonaEffectRegistryError(
+                    f"Persona effect legacy alias is already registered: {alias!r}"
+                )
+            if alias in existing_names:
+                raise PersonaEffectRegistryError(
+                    f"Persona effect legacy alias conflicts with effect name: {alias!r}"
+                )
+
+    def _is_persona_effect_active(
+        self,
+        registration: _PersonaEffectRegistration,
+    ) -> bool:
+        if not registration.effect.enabled:
+            return False
+        for candidate in (
+            registration.owner_module_path,
+            registration.definition_module_path,
+        ):
+            if not candidate:
+                continue
+            plugin = star_map.get(candidate)
+            if plugin is not None:
+                return bool(plugin.activated)
+        return True
+
+    @staticmethod
+    def _matches_persona_effect_module_prefix(
+        registration: _PersonaEffectRegistration,
+        module_prefix: str,
+    ) -> bool:
+        return any(
+            candidate.startswith(module_prefix)
+            for candidate in (
+                registration.owner_module_path,
+                registration.definition_module_path,
+            )
+            if candidate
+        )
 
     def _remove_interaction_contributors_by_module_prefix(
         self,

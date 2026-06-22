@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from astrbot import logger
 from astrbot.core.output_contract import OutputContract
@@ -24,18 +27,10 @@ from .decision_agent import (
     _build_decision_build_config,
     build_interaction_decision_contexts,
 )
+from .effects import PersonaEffectSpec, PersonaExpressionPhase
 from .memory_store import InteractionMemoryStore
 from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
 from .types import InteractionAgentConfig
-
-PersonaExpressionPhase = Literal[
-    "first_response",
-    "executor_started",
-    "executor_progress",
-    "executor_result",
-    "plugin_output",
-    "final_response",
-]
 
 
 @dataclass(slots=True)
@@ -71,14 +66,40 @@ def build_persona_runtime_system_prompt() -> str:
     )
 
 
-def build_persona_expression_tool_parameters() -> dict[str, Any]:
+def build_persona_expression_tool_parameters(
+    effects: Sequence[PersonaEffectSpec] = (),
+) -> dict[str, Any]:
+    properties: dict[str, Any] = {
+        "spoken_reply": {"type": "string"},
+        "plugin_hints": {"type": "object", "additionalProperties": True},
+        "metadata": {"type": "object", "additionalProperties": True},
+    }
+    effect_names = sorted(
+        {
+            effect.name
+            for effect in effects
+            if isinstance(effect, PersonaEffectSpec) and effect.enabled
+        }
+    )
+    if effect_names:
+        properties["effect_calls"] = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": effect_names},
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["name", "arguments"],
+            },
+        }
+
     return {
         "type": "object",
-        "properties": {
-            "spoken_reply": {"type": "string"},
-            "plugin_hints": {"type": "object", "additionalProperties": True},
-            "metadata": {"type": "object", "additionalProperties": True},
-        },
+        "properties": copy.deepcopy(properties),
         "required": ["spoken_reply"],
     }
 
@@ -91,6 +112,19 @@ def build_persona_expression_output_contract() -> OutputContract:
         preferred_tool_name="persona_expression",
         allow_text_fallback=True,
     )
+
+
+def _coerce_hints_dict(value: object) -> dict[str, Any]:
+    """将 plugin_hints / metadata 值强制转换为 dict，处理 provider 返回 JSON 字符串的情况。"""
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            pass
+    return {}
 
 
 def extract_persona_expression_result(
@@ -115,22 +149,18 @@ def extract_persona_expression_result(
             if preferred and tool_name != preferred:
                 continue
             if isinstance(tool_arg, dict):
-                _ph = tool_arg.get("plugin_hints")
-                _md = tool_arg.get("metadata")
                 return PersonaExpressionResult(
                     spoken_reply=str(tool_arg.get("spoken_reply", "") or ""),
-                    plugin_hints=dict(_ph) if isinstance(_ph, dict) else {},
-                    metadata=dict(_md) if isinstance(_md, dict) else {},
+                    plugin_hints=_coerce_hints_dict(tool_arg.get("plugin_hints")),
+                    metadata=_coerce_hints_dict(tool_arg.get("metadata")),
                 )
     # 2. JSON object fallback
     payload = _extract_json_object(text)
     if isinstance(payload, dict) and "spoken_reply" in payload:
-        _ph = payload.get("plugin_hints")
-        _md = payload.get("metadata")
         return PersonaExpressionResult(
             spoken_reply=str(payload.get("spoken_reply", "") or ""),
-            plugin_hints=dict(_ph) if isinstance(_ph, dict) else {},
-            metadata=dict(_md) if isinstance(_md, dict) else {},
+            plugin_hints=_coerce_hints_dict(payload.get("plugin_hints")),
+            metadata=_coerce_hints_dict(payload.get("metadata")),
         )
     # 3. 纯文本兼容
     return PersonaExpressionResult(spoken_reply=(str(text or "")).strip())
@@ -210,6 +240,29 @@ class InteractionExpressionAgent:
             )
         event.set_extra("_interaction_expression_prompt_render_result", render_result)
         output_contract = render_result.output_contract
+        provider_config = getattr(provider, "provider_config", {})
+        if not isinstance(provider_config, dict):
+            provider_config = {}
+        logger.info(
+            "DIAG expression.contract: platform_id=%s session_id=%s phase=%s provider_type=%s model=%s renderer=%s strategy=%s degraded=%s tool_name=%s",
+            event.get_platform_id(),
+            event.session_id,
+            req.phase,
+            provider_config.get("type", ""),
+            (
+                provider.get_model()
+                if callable(getattr(provider, "get_model", None))
+                else ""
+            ),
+            render_result.metadata.get("renderer"),
+            render_result.metadata.get("output_contract_strategy"),
+            render_result.metadata.get("output_contract_degraded"),
+            (
+                render_result.compiled_output_contract.tool_name
+                if render_result.compiled_output_contract is not None
+                else None
+            ),
+        )
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
@@ -227,19 +280,37 @@ class InteractionExpressionAgent:
         except Exception as exc:  # noqa: BLE001
             raise InteractionExpressionError("model_error", str(exc)) from exc
 
+        logger.info(
+            "DIAG expression.response_shape: platform_id=%s session_id=%s phase=%s has_tool_calls=%s tool_names=%s text_length=%s",
+            event.get_platform_id(),
+            event.session_id,
+            req.phase,
+            bool(getattr(llm_resp, "tools_call_args", None)),
+            list(getattr(llm_resp, "tools_call_name", []) or []),
+            len((llm_resp.completion_text or "").strip()),
+        )
         result = extract_persona_expression_result(
             llm_resp.completion_text,
             llm_response=llm_resp,
             output_contract=output_contract,
         )
+        logger.info(
+            "DIAG expression.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s",
+            event.get_platform_id(),
+            event.session_id,
+            req.phase,
+            sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
+            bool(result.plugin_hints),
+        )
         if not result.spoken_reply:
             raise InteractionExpressionError("empty_output")
         logger.info(
-            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s",
+            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s plugin_hints_keys=%s",
             event.get_platform_id(),
             event.session_id,
             req.phase,
             len(result.spoken_reply),
+            sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
         )
         return result
 

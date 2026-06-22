@@ -333,6 +333,14 @@ class InteractionMiddleware:
                     first_response=expression.spoken_reply,
                     plugin_hints=expression.plugin_hints,
                 )
+                logger.info(
+                    "DIAG decision.plugin_hints: platform_id=%s session_id=%s route_mode=%s keys=%s payload_present=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    decision.route_mode.value,
+                    sorted(decision.plugin_hints.keys()) if decision.plugin_hints else [],
+                    bool(decision.plugin_hints),
+                )
             self.attach_event_context(
                 event,
                 turn_id=turn_state.turn_id,

@@ -13,6 +13,12 @@ from .conversation_postprocessor import (
     reset_interaction_conversation_postprocessor,
     unregister_interaction_conversation_postprocessor,
 )
+from .effects import (
+    PersonaEffectCall,
+    PersonaEffectRegistryError,
+    PersonaEffectSpec,
+    legacy_plugin_hints_to_effect_calls,
+)
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
@@ -69,6 +75,9 @@ __all__ = [
     "PLUGIN_OUTPUT_MODE_EXTRA_KEY",
     "PluginOutputMode",
     "PluginOutputRequest",
+    "PersonaEffectCall",
+    "PersonaEffectRegistryError",
+    "PersonaEffectSpec",
     "InteractionPersonaRuntime",
     "FastRouteMode",
     "FinalizerMode",
@@ -106,6 +115,7 @@ __all__ = [
     "get_interaction_decision",
     "is_middleware_enabled_for_platform",
     "load_interaction_agent_config",
+    "legacy_plugin_hints_to_effect_calls",
     "register_interaction_conversation_postprocessor",
     "reset_interaction_conversation_postprocessor",
     "temporary_output_origin",
