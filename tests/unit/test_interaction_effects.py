@@ -7,6 +7,7 @@ from astrbot.core.interaction.effects import (
     effect_calls_to_legacy_plugin_hints,
     legacy_plugin_hints_to_effect_calls,
     parse_persona_effect_calls,
+    parse_persona_effect_calls_with_issues,
 )
 from astrbot.core.interaction.expression_agent import (
     build_persona_expression_tool_parameters,
@@ -225,6 +226,38 @@ def test_parse_persona_effect_calls_keeps_valid_calls_and_drops_unknown_or_inval
             plugin_id="plugin_a",
             source="persona",
         )
+    ]
+
+
+def test_parse_persona_effect_calls_reports_rejection_reasons():
+    effect = _effect()
+    effect.parameters = {
+        "type": "object",
+        "properties": {"axes": {"type": "object"}},
+        "required": ["axes"],
+    }
+
+    calls, issues = parse_persona_effect_calls_with_issues(
+        [
+            {"name": "ag99live.motion", "arguments": {"axes": {}}},
+            "not-object",
+            {"name": "unknown.effect", "arguments": {}},
+            {"name": "ag99live.motion", "arguments": []},
+            {"name": "ag99live.motion", "arguments": {}},
+        ],
+        [effect],
+    )
+
+    assert [call.name for call in calls] == ["ag99live.motion"]
+    assert [issue.to_dict() for issue in issues] == [
+        {"index": 1, "name": "", "reason": "effect_call_not_object"},
+        {"index": 2, "name": "unknown.effect", "reason": "unknown_effect_name"},
+        {"index": 3, "name": "ag99live.motion", "reason": "arguments_not_object"},
+        {
+            "index": 4,
+            "name": "ag99live.motion",
+            "reason": "missing required argument: axes",
+        },
     ]
 
 

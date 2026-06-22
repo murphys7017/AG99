@@ -15,6 +15,7 @@ from .conversation_postprocessor import (
 )
 from .effects import (
     PersonaEffectCall,
+    PersonaEffectParseIssue,
     PersonaEffectRegistryError,
     PersonaEffectSpec,
     PersonaEffectValidationError,
@@ -79,6 +80,7 @@ __all__ = [
     "PluginOutputMode",
     "PluginOutputRequest",
     "PersonaEffectCall",
+    "PersonaEffectParseIssue",
     "PersonaEffectRegistryError",
     "PersonaEffectSpec",
     "PersonaEffectValidationError",

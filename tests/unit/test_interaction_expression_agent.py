@@ -144,6 +144,34 @@ def test_persona_expression_parses_effect_calls_from_json_fallback():
     ]
 
 
+def test_persona_expression_records_effect_parse_issues_in_metadata():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"axes": {"type": "object"}},
+            "required": ["axes"],
+        },
+    )
+
+    result = extract_persona_expression_result(
+        '{"spoken_reply":"嗯。","effect_calls":[{"name":"ag99live.motion","arguments":{}},{"name":"unknown.effect","arguments":{}}]}',
+        effects=[effect],
+    )
+
+    assert result.effect_calls == []
+    assert result.metadata["effect_parse_issues"] == [
+        {
+            "index": 0,
+            "name": "ag99live.motion",
+            "reason": "missing required argument: axes",
+        },
+        {"index": 1, "name": "unknown.effect", "reason": "unknown_effect_name"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_persona_expression_passes_compiled_contract_and_returns_plugin_hints(
     monkeypatch,

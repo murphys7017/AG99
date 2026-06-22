@@ -85,6 +85,20 @@ class PersonaEffectCall:
         }
 
 
+@dataclass(slots=True)
+class PersonaEffectParseIssue:
+    index: int
+    name: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "name": self.name,
+            "reason": self.reason,
+        }
+
+
 class PersonaEffectRegistryError(ValueError):
     """Raised when a persona effect registration is invalid or conflicts."""
 
@@ -211,8 +225,22 @@ def parse_persona_effect_calls(
     raw_calls: object,
     effects: Sequence[PersonaEffectSpec],
 ) -> list[PersonaEffectCall]:
+    calls, _issues = parse_persona_effect_calls_with_issues(raw_calls, effects)
+    return calls
+
+
+def parse_persona_effect_calls_with_issues(
+    raw_calls: object,
+    effects: Sequence[PersonaEffectSpec],
+) -> tuple[list[PersonaEffectCall], list[PersonaEffectParseIssue]]:
     if not isinstance(raw_calls, list):
-        return []
+        return [], [
+            PersonaEffectParseIssue(
+                index=-1,
+                name="",
+                reason="effect_calls_not_array",
+            )
+        ]
 
     effects_by_name = {
         effect.name: effect
@@ -220,19 +248,48 @@ def parse_persona_effect_calls(
         if effect.enabled
     }
     calls: list[PersonaEffectCall] = []
-    for raw_call in raw_calls:
+    issues: list[PersonaEffectParseIssue] = []
+    for index, raw_call in enumerate(raw_calls):
         if not isinstance(raw_call, dict):
+            issues.append(
+                PersonaEffectParseIssue(
+                    index=index,
+                    name="",
+                    reason="effect_call_not_object",
+                )
+            )
             continue
         name = str(raw_call.get("name", "") or "").strip()
         effect = effects_by_name.get(name)
         if effect is None:
+            issues.append(
+                PersonaEffectParseIssue(
+                    index=index,
+                    name=name,
+                    reason="unknown_effect_name",
+                )
+            )
             continue
         arguments = raw_call.get("arguments", {})
         if not isinstance(arguments, dict):
+            issues.append(
+                PersonaEffectParseIssue(
+                    index=index,
+                    name=name,
+                    reason="arguments_not_object",
+                )
+            )
             continue
         try:
             validate_persona_effect_arguments(arguments, effect.parameters)
-        except PersonaEffectValidationError:
+        except PersonaEffectValidationError as exc:
+            issues.append(
+                PersonaEffectParseIssue(
+                    index=index,
+                    name=name,
+                    reason=str(exc) or "arguments_invalid",
+                )
+            )
             continue
         calls.append(
             PersonaEffectCall(
@@ -247,7 +304,7 @@ def parse_persona_effect_calls(
                 source="persona",
             )
         )
-    return calls
+    return calls, issues
 
 
 def validate_persona_effect_arguments(

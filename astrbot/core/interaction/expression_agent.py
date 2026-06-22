@@ -27,8 +27,12 @@ from .decision_agent import (
     _build_decision_build_config,
     build_interaction_decision_contexts,
 )
-from .effects import PersonaEffectSpec, PersonaExpressionPhase
-from .effects import PersonaEffectCall, parse_persona_effect_calls
+from .effects import (
+    PersonaEffectCall,
+    PersonaEffectSpec,
+    PersonaExpressionPhase,
+    parse_persona_effect_calls_with_issues,
+)
 from .memory_store import InteractionMemoryStore
 from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
 from .types import InteractionAgentConfig
@@ -177,26 +181,38 @@ def extract_persona_expression_result(
             if preferred and tool_name != preferred:
                 continue
             if isinstance(tool_arg, dict):
+                effect_calls, effect_issues = parse_persona_effect_calls_with_issues(
+                    tool_arg.get("effect_calls", []),
+                    effects,
+                )
+                metadata = _coerce_hints_dict(tool_arg.get("metadata"))
+                if effect_issues:
+                    metadata["effect_parse_issues"] = [
+                        issue.to_dict() for issue in effect_issues
+                    ]
                 return PersonaExpressionResult(
                     spoken_reply=str(tool_arg.get("spoken_reply", "") or ""),
-                    effect_calls=parse_persona_effect_calls(
-                        tool_arg.get("effect_calls", []),
-                        effects,
-                    ),
+                    effect_calls=effect_calls,
                     plugin_hints=_coerce_hints_dict(tool_arg.get("plugin_hints")),
-                    metadata=_coerce_hints_dict(tool_arg.get("metadata")),
+                    metadata=metadata,
                 )
     # 2. JSON object fallback
     payload = _extract_json_object(text)
     if isinstance(payload, dict) and "spoken_reply" in payload:
+        effect_calls, effect_issues = parse_persona_effect_calls_with_issues(
+            payload.get("effect_calls", []),
+            effects,
+        )
+        metadata = _coerce_hints_dict(payload.get("metadata"))
+        if effect_issues:
+            metadata["effect_parse_issues"] = [
+                issue.to_dict() for issue in effect_issues
+            ]
         return PersonaExpressionResult(
             spoken_reply=str(payload.get("spoken_reply", "") or ""),
-            effect_calls=parse_persona_effect_calls(
-                payload.get("effect_calls", []),
-                effects,
-            ),
+            effect_calls=effect_calls,
             plugin_hints=_coerce_hints_dict(payload.get("plugin_hints")),
-            metadata=_coerce_hints_dict(payload.get("metadata")),
+            metadata=metadata,
         )
     # 3. 纯文本兼容
     return PersonaExpressionResult(spoken_reply=(str(text or "")).strip())
@@ -338,13 +354,21 @@ class InteractionExpressionAgent:
             effects=persona_effect_specs,
         )
         logger.info(
-            "DIAG expression.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s",
+            "DIAG expression.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
             event.get_platform_id(),
             event.session_id,
             req.phase,
             sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
             bool(result.plugin_hints),
             [call.name for call in result.effect_calls],
+            [
+                {
+                    "name": str(issue.get("name", "")),
+                    "reason": str(issue.get("reason", "")),
+                }
+                for issue in result.metadata.get("effect_parse_issues", [])
+                if isinstance(issue, dict)
+            ],
         )
         validate_persona_expression_result(req.phase, result)
         logger.info(
