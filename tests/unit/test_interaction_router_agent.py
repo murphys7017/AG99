@@ -63,19 +63,6 @@ def test_route_decision_to_legacy_interaction_decision_omits_core_task_spec():
     assert legacy.core_task_spec is None
 
 
-def test_route_decision_keeps_selected_persona_plugin_hints():
-    decision = InteractionRouteDecision(mode=FastRouteMode.SELF_REPLY)
-
-    selected = decision.to_interaction_decision(
-        first_response="嗯。",
-        plugin_hints={"ag99live_motion": {"emotion_label": "happy"}},
-    )
-
-    assert selected.plugin_hints == {
-        "ag99live_motion": {"emotion_label": "happy"}
-    }
-
-
 def test_route_decision_keeps_selected_persona_effect_calls():
     decision = InteractionRouteDecision(mode=FastRouteMode.SELF_REPLY)
     effect_call = PersonaEffectCall(

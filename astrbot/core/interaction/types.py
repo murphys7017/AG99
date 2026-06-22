@@ -71,7 +71,6 @@ class InteractionDecision:
     immediate_spoken_reply: str | None = None
     core_task_spec: CoreTaskSpec | None = None
     effect_calls: list[PersonaEffectCall] = field(default_factory=list)
-    plugin_hints: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
 
     @classmethod
@@ -90,7 +89,6 @@ class InteractionDecision:
             immediate_spoken_reply = str(immediate_spoken_reply)
         core_task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
         effect_calls = _coerce_effect_calls(payload.get("effect_calls", []))
-        plugin_hints = _coerce_mapping(payload.get("plugin_hints", {}))
         return cls(
             route_mode=route_mode,
             should_emit_immediate_reply=bool(
@@ -99,7 +97,6 @@ class InteractionDecision:
             immediate_spoken_reply=immediate_spoken_reply,
             core_task_spec=core_task_spec,
             effect_calls=effect_calls,
-            plugin_hints=plugin_hints,
             reason=str(payload.get("reason", "") or ""),
         )
 
@@ -112,7 +109,6 @@ class InteractionDecision:
                 self.core_task_spec.to_dict() if self.core_task_spec else None
             ),
             "effect_calls": [call.to_dict() for call in self.effect_calls],
-            "plugin_hints": dict(self.plugin_hints),
             "reason": self.reason,
         }
 
@@ -139,7 +135,6 @@ class InteractionRouteDecision:
         *,
         first_response: str | None,
         effect_calls: list[PersonaEffectCall] | None = None,
-        plugin_hints: dict[str, Any] | None = None,
     ) -> InteractionDecision:
         reply = (first_response or "").strip() or None
         route_mode = (
@@ -153,25 +148,8 @@ class InteractionRouteDecision:
             immediate_spoken_reply=reply,
             core_task_spec=None,
             effect_calls=list(effect_calls) if isinstance(effect_calls, list) else [],
-            plugin_hints=dict(plugin_hints) if isinstance(plugin_hints, dict) else {},
             reason="fast_route",
         )
-
-
-def _coerce_mapping(value: object) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if not isinstance(value, str):
-        return {}
-
-    raw_value = value.strip()
-    if not raw_value:
-        return {}
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _coerce_effect_calls(value: object) -> list[PersonaEffectCall]:

@@ -4,8 +4,6 @@ from astrbot.core.interaction.effects import (
     PersonaEffectCall,
     PersonaEffectRegistryError,
     PersonaEffectSpec,
-    effect_calls_to_legacy_plugin_hints,
-    legacy_plugin_hints_to_effect_calls,
     parse_persona_effect_calls,
     parse_persona_effect_calls_with_issues,
 )
@@ -19,7 +17,6 @@ def _effect(
     name: str = "ag99live.motion",
     *,
     plugin_id: str = "plugin_a",
-    aliases: tuple[str, ...] = ("ag99live_motion",),
     phases: tuple[str, ...] = (),
     priority: int = 100,
     enabled: bool = True,
@@ -35,7 +32,6 @@ def _effect(
             "required": [],
         },
         phases=phases,
-        legacy_hint_names=aliases,
         priority=priority,
         enabled=enabled,
         metadata=metadata or {"internal": "not-for-prompt"},
@@ -56,15 +52,12 @@ def test_empty_effect_list_does_not_generate_effect_calls_schema():
     schema = build_persona_expression_tool_parameters()
 
     assert "effect_calls" not in schema["properties"]
-    assert schema["properties"]["plugin_hints"] == {
-        "type": "object",
-        "additionalProperties": True,
-    }
+    assert "metadata" in schema["properties"]
 
 
 def test_effect_schema_uses_stable_portable_enum_without_strict_union_keywords():
     effects = [
-        _effect("voice.emotion", plugin_id="plugin_b", aliases=()),
+        _effect("voice.emotion", plugin_id="plugin_b"),
         _effect("ag99live.motion", plugin_id="plugin_a"),
     ]
 
@@ -95,69 +88,18 @@ def test_effect_schema_does_not_mutate_plugin_parameters_or_include_metadata():
     assert "secret_prompt_hint" not in str(schema)
 
 
-def test_context_rejects_duplicate_effect_name_and_alias_conflicts():
+def test_context_rejects_duplicate_effect_name():
     ctx = _init_effect_registry(_context())
-    ctx.register_persona_effect(_effect("ag99live.motion", aliases=("ag99live_motion",)))
+    ctx.register_persona_effect(_effect("ag99live.motion"))
 
     with pytest.raises(PersonaEffectRegistryError):
         ctx.register_persona_effect(_effect("ag99live.motion", plugin_id="plugin_b"))
-    with pytest.raises(PersonaEffectRegistryError):
-        ctx.register_persona_effect(
-            _effect("voice.emotion", plugin_id="plugin_b", aliases=("ag99live_motion",))
-        )
-    with pytest.raises(PersonaEffectRegistryError):
-        ctx.register_persona_effect(
-            _effect("client.expression", plugin_id="plugin_b", aliases=("ag99live.motion",))
-        )
-
-
-def test_context_rejects_name_that_conflicts_with_existing_alias():
-    ctx = _init_effect_registry(_context())
-    ctx.register_persona_effect(_effect("ag99live.motion", aliases=("legacy.motion",)))
-
-    with pytest.raises(PersonaEffectRegistryError):
-        ctx.register_persona_effect(_effect("legacy.motion", plugin_id="plugin_b"))
-
-
-def test_legacy_hints_convert_only_by_explicit_alias_or_exact_name():
-    effects = [_effect("ag99live.motion", aliases=("ag99live_motion",))]
-    hints = {
-        "ag99live.motion": {"direct": True},
-        "ag99live_motion": {"legacy": True},
-        "voice_emotion": {"emotion": "happy"},
-    }
-
-    calls = legacy_plugin_hints_to_effect_calls(hints, effects)
-
-    assert calls == [
-        PersonaEffectCall(
-            name="ag99live.motion",
-            arguments={"direct": True},
-            plugin_id="plugin_a",
-            source="legacy_plugin_hints",
-        ),
-        PersonaEffectCall(
-            name="ag99live.motion",
-            arguments={"legacy": True},
-            plugin_id="plugin_a",
-            source="legacy_plugin_hints",
-        ),
-    ]
-
-
-def test_no_underscore_dot_automatic_legacy_conversion():
-    calls = legacy_plugin_hints_to_effect_calls(
-        {"ag99live_motion": {"legacy": True}},
-        [_effect("ag99live.motion", aliases=())],
-    )
-
-    assert calls == []
 
 
 def test_context_lists_effects_by_phase_enabled_state_and_stable_order():
     ctx = _init_effect_registry(_context())
     ctx.register_persona_effect(
-        _effect("voice.emotion", plugin_id="plugin_b", aliases=(), priority=20)
+        _effect("voice.emotion", plugin_id="plugin_b", priority=20)
     )
     ctx.register_persona_effect(
         _effect(
@@ -168,7 +110,7 @@ def test_context_lists_effects_by_phase_enabled_state_and_stable_order():
         )
     )
     ctx.register_persona_effect(
-        _effect("client.expression", plugin_id="plugin_c", aliases=(), enabled=False)
+        _effect("client.expression", plugin_id="plugin_c", enabled=False)
     )
 
     assert [effect.name for effect in ctx.list_persona_effects()] == [
@@ -180,7 +122,7 @@ def test_context_lists_effects_by_phase_enabled_state_and_stable_order():
     ]
 
 
-def test_context_returns_copies_and_unregisters_names_and_aliases_together():
+def test_context_returns_copies_and_unregisters_by_plugin():
     ctx = _init_effect_registry(_context())
     ctx.register_persona_effect(_effect())
 
@@ -190,8 +132,6 @@ def test_context_returns_copies_and_unregisters_names_and_aliases_together():
     assert "mutated" not in ctx.list_persona_effects()[0].parameters["properties"]["axes"]
     assert ctx.unregister_persona_effects(plugin_id="plugin_a") == 1
     assert ctx.list_persona_effects() == []
-    ctx.register_persona_effect(_effect("ag99live.motion", aliases=("ag99live_motion",)))
-
 
 def test_parse_persona_effect_calls_keeps_valid_calls_and_drops_unknown_or_invalid():
     effect = _effect()
@@ -259,26 +199,3 @@ def test_parse_persona_effect_calls_reports_rejection_reasons():
             "reason": "missing required argument: axes",
         },
     ]
-
-
-def test_effect_calls_convert_to_legacy_plugin_hints_by_explicit_alias():
-    hints = effect_calls_to_legacy_plugin_hints(
-        [
-            PersonaEffectCall(
-                name="ag99live.motion",
-                arguments={"axes": {"head_yaw": 40}},
-                plugin_id="plugin_a",
-            ),
-            PersonaEffectCall(
-                name="voice.emotion",
-                arguments={"emotion": "happy"},
-                plugin_id="plugin_b",
-            ),
-        ],
-        [
-            _effect("ag99live.motion", aliases=("ag99live_motion",)),
-            _effect("voice.emotion", plugin_id="plugin_b", aliases=()),
-        ],
-    )
-
-    assert hints == {"ag99live_motion": {"axes": {"head_yaw": 40}}}

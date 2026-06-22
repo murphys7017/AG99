@@ -80,7 +80,6 @@ def build_interaction_decision_schema() -> dict[str, Any]:
             "suggested_capabilities": ["search", "knowledge_base", "tools"],
             "metadata": {},
         },
-        "plugin_hints": {},
         "reason": "简短原因",
     }
 
@@ -126,10 +125,6 @@ def build_interaction_decision_tool_parameters() -> dict[str, Any]:
                     "metadata": {"type": "object"},
                 },
                 "required": ["task_intent", "task_summary", "execution_prompt"],
-            },
-            "plugin_hints": {
-                "type": "object",
-                "additionalProperties": True,
             },
             "reason": {"type": "string"},
         },
@@ -249,7 +244,7 @@ def _extract_function_call_decision_payload(text: object) -> dict[str, Any] | No
 def _coerce_function_call_parameter(key: str, value: str) -> Any:
     if key in {"should_emit_immediate_reply"}:
         return value.strip().lower() in {"true", "1", "yes", "y", "on"}
-    if key in {"core_task_spec", "plugin_hints"}:
+    if key in {"core_task_spec"}:
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
@@ -264,7 +259,6 @@ def build_protocol_bypass_decision(reason: str) -> InteractionDecision:
         should_emit_immediate_reply=False,
         immediate_spoken_reply=None,
         core_task_spec=None,
-        plugin_hints={},
         reason=reason,
     )
 
@@ -541,7 +535,6 @@ class InteractionDecisionAgent:
                             "decision_raw_text": raw_text[:500],
                         },
                     },
-                    "plugin_hints": {},
                     "reason": "non_json_delegate_to_core",
                 }
             else:

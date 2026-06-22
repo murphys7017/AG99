@@ -259,7 +259,6 @@ class InteractionResultView:
     metadata: dict[str, Any] = field(default_factory=dict)
     purpose: PromptViewPurpose = "unknown"
     effect_calls: tuple[Any, ...] = field(default_factory=tuple)
-    plugin_hints: dict[str, Any] = field(default_factory=dict)
 
     def as_read_only_mapping(self) -> MappingProxyType:
         return MappingProxyType(
@@ -274,7 +273,6 @@ class InteractionResultView:
                 "core_result": self.core_result,
                 "final_result": self.final_result,
                 "effect_calls": freeze_interaction_snapshot(self.effect_calls),
-                "plugin_hints": freeze_interaction_snapshot(self.plugin_hints),
                 "visible_outputs": freeze_interaction_snapshot(self.visible_outputs),
                 "utterances": freeze_interaction_snapshot(self.utterances),
                 "turn_material_snapshot": freeze_interaction_snapshot(
@@ -296,7 +294,6 @@ class InteractionResultView:
             decision=freeze_interaction_snapshot(self.decision),
             output_draft=freeze_interaction_snapshot(self.output_draft),
             effect_calls=freeze_interaction_snapshot(self.effect_calls),
-            plugin_hints=freeze_interaction_snapshot(self.plugin_hints),
             visible_outputs=freeze_interaction_snapshot(self.visible_outputs),
             utterances=freeze_interaction_snapshot(self.utterances),
             turn_material_snapshot=freeze_interaction_snapshot(

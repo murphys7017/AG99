@@ -120,26 +120,6 @@ def test_extract_interaction_decision_payload_accepts_function_call_text():
     assert decision.reason == "用户表达优化难度，是轻松情感对话，无需工具执行"
 
 
-def test_interaction_decision_from_mapping_accepts_json_string_plugin_hints():
-    decision = InteractionDecision.from_mapping(
-        {
-            "route_mode": "self_reply",
-            "should_emit_immediate_reply": True,
-            "immediate_spoken_reply": "嗯。",
-            "plugin_hints": '{"ag99live_motion":{"mode":"expressive","axes":{"head_yaw":{"value":50}}}}',
-            "reason": "ok",
-        }
-    )
-
-    assert decision is not None
-    assert decision.plugin_hints == {
-        "ag99live_motion": {
-            "mode": "expressive",
-            "axes": {"head_yaw": {"value": 50}},
-        }
-    }
-
-
 def test_extract_interaction_decision_payload_prefers_tool_call_payload():
     llm_response = LLMResponse(
         role="assistant",

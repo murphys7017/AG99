@@ -8,6 +8,7 @@ from astrbot.core.interaction.expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
     build_persona_expression_output_contract,
+    build_persona_expression_output_contract_for_effects,
     extract_persona_expression_result,
     phase_requires_spoken_reply,
     validate_persona_expression_result,
@@ -96,24 +97,41 @@ def test_persona_expression_still_requires_reply_for_first_response_even_with_ef
 def test_persona_expression_repairs_truncated_json_from_provider():
     text = (
         '{"spoken_reply": "……你倒是说句话啊，发个问号是什么意思。", '
-        '"plugin_hints": {"ag99live_motion": {"axes": {"head_yaw": 40, '
-        '"head_pitch": 45, "head_roll": 50}, '
-        '"resource_id": "embarrassed_lookaway"}}'
+        '"effect_calls": [{"name":"ag99live.motion","arguments":{"axes":{"head_yaw":40,'
+        '"head_pitch":45,"head_roll":50},"resource_id":"embarrassed_lookaway"}}]'
+    )
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {
+                "axes": {"type": "object"},
+                "resource_id": {"type": "string"},
+            },
+            "required": ["axes"],
+        },
     )
 
-    result = extract_persona_expression_result(text)
+    result = extract_persona_expression_result(text, effects=[effect])
 
     assert result.spoken_reply == "……你倒是说句话啊，发个问号是什么意思。"
-    assert result.plugin_hints == {
-        "ag99live_motion": {
-            "axes": {
-                "head_yaw": 40,
-                "head_pitch": 45,
-                "head_roll": 50,
+    assert result.effect_calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={
+                "axes": {
+                    "head_yaw": 40,
+                    "head_pitch": 45,
+                    "head_roll": 50,
+                },
+                "resource_id": "embarrassed_lookaway",
             },
-            "resource_id": "embarrassed_lookaway",
-        }
-    }
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]
 
 
 def test_persona_expression_parses_effect_calls_from_json_fallback():
@@ -173,10 +191,21 @@ def test_persona_expression_records_effect_parse_issues_in_metadata():
 
 
 @pytest.mark.asyncio
-async def test_persona_expression_passes_compiled_contract_and_returns_plugin_hints(
+async def test_persona_expression_passes_compiled_contract_and_returns_effect_calls(
     monkeypatch,
 ):
-    contract = build_persona_expression_output_contract()
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"emotion_label": {"type": "string"}},
+            "required": [],
+        },
+        phases=("first_response",),
+    )
+    contract = build_persona_expression_output_contract_for_effects([effect])
     compiled = CompiledOutputContract(
         contract=contract,
         strategy="protocol_tool_call",
@@ -197,9 +226,12 @@ async def test_persona_expression_passes_compiled_contract_and_returns_plugin_hi
                 tools_call_args=[
                     {
                         "spoken_reply": "嗯，我来看看。",
-                        "plugin_hints": {
-                            "ag99live_motion": {"emotion_label": "focused"}
-                        },
+                        "effect_calls": [
+                            {
+                                "name": "ag99live.motion",
+                                "arguments": {"emotion_label": "focused"},
+                            }
+                        ],
                     }
                 ],
             )
@@ -234,6 +266,7 @@ async def test_persona_expression_passes_compiled_contract_and_returns_plugin_hi
             messages=[{"role": "user", "content": "hello"}],
             output_contract=contract,
             compiled_output_contract=compiled,
+            metadata={"persona_effect_specs": [effect]},
         )
     )
     monkeypatch.setattr(
@@ -249,15 +282,20 @@ async def test_persona_expression_passes_compiled_contract_and_returns_plugin_hi
     )
 
     assert result.spoken_reply == "嗯，我来看看。"
-    assert result.plugin_hints == {
-        "ag99live_motion": {"emotion_label": "focused"}
-    }
+    assert result.effect_calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"emotion_label": "focused"},
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]
     assert provider.calls[0]["output_contract"] is contract
     assert provider.calls[0]["compiled_output_contract"] is compiled
 
 
 @pytest.mark.asyncio
-async def test_persona_runtime_publishes_plugin_output_hints_after_selection():
+async def test_persona_runtime_publishes_plugin_output_effect_calls():
     expression_agent = type(
         "ExpressionAgent",
         (),
@@ -265,9 +303,13 @@ async def test_persona_runtime_publishes_plugin_output_hints_after_selection():
             "rewrite_plugin_output_result": AsyncMock(
                 return_value=PersonaExpressionResult(
                     spoken_reply="人格化结果",
-                    plugin_hints={
-                        "ag99live_motion": {"emotion_label": "satisfied"}
-                    },
+                    effect_calls=[
+                        PersonaEffectCall(
+                            name="ag99live.motion",
+                            arguments={"emotion_label": "satisfied"},
+                            plugin_id="plugin_a",
+                        )
+                    ],
                 )
             )
         },
@@ -294,6 +336,10 @@ async def test_persona_runtime_publishes_plugin_output_hints_after_selection():
     )
 
     assert rendered.get_plain_text() == "人格化结果"
-    assert event.get_extra("_interaction_plugin_hints") == {
-        "ag99live_motion": {"emotion_label": "satisfied"}
-    }
+    assert event.get_extra("_interaction_plugin_output_effect_calls") == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"emotion_label": "satisfied"},
+            plugin_id="plugin_a",
+        )
+    ]

@@ -38,9 +38,6 @@ class InteractionPersonaRuntime:
             interaction_config,
             plain,
         )
-        if result.plugin_hints:
-            existing = event.get_extra("_interaction_plugin_hints", {})
-            merged = dict(existing) if isinstance(existing, dict) else {}
-            merged.update(result.plugin_hints)
-            event.set_extra("_interaction_plugin_hints", merged)
+        if result.effect_calls:
+            event.set_extra("_interaction_plugin_output_effect_calls", list(result.effect_calls))
         return message.derive([Plain(result.spoken_reply)])

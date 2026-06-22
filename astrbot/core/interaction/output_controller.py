@@ -36,7 +36,6 @@ from .contributors import (
 )
 from .core_bridge import get_interaction_decision
 from .decision_agent import _build_decision_build_config
-from .effects import effect_calls_to_legacy_plugin_hints
 from .finalizer import InteractionFinalizerError, finalize_response
 from .memory_store import (
     InteractionMemoryStore,
@@ -1310,33 +1309,19 @@ class InteractionOutputController:
             decision_obj.route_mode.value if decision_obj is not None else None
         )
         purpose = "persona_reply" if phase == "immediate" else "core_reply"
-        plugin_hints = (
-            dict(decision_obj.plugin_hints)
-            if decision_obj is not None and isinstance(decision_obj.plugin_hints, dict)
-            else {}
-        )
         effect_calls = (
             tuple(decision_obj.effect_calls)
             if decision_obj is not None and isinstance(decision_obj.effect_calls, list)
             else ()
         )
-        legacy_effect_hints = effect_calls_to_legacy_plugin_hints(
-            effect_calls,
-            self._list_persona_effects_for_result_view(phase=phase),
-        )
-        for hint_name, hint_value in legacy_effect_hints.items():
-            plugin_hints.setdefault(hint_name, hint_value)
         logger.info(
-            "DIAG result_view.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s",
+            "DIAG result_view.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             phase,
-            sorted(plugin_hints.keys()) if plugin_hints else [],
-            bool(plugin_hints),
+            bool(effect_calls),
             [call.name for call in effect_calls],
         )
-        if phase == "final":
-            event.set_extra("_interaction_plugin_hints", dict(plugin_hints))
         output_text = (final_result or core_result or "").strip()
         output_draft = InteractionOutputDraft(
             turn_id=str(event.get_extra("_turn_id", "") or ""),
@@ -1366,7 +1351,6 @@ class InteractionOutputController:
             core_result=core_result,
             final_result=final_result,
             effect_calls=effect_calls,
-            plugin_hints=plugin_hints,
             visible_outputs=self._snapshot_result_visible_outputs(event),
             utterances=self._snapshot_result_utterances(event),
             turn_material_snapshot=get_interaction_turn_finalized_material(event),
@@ -1502,11 +1486,6 @@ class InteractionOutputController:
         result_contribution: InteractionResultContribution | None = None,
     ) -> dict[str, Any]:
         extras: dict[str, Any] = {}
-        hints = event.get_extra("_interaction_plugin_hints", {})
-        if isinstance(hints, dict):
-            hinted_extras = hints.get("platform_extras", {})
-            if isinstance(hinted_extras, dict):
-                extras.update(hinted_extras)
         if result_contribution is not None:
             extras.update(result_contribution.platform_extras)
             if result_contribution.client_objects:

@@ -50,7 +50,6 @@ class PersonaExpressionRequest:
 class PersonaExpressionResult:
     spoken_reply: str = ""
     effect_calls: list[PersonaEffectCall] = field(default_factory=list)
-    plugin_hints: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -82,7 +81,7 @@ def validate_persona_expression_result(
 def build_persona_runtime_system_prompt() -> str:
     return (
         "你负责以当前人格对用户表达。\n"
-        "根据本次调用提供的场景，生成自然语言表达以及必要的插件提示。\n"
+        "根据本次调用提供的场景，生成自然语言表达以及必要的人格 effect 调用。\n"
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。\n"
         "如果场景为 first_response 且输入明显需要工具/搜索/代码/检索，"
@@ -96,7 +95,6 @@ def build_persona_expression_tool_parameters(
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "spoken_reply": {"type": "string"},
-        "plugin_hints": {"type": "object", "additionalProperties": True},
         "metadata": {"type": "object", "additionalProperties": True},
     }
     effect_names = sorted(
@@ -145,8 +143,8 @@ def build_persona_expression_output_contract_for_effects(
     )
 
 
-def _coerce_hints_dict(value: object) -> dict[str, Any]:
-    """将 plugin_hints / metadata 值强制转换为 dict，处理 provider 返回 JSON 字符串的情况。"""
+def _coerce_mapping_dict(value: object) -> dict[str, Any]:
+    """将 metadata 值强制转换为 dict，处理 provider 返回 JSON 字符串的情况。"""
     if isinstance(value, dict):
         return dict(value)
     if isinstance(value, str):
@@ -185,7 +183,7 @@ def extract_persona_expression_result(
                     tool_arg.get("effect_calls", []),
                     effects,
                 )
-                metadata = _coerce_hints_dict(tool_arg.get("metadata"))
+                metadata = _coerce_mapping_dict(tool_arg.get("metadata"))
                 if effect_issues:
                     metadata["effect_parse_issues"] = [
                         issue.to_dict() for issue in effect_issues
@@ -193,7 +191,6 @@ def extract_persona_expression_result(
                 return PersonaExpressionResult(
                     spoken_reply=str(tool_arg.get("spoken_reply", "") or ""),
                     effect_calls=effect_calls,
-                    plugin_hints=_coerce_hints_dict(tool_arg.get("plugin_hints")),
                     metadata=metadata,
                 )
     # 2. JSON object fallback
@@ -203,7 +200,7 @@ def extract_persona_expression_result(
             payload.get("effect_calls", []),
             effects,
         )
-        metadata = _coerce_hints_dict(payload.get("metadata"))
+        metadata = _coerce_mapping_dict(payload.get("metadata"))
         if effect_issues:
             metadata["effect_parse_issues"] = [
                 issue.to_dict() for issue in effect_issues
@@ -211,7 +208,6 @@ def extract_persona_expression_result(
         return PersonaExpressionResult(
             spoken_reply=str(payload.get("spoken_reply", "") or ""),
             effect_calls=effect_calls,
-            plugin_hints=_coerce_hints_dict(payload.get("plugin_hints")),
             metadata=metadata,
         )
     # 3. 纯文本兼容
@@ -354,12 +350,11 @@ class InteractionExpressionAgent:
             effects=persona_effect_specs,
         )
         logger.info(
-            "DIAG expression.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
+            "DIAG expression.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
             event.get_platform_id(),
             event.session_id,
             req.phase,
-            sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
-            bool(result.plugin_hints),
+            bool(result.effect_calls),
             [call.name for call in result.effect_calls],
             [
                 {
@@ -372,12 +367,11 @@ class InteractionExpressionAgent:
         )
         validate_persona_expression_result(req.phase, result)
         logger.info(
-            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s plugin_hints_keys=%s effect_calls=%s",
+            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             req.phase,
             len(result.spoken_reply),
-            sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
             [call.name for call in result.effect_calls],
         )
         return result

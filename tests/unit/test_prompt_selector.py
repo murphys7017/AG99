@@ -49,14 +49,14 @@ class _CustomSelector(PromptSelectorInterface):
     ("text", "expected"),
     [
         ('{"a": 1', {"a": 1}),
-        ('{"spoken_reply":"ok","plugin_hints":{"motion":{"x":1}}', {
+        ('{"spoken_reply":"ok","effect_calls":[{"name":"ag99live.motion","arguments":{"x":1}}]', {
             "spoken_reply": "ok",
-            "plugin_hints": {"motion": {"x": 1}},
+            "effect_calls": [{"name": "ag99live.motion", "arguments": {"x": 1}}],
         }),
         ("```json\n{'spoken_reply': 'ok',}\n```", {"spoken_reply": "ok"}),
         (
-            'prefix {"spoken_reply":"ok","plugin_hints":{}} suffix',
-            {"spoken_reply": "ok", "plugin_hints": {}},
+            'prefix {"spoken_reply":"ok","effect_calls":[]} suffix',
+            {"spoken_reply": "ok", "effect_calls": []},
         ),
     ],
 )

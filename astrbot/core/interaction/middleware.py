@@ -332,15 +332,14 @@ class InteractionMiddleware:
                 decision = route.to_interaction_decision(
                     first_response=expression.spoken_reply,
                     effect_calls=expression.effect_calls,
-                    plugin_hints=expression.plugin_hints,
                 )
                 logger.info(
-                    "DIAG decision.plugin_hints: platform_id=%s session_id=%s route_mode=%s keys=%s payload_present=%s",
+                    "DIAG decision.effect_calls: platform_id=%s session_id=%s route_mode=%s effect_calls=%s payload_present=%s",
                     event.get_platform_id(),
                     event.session_id,
                     decision.route_mode.value,
-                    sorted(decision.plugin_hints.keys()) if decision.plugin_hints else [],
-                    bool(decision.plugin_hints),
+                    [call.name for call in decision.effect_calls],
+                    bool(decision.effect_calls),
                 )
             self.attach_event_context(
                 event,
