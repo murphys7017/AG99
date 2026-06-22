@@ -162,6 +162,52 @@ def test_persona_expression_parses_effect_calls_from_json_fallback():
     ]
 
 
+def test_persona_expression_parses_tool_args_from_string_payload():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {
+                "axes": {
+                    "type": "object",
+                    "properties": {"head_yaw": {"type": "number"}},
+                }
+            },
+            "required": ["axes"],
+        },
+    )
+    response = LLMResponse(
+        role="assistant",
+        completion_text="",
+        tools_call_name=["persona_expression"],
+        tools_call_args=[
+            """{
+                "spoken_reply":"嗯。",
+                "effect_calls":"[{\\"name\\":\\"ag99live.motion\\",\\"arguments\\":{\\"axes\\":{\\"head_yaw\\":\\"55\\"}}}]"
+            }"""
+        ],
+    )
+
+    result = extract_persona_expression_result(
+        "",
+        llm_response=response,
+        output_contract=build_persona_expression_output_contract_for_effects([effect]),
+        effects=[effect],
+    )
+
+    assert result.spoken_reply == "嗯。"
+    assert result.effect_calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"axes": {"head_yaw": 55.0}},
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]
+
+
 def test_persona_expression_records_effect_parse_issues_in_metadata():
     effect = PersonaEffectSpec(
         plugin_id="plugin_a",

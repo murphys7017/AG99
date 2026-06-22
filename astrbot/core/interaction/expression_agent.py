@@ -7,6 +7,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+try:
+    from json_repair import repair_json
+except ImportError:  # pragma: no cover - optional runtime dependency
+    repair_json = None
+
 from astrbot import logger
 from astrbot.core.output_contract import OutputContract
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
@@ -156,6 +161,48 @@ def _coerce_mapping_dict(value: object) -> dict[str, Any]:
     return {}
 
 
+def _coerce_json_like(value: object) -> Any:
+    if isinstance(value, dict | list):
+        return copy.deepcopy(value)
+    if not isinstance(value, str):
+        return value
+
+    cleaned = value.strip()
+    if not cleaned:
+        return value
+    try:
+        return json.loads(cleaned)
+    except (ValueError, TypeError):
+        pass
+
+    extracted = _extract_json_object(cleaned)
+    if extracted is not None:
+        return extracted
+
+    if repair_json is None:
+        return value
+    try:
+        repaired = repair_json(cleaned, return_objects=True)
+    except Exception:  # noqa: BLE001
+        return value
+    return repaired
+
+
+def _coerce_tool_call_payload(tool_arg: object) -> dict[str, Any] | None:
+    payload = _coerce_json_like(tool_arg)
+    if not isinstance(payload, dict):
+        return None
+
+    normalized = dict(payload)
+    effect_calls = _coerce_json_like(normalized.get("effect_calls", []))
+    if isinstance(effect_calls, list):
+        normalized["effect_calls"] = effect_calls
+    metadata = _coerce_json_like(normalized.get("metadata", {}))
+    if isinstance(metadata, dict):
+        normalized["metadata"] = metadata
+    return normalized
+
+
 def extract_persona_expression_result(
     text: object,
     *,
@@ -178,18 +225,19 @@ def extract_persona_expression_result(
         ):
             if preferred and tool_name != preferred:
                 continue
-            if isinstance(tool_arg, dict):
+            payload = _coerce_tool_call_payload(tool_arg)
+            if isinstance(payload, dict):
                 effect_calls, effect_issues = parse_persona_effect_calls_with_issues(
-                    tool_arg.get("effect_calls", []),
+                    payload.get("effect_calls", []),
                     effects,
                 )
-                metadata = _coerce_mapping_dict(tool_arg.get("metadata"))
+                metadata = _coerce_mapping_dict(payload.get("metadata"))
                 if effect_issues:
                     metadata["effect_parse_issues"] = [
                         issue.to_dict() for issue in effect_issues
                     ]
                 return PersonaExpressionResult(
-                    spoken_reply=str(tool_arg.get("spoken_reply", "") or ""),
+                    spoken_reply=str(payload.get("spoken_reply", "") or ""),
                     effect_calls=effect_calls,
                     metadata=metadata,
                 )

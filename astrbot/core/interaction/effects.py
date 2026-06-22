@@ -280,8 +280,12 @@ def parse_persona_effect_calls_with_issues(
                 )
             )
             continue
+        normalized_arguments = normalize_persona_effect_arguments(
+            copy.deepcopy(arguments),
+            effect.parameters,
+        )
         try:
-            validate_persona_effect_arguments(arguments, effect.parameters)
+            validate_persona_effect_arguments(normalized_arguments, effect.parameters)
         except PersonaEffectValidationError as exc:
             issues.append(
                 PersonaEffectParseIssue(
@@ -294,7 +298,7 @@ def parse_persona_effect_calls_with_issues(
         calls.append(
             PersonaEffectCall(
                 name=effect.name,
-                arguments=copy.deepcopy(arguments),
+                arguments=normalized_arguments,
                 call_id=(
                     str(raw_call.get("call_id"))
                     if raw_call.get("call_id") is not None
@@ -327,19 +331,172 @@ def validate_persona_effect_arguments(
     for key, value in arguments.items():
         property_schema = properties.get(key)
         if isinstance(property_schema, dict):
-            _validate_json_schema_type(value, property_schema, path=key)
+            _validate_json_schema_value(value, property_schema, path=key)
 
 
-def _validate_json_schema_type(value: Any, schema: dict[str, Any], *, path: str) -> None:
+def normalize_persona_effect_arguments(
+    arguments: dict[str, Any],
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(arguments, dict) or not _is_valid_parameters_schema(schema):
+        return arguments
+    normalized = copy.deepcopy(arguments)
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        properties = {}
+    additional_properties = schema.get("additionalProperties")
+    for key, value in list(normalized.items()):
+        property_schema = properties.get(key)
+        if not isinstance(property_schema, dict) and isinstance(additional_properties, dict):
+            property_schema = additional_properties
+        if isinstance(property_schema, dict):
+            normalized[key] = _normalize_json_schema_value(value, property_schema)
+    return normalized
+
+
+def _validate_json_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> None:
     schema_type = schema.get("type")
     if schema_type is None:
         return
     if isinstance(schema_type, list):
         if any(_json_schema_type_matches(value, item) for item in schema_type):
+            _validate_typed_json_schema_value(value, schema, path=path)
             return
         raise PersonaEffectValidationError(f"invalid type for {path}")
-    if isinstance(schema_type, str) and not _json_schema_type_matches(value, schema_type):
-        raise PersonaEffectValidationError(f"invalid type for {path}")
+    if isinstance(schema_type, str):
+        if not _json_schema_type_matches(value, schema_type):
+            raise PersonaEffectValidationError(f"invalid type for {path}")
+        _validate_typed_json_schema_value(value, schema, path=path)
+
+
+def _validate_typed_json_schema_value(
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    path: str,
+) -> None:
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        schema_type = next(
+            (item for item in schema_type if _json_schema_type_matches(value, item)),
+            None,
+        )
+    if schema_type == "object":
+        if not isinstance(value, dict):
+            raise PersonaEffectValidationError(f"invalid type for {path}")
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        required = schema.get("required", [])
+        if not isinstance(required, list):
+            required = []
+        for key in required:
+            if key not in value:
+                raise PersonaEffectValidationError(
+                    f"missing required argument: {path}.{key}"
+                )
+        additional_properties = schema.get("additionalProperties")
+        for key, item in value.items():
+            property_schema = properties.get(key)
+            if not isinstance(property_schema, dict) and isinstance(
+                additional_properties, dict
+            ):
+                property_schema = additional_properties
+            if isinstance(property_schema, dict):
+                _validate_json_schema_value(
+                    item,
+                    property_schema,
+                    path=f"{path}.{key}",
+                )
+        return
+    if schema_type == "array":
+        if not isinstance(value, list):
+            raise PersonaEffectValidationError(f"invalid type for {path}")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                _validate_json_schema_value(
+                    item,
+                    item_schema,
+                    path=f"{path}[{index}]",
+                )
+
+
+def _normalize_json_schema_value(value: Any, schema: dict[str, Any]) -> Any:
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        for item in schema_type:
+            normalized = _normalize_json_schema_value(
+                value,
+                {**schema, "type": item},
+            )
+            if _json_schema_type_matches(normalized, item):
+                return normalized
+        return value
+    if schema_type == "number":
+        return _coerce_number_like(value)
+    if schema_type == "integer":
+        return _coerce_integer_like(value)
+    if schema_type == "object":
+        if not isinstance(value, dict):
+            return value
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        additional_properties = schema.get("additionalProperties")
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            property_schema = properties.get(key)
+            if not isinstance(property_schema, dict) and isinstance(
+                additional_properties, dict
+            ):
+                property_schema = additional_properties
+            normalized[key] = (
+                _normalize_json_schema_value(item, property_schema)
+                if isinstance(property_schema, dict)
+                else item
+            )
+        return normalized
+    if schema_type == "array":
+        if not isinstance(value, list):
+            return value
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, dict):
+            return list(value)
+        return [_normalize_json_schema_value(item, item_schema) for item in value]
+    return value
+
+
+def _coerce_number_like(value: Any) -> Any:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return value
+        try:
+            return float(stripped)
+        except ValueError:
+            return value
+    return value
+
+
+def _coerce_integer_like(value: Any) -> Any:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return value
+        try:
+            number = float(stripped)
+        except ValueError:
+            return value
+        if number.is_integer():
+            return int(number)
+    return value
 
 
 def _json_schema_type_matches(value: Any, schema_type: str) -> bool:

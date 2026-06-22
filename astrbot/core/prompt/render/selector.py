@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import re
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
-from json_repair import repair_json
+try:
+    from json_repair import repair_json
+except ImportError:  # pragma: no cover - optional runtime dependency
+    repair_json = None
 
 from astrbot.core import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -789,22 +793,25 @@ def _merge_rule_escalations(
 def _extract_json_object(text: object) -> dict[str, Any] | None:
     if not isinstance(text, str):
         return None
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    try:
-        payload = json.loads(cleaned)
-        return payload if isinstance(payload, dict) else None
-    except json.JSONDecodeError:
-        pass
+    cleaned = _clean_json_candidate(text)
+    payload = _parse_jsonish_dict(cleaned)
+    if payload is not None:
+        return payload
 
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start >= 0 and end > start:
-        try:
-            payload = json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-        else:
-            return payload if isinstance(payload, dict) else None
+        payload = _parse_jsonish_dict(cleaned[start : end + 1])
+        if payload is not None:
+            return payload
+
+    if start >= 0:
+        payload = _parse_jsonish_dict(_balance_json_delimiters(cleaned[start:]))
+        if payload is not None:
+            return payload
+
+    if repair_json is None:
+        return None
 
     try:
         repaired = repair_json(cleaned, return_objects=True)
@@ -812,6 +819,66 @@ def _extract_json_object(text: object) -> dict[str, Any] | None:
         logger.debug("JSON repair failed: %s", exc)
         return None
     return repaired if isinstance(repaired, dict) else None
+
+
+def _clean_json_candidate(text: str) -> str:
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, flags=re.DOTALL)
+    if fenced:
+        cleaned = fenced.group(1).strip()
+    return cleaned
+
+
+def _parse_jsonish_dict(text: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    else:
+        return payload if isinstance(payload, dict) else None
+
+    try:
+        payload = ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _balance_json_delimiters(text: str) -> str:
+    closers: list[str] = []
+    in_string = False
+    escape = False
+    quote_char = '"'
+
+    for char in text:
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if char == "\\":
+                escape = True
+                continue
+            if char == quote_char:
+                in_string = False
+            continue
+        if char in {'"', "'"}:
+            in_string = True
+            quote_char = char
+            continue
+        if char == "{":
+            closers.append("}")
+        elif char == "[":
+            closers.append("]")
+        elif char in {"}", "]"} and closers:
+            expected = closers[-1]
+            if char == expected:
+                closers.pop()
+
+    if in_string:
+        text += quote_char
+    if closers:
+        text += "".join(reversed(closers))
+    return text
 
 
 def _normalize_choice(value: object, allowed: set[str], default: str) -> str:

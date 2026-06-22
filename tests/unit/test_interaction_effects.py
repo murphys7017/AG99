@@ -4,6 +4,7 @@ from astrbot.core.interaction.effects import (
     PersonaEffectCall,
     PersonaEffectRegistryError,
     PersonaEffectSpec,
+    normalize_persona_effect_arguments,
     parse_persona_effect_calls,
     parse_persona_effect_calls_with_issues,
 )
@@ -198,4 +199,80 @@ def test_parse_persona_effect_calls_reports_rejection_reasons():
             "name": "ag99live.motion",
             "reason": "missing required argument: axes",
         },
+    ]
+
+
+def test_normalize_persona_effect_arguments_coerces_nested_numeric_strings():
+    effect = _effect()
+    effect.parameters = {
+        "type": "object",
+        "properties": {
+            "axes": {
+                "type": "object",
+                "properties": {
+                    "head_yaw": {"type": "number"},
+                    "duration_ms": {"type": "integer"},
+                },
+            }
+        },
+        "required": ["axes"],
+    }
+
+    normalized = normalize_persona_effect_arguments(
+        {
+            "axes": {
+                "head_yaw": "55",
+                "duration_ms": "1200",
+            }
+        },
+        effect.parameters,
+    )
+
+    assert normalized == {
+        "axes": {
+            "head_yaw": 55.0,
+            "duration_ms": 1200,
+        }
+    }
+
+
+def test_parse_persona_effect_calls_accepts_numeric_strings_after_normalization():
+    effect = _effect()
+    effect.parameters = {
+        "type": "object",
+        "properties": {
+            "axes": {
+                "type": "object",
+                "properties": {
+                    "head_yaw": {"type": "number"},
+                    "body_roll": {"type": "number"},
+                },
+                "required": ["head_yaw"],
+            }
+        },
+        "required": ["axes"],
+    }
+
+    calls = parse_persona_effect_calls(
+        [
+            {
+                "name": "ag99live.motion",
+                "arguments": {
+                    "axes": {
+                        "head_yaw": "55",
+                        "body_roll": "47.5",
+                    }
+                },
+            }
+        ],
+        [effect],
+    )
+
+    assert calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"axes": {"head_yaw": 55.0, "body_roll": 47.5}},
+            plugin_id="plugin_a",
+            source="persona",
+        )
     ]
