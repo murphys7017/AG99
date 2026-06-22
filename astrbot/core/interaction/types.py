@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .effects import PersonaEffectCall
+
 
 class RouteMode(str, Enum):
     SELF_REPLY = "self_reply"
@@ -68,6 +70,7 @@ class InteractionDecision:
     should_emit_immediate_reply: bool = False
     immediate_spoken_reply: str | None = None
     core_task_spec: CoreTaskSpec | None = None
+    effect_calls: list[PersonaEffectCall] = field(default_factory=list)
     plugin_hints: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
 
@@ -86,6 +89,7 @@ class InteractionDecision:
         if immediate_spoken_reply is not None:
             immediate_spoken_reply = str(immediate_spoken_reply)
         core_task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
+        effect_calls = _coerce_effect_calls(payload.get("effect_calls", []))
         plugin_hints = _coerce_mapping(payload.get("plugin_hints", {}))
         return cls(
             route_mode=route_mode,
@@ -94,6 +98,7 @@ class InteractionDecision:
             ),
             immediate_spoken_reply=immediate_spoken_reply,
             core_task_spec=core_task_spec,
+            effect_calls=effect_calls,
             plugin_hints=plugin_hints,
             reason=str(payload.get("reason", "") or ""),
         )
@@ -106,6 +111,7 @@ class InteractionDecision:
             "core_task_spec": (
                 self.core_task_spec.to_dict() if self.core_task_spec else None
             ),
+            "effect_calls": [call.to_dict() for call in self.effect_calls],
             "plugin_hints": dict(self.plugin_hints),
             "reason": self.reason,
         }
@@ -132,6 +138,7 @@ class InteractionRouteDecision:
         self,
         *,
         first_response: str | None,
+        effect_calls: list[PersonaEffectCall] | None = None,
         plugin_hints: dict[str, Any] | None = None,
     ) -> InteractionDecision:
         reply = (first_response or "").strip() or None
@@ -145,6 +152,7 @@ class InteractionRouteDecision:
             should_emit_immediate_reply=bool(reply),
             immediate_spoken_reply=reply,
             core_task_spec=None,
+            effect_calls=list(effect_calls) if isinstance(effect_calls, list) else [],
             plugin_hints=dict(plugin_hints) if isinstance(plugin_hints, dict) else {},
             reason="fast_route",
         )
@@ -164,6 +172,17 @@ def _coerce_mapping(value: object) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _coerce_effect_calls(value: object) -> list[PersonaEffectCall]:
+    if not isinstance(value, list):
+        return []
+    calls: list[PersonaEffectCall] = []
+    for item in value:
+        call = PersonaEffectCall.from_mapping(item)
+        if call is not None:
+            calls.append(call)
+    return calls
 
 
 @dataclass(slots=True)

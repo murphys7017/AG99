@@ -1314,13 +1314,19 @@ class InteractionOutputController:
             if decision_obj is not None and isinstance(decision_obj.plugin_hints, dict)
             else {}
         )
+        effect_calls = (
+            tuple(decision_obj.effect_calls)
+            if decision_obj is not None and isinstance(decision_obj.effect_calls, list)
+            else ()
+        )
         logger.info(
-            "DIAG result_view.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s",
+            "DIAG result_view.plugin_hints: platform_id=%s session_id=%s phase=%s keys=%s payload_present=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             phase,
             sorted(plugin_hints.keys()) if plugin_hints else [],
             bool(plugin_hints),
+            [call.name for call in effect_calls],
         )
         if phase == "final":
             event.set_extra("_interaction_plugin_hints", dict(plugin_hints))
@@ -1352,6 +1358,7 @@ class InteractionOutputController:
             immediate_reply=get_interaction_turn_immediate_reply(event),
             core_result=core_result,
             final_result=final_result,
+            effect_calls=effect_calls,
             plugin_hints=plugin_hints,
             visible_outputs=self._snapshot_result_visible_outputs(event),
             utterances=self._snapshot_result_utterances(event),

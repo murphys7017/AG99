@@ -331,6 +331,7 @@ class InteractionMiddleware:
                 )
                 decision = route.to_interaction_decision(
                     first_response=expression.spoken_reply,
+                    effect_calls=expression.effect_calls,
                     plugin_hints=expression.plugin_hints,
                 )
                 logger.info(

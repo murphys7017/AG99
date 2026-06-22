@@ -4,6 +4,7 @@ from astrbot.core.interaction.router_agent import (
     InteractionRouterAgent,
     extract_interaction_route_payload,
 )
+from astrbot.core.interaction.effects import PersonaEffectCall
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
     InteractionTurnState,
@@ -73,6 +74,22 @@ def test_route_decision_keeps_selected_persona_plugin_hints():
     assert selected.plugin_hints == {
         "ag99live_motion": {"emotion_label": "happy"}
     }
+
+
+def test_route_decision_keeps_selected_persona_effect_calls():
+    decision = InteractionRouteDecision(mode=FastRouteMode.SELF_REPLY)
+    effect_call = PersonaEffectCall(
+        name="ag99live.motion",
+        arguments={"axes": {"head_yaw": 40}},
+        plugin_id="plugin_a",
+    )
+
+    selected = decision.to_interaction_decision(
+        first_response="嗯。",
+        effect_calls=[effect_call],
+    )
+
+    assert selected.effect_calls == [effect_call]
 
 
 class PurposeAwarePromptContributor:

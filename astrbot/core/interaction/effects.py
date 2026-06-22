@@ -51,6 +51,39 @@ class PersonaEffectCall:
     source: str = "persona"
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def from_mapping(cls, payload: object) -> PersonaEffectCall | None:
+        if not isinstance(payload, dict):
+            return None
+        name = str(payload.get("name", "") or "").strip()
+        arguments = payload.get("arguments", {})
+        if not name or not isinstance(arguments, dict):
+            return None
+        call_id = payload.get("call_id")
+        plugin_id = payload.get("plugin_id")
+        return cls(
+            name=name,
+            arguments=copy.deepcopy(arguments),
+            call_id=str(call_id) if call_id is not None else None,
+            plugin_id=str(plugin_id) if plugin_id is not None else None,
+            source=str(payload.get("source", "") or "persona"),
+            metadata=(
+                copy.deepcopy(payload.get("metadata", {}))
+                if isinstance(payload.get("metadata", {}), dict)
+                else {}
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "arguments": copy.deepcopy(self.arguments),
+            "call_id": self.call_id,
+            "plugin_id": self.plugin_id,
+            "source": self.source,
+            "metadata": copy.deepcopy(self.metadata),
+        }
+
 
 class PersonaEffectRegistryError(ValueError):
     """Raised when a persona effect registration is invalid or conflicts."""
