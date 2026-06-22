@@ -8,6 +8,9 @@ from astrbot.core.interaction.expression_agent import (
     PersonaExpressionResult,
     build_persona_expression_output_contract,
     extract_persona_expression_result,
+    phase_requires_spoken_reply,
+    validate_persona_expression_result,
+    InteractionExpressionError,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
 from astrbot.core.interaction.persona_runtime import InteractionPersonaRuntime
@@ -17,6 +20,45 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
+
+
+@pytest.mark.parametrize(
+    ("phase", "requires_reply"),
+    [
+        ("first_response", True),
+        ("plugin_output", True),
+        ("final_response", True),
+        ("executor_result", True),
+        ("executor_started", False),
+        ("executor_progress", False),
+    ],
+)
+def test_phase_requires_spoken_reply_matches_persona_phase_contract(
+    phase,
+    requires_reply,
+):
+    assert phase_requires_spoken_reply(phase) is requires_reply
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "first_response",
+        "plugin_output",
+        "final_response",
+        "executor_result",
+        "executor_started",
+        "executor_progress",
+    ],
+)
+def test_persona_expression_empty_result_is_rejected_until_effect_calls_exist(phase):
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            phase,
+            PersonaExpressionResult(spoken_reply=""),
+        )
+
+    assert exc_info.value.reason == "empty_output"
 
 
 def test_persona_expression_repairs_truncated_json_from_provider():

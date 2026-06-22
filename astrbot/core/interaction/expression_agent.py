@@ -54,6 +54,25 @@ class InteractionExpressionError(RuntimeError):
         super().__init__(message or reason)
 
 
+def phase_requires_spoken_reply(phase: PersonaExpressionPhase) -> bool:
+    return phase in {
+        "first_response",
+        "plugin_output",
+        "final_response",
+        "executor_result",
+    }
+
+
+def validate_persona_expression_result(
+    phase: PersonaExpressionPhase,
+    result: PersonaExpressionResult,
+) -> None:
+    if phase_requires_spoken_reply(phase) and not result.spoken_reply:
+        raise InteractionExpressionError("empty_output")
+    if not result.spoken_reply:
+        raise InteractionExpressionError("empty_output")
+
+
 def build_persona_runtime_system_prompt() -> str:
     return (
         "你负责以当前人格对用户表达。\n"
@@ -302,8 +321,7 @@ class InteractionExpressionAgent:
             sorted(result.plugin_hints.keys()) if result.plugin_hints else [],
             bool(result.plugin_hints),
         )
-        if not result.spoken_reply:
-            raise InteractionExpressionError("empty_output")
+        validate_persona_expression_result(req.phase, result)
         logger.info(
             "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s plugin_hints_keys=%s",
             event.get_platform_id(),
