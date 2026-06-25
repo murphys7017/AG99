@@ -13,6 +13,13 @@ from .conversation_postprocessor import (
     reset_interaction_conversation_postprocessor,
     unregister_interaction_conversation_postprocessor,
 )
+from .core_bridge import (
+    INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
+    INTERACTION_DECISION_EXTRA_KEY,
+    apply_interaction_core_task_spec,
+    get_core_task_spec,
+    get_interaction_decision,
+)
 from .effects import (
     PersonaEffectCall,
     PersonaEffectParseIssue,
@@ -23,19 +30,13 @@ from .effects import (
     legacy_plugin_hints_to_effect_calls,
     parse_persona_effect_calls,
 )
-from .core_bridge import (
-    INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-    INTERACTION_DECISION_EXTRA_KEY,
-    apply_interaction_core_task_spec,
-    get_core_task_spec,
-    get_interaction_decision,
-)
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
 from .input_gateway import CoreInputGateway
 from .memory_store import InteractionMemorySnapshot, InteractionMemoryStore
+from .middleware import InteractionMiddleware
+from .output_controller import InteractionOutputController
 from .output_modes import (
     OUTPUT_ORIGIN_EXTRA_KEY,
-    PERSONA_REWRITE_FAILED_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
     PLUGIN_OUTPUT_MODE_EXTRA_KEY,
@@ -45,8 +46,6 @@ from .output_modes import (
     temporary_output_origin,
 )
 from .persona_runtime import InteractionPersonaRuntime
-from .middleware import InteractionMiddleware
-from .output_controller import InteractionOutputController
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
@@ -61,7 +60,6 @@ from .turn_state import (
 from .types import (
     CoreTaskSpec,
     FastRouteMode,
-    FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
     InteractionRouteDecision,
@@ -73,7 +71,6 @@ __all__ = [
     "CoreTaskSpec",
     "OUTPUT_ORIGIN_EXTRA_KEY",
     "OutputOrigin",
-    "PERSONA_REWRITE_FAILED_EXTRA_KEY",
     "PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY",
     "PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY",
     "PLUGIN_OUTPUT_MODE_EXTRA_KEY",
@@ -86,7 +83,6 @@ __all__ = [
     "PersonaEffectValidationError",
     "InteractionPersonaRuntime",
     "FastRouteMode",
-    "FinalizerMode",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
     "INTERACTION_DECISION_EXTRA_KEY",
     "INTERACTION_TURN_STATE_EXTRA_KEY",

@@ -27,6 +27,7 @@ from .decision_agent import _maybe_bypass_protocol_command
 from .expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
+    PersonaExpressionRequest,
     PersonaExpressionResult,
 )
 from .memory_store import (
@@ -100,8 +101,8 @@ class InteractionMiddleware:
         self.output_controller.interaction_memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
         self.output_controller._persist_callback = self._on_output_persist_requested
-        self.output_controller.persona_output_renderer = (
-            self._render_plugin_output_via_persona
+        self.output_controller.visible_reply_renderer = (
+            self._render_visible_reply_via_persona
         )
         self._inflight_tasks: set[asyncio.Task] = set()
 
@@ -109,20 +110,18 @@ class InteractionMiddleware:
         self.plugin_context = plugin_context
         self.output_controller.plugin_context = plugin_context
 
-    async def _render_plugin_output_via_persona(
+    async def _render_visible_reply_via_persona(
         self,
         event: AstrMessageEvent,
-        message: MessageChain,
-        metadata: dict[str, Any] | None = None,
-    ) -> MessageChain:
-        return await self.persona_runtime.render_plugin_output(
+        request: PersonaExpressionRequest,
+    ) -> PersonaExpressionResult:
+        return await self.persona_runtime.express_visible_reply(
             event,
-            message,
             plugin_context=self.plugin_context,
             interaction_config=load_interaction_agent_config(
                 self._get_runtime_config(event)
             ),
-            metadata=metadata,
+            request=request,
         )
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
@@ -448,13 +447,12 @@ class InteractionMiddleware:
                 "plugin_context_unavailable",
             )
             return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
-        from .expression_agent import PersonaExpressionRequest
         try:
-            return await self.expression_agent.generate_expression(
+            return await self.persona_runtime.express_visible_reply(
                 event,
-                self.plugin_context,
-                interaction_config,
-                PersonaExpressionRequest(phase="first_response"),
+                plugin_context=self.plugin_context,
+                interaction_config=interaction_config,
+                request=PersonaExpressionRequest(),
             )
         except InteractionExpressionError as exc:
             reason = exc.reason

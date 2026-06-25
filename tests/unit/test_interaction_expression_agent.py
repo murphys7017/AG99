@@ -2,18 +2,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
     PersonaExpressionRequest,
     PersonaExpressionResult,
-    build_persona_expression_output_contract,
     build_persona_expression_output_contract_for_effects,
     extract_persona_expression_result,
-    phase_requires_spoken_reply,
     validate_persona_expression_result,
 )
-from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
 from astrbot.core.interaction.persona_runtime import InteractionPersonaRuntime
 from astrbot.core.interaction.types import InteractionAgentConfig
@@ -24,48 +22,19 @@ from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
 
 
-@pytest.mark.parametrize(
-    ("phase", "requires_reply"),
-    [
-        ("first_response", True),
-        ("plugin_output", True),
-        ("final_response", True),
-        ("executor_result", True),
-        ("executor_started", False),
-        ("executor_progress", False),
-    ],
-)
-def test_phase_requires_spoken_reply_matches_persona_phase_contract(
-    phase,
-    requires_reply,
-):
-    assert phase_requires_spoken_reply(phase) is requires_reply
-
-
-@pytest.mark.parametrize(
-    "phase",
-    [
-        "first_response",
-        "plugin_output",
-        "final_response",
-        "executor_result",
-        "executor_started",
-        "executor_progress",
-    ],
-)
-def test_persona_expression_empty_result_without_effects_is_rejected(phase):
+def test_persona_expression_empty_result_without_effects_is_rejected():
     with pytest.raises(InteractionExpressionError) as exc_info:
         validate_persona_expression_result(
-            phase,
+            PersonaExpressionRequest(),
             PersonaExpressionResult(spoken_reply=""),
         )
 
     assert exc_info.value.reason == "empty_output"
 
 
-def test_persona_expression_allows_effect_only_for_progress_phases():
+def test_persona_expression_allows_effect_only_reply_when_request_explicitly_allows_empty():
     validate_persona_expression_result(
-        "executor_progress",
+        PersonaExpressionRequest(allow_empty=True),
         PersonaExpressionResult(
             spoken_reply="",
             effect_calls=[
@@ -81,7 +50,7 @@ def test_persona_expression_allows_effect_only_for_progress_phases():
 def test_persona_expression_still_requires_reply_for_first_response_even_with_effect():
     with pytest.raises(InteractionExpressionError):
         validate_persona_expression_result(
-            "first_response",
+            PersonaExpressionRequest(),
             PersonaExpressionResult(
                 spoken_reply="",
                 effect_calls=[
@@ -249,7 +218,6 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
             "properties": {"emotion_label": {"type": "string"}},
             "required": [],
         },
-        phases=("first_response",),
     )
     contract = build_persona_expression_output_contract_for_effects([effect])
     compiled = CompiledOutputContract(
@@ -324,7 +292,7 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
         event,
         plugin_context,
         InteractionAgentConfig(expression_provider_id="persona"),
-        PersonaExpressionRequest(phase="first_response"),
+        PersonaExpressionRequest(),
     )
 
     assert result.spoken_reply == "嗯，我来看看。"
@@ -346,7 +314,7 @@ async def test_persona_runtime_publishes_plugin_output_effect_calls():
         "ExpressionAgent",
         (),
         {
-            "rewrite_plugin_output_result": AsyncMock(
+            "express_visible_reply_result": AsyncMock(
                 return_value=PersonaExpressionResult(
                     spoken_reply="人格化结果",
                     effect_calls=[
@@ -389,3 +357,61 @@ async def test_persona_runtime_publishes_plugin_output_effect_calls():
             plugin_id="plugin_a",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_persona_runtime_renders_core_reply_via_shared_visible_reply_entry():
+    expression_agent = type(
+        "ExpressionAgent",
+        (),
+        {
+            "express_visible_reply_result": AsyncMock(
+                return_value=PersonaExpressionResult(
+                    spoken_reply="整理后的最终回复",
+                    effect_calls=[
+                        PersonaEffectCall(
+                            name="ag99live.motion",
+                            arguments={"emotion_label": "focused"},
+                            plugin_id="plugin_a",
+                        )
+                    ],
+                )
+            )
+        },
+    )()
+
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    runtime = InteractionPersonaRuntime(expression_agent)
+
+    plugin_context = object()
+    interaction_config = InteractionAgentConfig()
+
+    reply = await runtime.render_core_reply(
+        event,
+        "原始 core 结果",
+        plugin_context=plugin_context,
+        interaction_config=interaction_config,
+        immediate_reply="我先看一下。",
+    )
+
+    assert reply == "整理后的最终回复"
+    expression_agent.express_visible_reply_result.assert_awaited_once_with(
+        event,
+        plugin_context,
+        interaction_config,
+        PersonaExpressionRequest(
+            source_text="原始 core 结果",
+            immediate_reply="我先看一下。",
+            preserve_facts=True,
+        ),
+    )

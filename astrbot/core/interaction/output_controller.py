@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 import time
 import traceback
@@ -15,18 +14,10 @@ from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.prompt.render.selector import _extract_json_object
-from astrbot.core.provider import Provider
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.voice import VoiceServiceError, resolve_tts_provider, synthesize_text
 
 from .config import load_interaction_agent_config
-from .context_builder import (
-    build_interaction_context_pack,
-    extract_interaction_memory_payload,
-    extract_persona_payload,
-    extract_recent_messages,
-)
 from .contributors import (
     InteractionOutputDraft,
     InteractionResultContribution,
@@ -35,14 +26,12 @@ from .contributors import (
     merge_result_contributions,
 )
 from .core_bridge import get_interaction_decision
-from .decision_agent import _build_decision_build_config
-from .finalizer import InteractionFinalizerError, finalize_response
+from .expression_agent import PersonaExpressionRequest, PersonaExpressionResult
 from .memory_store import (
     InteractionMemoryStore,
     build_interaction_memory_reply_from_visible_outputs,
 )
 from .output_modes import (
-    PERSONA_REWRITE_FAILED_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
     OutputOrigin,
@@ -108,10 +97,10 @@ class InteractionOutputController:
         interaction_memory_store: InteractionMemoryStore | None = None,
         platform_settings: dict[str, Any] | None = None,
         persist_callback: (Callable[[AstrMessageEvent], Awaitable[None]] | None) = None,
-        persona_output_renderer: (
+        visible_reply_renderer: (
             Callable[
-                [AstrMessageEvent, MessageChain, dict[str, Any] | None],
-                Awaitable[MessageChain],
+                [AstrMessageEvent, PersonaExpressionRequest],
+                Awaitable[PersonaExpressionResult],
             ]
             | None
         ) = None,
@@ -121,7 +110,7 @@ class InteractionOutputController:
         self.interaction_memory_store = interaction_memory_store
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
-        self.persona_output_renderer = persona_output_renderer
+        self.visible_reply_renderer = visible_reply_renderer
         self._refresh_outbound_materialization_config()
 
     def _refresh_outbound_materialization_config(
@@ -292,8 +281,7 @@ class InteractionOutputController:
                 message_kind="immediate_reply",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
-                metadata=materialization,
-            )
+                )
             return
 
         if outbound_kind == "streaming_finish_marker":
@@ -332,8 +320,7 @@ class InteractionOutputController:
                 message_kind="passthrough",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
-                metadata=materialization,
-            )
+                )
             self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(event)
             return
@@ -351,18 +338,14 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         *,
         mode: str = PluginOutputMode.DIRECT.value,
-        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Entry point for plugin-origin output through the Output Runtime.
 
         Two modes are supported:
 
-        * **direct** — deliver the message as-is.  No persona rewriting,
-          no finalizer, no ``result_is_model_result=True``.
-        * **persona** — extract plain text, run it through a lightweight
-          persona expression rewrite, then deliver the rewritten text.
-          If the rewrite fails, degrade to direct without swallowing the
-          message.
+        * **direct** — deliver the message as-is.
+        * **persona** — extract plain text, pass it through the unified
+          visible-reply persona layer, then deliver the rewritten text.
         """
         if message is None:
             return
@@ -374,29 +357,21 @@ class InteractionOutputController:
         if resolved_mode == PluginOutputMode.PERSONA:
             plain = message.get_plain_text().strip()
             if plain:
-                try:
-                    if self.persona_output_renderer is None:
-                        raise RuntimeError(
-                            "plugin persona rewrite: persona_output_renderer unavailable"
-                        )
-                    message = await self.persona_output_renderer(
-                        event,
-                        message,
-                        metadata,
+                result = await self._render_visible_reply(
+                    event,
+                    PersonaExpressionRequest(
+                        source_text=plain,
+                        preserve_facts=True,
+                    ),
+                )
+                if result.effect_calls:
+                    event.set_extra(
+                        "_interaction_plugin_output_effect_calls",
+                        list(result.effect_calls),
                     )
-                    resolved_kind = "plugin_persona"
-                except Exception:  # noqa: BLE001
-                    event.set_extra(PERSONA_REWRITE_FAILED_EXTRA_KEY, True)
-                    logger.warning(
-                        "Plugin persona rewrite failed; falling back to direct: "
-                        "platform_id=%s session_id=%s",
-                        event.get_platform_id(),
-                        event.session_id,
-                        exc_info=True,
-                    )
-                    resolved_kind = "plugin_direct"
+                message = message.derive([Plain(result.spoken_reply)])
+                resolved_kind = "plugin_persona"
             else:
-                # No plain text to rewrite — deliver as-is.
                 resolved_kind = "plugin_direct"
 
         event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
@@ -423,7 +398,6 @@ class InteractionOutputController:
             message_kind=resolved_kind,
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
-            metadata=materialization,
             memory_relevant=True,
         )
         self._materialize_finalized_turn(event)
@@ -783,8 +757,18 @@ class InteractionOutputController:
             is_final=is_final,
         )
         if decision is not None:
-            return decision
-        return await self._decide_stream_interjection_with_model(
+            if not decision.should_interject:
+                return decision
+            return await self._render_stream_interjection_via_persona(
+                event,
+                source_text=(decision.reply or "").strip(),
+                observed_text=observed_text,
+                total_text=total_text,
+                window_index=window_index,
+                is_final=is_final,
+                reason=decision.reason or "plugin_decider",
+            )
+        return await self._render_stream_interjection_via_persona(
             event,
             observed_text=observed_text,
             total_text=total_text,
@@ -792,71 +776,32 @@ class InteractionOutputController:
             is_final=is_final,
         )
 
-    async def _decide_stream_interjection_with_model(
+    async def _render_stream_interjection_via_persona(
         self,
         event: AstrMessageEvent,
         *,
+        source_text: str = "",
         observed_text: str,
         total_text: str,
         window_index: int,
         is_final: bool,
+        reason: str = "persona_runtime",
     ) -> StreamObservationDecision:
-        interaction_config = self._get_interaction_config(event)
-        if self.plugin_context is None:
-            self._record_stream_interjection_failure(
-                event,
-                reason="plugin_context_unavailable",
-                user_visible_action="continue_core_stream",
-            )
-            return StreamObservationDecision(reason="plugin_context_unavailable")
-        provider = self.plugin_context.get_provider_by_id(
-            interaction_config.stream_interjection_provider_id
-        )
-        if not isinstance(provider, Provider):
-            self._record_stream_interjection_failure(
-                event,
-                reason="provider_unavailable",
-                user_visible_action="continue_core_stream",
-            )
-            logger.warning(
-                "Interaction stream interjection skipped: provider unavailable provider_id=%s",
-                interaction_config.stream_interjection_provider_id,
-            )
-            return StreamObservationDecision(reason="provider_unavailable")
-
-        prompt = await self._build_stream_interjection_prompt(
-            event,
-            observed_text=observed_text,
-            total_text=total_text,
-            window_index=window_index,
-            is_final=is_final,
-        )
         try:
-            llm_resp = await asyncio.wait_for(
-                provider.text_chat(
-                    prompt=prompt,
-                    system_prompt="",
-                    temperature=interaction_config.stream_interjection_temperature,
-                ),
-                timeout=interaction_config.stream_interjection_timeout,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Interaction stream interjection skipped: reason=timeout platform_id=%s session_id=%s turn_id=%s window_index=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id"),
-                window_index,
-            )
-            self._record_stream_interjection_failure(
+            result = await self._render_visible_reply(
                 event,
-                reason="timeout",
-                user_visible_action="continue_core_stream",
+                PersonaExpressionRequest(
+                    source_text=source_text,
+                    observed_text=observed_text,
+                    total_text=total_text,
+                    pending_text=get_interaction_turn_stream_pending_text(event),
+                    short_reply=True,
+                    allow_empty=True,
+                ),
             )
-            return StreamObservationDecision(reason="timeout")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Interaction stream interjection skipped: reason=model_error platform_id=%s session_id=%s turn_id=%s window_index=%s error=%s",
+                "Interaction stream interjection skipped: reason=persona_render_failed platform_id=%s session_id=%s turn_id=%s window_index=%s error=%s",
                 event.get_platform_id(),
                 event.session_id,
                 event.get_extra("_turn_id"),
@@ -866,29 +811,18 @@ class InteractionOutputController:
             )
             self._record_stream_interjection_failure(
                 event,
-                reason="model_error",
+                reason="persona_render_failed",
                 exception=exc,
                 user_visible_action="continue_core_stream",
             )
-            return StreamObservationDecision(reason="model_error")
+            return StreamObservationDecision(reason="persona_render_failed")
 
-        payload = _extract_json_object(llm_resp.completion_text)
-        decision = self._coerce_stream_interjection_decision(payload)
-        if decision is None:
-            logger.warning(
-                "Interaction stream interjection skipped: reason=non_json raw=%s",
-                llm_resp.completion_text,
-            )
-            self._record_stream_interjection_failure(
-                event,
-                reason="non_json",
-                message=llm_resp.completion_text,
-                user_visible_action="continue_core_stream",
-            )
-            return StreamObservationDecision(reason="non_json")
-        if decision.reply and len(decision.reply) > 40:
-            decision.reply = decision.reply[:40].rstrip("，,。.!！?？")
-        return decision
+        reply = result.spoken_reply.strip()
+        return StreamObservationDecision(
+            should_interject=bool(reply),
+            reply=reply or None,
+            reason=reason,
+        )
 
     async def _collect_stream_interjection_from_plugins(
         self,
@@ -1009,116 +943,6 @@ class InteractionOutputController:
             },
         )
 
-    async def _build_stream_interjection_prompt(
-        self,
-        event: AstrMessageEvent,
-        *,
-        observed_text: str,
-        total_text: str,
-        window_index: int,
-        is_final: bool,
-    ) -> str:
-        persona_payload: dict[str, Any] = {}
-        memory_payload: dict[str, Any] = {}
-        recent_messages: list[dict[str, Any]] = []
-        turn_state = get_interaction_turn_state(event)
-        cached_material = (
-            turn_state.context_material if turn_state is not None else None
-        )
-        stream_state = turn_state.stream_state if turn_state is not None else None
-        existing_utterances = (
-            [
-                {
-                    "kind": utterance.kind,
-                    "text": utterance.text,
-                    "memory_relevant": utterance.memory_relevant,
-                }
-                for utterance in turn_state.utterances
-                if utterance.kind != "stream_interjection" and utterance.text.strip()
-            ]
-            if turn_state is not None
-            else []
-        )
-        if cached_material is not None:
-            persona_payload = cached_material.persona_payload
-            memory_payload = cached_material.memory_payload
-            desired_window = self._get_interaction_config(event).memory_window_size
-            recent_messages = list(cached_material.recent_messages)
-            if desired_window > 0:
-                recent_messages = recent_messages[-desired_window:]
-        elif self.plugin_context is not None:
-            try:
-                if self.interaction_memory_store is None:
-                    raise RuntimeError(
-                        "Interaction stream prompt context requires interaction_memory_store"
-                    )
-                build_config = _build_decision_build_config(self.plugin_context, event)
-                prompt_context_pack = await build_interaction_context_pack(
-                    event,
-                    self.plugin_context,
-                    build_config,
-                    self.interaction_memory_store,
-                )
-                persona_payload = extract_persona_payload(prompt_context_pack)
-                memory_payload = extract_interaction_memory_payload(prompt_context_pack)
-                recent_messages = extract_recent_messages(
-                    prompt_context_pack,
-                    self._get_interaction_config(event).memory_window_size,
-                )
-            except Exception as exc:  # noqa: BLE001
-                event.set_extra(
-                    "_interaction_stream_context_build_failed",
-                    True,
-                )
-                event.set_extra(
-                    "_interaction_stream_context_build_failure_reason",
-                    str(exc),
-                )
-                logger.warning(
-                    "Interaction stream context build failed: platform_id=%s session_id=%s turn_id=%s error=%s",
-                    event.get_platform_id(),
-                    event.session_id,
-                    event.get_extra("_turn_id"),
-                    exc,
-                    exc_info=True,
-                )
-                raise
-        payload = {
-            "platform_id": event.get_platform_id(),
-            "session_id": event.unified_msg_origin,
-            "turn_id": event.get_extra("_turn_id"),
-            "user_input": event.message_str,
-            "persona": persona_payload,
-            "interaction_memory": memory_payload,
-            "recent_messages": recent_messages,
-            "window_index": window_index,
-            "is_final_window": is_final,
-            "observed_core_stream_window": observed_text,
-            "core_stream_so_far": (
-                (stream_state.total_text if stream_state is not None else total_text)[
-                    -800:
-                ]
-            ),
-            "core_stream_pending": (
-                stream_state.pending_text if stream_state is not None else ""
-            ),
-            "existing_turn_utterances": existing_utterances,
-            "output_schema": {
-                "should_interject": False,
-                "reply": "不超过 20 字的口语短句，或 null",
-                "reason": "简短原因",
-            },
-        }
-        return (
-            "你是 AstrBot interaction middleware 的流式观察器。\n"
-            "核心执行层正在流式输出，你要判断此刻是否需要插一句拟人化短回复。\n"
-            "只在用户可能需要等待确认、核心输出明显很长、或需要自然承接时插话。\n"
-            "不要总结核心结果，不要声称任务完成，不要替核心执行工具。\n"
-            "多数情况下 should_interject=false。\n"
-            "必须只输出 JSON。\n\n"
-            f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
-        )
-
     async def _emit_stream_interjection(
         self,
         event: AstrMessageEvent,
@@ -1158,41 +982,40 @@ class InteractionOutputController:
             delivered_message_ids=(
                 [visible_message_id] if visible_message_id else None
             ),
-            metadata=materialization,
             memory_relevant=False,
         )
+
+    async def _render_visible_reply(
+        self,
+        event: AstrMessageEvent,
+        request: PersonaExpressionRequest,
+    ) -> PersonaExpressionResult:
+        if self.visible_reply_renderer is None:
+            del event
+            raise RuntimeError("interaction visible_reply_renderer unavailable")
+        return await self.visible_reply_renderer(event, request)
 
     async def _deliver_core_reply(
         self,
         message: MessageChain,
         event: AstrMessageEvent,
     ) -> None:
-        interaction_config = self._get_interaction_config(event)
         core_result_text = message.get_plain_text()
         immediate_reply = get_interaction_turn_immediate_reply(event)
-        try:
-            final_text = await finalize_response(
-                event=event,
-                plugin_context=self.plugin_context,
-                config=interaction_config,
-                core_result_text=core_result_text,
-                immediate_reply=immediate_reply,
+        result = await self._render_visible_reply(
+            event,
+            PersonaExpressionRequest(
+                source_text=core_result_text,
+                immediate_reply=immediate_reply or "",
+                preserve_facts=True,
+            ),
+        )
+        if result.effect_calls:
+            event.set_extra(
+                "_interaction_final_response_effect_calls",
+                list(result.effect_calls),
             )
-        except InteractionFinalizerError as exc:
-            final_text = None
-            record_interaction_turn_completion_failure(
-                event,
-                "finalizer_failed",
-            )
-            logger.warning(
-                "Interaction finalizer failed; sending raw core result: platform_id=%s session_id=%s reason=%s",
-                event.get_platform_id(),
-                event.session_id,
-                exc.reason,
-            )
-        final_message = message
-        if final_text:
-            final_message = message.derive([Plain(final_text)])
+        final_message = message.derive([Plain(result.spoken_reply)])
 
         contributions = await self._collect_result_contributions(
             event,
@@ -1233,7 +1056,6 @@ class InteractionOutputController:
             message_kind="core_reply",
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
-            metadata=materialization,
         )
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
@@ -1406,13 +1228,13 @@ class InteractionOutputController:
         *,
         phase: str,
     ):
+        del phase
         if self.plugin_context is None:
             return []
         list_effects = getattr(self.plugin_context, "list_persona_effects", None)
         if not callable(list_effects):
             return []
-        persona_phase = "first_response" if phase == "immediate" else "final_response"
-        effects = list_effects(phase=persona_phase)
+        effects = list_effects()
         return effects if isinstance(effects, list) else []
 
     @staticmethod
@@ -1900,7 +1722,6 @@ class InteractionOutputController:
         message_kind: str,
         text: str | None,
         delivered_message_ids: list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
         memory_relevant: bool = True,
     ) -> None:
         append_interaction_turn_visible_output(
@@ -1909,7 +1730,7 @@ class InteractionOutputController:
             text=text,
             message_id=(delivered_message_ids[0] if delivered_message_ids else None),
             delivered_message_ids=delivered_message_ids,
-            metadata=metadata,
+            metadata=None,
             memory_relevant=memory_relevant,
         )
 

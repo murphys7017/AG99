@@ -814,7 +814,6 @@ class TestConfigMetadataI18n:
         assert sorted(group["metadata"]) == [
             "decision_compat",
             "expression",
-            "finalizer",
             "general",
             "router",
             "stream",

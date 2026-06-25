@@ -4,27 +4,7 @@ import copy
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
-
-PersonaExpressionPhase = Literal[
-    "first_response",
-    "executor_started",
-    "executor_progress",
-    "executor_result",
-    "plugin_output",
-    "final_response",
-]
-
-PERSONA_EXPRESSION_PHASES: frozenset[str] = frozenset(
-    (
-        "first_response",
-        "executor_started",
-        "executor_progress",
-        "executor_result",
-        "plugin_output",
-        "final_response",
-    )
-)
+from typing import Any
 
 _EFFECT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 
@@ -35,7 +15,6 @@ class PersonaEffectSpec:
     name: str
     description: str
     parameters: dict[str, Any]
-    phases: tuple[PersonaExpressionPhase, ...] = ()
     legacy_hint_names: tuple[str, ...] = ()
     priority: int = 100
     enabled: bool = True
@@ -122,11 +101,6 @@ def validate_persona_effect_spec(effect: PersonaEffectSpec) -> None:
         raise PersonaEffectRegistryError(
             "Persona effect parameters must be an object JSON schema"
         )
-    for phase in effect.phases:
-        if phase not in PERSONA_EXPRESSION_PHASES:
-            raise PersonaEffectRegistryError(
-                f"Persona effect phase is invalid: {phase!r}"
-            )
     seen_aliases: set[str] = set()
     for alias in effect.legacy_hint_names:
         if not isinstance(alias, str) or not alias.strip():
@@ -146,23 +120,11 @@ def clone_persona_effect_spec(effect: PersonaEffectSpec) -> PersonaEffectSpec:
         name=effect.name,
         description=effect.description,
         parameters=copy.deepcopy(effect.parameters),
-        phases=tuple(effect.phases),
         legacy_hint_names=tuple(effect.legacy_hint_names),
         priority=int(effect.priority),
         enabled=bool(effect.enabled),
         metadata=copy.deepcopy(effect.metadata),
     )
-
-
-def persona_effect_applies_to_phase(
-    effect: PersonaEffectSpec,
-    phase: str | None,
-) -> bool:
-    if not effect.enabled:
-        return False
-    if phase is None or not effect.phases:
-        return True
-    return phase in effect.phases
 
 
 def legacy_plugin_hints_to_effect_calls(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -17,12 +16,6 @@ class RouteMode(str, Enum):
 class FastRouteMode(str, Enum):
     SELF_REPLY = "self_reply"
     HYBRID = "hybrid"
-
-
-class FinalizerMode(str, Enum):
-    OFF = "off"
-    AUTO = "auto"
-    FORCE = "force"
 
 
 @dataclass(slots=True)
@@ -178,18 +171,10 @@ class InteractionAgentConfig:
     router_temperature: float = 0.0
     router_timeout: float = 3.0
     parallel_expression_router: bool = True
-    finalizer_provider_id: str = ""
-    finalizer_temperature: float = 0.6
-    finalizer_max_tokens: int = 512
-    finalizer_timeout: float = 15.0
-    finalizer_mode: FinalizerMode = FinalizerMode.AUTO
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200
     stream_interjection_enabled: bool = True
-    stream_interjection_provider_id: str = ""
-    stream_interjection_temperature: float = 0.5
-    stream_interjection_timeout: float = 15.0
     stream_interjection_max_per_turn: int = 1
 
 

@@ -71,11 +71,11 @@ Input Runtime / Observation
 - 捕获 interaction turn 的 `send` / `send_streaming`
 - 分类 immediate reply、passthrough、core reply、core stream、streaming finish marker
 - **新增** `capture_plugin_output()` — 插件输出的独立入口，支持 `direct` / `persona` 两种模式
-- 统一 result finalizer、result contributor、reply prefix、reasoning display、TTS、t2i
+- 统一 visible-reply persona 入口、result contributor、reply prefix、reasoning display、TTS、t2i
 - 记录 `InteractionUtterance` 与 visible output
 - 产出 finalized turn material 后请求 middleware finalization
-- 持有一个可注入的 `persona_output_renderer: Callable`，用于 persona 模式的文本改写；
-  output_controller 自身不直接调 provider
+- 持有一个可注入的 `visible_reply_renderer: Callable`，所有用户可见自然语言都经这一个 persona 入口；
+  output_controller 自身不直接调 provider 或独立拼装 persona prompt
 
 输出分类中的新 message kind：
 
@@ -87,7 +87,7 @@ Input Runtime / Observation
 - interaction outbound materialization 失败不降级成文本成功发送
 - TTS / t2i / finalizer 失败会写 failure ledger 并抛错
 - 缺 persist callback 是 turn finalization failure，不是 memory persist failure
-- plugin persona 改写失败降级为 direct，不吞消息
+- 主运行时不再维护独立 finalizer；core final reply 和 stream interjection 统一走 persona visible-reply
 
 ### `turn_state.py`
 
@@ -110,14 +110,6 @@ Input Runtime / Observation
 - 插件只拿阶段 snapshot，不拿可变 turn state
 - 保留外部签名兼容，但内部正确性不依赖旧 dict 可变对象
 
-### `finalizer.py`
-
-职责：
-
-- 判断 core result 是否需要 finalization
-- 调用 finalizer provider 生成最终表达
-- 开发期 fail-fast，不发送替代文本掩盖失败
-
 ### `memory_store.py`
 
 当前定位：
@@ -139,7 +131,6 @@ Input Runtime / Observation
 
 - `OUTPUT_ORIGIN_EXTRA_KEY`（`_interaction_output_origin`）
 - `PLUGIN_OUTPUT_MODE_EXTRA_KEY`（`_interaction_plugin_output_mode`）
-- `PERSONA_REWRITE_FAILED_EXTRA_KEY` / `PERSONA_REWRITE_UNAVAILABLE_EXTRA_KEY`
 - `PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY` / `PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY`（诊断用）
 
 ### `persona_runtime.py`
@@ -148,7 +139,8 @@ Input Runtime / Observation
 
 当前职责：
 
-- `render_plugin_output(event, message, plugin_context, interaction_config)` — 接收插件的原始消息，调用 expression_agent 的 rewrite 链路，返回改写后的 MessageChain
+- `express_visible_reply(...)` — 统一 persona visible-reply 入口，接收“待表达材料”请求
+- `render_plugin_output(...)` / `render_core_reply(...)` / `render_stream_interjection(...)` 只是同一入口的薄包装
 - 本身不做 LLM 调用，只做编排
 
 它不属于 Output Runtime，也不属于 middleware 核心链路，而是 Persona 层的轻量入口。当前挂在 `InteractionMiddleware` 下由构造函数装配。

@@ -10,12 +10,7 @@ PromptViewPurpose = Literal["unknown", "router", "persona_reply", "core_reply"]
 PromptViewPhase = Literal[
     "unknown",
     "route",
-    "first_response",
-    "executor_started",
-    "executor_progress",
-    "executor_result",
-    "plugin_output",
-    "final_response",
+    "visible_reply",
 ]
 
 

@@ -72,7 +72,7 @@
 - 在 adapter 与 core queue 之间维护 interaction turn state
 - 在 core decision 之前处理入站媒体、STT、route decision 与 immediate reply
 - 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
-- 统一 finalizer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
+- 统一 visible-reply persona layer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
 - 将 turn completion 收口为：middleware 产出 finalized material，postprocess consumers 再消费 material；当前 memory service 与 interaction conversation history 都在 `AFTER_TURN_COMPLETED` 阶段落地
 - 对普通 core 非 interaction 事件保留原 pipeline STT/TTS 兼容路径
 
@@ -86,11 +86,13 @@
 - interaction 内部主链路开发期 fail-fast，不依赖 fallback 证明正确性
 - **新增** `output_modes.py`：定义 `PluginOutputMode`、`OutputOrigin`、`temporary_output_origin` 等输出身份模型
 - **新增** `persona_runtime.py`：`InteractionPersonaRuntime`，Persona Runtime 种子代码
-- **新增** `capture_plugin_output()`：插件输出的独立路径，支持 `direct` / `persona` 两种模式，
-  persona 改写失败降级 direct
+- 所有用户可见自然语言已经收口到统一的 visible-reply persona 入口：
+  `first_response`、插件 persona 输出、core final reply、stream interjection 不再各自维护独立文案生成器
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的统一插件输出 helper
-- **新增** `_rewrite_plugin_output_via_persona()` → `expression_agent.rewrite_plugin_output()`，
-  复用完整 prompt 构建管线（persona / memory / context）进行人格化改写
+- `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
+  prompt tree 通过 `astrbot/core/prompt` 组装材料，tool call JSON 返回 `spoken_reply` / `effect_calls`
+- 旧 `finalizer.py` 已删除；core final reply 不再走独立 finalizer provider
+- stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成
 - **origin 路由**：`send_wrapper` 通过 `_interaction_output_origin` 区分 core/plugin 输出，
   `respond/stage.py` 中的 event.send / event.send_streaming 调用已加 CORE origin 标记
 

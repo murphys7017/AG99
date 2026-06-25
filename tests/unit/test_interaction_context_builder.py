@@ -520,7 +520,7 @@ async def test_prompt_contributor_receives_read_only_decision_view():
 
 
 @pytest.mark.asyncio
-async def test_persona_prompt_extension_cache_is_isolated_by_phase():
+async def test_persona_prompt_extension_cache_uses_single_visible_reply_phase():
     event = _prompt_event()
 
     class PhaseContributor:
@@ -552,7 +552,7 @@ async def test_persona_prompt_extension_cache_is_isolated_by_phase():
         _decision_context(),
         material,
         purpose="persona_reply",
-        phase="first_response",
+        phase="visible_reply",
     )
     plugin_output = await get_or_collect_interaction_prompt_extensions(
         event,
@@ -561,7 +561,7 @@ async def test_persona_prompt_extension_cache_is_isolated_by_phase():
         _decision_context(),
         material,
         purpose="persona_reply",
-        phase="plugin_output",
+        phase="visible_reply",
     )
     first_again = await get_or_collect_interaction_prompt_extensions(
         event,
@@ -570,13 +570,14 @@ async def test_persona_prompt_extension_cache_is_isolated_by_phase():
         _decision_context(),
         material,
         purpose="persona_reply",
-        phase="first_response",
+        phase="visible_reply",
     )
 
-    assert contributor.phases == ["first_response", "plugin_output"]
-    assert first[0].value == {"phase": "first_response"}
-    assert plugin_output[0].value == {"phase": "plugin_output"}
+    assert contributor.phases == ["visible_reply"]
+    assert first[0].value == {"phase": "visible_reply"}
+    assert plugin_output[0].value == {"phase": "visible_reply"}
     assert first_again is first
+    assert plugin_output is first
 
 
 @pytest.mark.asyncio

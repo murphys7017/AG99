@@ -18,7 +18,6 @@ from astrbot.core.interaction.turn_state import (
 )
 from astrbot.core.interaction.types import (
     FastRouteMode,
-    FinalizerMode,
     InteractionAgentConfig,
     InteractionRouteDecision,
     RouteMode,
@@ -81,8 +80,8 @@ def _stub_fast_response_route(
         AsyncMock,
     ):
         middleware.output_controller.emit_immediate_spoken_reply = AsyncMock()
-    middleware.expression_agent = MagicMock()
-    middleware.expression_agent.generate_expression = AsyncMock(
+    middleware.persona_runtime = MagicMock()
+    middleware.persona_runtime.express_visible_reply = AsyncMock(
         return_value=PersonaExpressionResult(spoken_reply=first_response)
     )
     middleware.router_agent = MagicMock()
@@ -202,31 +201,9 @@ class TestInteractionMiddlewareConfig:
         loaded = load_interaction_agent_config(config)
 
         assert loaded.expression_provider_id == "legacy_decision"
+        assert loaded.expression_temperature == 0.25
+        assert loaded.expression_timeout == 6.0
         assert loaded.router_provider_id == "legacy_decision"
-        assert loaded.stream_interjection_provider_id == "legacy_decision"
-        assert loaded.stream_interjection_temperature == 0.25
-        assert loaded.stream_interjection_timeout == 6.0
-        assert loaded.finalizer_timeout == 6.0
-
-    def test_role_specific_model_config_uses_explicit_fields(self):
-        config = {
-            "interaction_middleware": {
-                "decision_provider_id": "legacy_decision",
-                "decision_temperature": 0.25,
-                "decision_timeout": 6.0,
-                "stream_interjection_provider_id": "stream_model",
-                "stream_interjection_temperature": 0.1,
-                "stream_interjection_timeout": 2.0,
-                "finalizer_timeout": 12.0,
-            }
-        }
-
-        loaded = load_interaction_agent_config(config)
-
-        assert loaded.stream_interjection_provider_id == "stream_model"
-        assert loaded.stream_interjection_temperature == 0.1
-        assert loaded.stream_interjection_timeout == 2.0
-        assert loaded.finalizer_timeout == 12.0
 
 
 class TestInteractionMiddleware:
@@ -242,6 +219,8 @@ class TestInteractionMiddleware:
                 "interaction_middleware": {
                     "enabled": True,
                     "default_enabled_for_platforms": ["webchat"],
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
                     "platforms": {},
                 }
             },
@@ -292,8 +271,8 @@ class TestInteractionMiddleware:
         await _drain_inbound_tasks(middleware)
 
         forwarded_event = queue.get_nowait()
-        middleware.expression_agent.generate_expression.assert_awaited_once()
-        decision_event = middleware.expression_agent.generate_expression.await_args.args[0]
+        middleware.persona_runtime.express_visible_reply.assert_awaited_once()
+        decision_event = middleware.persona_runtime.express_visible_reply.await_args.args[0]
         assert decision_event.message_str == "recognized voice text"
         assert forwarded_event.message_obj.message_str == "recognized voice text"
         assert isinstance(forwarded_event.message_obj.message[0], Plain)
@@ -331,7 +310,7 @@ class TestInteractionMiddleware:
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
-        middleware.expression_agent.generate_expression.assert_not_awaited()
+        middleware.persona_runtime.express_visible_reply.assert_not_awaited()
         middleware.router_agent.route.assert_not_awaited()
         assert voice_event.get_extra("_interaction_stt_failed") is True
         assert (
@@ -395,6 +374,8 @@ class TestInteractionMiddleware:
                 "interaction_middleware": {
                     "enabled": True,
                     "default_enabled_for_platforms": ["webchat"],
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
                     "platforms": {},
                 }
             },
@@ -435,6 +416,8 @@ class TestInteractionMiddleware:
                 "interaction_middleware": {
                     "enabled": True,
                     "default_enabled_for_platforms": ["webchat"],
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
                     "platforms": {},
                 }
             },
@@ -508,7 +491,6 @@ class TestInteractionMiddleware:
         queue = asyncio.Queue()
         controller = InteractionOutputController(
             interaction_config=InteractionAgentConfig(
-                finalizer_mode=FinalizerMode.OFF,
                 stream_observation_enabled=False,
                 stream_interjection_enabled=False,
             )
@@ -518,6 +500,8 @@ class TestInteractionMiddleware:
                 "interaction_middleware": {
                     "enabled": True,
                     "default_enabled_for_platforms": ["webchat"],
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
                     "platforms": {},
                 }
             },
@@ -864,8 +848,8 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.expression_agent = MagicMock()
-        middleware.expression_agent.generate_expression = AsyncMock(
+        middleware.persona_runtime = MagicMock()
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
             return_value=PersonaExpressionResult(spoken_reply="我先看一下。")
         )
         middleware.router_agent = MagicMock()
@@ -938,8 +922,8 @@ class TestInteractionMiddleware:
             controller,
         )
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.expression_agent = MagicMock()
-        middleware.expression_agent.generate_expression = AsyncMock()
+        middleware.persona_runtime = MagicMock()
+        middleware.persona_runtime.express_visible_reply = AsyncMock()
         middleware.router_agent = MagicMock()
         middleware.router_agent.route = AsyncMock()
 
@@ -948,7 +932,7 @@ class TestInteractionMiddleware:
 
         assert queue.get_nowait() is live_event
         assert queue.empty()
-        middleware.expression_agent.generate_expression.assert_not_awaited()
+        middleware.persona_runtime.express_visible_reply.assert_not_awaited()
         middleware.router_agent.route.assert_not_awaited()
         controller.emit_immediate_spoken_reply.assert_not_awaited()
         assert (

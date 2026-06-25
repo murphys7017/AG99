@@ -9,10 +9,11 @@ This module defines the minimal identity model for plugin output:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterator
+from typing import Any
 
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -46,16 +47,11 @@ class PluginOutputRequest:
     message: MessageChain
     mode: PluginOutputMode = PluginOutputMode.DIRECT
     source: str = "plugin"
-    metadata: dict[str, Any] | None = None
 
 
 # Extra keys used on AstrMessageEvent for output-origin tracking.
 OUTPUT_ORIGIN_EXTRA_KEY = "_interaction_output_origin"
 PLUGIN_OUTPUT_MODE_EXTRA_KEY = "_interaction_plugin_output_mode"
-PLUGIN_OUTPUT_METADATA_EXTRA_KEY = "_interaction_plugin_output_metadata"
-PERSONA_REWRITE_FAILED_EXTRA_KEY = "_interaction_persona_rewrite_failed"
-PERSONA_REWRITE_UNAVAILABLE_EXTRA_KEY = "_interaction_persona_rewrite_unavailable"
-
 # Diagnostic extras (read-only, for testing / debugging).
 PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY = "_interaction_plugin_output_last_mode"
 PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY = "_interaction_plugin_output_last_kind"

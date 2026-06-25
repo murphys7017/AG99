@@ -872,16 +872,12 @@ class TestPluginOutputHelpers:
         self, astr_message_event
     ):
         """emit_output(mode='persona') should fall back to event.send() when
-        no output controller is attached, and record a diagnostic extra."""
+        no output controller is attached."""
         astr_message_event.send = AsyncMock()
         await astr_message_event.emit_output(
             MessageChain([Plain("persona test")]), mode="persona"
         )
         astr_message_event.send.assert_awaited_once()
-        assert (
-            astr_message_event.get_extra("_interaction_persona_rewrite_unavailable")
-            is True
-        )
 
     @pytest.mark.asyncio
     async def test_send_direct_calls_emit_output(self, astr_message_event):
@@ -896,10 +892,6 @@ class TestPluginOutputHelpers:
         astr_message_event.send = AsyncMock()
         await astr_message_event.send_persona(MessageChain([Plain("ps")]))
         astr_message_event.send.assert_awaited_once()
-        assert (
-            astr_message_event.get_extra("_interaction_persona_rewrite_unavailable")
-            is True
-        )
 
     @pytest.mark.asyncio
     async def test_emit_output_with_controller_delegates_to_capture_plugin_output(

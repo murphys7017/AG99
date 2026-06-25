@@ -558,16 +558,14 @@ class AstrMessageEvent(abc.ABC):
         message: MessageChain,
         *,
         mode: str = "direct",
-        metadata: dict | None = None,
     ) -> None:
         """Unified plugin output entry point.
 
         When an interaction output controller is attached (middleware enabled),
         the request is forwarded to ``capture_plugin_output`` on the controller.
 
-        When no controller is available, ``direct`` falls back to the legacy
-        ``self.send(message)`` while ``persona`` also falls back but records
-        a diagnostic extra so the caller can observe the gap.
+        When no controller is available, the helper falls back to the legacy
+        ``self.send(message)`` path.
 
         This helper does **not** perform persona rewriting itself — it only
         dispatches to the right Output Runtime entry.
@@ -578,37 +576,30 @@ class AstrMessageEvent(abc.ABC):
                 message,
                 self,
                 mode=mode,
-                metadata=metadata,
             )
             return
 
-        if mode == "persona":
-            self.set_extra("_interaction_persona_rewrite_unavailable", True)
         await self.send(message)
 
     async def send_direct(
         self,
         message: MessageChain,
-        *,
-        metadata: dict | None = None,
     ) -> None:
         """Deliver a plugin message without persona rewriting.
 
         Equivalent to ``emit_output(message, mode="direct")``.
         """
-        await self.emit_output(message, mode="direct", metadata=metadata)
+        await self.emit_output(message, mode="direct")
 
     async def send_persona(
         self,
         message: MessageChain,
-        *,
-        metadata: dict | None = None,
     ) -> None:
         """Deliver a plugin message through the persona expression path.
 
         Equivalent to ``emit_output(message, mode="persona")``.
         """
-        await self.emit_output(message, mode="persona", metadata=metadata)
+        await self.emit_output(message, mode="persona")
 
     async def react(self, emoji: str) -> None:
         """对消息添加表情回应。

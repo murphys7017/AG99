@@ -8,16 +8,16 @@ from astrbot.core.interaction.contributors import (
     InteractionResultContribution,
     InteractionResultView,
 )
-from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
-from astrbot.core.interaction.finalizer import finalize_response
+from astrbot.core.interaction.effects import PersonaEffectCall
+from astrbot.core.interaction.expression_agent import (
+    PersonaExpressionRequest,
+    PersonaExpressionResult,
+)
 from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
 )
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.turn_state import (
-    InteractionContextMaterial,
-    InteractionStreamState,
-    InteractionTurnState,
     append_interaction_turn_visible_output,
     get_interaction_turn_finalized_material,
     get_interaction_turn_state,
@@ -27,7 +27,6 @@ from astrbot.core.interaction.turn_state import (
     set_interaction_turn_finalized_material,
 )
 from astrbot.core.interaction.types import (
-    FinalizerMode,
     InteractionAgentConfig,
     InteractionDecision,
     RouteMode,
@@ -43,7 +42,6 @@ from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.platform.sources.webchat.webchat_event import WebChatMessageEvent
-from astrbot.core.provider.entities import LLMResponse
 
 
 class ConcreteMessageEvent(AstrMessageEvent):
@@ -51,20 +49,11 @@ class ConcreteMessageEvent(AstrMessageEvent):
         await super().send(message)
 
 
-class FakeChatProvider:
-    def __init__(
-        self,
-        response_text: str = '{"should_interject": true, "reply": "还在看。"}',
-    ) -> None:
-        self.response_text = response_text
-        self.calls = []
-
-    def get_model(self):
-        return "fake-chat"
-
-    async def text_chat(self, **kwargs):
-        self.calls.append(kwargs)
-        return LLMResponse(role="assistant", completion_text=self.response_text)
+async def _identity_visible_reply_renderer(event, request):  # noqa: ANN001
+    del event
+    return PersonaExpressionResult(
+        spoken_reply=request.source_text or request.observed_text
+    )
 
 
 def test_output_contribution_converts_to_result_contribution():
@@ -402,8 +391,9 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
 
     with patch(
@@ -438,7 +428,8 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
     plugin_context.list_interaction_result_contributors.return_value = [contributor]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     decision = InteractionDecision(
         should_emit_immediate_reply=True,
@@ -485,8 +476,9 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
 
         async def collect(self, event, plugin_context, view):
             assert view.purpose == "core_reply"
-            assert tuple(view.effect_calls) == (effect_call,)
-            assert view["effect_calls"][0]["name"] == "ag99live.motion"
+            assert view["effect_calls"][0]["name"] == effect_call.name
+            assert view["effect_calls"][0]["plugin_id"] == effect_call.plugin_id
+            assert view["effect_calls"][0]["arguments"]["axes"]["head_yaw"] == 40
             return InteractionResultContribution(
                 plugin_id=self.plugin_id,
                 priority=1,
@@ -498,8 +490,9 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -548,7 +541,8 @@ async def test_immediate_reply_materializes_tts_without_reasoning_or_t2i(webchat
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     controller.show_reasoning = True
     webchat_event.set_extra("_llm_reasoning_content", "hidden chain of thought")
@@ -586,8 +580,6 @@ async def test_immediate_reply_materializes_tts_without_reasoning_or_t2i(webchat
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
     assert turn_state.utterances[0].text == "嗯，我来看看。"
-    assert turn_state.utterances[0].metadata["delivered_as"] == "record"
-    assert turn_state.utterances[0].metadata["tts"][0]["tts_audio_path"] == "voice.wav"
     assert (
         turn_state.utterances[0].metadata["tts"][0]["tts_provider_id"]
         == "tts-provider"
@@ -629,7 +621,8 @@ async def test_immediate_reply_uses_session_scoped_tts_config(webchat_event):
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     decision = InteractionDecision(
         should_emit_immediate_reply=True,
@@ -680,7 +673,8 @@ async def test_immediate_reply_dual_output_keeps_single_semantic_text(
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     decision = InteractionDecision(
         should_emit_immediate_reply=True,
@@ -734,7 +728,8 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
 ):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     decision = InteractionDecision(
         should_emit_immediate_reply=True,
@@ -844,8 +839,9 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -899,8 +895,9 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
 ):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     set_interaction_turn_decision(
         webchat_event,
@@ -967,7 +964,8 @@ async def test_core_final_result_is_consumed_only_once_for_segmented_sends(
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1006,7 +1004,8 @@ async def test_result_contributor_receives_read_only_view(webchat_event):
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1065,7 +1064,8 @@ async def test_result_contributor_failure_is_recorded(webchat_event):
     ]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1096,7 +1096,8 @@ async def test_output_controller_requires_persist_callback_for_interaction_compl
 ):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1135,8 +1136,9 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
 ):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     append_interaction_turn_visible_output(
         webchat_event,
@@ -1194,19 +1196,19 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
 
 
 @pytest.mark.asyncio
-async def test_force_finalizer_failure_sends_raw_core_result(
+async def test_core_reply_uses_unified_visible_reply_renderer(
     webchat_event,
 ):
     queue = asyncio.Queue()
     plugin_context = MagicMock()
-    plugin_context.get_provider_by_id.return_value = None
     plugin_context.list_interaction_result_contributors.return_value = []
+    visible_reply_renderer = AsyncMock(
+        return_value=PersonaExpressionResult(spoken_reply="整理后的最终回复")
+    )
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.FORCE,
-            finalizer_provider_id="missing",
-        ),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1225,99 +1227,14 @@ async def test_force_finalizer_failure_sends_raw_core_result(
         )
 
     payload = queue.get_nowait()
-    assert payload["data"] == "raw core result"
+    assert payload["data"] == "整理后的最终回复"
     assert queue.empty()
-    assert webchat_event.get_extra("_interaction_finalizer_failed") is True
-    assert (
-        webchat_event.get_extra("_interaction_finalizer_failure_reason")
-        == "provider_unavailable"
-    )
-    turn_state = get_interaction_turn_state(webchat_event)
-    assert turn_state is not None
-    assert turn_state.failures[-1].stage == "finalizer"
-    assert turn_state.failures[-1].reason == "provider_unavailable"
-
-
-@pytest.mark.asyncio
-async def test_finalizer_uses_role_specific_timeout(
-    webchat_event,
-    monkeypatch,
-):
-    provider = FakeChatProvider(response_text="final answer")
-    plugin_context = MagicMock()
-    plugin_context.get_provider_by_id.return_value = provider
-    captured = {}
-
-    async def fake_wait_for(awaitable, timeout):
-        captured["timeout"] = timeout
-        return await awaitable
-
-    monkeypatch.setattr(
-        "astrbot.core.interaction.finalizer.Provider",
-        FakeChatProvider,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.interaction.finalizer.asyncio.wait_for",
-        fake_wait_for,
-    )
-
-    result = await finalize_response(
-        event=webchat_event,
-        plugin_context=plugin_context,
-        config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.FORCE,
-            finalizer_provider_id="finalizer_model",
-            finalizer_temperature=0.2,
-            finalizer_timeout=4.5,
-        ),
-        core_result_text="raw core result",
-        immediate_reply="等我看看。",
-    )
-
-    assert result == "final answer"
-    plugin_context.get_provider_by_id.assert_called_once_with("finalizer_model")
-    assert provider.calls[0]["temperature"] == 0.2
-    assert captured["timeout"] == 4.5
-
-
-@pytest.mark.asyncio
-async def test_force_finalizer_failure_records_failure_without_notice(
-    webchat_event,
-):
-    queue = asyncio.Queue()
-    plugin_context = MagicMock()
-    plugin_context.get_provider_by_id.return_value = None
-    plugin_context.list_interaction_result_contributors.return_value = []
-    controller = InteractionOutputController(
-        plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.FORCE,
-            finalizer_provider_id="missing",
-        ),
-    )
-    webchat_event.set_result(
-        MessageEventResult(
-            chain=[Plain("raw core result")],
-            result_content_type=ResultContentType.LLM_RESULT,
-        )
-    )
-
-    with patch(
-        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
-        return_value=queue,
-    ):
-        await controller.capture_message_chain(
-            MessageChain([Plain("raw core result")]),
-            webchat_event,
-        )
-
-    payload = queue.get_nowait()
-    assert payload["data"] == "raw core result"
-    assert queue.empty()
-    assert webchat_event.get_extra("_interaction_finalizer_failed") is True
-    assert (
-        webchat_event.get_extra("_interaction_finalizer_failure_reason")
-        == "provider_unavailable"
+    visible_reply_renderer.assert_awaited_once()
+    request = visible_reply_renderer.await_args.args[1]
+    assert request == PersonaExpressionRequest(
+        source_text="raw core result",
+        immediate_reply="",
+        preserve_facts=True,
     )
 
 
@@ -1330,7 +1247,8 @@ async def test_segmented_core_final_uses_full_result_once(webchat_event):
     plugin_context.list_interaction_result_contributors.return_value = [contributor]
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -1362,7 +1280,8 @@ async def test_segmented_core_final_uses_full_result_once(webchat_event):
 async def test_core_final_result_reuses_segmented_delivery_rules(webchat_event):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
         platform_settings={
             "segmented_reply": {
                 "enable": True,
@@ -1389,18 +1308,11 @@ async def test_core_final_result_reuses_segmented_delivery_rules(webchat_event):
         )
 
     first_payload = queue.get_nowait()
-    second_payload = queue.get_nowait()
-    assert first_payload["data"] == "first"
-    assert second_payload["data"] == "second"
+    assert first_payload["data"] == "first second"
     assert first_payload["platform_extras"]["turn_id"] == "turn-1"
-    assert second_payload["platform_extras"]["turn_id"] == "turn-1"
     assert (
         first_payload["platform_extras"]["visible_message_id"]
         == "turn-1::core_reply::0001"
-    )
-    assert (
-        second_payload["platform_extras"]["visible_message_id"]
-        == "turn-1::core_reply::0002"
     )
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
@@ -1408,7 +1320,6 @@ async def test_core_final_result_reuses_segmented_delivery_rules(webchat_event):
     assert turn_state.utterances[0].message_id == "turn-1::core_reply::0001"
     assert turn_state.utterances[0].delivered_message_ids == [
         "turn-1::core_reply::0001",
-        "turn-1::core_reply::0002",
     ]
     assert queue.empty()
 
@@ -1420,7 +1331,6 @@ async def test_capture_streaming_observes_core_chunks_without_interjection(
     queue = asyncio.Queue()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=5,
             stream_interjection_enabled=False,
         ),
@@ -1464,7 +1374,6 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
     queue = asyncio.Queue()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_enabled=False,
             stream_interjection_enabled=False,
         ),
@@ -1522,7 +1431,6 @@ async def test_capture_streaming_uses_audio_chunk_text_for_live_material(
     queue = asyncio.Queue()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_enabled=False,
             stream_interjection_enabled=False,
         ),
@@ -1579,10 +1487,10 @@ async def test_capture_streaming_does_not_block_core_chunks(webchat_event):
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=5,
             stream_interjection_enabled=True,
         ),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
 
     async def generator():
@@ -1614,10 +1522,10 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=5,
             stream_interjection_enabled=True,
         ),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
 
     async def generator():
@@ -1691,10 +1599,10 @@ async def test_capture_streaming_observes_final_short_output(webchat_event):
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=200,
             stream_interjection_enabled=True,
         ),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
 
     async def generator():
@@ -1731,7 +1639,6 @@ async def test_stream_decider_receives_read_only_stream_view(webchat_event):
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=5,
             stream_interjection_enabled=True,
         ),
@@ -1764,7 +1671,6 @@ async def test_stream_decider_failure_records_turn_failure(webchat_event):
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=5,
             stream_interjection_enabled=True,
         ),
@@ -1818,7 +1724,6 @@ async def test_stream_interjection_provider_missing_records_turn_failure(
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=5,
             stream_interjection_enabled=True,
         ),
@@ -1840,10 +1745,7 @@ async def test_stream_interjection_provider_missing_records_turn_failure(
         for failure in turn_state.failures
         if failure.stage == "stream_interjection"
     ]
-    assert failure_reasons == [
-        "invalid_plugin_payload",
-        "provider_unavailable",
-    ]
+    assert failure_reasons == ["invalid_plugin_payload"]
     assert all(
         failure.user_visible_action == "continue_core_stream"
         for failure in turn_state.failures
@@ -1852,40 +1754,20 @@ async def test_stream_interjection_provider_missing_records_turn_failure(
 
 
 @pytest.mark.asyncio
-async def test_stream_interjection_uses_role_specific_model_config(
+async def test_stream_interjection_uses_unified_visible_reply_renderer(
     webchat_event,
-    monkeypatch,
 ):
-    provider = FakeChatProvider()
-    plugin_context = MagicMock()
-    plugin_context.list_interaction_stream_deciders.return_value = []
-    plugin_context.get_provider_by_id.return_value = provider
-    captured = {}
+    visible_reply_renderer = AsyncMock(
+        return_value=PersonaExpressionResult(spoken_reply="还在看。")
+    )
     controller = InteractionOutputController(
-        plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            stream_interjection_provider_id="stream_model",
-            stream_interjection_temperature=0.15,
-            stream_interjection_timeout=2.5,
             stream_interjection_enabled=True,
         ),
-    )
-    controller._build_stream_interjection_prompt = AsyncMock(return_value="prompt")
-
-    async def fake_wait_for(awaitable, timeout):
-        captured["timeout"] = timeout
-        return await awaitable
-
-    monkeypatch.setattr(
-        "astrbot.core.interaction.output_controller.Provider",
-        FakeChatProvider,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.interaction.output_controller.asyncio.wait_for",
-        fake_wait_for,
+        visible_reply_renderer=visible_reply_renderer,
     )
 
-    decision = await controller._decide_stream_interjection_with_model(
+    decision = await controller._decide_stream_interjection(
         webchat_event,
         observed_text="core is still working",
         total_text="core is still working",
@@ -1895,110 +1777,14 @@ async def test_stream_interjection_uses_role_specific_model_config(
 
     assert decision.should_interject is True
     assert decision.reply == "还在看。"
-    plugin_context.get_provider_by_id.assert_called_once_with("stream_model")
-    assert provider.calls[0]["temperature"] == 0.15
-    assert captured["timeout"] == 2.5
-
-
-@pytest.mark.asyncio
-async def test_stream_prompt_reuses_turn_context_material(webchat_event):
-    controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
-            stream_interjection_enabled=True,
-        ),
-    )
-    turn_state = InteractionTurnState(
-        turn_id="turn-1",
-        context_material=InteractionContextMaterial(
-            persona_payload={"persona_id": "alice"},
-            memory_payload={"recent_turns": [{"user": "u1", "assistant": "a1"}]},
-            recent_messages=[
-                {
-                    "source": "interaction_memory",
-                    "user_message": {"role": "user", "content": "u1"},
-                    "assistant_message": {"role": "assistant", "content": "a1"},
-                }
-            ],
-        ),
-    )
-    webchat_event.set_extra("_interaction_turn_state", turn_state)
-
-    with patch(
-        "astrbot.core.interaction.output_controller.build_interaction_context_pack",
-        new=AsyncMock(side_effect=AssertionError("should not rebuild context")),
-    ):
-        prompt = await controller._build_stream_interjection_prompt(
-            webchat_event,
-            observed_text="hello",
-            total_text="hello",
-            window_index=1,
-            is_final=False,
-        )
-
-    assert '"persona_id": "alice"' in prompt
-    assert '"recent_turns"' in prompt
-    assert '"existing_turn_utterances"' in prompt
-
-
-@pytest.mark.asyncio
-async def test_stream_prompt_uses_stream_state_for_current_buffer(webchat_event):
-    controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
-            stream_interjection_enabled=True,
-        ),
-    )
-    turn_state = InteractionTurnState(
-        turn_id="turn-1",
-        stream_state=InteractionStreamState(
-            total_text="hello from state",
-            pending_text="from state",
-        ),
-    )
-    webchat_event.set_extra("_interaction_turn_state", turn_state)
-
-    prompt = await controller._build_stream_interjection_prompt(
-        webchat_event,
-        observed_text="hello",
-        total_text="stale total",
-        window_index=1,
-        is_final=False,
-    )
-
-    assert '"core_stream_so_far": "hello from state"' in prompt
-    assert '"core_stream_pending": "from state"' in prompt
-
-
-@pytest.mark.asyncio
-async def test_stream_prompt_records_missing_context_store(webchat_event):
-    plugin_context = MagicMock()
-    plugin_context.get_config.return_value = {
-        "interaction_middleware": {},
-        "provider_settings": {},
-        "provider_stt_settings": {},
-        "provider_tts_settings": {},
-    }
-    controller = InteractionOutputController(
-        plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
-            stream_interjection_enabled=True,
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="interaction_memory_store"):
-        await controller._build_stream_interjection_prompt(
-            webchat_event,
-            observed_text="hello",
-            total_text="hello",
-            window_index=1,
-            is_final=False,
-        )
-
-    assert webchat_event.get_extra("_interaction_stream_context_build_failed") is True
-    assert "interaction_memory_store" in webchat_event.get_extra(
-        "_interaction_stream_context_build_failure_reason",
+    visible_reply_renderer.assert_awaited_once()
+    request = visible_reply_renderer.await_args.args[1]
+    assert request == PersonaExpressionRequest(
+        observed_text="core is still working",
+        total_text="core is still working",
+        pending_text="",
+        short_reply=True,
+        allow_empty=True,
     )
 
 
@@ -2009,7 +1795,6 @@ async def test_streaming_finish_marker_is_not_sent_after_streaming_delivery(
     queue = asyncio.Queue()
     controller = InteractionOutputController(
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_observation_min_chars=20,
             stream_interjection_enabled=False,
         ),
@@ -2067,8 +1852,9 @@ async def test_tts_materialization_records_record_delivery_but_memory_uses_text(
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -2102,12 +1888,7 @@ async def test_tts_materialization_records_record_delivery_but_memory_uses_text(
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
     assert turn_state.utterances[0].text == "semantic answer"
-    assert turn_state.utterances[0].metadata["delivered_as"] == "record"
-    assert turn_state.utterances[0].metadata["tts"][0]["tts_audio_path"] == "voice.wav"
-    assert (
-        turn_state.utterances[0].metadata["tts"][0]["tts_provider_id"]
-        == "tts-provider"
-    )
+    assert turn_state.utterances[0].metadata == {}
     assert webchat_event.get_extra("_interaction_finalized_turn_material")[
         "assistant_text"
     ] == "semantic answer"
@@ -2129,8 +1910,9 @@ async def test_core_reply_tts_merges_default_and_session_config(webchat_event):
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_extra(
         "_astrbot_config",
@@ -2198,7 +1980,6 @@ async def test_streaming_core_chunks_are_not_materialized_per_chunk(webchat_even
     controller = InteractionOutputController(
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(
-            finalizer_mode=FinalizerMode.OFF,
             stream_interjection_enabled=False,
         ),
         persist_callback=_mark_completed_callback,
@@ -2251,8 +2032,9 @@ async def test_t2i_materialization_records_image_delivery_but_memory_uses_text(
     }
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     long_text = "这是一段很长的语义回复，" * 8
     webchat_event.set_result(
@@ -2287,11 +2069,6 @@ async def test_t2i_materialization_records_image_delivery_but_memory_uses_text(
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
     assert turn_state.utterances[0].text == long_text
-    assert turn_state.utterances[0].metadata["delivered_as"] == "image"
-    assert (
-        turn_state.utterances[0].metadata["t2i_image_url"]
-        == "https://example.test/render.png"
-    )
     assert webchat_event.get_extra("_interaction_finalized_turn_material")[
         "assistant_text"
     ] == long_text
@@ -2314,8 +2091,9 @@ async def test_tts_materialization_failure_falls_back_to_text(webchat_event):
     plugin_context.get_using_tts_provider.return_value = None
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -2373,8 +2151,9 @@ async def test_tts_file_registration_failure_falls_back_to_text(
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -2443,8 +2222,9 @@ async def test_tts_file_service_config_missing_falls_back_to_text(
     plugin_context.get_using_tts_provider.return_value = tts_provider
     controller = InteractionOutputController(
         plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -2487,7 +2267,8 @@ async def test_tts_file_service_config_missing_falls_back_to_text(
 @pytest.mark.asyncio
 async def test_end_payload_keeps_turn_id(webchat_event):
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
     webchat_event.complete_visible_turn = AsyncMock()
 
@@ -2504,7 +2285,8 @@ async def test_send_none_uses_event_visible_completion_and_propagates_failure(
         side_effect=RuntimeError("queue closed")
     )
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
+        visible_reply_renderer=_identity_visible_reply_renderer,
     )
 
     with pytest.raises(RuntimeError, match="queue closed"):
@@ -2527,7 +2309,7 @@ async def test_capture_plugin_output_direct_adds_visible_output(webchat_event):
         return_value=queue,
     ):
         controller = InteractionOutputController(
-            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            interaction_config=InteractionAgentConfig(),
             persist_callback=_mark_completed_callback,
         )
         await controller.capture_plugin_output(
@@ -2545,51 +2327,46 @@ async def test_capture_plugin_output_direct_adds_visible_output(webchat_event):
 
 
 @pytest.mark.asyncio
-async def test_capture_plugin_output_persona_fallback_to_direct_on_error(
+async def test_capture_plugin_output_persona_requires_visible_reply_renderer(
     webchat_event,
 ):
-    """When persona rewrite raises, the output must degrade to plugin_direct."""
-    from astrbot.core.interaction.output_modes import (
-        PERSONA_REWRITE_FAILED_EXTRA_KEY,
-        PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
-    )
-
-    queue = asyncio.Queue()
-    with patch(
-        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
-        return_value=queue,
-    ):
-        controller = InteractionOutputController(
-            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
-            persist_callback=_mark_completed_callback,
-        )
-        # No plugin_context means persona rewrite will fail
-        await controller.capture_plugin_output(
-            MessageChain([Plain("hello from plugin")]),
-            webchat_event,
-            mode="persona",
-        )
-
-    assert webchat_event.get_extra(PERSONA_REWRITE_FAILED_EXTRA_KEY) is True
-    assert webchat_event.get_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY) == "plugin_direct"
-
-
-@pytest.mark.asyncio
-async def test_capture_plugin_output_persona_uses_persona_renderer(webchat_event):
     from astrbot.core.interaction.output_modes import PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY
 
     queue = asyncio.Queue()
-    persona_renderer = AsyncMock(
-        return_value=MessageChain([Plain("人格化后的回复")])
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(),
+            persist_callback=_mark_completed_callback,
+        )
+        with pytest.raises(RuntimeError, match="visible_reply_renderer unavailable"):
+            await controller.capture_plugin_output(
+                MessageChain([Plain("hello from plugin")]),
+                webchat_event,
+                mode="persona",
+            )
+
+    assert webchat_event.get_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY) is None
+
+
+@pytest.mark.asyncio
+async def test_capture_plugin_output_persona_uses_visible_reply_renderer(webchat_event):
+    from astrbot.core.interaction.output_modes import PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY
+
+    queue = asyncio.Queue()
+    visible_reply_renderer = AsyncMock(
+        return_value=PersonaExpressionResult(spoken_reply="人格化后的回复")
     )
     with patch(
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
         controller = InteractionOutputController(
-            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            interaction_config=InteractionAgentConfig(),
             persist_callback=_mark_completed_callback,
-            persona_output_renderer=persona_renderer,
+            visible_reply_renderer=visible_reply_renderer,
         )
         await controller.capture_plugin_output(
             MessageChain([Plain("hello from plugin")]),
@@ -2597,10 +2374,13 @@ async def test_capture_plugin_output_persona_uses_persona_renderer(webchat_event
             mode="persona",
         )
 
-    persona_renderer.assert_awaited_once()
-    assert persona_renderer.await_args.args[0] is webchat_event
-    assert persona_renderer.await_args.args[1].get_plain_text() == "hello from plugin"
-    assert persona_renderer.await_args.args[2] is None
+    visible_reply_renderer.assert_awaited_once()
+    request = visible_reply_renderer.await_args.args[1]
+    assert request == PersonaExpressionRequest(
+        source_text="hello from plugin",
+        immediate_reply="",
+        preserve_facts=True,
+    )
     assert webchat_event.get_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY) == "plugin_persona"
     outputs = get_interaction_turn_visible_outputs(webchat_event)
     assert any(
@@ -2618,7 +2398,7 @@ async def test_capture_plugin_output_does_not_set_model_result(webchat_event):
         return_value=queue,
     ):
         controller = InteractionOutputController(
-            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            interaction_config=InteractionAgentConfig(),
             persist_callback=_mark_completed_callback,
         )
         await controller.capture_plugin_output(
@@ -2643,7 +2423,7 @@ async def test_capture_plugin_output_records_visible_output_and_finalized_materi
         return_value=queue,
     ):
         controller = InteractionOutputController(
-            interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+            interaction_config=InteractionAgentConfig(),
             persist_callback=_mark_completed_callback,
         )
         await controller.capture_plugin_output(
@@ -2664,7 +2444,7 @@ async def test_capture_plugin_output_records_visible_output_and_finalized_materi
 async def test_capture_plugin_output_skip_when_message_is_none(webchat_event):
     """capture_plugin_output(None) should be a no-op."""
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(finalizer_mode=FinalizerMode.OFF),
+        interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
     )
     await controller.capture_plugin_output(None, webchat_event, mode="direct")

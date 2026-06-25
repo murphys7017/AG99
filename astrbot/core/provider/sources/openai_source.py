@@ -1309,6 +1309,7 @@ class ProviderOpenAIOfficial(Provider):
                 llm_response = await self._query(payloads, func_tool)
                 break
             except Exception as e:
+                logger.error(f"API 调用失败，重试 {e} 次仍然失败。")
                 last_exception = e
                 (
                     success,

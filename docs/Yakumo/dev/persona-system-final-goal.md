@@ -58,7 +58,7 @@ Input Bus
   -> Postprocess / Memory / Trigger
 ```
 
-这个流程里，`first_response`、`stream_interjection`、`finalizer` 不应该被看成彼此独立的系统。它们本质上是 Persona Runtime 在不同阶段被调用。
+这个流程里，`first_response`、`stream_interjection`、旧 `finalizer` 概念都不应该被看成彼此独立的系统。它们本质上是同一个 Persona Runtime visible-reply 入口在不同材料下的调用。
 
 ## Input Bus
 
@@ -116,7 +116,7 @@ persona.on_turn_finalize(turn_material)
 ```text
 first_response
 stream_interjection
-finalizer
+? finalizer??????
 ```
 
 都应该逐步收口为 Persona Runtime 的阶段性能力，而不是继续作为散落在不同模块里的独立概念。

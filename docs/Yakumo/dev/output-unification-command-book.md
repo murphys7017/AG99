@@ -1,5 +1,11 @@
 # Output Unification Command Book
 
+> 状态说明（2026-06-25）：
+> 本文档保留为历史设计记录。
+> 当前 interaction 主链路已经进一步收口为单一 visible-reply persona 入口：
+> `first_response`、插件 persona 输出、core final reply、stream interjection 共用同一 persona prompt/render/tool-call JSON 路径；
+> 文中的独立 `finalizer`、独立 stream 文案生成、以及 phase 化 persona 设计不再代表当前实现。
+
 这是一份给其他 AI 编码代理使用的命令书。
 
 目标不是讨论方案，而是指导实现：
@@ -352,19 +358,17 @@ async def emit_output(
 推荐伪代码：
 
 ```python
-async def emit_output(self, message, *, mode="direct", metadata=None):
+async def emit_output(self, message, *, mode="direct", ):
     controller = self.get_extra("_interaction_output_controller")
     if controller is not None:
         await controller.capture_plugin_output(
             message,
             self,
             mode=mode,
-            metadata=metadata,
         )
         return
 
     if mode == "persona":
-        self.set_extra("_interaction_persona_rewrite_unavailable", True)
     await self.send(message)
 ```
 
@@ -653,7 +657,7 @@ async def _rewrite_plugin_output_via_persona(
 推荐伪代码：
 
 ```python
-async def capture_plugin_output(..., mode="direct", metadata=None):
+async def capture_plugin_output(..., mode="direct", ):
     if message is None:
         return
 
@@ -664,8 +668,7 @@ async def capture_plugin_output(..., mode="direct", metadata=None):
                 message = await self._rewrite_plugin_output_via_persona(
                     event,
                     message,
-                    metadata=metadata,
-                )
+                        )
                 kind = "plugin_persona"
             except Exception:
                 event.set_extra("_interaction_persona_rewrite_failed", True)
@@ -811,7 +814,6 @@ async def send_persona(
     await self.emit_output(
         message,
         mode="persona",
-        metadata=metadata,
     )
 ```
 
@@ -827,7 +829,6 @@ async def send_direct(
     await self.emit_output(
         message,
         mode="direct",
-        metadata=metadata,
     )
 ```
 
@@ -902,7 +903,7 @@ async def send(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     if persona:
-        await self.emit_output(message, mode="persona", metadata=metadata)
+        await self.emit_output(message, mode="persona")
         return
 
     # 保留原平台发送逻辑

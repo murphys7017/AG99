@@ -18,7 +18,6 @@ def _effect(
     name: str = "ag99live.motion",
     *,
     plugin_id: str = "plugin_a",
-    phases: tuple[str, ...] = (),
     priority: int = 100,
     enabled: bool = True,
     metadata: dict | None = None,
@@ -32,7 +31,6 @@ def _effect(
             "properties": {"axes": {"type": "object"}},
             "required": [],
         },
-        phases=phases,
         priority=priority,
         enabled=enabled,
         metadata=metadata or {"internal": "not-for-prompt"},
@@ -53,7 +51,7 @@ def test_empty_effect_list_does_not_generate_effect_calls_schema():
     schema = build_persona_expression_tool_parameters()
 
     assert "effect_calls" not in schema["properties"]
-    assert "metadata" in schema["properties"]
+    assert "metadata" not in schema["properties"]
 
 
 def test_effect_schema_uses_stable_portable_enum_without_strict_union_keywords():
@@ -97,7 +95,7 @@ def test_context_rejects_duplicate_effect_name():
         ctx.register_persona_effect(_effect("ag99live.motion", plugin_id="plugin_b"))
 
 
-def test_context_lists_effects_by_phase_enabled_state_and_stable_order():
+def test_context_lists_effects_by_enabled_state_and_stable_order():
     ctx = _init_effect_registry(_context())
     ctx.register_persona_effect(
         _effect("voice.emotion", plugin_id="plugin_b", priority=20)
@@ -106,7 +104,6 @@ def test_context_lists_effects_by_phase_enabled_state_and_stable_order():
         _effect(
             "ag99live.motion",
             plugin_id="plugin_a",
-            phases=("first_response",),
             priority=10,
         )
     )
@@ -116,9 +113,6 @@ def test_context_lists_effects_by_phase_enabled_state_and_stable_order():
 
     assert [effect.name for effect in ctx.list_persona_effects()] == [
         "ag99live.motion",
-        "voice.emotion",
-    ]
-    assert [effect.name for effect in ctx.list_persona_effects(phase="executor_progress")] == [
         "voice.emotion",
     ]
 

@@ -795,21 +795,13 @@ class Context:
             effect.name,
         )
 
-    def list_persona_effects(
-        self,
-        *,
-        phase: str | None = None,
-    ) -> list[PersonaEffectSpec]:
-        from astrbot.core.interaction.effects import (
-            clone_persona_effect_spec,
-            persona_effect_applies_to_phase,
-        )
+    def list_persona_effects(self) -> list[PersonaEffectSpec]:
+        from astrbot.core.interaction.effects import clone_persona_effect_spec
 
         registrations = [
             registration
             for registration in self._persona_effects
             if self._is_persona_effect_active(registration)
-            and persona_effect_applies_to_phase(registration.effect, phase)
         ]
         registrations.sort(
             key=lambda registration: (

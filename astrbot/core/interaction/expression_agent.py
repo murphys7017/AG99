@@ -35,7 +35,6 @@ from .decision_agent import (
 from .effects import (
     PersonaEffectCall,
     PersonaEffectSpec,
-    PersonaExpressionPhase,
     parse_persona_effect_calls_with_issues,
 )
 from .memory_store import InteractionMemoryStore
@@ -45,10 +44,14 @@ from .types import InteractionAgentConfig
 
 @dataclass(slots=True)
 class PersonaExpressionRequest:
-    phase: PersonaExpressionPhase
     source_text: str = ""
-    executor_material: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    immediate_reply: str = ""
+    observed_text: str = ""
+    total_text: str = ""
+    pending_text: str = ""
+    preserve_facts: bool = False
+    short_reply: bool = False
+    allow_empty: bool = False
 
 
 @dataclass(slots=True)
@@ -64,22 +67,11 @@ class InteractionExpressionError(RuntimeError):
         super().__init__(message or reason)
 
 
-def phase_requires_spoken_reply(phase: PersonaExpressionPhase) -> bool:
-    return phase in {
-        "first_response",
-        "plugin_output",
-        "final_response",
-        "executor_result",
-    }
-
-
 def validate_persona_expression_result(
-    phase: PersonaExpressionPhase,
+    req: PersonaExpressionRequest,
     result: PersonaExpressionResult,
 ) -> None:
-    if phase_requires_spoken_reply(phase) and not result.spoken_reply:
-        raise InteractionExpressionError("empty_output")
-    if not result.spoken_reply and not result.effect_calls:
+    if not result.spoken_reply and not req.allow_empty:
         raise InteractionExpressionError("empty_output")
 
 
@@ -88,10 +80,7 @@ def build_persona_runtime_system_prompt() -> str:
         "你负责以当前人格对用户表达。\n"
         "根据本次调用提供的场景，生成自然语言表达以及必要的人格 effect 调用。\n"
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
-        "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。\n"
-        "如果场景为 first_response 且输入明显需要工具/搜索/代码/检索，"
-        "只给自然的即时回应，不声称已完成。\n"
-        "如果场景为 plugin_output，必须保持原始事实，只做人格化改写。"
+        "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
 
 
@@ -100,7 +89,6 @@ def build_persona_expression_tool_parameters(
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "spoken_reply": {"type": "string"},
-        "metadata": {"type": "object", "additionalProperties": True},
     }
     effect_names = sorted(
         {
@@ -263,34 +251,8 @@ def extract_persona_expression_result(
 
 
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
-    if req.phase == "plugin_output":
-        return (
-            "请将下面这段插件输出，改写成当前人格会对用户说的话，"
-            "并按 persona_expression 输出协议返回。\n\n"
-            f"插件输出：\n{req.source_text}"
-        )
-    return "请按 persona_expression 输出协议生成本轮用户可见回应。"
-
-
-# ── 兼容旧接口的系统 prompt 构建函数（被 add_*_slots_to_pack 引用）──────────
-def build_fast_expression_system_prompt() -> str:
-    return build_persona_runtime_system_prompt()
-
-
-def build_fast_expression_prompt() -> str:
-    return _build_expression_prompt(
-        PersonaExpressionRequest(phase="first_response")
-    )
-
-
-def build_plugin_output_rewrite_system_prompt() -> str:
-    return build_persona_runtime_system_prompt()
-
-
-def build_plugin_output_rewrite_prompt(source_text: str) -> str:
-    return _build_expression_prompt(
-        PersonaExpressionRequest(phase="plugin_output", source_text=source_text)
-    )
+    del req
+    return "请按 persona_expression 输出协议生成当前人格的用户可见回应。"
 
 
 class InteractionExpressionAgent:
@@ -313,7 +275,6 @@ class InteractionExpressionAgent:
                 "provider_unavailable",
                 f"provider unavailable: provider_id={interaction_config.expression_provider_id}",
             )
-        mode = "plugin_output_rewrite" if req.phase == "plugin_output" else "fast_expression"
         turn_state = get_interaction_turn_state(event)
         if turn_state is not None:
             async with turn_state.lock:
@@ -322,8 +283,7 @@ class InteractionExpressionAgent:
                     plugin_context,
                     interaction_config,
                     provider,
-                    mode=mode,
-                    phase=req.phase,
+                    req=req,
                 )
         else:
             render_result = await self._prepare_render_result(
@@ -331,8 +291,7 @@ class InteractionExpressionAgent:
                 plugin_context,
                 interaction_config,
                 provider,
-                mode=mode,
-                phase=req.phase,
+                req=req,
             )
         event.set_extra("_interaction_expression_prompt_render_result", render_result)
         output_contract = render_result.output_contract
@@ -349,7 +308,7 @@ class InteractionExpressionAgent:
             "DIAG expression.contract: platform_id=%s session_id=%s phase=%s provider_type=%s model=%s renderer=%s strategy=%s degraded=%s tool_name=%s",
             event.get_platform_id(),
             event.session_id,
-            req.phase,
+            _describe_expression_request(req),
             provider_config.get("type", ""),
             (
                 provider.get_model()
@@ -386,7 +345,7 @@ class InteractionExpressionAgent:
             "DIAG expression.response_shape: platform_id=%s session_id=%s phase=%s has_tool_calls=%s tool_names=%s text_length=%s",
             event.get_platform_id(),
             event.session_id,
-            req.phase,
+            _describe_expression_request(req),
             bool(getattr(llm_resp, "tools_call_args", None)),
             list(getattr(llm_resp, "tools_call_name", []) or []),
             len((llm_resp.completion_text or "").strip()),
@@ -401,7 +360,7 @@ class InteractionExpressionAgent:
             "DIAG expression.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
             event.get_platform_id(),
             event.session_id,
-            req.phase,
+            _describe_expression_request(req),
             bool(result.effect_calls),
             [call.name for call in result.effect_calls],
             [
@@ -413,60 +372,31 @@ class InteractionExpressionAgent:
                 if isinstance(issue, dict)
             ],
         )
-        validate_persona_expression_result(req.phase, result)
+        validate_persona_expression_result(req, result)
+        if req.short_reply and result.spoken_reply and len(result.spoken_reply) > 40:
+            result.spoken_reply = result.spoken_reply[:40].rstrip("，,。.!！?？")
         logger.info(
             "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
-            req.phase,
+            _describe_expression_request(req),
             len(result.spoken_reply),
             [call.name for call in result.effect_calls],
         )
         return result
 
-    async def generate_first_response(
+    async def express_visible_reply_result(
         self,
         event,
         plugin_context: Context,
         interaction_config: InteractionAgentConfig,
-    ) -> str:
-        """兼容包装：调用 generate_expression 并返回 spoken_reply。"""
-        result = await self.generate_expression(
-            event,
-            plugin_context,
-            interaction_config,
-            PersonaExpressionRequest(phase="first_response"),
-        )
-        return result.spoken_reply
-
-    async def rewrite_plugin_output(
-        self,
-        event,
-        plugin_context: Context,
-        interaction_config: InteractionAgentConfig,
-        source_text: str,
-    ) -> str:
-        """兼容包装：调用 generate_expression 并返回 spoken_reply。"""
-        result = await self.rewrite_plugin_output_result(
-            event,
-            plugin_context,
-            interaction_config,
-            source_text,
-        )
-        return result.spoken_reply
-
-    async def rewrite_plugin_output_result(
-        self,
-        event,
-        plugin_context: Context,
-        interaction_config: InteractionAgentConfig,
-        source_text: str,
+        req: PersonaExpressionRequest,
     ) -> PersonaExpressionResult:
         return await self.generate_expression(
             event,
             plugin_context,
             interaction_config,
-            PersonaExpressionRequest(phase="plugin_output", source_text=source_text),
+            req,
         )
 
     async def _prepare_render_result(
@@ -476,8 +406,7 @@ class InteractionExpressionAgent:
         interaction_config: InteractionAgentConfig,
         provider: Provider,
         *,
-        mode: str = "fast_expression",
-        phase: PersonaExpressionPhase = "first_response",
+        req: PersonaExpressionRequest,
     ):
         build_config = _build_decision_build_config(plugin_context, event)
         material = await self._build_or_reuse_context_material(
@@ -498,7 +427,7 @@ class InteractionExpressionAgent:
                 material.decision_context,
                 material,
                 purpose="persona_reply",
-                phase=phase,
+                phase="visible_reply",
             )
         except InteractionPromptContributorError as exc:
             raise InteractionExpressionError(exc.reason, str(exc)) from exc
@@ -507,17 +436,12 @@ class InteractionExpressionAgent:
             expression_pack,
             prompt_extensions,
         )
-        persona_effect_specs = self._list_persona_effects(plugin_context, phase=phase)
-        if mode == "plugin_output_rewrite":
-            add_plugin_output_rewrite_slots_to_pack(
-                expression_pack,
-                effects=persona_effect_specs,
-            )
-        else:
-            add_fast_expression_slots_to_pack(
-                expression_pack,
-                effects=persona_effect_specs,
-            )
+        add_visible_reply_material_slots_to_pack(expression_pack, req)
+        persona_effect_specs = self._list_persona_effects(plugin_context)
+        add_persona_runtime_slots_to_pack(
+            expression_pack,
+            effects=persona_effect_specs,
+        )
         render_result = PromptRenderEngine().render(
             expression_pack,
             event=event,
@@ -531,13 +455,11 @@ class InteractionExpressionAgent:
     @staticmethod
     def _list_persona_effects(
         plugin_context: Context,
-        *,
-        phase: PersonaExpressionPhase,
     ) -> list[PersonaEffectSpec]:
         list_effects = getattr(plugin_context, "list_persona_effects", None)
         if not callable(list_effects):
             return []
-        effects = list_effects(phase=phase)
+        effects = list_effects()
         return effects if isinstance(effects, list) else []
 
     async def _build_or_reuse_context_material(
@@ -559,7 +481,15 @@ class InteractionExpressionAgent:
         )
 
 
-def add_fast_expression_slots_to_pack(
+def _describe_expression_request(req: PersonaExpressionRequest) -> str:
+    if req.observed_text.strip():
+        return "stream_reply"
+    if req.source_text.strip():
+        return "material_reply"
+    return "direct_reply"
+
+
+def add_persona_runtime_slots_to_pack(
     pack,
     *,
     effects: Sequence[PersonaEffectSpec] = (),
@@ -575,7 +505,10 @@ def add_fast_expression_slots_to_pack(
             meta={"scope": "static", "node_type": "interaction_persona_runtime_policy"},
         )
     ]
-    for slot in build_prompt_extension_slots(extensions, source="interaction_fast_expression"):
+    for slot in build_prompt_extension_slots(
+        extensions,
+        source="interaction_persona_runtime",
+    ):
         pack.add_slot(slot)
     pack.meta["slot_count"] = len(pack.slots)
     pack.meta["output_contract"] = build_persona_expression_output_contract_for_effects(
@@ -583,25 +516,77 @@ def add_fast_expression_slots_to_pack(
     ).to_dict()
 
 
-def add_plugin_output_rewrite_slots_to_pack(
+def add_visible_reply_material_slots_to_pack(
     pack,
-    *,
-    effects: Sequence[PersonaEffectSpec] = (),
+    req: PersonaExpressionRequest,
 ) -> None:
+    source_text = req.source_text.strip()
+    observed_text = req.observed_text.strip()
+    total_text = req.total_text.strip()
+    pending_text = req.pending_text.strip()
+    immediate_reply = req.immediate_reply.strip()
+    scene_payload = {
+        "source_text": source_text,
+        "immediate_reply": immediate_reply,
+        "observed_text": observed_text,
+        "total_text": total_text,
+        "pending_text": pending_text,
+        "preserve_facts": req.preserve_facts,
+        "short_reply": req.short_reply,
+        "allow_empty": req.allow_empty,
+    }
+    scene_payload = {
+        key: value
+        for key, value in scene_payload.items()
+        if value not in {"", False}
+    }
+    if not scene_payload:
+        return
+
+    policy_lines = ["当前会提供当前轮次的表达材料。"]
+    if source_text:
+        policy_lines.append("如果提供了待表达语义材料，应以它为准组织用户可见回应。")
+    if req.preserve_facts:
+        policy_lines.append("表达时必须保留原始事实、数字、结论，不要编造。")
+    if immediate_reply:
+        policy_lines.append(
+            f"可以参考本轮之前已经说过的短回复，但不要和它矛盾：{immediate_reply}"
+        )
+    if observed_text:
+        policy_lines.append("当前处于执行过程中的短暂插话场景，不要冒充最终结果。")
+    if req.short_reply:
+        policy_lines.append("如果需要说话，只说一句简短口语短句，尽量控制在 20 字以内。")
+    if req.allow_empty:
+        policy_lines.append("如果当前没有必要说话，可以让 spoken_reply 为空字符串。")
+
     extensions: list[PromptExtension] = [
         PromptExtension(
             plugin_id="astrbot.interaction",
             mount="system",
-            title="Persona runtime policy",
+            title="Visible reply material policy",
             value_kind="text",
-            value=build_persona_runtime_system_prompt(),
-            order=0,
-            meta={"scope": "static", "node_type": "interaction_persona_runtime_policy"},
-        )
+            value="\n".join(policy_lines),
+            order=5,
+            meta={
+                "scope": "dynamic",
+                "node_type": "interaction_visible_reply_policy",
+            },
+        ),
+        PromptExtension(
+            plugin_id="astrbot.interaction",
+            mount="context",
+            title="Visible reply material",
+            value_kind="mapping",
+            value=scene_payload,
+            order=10,
+            meta={
+                "scope": "dynamic",
+                "node_type": "interaction_visible_reply_material",
+            },
+        ),
     ]
-    for slot in build_prompt_extension_slots(extensions, source="interaction_plugin_output_rewrite"):
+    for slot in build_prompt_extension_slots(
+        extensions,
+        source="interaction_visible_reply_material",
+    ):
         pack.add_slot(slot)
-    pack.meta["slot_count"] = len(pack.slots)
-    pack.meta["output_contract"] = build_persona_expression_output_contract_for_effects(
-        effects
-    ).to_dict()

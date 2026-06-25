@@ -1,5 +1,10 @@
 # Persona Effect Tool Call Implementation Plan
 
+> 状态说明（2026-06-25）：
+> 本文档中的 phase-based persona expression 设计已过时。
+> 当前实现已经改为“visible reply material”驱动：用户可见自然语言统一走一个 persona visible-reply 入口，
+> phase 不再作为 first_response / plugin_output / final_response / stream_interjection 的核心语义分叉。
+
 这份文档记录 Yakumo Persona Runtime 中人格表现插件结构化输出的实施计划。
 
 本文服从 `persona-system-final-goal.md` 已确认的运行时边界：
@@ -214,7 +219,6 @@ class PersonaEffectSpec:
     name: str
     description: str
     parameters: dict[str, Any]
-    phases: tuple[PersonaExpressionPhase, ...] = ()
     legacy_hint_names: tuple[str, ...] = ()
     priority: int = 100
     enabled: bool = True
@@ -397,7 +401,6 @@ effect_calls 是可选的人格表现意图。
 
 ```python
 def phase_requires_spoken_reply(
-    phase: PersonaExpressionPhase,
 ) -> bool:
     ...
 ```
@@ -744,4 +747,3 @@ Phase 1 完成时必须满足：
 12. 相关 interaction 回归测试通过。
 
 Phase 1 的目的不是立即让插件消费 Effect Calls，而是先把协议模型、名称所有权、兼容规则和跨 Provider schema 边界确定下来。完成后再进入 Persona Runtime 调用链改造。
-
