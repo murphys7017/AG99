@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from astrbot.core.interaction.config import (
-    is_middleware_enabled_for_platform,
+    is_middleware_enabled,
     load_interaction_agent_config,
 )
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
@@ -148,32 +148,25 @@ class TestInteractionMiddlewareConfig:
         config = {
             "interaction_middleware": {
                 "enabled": False,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {"webchat": {"enabled": True}},
             }
         }
-        assert is_middleware_enabled_for_platform("webchat", config) is False
+        assert is_middleware_enabled(config) is False
 
-    def test_explicit_platform_override_is_used(self):
+    def test_global_enable_is_used(self):
         config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": [],
-                "platforms": {"webchat": {"enabled": True}},
             }
         }
-        assert is_middleware_enabled_for_platform("webchat", config) is True
+        assert is_middleware_enabled(config) is True
 
-    def test_default_platform_policy_is_used(self):
+    def test_enable_applies_to_all_platforms(self):
         config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
             }
         }
-        assert is_middleware_enabled_for_platform("webchat", config) is True
-        assert is_middleware_enabled_for_platform("telegram", config) is False
+        assert is_middleware_enabled(config) is True
 
     def test_stream_interjection_zero_limit_is_preserved(self):
         config = {
@@ -218,10 +211,8 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
                     "stream_observation_enabled": False,
                     "stream_interjection_enabled": False,
-                    "platforms": {},
                 }
             },
             queue,
@@ -256,8 +247,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 },
                 "provider_stt_settings": {"enable": True},
             },
@@ -295,8 +284,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 },
                 "provider_stt_settings": {"enable": True},
             },
@@ -336,8 +323,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -373,10 +358,8 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
                     "stream_observation_enabled": False,
                     "stream_interjection_enabled": False,
-                    "platforms": {},
                 }
             },
             queue,
@@ -415,10 +398,8 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
                     "stream_observation_enabled": False,
                     "stream_interjection_enabled": False,
-                    "platforms": {},
                 }
             },
             queue,
@@ -460,8 +441,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -499,10 +478,8 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
                     "stream_observation_enabled": False,
                     "stream_interjection_enabled": False,
-                    "platforms": {},
                 }
             },
             queue,
@@ -548,14 +525,12 @@ class TestInteractionMiddleware:
             "history_source": "interaction.turn.material",
         }
 
-    def test_handle_inbound_skips_context_for_disabled_platform(self, webchat_event):
+    def test_handle_inbound_skips_context_when_globally_disabled(self, webchat_event):
         queue = asyncio.Queue()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
-                    "enabled": True,
-                    "default_enabled_for_platforms": [],
-                    "platforms": {},
+                    "enabled": False,
                 }
             },
             queue,
@@ -588,8 +563,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -628,8 +601,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -663,16 +634,12 @@ class TestInteractionMiddleware:
         default_config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
                 "decision_provider_id": "",
             }
         }
         runtime_config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
                 "decision_provider_id": "runtime_provider",
                 "memory_window_size": 3,
             }
@@ -710,8 +677,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -741,8 +706,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -773,8 +736,6 @@ class TestInteractionMiddleware:
                 {
                     "interaction_middleware": {
                         "enabled": True,
-                        "default_enabled_for_platforms": ["webchat"],
-                        "platforms": {},
                         "fallback_policy": "observable_protect",
                     }
                 },
@@ -790,8 +751,6 @@ class TestInteractionMiddleware:
         config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
             }
         }
         middleware = InteractionMiddleware(config, queue, controller)
@@ -807,8 +766,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -818,8 +775,6 @@ class TestInteractionMiddleware:
         plugin_context.get_config.side_effect = lambda umo=None: {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
                 "fallback_policy": "observable_protect",
             }
         }
@@ -840,8 +795,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -881,8 +834,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -914,8 +865,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -961,8 +910,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -996,8 +943,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1041,8 +986,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1093,8 +1036,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1132,8 +1073,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1183,8 +1122,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1249,8 +1186,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1291,8 +1226,6 @@ class TestInteractionMiddleware:
         default_config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
             },
             "platform_settings": {
                 "enable_id_white_list": False,
@@ -1302,8 +1235,6 @@ class TestInteractionMiddleware:
         runtime_config = {
             "interaction_middleware": {
                 "enabled": True,
-                "default_enabled_for_platforms": ["webchat"],
-                "platforms": {},
             },
             "platform_settings": {
                 "enable_id_white_list": True,
@@ -1353,8 +1284,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1400,8 +1329,6 @@ class TestInteractionMiddleware:
             {
                 "interaction_middleware": {
                     "enabled": True,
-                    "default_enabled_for_platforms": ["webchat"],
-                    "platforms": {},
                 }
             },
             queue,
@@ -1518,3 +1445,6 @@ class TestCoreInputGateway:
         gateway.put_nowait(webchat_event)
 
         middleware.handle_inbound.assert_called_once_with(webchat_event)
+
+
+

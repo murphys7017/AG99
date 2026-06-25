@@ -210,8 +210,6 @@ DEFAULT_CONFIG = {
     },
     "interaction_middleware": {
         "enabled": False,
-        "default_enabled_for_platforms": [],
-        "platforms": {},
         "memory_window_size": 8,
         "decision_provider_id": "",
         "decision_temperature": 0.5,
@@ -4284,17 +4282,6 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.enabled": {
                         "description": "启用交互中间件",
                         "type": "bool",
-                    },
-                    "interaction_middleware.default_enabled_for_platforms": {
-                        "description": "默认启用平台",
-                        "type": "list",
-                        "items": {"type": "string"},
-                        "hint": "平台 ID 列表。只有列入这里的平台会默认进入交互中间件链路。",
-                    },
-                    "interaction_middleware.platforms": {
-                        "description": "平台覆盖配置",
-                        "type": "dict",
-                        "hint": "按平台 ID 覆盖中间件配置。仅用于显式平台差异，不作为缺失配置的 fallback。",
                     },
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",

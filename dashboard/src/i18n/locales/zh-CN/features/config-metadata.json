@@ -1030,14 +1030,6 @@
         "enabled": {
           "description": "启用交互中间件"
         },
-        "default_enabled_for_platforms": {
-          "description": "默认启用平台",
-          "hint": "平台 ID 列表。只有列入这里的平台会默认进入交互中间件链路。"
-        },
-        "platforms": {
-          "description": "平台覆盖配置",
-          "hint": "按平台 ID 覆盖中间件配置。仅用于显式平台差异，不作为缺失配置的 fallback。"
-        },
         "memory_window_size": {
           "description": "记忆窗口轮数",
           "hint": "构建中间件上下文时读取的 interaction memory 轮数。"

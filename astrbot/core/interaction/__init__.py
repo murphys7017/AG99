@@ -1,4 +1,4 @@
-from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
+from .config import is_middleware_enabled, load_interaction_agent_config
 from .contributors import (
     InteractionDecisionView,
     InteractionOutputContribution,
@@ -115,7 +115,7 @@ __all__ = [
     "get_interaction_turn_state",
     "get_core_task_spec",
     "get_interaction_decision",
-    "is_middleware_enabled_for_platform",
+    "is_middleware_enabled",
     "load_interaction_agent_config",
     "effect_calls_to_legacy_plugin_hints",
     "legacy_plugin_hints_to_effect_calls",

@@ -1029,14 +1029,6 @@
                 "enabled": {
                     "description": "Включить Interaction Middleware"
                 },
-                "default_enabled_for_platforms": {
-                    "description": "Платформы, включенные по умолчанию",
-                    "hint": "Список ID платформ. Только эти платформы по умолчанию входят в путь interaction middleware."
-                },
-                "platforms": {
-                    "description": "Переопределения платформ",
-                    "hint": "Переопределяет настройки middleware по ID платформы. Используется только для явных различий платформ, не как fallback для отсутствующей конфигурации."
-                },
                 "memory_window_size": {
                     "description": "Размер окна памяти",
                     "hint": "Количество ходов interaction memory, читаемых при построении контекста middleware."

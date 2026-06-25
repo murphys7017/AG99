@@ -159,8 +159,6 @@ def _coerce_effect_calls(value: object) -> list[PersonaEffectCall]:
 @dataclass(slots=True)
 class InteractionAgentConfig:
     enabled: bool = False
-    default_enabled_for_platforms: list[str] = field(default_factory=list)
-    platforms: dict[str, dict[str, Any]] = field(default_factory=dict)
     decision_provider_id: str = ""
     decision_temperature: float = 0.5
     decision_timeout: float = 15.0

@@ -1028,14 +1028,6 @@
         "enabled": {
           "description": "Enable Interaction Middleware"
         },
-        "default_enabled_for_platforms": {
-          "description": "Default Enabled Platforms",
-          "hint": "Platform ID list. Only platforms listed here enter the interaction middleware path by default."
-        },
-        "platforms": {
-          "description": "Platform Overrides",
-          "hint": "Override middleware settings by platform ID. Use only for explicit platform differences, not as fallback for missing configuration."
-        },
         "memory_window_size": {
           "description": "Memory Window Size",
           "hint": "Number of interaction memory turns read when building middleware context."

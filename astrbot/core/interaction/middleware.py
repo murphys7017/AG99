@@ -18,7 +18,7 @@ from astrbot.core.voice import (
     transcribe_record,
 )
 
-from .config import is_middleware_enabled_for_platform, load_interaction_agent_config
+from .config import is_middleware_enabled, load_interaction_agent_config
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_DECISION_EXTRA_KEY,
@@ -162,10 +162,7 @@ class InteractionMiddleware:
         )
 
     def is_enabled_for_event(self, event: AstrMessageEvent) -> bool:
-        return is_middleware_enabled_for_platform(
-            event.get_platform_id(),
-            self._get_runtime_config(event),
-        )
+        return is_middleware_enabled(self._get_runtime_config(event))
 
     @staticmethod
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:

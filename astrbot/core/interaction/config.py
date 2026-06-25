@@ -17,21 +17,9 @@ def _int_or_default(value: Any, default: int) -> int:
         return default
 
 
-def is_middleware_enabled_for_platform(platform_id: str, config: Any) -> bool:
+def is_middleware_enabled(config: Any) -> bool:
     interaction_config = config.get("interaction_middleware", {})
-    if not interaction_config.get("enabled", False):
-        return False
-
-    platforms = interaction_config.get("platforms", {})
-    platform_config = platforms.get(platform_id, {})
-    if "enabled" in platform_config:
-        return bool(platform_config["enabled"])
-
-    default_enabled_for_platforms = interaction_config.get(
-        "default_enabled_for_platforms",
-        [],
-    )
-    return platform_id in default_enabled_for_platforms
+    return bool(interaction_config.get("enabled", False))
 
 
 def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
@@ -55,10 +43,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     ) or decision_provider_id
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", False)),
-        default_enabled_for_platforms=list(
-            interaction_config.get("default_enabled_for_platforms", [])
-        ),
-        platforms=dict(interaction_config.get("platforms", {})),
         decision_provider_id=decision_provider_id,
         decision_temperature=decision_temperature,
         decision_timeout=decision_timeout,
