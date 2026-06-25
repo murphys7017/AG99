@@ -2575,9 +2575,11 @@ class BasePromptRenderer:
         return CompiledOutputContract(
             contract=contract,
             strategy="prompt_only",
-            degraded=contract.strict,
+            degraded=(contract.mode == "tool_call" and contract.strict),
             degrade_reason=(
-                "renderer_has_no_protocol_support" if contract.strict else None
+                "renderer_has_no_protocol_support"
+                if contract.mode == "tool_call" and contract.strict
+                else None
             ),
             fallback_prompt_text=build_output_contract_fallback_prompt(contract),
         )

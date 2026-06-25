@@ -9,6 +9,7 @@ from astrbot.core.interaction.expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
     build_persona_expression_output_contract_for_effects,
+    build_persona_expression_tool_parameters,
     extract_persona_expression_result,
     validate_persona_expression_result,
 )
@@ -162,7 +163,10 @@ def test_persona_expression_parses_tool_args_from_string_payload():
     result = extract_persona_expression_result(
         "",
         llm_response=response,
-        output_contract=build_persona_expression_output_contract_for_effects([effect]),
+        output_contract=build_persona_expression_output_contract_for_effects(
+            [effect],
+            use_tool_call=True,
+        ),
         effects=[effect],
     )
 
@@ -205,6 +209,41 @@ def test_persona_expression_records_effect_parse_issues_in_metadata():
     ]
 
 
+def test_persona_expression_rejects_plain_text_under_strict_json_contract():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"axes": {"type": "object"}},
+            "required": ["axes"],
+        },
+    )
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        extract_persona_expression_result(
+            "嗯，我直接说一句。",
+            output_contract=build_persona_expression_output_contract_for_effects(
+                [effect]
+            ),
+            effects=[effect],
+        )
+
+    assert exc_info.value.reason == "invalid_persona_expression_json"
+
+
+def test_persona_expression_defaults_to_strict_prompt_only_json_contract():
+    schema = build_persona_expression_tool_parameters()
+    contract = build_persona_expression_output_contract_for_effects()
+
+    assert contract.mode == "json_object"
+    assert contract.strict is True
+    assert contract.allow_text_fallback is False
+    assert contract.preferred_tool_name is None
+    assert schema["required"] == ["spoken_reply", "effect_calls"]
+
+
 @pytest.mark.asyncio
 async def test_persona_expression_passes_compiled_contract_and_returns_effect_calls(
     monkeypatch,
@@ -218,13 +257,6 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
             "properties": {"emotion_label": {"type": "string"}},
             "required": [],
         },
-    )
-    contract = build_persona_expression_output_contract_for_effects([effect])
-    compiled = CompiledOutputContract(
-        contract=contract,
-        strategy="protocol_tool_call",
-        tool_name="persona_expression",
-        tool_schema=contract.schema,
     )
 
     class Provider:
@@ -274,6 +306,20 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     )()
     event = Event()
     agent = InteractionExpressionAgent(InteractionMemoryStore())
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.Provider",
+        Provider,
+    )
+    contract = build_persona_expression_output_contract_for_effects(
+        [effect],
+        use_tool_call=True,
+    )
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="protocol_tool_call",
+        tool_name="persona_expression",
+        tool_schema=contract.schema,
+    )
     agent._prepare_render_result = AsyncMock(
         return_value=RenderResult(
             system_prompt="persona",
@@ -282,10 +328,6 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
             compiled_output_contract=compiled,
             metadata={"persona_effect_specs": [effect]},
         )
-    )
-    monkeypatch.setattr(
-        "astrbot.core.interaction.expression_agent.Provider",
-        Provider,
     )
 
     result = await agent.generate_expression(

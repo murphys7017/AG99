@@ -5,6 +5,7 @@ from astrbot.core.interaction.effects import (
     PersonaEffectRegistryError,
     PersonaEffectSpec,
     normalize_persona_effect_arguments,
+    normalize_persona_effect_parameters_schema,
     parse_persona_effect_calls,
     parse_persona_effect_calls_with_issues,
 )
@@ -50,11 +51,12 @@ def _init_effect_registry(ctx: Context) -> Context:
 def test_empty_effect_list_does_not_generate_effect_calls_schema():
     schema = build_persona_expression_tool_parameters()
 
-    assert "effect_calls" not in schema["properties"]
+    assert schema["properties"]["effect_calls"] == {"type": "array", "items": False}
     assert "metadata" not in schema["properties"]
+    assert schema["required"] == ["spoken_reply", "effect_calls"]
 
 
-def test_effect_schema_uses_stable_portable_enum_without_strict_union_keywords():
+def test_effect_schema_freezes_effect_call_shape_per_effect():
     effects = [
         _effect("voice.emotion", plugin_id="plugin_b"),
         _effect("ag99live.motion", plugin_id="plugin_a"),
@@ -62,14 +64,14 @@ def test_effect_schema_uses_stable_portable_enum_without_strict_union_keywords()
 
     schema = build_persona_expression_tool_parameters(effects)
     effect_calls = schema["properties"]["effect_calls"]
+    variants = effect_calls["items"]["oneOf"]
 
-    assert effect_calls["items"]["properties"]["name"]["enum"] == [
+    assert [variant["properties"]["name"]["const"] for variant in variants] == [
         "ag99live.motion",
         "voice.emotion",
     ]
-    assert "oneOf" not in str(effect_calls)
-    assert "const" not in str(effect_calls)
-    assert "maxItems" not in str(effect_calls)
+    assert all(variant["additionalProperties"] is False for variant in variants)
+    assert all(variant["required"] == ["name", "arguments"] for variant in variants)
 
 
 def test_effect_schema_does_not_mutate_plugin_parameters_or_include_metadata():
@@ -85,6 +87,33 @@ def test_effect_schema_does_not_mutate_plugin_parameters_or_include_metadata():
 
     assert effect.parameters == original_parameters
     assert "secret_prompt_hint" not in str(schema)
+
+
+def test_effect_schema_normalizes_axes_leaf_values_to_number():
+    normalized = normalize_persona_effect_parameters_schema(
+        {
+            "type": "object",
+            "properties": {
+                "intent_tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "axes": {
+                    "type": "object",
+                    "properties": {
+                        "head_yaw": {"type": "integer"},
+                        "head_pitch": {"type": "string"},
+                    },
+                    "additionalProperties": {"type": "string"},
+                },
+            },
+            "required": ["intent_tags", "axes"],
+        }
+    )
+
+    assert normalized["properties"]["axes"]["properties"]["head_yaw"]["type"] == "number"
+    assert normalized["properties"]["axes"]["properties"]["head_pitch"]["type"] == "number"
+    assert normalized["properties"]["axes"]["additionalProperties"]["type"] == "number"
 
 
 def test_context_rejects_duplicate_effect_name():
@@ -225,7 +254,7 @@ def test_normalize_persona_effect_arguments_coerces_nested_numeric_strings():
     assert normalized == {
         "axes": {
             "head_yaw": 55.0,
-            "duration_ms": 1200,
+            "duration_ms": 1200.0,
         }
     }
 

@@ -286,6 +286,27 @@ def test_base_renderer_compiles_prompt_only_output_contract_with_fallback():
     )
 
 
+def test_base_renderer_treats_strict_json_object_as_native_prompt_only_contract():
+    output_contract = OutputContract(
+        mode="json_object",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        allow_text_fallback=False,
+    )
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = output_contract.to_dict()
+
+    result = PromptRenderEngine(default_renderer=BasePromptRenderer()).render(pack)
+
+    assert result.compiled_output_contract is not None
+    assert result.compiled_output_contract.strategy == "prompt_only"
+    assert result.compiled_output_contract.degraded is False
+    assert result.compiled_output_contract.degrade_reason is None
+    assert "只输出一个 JSON object" in (
+        result.compiled_output_contract.fallback_prompt_text or ""
+    )
+
+
 def test_request_adapter_skips_invalid_user_parts_without_touching_tool_runtime():
     tool_set = ToolSet()
     request = ProviderRequest(func_tool=tool_set)

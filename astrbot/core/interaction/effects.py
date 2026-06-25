@@ -86,6 +86,16 @@ class PersonaEffectValidationError(ValueError):
     """Raised when a persona effect call does not match its registered schema."""
 
 
+def normalize_persona_effect_parameters_schema(schema: object) -> dict[str, Any]:
+    if not _is_valid_parameters_schema(schema):
+        return {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+    return _normalize_persona_effect_schema(copy.deepcopy(schema), path=())
+
+
 def validate_persona_effect_spec(effect: PersonaEffectSpec) -> None:
     if not isinstance(effect.plugin_id, str) or not effect.plugin_id.strip():
         raise PersonaEffectRegistryError("Persona effect plugin_id must be non-empty")
@@ -242,12 +252,16 @@ def parse_persona_effect_calls_with_issues(
                 )
             )
             continue
+        normalized_schema = normalize_persona_effect_parameters_schema(effect.parameters)
         normalized_arguments = normalize_persona_effect_arguments(
             copy.deepcopy(arguments),
-            effect.parameters,
+            normalized_schema,
         )
         try:
-            validate_persona_effect_arguments(normalized_arguments, effect.parameters)
+            validate_persona_effect_arguments(
+                normalized_arguments,
+                normalized_schema,
+            )
         except PersonaEffectValidationError as exc:
             issues.append(
                 PersonaEffectParseIssue(
@@ -313,6 +327,61 @@ def normalize_persona_effect_arguments(
             property_schema = additional_properties
         if isinstance(property_schema, dict):
             normalized[key] = _normalize_json_schema_value(value, property_schema)
+    return normalized
+
+
+def _normalize_persona_effect_schema(
+    schema: dict[str, Any],
+    *,
+    path: tuple[str, ...],
+) -> dict[str, Any]:
+    normalized = copy.deepcopy(schema)
+    schema_type = normalized.get("type")
+    if schema_type == "object":
+        properties = normalized.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        normalized_properties: dict[str, Any] = {}
+        in_axes = bool(path) and path[-1] == "axes"
+        for key, value in properties.items():
+            if in_axes:
+                property_schema = value if isinstance(value, dict) else {}
+                normalized_properties[key] = _normalize_axis_leaf_schema(property_schema)
+                continue
+            normalized_properties[key] = (
+                _normalize_persona_effect_schema(
+                    value,
+                    path=(*path, str(key)),
+                )
+                if isinstance(value, dict)
+                else value
+            )
+        normalized["properties"] = normalized_properties
+        additional_properties = normalized.get("additionalProperties")
+        if in_axes:
+            normalized["additionalProperties"] = {"type": "number"}
+        elif isinstance(additional_properties, dict):
+            normalized["additionalProperties"] = _normalize_persona_effect_schema(
+                additional_properties,
+                path=(*path, "*"),
+            )
+        return normalized
+    if schema_type == "array":
+        items = normalized.get("items")
+        if isinstance(items, dict):
+            normalized["items"] = _normalize_persona_effect_schema(
+                items,
+                path=(*path, "[]"),
+            )
+    return normalized
+
+
+def _normalize_axis_leaf_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(schema)
+    normalized["type"] = "number"
+    normalized.pop("properties", None)
+    normalized.pop("required", None)
+    normalized.pop("additionalProperties", None)
     return normalized
 
 

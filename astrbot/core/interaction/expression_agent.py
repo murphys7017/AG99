@@ -35,6 +35,7 @@ from .decision_agent import (
 from .effects import (
     PersonaEffectCall,
     PersonaEffectSpec,
+    normalize_persona_effect_parameters_schema,
     parse_persona_effect_calls_with_issues,
 )
 from .memory_store import InteractionMemoryStore
@@ -79,6 +80,11 @@ def build_persona_runtime_system_prompt() -> str:
     return (
         "你负责以当前人格对用户表达。\n"
         "根据本次调用提供的场景，生成自然语言表达以及必要的人格 effect 调用。\n"
+        "必须返回一个只包含 spoken_reply 与 effect_calls 的 JSON object。\n"
+        "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
+        "effect 参数里的必填字段必须补全，例如 motion 类 effect 的 arguments.intent_tags。\n"
+        "优先输出高层语义参数，如 emotion_label、resource_id、style、intensity；只有在确实无法表达时才直接输出 axes。\n"
+        "如果输出 axes，所有 axes.* 必须是 JSON number，不能是字符串。\n"
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
@@ -89,34 +95,44 @@ def build_persona_expression_tool_parameters(
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "spoken_reply": {"type": "string"},
+        "effect_calls": {
+            "type": "array",
+            "items": False,
+        },
     }
-    effect_names = sorted(
-        {
-            effect.name
+    enabled_effects = sorted(
+        (
+            effect
             for effect in effects
             if isinstance(effect, PersonaEffectSpec) and effect.enabled
-        }
+        ),
+        key=lambda effect: effect.name,
     )
-    if effect_names:
+    effect_schemas = [
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "name": {"const": effect.name},
+                "arguments": normalize_persona_effect_parameters_schema(
+                    effect.parameters
+                ),
+            },
+            "required": ["name", "arguments"],
+        }
+        for effect in enabled_effects
+    ]
+    if effect_schemas:
         properties["effect_calls"] = {
             "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "enum": effect_names},
-                    "arguments": {
-                        "type": "object",
-                        "additionalProperties": True,
-                    },
-                },
-                "required": ["name", "arguments"],
-            },
+            "items": {"oneOf": copy.deepcopy(effect_schemas)},
         }
 
     return {
         "type": "object",
+        "additionalProperties": False,
         "properties": copy.deepcopy(properties),
-        "required": ["spoken_reply"],
+        "required": ["spoken_reply", "effect_calls"],
     }
 
 
@@ -126,13 +142,15 @@ def build_persona_expression_output_contract() -> OutputContract:
 
 def build_persona_expression_output_contract_for_effects(
     effects: Sequence[PersonaEffectSpec] = (),
+    *,
+    use_tool_call: bool = False,
 ) -> OutputContract:
     return OutputContract(
-        mode="tool_call",
-        strict=False,
+        mode="tool_call" if use_tool_call else "json_object",
+        strict=True,
         schema=build_persona_expression_tool_parameters(effects),
-        preferred_tool_name="persona_expression",
-        allow_text_fallback=True,
+        preferred_tool_name="persona_expression" if use_tool_call else None,
+        allow_text_fallback=False,
     )
 
 
@@ -191,6 +209,25 @@ def _coerce_tool_call_payload(tool_arg: object) -> dict[str, Any] | None:
     return normalized
 
 
+def _build_persona_expression_result_from_payload(
+    payload: dict[str, Any],
+    *,
+    effects: Sequence[PersonaEffectSpec] = (),
+) -> PersonaExpressionResult:
+    effect_calls, effect_issues = parse_persona_effect_calls_with_issues(
+        payload.get("effect_calls", []),
+        effects,
+    )
+    metadata = _coerce_mapping_dict(payload.get("metadata"))
+    if effect_issues:
+        metadata["effect_parse_issues"] = [issue.to_dict() for issue in effect_issues]
+    return PersonaExpressionResult(
+        spoken_reply=str(payload.get("spoken_reply", "") or ""),
+        effect_calls=effect_calls,
+        metadata=metadata,
+    )
+
+
 def extract_persona_expression_result(
     text: object,
     *,
@@ -198,11 +235,21 @@ def extract_persona_expression_result(
     output_contract: OutputContract | None = None,
     effects: Sequence[PersonaEffectSpec] = (),
 ) -> PersonaExpressionResult:
-    """三级解析：tool call → JSON object → 纯文本兼容。"""
+    """优先解析结构化输出；严格 JSON 合约下不接受自由文本。"""
     preferred = (
         output_contract.preferred_tool_name
         if isinstance(output_contract, OutputContract)
         else None
+    )
+    strict_tool_call = (
+        isinstance(output_contract, OutputContract)
+        and output_contract.mode == "tool_call"
+        and not output_contract.allow_text_fallback
+    )
+    strict_json_object = (
+        isinstance(output_contract, OutputContract)
+        and output_contract.mode == "json_object"
+        and output_contract.strict
     )
     # 1. 协议 tool call
     if llm_response is not None:
@@ -215,36 +262,26 @@ def extract_persona_expression_result(
                 continue
             payload = _coerce_tool_call_payload(tool_arg)
             if isinstance(payload, dict):
-                effect_calls, effect_issues = parse_persona_effect_calls_with_issues(
-                    payload.get("effect_calls", []),
-                    effects,
+                return _build_persona_expression_result_from_payload(
+                    payload,
+                    effects=effects,
                 )
-                metadata = _coerce_mapping_dict(payload.get("metadata"))
-                if effect_issues:
-                    metadata["effect_parse_issues"] = [
-                        issue.to_dict() for issue in effect_issues
-                    ]
-                return PersonaExpressionResult(
-                    spoken_reply=str(payload.get("spoken_reply", "") or ""),
-                    effect_calls=effect_calls,
-                    metadata=metadata,
-                )
+    if strict_tool_call:
+        raise InteractionExpressionError(
+            "missing_persona_expression_tool_call",
+            "persona_expression tool call missing",
+        )
     # 2. JSON object fallback
     payload = _extract_json_object(text)
     if isinstance(payload, dict) and "spoken_reply" in payload:
-        effect_calls, effect_issues = parse_persona_effect_calls_with_issues(
-            payload.get("effect_calls", []),
-            effects,
+        return _build_persona_expression_result_from_payload(
+            payload,
+            effects=effects,
         )
-        metadata = _coerce_mapping_dict(payload.get("metadata"))
-        if effect_issues:
-            metadata["effect_parse_issues"] = [
-                issue.to_dict() for issue in effect_issues
-            ]
-        return PersonaExpressionResult(
-            spoken_reply=str(payload.get("spoken_reply", "") or ""),
-            effect_calls=effect_calls,
-            metadata=metadata,
+    if strict_json_object:
+        raise InteractionExpressionError(
+            "invalid_persona_expression_json",
+            "persona expression must be a single JSON object",
         )
     # 3. 纯文本兼容
     return PersonaExpressionResult(spoken_reply=(str(text or "")).strip())
@@ -252,7 +289,7 @@ def extract_persona_expression_result(
 
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
     del req
-    return "请按 persona_expression 输出协议生成当前人格的用户可见回应。"
+    return "请只返回一个 JSON object，生成当前人格的用户可见回应，不要输出额外文本。"
 
 
 class InteractionExpressionAgent:
@@ -305,7 +342,7 @@ class InteractionExpressionAgent:
         if not isinstance(provider_config, dict):
             provider_config = {}
         logger.info(
-            "DIAG expression.contract: platform_id=%s session_id=%s phase=%s provider_type=%s model=%s renderer=%s strategy=%s degraded=%s tool_name=%s",
+            "DIAG expression.contract: platform_id=%s session_id=%s phase=%s provider_type=%s model=%s renderer=%s contract_mode=%s strategy=%s degraded=%s tool_name=%s",
             event.get_platform_id(),
             event.session_id,
             _describe_expression_request(req),
@@ -316,6 +353,7 @@ class InteractionExpressionAgent:
                 else ""
             ),
             render_result.metadata.get("renderer"),
+            (output_contract.mode if isinstance(output_contract, OutputContract) else None),
             render_result.metadata.get("output_contract_strategy"),
             render_result.metadata.get("output_contract_degraded"),
             (
