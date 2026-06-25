@@ -4,6 +4,17 @@
 > 本文档中的 phase-based persona expression 设计已过时。
 > 当前实现已经改为“visible reply material”驱动：用户可见自然语言统一走一个 persona visible-reply 入口，
 > phase 不再作为 first_response / plugin_output / final_response / stream_interjection 的核心语义分叉。
+>
+> 补充状态说明（2026-06-26）：
+> 当前运行时基线也已经从“单个虚拟 `persona_expression` tool call”进一步收口为严格 `json_object`：
+>
+> - 默认契约是 `mode="json_object"`、`strict=True`、`allow_text_fallback=False`
+> - `tool_call` 仍保留为可选协议路径和测试覆盖，但不代表线上 persona visible-reply 主链路
+> - `effect_calls` 现在是固定字段；无 effect 时返回空数组，而不是省略字段
+> - effect `arguments` 的约束以注册的 `PersonaEffectSpec.parameters` 为准
+> - 若 `arguments.axes` 存在，运行时会统一把 `axes.*` 归一为 `number` schema，减少后端 repair
+>
+> 因此，本文后续凡是把 `tool_call` 写成统一基线、把 `effect_calls` 写成可省略字段、或把 `axes` 视为松散 object 的段落，都应视为历史方案而不是当前实现。
 
 这份文档记录 Yakumo Persona Runtime 中人格表现插件结构化输出的实施计划。
 
@@ -38,7 +49,7 @@ Output Runtime 负责“把 Persona Runtime 的表达发出去”。
 }
 ```
 
-当 Provider 支持协议级 Tool Call 时，这份结果可以通过虚拟 `persona_expression` 工具返回。当 Provider 不支持或不能稳定遵守强制 Tool Call 时，Renderer 会降级为文本 JSON，再由本地解析器处理。
+当前主实现是严格 `json_object`，由本地解析器解析；当 Provider 或测试场景显式启用协议级 Tool Call 时，这份结果也可以通过虚拟 `persona_expression` 工具返回。
 
 这里存在几个长期问题：
 
@@ -88,7 +99,7 @@ Persona Effect 不进入 Agent Tool Loop，不由 Router 决策，也不交给 E
 
 ### 一期使用单个虚拟输出工具
 
-跨 Provider 的可靠基线仍然是单个虚拟输出工具：
+历史方案里，跨 Provider 的可靠基线曾被设计为单个虚拟输出工具：
 
 ```text
 persona_expression
@@ -132,7 +143,7 @@ tool_calls = 多个 Persona Effect Calls
 
 ### 一期使用可移植 schema
 
-一期不把 `oneOf + const` 作为跨 Provider 基线，也不依赖 `maxItems` 等兼容性不稳定的严格 schema 关键字。
+这部分设计已经过时。当前实现为了固定 `effect_calls` 结构，已经接受在 persona visible-reply contract 中使用 `oneOf + const`，并把 effect 参数 schema 直接编译进输出契约。
 
 Effect Calls 使用扁平 schema：
 
@@ -177,7 +188,7 @@ AstrBot 本地校验层
   -> 丢弃未知或无效调用
 ```
 
-当没有注册任何 Persona Effect 时，输出 schema 不生成 `effect_calls` 字段。解析器将缺失字段统一视为：
+这部分设计已经过时。当前实现即使没有注册任何 Persona Effect，也会保留 `effect_calls` 字段，并要求模型返回空数组：
 
 ```python
 effect_calls = []

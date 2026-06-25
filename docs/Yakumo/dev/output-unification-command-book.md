@@ -3,7 +3,7 @@
 > 状态说明（2026-06-25）：
 > 本文档保留为历史设计记录。
 > 当前 interaction 主链路已经进一步收口为单一 visible-reply persona 入口：
-> `first_response`、插件 persona 输出、core final reply、stream interjection 共用同一 persona prompt/render/tool-call JSON 路径；
+> `first_response`、插件 persona 输出、core final reply、stream interjection 共用同一 persona prompt/render/strict JSON 路径；
 > 文中的独立 `finalizer`、独立 stream 文案生成、以及 phase 化 persona 设计不再代表当前实现。
 
 这是一份给其他 AI 编码代理使用的命令书。

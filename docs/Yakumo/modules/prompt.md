@@ -133,7 +133,7 @@ prompt module 的职责是声明与编译契约，并把 `output_contract` / `co
 详细策略边界见 `docs/Yakumo/dev/output-contract.md`。这里需要记住的当前事实是：
 
 - `protocol_tool_call` 是 strict 结构化输出的主要协议级落地。
-- `prompt_only` 只是受控降级，不是正式支持声明。
+- `prompt_only` 不总是“退化”；对 persona visible-reply 这类 strict `json_object` 契约，它就是当前正式落地方式。
 - `interaction decision` 是高约束场景，必须走 `protocol_tool_call`，不能把裸文本 JSON 当成功。
 
 ## 主 Agent 接入方式

@@ -142,6 +142,8 @@ Input Runtime / Observation
 - `express_visible_reply(...)` — 统一 persona visible-reply 入口，接收“待表达材料”请求
 - `render_plugin_output(...)` / `render_core_reply(...)` / `render_stream_interjection(...)` 只是同一入口的薄包装
 - 本身不做 LLM 调用，只做编排
+- 当前默认输出契约是严格 `json_object`：返回 `spoken_reply` 与 `effect_calls`，且 `allow_text_fallback=False`
+- `tool_call` 仍可作为协议级可选路径存在，但不是 persona visible-reply 的运行时基线
 
 它不属于 Output Runtime，也不属于 middleware 核心链路，而是 Persona 层的轻量入口。当前挂在 `InteractionMiddleware` 下由构造函数装配。
 
@@ -158,6 +160,29 @@ Input Runtime / Observation
 - core 普通 TTS provider missing 时 warning 并继续文本输出
 - interaction TTS provider missing / file registration failed / config missing 时 fail-fast
 - live audio 是通用平台音频流协议，不是 Live2D 专用路径
+
+## Persona Effect 输出契约
+
+当前 persona visible-reply 的结构化结果约束是：
+
+```json
+{
+  "spoken_reply": "string",
+  "effect_calls": [
+    {
+      "name": "effect.name",
+      "arguments": {}
+    }
+  ]
+}
+```
+
+补充约束：
+
+- `effect_calls` 是固定字段；没有 effect 时返回空数组，而不是省略字段。
+- effect 的 `arguments` 由注册的 `PersonaEffectSpec.parameters` 决定。
+- motion 类 effect 如果包含 `axes`，运行时会把 `axes.*` 统一视为 `number` schema。
+- `intent_tags` 是否必填不由 persona 顶层决定，而由具体 effect schema 决定；例如 motion effect 可在 `arguments` 内要求它。
 
 ## Postprocess / Memory 边界
 

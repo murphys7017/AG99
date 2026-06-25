@@ -8,7 +8,10 @@
 
 `prompt 声明 -> render 编译 -> request 投影 -> provider 落地 -> response 解析`
 
-当前第一目标是让高约束场景脱离纯文本 JSON prompt，尤其是 interaction decision。
+当前第一目标是让高约束场景脱离“手写自由文本 JSON prompt”。其中：
+
+- `interaction decision` 仍以协议级 `tool_call` 为主成功路径
+- persona visible-reply 当前主链路已经明确为严格 `json_object`
 
 ## 核心类型
 
@@ -72,21 +75,33 @@
 
 ### `prompt_only`
 
-只表示受控降级，不表示正式协议支持。
+这里需要区分两种情况：
+
+1. `tool_call -> prompt_only`
+
+- 这是协议级能力不可用时的受控降级。
+- `RenderResult.metadata` 中应体现 `output_contract_degraded=True`。
+
+2. `json_object -> prompt_only`
+
+- 这是当前的原生契约落地方式，不应视为退化。
+- 例如 persona visible-reply 当前就是 `strict json_object + allow_text_fallback=False`。
+
+因此，`prompt_only` 本身只表示“最终通过 prompt 文本约束落地”，不自动等价于“失败降级”。
 
 - fallback 文本由 `build_output_contract_fallback_prompt(...)` 统一生成。
-- `RenderResult.metadata` 必须能看到 `output_contract_degraded` 和 `output_contract_degrade_reason`。
-- 普通非高约束场景可以接受 prompt-only 降级。
-- 高约束场景不能把 prompt-only 当成功路径。
+- 只有 `tool_call` strict 契约降到 `prompt_only` 时，才应标记 `degraded=True`。
+- 普通非高约束场景可以原生使用 strict `json_object`。
+- 高约束 `tool_call` 场景不能把受控降级后的 `prompt_only` 当成功路径。
 
 ## Renderer 职责
 
 renderer 负责把声明编译成策略：
 
-- `BasePromptRenderer`: 对非 text 输出契约默认 `prompt_only + degraded`。
+- `BasePromptRenderer`: 对非 text 输出契约默认编译为 `prompt_only`；仅 `strict tool_call` 降到 `prompt_only` 时记为 `degraded`。
 - `OpenAIPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 OpenAI-compatible message/tool schema 形态。
 - `AnthropicPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 Anthropic content block/tool schema 形态。
-- `MiniMaxPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 MiniMax Token Plan 友好 JSON sections 和 Anthropic 兼容 tool schema 形态。
+- `MiniMaxPromptRenderer`: 默认保持 `prompt_only`；只有 provider 显式启用 `minimax_enable_tool_call` 时才把 `tool_call` 编译为 `protocol_tool_call`。
 
 renderer 不负责：
 
@@ -128,6 +143,24 @@ interaction decision 是当前首个高约束消费者。
 - `prompt_only` 不能作为成功路径。
 - parser 优先读 tool call payload。
 - strict 且 `allow_text_fallback=false` 时，裸文本 JSON 不算成功。
+
+## Persona Visible Reply
+
+persona visible-reply 是当前另一个重要消费者，但它和 interaction decision 的策略不同。
+
+默认契约：
+
+- `mode="json_object"`
+- `strict=True`
+- `allow_text_fallback=False`
+- `schema` 固定为 `spoken_reply` + `effect_calls`
+
+运行规则：
+
+- 当前主链路允许 renderer 编译成 `prompt_only`，且这不是 degraded。
+- parser 必须解析单个 JSON object；自由文本不算成功。
+- `effect_calls` 使用固定字段；无 effect 时返回空数组。
+- 具体 effect 的 `arguments` 由注册的 effect schema 决定。
 
 ## 观测字段
 
