@@ -504,6 +504,11 @@ class ConfigRoute(Route):
         # 重载受影响的 providers，使新的 source 配置生效
         reload_errors = []
         prov_mgr = self.core_lifecycle.provider_manager
+        # 先同步 provider manager 持有的配置视图，再重载关联 provider。
+        # 否则当 source id 或 source 内容发生变化时，reload 仍会按旧配置合并，
+        # 导致 provider_source 合并失败，进而缺失 type 等关键字段。
+        prov_mgr.providers_config = self.config.get("provider", [])
+        prov_mgr.provider_sources_config = self.config.get("provider_sources", [])
         for provider in affected_providers:
             try:
                 await prov_mgr.reload(provider)
