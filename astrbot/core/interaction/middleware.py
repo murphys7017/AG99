@@ -9,6 +9,7 @@ from astrbot import logger
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.message_type import MessageType
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.utils.media_utils import ensure_wav
@@ -165,6 +166,29 @@ class InteractionMiddleware:
         return is_middleware_enabled(self._get_runtime_config(event))
 
     @staticmethod
+    def _is_passive_group_reply_allowed(
+        event: AstrMessageEvent,
+        runtime_config: Any,
+    ) -> bool:
+        if event.get_message_type() != MessageType.GROUP_MESSAGE:
+            return True
+        if event.is_at_or_wake_command:
+            return True
+        provider_ltm_settings = runtime_config.get("provider_ltm_settings", {})
+        if not isinstance(provider_ltm_settings, dict):
+            return True
+        active_reply = provider_ltm_settings.get("active_reply", {})
+        if not isinstance(active_reply, dict) or not active_reply.get("enable", False):
+            return True
+        whitelist = active_reply.get("whitelist", [])
+        if not isinstance(whitelist, list) or not whitelist:
+            return True
+        if event.unified_msg_origin in whitelist:
+            return True
+        group_id = event.get_group_id()
+        return bool(group_id) and group_id in whitelist
+
+    @staticmethod
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:
         return event.get_extra("action_type") == "live"
 
@@ -245,7 +269,23 @@ class InteractionMiddleware:
         event.set_extra("_interaction_output_interceptor_installed", True)
 
     def handle_inbound(self, event: AstrMessageEvent) -> None:
-        if not self.is_enabled_for_event(event):
+        runtime_config = self._get_runtime_config(event)
+        if not is_middleware_enabled(runtime_config):
+            self.core_queue.put_nowait(event)
+            return
+        if not self._is_passive_group_reply_allowed(event, runtime_config):
+            event.set_extra("_interaction_active_reply_whitelist_skipped", True)
+            event.set_extra(
+                "_interaction_active_reply_whitelist_skip_reason",
+                "active_reply_whitelist_miss",
+            )
+            logger.info(
+                "Interaction middleware skipped passive group reply due to active-reply whitelist: platform_id=%s session_id=%s umo=%s group_id=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.unified_msg_origin,
+                event.get_group_id(),
+            )
             self.core_queue.put_nowait(event)
             return
         self._spawn_inbound_task(event)

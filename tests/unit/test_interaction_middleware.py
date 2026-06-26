@@ -126,6 +126,30 @@ def streaming_event(webchat_event):
 
 
 @pytest.fixture
+def group_event():
+    platform_meta = PlatformMetadata(
+        name="aiocqhttp",
+        description="aiocqhttp",
+        id="aiocqhttp",
+    )
+    message = AstrBotMessage()
+    message.type = MessageType.GROUP_MESSAGE
+    message.self_id = "bot123"
+    message.session_id = "group_456"
+    message.group_id = "456"
+    message.message_id = "group-msg-123"
+    message.sender = MessageMember(user_id="user123", nickname="GroupUser")
+    message.message = []
+    message.message_str = "group hello"
+    return ConcreteAstrMessageEvent(
+        message_str="group hello",
+        message_obj=message,
+        platform_meta=platform_meta,
+        session_id="group_456",
+    )
+
+
+@pytest.fixture
 def voice_event(webchat_event, tmp_path):
     audio_path = tmp_path / "voice.wav"
     audio_path.write_bytes(b"fake-wav")
@@ -543,6 +567,74 @@ class TestInteractionMiddleware:
         assert webchat_event.get_extra("_interaction_enabled") is None
         assert webchat_event.get_extra("_turn_id") is None
         assert webchat_event.get_extra("_output_controller") is None
+
+    def test_handle_inbound_skips_passive_group_reply_when_active_reply_whitelist_misses(
+        self,
+        group_event,
+    ):
+        queue = asyncio.Queue()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                },
+                "provider_ltm_settings": {
+                    "active_reply": {
+                        "enable": True,
+                        "method": "possibility_reply",
+                        "possibility_reply": 0.1,
+                        "whitelist": ["999"],
+                    }
+                },
+            },
+            queue,
+            MagicMock(),
+        )
+
+        middleware.handle_inbound(group_event)
+
+        assert queue.get_nowait() is group_event
+        assert group_event.get_extra("_interaction_enabled") is None
+        assert group_event.get_extra("_turn_id") is None
+        assert group_event.get_extra("_output_controller") is None
+        assert group_event.get_extra("_interaction_active_reply_whitelist_skipped") is True
+
+    @pytest.mark.asyncio
+    async def test_handle_inbound_allows_passive_group_reply_when_active_reply_whitelist_matches(
+        self,
+        group_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
+                },
+                "provider_ltm_settings": {
+                    "active_reply": {
+                        "enable": True,
+                        "method": "possibility_reply",
+                        "possibility_reply": 0.1,
+                        "whitelist": ["456"],
+                    }
+                },
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(middleware)
+
+        middleware.handle_inbound(group_event)
+        await _drain_inbound_tasks(middleware)
+
+        assert queue.get_nowait() is group_event
+        assert group_event.get_extra("_interaction_enabled") is True
+        assert isinstance(group_event.get_extra("_turn_id"), str)
 
     @pytest.mark.asyncio
     async def test_hybrid_emits_reply_before_forwarding(self, webchat_event):
