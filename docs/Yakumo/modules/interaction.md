@@ -144,6 +144,8 @@ Input Runtime / Observation
 - 本身不做 LLM 调用，只做编排
 - 当前默认输出契约是严格 `json_object`：返回 `spoken_reply` 与 `effect_calls`，且 `allow_text_fallback=False`
 - `tool_call` 仍可作为协议级可选路径存在，但不是 persona visible-reply 的运行时基线
+- 对 DeepSeek-V4 / `deepseek-reasoner` 这类 reasoning 模型，首轮 persona user input 会额外注入一次“角色沉浸模式” marker，
+  用于约束 `<think>` 里的思维风格；稳定人格设定仍留在 `system`，marker 不作为长期人格本体
 
 它不属于 Output Runtime，也不属于 middleware 核心链路，而是 Persona 层的轻量入口。当前挂在 `InteractionMiddleware` 下由构造函数装配。
 

@@ -11,6 +11,7 @@ from astrbot.core.interaction.expression_agent import (
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     extract_persona_expression_result,
+    maybe_inject_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
@@ -19,6 +20,7 @@ from astrbot.core.interaction.types import InteractionAgentConfig
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
+from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
 
@@ -242,6 +244,98 @@ def test_persona_expression_defaults_to_strict_prompt_only_json_contract():
     assert contract.allow_text_fallback is False
     assert contract.preferred_tool_name is None
     assert schema["required"] == ["spoken_reply", "effect_calls"]
+
+
+def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
+    class Provider:
+        provider_config = {"type": "deepseek_chat_completion"}
+
+        @staticmethod
+        def get_model():
+            return "deepseek-v4-flash"
+
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="你好",
+                category="input",
+                source="test",
+            ),
+            "memory.interaction": ContextSlot(
+                name="memory.interaction",
+                value={"recent_turns": []},
+                category="memory",
+                source="test",
+            ),
+        }
+    )
+    event = Event()
+
+    assert maybe_inject_deepseek_first_turn_reasoning_marker(
+        event,
+        pack,
+        Provider(),
+    )
+    assert "【角色沉浸要求】" in pack.get_slot("input.text").value
+    assert not maybe_inject_deepseek_first_turn_reasoning_marker(
+        event,
+        pack,
+        Provider(),
+    )
+
+
+def test_deepseek_first_turn_reasoning_marker_skips_nonfirst_turn_history():
+    class Provider:
+        provider_config = {"type": "deepseek_chat_completion"}
+
+        @staticmethod
+        def get_model():
+            return "deepseek-v4-pro"
+
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="你好",
+                category="input",
+                source="test",
+            ),
+            "memory.interaction": ContextSlot(
+                name="memory.interaction",
+                value={"recent_turns": [{"user": "上轮", "assistant": "回复"}]},
+                category="memory",
+                source="test",
+            ),
+        }
+    )
+
+    assert not maybe_inject_deepseek_first_turn_reasoning_marker(
+        Event(),
+        pack,
+        Provider(),
+    )
+    assert pack.get_slot("input.text").value == "你好"
 
 
 @pytest.mark.asyncio

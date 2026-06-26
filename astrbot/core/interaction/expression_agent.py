@@ -68,6 +68,17 @@ class InteractionExpressionError(RuntimeError):
         super().__init__(message or reason)
 
 
+_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY = (
+    "_interaction_deepseek_reasoning_marker_applied"
+)
+_DEEPSEEK_INNER_OS_MARKER = (
+    "\n\n【角色沉浸要求】在你的思考过程（<think>标签内）中，请遵守以下规则：\n"
+    '1. 请以角色第一人称进行内心独白，用括号包裹内心活动，例如"（心想：……）"或"(内心OS：……)"\n'
+    '2. 用第一人称描写角色的内心感受，例如"我心想""我觉得""我暗自"等\n'
+    "3. 思考内容应沉浸在角色中，通过内心独白分析剧情和规划回复"
+)
+
+
 def validate_persona_expression_result(
     req: PersonaExpressionRequest,
     result: PersonaExpressionResult,
@@ -88,6 +99,65 @@ def build_persona_runtime_system_prompt() -> str:
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
+
+
+def _resolve_provider_model(provider: Provider) -> str:
+    getter = getattr(provider, "get_model", None)
+    if callable(getter):
+        try:
+            return str(getter() or "").strip().lower()
+        except Exception:  # noqa: BLE001
+            return ""
+    return ""
+
+
+def _is_deepseek_reasoning_provider(provider: Provider) -> bool:
+    provider_config = getattr(provider, "provider_config", {})
+    if not isinstance(provider_config, dict):
+        provider_config = {}
+    provider_type = str(provider_config.get("type", "") or "").strip().lower()
+    model = _resolve_provider_model(provider)
+    if model.startswith("deepseek-v4") or model.startswith("deepseek-reasoner"):
+        return True
+    return provider_type == "deepseek_chat_completion" and (
+        model.startswith("deepseek-v4") or model.startswith("deepseek-reasoner")
+    )
+
+
+def _pack_has_interaction_history(pack) -> bool:
+    slot = pack.get_slot("memory.interaction")
+    if slot is None or not isinstance(slot.value, dict):
+        return False
+    recent_turns = slot.value.get("recent_turns", [])
+    return isinstance(recent_turns, list) and len(recent_turns) > 0
+
+
+def _inject_deepseek_reasoning_marker_into_input(pack) -> bool:
+    slot = pack.get_slot("input.text")
+    if slot is None or not isinstance(slot.value, str):
+        return False
+    text = slot.value.strip()
+    if not text or _DEEPSEEK_INNER_OS_MARKER.strip() in slot.value:
+        return False
+    slot.value = f"{text}{_DEEPSEEK_INNER_OS_MARKER}"
+    return True
+
+
+def maybe_inject_deepseek_first_turn_reasoning_marker(
+    event,
+    pack,
+    provider: Provider,
+) -> bool:
+    if not _is_deepseek_reasoning_provider(provider):
+        return False
+    if event.get_extra(_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY):
+        return False
+    if _pack_has_interaction_history(pack):
+        return False
+    injected = _inject_deepseek_reasoning_marker_into_input(pack)
+    if injected:
+        event.set_extra(_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY, True)
+    return injected
 
 
 def build_persona_expression_tool_parameters(
@@ -475,6 +545,11 @@ class InteractionExpressionAgent:
             prompt_extensions,
         )
         add_visible_reply_material_slots_to_pack(expression_pack, req)
+        injected_reasoning_marker = maybe_inject_deepseek_first_turn_reasoning_marker(
+            event,
+            expression_pack,
+            provider,
+        )
         persona_effect_specs = self._list_persona_effects(plugin_context)
         add_persona_runtime_slots_to_pack(
             expression_pack,
@@ -487,6 +562,14 @@ class InteractionExpressionAgent:
             config=build_config,
             provider_request=build_prompt_render_provider_request(event, provider),
         )
+        if injected_reasoning_marker:
+            logger.info(
+                "DIAG expression.deepseek_reasoning_marker: platform_id=%s session_id=%s phase=%s mode=inner_os applied=True model=%s",
+                event.get_platform_id(),
+                event.session_id,
+                _describe_expression_request(req),
+                _resolve_provider_model(provider),
+            )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
         return render_result
 
