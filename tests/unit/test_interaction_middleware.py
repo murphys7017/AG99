@@ -597,7 +597,81 @@ class TestInteractionMiddleware:
         assert group_event.get_extra("_interaction_enabled") is None
         assert group_event.get_extra("_turn_id") is None
         assert group_event.get_extra("_output_controller") is None
+        assert group_event.get_extra("_interaction_passive_group_reply_skipped") is True
+        assert (
+            group_event.get_extra("_interaction_passive_group_reply_skip_reason")
+            == "active_reply_whitelist_miss"
+        )
         assert group_event.get_extra("_interaction_active_reply_whitelist_skipped") is True
+
+    def test_handle_inbound_skips_passive_group_reply_when_active_reply_disabled(
+        self,
+        group_event,
+    ):
+        queue = asyncio.Queue()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                },
+                "provider_ltm_settings": {
+                    "active_reply": {
+                        "enable": False,
+                        "method": "possibility_reply",
+                        "possibility_reply": 1.0,
+                    }
+                },
+            },
+            queue,
+            MagicMock(),
+        )
+
+        middleware.handle_inbound(group_event)
+
+        assert queue.get_nowait() is group_event
+        assert group_event.get_extra("_interaction_enabled") is None
+        assert group_event.get_extra("_turn_id") is None
+        assert group_event.get_extra("_output_controller") is None
+        assert group_event.get_extra("_interaction_passive_group_reply_skipped") is True
+        assert (
+            group_event.get_extra("_interaction_passive_group_reply_skip_reason")
+            == "active_reply_disabled"
+        )
+
+    def test_handle_inbound_skips_passive_group_reply_when_probability_misses(
+        self,
+        group_event,
+    ):
+        queue = asyncio.Queue()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                },
+                "provider_ltm_settings": {
+                    "active_reply": {
+                        "enable": True,
+                        "method": "possibility_reply",
+                        "possibility_reply": 0.1,
+                    }
+                },
+            },
+            queue,
+            MagicMock(),
+        )
+
+        with patch("astrbot.core.interaction.middleware.random.random", return_value=0.9):
+            middleware.handle_inbound(group_event)
+
+        assert queue.get_nowait() is group_event
+        assert group_event.get_extra("_interaction_enabled") is None
+        assert group_event.get_extra("_turn_id") is None
+        assert group_event.get_extra("_output_controller") is None
+        assert group_event.get_extra("_interaction_passive_group_reply_skipped") is True
+        assert (
+            group_event.get_extra("_interaction_passive_group_reply_skip_reason")
+            == "active_reply_probability_miss"
+        )
 
     @pytest.mark.asyncio
     async def test_handle_inbound_allows_passive_group_reply_when_active_reply_whitelist_matches(
@@ -629,7 +703,11 @@ class TestInteractionMiddleware:
         middleware.plugin_context = MagicMock(spec=Context)
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(group_event)
+        with patch(
+            "astrbot.core.interaction.middleware.random.random",
+            return_value=0.01,
+        ):
+            middleware.handle_inbound(group_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is group_event

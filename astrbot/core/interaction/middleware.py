@@ -1,4 +1,5 @@
 import asyncio
+import random
 import uuid
 from asyncio import Queue
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
@@ -166,27 +167,46 @@ class InteractionMiddleware:
         return is_middleware_enabled(self._get_runtime_config(event))
 
     @staticmethod
-    def _is_passive_group_reply_allowed(
+    def _coerce_probability(value: Any, default: float = 0.0) -> float:
+        try:
+            return max(0.0, min(float(value), 1.0))
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _check_passive_group_reply_gate(
+        cls,
         event: AstrMessageEvent,
         runtime_config: Any,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
-            return True
+            return True, None
         if event.is_at_or_wake_command:
-            return True
+            return True, None
         provider_ltm_settings = runtime_config.get("provider_ltm_settings", {})
         if not isinstance(provider_ltm_settings, dict):
-            return True
+            return False, "active_reply_disabled"
         active_reply = provider_ltm_settings.get("active_reply", {})
         if not isinstance(active_reply, dict) or not active_reply.get("enable", False):
-            return True
+            return False, "active_reply_disabled"
+        method = str(active_reply.get("method", "possibility_reply") or "").strip()
+        if method != "possibility_reply":
+            return False, "active_reply_method_unsupported"
         whitelist = active_reply.get("whitelist", [])
-        if not isinstance(whitelist, list) or not whitelist:
-            return True
-        if event.unified_msg_origin in whitelist:
-            return True
-        group_id = event.get_group_id()
-        return bool(group_id) and group_id in whitelist
+        if isinstance(whitelist, list) and whitelist:
+            if event.unified_msg_origin not in whitelist:
+                group_id = event.get_group_id()
+                if not (bool(group_id) and group_id in whitelist):
+                    return False, "active_reply_whitelist_miss"
+        probability = cls._coerce_probability(
+            active_reply.get("possibility_reply", 0.0),
+            0.0,
+        )
+        if probability <= 0.0:
+            return False, "active_reply_probability_miss"
+        if probability < 1.0 and random.random() > probability:
+            return False, "active_reply_probability_miss"
+        return True, None
 
     @staticmethod
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:
@@ -273,18 +293,29 @@ class InteractionMiddleware:
         if not is_middleware_enabled(runtime_config):
             self.core_queue.put_nowait(event)
             return
-        if not self._is_passive_group_reply_allowed(event, runtime_config):
-            event.set_extra("_interaction_active_reply_whitelist_skipped", True)
+        passive_group_allowed, skip_reason = self._check_passive_group_reply_gate(
+            event,
+            runtime_config,
+        )
+        if not passive_group_allowed:
+            event.set_extra("_interaction_passive_group_reply_skipped", True)
             event.set_extra(
-                "_interaction_active_reply_whitelist_skip_reason",
-                "active_reply_whitelist_miss",
+                "_interaction_passive_group_reply_skip_reason",
+                skip_reason,
             )
+            if skip_reason == "active_reply_whitelist_miss":
+                event.set_extra("_interaction_active_reply_whitelist_skipped", True)
+                event.set_extra(
+                    "_interaction_active_reply_whitelist_skip_reason",
+                    skip_reason,
+                )
             logger.info(
-                "Interaction middleware skipped passive group reply due to active-reply whitelist: platform_id=%s session_id=%s umo=%s group_id=%s",
+                "Interaction middleware skipped passive group reply: platform_id=%s session_id=%s umo=%s group_id=%s reason=%s",
                 event.get_platform_id(),
                 event.session_id,
                 event.unified_msg_origin,
                 event.get_group_id(),
+                skip_reason,
             )
             self.core_queue.put_nowait(event)
             return
