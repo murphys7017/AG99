@@ -1227,6 +1227,34 @@ async def _ensure_img_caption(
         req.image_urls = []
 
 
+def _resolve_image_caption_provider(
+    plugin_context: Context,
+    provider_id: str,
+    *,
+    source: str,
+) -> Provider | None:
+    if not provider_id:
+        return None
+
+    prov = plugin_context.get_provider_by_id(provider_id)
+    if prov is None:
+        logger.warning(
+            "Skip %s image captioning because provider `%s` is unavailable.",
+            source,
+            provider_id,
+        )
+        return None
+    if not isinstance(prov, Provider):
+        logger.warning(
+            "Skip %s image captioning because provider `%s` is invalid type: %s.",
+            source,
+            provider_id,
+            type(prov),
+        )
+        return None
+    return prov
+
+
 def _append_quoted_image_attachment(req: ProviderRequest, image_path: str) -> None:
     req.extra_user_content_parts.append(
         TextPart(text=f"[Image Attachment in quoted message: path {image_path}]")
@@ -1435,11 +1463,13 @@ async def _process_quote_message(
             prov = None
             path = None
             compress_path = None
-            prov = plugin_context.get_provider_by_id(img_cap_prov_id)
-            if prov is None:
-                prov = plugin_context.get_using_provider(event.unified_msg_origin)
+            prov = _resolve_image_caption_provider(
+                plugin_context,
+                img_cap_prov_id,
+                source="quoted",
+            )
 
-            if prov and isinstance(prov, Provider):
+            if prov:
                 cache_ref = await _resolve_image_component_ref(image_seg)
                 path = await image_seg.convert_to_file_path()
                 compress_path = await _compress_image_for_provider(
@@ -1474,8 +1504,6 @@ async def _process_quote_message(
                     content_parts.append(
                         f"[Image Caption in quoted message]: {completion_text}"
                     )
-            else:
-                logger.warning("No provider found for image captioning in quote.")
         except BaseException as exc:
             logger.error("处理引用图片失败: %s", exc)
         finally:
@@ -1563,12 +1591,22 @@ async def _decorate_llm_request(
                 "Skipping image captioning because the main provider supports image input."
             )
         elif img_cap_prov_id and req.image_urls:
-            await _ensure_img_caption(
-                event,
-                req,
-                cfg,
+            if _resolve_image_caption_provider(
                 plugin_context,
                 img_cap_prov_id,
+                source="current",
+            ):
+                await _ensure_img_caption(
+                    event,
+                    req,
+                    cfg,
+                    plugin_context,
+                    img_cap_prov_id,
+                )
+        elif req.image_urls:
+            logger.debug(
+                "No dedicated image caption provider configured. "
+                "Skipping current image captioning."
             )
 
     img_cap_prov_id = cfg.get("default_image_caption_provider_id") or ""

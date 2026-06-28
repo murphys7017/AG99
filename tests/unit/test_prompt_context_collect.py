@@ -887,7 +887,68 @@ async def test_collect_context_pack_collects_current_image_captions():
 
 
 @pytest.mark.asyncio
-async def test_collect_context_pack_collects_quoted_image_captions_from_current_provider():
+async def test_collect_context_pack_skips_current_image_captions_for_vision_provider():
+    event, _extras = _make_event()
+    event.message_obj.message = [Image(file="https://example.com/image.png")]
+    context = _make_context()
+    req = ProviderRequest(prompt="describe this")
+    req.conversation = _make_conversation()
+    provider = MagicMock()
+    provider.provider_config = {
+        "id": "vision-provider",
+        "modalities": ["text", "image", "tool_use"],
+    }
+    req.provider = provider
+    caption_provider = MagicMock()
+    caption_provider.text_chat = AsyncMock(
+        return_value=MagicMock(completion_text="Should not be used.")
+    )
+    context.get_provider_by_id.return_value = caption_provider
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            provider_settings={
+                "default_image_caption_provider_id": "caption-provider",
+            },
+        ),
+        provider_request=req,
+        collectors=[InputCollector()],
+    )
+
+    assert pack.get_slot("input.image_captions") is None
+    caption_provider.text_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_skips_current_image_captions_without_configured_provider():
+    event, _extras = _make_event()
+    event.message_obj.message = [Image(file="https://example.com/image.png")]
+    context = _make_context()
+    req = ProviderRequest(prompt="describe this")
+    req.conversation = _make_conversation()
+    current_provider = MagicMock()
+    current_provider.text_chat = AsyncMock(
+        return_value=MagicMock(completion_text="Should not be used.")
+    )
+    context.get_using_provider.return_value = current_provider
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[InputCollector()],
+    )
+
+    assert pack.get_slot("input.image_captions") is None
+    current_provider.text_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_collects_quoted_image_captions_from_configured_provider():
     event, extras = _make_event()
     event.message_obj.message = [
         Reply(
@@ -906,11 +967,61 @@ async def test_collect_context_pack_collects_quoted_image_captions_from_current_
     }
     context = _make_context()
     caption_provider = MagicMock()
-    caption_provider.provider_config = {"id": "active-provider"}
+    caption_provider.provider_config = {"id": "caption-provider"}
     caption_provider.text_chat = AsyncMock(
         return_value=MagicMock(completion_text="Quoted image caption.")
     )
-    context.get_using_provider.return_value = caption_provider
+    context.get_provider_by_id.return_value = caption_provider
+
+    with patch(
+        "astrbot.core.prompt.collectors.input_collector.extract_quoted_message_text",
+        new=AsyncMock(return_value="quoted image"),
+    ):
+        pack = await collect_context_pack(
+            event=event,
+            plugin_context=context,
+            config=ama.MainAgentBuildConfig(
+                tool_call_timeout=60,
+                provider_settings={
+                    "default_image_caption_provider_id": "caption-provider",
+                },
+            ),
+            collectors=[InputCollector()],
+        )
+
+    captions_slot = pack.get_slot("input.quoted_image_captions")
+    assert captions_slot is not None
+    assert captions_slot.value == [
+        {
+            "ref": "https://example.com/quoted.png",
+            "caption": "Quoted image caption.",
+            "provider_id": "caption-provider",
+            "source": "quoted",
+            "reply_id": "reply-1",
+            "semantic_type": "quoted_screenshot",
+            "explanation": "This quoted image is the screenshot referenced in the reply.",
+            "explanation_source": "platform",
+            "context_role": "reference",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_skips_quoted_image_captions_without_configured_provider():
+    event, _extras = _make_event()
+    event.message_obj.message = [
+        Reply(
+            id="reply-1",
+            message_str="quoted image",
+            chain=[Image(file="https://example.com/quoted.png")],
+        )
+    ]
+    context = _make_context()
+    current_provider = MagicMock()
+    current_provider.text_chat = AsyncMock(
+        return_value=MagicMock(completion_text="Should not be used.")
+    )
+    context.get_using_provider.return_value = current_provider
 
     with patch(
         "astrbot.core.prompt.collectors.input_collector.extract_quoted_message_text",
@@ -923,21 +1034,8 @@ async def test_collect_context_pack_collects_quoted_image_captions_from_current_
             collectors=[InputCollector()],
         )
 
-    captions_slot = pack.get_slot("input.quoted_image_captions")
-    assert captions_slot is not None
-    assert captions_slot.value == [
-        {
-            "ref": "https://example.com/quoted.png",
-            "caption": "Quoted image caption.",
-            "provider_id": "active-provider",
-            "source": "quoted",
-            "reply_id": "reply-1",
-            "semantic_type": "quoted_screenshot",
-            "explanation": "This quoted image is the screenshot referenced in the reply.",
-            "explanation_source": "platform",
-            "context_role": "reference",
-        }
-    ]
+    assert pack.get_slot("input.quoted_image_captions") is None
+    current_provider.text_chat.assert_not_called()
 
 
 @pytest.mark.asyncio

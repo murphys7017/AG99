@@ -913,6 +913,83 @@ class TestDecorateLlmRequest:
 
         assert req.prompt == "Hello"
 
+    @pytest.mark.asyncio
+    async def test_decorate_llm_request_skips_current_image_caption_without_caption_provider(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Current images should not be captioned when no caption provider is configured."""
+        module = ama
+        mock_provider.provider_config = {
+            "id": "text-provider",
+            "modalities": ["text", "tool_use"],
+        }
+        mock_provider.text_chat = AsyncMock()
+        req = ProviderRequest(prompt="Hello", image_urls=["/tmp/image.jpg"])
+        req.conversation = MagicMock()
+        mock_context.get_config.return_value = {"provider_settings": {}}
+        config = module.MainAgentBuildConfig(tool_call_timeout=60)
+
+        with patch.object(
+            module,
+            "_ensure_persona_and_skills",
+            new=AsyncMock(),
+        ):
+            await module._decorate_llm_request(
+                mock_event,
+                req,
+                mock_context,
+                config,
+                provider=mock_provider,
+            )
+
+        assert req.image_urls == ["/tmp/image.jpg"]
+        assert not any(
+            "[Image Captioning Failed]" in getattr(part, "text", "")
+            for part in req.extra_user_content_parts
+        )
+        mock_provider.text_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_decorate_llm_request_skips_current_image_caption_when_configured_provider_missing(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Missing caption providers should not add failure placeholders."""
+        module = ama
+        mock_provider.provider_config = {
+            "id": "text-provider",
+            "modalities": ["text", "tool_use"],
+        }
+        mock_provider.text_chat = AsyncMock()
+        req = ProviderRequest(prompt="Hello", image_urls=["/tmp/image.jpg"])
+        req.conversation = MagicMock()
+        mock_context.get_provider_by_id.return_value = None
+        config = module.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            provider_settings={
+                "default_image_caption_provider_id": "missing-caption-provider",
+            },
+        )
+
+        with patch.object(
+            module,
+            "_ensure_persona_and_skills",
+            new=AsyncMock(),
+        ):
+            await module._decorate_llm_request(
+                mock_event,
+                req,
+                mock_context,
+                config,
+                provider=mock_provider,
+            )
+
+        assert req.image_urls == ["/tmp/image.jpg"]
+        assert not any(
+            "[Image Captioning Failed]" in getattr(part, "text", "")
+            for part in req.extra_user_content_parts
+        )
+        mock_provider.text_chat.assert_not_called()
+
 
 class TestPluginToolFix:
     """Tests for _plugin_tool_fix function."""
@@ -1292,6 +1369,66 @@ class TestBuildMainAgent:
         mock_context.get_provider_by_id.return_value = None
         mock_context.get_using_provider.return_value = mock_provider
         mock_context.get_config.return_value = {"provider_settings": {}}
+
+        conv_mgr = mock_context.conversation_manager
+        _setup_conversation_for_build(conv_mgr)
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+            patch.object(
+                Image,
+                "convert_to_file_path",
+                AsyncMock(return_value="/tmp/quoted.jpg"),
+            ),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(tool_call_timeout=60),
+            )
+
+        assert result is not None
+        assert not any(
+            "Image Caption" in text or "<image_caption>" in text
+            for text in (
+                getattr(part, "text", "")
+                for part in result.provider_request.extra_user_content_parts
+            )
+        )
+        mock_provider.text_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_skips_quoted_image_caption_when_configured_provider_missing(
+        self, mock_event, mock_context, mock_provider
+    ):
+        """Missing caption providers should not fall back to the main chat provider."""
+        module = ama
+        mock_provider.provider_config = {
+            "id": "text-provider",
+            "modalities": ["text", "tool_use"],
+        }
+        mock_provider.text_chat = AsyncMock()
+        mock_image = Image(file="/tmp/quoted.jpg")
+        mock_reply = Reply(
+            id="reply-1",
+            chain=[mock_image],
+            sender_nickname="",
+            message_str="quoted message",
+        )
+        mock_event.message_obj.message = [Plain(text="Hello"), mock_reply]
+
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "default_image_caption_provider_id": "missing-caption-provider",
+            }
+        }
 
         conv_mgr = mock_context.conversation_manager
         _setup_conversation_for_build(conv_mgr)
