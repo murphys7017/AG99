@@ -95,13 +95,16 @@
   `tool_call` 仅保留为可选协议路径和测试覆盖，不代表线上主链路
 - 旧 `finalizer.py` 已删除；core final reply 不再走独立 finalizer provider
 - stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成
-- **origin 路由**：`send_wrapper` 通过 `_interaction_output_origin` 区分 core/plugin 输出，
-  `respond/stage.py` 中的 event.send / event.send_streaming 调用已加 CORE origin 标记
+- **origin 路由**：`send_wrapper` / `send_streaming_wrapper` 通过 `_interaction_output_origin` 区分 core/plugin 输出，
+  `respond/stage.py` 中的 event.send / event.send_streaming 调用已加 CORE origin 标记；未标记的插件主动流式输出会走 plugin output path，不再记录为 `core_stream`
 
 当前仍需继续收口：
 
 - output gateway：`capture_plugin_output()` 已建立，但 `event.send` / `event.send_streaming`
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
+- 插件通过 `return/yield MessageEventResult` 交给 `RespondStage` / 平台适配器发送的官方结果路径，
+  仍需接入 interaction Output Runtime，并按 plugin output 归类；当前已覆盖的是插件主动
+  `event.send(...)` 与 `event.send_streaming(...)` 路径
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
 

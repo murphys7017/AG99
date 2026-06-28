@@ -160,16 +160,17 @@ plugin output 的独立 message kind 和记录语义
    - `event.send`
    - `event.send_streaming`
    - `event.complete_visible_turn`
-4. 替换后，`event.send(...)` 不直接发，而是进入 `InteractionOutputController.capture_message_chain(...)`。
-5. 真正发给平台时，Output Controller 会调用：
+4. 替换后，`event.send(...)` 会按 origin 进入 core 或 plugin output path；未标记 origin 的插件发送进入 `capture_plugin_output(...)`。
+5. `event.send_streaming(...)` 同样按 origin 分流；core 流式进入 `capture_streaming(...)`，插件主动流式进入 `capture_plugin_streaming(...)`。
+6. 真正发给平台时，Output Controller 会调用：
    - `event.send_interaction_message(...)`
    - `event.send_interaction_streaming(...)`
-6. `send_interaction_message(...)` 已经是“统一出口”的雏形。
+7. 插件通过 `return/yield MessageEventResult` 交给 `RespondStage` 的官方结果路径仍是待收口项。
 
 因此，本轮实现的最佳切入点不是新造一个发送系统，而是：
 
 ```text
-围绕 send_interaction_message / capture_message_chain 建立标准化的 plugin output path
+围绕 send_interaction_message / send_interaction_streaming 建立标准化的 plugin output path
 ```
 
 ## 本轮完成后的理想行为
@@ -184,6 +185,13 @@ plugin -> event.send(message)
   -> materialize as plugin_direct
   -> event.send_interaction_message(...)
   -> visible_outputs / finalized material
+
+plugin -> event.send_streaming(generator)
+  -> middleware send_streaming wrapper
+  -> detect origin=plugin
+  -> capture_plugin_streaming(mode=direct)
+  -> event.send_interaction_streaming(...)
+  -> visible_outputs / finalized material as plugin_direct
 ```
 
 而不是：
@@ -1067,6 +1075,7 @@ _interaction_persona_rewrite_failed
 新增测试：
 
 - 插件主动调用 `event.send(...)` 时走 plugin output path，而不是 core output path
+- 待补：插件 `return/yield MessageEventResult` 后经 `RespondStage` / 平台适配器发送时，也走 plugin output path，而不是 core output path
 - core 输出仍走原 `capture_message_chain(...)`
 - 插件输出默认 mode 为 `direct`
 - core origin 标记在调用后会恢复
@@ -1097,10 +1106,10 @@ _interaction_persona_rewrite_failed
 本轮完成后，以下行为必须成立：
 
 1. 旧插件 `await event.send(message)` 仍可工作。
-2. 在 interaction middleware 启用时，插件输出经过统一 Output Runtime。
+2. 在 interaction middleware 启用时，插件主动输出经过统一 Output Runtime；包括 `event.send(...)` 与 `event.send_streaming(...)`。`return/yield MessageEventResult` 后由 `RespondStage` / 平台适配器发送的官方结果路径仍是后续待收口项。
 3. direct 模式不改写文本。
 4. persona 模式可以改写文本，失败时降级 direct。
-5. 插件输出被记录进 visible outputs 和 finalized material。
+5. 插件主动输出被记录进 visible outputs 和 finalized material；插件主动流式输出不再冒充 `core_stream`。
 6. core first response、core final reply、core streaming 行为不回归。
 7. 不需要本轮修改所有平台 event 类。
 8. plugin output 不会污染 core output origin 状态。

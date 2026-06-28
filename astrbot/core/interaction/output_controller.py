@@ -71,7 +71,9 @@ from .turn_state import (
 from .types import InteractionAgentConfig, RouteMode
 
 
-def _merge_runtime_config(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+def _merge_runtime_config(
+    base: Mapping[str, Any], override: Mapping[str, Any]
+) -> dict[str, Any]:
     merged: dict[str, Any] = dict(base)
     for key, value in override.items():
         if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
@@ -281,7 +283,7 @@ class InteractionOutputController:
                 message_kind="immediate_reply",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
-                )
+            )
             return
 
         if outbound_kind == "streaming_finish_marker":
@@ -320,7 +322,7 @@ class InteractionOutputController:
                 message_kind="passthrough",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
-                )
+            )
             self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(event)
             return
@@ -398,6 +400,67 @@ class InteractionOutputController:
             message_kind=resolved_kind,
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
+            memory_relevant=True,
+        )
+        self._materialize_finalized_turn(event)
+        await self._persist_interaction_turn(event)
+
+    async def capture_plugin_streaming(
+        self,
+        generator: AsyncGenerator[MessageChain, None],
+        event: AstrMessageEvent,
+        *,
+        mode: str = PluginOutputMode.DIRECT.value,
+        use_fallback: bool = False,
+    ) -> None:
+        """Deliver plugin-origin streaming output without core stream semantics."""
+        resolved_mode = PluginOutputMode(mode)
+        resolved_kind = "plugin_direct"
+        event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
+        event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
+        stream_text_parts: list[str] = []
+
+        async def _observe_plugin_stream() -> AsyncGenerator[MessageChain, None]:
+            async for chain in generator:
+                chunk_text = self._extract_observable_stream_text(chain)
+                if chunk_text:
+                    stream_text_parts.append(chunk_text)
+                yield chain
+
+        try:
+            await event.send_interaction_streaming(
+                _observe_plugin_stream(),
+                platform_extras={
+                    **self.build_platform_output_extras(
+                        event,
+                        message_kind=resolved_kind,
+                    ),
+                    "interaction_plugin_streaming": True,
+                    "plugin_output_mode": resolved_mode.value,
+                },
+                use_fallback=use_fallback,
+            )
+        except Exception as exc:
+            event.set_extra("_interaction_plugin_streaming_failed", True)
+            event.set_extra("_interaction_plugin_streaming_failure_reason", str(exc))
+            logger.error(
+                "Interaction middleware plugin streaming delivery failed: platform_id=%s session_id=%s turn_id=%s error=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+                exc,
+                exc_info=True,
+            )
+            raise
+        text = "".join(stream_text_parts).strip()
+        event.set_extra("_interaction_plugin_streaming_consumed", True)
+        event.set_extra("_interaction_plugin_streaming_text", text)
+        if not text:
+            return
+        self._record_visible_output(
+            event,
+            message_kind=resolved_kind,
+            text=text,
             memory_relevant=True,
         )
         self._materialize_finalized_turn(event)
@@ -959,7 +1022,9 @@ class InteractionOutputController:
         (
             materialized_message,
             materialization,
-        ) = await self.materialize_immediate_interaction_outbound_message(event, message)
+        ) = await self.materialize_immediate_interaction_outbound_message(
+            event, message
+        )
         platform_extras = {
             **self.build_platform_output_extras(
                 event,
@@ -1127,9 +1192,7 @@ class InteractionOutputController:
 
         decision_obj = get_interaction_decision(event)
         decision_payload = decision_obj.to_dict() if decision_obj is not None else None
-        route_mode = (
-            decision_obj.route_mode.value if decision_obj is not None else None
-        )
+        route_mode = decision_obj.route_mode.value if decision_obj is not None else None
         purpose = "persona_reply" if phase == "immediate" else "core_reply"
         effect_calls = (
             tuple(decision_obj.effect_calls)

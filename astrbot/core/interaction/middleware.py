@@ -168,6 +168,20 @@ class InteractionMiddleware:
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:
         return event.get_extra("action_type") == "live"
 
+    def prepare_pipeline_event(self, event: AstrMessageEvent) -> None:
+        if event.is_stopped() or event.get_extra("_interaction_output_prepared", False):
+            return
+        runtime_config = self._get_runtime_config(event)
+        if not is_middleware_enabled(runtime_config):
+            return
+        self._reject_development_fallback_policy(runtime_config)
+        if isinstance(runtime_config, Mapping):
+            event.set_extra("_astrbot_config", runtime_config)
+        turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
+        ensure_interaction_turn_state(event, turn_id=turn_id)
+        self.attach_event_context(event, turn_id=turn_id)
+        event.set_extra("_interaction_output_prepared", True)
+
     def attach_event_context(
         self,
         event: AstrMessageEvent,
@@ -222,11 +236,23 @@ class InteractionMiddleware:
             generator: AsyncGenerator[MessageChain, None],
             use_fallback: bool = False,
         ) -> None:
-            await output_controller.capture_streaming(
-                generator,
-                wrapped_event,
-                use_fallback=use_fallback,
-            )
+            origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
+            if origin == OutputOrigin.CORE.value:
+                await output_controller.capture_streaming(
+                    generator,
+                    wrapped_event,
+                    use_fallback=use_fallback,
+                )
+            else:
+                await output_controller.capture_plugin_streaming(
+                    generator,
+                    wrapped_event,
+                    mode=wrapped_event.get_extra(
+                        "_interaction_plugin_output_mode",
+                        "direct",
+                    ),
+                    use_fallback=use_fallback,
+                )
             wrapped_event._has_send_oper = True
 
         async def complete_visible_turn_wrapper(
@@ -253,12 +279,14 @@ class InteractionMiddleware:
         self._spawn_inbound_task(event)
 
     async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
-        if event.is_stopped() or event.get_extra("_interaction_enabled", False):
+        if event.is_stopped() or event.get_extra("_interaction_route_handled", False):
             return
         runtime_config = self._get_runtime_config(event)
         if not is_middleware_enabled(runtime_config):
             return
+        self.prepare_pipeline_event(event)
         await self._handle_inbound_async(event, enqueue_core=False)
+        event.set_extra("_interaction_route_handled", True)
 
     def _spawn_inbound_task(self, event: AstrMessageEvent) -> None:
         task = asyncio.create_task(
@@ -323,7 +351,7 @@ class InteractionMiddleware:
         if isinstance(runtime_config, Mapping):
             event.set_extra("_astrbot_config", runtime_config)
         interaction_config = load_interaction_agent_config(runtime_config)
-        turn_id = uuid.uuid4().hex
+        turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         await self._materialize_inbound_media(event)
         if self._is_live_mode_event(event):

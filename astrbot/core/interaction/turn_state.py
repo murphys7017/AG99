@@ -20,6 +20,8 @@ _VALID_UTTERANCE_KINDS = frozenset(
         "core_reply",
         "core_stream",
         "finalized_reply",
+        "plugin_direct",
+        "plugin_persona",
     }
 )
 

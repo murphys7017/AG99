@@ -25,6 +25,15 @@ class ProcessStage(Stage):
         self.star_request_sub_stage = StarRequestSubStage()
         await self.star_request_sub_stage.initialize(ctx)
 
+    def _prepare_interaction_output(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        middleware = self.ctx.interaction_middleware
+        if middleware is None:
+            return
+        middleware.prepare_pipeline_event(event)
+
     async def _run_interaction_before_core_agent(
         self,
         event: AstrMessageEvent,
@@ -42,6 +51,9 @@ class ProcessStage(Stage):
         activated_handlers: list[StarHandlerMetadata] = event.get_extra(
             "activated_handlers",
         )
+        self._prepare_interaction_output(event)
+        if event.is_stopped():
+            return
         # 有插件 Handler 被激活
         if activated_handlers:
             async for resp in self.star_request_sub_stage.process(event):

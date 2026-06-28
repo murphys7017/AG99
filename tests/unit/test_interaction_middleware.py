@@ -24,6 +24,7 @@ from astrbot.core.interaction.types import (
 from astrbot.core.message.components import Plain, Record, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.pipeline.preprocess_stage.stage import PreProcessStage
+from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
@@ -284,7 +285,9 @@ class TestInteractionMiddleware:
 
         forwarded_event = queue.get_nowait()
         middleware.persona_runtime.express_visible_reply.assert_awaited_once()
-        decision_event = middleware.persona_runtime.express_visible_reply.await_args.args[0]
+        decision_event = (
+            middleware.persona_runtime.express_visible_reply.await_args.args[0]
+        )
         assert decision_event.message_str == "recognized voice text"
         assert forwarded_event.message_obj.message_str == "recognized voice text"
         assert isinstance(forwarded_event.message_obj.message[0], Plain)
@@ -331,6 +334,118 @@ class TestInteractionMiddleware:
         assert turn_state is not None
         assert turn_state.failures[-1].stage == "inbound_stt"
         assert turn_state.failures[-1].reason == "provider_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_prepare_pipeline_event_intercepts_plugin_send_before_routing(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                }
+            },
+            queue,
+            controller,
+        )
+
+        middleware.prepare_pipeline_event(webchat_event)
+        message = MessageChain([Plain("plugin early send")])
+
+        await webchat_event.send(message)
+
+        controller.capture_plugin_output.assert_awaited_once_with(
+            message,
+            webchat_event,
+            mode="direct",
+        )
+        controller.capture_message_chain.assert_not_awaited()
+        assert webchat_event.get_extra("_interaction_enabled") is True
+        assert webchat_event.get_extra("_interaction_output_prepared") is True
+        assert webchat_event.get_extra("_interaction_route_handled") is None
+        assert isinstance(webchat_event.get_extra("_turn_id"), str)
+        assert get_interaction_turn_state(webchat_event) is not None
+
+    @pytest.mark.asyncio
+    async def test_handle_pipeline_event_runs_route_after_output_prepare(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(middleware)
+
+        middleware.prepare_pipeline_event(webchat_event)
+        await middleware.handle_pipeline_event(webchat_event)
+
+        middleware.persona_runtime.express_visible_reply.assert_awaited_once()
+        middleware.router_agent.route.assert_awaited_once()
+        assert webchat_event.get_extra("_interaction_route_handled") is True
+        assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_process_stage_prepares_output_before_plugin_handler_send(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                }
+            },
+            queue,
+            controller,
+        )
+        stage = ProcessStage()
+        stage.ctx = MagicMock()
+        stage.ctx.interaction_middleware = middleware
+        stage.ctx.astrbot_config = {"provider_settings": {"enable": False}}
+        stage.star_request_sub_stage = MagicMock()
+        message = MessageChain([Plain("plugin handler send")])
+
+        async def _plugin_process(event):
+            assert event.get_extra("_interaction_output_prepared") is True
+            assert event.get_extra("_interaction_route_handled") is None
+            await event.send(message)
+            yield None
+
+        stage.star_request_sub_stage.process = _plugin_process
+        webchat_event.set_extra("activated_handlers", [MagicMock()])
+
+        async for _ in stage.process(webchat_event):
+            pass
+
+        controller.capture_plugin_output.assert_awaited_once_with(
+            message,
+            webchat_event,
+            mode="direct",
+        )
+        controller.capture_message_chain.assert_not_awaited()
+        assert webchat_event.get_extra("_interaction_route_handled") is None
+        assert queue.empty()
 
     @pytest.mark.asyncio
     async def test_plugin_send_defaults_to_plugin_output_after_forwarding(
@@ -435,9 +550,7 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
-        forwarded_event.set_result(
-            MessageEventResult().message("respond stage reply")
-        )
+        forwarded_event.set_result(MessageEventResult().message("respond stage reply"))
 
         stage = RespondStage()
         await stage.initialize(
@@ -454,6 +567,47 @@ class TestInteractionMiddleware:
         assert sent_message.get_plain_text() == "respond stage reply"
         assert controller.capture_plugin_output.await_count == 0
         assert forwarded_event.get_extra("_interaction_output_origin") is None
+
+    @pytest.mark.asyncio
+    async def test_plugin_streaming_defaults_to_plugin_output_after_forwarding(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_streaming = AsyncMock()
+        controller.capture_plugin_streaming = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
+
+        async def generator():
+            yield MessageChain([Plain("plugin chunk")])
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+        forwarded_event = queue.get_nowait()
+
+        await forwarded_event.send_streaming(generator(), use_fallback=True)
+
+        controller.capture_plugin_streaming.assert_awaited_once()
+        assert controller.capture_plugin_streaming.await_args.args[0] is not None
+        assert controller.capture_plugin_streaming.await_args.args[1] is forwarded_event
+        assert controller.capture_plugin_streaming.await_args.kwargs == {
+            "mode": "direct",
+            "use_fallback": True,
+        }
+        controller.capture_streaming.assert_not_awaited()
+        assert forwarded_event._has_send_oper is True
 
     @pytest.mark.asyncio
     async def test_core_streaming_is_intercepted_after_forwarding(self, webchat_event):
@@ -480,10 +634,77 @@ class TestInteractionMiddleware:
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
 
-        await forwarded_event.send_streaming(generator(), use_fallback=True)
+        with temporary_output_origin(forwarded_event, OutputOrigin.CORE.value):
+            await forwarded_event.send_streaming(generator(), use_fallback=True)
 
         controller.capture_streaming.assert_awaited_once()
         assert forwarded_event._has_send_oper is True
+
+    @pytest.mark.asyncio
+    async def test_plugin_streaming_records_plugin_output_without_core_stream_state(
+        self,
+        streaming_event,
+    ):
+        queue = asyncio.Queue()
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(
+                stream_observation_enabled=False,
+                stream_interjection_enabled=False,
+            )
+        )
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(middleware)
+        middleware.memory_store.update_interaction_memory = AsyncMock()
+
+        async def generator():
+            yield MessageChain([Plain("plugin ")])
+            yield MessageChain([Plain("stream")])
+
+        with patch(
+            "astrbot.core.interaction.middleware.dispatch_postprocess",
+            new=AsyncMock(),
+        ) as dispatch:
+            middleware.handle_inbound(streaming_event)
+            await _drain_inbound_tasks(middleware)
+            forwarded_event = queue.get_nowait()
+            await forwarded_event.send_streaming(generator())
+            await _drain_inbound_tasks(middleware)
+
+        turn_state = get_interaction_turn_state(forwarded_event)
+        assert turn_state is not None
+        assert (
+            forwarded_event.get_extra("_interaction_plugin_streaming_consumed") is True
+        )
+        assert (
+            forwarded_event.get_extra("_interaction_plugin_streaming_text")
+            == "plugin stream"
+        )
+        assert (
+            forwarded_event.get_extra("_interaction_core_streaming_result_consumed")
+            is None
+        )
+        assert turn_state.visible_outputs == [
+            {
+                "turn_id": forwarded_event.get_extra("_turn_id"),
+                "kind": "plugin_direct",
+                "text": "plugin stream",
+                "memory_relevant": True,
+            }
+        ]
+        assert turn_state.utterances[0].kind == "plugin_direct"
+        middleware.memory_store.update_interaction_memory.assert_not_awaited()
+        dispatch.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_core_streaming_finalizes_turn_after_stream_completion(
@@ -522,7 +743,8 @@ class TestInteractionMiddleware:
             middleware.handle_inbound(streaming_event)
             await _drain_inbound_tasks(middleware)
             forwarded_event = queue.get_nowait()
-            await forwarded_event.send_streaming(generator())
+            with temporary_output_origin(forwarded_event, OutputOrigin.CORE.value):
+                await forwarded_event.send_streaming(generator())
             await _drain_inbound_tasks(middleware)
 
         turn_state = get_interaction_turn_state(forwarded_event)
@@ -669,8 +891,8 @@ class TestInteractionMiddleware:
         }
         middleware = InteractionMiddleware(default_config, queue, controller)
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.plugin_context.get_config.side_effect = (
-            lambda umo=None: runtime_config
+        middleware.plugin_context.get_config.side_effect = lambda umo=None: (
+            runtime_config
             if umo == webchat_event.unified_msg_origin
             else default_config
         )
@@ -810,7 +1032,7 @@ class TestInteractionMiddleware:
     async def test_router_pipeline_error_falls_back_to_hybrid_records_failure(
         self,
         webchat_event,
-        ):
+    ):
         queue = asyncio.Queue()
         controller = MagicMock()
         controller.emit_immediate_spoken_reply = AsyncMock()
@@ -1266,8 +1488,8 @@ class TestInteractionMiddleware:
         }
         middleware = InteractionMiddleware(default_config, queue, controller)
         middleware.plugin_context = MagicMock(spec=Context)
-        middleware.plugin_context.get_config.side_effect = (
-            lambda umo=None: runtime_config
+        middleware.plugin_context.get_config.side_effect = lambda umo=None: (
+            runtime_config
             if umo == webchat_event.unified_msg_origin
             else default_config
         )
@@ -1380,7 +1602,9 @@ class TestInteractionMiddleware:
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 
-        assert webchat_event.get_extra("_interaction_conversation_history_failed") is None
+        assert (
+            webchat_event.get_extra("_interaction_conversation_history_failed") is None
+        )
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
         assert turn_state.completion_state.completed is True
@@ -1458,4 +1682,3 @@ class TestInteractionMiddleware:
         assert isinstance(reply.chain[0], Plain)
         assert reply.chain[0].text == "引用语音"
         assert webchat_event.message_str == "引用语音"
-

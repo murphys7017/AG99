@@ -8,6 +8,7 @@ from astrbot.core import logger
 from astrbot.core.agent.message import Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.message.components import BaseMessageComponent, Json, Plain
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -25,6 +26,11 @@ AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
 
 def _should_stop_agent(astr_event) -> bool:
     return astr_event.is_stopped() or bool(astr_event.get_extra("agent_stop_requested"))
+
+
+async def _send_core_event_message(astr_event, message: MessageChain) -> None:
+    with temporary_output_origin(astr_event, OutputOrigin.CORE.value):
+        await astr_event.send(message)
 
 
 def _truncate_tool_result(text: str, limit: int = 70) -> str:
@@ -194,16 +200,17 @@ async def run_agent(
 
                     if msg_chain.type == "tool_direct_result":
                         # tool_direct_result 用于标记 llm tool 需要直接发送给用户的内容
-                        await astr_event.send(msg_chain)
+                        await _send_core_event_message(astr_event, msg_chain)
                         continue
                     if astr_event.get_platform_id() == "webchat":
-                        await astr_event.send(msg_chain)
+                        await _send_core_event_message(astr_event, msg_chain)
                     elif show_tool_use and show_tool_call_result:
                         status_msg = _build_tool_result_status_message(
                             msg_chain, tool_name_by_call_id
                         )
-                        await astr_event.send(
-                            MessageChain(type="tool_call").message(status_msg)
+                        await _send_core_event_message(
+                            astr_event,
+                            MessageChain(type="tool_call").message(status_msg),
                         )
                     # 对于其他情况，暂时先不处理
                     continue
@@ -225,7 +232,7 @@ async def run_agent(
                     _record_tool_call_name(tool_info, tool_name_by_call_id)
 
                     if astr_event.get_platform_name() == "webchat":
-                        await astr_event.send(resp.data["chain"])
+                        await _send_core_event_message(astr_event, resp.data["chain"])
                     elif show_tool_use:
                         if show_tool_call_result and isinstance(tool_info, dict):
                             # Delay tool status notification until tool_call_result.
@@ -233,7 +240,7 @@ async def run_agent(
                         chain = MessageChain(type="tool_call").message(
                             _build_tool_call_status_message(tool_info)
                         )
-                        await astr_event.send(chain)
+                        await _send_core_event_message(astr_event, chain)
                     continue
                 elif resp.type == "llm_result":
                     chain = resp.data["chain"]
@@ -291,11 +298,12 @@ async def run_agent(
             if agent_runner.done():
                 # send agent stats to webchat
                 if astr_event.get_platform_name() == "webchat":
-                    await astr_event.send(
+                    await _send_core_event_message(
+                        astr_event,
                         MessageChain(
                             type="agent_stats",
                             chain=[Json(data=agent_runner.stats.to_dict())],
-                        )
+                        ),
                     )
 
                 break
@@ -473,7 +481,8 @@ async def run_live_agent(
         astr_event = agent_runner.run_context.context.event
         if astr_event.get_platform_name() == "webchat":
             tts_duration = tts_end_time - tts_start_time
-            await astr_event.send(
+            await _send_core_event_message(
+                astr_event,
                 MessageChain(
                     type="tts_stats",
                     chain=[
@@ -486,7 +495,7 @@ async def run_live_agent(
                             }
                         )
                     ],
-                )
+                ),
             )
     except Exception as e:
         logger.error(f"发送 TTS 统计信息失败: {e}")
