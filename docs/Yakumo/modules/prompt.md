@@ -133,8 +133,9 @@ prompt module 的职责是声明与编译契约，并把 `output_contract` / `co
 详细策略边界见 `docs/Yakumo/dev/output-contract.md`。这里需要记住的当前事实是：
 
 - `protocol_tool_call` 是 strict 结构化输出的主要协议级落地。
-- `prompt_only` 不总是“退化”；对 persona visible-reply 这类 strict `json_object` 契约，它就是当前正式落地方式。
-- `interaction decision` 是高约束场景，必须走 `protocol_tool_call`，不能把裸文本 JSON 当成功。
+- `prompt_only` 不总是“退化”；普通 `json_object` 契约可以原生落到 prompt-only。
+- persona visible-reply 当前是 strict `tool_call` 的高约束场景，优先走 `protocol_tool_call`；只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON。
+- interaction fast router 不使用输出契约，只输出固定路由词 `self_reply` / `hybrid`。
 
 ## 主 Agent 接入方式
 
@@ -162,12 +163,12 @@ memory 写入发生在回合完成后的 postprocess/memory service 链路中。
 
 ## 和 Interaction Middleware 的关系
 
-interaction middleware 在 decision 阶段也复用 prompt render 能力。插件通过 `register_interaction_prompt_contributor(...)` 提供的 `PromptExtension` 会进入 interaction decision prompt，而不是普通 core prompt 的直接替代品。
+interaction middleware 在 fast route 与 persona reply 阶段也复用 prompt render 能力。插件通过 `register_interaction_prompt_contributor(...)` 提供的 `PromptExtension` 会按 purpose 进入 router 或 persona prompt，而不是普通 core prompt 的直接替代品。
 
 当前约束：
 
 - 普通 core prompt extension 影响主 Agent 可见上下文。
-- interaction prompt contributor 只影响 middleware decision prompt。
+- interaction prompt contributor 只影响 middleware router / persona prompt。
 - 两者都使用 `PromptExtension` 数据结构，但作用阶段不同。
 
 ## 仍需继续收口

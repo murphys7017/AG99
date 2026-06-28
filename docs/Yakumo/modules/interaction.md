@@ -30,7 +30,7 @@ middleware 的职责是组合这些服务，并在一个 interaction turn 内形
 Input Runtime / Observation
   -> Interaction Middleware / Persona Runtime Shell
       -> Effective Persona Resolver
-      -> Reflex / Route Decision
+      -> Fast Route Classifier
       -> Core Agent / Tools / Capabilities
       -> Output Gateway
           -> Chat Reply
@@ -50,7 +50,7 @@ Input Runtime / Observation
 - 入站媒体 materialization
 - interaction STT
 - observation / reflex 前置判断
-- route decision
+- fast route classifier：只输出 `self_reply` / `hybrid`，不承担用户可见回复或 effect 输出
 - SELF_REPLY / HYBRID / DELEGATE_TO_CORE 编排
 - live audio protocol route
 - Desktop Body Output intent 调度点
@@ -142,8 +142,8 @@ Input Runtime / Observation
 - `express_visible_reply(...)` — 统一 persona visible-reply 入口，接收“待表达材料”请求
 - `render_plugin_output(...)` / `render_core_reply(...)` / `render_stream_interjection(...)` 只是同一入口的薄包装
 - 本身不做 LLM 调用，只做编排
-- 当前默认输出契约是严格 `json_object`：返回 `spoken_reply` 与 `effect_calls`，且 `allow_text_fallback=False`
-- `tool_call` 仍可作为协议级可选路径存在，但不是 persona visible-reply 的运行时基线
+- 当前默认输出契约是严格 `tool_call`：注册虚拟工具 `persona_expression`，返回 `spoken_reply` 与 `effect_calls`，且 `allow_text_fallback=False`
+- 当 renderer/provider 明确不支持协议级 tool-call 时，才受控降级为 prompt-only JSON；这不是 router/decision 的职责
 - 对 DeepSeek-V4 / `deepseek-reasoner` 这类 reasoning 模型，首轮 persona user input 会额外注入一次“角色沉浸模式” marker，
   用于约束 `<think>` 里的思维风格；稳定人格设定仍留在 `system`，marker 不作为长期人格本体
 
@@ -165,7 +165,7 @@ Input Runtime / Observation
 
 ## Persona Effect 输出契约
 
-当前 persona visible-reply 的结构化结果约束是：
+当前 persona visible-reply 的结构化结果由虚拟工具 `persona_expression` 承载，参数约束是：
 
 ```json
 {
@@ -185,6 +185,7 @@ Input Runtime / Observation
 - effect 的 `arguments` 由注册的 `PersonaEffectSpec.parameters` 决定。
 - motion 类 effect 如果包含 `axes`，运行时会把 `axes.*` 统一视为 `number` schema。
 - `intent_tags` 是否必填不由 persona 顶层决定，而由具体 effect schema 决定；例如 motion effect 可在 `arguments` 内要求它。
+- fast router 不输出这个结构；它只返回 `self_reply` 或 `hybrid`。
 
 ## Postprocess / Memory 边界
 
@@ -263,10 +264,10 @@ AG99live Frontend 只负责身体表现，例如气泡、语音、动作、表�
 interaction middleware 对插件主要暴露两个阶段接口：
 
 1. `register_interaction_prompt_contributor(...)`
-   - 在 middleware decision 前运行。
-   - 用于向 interaction decision prompt 注入结构化信息。
+   - 在 middleware fast route / persona reply 前运行。
+   - 用于向 interaction router 或 persona prompt 注入结构化信息。
    - 返回 `PromptExtension` 或 `list[PromptExtension]`。
-   - 影响中间件如何判断本轮应该 `self_reply`、`hybrid` 还是 `delegate_to_core`。
+   - 影响中间件如何判断本轮应该 `self_reply` 还是 `hybrid`，或影响 persona visible-reply 如何表达。
 
 2. `register_interaction_result_contributor(...)`
    - 在 interaction 输出阶段运行。
@@ -333,7 +334,7 @@ class Main(star.Star):
         )
 ```
 
-`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。
+`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。router purpose 下视图会被裁剪为最小上下文；persona_reply purpose 下才暴露人格、记忆、能力等表达材料。
 常用字段：
 
 - `view.turn_id`

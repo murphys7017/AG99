@@ -56,7 +56,7 @@
 - 新的 `prompt` 模块已经完成 collect/select/render/apply 主链路，当前默认 `apply_visible` 会接管模型可见 `ProviderRequest` 字段；shadow/legacy 仍作为显式配置模式存在
 - builtin 群聊上下文已接入 prompt pipeline：`GroupChatContext` 作为 prompt extension collector 向 `extension.context` 提供群聊上下文，同时保留 legacy `on_llm_request` 兜底出口；该层只提供群聊上下文材料，不接管 Yakumo memory。
 - `PromptRenderEngine` 已支持按 provider metadata 的 `prompt_renderer_family` 自动选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`），输出对应 API 原生格式
-- prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；其中 `interaction decision` 仍要求协议级 `tool_call`，而 persona visible-reply 已明确改为严格 `json_object` 契约，不再把自由文本 fallback 当成功路径
+- prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；当前 interaction fast router 不使用结构化输出契约，只返回固定路由词；persona visible-reply 使用统一的 `persona_expression` 虚拟 tool-call 契约，只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON
 - TODO: 将上下文预算改为显式可配置策略，按 provider/model 支持的 `max_context_tokens` 分配 history/system/tools/memory 的预算，补齐 1M context 模型适配；现阶段 token 统计仍主要依赖估算器，容易保守截断，尚未充分利用大窗口模型
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
 
@@ -89,10 +89,10 @@
 - 所有用户可见自然语言已经收口到统一的 visible-reply persona 入口：
   `first_response`、插件 persona 输出、core final reply、stream interjection 不再各自维护独立文案生成器
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的统一插件输出 helper
+- `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
-  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认返回严格 `json_object` 的 `spoken_reply` / `effect_calls`
-- persona visible-reply 当前统一基线不是原生 `tool_call`，而是 strict `json_object + allow_text_fallback=False`；
-  `tool_call` 仅保留为可选协议路径和测试覆盖，不代表线上主链路
+  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`
+- persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功
 - 旧 `finalizer.py` 已删除；core final reply 不再走独立 finalizer provider
 - stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成
 - **origin 路由**：`send_wrapper` / `send_streaming_wrapper` 通过 `_interaction_output_origin` 区分 core/plugin 输出，

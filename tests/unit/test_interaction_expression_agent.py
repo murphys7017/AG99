@@ -167,7 +167,6 @@ def test_persona_expression_parses_tool_args_from_string_payload():
         llm_response=response,
         output_contract=build_persona_expression_output_contract_for_effects(
             [effect],
-            use_tool_call=True,
         ),
         effects=[effect],
     )
@@ -211,7 +210,7 @@ def test_persona_expression_records_effect_parse_issues_in_metadata():
     ]
 
 
-def test_persona_expression_rejects_plain_text_under_strict_json_contract():
+def test_persona_expression_rejects_plain_text_when_protocol_tool_call_required():
     effect = PersonaEffectSpec(
         plugin_id="plugin_a",
         name="ag99live.motion",
@@ -232,17 +231,54 @@ def test_persona_expression_rejects_plain_text_under_strict_json_contract():
             effects=[effect],
         )
 
-    assert exc_info.value.reason == "invalid_persona_expression_json"
+    assert exc_info.value.reason == "missing_persona_expression_tool_call"
 
 
-def test_persona_expression_defaults_to_strict_prompt_only_json_contract():
+def test_persona_expression_accepts_json_when_tool_call_contract_degrades_to_prompt_only():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"emotion_label": {"type": "string"}},
+            "required": [],
+        },
+    )
+    contract = build_persona_expression_output_contract_for_effects([effect])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="prompt_only",
+        degraded=True,
+        degrade_reason="renderer_has_no_protocol_support",
+    )
+
+    result = extract_persona_expression_result(
+        '{"spoken_reply":"嗯。","effect_calls":[{"name":"ag99live.motion","arguments":{"emotion_label":"focused"}}]}',
+        output_contract=contract,
+        compiled_output_contract=compiled,
+        effects=[effect],
+    )
+
+    assert result.spoken_reply == "嗯。"
+    assert result.effect_calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"emotion_label": "focused"},
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]
+
+
+def test_persona_expression_defaults_to_strict_tool_call_contract():
     schema = build_persona_expression_tool_parameters()
     contract = build_persona_expression_output_contract_for_effects()
 
-    assert contract.mode == "json_object"
+    assert contract.mode == "tool_call"
     assert contract.strict is True
     assert contract.allow_text_fallback is False
-    assert contract.preferred_tool_name is None
+    assert contract.preferred_tool_name == "persona_expression"
     assert schema["required"] == ["spoken_reply", "effect_calls"]
 
 
@@ -406,7 +442,6 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     )
     contract = build_persona_expression_output_contract_for_effects(
         [effect],
-        use_tool_call=True,
     )
     compiled = CompiledOutputContract(
         contract=contract,

@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from astrbot.core.interaction.router_agent import (
@@ -18,6 +20,7 @@ from astrbot.core.interaction.types import (
 from astrbot.core.prompt.context_types import ContextPack
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render.interfaces import RenderResult
+from astrbot.core.provider.entities import LLMResponse
 
 
 def test_route_decision_accepts_self_reply_mode():
@@ -50,6 +53,69 @@ def test_route_decision_rejects_invalid_payload():
 )
 def test_extract_route_payload_accepts_json_and_plain_mode(text, mode):
     assert extract_interaction_route_payload(text) == {"mode": mode}
+
+
+@pytest.mark.asyncio
+async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        message_str = "你好"
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(role="assistant", completion_text="self_reply")
+
+    provider = Provider()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "get_config": lambda self, umo=None: {},
+            "get_provider_by_id": lambda self, provider_id: provider,
+        },
+    )()
+    event = Event()
+    agent = InteractionRouterAgent(memory_store=None)
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.router_agent.Provider",
+        Provider,
+    )
+    monkeypatch.setattr(
+        agent,
+        "_prepare_render_result",
+        AsyncMock(return_value=RenderResult(system_prompt="router", messages=[])),
+    )
+
+    route = await agent.route(
+        event,
+        plugin_context,
+        InteractionAgentConfig(router_provider_id="router"),
+    )
+
+    assert route.mode == FastRouteMode.SELF_REPLY
+    assert "tool_choice" not in provider.calls[0]
+    assert "output_contract" not in provider.calls[0]
+    assert "compiled_output_contract" not in provider.calls[0]
 
 
 def test_route_decision_to_legacy_interaction_decision_omits_core_task_spec():

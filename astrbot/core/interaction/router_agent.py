@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.output_contract import OutputContract
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
-from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.star.context import Context
 
 from .context_builder import (
@@ -26,7 +23,6 @@ from .context_builder import (
 from .decision_agent import (
     _build_decision_build_config,
     _maybe_bypass_protocol_command,
-    _should_require_tool_choice,
     build_interaction_decision_contexts,
 )
 from .memory_store import InteractionMemoryStore
@@ -48,61 +44,17 @@ def build_interaction_router_system_prompt() -> str:
         "只判断当前输入是否需要执行层。\n"
         "self_reply：寒暄、情绪回应、轻量闲聊。\n"
         "hybrid：工具、检索、文件、代码、外部动作、事实核验、复杂推理，或不确定。\n"
-        "不要生成用户回复，只返回 mode。"
-    )
-
-
-def build_interaction_router_tool_parameters() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "mode": {
-                "type": "string",
-                "enum": [
-                    FastRouteMode.SELF_REPLY.value,
-                    FastRouteMode.HYBRID.value,
-                ],
-            },
-        },
-        "required": ["mode"],
-    }
-
-
-def build_interaction_router_output_contract() -> OutputContract:
-    return OutputContract(
-        mode="tool_call",
-        strict=True,
-        schema=build_interaction_router_tool_parameters(),
-        preferred_tool_name="interaction_route",
-        allow_text_fallback=True,
+        "不要生成用户回复，不要输出 JSON，只返回 self_reply 或 hybrid 其中一个词。"
     )
 
 
 def build_interaction_router_prompt() -> str:
-    return "请只判断当前输入应为 self_reply 还是 hybrid。"
+    return "请只输出 self_reply 或 hybrid。"
 
 
 def extract_interaction_route_payload(
     text: object,
-    *,
-    llm_response: LLMResponse | None = None,
-    output_contract: OutputContract | None = None,
 ) -> dict[str, Any] | None:
-    if llm_response is not None:
-        preferred = (
-            output_contract.preferred_tool_name
-            if isinstance(output_contract, OutputContract)
-            else None
-        )
-        for tool_name, tool_arg in zip(
-            list(getattr(llm_response, "tools_call_name", []) or []),
-            list(getattr(llm_response, "tools_call_args", []) or []),
-            strict=False,
-        ):
-            if preferred and tool_name != preferred:
-                continue
-            if isinstance(tool_arg, dict):
-                return tool_arg
     payload = _extract_json_object(text)
     if payload is not None:
         return payload
@@ -153,11 +105,6 @@ class InteractionRouterAgent:
                     ),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.router_temperature,
-                    tool_choice="required"
-                    if _should_require_tool_choice(render_result.output_contract)
-                    else "auto",
-                    output_contract=render_result.output_contract,
-                    compiled_output_contract=render_result.compiled_output_contract,
                 ),
                 timeout=interaction_config.router_timeout,
             )
@@ -168,8 +115,6 @@ class InteractionRouterAgent:
 
         payload = extract_interaction_route_payload(
             llm_resp.completion_text,
-            llm_response=llm_resp,
-            output_contract=render_result.output_contract,
         )
         route = InteractionRouteDecision.from_mapping(payload)
         if route is None:
@@ -238,22 +183,7 @@ def add_interaction_router_slots_to_pack(
                 "node_type": "interaction_router_policy",
             },
         ),
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="system",
-            title="Interaction router output contract",
-            value_kind="mapping",
-            value=build_interaction_router_output_contract().to_dict(),
-            order=1,
-            meta={
-                "scope": "static",
-                "node_type": "interaction_router_output_contract",
-            },
-        ),
     ]
     for slot in build_prompt_extension_slots(extensions, source="interaction_router"):
         pack.add_slot(slot)
     pack.meta["slot_count"] = len(pack.slots)
-    pack.meta["output_contract"] = json.loads(
-        json.dumps(build_interaction_router_output_contract().to_dict())
-    )

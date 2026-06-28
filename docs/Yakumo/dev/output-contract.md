@@ -10,8 +10,8 @@
 
 当前第一目标是让高约束场景脱离“手写自由文本 JSON prompt”。其中：
 
-- `interaction decision` 仍以协议级 `tool_call` 为主成功路径
-- persona visible-reply 当前主链路已经明确为严格 `json_object`
+- interaction fast router 不使用结构化输出契约，只返回固定路由词
+- persona visible-reply 以协议级虚拟 `persona_expression` tool-call 为主成功路径
 
 ## 核心类型
 
@@ -84,15 +84,15 @@
 
 2. `json_object -> prompt_only`
 
-- 这是当前的原生契约落地方式，不应视为退化。
-- 例如 persona visible-reply 当前就是 `strict json_object + allow_text_fallback=False`。
+- 这是普通 JSON object 契约的原生落地方式，不应视为退化。
+- 当前 persona visible-reply 已不再以 `json_object` 作为主链路；它使用 `tool_call`，因此落到 `prompt_only` 时属于受控降级。
 
 因此，`prompt_only` 本身只表示“最终通过 prompt 文本约束落地”，不自动等价于“失败降级”。
 
 - fallback 文本由 `build_output_contract_fallback_prompt(...)` 统一生成。
 - 只有 `tool_call` strict 契约降到 `prompt_only` 时，才应标记 `degraded=True`。
 - 普通非高约束场景可以原生使用 strict `json_object`。
-- 高约束 `tool_call` 场景不能把受控降级后的 `prompt_only` 当成功路径。
+- 高约束 `tool_call` 场景默认应优先要求协议级 tool-call；若业务明确允许受控降级，parser 必须仍按固定 schema 解析 prompt-only JSON，不能接受自由文本。
 
 ## Renderer 职责
 
@@ -125,40 +125,37 @@ provider 负责把 compiled binding 落到自身协议：
 
 Gemini、VolcEngine Ark 等 provider 当前没有 provider-specific renderer。strict contract 到达这些 provider 时，应按场景策略显式失败或受控降级。
 
-## Interaction Decision
+## Interaction Fast Router
 
-interaction decision 是当前首个高约束消费者。
+interaction fast router 是一个轻量分类器，不属于 OutputContract 高约束消费者。
+
+运行规则：
+
+- 只判断 `self_reply` / `hybrid`。
+- 不生成用户可见回复。
+- 不输出 `effect_calls`。
+- 不注册 tool-call，不要求 JSON。
+- 解析器可容忍旧 JSON 形态，但 prompt 目标是固定词文本。
+
+旧的 heavy decision agent 仍可作为历史/辅助实现存在，但当前 fast path 的 router 不应承担 structured output、core task spec 或 persona effect 生成职责。
+
+## Persona Visible Reply
+
+persona visible-reply 是当前主要高约束消费者。
 
 默认契约：
 
 - `mode="tool_call"`
 - `strict=True`
-- `preferred_tool_name="interaction_decision"`
-- `allow_text_fallback=False`
-- `schema=build_interaction_decision_tool_parameters()`
-
-运行规则：
-
-- render 结果必须是 `protocol_tool_call`。
-- `prompt_only` 不能作为成功路径。
-- parser 优先读 tool call payload。
-- strict 且 `allow_text_fallback=false` 时，裸文本 JSON 不算成功。
-
-## Persona Visible Reply
-
-persona visible-reply 是当前另一个重要消费者，但它和 interaction decision 的策略不同。
-
-默认契约：
-
-- `mode="json_object"`
-- `strict=True`
+- `preferred_tool_name="persona_expression"`
 - `allow_text_fallback=False`
 - `schema` 固定为 `spoken_reply` + `effect_calls`
 
 运行规则：
 
-- 当前主链路允许 renderer 编译成 `prompt_only`，且这不是 degraded。
-- parser 必须解析单个 JSON object；自由文本不算成功。
+- render 结果优先使用 `protocol_tool_call`，provider 通过单个虚拟工具返回结构化参数。
+- 若 renderer/provider 明确把 strict tool-call 编译为 `prompt_only`，parser 可按同一 schema 解析单个 JSON object，作为受控降级。
+- 自由文本不算成功；协议级 tool-call 主路径缺失时会记录 `missing_persona_expression_tool_call`。
 - `effect_calls` 使用固定字段；无 effect 时返回空数组。
 - 具体 effect 的 `arguments` 由注册的 effect schema 决定。
 

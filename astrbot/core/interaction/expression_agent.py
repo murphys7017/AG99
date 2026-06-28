@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     repair_json = None
 
 from astrbot import logger
-from astrbot.core.output_contract import OutputContract
+from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render import PromptRenderEngine
@@ -91,7 +91,8 @@ def build_persona_runtime_system_prompt() -> str:
     return (
         "你负责以当前人格对用户表达。\n"
         "根据本次调用提供的场景，生成自然语言表达以及必要的人格 effect 调用。\n"
-        "必须返回一个只包含 spoken_reply 与 effect_calls 的 JSON object。\n"
+        "必须按本次输出契约返回只包含 spoken_reply 与 effect_calls 的结构化结果。\n"
+        "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数里的必填字段必须补全，例如 motion 类 effect 的 arguments.intent_tags。\n"
         "优先输出高层语义参数，如 emotion_label、resource_id、style、intensity；只有在确实无法表达时才直接输出 axes。\n"
@@ -212,14 +213,12 @@ def build_persona_expression_output_contract() -> OutputContract:
 
 def build_persona_expression_output_contract_for_effects(
     effects: Sequence[PersonaEffectSpec] = (),
-    *,
-    use_tool_call: bool = False,
 ) -> OutputContract:
     return OutputContract(
-        mode="tool_call" if use_tool_call else "json_object",
+        mode="tool_call",
         strict=True,
         schema=build_persona_expression_tool_parameters(effects),
-        preferred_tool_name="persona_expression" if use_tool_call else None,
+        preferred_tool_name="persona_expression",
         allow_text_fallback=False,
     )
 
@@ -303,6 +302,7 @@ def extract_persona_expression_result(
     *,
     llm_response=None,
     output_contract: OutputContract | None = None,
+    compiled_output_contract: CompiledOutputContract | None = None,
     effects: Sequence[PersonaEffectSpec] = (),
 ) -> PersonaExpressionResult:
     """优先解析结构化输出；严格 JSON 合约下不接受自由文本。"""
@@ -315,6 +315,13 @@ def extract_persona_expression_result(
         isinstance(output_contract, OutputContract)
         and output_contract.mode == "tool_call"
         and not output_contract.allow_text_fallback
+    )
+    protocol_tool_call_required = (
+        strict_tool_call
+        and not (
+            isinstance(compiled_output_contract, CompiledOutputContract)
+            and compiled_output_contract.strategy == "prompt_only"
+        )
     )
     strict_json_object = (
         isinstance(output_contract, OutputContract)
@@ -336,7 +343,7 @@ def extract_persona_expression_result(
                     payload,
                     effects=effects,
                 )
-    if strict_tool_call:
+    if protocol_tool_call_required:
         raise InteractionExpressionError(
             "missing_persona_expression_tool_call",
             "persona_expression tool call missing",
@@ -359,7 +366,7 @@ def extract_persona_expression_result(
 
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
     del req
-    return "请只返回一个 JSON object，生成当前人格的用户可见回应，不要输出额外文本。"
+    return "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
 
 
 class InteractionExpressionAgent:
@@ -462,6 +469,7 @@ class InteractionExpressionAgent:
             llm_resp.completion_text,
             llm_response=llm_resp,
             output_contract=output_contract,
+            compiled_output_contract=render_result.compiled_output_contract,
             effects=persona_effect_specs,
         )
         logger.info(
