@@ -1,5 +1,4 @@
 import asyncio
-import random
 import uuid
 from asyncio import Queue
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
@@ -10,7 +9,6 @@ from astrbot import logger
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.platform.message_type import MessageType
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.utils.media_utils import ensure_wav
@@ -167,48 +165,6 @@ class InteractionMiddleware:
         return is_middleware_enabled(self._get_runtime_config(event))
 
     @staticmethod
-    def _coerce_probability(value: Any, default: float = 0.0) -> float:
-        try:
-            return max(0.0, min(float(value), 1.0))
-        except (TypeError, ValueError):
-            return default
-
-    @classmethod
-    def _check_passive_group_reply_gate(
-        cls,
-        event: AstrMessageEvent,
-        runtime_config: Any,
-    ) -> tuple[bool, str | None]:
-        if event.get_message_type() != MessageType.GROUP_MESSAGE:
-            return True, None
-        if event.is_at_or_wake_command:
-            return True, None
-        provider_ltm_settings = runtime_config.get("provider_ltm_settings", {})
-        if not isinstance(provider_ltm_settings, dict):
-            return False, "active_reply_disabled"
-        active_reply = provider_ltm_settings.get("active_reply", {})
-        if not isinstance(active_reply, dict) or not active_reply.get("enable", False):
-            return False, "active_reply_disabled"
-        method = str(active_reply.get("method", "possibility_reply") or "").strip()
-        if method != "possibility_reply":
-            return False, "active_reply_method_unsupported"
-        whitelist = active_reply.get("whitelist", [])
-        if isinstance(whitelist, list) and whitelist:
-            if event.unified_msg_origin not in whitelist:
-                group_id = event.get_group_id()
-                if not (bool(group_id) and group_id in whitelist):
-                    return False, "active_reply_whitelist_miss"
-        probability = cls._coerce_probability(
-            active_reply.get("possibility_reply", 0.0),
-            0.0,
-        )
-        if probability <= 0.0:
-            return False, "active_reply_probability_miss"
-        if probability < 1.0 and random.random() > probability:
-            return False, "active_reply_probability_miss"
-        return True, None
-
-    @staticmethod
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:
         return event.get_extra("action_type") == "live"
 
@@ -222,6 +178,7 @@ class InteractionMiddleware:
         event.set_extra("_interaction_enabled", True)
         event.set_extra("_turn_id", turn_id)
         event.set_extra("_output_controller", self.output_controller)
+        event.set_extra("_interaction_output_controller", self.output_controller)
         event.set_extra(INTERACTION_MEMORY_STORE_EXTRA_KEY, self.memory_store)
         self._install_core_output_interceptor(event)
         if decision is not None:
@@ -293,33 +250,15 @@ class InteractionMiddleware:
         if not is_middleware_enabled(runtime_config):
             self.core_queue.put_nowait(event)
             return
-        passive_group_allowed, skip_reason = self._check_passive_group_reply_gate(
-            event,
-            runtime_config,
-        )
-        if not passive_group_allowed:
-            event.set_extra("_interaction_passive_group_reply_skipped", True)
-            event.set_extra(
-                "_interaction_passive_group_reply_skip_reason",
-                skip_reason,
-            )
-            if skip_reason == "active_reply_whitelist_miss":
-                event.set_extra("_interaction_active_reply_whitelist_skipped", True)
-                event.set_extra(
-                    "_interaction_active_reply_whitelist_skip_reason",
-                    skip_reason,
-                )
-            logger.info(
-                "Interaction middleware skipped passive group reply: platform_id=%s session_id=%s umo=%s group_id=%s reason=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.unified_msg_origin,
-                event.get_group_id(),
-                skip_reason,
-            )
-            self.core_queue.put_nowait(event)
-            return
         self._spawn_inbound_task(event)
+
+    async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
+        if event.is_stopped() or event.get_extra("_interaction_enabled", False):
+            return
+        runtime_config = self._get_runtime_config(event)
+        if not is_middleware_enabled(runtime_config):
+            return
+        await self._handle_inbound_async(event, enqueue_core=False)
 
     def _spawn_inbound_task(self, event: AstrMessageEvent) -> None:
         task = asyncio.create_task(
@@ -373,7 +312,12 @@ class InteractionMiddleware:
                 exc_info=True,
             )
 
-    async def _handle_inbound_async(self, event: AstrMessageEvent) -> None:
+    async def _handle_inbound_async(
+        self,
+        event: AstrMessageEvent,
+        *,
+        enqueue_core: bool = True,
+    ) -> None:
         runtime_config = self._get_runtime_config(event)
         self._reject_development_fallback_policy(runtime_config)
         if isinstance(runtime_config, Mapping):
@@ -443,14 +387,15 @@ class InteractionMiddleware:
                     reply=decision.immediate_spoken_reply,
                 )
                 await self._finalize_turn(event)
+            event.stop_event()
             return
         if decision.route_mode == RouteMode.HYBRID:
             await self._emit_immediate_reply_or_record_failure(event, decision)
-            self._forward_to_core(event)
+            self._forward_to_core(event, enqueue_core=enqueue_core)
             return
         if decision.should_emit_immediate_reply:
             await self._emit_immediate_reply_or_record_failure(event, decision)
-        self._forward_to_core(event)
+        self._forward_to_core(event, enqueue_core=enqueue_core)
 
     def _build_live_mode_decision(
         self,
@@ -863,7 +808,12 @@ class InteractionMiddleware:
                 exc_info=True,
             )
 
-    def _forward_to_core(self, event: AstrMessageEvent) -> None:
+    def _forward_to_core(
+        self,
+        event: AstrMessageEvent,
+        *,
+        enqueue_core: bool = True,
+    ) -> None:
         event.set_extra("_interaction_delegate_to_core", True)
         event.is_wake = True
         event.is_at_or_wake_command = True
@@ -877,7 +827,8 @@ class InteractionMiddleware:
             and event._has_send_oper
         ):
             event._has_send_oper = False
-        self.core_queue.put_nowait(event)
+        if enqueue_core:
+            self.core_queue.put_nowait(event)
 
     def _build_finalized_turn_material(
         self,

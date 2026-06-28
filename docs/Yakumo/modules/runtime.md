@@ -89,11 +89,13 @@
 
 1. 平台适配器接收消息
 2. 平台适配器构造 `AstrMessageEvent`
-3. 写入 core input queue
-4. 如果启用 interaction middleware，则先进入 `CoreInputGateway -> InteractionMiddleware`
-5. middleware 创建 turn state、执行入站媒体/STT/路由，必要时再转发到 core queue
-6. `EventBus.dispatch()`
-7. `PipelineScheduler.execute()`
+3. 写入官方 `event_queue`
+4. `EventBus.dispatch()`
+5. `PipelineScheduler.execute()`
+6. 官方前置 stage 执行：唤醒、白名单、会话状态、限流、内容安全、预处理
+7. 进入 `ProcessStage`
+8. 如果即将启动 core agent，则先由 interaction middleware 创建 turn state、执行路由和快速拟人回复
+9. 需要 core 执行时继续调用 core agent
 8. pipeline 内部调用插件、主 Agent、工具等能力
 
 interaction turn 的输出路径与普通事件不同：

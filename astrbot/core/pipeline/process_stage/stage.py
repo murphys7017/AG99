@@ -25,6 +25,15 @@ class ProcessStage(Stage):
         self.star_request_sub_stage = StarRequestSubStage()
         await self.star_request_sub_stage.initialize(ctx)
 
+    async def _run_interaction_before_core_agent(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        middleware = self.ctx.interaction_middleware
+        if middleware is None:
+            return
+        await middleware.handle_pipeline_event(event)
+
     async def process(
         self,
         event: AstrMessageEvent,
@@ -40,6 +49,9 @@ class ProcessStage(Stage):
                 if isinstance(resp, ProviderRequest):
                     # Handler 的 LLM 请求
                     event.set_extra("provider_request", resp)
+                    await self._run_interaction_before_core_agent(event)
+                    if event.is_stopped():
+                        return
                     _t = False
                     async for _ in self.agent_sub_stage.process(event):
                         _t = True
@@ -62,5 +74,8 @@ class ProcessStage(Stage):
             if (
                 event.get_result() and not event.is_stopped()
             ) or not event.get_result():
+                await self._run_interaction_before_core_agent(event)
+                if event.is_stopped():
+                    return
                 async for _ in self.agent_sub_stage.process(event):
                     yield

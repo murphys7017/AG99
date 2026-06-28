@@ -634,7 +634,6 @@ class TestAstrBotCoreLifecycleInitialize:
         mock_register_memory_postprocessor.assert_called_once()
         mock_register_interaction_conversation_postprocessor.assert_called_once()
         mock_get_memory_service.assert_called_once_with(lifecycle.astrbot_config)
-        assert lifecycle.platform_event_gateway is not None
         assert lifecycle.interaction_middleware is not None
         assert lifecycle.interaction_output_controller is not None
         mock_memory_service.initialize.assert_awaited_once()

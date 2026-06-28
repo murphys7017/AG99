@@ -92,12 +92,13 @@ Platform Adapter
 相关实现包括：
 
 - 平台通过 `Platform.commit_event(event)` 或 `_event_queue.put_nowait(event)` 提交 `AstrMessageEvent`。
-- `CoreInputGateway` 当前只提供 `put_nowait(...)`，然后直接调用 `InteractionMiddleware.handle_inbound(...)`。
-- 未启用 interaction middleware 的事件被直接放入原有 `event_queue`。
+- 平台入口仍直接写入原有 `event_queue`。
+- 未启用 interaction middleware 的事件按官方 pipeline 继续执行。
 - `EventBus` 从 `event_queue` 中读取事件，并交给对应的 `PipelineScheduler`。
+- interaction middleware 位于 `ProcessStage` 内部，贴在核心 agent 启动前执行快速拟人回复和路由判断。
 - 大部分旧插件钩子仍在 pipeline 的各个 stage 内触发。
 
-因此，目前的 `CoreInputGateway` 还不是目标架构中的 Input Gateway。它没有负责统一输入分类，也没有独立承担 route / executor decision；它主要是现有 interaction middleware 的入站转发器。
+因此，目前不再保留独立的输入代理类。平台输入先进入官方 EventBus/pipeline，统一输入分类和 route / executor decision 由 `ProcessStage` 内部的 interaction 入口和显式 router/decision 逻辑承担。
 
 一期不能在这条链旁边再建立一套平行输入链。目标是逐步把现有入口正规化：
 
@@ -340,7 +341,7 @@ Platform Adapter
 
 此时 Input Bus 已经成为平台输入的真实入口，但业务行为仍然由旧链路完成。
 
-当前 `CoreInputGateway` 可以暂时作为 adapter，或者被 Input Bus 包裹；在目标 Input Gateway 实现前，不应仅因为名称相似就把它视为最终决策层。
+当前 `ProcessStage` 内部的 interaction 入口是 core agent 前的入口，未来也可以被 Input Bus 包裹；在目标 Input Gateway 实现前，不应把平台入口适配层误认为最终决策层。
 
 ### Phase 3: 统一旧插件注入入口
 

@@ -31,7 +31,6 @@ from .effects import (
     parse_persona_effect_calls,
 )
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
-from .input_gateway import CoreInputGateway
 from .memory_store import InteractionMemorySnapshot, InteractionMemoryStore
 from .middleware import InteractionMiddleware
 from .output_controller import InteractionOutputController
@@ -67,7 +66,6 @@ from .types import (
 )
 
 __all__ = [
-    "CoreInputGateway",
     "CoreTaskSpec",
     "OUTPUT_ORIGIN_EXTRA_KEY",
     "OutputOrigin",
