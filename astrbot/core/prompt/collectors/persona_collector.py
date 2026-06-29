@@ -35,6 +35,10 @@ class PersonaCollector(ContextCollectorInterface):
     - persona.skills_whitelist: Skills 白名单
     """
 
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
     async def collect(
         self,
         event: AstrMessageEvent,

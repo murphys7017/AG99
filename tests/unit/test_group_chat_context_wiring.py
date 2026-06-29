@@ -74,6 +74,12 @@ def test_main_registers_group_chat_context_collector():
     )
 
 
+def test_group_chat_context_collector_is_dynamic():
+    group_context = GroupChatContext(MagicMock(), MagicMock())
+
+    assert group_context.lifecycle == "dynamic"
+
+
 @pytest.mark.asyncio
 async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_double_inject():
     context = MagicMock()

@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 class ToolsCollector(ContextCollectorInterface):
     """Collect the persona-resolved tool inventory without mutating runtime tools."""
 
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
     async def collect(
         self,
         event: AstrMessageEvent,

@@ -36,6 +36,8 @@ from .interfaces.context_collector_inferface import ContextCollectorInterface
 from .profiles import PromptProfile
 
 PROMPT_CONTEXT_PACK_EXTRA_KEY = "prompt_context_pack"
+PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY = "_prompt_static_context_cache"
+PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY = "_prompt_extension_static_cache"
 PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
     mount: f"extension.{mount}" for mount in PROMPT_EXTENSION_MOUNTS
 }
@@ -109,6 +111,93 @@ def _coerce_prompt_extension_order(value: object) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 100
+
+
+def _collector_lifecycle(collector: object) -> str:
+    return str(getattr(collector, "lifecycle", "dynamic") or "dynamic").strip().lower()
+
+
+def _collector_cache_key(collector: object) -> str:
+    cls = collector.__class__
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _prompt_extension_cache_key(collector: object, plugin_id: str) -> str:
+    collector_key = _collector_cache_key(collector)
+    return f"{plugin_id}:{collector_key}" if plugin_id else collector_key
+
+
+def _get_event_dict_extra(event: AstrMessageEvent, key: str) -> dict:
+    cache = event.get_extra(key, {})
+    if isinstance(cache, dict):
+        return cache
+    return {}
+
+
+def _find_static_cache_entry(
+    cache: dict,
+    key: str,
+    *,
+    config: object,
+    provider_request: object | None,
+) -> object:
+    entries = cache.get(key)
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if (
+            entry.get("config") is config
+            and entry.get("provider_request") is provider_request
+        ):
+            return entry.get("items")
+    return None
+
+
+def _copy_for_static_cache(items: object) -> object | None:
+    try:
+        return deepcopy(items)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to copy prompt static cache items; skip static cache: %s",
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+def _store_static_cache_entry(
+    cache: dict,
+    key: str,
+    *,
+    config: object,
+    provider_request: object | None,
+    items: object,
+) -> None:
+    entries = cache.setdefault(key, [])
+    if not isinstance(entries, list):
+        entries = []
+        cache[key] = entries
+    cached_items = _copy_for_static_cache(items)
+    if cached_items is None:
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if (
+            entry.get("config") is config
+            and entry.get("provider_request") is provider_request
+        ):
+            entry["items"] = cached_items
+            return
+    entries.append(
+        {
+            "config": config,
+            "provider_request": provider_request,
+            "items": cached_items,
+        }
+    )
 
 
 def build_prompt_extension_slots(
@@ -189,10 +278,24 @@ async def _collect_prompt_extension_slots(
 
     collected_extensions: list[PromptExtension] = []
     collector_names: list[str] = []
+    static_cache = _get_event_dict_extra(event, PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY)
 
     for collector in collectors:
         collector_name = collector.__class__.__name__
         collector_names.append(collector_name)
+        lifecycle = _collector_lifecycle(collector)
+        plugin_id = str(getattr(collector, "plugin_id", "") or "").strip()
+        static_cache_key = _prompt_extension_cache_key(collector, plugin_id)
+        cached_items = _find_static_cache_entry(
+            static_cache,
+            static_cache_key,
+            config=config,
+            provider_request=provider_request,
+        )
+        if lifecycle == "static" and cached_items is not None:
+            cached_extensions = _normalize_prompt_extension_items(deepcopy(cached_items))
+            collected_extensions.extend(cached_extensions)
+            continue
         try:
             raw_extensions = await collector.collect(
                 event,
@@ -240,6 +343,17 @@ async def _collect_prompt_extension_slots(
 
             collected_extensions.append(extension)
 
+        if lifecycle == "static":
+            _store_static_cache_entry(
+                static_cache,
+                static_cache_key,
+                config=config,
+                provider_request=provider_request,
+                items=extensions,
+            )
+
+    event.set_extra(PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY, static_cache)
+
     slots = build_prompt_extension_slots(
         collected_extensions,
         source="prompt_extension_collectors",
@@ -266,6 +380,7 @@ async def collect_context_pack(
     collector_list = (
         list(collectors) if collectors is not None else _default_collectors()
     )
+    static_context_cache = _get_event_dict_extra(event, PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY)
 
     pack = ContextPack(
         provider_request_ref=provider_request,
@@ -279,13 +394,33 @@ async def collect_context_pack(
     for collector in collector_list:
         collector_name = collector.__class__.__name__
         pack.meta["collectors"].append(collector_name)
+        lifecycle = _collector_lifecycle(collector)
+        static_cache_key = _collector_cache_key(collector)
 
-        slots = await collector.collect(
-            event,
-            plugin_context,
-            config,
+        cached_items = _find_static_cache_entry(
+            static_context_cache,
+            static_cache_key,
+            config=config,
             provider_request=provider_request,
         )
+        if lifecycle == "static" and cached_items is not None:
+            slots = deepcopy(cached_items)
+            pack.meta.setdefault("cached_collectors", []).append(collector_name)
+        else:
+            slots = await collector.collect(
+                event,
+                plugin_context,
+                config,
+                provider_request=provider_request,
+            )
+            if lifecycle == "static":
+                _store_static_cache_entry(
+                    static_context_cache,
+                    static_cache_key,
+                    config=config,
+                    provider_request=provider_request,
+                    items=slots,
+                )
 
         for slot in slots:
             if not catalog.has(slot.name):
@@ -303,6 +438,8 @@ async def collect_context_pack(
                 )
 
             pack.add_slot(slot)
+
+    event.set_extra(PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY, static_context_cache)
 
     if include_prompt_extensions:
         extension_slots, extension_collectors = await _collect_prompt_extension_slots(

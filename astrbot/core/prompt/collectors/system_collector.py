@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 class SystemCollector(ContextCollectorInterface):
     """Collect base system prompt and tool-call instruction metadata."""
 
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
     async def collect(
         self,
         event: AstrMessageEvent,

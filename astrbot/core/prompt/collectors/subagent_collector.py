@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 class SubagentCollector(ContextCollectorInterface):
     """Collect subagent handoff tools and router prompt as structured context."""
 
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
     async def collect(
         self,
         event: AstrMessageEvent,

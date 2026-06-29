@@ -29,6 +29,15 @@ class PromptExtensionCollectorInterface(ABC):
         """Return collection priority; lower values collect first."""
         return 100
 
+    @property
+    def lifecycle(self) -> str:
+        """Return collector lifecycle.
+
+        `static` collectors are cached per event after the first successful
+        collection. `dynamic` collectors are evaluated on every prompt build.
+        """
+        return "dynamic"
+
     @abstractmethod
     async def collect(
         self,

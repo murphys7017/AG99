@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 class PolicyCollector(ContextCollectorInterface):
     """Collect active request policy prompts without mutating the request."""
 
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
     async def collect(
         self,
         event: AstrMessageEvent,

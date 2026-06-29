@@ -3044,6 +3044,110 @@ class _BrokenExtensionCollector(PromptExtensionCollectorInterface):
         raise RuntimeError("extension boom")
 
 
+class _StaticCachingExtensionCollector(PromptExtensionCollectorInterface):
+    calls = 0
+
+    @property
+    def plugin_id(self) -> str:
+        return "static.plugin"
+
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        type(self).calls += 1
+        return [
+            PromptExtension(
+                plugin_id="static.plugin",
+                mount="context",
+                title="Static",
+                value={"calls": type(self).calls},
+            )
+        ]
+
+
+class _StaticCachingExtensionCollectorSibling(PromptExtensionCollectorInterface):
+    calls = 0
+
+    @property
+    def plugin_id(self) -> str:
+        return "static.plugin"
+
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        type(self).calls += 1
+        return [
+            PromptExtension(
+                plugin_id="static.plugin",
+                mount="context",
+                title="Static Sibling",
+                value={"sibling_calls": type(self).calls},
+                order=20,
+            )
+        ]
+
+
+class _DynamicExtensionCollector(PromptExtensionCollectorInterface):
+    calls = 0
+
+    @property
+    def plugin_id(self) -> str:
+        return "dynamic.plugin"
+
+    @property
+    def lifecycle(self) -> str:
+        return "dynamic"
+
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        type(self).calls += 1
+        return [
+            PromptExtension(
+                plugin_id="dynamic.plugin",
+                mount="context",
+                title="Dynamic",
+                value={"calls": type(self).calls},
+            )
+        ]
+
+
+class _StaticContextCollector(ContextCollectorInterface):
+    calls = 0
+
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        type(self).calls += 1
+        return [
+            ContextSlot(
+                name="input.text",
+                value={"calls": type(self).calls},
+                category="input",
+                source="static_test",
+            )
+        ]
+
+
+class _DynamicContextCollector(ContextCollectorInterface):
+    calls = 0
+
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        type(self).calls += 1
+        return [
+            ContextSlot(
+                name="input.files",
+                value=[{"calls": type(self).calls}],
+                category="input",
+                source="dynamic_test",
+            )
+        ]
+
+
 @pytest.mark.asyncio
 async def test_context_prompt_extension_collector_registry_orders_and_cleans_up():
     context = _make_real_context()
@@ -3133,3 +3237,138 @@ async def test_collect_context_pack_fail_open_when_prompt_extension_collector_ra
     assert pack.get_slot("extension.system") is not None
     assert pack.get_slot("extension.context") is not None
     assert pack.get_slot("extension.input") is not None
+
+
+@pytest.mark.asyncio
+async def test_static_prompt_extension_collectors_are_cached_per_event():
+    event, _ = _make_event()
+    context = _make_context()
+    static_collector = _StaticCachingExtensionCollector()
+    dynamic_collector = _DynamicExtensionCollector()
+    context.list_prompt_extension_collectors.return_value = [
+        static_collector,
+        dynamic_collector,
+    ]
+    _StaticCachingExtensionCollector.calls = 0
+    _DynamicExtensionCollector.calls = 0
+    config = ama.MainAgentBuildConfig(tool_call_timeout=60)
+
+    first = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        collectors=[],
+    )
+    second = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        collectors=[],
+    )
+
+    assert _StaticCachingExtensionCollector.calls == 1
+    assert _DynamicExtensionCollector.calls == 2
+    assert first.get_slot("extension.context") is not None
+    assert second.get_slot("extension.context") is not None
+    assert event.get_extra("_prompt_extension_static_cache") is not None
+    static_cache = event.get_extra("_prompt_extension_static_cache")
+    static_entries = next(
+        entries
+        for key, entries in static_cache.items()
+        if key.startswith("static.plugin:")
+    )
+    assert static_entries[0]["items"][0].value[
+        "calls"
+    ] == 1
+
+
+@pytest.mark.asyncio
+async def test_static_prompt_extension_cache_is_scoped_to_config_object():
+    event, _ = _make_event()
+    context = _make_context()
+    context.list_prompt_extension_collectors.return_value = [
+        _StaticCachingExtensionCollector(),
+    ]
+    _StaticCachingExtensionCollector.calls = 0
+
+    await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        collectors=[],
+    )
+    await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        collectors=[],
+    )
+
+    assert _StaticCachingExtensionCollector.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_static_prompt_extension_cache_is_scoped_to_collector_class():
+    event, _ = _make_event()
+    context = _make_context()
+    context.list_prompt_extension_collectors.return_value = [
+        _StaticCachingExtensionCollector(),
+        _StaticCachingExtensionCollectorSibling(),
+    ]
+    _StaticCachingExtensionCollector.calls = 0
+    _StaticCachingExtensionCollectorSibling.calls = 0
+    config = ama.MainAgentBuildConfig(tool_call_timeout=60)
+
+    first = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        collectors=[],
+    )
+    second = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        collectors=[],
+    )
+
+    assert _StaticCachingExtensionCollector.calls == 1
+    assert _StaticCachingExtensionCollectorSibling.calls == 1
+    first_items = first.get_slot("extension.context").value["items"]
+    second_items = second.get_slot("extension.context").value["items"]
+    assert [item["title"] for item in first_items] == ["Static", "Static Sibling"]
+    assert [item["title"] for item in second_items] == ["Static", "Static Sibling"]
+
+
+@pytest.mark.asyncio
+async def test_static_context_collectors_are_cached_per_event_and_request():
+    event, _ = _make_event()
+    context = _make_context()
+    config = ama.MainAgentBuildConfig(tool_call_timeout=60)
+    req = ProviderRequest(prompt="hello")
+    _StaticContextCollector.calls = 0
+    _DynamicContextCollector.calls = 0
+
+    first = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        provider_request=req,
+        collectors=[_StaticContextCollector(), _DynamicContextCollector()],
+        include_prompt_extensions=False,
+    )
+    second = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        provider_request=req,
+        collectors=[_StaticContextCollector(), _DynamicContextCollector()],
+        include_prompt_extensions=False,
+    )
+
+    assert _StaticContextCollector.calls == 1
+    assert _DynamicContextCollector.calls == 2
+    assert first.get_slot("input.text").value == {"calls": 1}
+    assert second.get_slot("input.text").value == {"calls": 1}
+    assert second.get_slot("input.files").value == [{"calls": 2}]
+    assert second.meta["cached_collectors"] == ["_StaticContextCollector"]

@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 class SkillsCollector(ContextCollectorInterface):
     """Collect active skills as structured inventory for later rendering."""
 
+    @property
+    def lifecycle(self) -> str:
+        return "static"
+
     async def collect(
         self,
         event: AstrMessageEvent,

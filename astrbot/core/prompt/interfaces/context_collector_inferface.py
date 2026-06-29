@@ -26,6 +26,16 @@ class ContextCollectorInterface(ABC):
     每个具体的 Collector 负责收集一类上下文信息（如 Persona、Input、Memory 等）。
     """
 
+    @property
+    def lifecycle(self) -> str:
+        """Return collector lifecycle for per-event prompt build reuse.
+
+        `static` collectors are stable within one event and may be cached after
+        a successful collection. `dynamic` collectors are evaluated on every
+        prompt build.
+        """
+        return "dynamic"
+
     @abstractmethod
     async def collect(
         self,
