@@ -1254,13 +1254,38 @@ class InteractionOutputController:
             },
         )
         contributions: list[InteractionResultContribution] = []
-        for contributor in list_contributors():
+        contributors = list_contributors()
+        timeout = self._get_interaction_config(event).contributor_timeout
+
+        async def _collect_one(contributor) -> InteractionResultContribution | None:
             try:
-                payload = await contributor.collect(
-                    event,
-                    self.plugin_context,
-                    view.copy_read_only(),
+                payload = await asyncio.wait_for(
+                    contributor.collect(
+                        event,
+                        self.plugin_context,
+                        view.copy_read_only(),
+                    ),
+                    timeout=timeout,
                 )
+            except asyncio.TimeoutError:
+                failures = event.get_extra(
+                    "_interaction_result_contributor_failures", []
+                )
+                if not isinstance(failures, list):
+                    failures = []
+                failures.append(
+                    {
+                        "plugin_id": getattr(contributor, "plugin_id", "<unknown>"),
+                        "error": f"timeout after {timeout:.2f}s",
+                    }
+                )
+                event.set_extra("_interaction_result_contributor_failures", failures)
+                logger.warning(
+                    "Interaction result contributor timed out: plugin_id=%s timeout=%.2fs",
+                    getattr(contributor, "plugin_id", "<unknown>"),
+                    timeout,
+                )
+                return None
             except Exception as exc:  # noqa: BLE001
                 failures = event.get_extra(
                     "_interaction_result_contributor_failures", []
@@ -1280,9 +1305,19 @@ class InteractionOutputController:
                     exc,
                     exc_info=True,
                 )
-                continue
+                return None
             if isinstance(payload, InteractionResultContribution):
-                contributions.append(payload)
+                return payload
+            return None
+
+        results = await asyncio.gather(
+            *[_collect_one(contributor) for contributor in contributors],
+        )
+        contributions.extend(
+            result
+            for result in results
+            if isinstance(result, InteractionResultContribution)
+        )
         contributions.sort(key=lambda item: (item.priority, item.plugin_id))
         return contributions
 

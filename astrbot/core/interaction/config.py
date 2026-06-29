@@ -88,4 +88,11 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 1,
             ),
         ),
+        contributor_timeout=max(
+            0.1,
+            _float_or_default(
+                interaction_config.get("contributor_timeout", 1.0),
+                1.0,
+            ),
+        ),
     )

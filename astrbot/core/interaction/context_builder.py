@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import copy, deepcopy
 from typing import Any
 
 from astrbot import logger
+from astrbot.core.message.components import File, Image, Reply
 from astrbot.core.prompt.collectors.input_collector import InputCollector
 from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
 from astrbot.core.prompt.context_collect import (
@@ -13,7 +15,8 @@ from astrbot.core.prompt.context_collect import (
     collect_context_pack,
     filter_context_pack_for_profile,
 )
-from astrbot.core.prompt.context_types import ContextPack
+from astrbot.core.prompt.context_catalog import get_catalog
+from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces.context_collector_inferface import (
     ContextCollectorInterface,
@@ -79,13 +82,10 @@ async def build_router_context_pack(
     config,
 ) -> ContextPack:
     """Router 专用最小 Pack：仅含输入内容，无人格/记忆/历史/工具。"""
-    source_pack = await collect_context_pack(
-        event=event,
-        plugin_context=plugin_context,
-        config=config,
+    del plugin_context, config
+    source_pack = build_minimal_router_context_pack(
+        event,
         provider_request=event.get_extra("provider_request"),
-        collectors=build_router_collectors(),
-        include_prompt_extensions=False,
     )
     router_pack = filter_context_pack_for_profile(source_pack, ROUTER_PROMPT_PROFILE)
     attachment_summary = _build_router_attachment_summary(source_pack)
@@ -110,6 +110,101 @@ async def build_router_context_pack(
             router_pack.add_slot(slot)
         router_pack.meta["slot_count"] = len(router_pack.slots)
     return router_pack
+
+
+def build_minimal_router_context_pack(
+    event,
+    *,
+    provider_request=None,
+) -> ContextPack:
+    """Build a cheap router input pack without resolving media or quoted payloads."""
+    catalog = get_catalog(strict=True)
+    pack = ContextPack(
+        provider_request_ref=provider_request,
+        meta={
+            "catalog_version": catalog.version,
+            "collectors": ["MinimalRouterInput"],
+            "extension_collectors": [],
+        },
+    )
+    text = (getattr(event, "message_str", "") or "").strip()
+    if text:
+        pack.add_slot(
+            ContextSlot(
+                name="input.text",
+                value=text,
+                category="input",
+                source="event_input",
+                meta={"source_field": "message_str", "router_minimal": True},
+            )
+        )
+
+    images: list[dict[str, Any]] = []
+    quoted_images: list[dict[str, Any]] = []
+    files: list[dict[str, Any]] = []
+    quoted_files: list[dict[str, Any]] = []
+    for index, component in enumerate(getattr(event.message_obj, "message", []) or []):
+        if isinstance(component, Image):
+            images.append({"source": "current", "index": index})
+            continue
+        if isinstance(component, File):
+            files.append({"source": "current", "index": index})
+            continue
+        if isinstance(component, Reply):
+            for reply_index, reply_component in enumerate(component.chain or []):
+                if isinstance(reply_component, Image):
+                    quoted_images.append(
+                        {
+                            "source": "quoted",
+                            "index": reply_index,
+                            "reply_id": getattr(component, "id", None),
+                        }
+                    )
+                elif isinstance(reply_component, File):
+                    quoted_files.append(
+                        {
+                            "source": "quoted",
+                            "index": reply_index,
+                            "reply_id": getattr(component, "id", None),
+                        }
+                    )
+
+    if images:
+        pack.add_slot(
+            ContextSlot(
+                name="input.images",
+                value=images,
+                category="input",
+                source="event_input",
+                meta={"count": len(images), "source": "current", "router_minimal": True},
+            )
+        )
+    if quoted_images:
+        pack.add_slot(
+            ContextSlot(
+                name="input.quoted_images",
+                value=quoted_images,
+                category="input",
+                source="quoted_message",
+                meta={"count": len(quoted_images), "router_minimal": True},
+            )
+        )
+    if files or quoted_files:
+        pack.add_slot(
+            ContextSlot(
+                name="input.files",
+                value=[*files, *quoted_files],
+                category="input",
+                source="event_input",
+                meta={
+                    "count": len(files) + len(quoted_files),
+                    "quoted_count": len(quoted_files),
+                    "router_minimal": True,
+                },
+            )
+        )
+    pack.meta["slot_count"] = len(pack.slots)
+    return pack
 
 
 def _build_router_attachment_summary(pack: ContextPack) -> dict[str, int]:
@@ -294,20 +389,45 @@ async def collect_interaction_prompt_extensions(
         purpose=purpose,
         phase=phase,
     ).copy_read_only()
-    for contributor in plugin_context.list_interaction_prompt_contributors():
+    contributors = list(plugin_context.list_interaction_prompt_contributors())
+    raw_timeout = (
+        config.get("contributor_timeout", 1.0)
+        if isinstance(config, dict)
+        else getattr(config, "contributor_timeout", 1.0)
+    )
+    try:
+        timeout = max(0.1, float(raw_timeout or 1.0))
+    except (TypeError, ValueError):
+        timeout = 1.0
+
+    async def _collect_one(contributor):
         plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
         try:
-            payload = await contributor.collect(event, plugin_context, view)
+            payload = await asyncio.wait_for(
+                contributor.collect(event, plugin_context, view),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            error = f"timeout after {timeout:.2f}s"
+            _record_interaction_prompt_contributor_failure(
+                event,
+                plugin_id=plugin_id,
+                error=error,
+            )
+            return InteractionPromptContributorError(
+                "collector_timeout",
+                f"Interaction prompt contributor timed out: plugin_id={plugin_id} timeout={timeout:.2f}s",
+            )
         except Exception as exc:  # noqa: BLE001
             _record_interaction_prompt_contributor_failure(
                 event,
                 plugin_id=plugin_id,
                 error=str(exc),
             )
-            raise InteractionPromptContributorError(
+            return InteractionPromptContributorError(
                 "collector_failed",
                 f"Interaction prompt contributor failed: plugin_id={plugin_id} error={exc}",
-            ) from exc
+            )
 
         try:
             contributor_extensions = _normalize_interaction_prompt_extensions(payload)
@@ -315,16 +435,22 @@ async def collect_interaction_prompt_extensions(
                 contributor_extensions,
                 source="interaction_prompt_contributors",
             )
-            extensions.extend(contributor_extensions)
         except (InteractionPromptContributorError, ValueError) as exc:
             _record_interaction_prompt_contributor_failure(
                 event,
                 plugin_id=plugin_id,
                 error=str(exc),
             )
-            raise InteractionPromptContributorError(
-                "invalid_payload", str(exc)
-            ) from exc
+            return InteractionPromptContributorError("invalid_payload", str(exc))
+        return contributor_extensions
+
+    results = await asyncio.gather(
+        *[_collect_one(contributor) for contributor in contributors],
+    )
+    for result in results:
+        if isinstance(result, InteractionPromptContributorError):
+            raise result
+        extensions.extend(result)
 
     extensions.sort(key=lambda item: (item.order, item.plugin_id))
     return extensions

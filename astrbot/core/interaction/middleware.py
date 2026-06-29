@@ -364,66 +364,18 @@ class InteractionMiddleware:
         else:
             decision = self._maybe_build_protocol_command_bypass(event)
             if decision is None:
-                expression, route = await self._build_fast_response_and_route(
+                await self._handle_async_fast_response_and_route(
                     event,
                     interaction_config,
+                    enqueue_core=enqueue_core,
                 )
-                decision = route.to_interaction_decision(
-                    first_response=expression.spoken_reply,
-                    effect_calls=expression.effect_calls,
-                )
-                logger.info(
-                    "DIAG decision.effect_calls: platform_id=%s session_id=%s route_mode=%s effect_calls=%s payload_present=%s",
-                    event.get_platform_id(),
-                    event.session_id,
-                    decision.route_mode.value,
-                    [call.name for call in decision.effect_calls],
-                    bool(decision.effect_calls),
-                )
+                return
             self.attach_event_context(
                 event,
                 turn_id=turn_state.turn_id,
                 decision=decision,
             )
-        if decision.route_mode == RouteMode.SELF_REPLY:
-            if not decision.should_emit_immediate_reply:
-                event.set_extra("_interaction_self_reply_invalid", True)
-                event.set_extra(
-                    "_interaction_self_reply_invalid_reason",
-                    "missing_immediate_reply",
-                )
-                logger.error(
-                    "Interaction self reply invalid; aborting turn: platform_id=%s session_id=%s turn_id=%s reason=missing_immediate_reply",
-                    event.get_platform_id(),
-                    event.session_id,
-                    event.get_extra("_turn_id"),
-                )
-                record_interaction_turn_failure(
-                    event,
-                    stage="decision",
-                    reason="missing_self_reply",
-                    user_visible_action="none",
-                )
-                raise RuntimeError("Interaction self reply decision missing reply")
-            await self._emit_immediate_reply_or_record_failure(event, decision)
-            completed = await self._complete_visible_turn_or_record_failure(
-                event,
-            )
-            if completed:
-                self._materialize_self_reply_turn(
-                    event,
-                    reply=decision.immediate_spoken_reply,
-                )
-                await self._finalize_turn(event)
-            event.stop_event()
-            return
-        if decision.route_mode == RouteMode.HYBRID:
-            await self._emit_immediate_reply_or_record_failure(event, decision)
-            self._forward_to_core(event, enqueue_core=enqueue_core)
-            return
-        if decision.should_emit_immediate_reply:
-            await self._emit_immediate_reply_or_record_failure(event, decision)
-        self._forward_to_core(event, enqueue_core=enqueue_core)
+        await self._apply_decision(event, decision, enqueue_core=enqueue_core)
 
     def _build_live_mode_decision(
         self,
@@ -475,6 +427,168 @@ class InteractionMiddleware:
         expression = await self._generate_expression(event, interaction_config)
         route = await self._route_interaction(event, interaction_config)
         return expression, route
+
+    async def _start_fast_response_and_route(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> tuple[asyncio.Task, asyncio.Task] | None:
+        if not interaction_config.parallel_expression_router:
+            return None
+        expression_task = asyncio.create_task(
+            self._generate_expression(event, interaction_config),
+            name="interaction_fast_expression",
+        )
+        route_task = asyncio.create_task(
+            self._route_interaction(event, interaction_config),
+            name="interaction_router",
+        )
+        return expression_task, route_task
+
+    async def _handle_async_fast_response_and_route(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+        *,
+        enqueue_core: bool,
+    ) -> None:
+        tasks = await self._start_fast_response_and_route(
+            event,
+            interaction_config,
+        )
+        if tasks is None:
+            expression, route = await self._build_fast_response_and_route(
+                event,
+                interaction_config,
+            )
+            decision = route.to_interaction_decision(
+                first_response=expression.spoken_reply,
+                effect_calls=expression.effect_calls,
+            )
+            self._record_decision_diagnostics(event, decision)
+            self.attach_event_context(
+                event,
+                turn_id=str(event.get_extra("_turn_id", "") or ""),
+                decision=decision,
+            )
+            await self._apply_decision(event, decision, enqueue_core=enqueue_core)
+            return
+
+        expression_task, route_task = tasks
+        try:
+            expression = await expression_task
+            fast_decision = InteractionDecision(
+                route_mode=RouteMode.HYBRID,
+                should_emit_immediate_reply=bool(
+                    (expression.spoken_reply or "").strip()
+                ),
+                immediate_spoken_reply=(expression.spoken_reply or "").strip()
+                or None,
+                effect_calls=list(expression.effect_calls),
+                reason="fast_expression_pending_route",
+            )
+            if fast_decision.should_emit_immediate_reply:
+                self.attach_event_context(
+                    event,
+                    turn_id=str(event.get_extra("_turn_id", "") or ""),
+                    decision=fast_decision,
+                )
+                await self._emit_immediate_reply_or_record_failure(
+                    event,
+                    fast_decision,
+                )
+
+            route = await route_task
+            decision = route.to_interaction_decision(
+                first_response=expression.spoken_reply,
+                effect_calls=expression.effect_calls,
+            )
+            self._record_decision_diagnostics(event, decision)
+            self.attach_event_context(
+                event,
+                turn_id=str(event.get_extra("_turn_id", "") or ""),
+                decision=decision,
+            )
+            await self._apply_decision(
+                event,
+                decision,
+                enqueue_core=enqueue_core,
+                immediate_already_emitted=fast_decision.should_emit_immediate_reply,
+            )
+        finally:
+            pending_tasks = [
+                task
+                for task in (expression_task, route_task)
+                if isinstance(task, asyncio.Task) and not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+    def _record_decision_diagnostics(
+        self,
+        event: AstrMessageEvent,
+        decision: InteractionDecision,
+    ) -> None:
+        logger.info(
+            "DIAG decision.effect_calls: platform_id=%s session_id=%s route_mode=%s effect_calls=%s payload_present=%s",
+            event.get_platform_id(),
+            event.session_id,
+            decision.route_mode.value,
+            [call.name for call in decision.effect_calls],
+            bool(decision.effect_calls),
+        )
+
+    async def _apply_decision(
+        self,
+        event: AstrMessageEvent,
+        decision: InteractionDecision,
+        *,
+        enqueue_core: bool,
+        immediate_already_emitted: bool = False,
+    ) -> None:
+        if decision.route_mode == RouteMode.SELF_REPLY:
+            if not decision.should_emit_immediate_reply:
+                event.set_extra("_interaction_self_reply_invalid", True)
+                event.set_extra(
+                    "_interaction_self_reply_invalid_reason",
+                    "missing_immediate_reply",
+                )
+                logger.error(
+                    "Interaction self reply invalid; aborting turn: platform_id=%s session_id=%s turn_id=%s reason=missing_immediate_reply",
+                    event.get_platform_id(),
+                    event.session_id,
+                    event.get_extra("_turn_id"),
+                )
+                record_interaction_turn_failure(
+                    event,
+                    stage="decision",
+                    reason="missing_self_reply",
+                    user_visible_action="none",
+                )
+                raise RuntimeError("Interaction self reply decision missing reply")
+            if not immediate_already_emitted:
+                await self._emit_immediate_reply_or_record_failure(event, decision)
+            completed = await self._complete_visible_turn_or_record_failure(
+                event,
+            )
+            if completed:
+                self._materialize_self_reply_turn(
+                    event,
+                    reply=decision.immediate_spoken_reply,
+                )
+                await self._finalize_turn(event)
+            event.stop_event()
+            return
+        if decision.route_mode == RouteMode.HYBRID:
+            if not immediate_already_emitted:
+                await self._emit_immediate_reply_or_record_failure(event, decision)
+            self._forward_to_core(event, enqueue_core=enqueue_core)
+            return
+        if decision.should_emit_immediate_reply and not immediate_already_emitted:
+            await self._emit_immediate_reply_or_record_failure(event, decision)
+        self._forward_to_core(event, enqueue_core=enqueue_core)
 
     async def _generate_expression(
         self,

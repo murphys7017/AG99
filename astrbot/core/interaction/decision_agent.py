@@ -350,6 +350,17 @@ def _build_decision_build_config(
                 (str(item) for item in wake_prefix if isinstance(item, str) and item),
                 "",
             )
+    interaction_settings = (
+        cfg.get("interaction_middleware", {}) if isinstance(cfg, dict) else {}
+    )
+    try:
+        contributor_timeout = float(
+            interaction_settings.get("contributor_timeout", 1.0)
+            if isinstance(interaction_settings, dict)
+            else 1.0
+        )
+    except (TypeError, ValueError):
+        contributor_timeout = 1.0
     return InteractionPromptBuildConfig(
         provider_settings=provider_settings,
         timezone=(cfg.get("timezone") if isinstance(cfg, dict) else None),
@@ -368,6 +379,7 @@ def _build_decision_build_config(
         max_quoted_fallback_images=int(
             provider_settings.get("max_quoted_fallback_images", 20) or 20
         ),
+        contributor_timeout=max(0.1, contributor_timeout),
     )
 
 
