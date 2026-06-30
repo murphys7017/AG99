@@ -306,6 +306,15 @@ def validate_persona_effect_arguments(
             raise PersonaEffectValidationError(f"missing required argument: {key}")
     for key, value in arguments.items():
         property_schema = properties.get(key)
+        if not isinstance(property_schema, dict) and isinstance(
+            schema.get("additionalProperties"),
+            dict,
+        ):
+            property_schema = schema["additionalProperties"]
+        if not isinstance(property_schema, dict) and schema.get(
+            "additionalProperties"
+        ) is False:
+            raise PersonaEffectValidationError(f"unexpected argument: {key}")
         if isinstance(property_schema, dict):
             _validate_json_schema_value(value, property_schema, path=key)
 
@@ -342,12 +351,7 @@ def _normalize_persona_effect_schema(
         if not isinstance(properties, dict):
             properties = {}
         normalized_properties: dict[str, Any] = {}
-        in_axes = bool(path) and path[-1] == "axes"
         for key, value in properties.items():
-            if in_axes:
-                property_schema = value if isinstance(value, dict) else {}
-                normalized_properties[key] = _normalize_axis_leaf_schema(property_schema)
-                continue
             normalized_properties[key] = (
                 _normalize_persona_effect_schema(
                     value,
@@ -358,9 +362,7 @@ def _normalize_persona_effect_schema(
             )
         normalized["properties"] = normalized_properties
         additional_properties = normalized.get("additionalProperties")
-        if in_axes:
-            normalized["additionalProperties"] = {"type": "number"}
-        elif isinstance(additional_properties, dict):
+        if isinstance(additional_properties, dict):
             normalized["additionalProperties"] = _normalize_persona_effect_schema(
                 additional_properties,
                 path=(*path, "*"),
@@ -373,15 +375,6 @@ def _normalize_persona_effect_schema(
                 items,
                 path=(*path, "[]"),
             )
-    return normalized
-
-
-def _normalize_axis_leaf_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(schema)
-    normalized["type"] = "number"
-    normalized.pop("properties", None)
-    normalized.pop("required", None)
-    normalized.pop("additionalProperties", None)
     return normalized
 
 
@@ -433,6 +426,10 @@ def _validate_typed_json_schema_value(
                 additional_properties, dict
             ):
                 property_schema = additional_properties
+            if not isinstance(property_schema, dict) and additional_properties is False:
+                raise PersonaEffectValidationError(
+                    f"unexpected argument: {path}.{key}"
+                )
             if isinstance(property_schema, dict):
                 _validate_json_schema_value(
                     item,

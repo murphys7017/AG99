@@ -101,7 +101,7 @@ renderer 负责把声明编译成策略：
 - `BasePromptRenderer`: 对非 text 输出契约默认编译为 `prompt_only`；仅 `strict tool_call` 降到 `prompt_only` 时记为 `degraded`。
 - `OpenAIPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 OpenAI-compatible message/tool schema 形态。
 - `AnthropicPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 Anthropic content block/tool schema 形态。
-- `MiniMaxPromptRenderer`: 默认保持 `prompt_only`；只有 provider 显式启用 `minimax_enable_tool_call` 时才把 `tool_call` 编译为 `protocol_tool_call`。
+- `MiniMaxPromptRenderer`: 默认把 `tool_call` 编译为 `protocol_tool_call`；只有 provider 显式配置 `minimax_enable_tool_call=False` 时才降级到 `prompt_only`。
 
 renderer 不负责：
 

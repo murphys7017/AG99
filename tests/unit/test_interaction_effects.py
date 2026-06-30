@@ -89,31 +89,31 @@ def test_effect_schema_does_not_mutate_plugin_parameters_or_include_metadata():
     assert "secret_prompt_hint" not in str(schema)
 
 
-def test_effect_schema_normalizes_axes_leaf_values_to_number():
+def test_effect_schema_preserves_plugin_declared_field_types():
     normalized = normalize_persona_effect_parameters_schema(
         {
             "type": "object",
             "properties": {
-                "intent_tags": {
+                "labels": {
                     "type": "array",
                     "items": {"type": "string"},
                 },
-                "axes": {
+                "payload": {
                     "type": "object",
                     "properties": {
-                        "head_yaw": {"type": "integer"},
-                        "head_pitch": {"type": "string"},
+                        "count": {"type": "integer"},
+                        "label": {"type": "string"},
                     },
                     "additionalProperties": {"type": "string"},
                 },
             },
-            "required": ["intent_tags", "axes"],
+            "required": ["labels", "payload"],
         }
     )
 
-    assert normalized["properties"]["axes"]["properties"]["head_yaw"]["type"] == "number"
-    assert normalized["properties"]["axes"]["properties"]["head_pitch"]["type"] == "number"
-    assert normalized["properties"]["axes"]["additionalProperties"]["type"] == "number"
+    assert normalized["properties"]["payload"]["properties"]["count"]["type"] == "integer"
+    assert normalized["properties"]["payload"]["properties"]["label"]["type"] == "string"
+    assert normalized["properties"]["payload"]["additionalProperties"]["type"] == "string"
 
 
 def test_context_rejects_duplicate_effect_name():
@@ -298,4 +298,78 @@ def test_parse_persona_effect_calls_accepts_numeric_strings_after_normalization(
             plugin_id="plugin_a",
             source="persona",
         )
+    ]
+
+
+def test_parse_persona_effect_calls_rejects_extra_arguments_when_schema_is_closed():
+    effect = _effect()
+    effect.name = "demo.effect"
+    effect.parameters = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "labels": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["labels"],
+    }
+
+    calls, issues = parse_persona_effect_calls_with_issues(
+        [
+            {
+                "name": "demo.effect",
+                "arguments": {
+                    "labels": ["focused"],
+                    "debug": True,
+                },
+            }
+        ],
+        [effect],
+    )
+
+    assert calls == []
+    assert [issue.to_dict() for issue in issues] == [
+        {
+            "index": 0,
+            "name": "demo.effect",
+            "reason": "unexpected argument: debug",
+        }
+    ]
+
+
+def test_parse_persona_effect_calls_rejects_nested_extra_arguments_when_schema_is_closed():
+    effect = _effect()
+    effect.name = "demo.effect"
+    effect.parameters = {
+        "type": "object",
+        "properties": {
+            "pose": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            }
+        },
+        "required": ["pose"],
+    }
+
+    calls, issues = parse_persona_effect_calls_with_issues(
+        [
+            {
+                "name": "demo.effect",
+                "arguments": {"pose": {"name": "lean", "debug": True}},
+            }
+        ],
+        [effect],
+    )
+
+    assert calls == []
+    assert [issue.to_dict() for issue in issues] == [
+        {
+            "index": 0,
+            "name": "demo.effect",
+            "reason": "unexpected argument: pose.debug",
+        }
     ]

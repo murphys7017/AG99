@@ -37,21 +37,37 @@ class RespondStage(Stage):
         await event.complete_visible_turn()
 
     @staticmethod
-    async def _send_interaction_core_message(
+    async def _send_with_origin(
         event: AstrMessageEvent,
         message,
+        origin: str | None,
     ) -> None:
-        with temporary_output_origin(event, OutputOrigin.CORE.value):
+        if origin is None:
+            await event.send(message)
+            return
+        with temporary_output_origin(event, origin):
             await event.send(message)
 
     @staticmethod
-    async def _send_interaction_core_stream(
+    async def _send_stream_with_origin(
         event: AstrMessageEvent,
         async_stream,
         realtime_segmenting: bool,
+        origin: str | None,
     ) -> None:
-        with temporary_output_origin(event, OutputOrigin.CORE.value):
+        if origin is None:
             await event.send_streaming(async_stream, realtime_segmenting)
+            return
+        with temporary_output_origin(event, origin):
+            await event.send_streaming(async_stream, realtime_segmenting)
+
+    @staticmethod
+    def _result_output_origin(result) -> str | None:
+        if result.result_content_type == ResultContentType.STREAMING_RESULT:
+            return OutputOrigin.CORE.value
+        if result.is_model_result():
+            return OutputOrigin.CORE.value
+        return None
 
     def _schedule_after_message_sent_postprocess(
         self,
@@ -192,21 +208,24 @@ class RespondStage(Stage):
                 == "realtime_segmenting"
             )
             logger.debug(f"应用流式输出({event.get_platform_id()})")
-            await self._send_interaction_core_stream(
+            await self._send_stream_with_origin(
                 event,
                 result.async_stream,
                 realtime_segmenting,
+                self._result_output_origin(result),
             )
             sent_any = True
             await self._dispatch_after_message_sent(event)
             return
         if len(result.chain) > 0:
+            output_origin = self._result_output_origin(result)
             sent_any = await deliver_message_chain(
                 event,
                 result.derive(result.chain),
-                send_message=lambda chain: self._send_interaction_core_message(
+                send_message=lambda chain: self._send_with_origin(
                     event,
                     chain,
+                    output_origin,
                 ),
                 platform_settings=self.platform_settings,
                 result_is_model_result=result.is_model_result(),

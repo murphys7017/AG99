@@ -8,6 +8,7 @@ from astrbot.core.interaction.expression_agent import (
     InteractionExpressionError,
     PersonaExpressionRequest,
     PersonaExpressionResult,
+    build_persona_runtime_system_prompt,
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     extract_persona_expression_result,
@@ -271,6 +272,73 @@ def test_persona_expression_accepts_json_when_tool_call_contract_degrades_to_pro
     ]
 
 
+def test_persona_expression_repairs_json_when_tool_call_degrades_to_prompt_only():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"emotion_label": {"type": "string"}},
+            "required": [],
+        },
+    )
+    contract = build_persona_expression_output_contract_for_effects([effect])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="prompt_only",
+        degraded=True,
+        degrade_reason="renderer_has_no_protocol_support",
+    )
+
+    result = extract_persona_expression_result(
+        '{"spoken_reply":"嗯。","effect_calls":[{"name":"ag99live.motion","arguments":{"emotion_label":"focused"}}]',
+        output_contract=contract,
+        compiled_output_contract=compiled,
+        effects=[effect],
+    )
+
+    assert result.spoken_reply == "嗯。"
+    assert result.effect_calls == [
+        PersonaEffectCall(
+            name="ag99live.motion",
+            arguments={"emotion_label": "focused"},
+            plugin_id="plugin_a",
+            source="persona",
+        )
+    ]
+
+
+def test_persona_expression_rejects_plain_text_when_tool_call_degrades_to_prompt_only():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"emotion_label": {"type": "string"}},
+            "required": [],
+        },
+    )
+    contract = build_persona_expression_output_contract_for_effects([effect])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="prompt_only",
+        degraded=True,
+        degrade_reason="renderer_has_no_protocol_support",
+    )
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        extract_persona_expression_result(
+            "少熬夜，对脑子不好。",
+            output_contract=contract,
+            compiled_output_contract=compiled,
+            effects=[effect],
+        )
+
+    assert exc_info.value.reason == "invalid_persona_expression_json"
+
+
 def test_persona_expression_defaults_to_strict_tool_call_contract():
     schema = build_persona_expression_tool_parameters()
     contract = build_persona_expression_output_contract_for_effects()
@@ -280,6 +348,16 @@ def test_persona_expression_defaults_to_strict_tool_call_contract():
     assert contract.allow_text_fallback is False
     assert contract.preferred_tool_name == "persona_expression"
     assert schema["required"] == ["spoken_reply", "effect_calls"]
+
+
+def test_persona_runtime_prompt_describes_generic_effect_schema_contract():
+    prompt = build_persona_runtime_system_prompt()
+
+    assert "persona_expression" in prompt
+    assert "effect_calls 只能使用注册过的 effect 与参数 schema" in prompt
+    assert "未声明字段不要输出" in prompt
+    assert "intent_tags" not in prompt
+    assert "axes" not in prompt
 
 
 def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
@@ -477,6 +555,80 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     ]
     assert provider.calls[0]["output_contract"] is contract
     assert provider.calls[0]["compiled_output_contract"] is compiled
+    assert provider.calls[0]["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+async def test_persona_expression_appends_prompt_only_contract_to_final_prompt(
+    monkeypatch,
+):
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(
+                role="assistant",
+                completion_text='{"spoken_reply":"嗯。","effect_calls":[]}',
+            )
+
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+    provider = Provider()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {"get_provider_by_id": lambda self, provider_id: provider},
+    )()
+    event = Event()
+    agent = InteractionExpressionAgent(InteractionMemoryStore())
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.Provider",
+        Provider,
+    )
+    contract = build_persona_expression_output_contract_for_effects([])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="prompt_only",
+        degraded=True,
+        degrade_reason="renderer_has_no_protocol_support",
+        fallback_prompt_text="必须只输出一个 JSON object。",
+    )
+    agent._prepare_render_result = AsyncMock(
+        return_value=RenderResult(
+            system_prompt="persona",
+            messages=[{"role": "user", "content": "hello"}],
+            output_contract=contract,
+            compiled_output_contract=compiled,
+            metadata={"persona_effect_specs": []},
+        )
+    )
+
+    result = await agent.generate_expression(
+        event,
+        plugin_context,
+        InteractionAgentConfig(expression_provider_id="persona"),
+        PersonaExpressionRequest(),
+    )
+
+    assert result.spoken_reply == "嗯。"
+    assert "必须只输出一个 JSON object" in provider.calls[0]["prompt"]
+    assert provider.calls[0]["tool_choice"] == "required"
 
 
 @pytest.mark.asyncio

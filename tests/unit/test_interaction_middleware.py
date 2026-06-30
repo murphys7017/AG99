@@ -22,7 +22,11 @@ from astrbot.core.interaction.types import (
     RouteMode,
 )
 from astrbot.core.message.components import Plain, Record, Reply
-from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
+from astrbot.core.message.message_event_result import (
+    MessageChain,
+    MessageEventResult,
+    ResultContentType,
+)
 from astrbot.core.pipeline.preprocess_stage.stage import PreProcessStage
 from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.respond.stage import RespondStage
@@ -523,7 +527,7 @@ class TestInteractionMiddleware:
         assert forwarded_event._has_send_oper is True
 
     @pytest.mark.asyncio
-    async def test_respond_stage_marks_interaction_send_as_core(
+    async def test_respond_stage_routes_official_plugin_result_as_plugin_output(
         self,
         webchat_event,
     ):
@@ -562,10 +566,62 @@ class TestInteractionMiddleware:
 
         await stage.process(forwarded_event)
 
+        controller.capture_plugin_output.assert_awaited_once()
+        sent_message = controller.capture_plugin_output.await_args.args[0]
+        assert sent_message.get_plain_text() == "respond stage reply"
+        assert controller.capture_plugin_output.await_args.args[1] is forwarded_event
+        assert controller.capture_plugin_output.await_args.kwargs == {"mode": "direct"}
+        controller.capture_message_chain.assert_not_awaited()
+        assert forwarded_event.get_extra("_interaction_output_origin") is None
+
+    @pytest.mark.asyncio
+    async def test_respond_stage_keeps_model_result_on_core_output_path(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        _stub_fast_response_route(middleware)
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+        forwarded_event = queue.get_nowait()
+        forwarded_event.set_result(
+            MessageEventResult()
+            .message("core model reply")
+            .set_result_content_type(ResultContentType.LLM_RESULT)
+        )
+
+        stage = RespondStage()
+        await stage.initialize(
+            MagicMock(
+                astrbot_config={"platform_settings": {}, "provider_settings": {}},
+                plugin_manager=MagicMock(context=MagicMock()),
+            )
+        )
+
+        await stage.process(forwarded_event)
+
         controller.capture_message_chain.assert_awaited_once()
         sent_message = controller.capture_message_chain.await_args.args[0]
-        assert sent_message.get_plain_text() == "respond stage reply"
-        assert controller.capture_plugin_output.await_count == 0
+        assert sent_message.get_plain_text() == "core model reply"
+        controller.capture_plugin_output.assert_not_awaited()
         assert forwarded_event.get_extra("_interaction_output_origin") is None
 
     @pytest.mark.asyncio

@@ -94,9 +94,7 @@ def build_persona_runtime_system_prompt() -> str:
         "必须按本次输出契约返回只包含 spoken_reply 与 effect_calls 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
-        "effect 参数里的必填字段必须补全，例如 motion 类 effect 的 arguments.intent_tags。\n"
-        "优先输出高层语义参数，如 emotion_label、resource_id、style、intensity；只有在确实无法表达时才直接输出 axes。\n"
-        "如果输出 axes，所有 axes.* 必须是 JSON number，不能是字符串。\n"
+        "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
@@ -355,7 +353,7 @@ def extract_persona_expression_result(
             payload,
             effects=effects,
         )
-    if strict_json_object:
+    if strict_tool_call or strict_json_object:
         raise InteractionExpressionError(
             "invalid_persona_expression_json",
             "persona expression must be a single JSON object",
@@ -367,6 +365,28 @@ def extract_persona_expression_result(
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
     del req
     return "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
+
+
+def _build_expression_prompt_for_contract(
+    req: PersonaExpressionRequest,
+    compiled_output_contract: CompiledOutputContract | None,
+) -> str:
+    prompt = _build_expression_prompt(req)
+    if (
+        isinstance(compiled_output_contract, CompiledOutputContract)
+        and compiled_output_contract.strategy == "prompt_only"
+        and compiled_output_contract.fallback_prompt_text
+    ):
+        return f"{prompt}\n\n{compiled_output_contract.fallback_prompt_text}"
+    return prompt
+
+
+def _should_require_tool_choice(output_contract: OutputContract | None) -> bool:
+    return (
+        isinstance(output_contract, OutputContract)
+        and output_contract.mode == "tool_call"
+        and output_contract.strict
+    )
 
 
 class InteractionExpressionAgent:
@@ -442,10 +462,16 @@ class InteractionExpressionAgent:
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
-                    prompt=_build_expression_prompt(req),
+                    prompt=_build_expression_prompt_for_contract(
+                        req,
+                        render_result.compiled_output_contract,
+                    ),
                     contexts=build_interaction_decision_contexts(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.expression_temperature,
+                    tool_choice="required"
+                    if _should_require_tool_choice(output_contract)
+                    else "auto",
                     output_contract=output_contract,
                     compiled_output_contract=render_result.compiled_output_contract,
                 ),

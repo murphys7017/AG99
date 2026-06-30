@@ -161,7 +161,7 @@ class PromptRenderEngine:
         provider_config = getattr(provider, "provider_config", None)
         if not isinstance(provider_config, dict):
             return False
-        value = provider_config.get("minimax_enable_tool_call", False)
+        value = provider_config.get("minimax_enable_tool_call", True)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
