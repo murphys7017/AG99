@@ -8,6 +8,8 @@ from astrbot.core.interaction.expression_agent import (
     InteractionExpressionError,
     PersonaExpressionRequest,
     PersonaExpressionResult,
+    add_persona_runtime_slots_to_pack,
+    add_visible_reply_material_slots_to_pack,
     build_persona_runtime_system_prompt,
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
@@ -22,6 +24,7 @@ from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
+from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
 
@@ -360,6 +363,47 @@ def test_persona_runtime_prompt_describes_generic_effect_schema_contract():
     assert "axes" not in prompt
 
 
+def test_persona_runtime_slots_are_native_system_base_not_extensions():
+    pack = ContextPack()
+
+    add_persona_runtime_slots_to_pack(pack, effects=[])
+
+    assert pack.get_slot("system.base") is not None
+    assert pack.get_slot("extension.system") is None
+    result = PromptRenderEngine().render(pack)
+    assert "system.base" in result.metadata["selected_slot_names"]
+    assert "extension.system" not in result.metadata["selected_slot_names"]
+    assert "<base" in result.system_prompt
+    assert "<extensions>" not in result.system_prompt
+
+
+def test_visible_reply_material_renders_as_native_input_message_with_stream_text():
+    pack = ContextPack()
+
+    add_visible_reply_material_slots_to_pack(
+        pack,
+        PersonaExpressionRequest(
+            observed_text="核心已经流出",
+            total_text="核心累计内容",
+            pending_text="待完成内容",
+            short_reply=True,
+        ),
+    )
+
+    assert pack.get_slot("input.visible_reply_material") is not None
+    assert pack.get_slot("extension.context") is None
+    result = PromptRenderEngine().render(pack)
+    assert "input.visible_reply_material" in result.metadata["selected_slot_names"]
+    assert "extension.context" not in result.metadata["selected_slot_names"]
+    assert len(result.messages) == 1
+    material_text = result.messages[0]["content"][0]["text"]
+    assert "<visible_reply_material>" in material_text
+    assert "核心已经流出" in material_text
+    assert "核心累计内容" in material_text
+    assert "待完成内容" in material_text
+    assert "extensions" not in material_text
+
+
 def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
     class Provider:
         provider_config = {"type": "deepseek_chat_completion"}
@@ -559,7 +603,7 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
 
 
 @pytest.mark.asyncio
-async def test_persona_expression_appends_prompt_only_contract_to_final_prompt(
+async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_prompt(
     monkeypatch,
 ):
     class Provider:
@@ -627,7 +671,8 @@ async def test_persona_expression_appends_prompt_only_contract_to_final_prompt(
     )
 
     assert result.spoken_reply == "嗯。"
-    assert "必须只输出一个 JSON object" in provider.calls[0]["prompt"]
+    assert "必须只输出一个 JSON object" not in provider.calls[0]["prompt"]
+    assert provider.calls[0]["prompt"] == "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
     assert provider.calls[0]["tool_choice"] == "required"
 
 

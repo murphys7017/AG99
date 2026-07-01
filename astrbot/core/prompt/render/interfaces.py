@@ -253,13 +253,11 @@ class BasePromptRenderer:
                 rendered_slot_names.append(segments_slot.name)
         else:
             prompt_slot = self._find_slot(slots, "persona.prompt")
-            if prompt_slot is not None and self._add_text_tag(
-                target,
-                "prompt",
-                self._stringify_slot_value(prompt_slot),
-                meta=self._slot_meta(prompt_slot),
-            ):
-                rendered_slot_names.append(prompt_slot.name)
+            if prompt_slot is not None:
+                prompt_text = self._stringify_slot_value(prompt_slot)
+                if prompt_text:
+                    target.add(prompt_text, meta=self._slot_meta(prompt_slot))
+                    rendered_slot_names.append(prompt_slot.name)
 
         begin_dialogs_slot = pack.get_slot("persona.begin_dialogs")
         if begin_dialogs_slot is not None and isinstance(
@@ -338,6 +336,27 @@ class BasePromptRenderer:
             )
             if text_rendered or annotation_rendered:
                 rendered_slot_names.append(text_slot.name)
+
+        visible_reply_material_slot = self._find_slot(
+            slots,
+            "input.visible_reply_material",
+        )
+        if self._render_mapping_slot(
+            resolve_node("user_input/visible_reply_material"),
+            "value",
+            visible_reply_material_slot,
+            body_keys=(
+                "source_text",
+                "immediate_reply",
+                "observed_text",
+                "total_text",
+                "pending_text",
+                "preserve_facts",
+                "short_reply",
+                "allow_empty",
+            ),
+        ):
+            rendered_slot_names.append("input.visible_reply_material")
 
         quoted_text_slot = self._find_slot(slots, "input.quoted_text")
         if quoted_text_slot is not None:
@@ -924,6 +943,20 @@ class BasePromptRenderer:
             if text_node is not None
             else {}
         )
+        visible_reply_material_node = self._find_tag_path(
+            prompt_tree,
+            "user_input/visible_reply_material",
+        )
+        visible_reply_material_text = (
+            self._render_subtree_text(
+                prompt_tree,
+                visible_reply_material_node,
+                include_root=True,
+                escape_text=True,
+            )
+            if visible_reply_material_node is not None
+            else None
+        )
 
         quoted_node = self._find_tag_path(prompt_tree, "user_input/quoted")
         quoted_text = (
@@ -1060,6 +1093,7 @@ class BasePromptRenderer:
 
         if (
             current_text
+            and not visible_reply_material_text
             and not request_context_text
             and not input_extensions_text
             and not quoted_text
@@ -1079,6 +1113,10 @@ class BasePromptRenderer:
 
         if request_context_text:
             content_parts.append(self._build_text_content_part(request_context_text))
+        if visible_reply_material_text:
+            content_parts.append(
+                self._build_text_content_part(visible_reply_material_text)
+            )
         if input_extensions_text:
             content_parts.append(self._build_text_content_part(input_extensions_text))
         if user_input_text:

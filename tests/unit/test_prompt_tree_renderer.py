@@ -1636,6 +1636,51 @@ def test_render_engine_returns_prompt_tree_and_system_prompt():
     assert result.metadata["rendered_slots"] == ["persona.prompt"]
     assert result.metadata["compiled_message_count"] == 0
     assert result.metadata["compiled_tool_count"] == 0
+    assert "<prompt>" not in result.system_prompt
+
+
+def test_render_engine_renders_visible_reply_material_as_native_input_context():
+    pack = ContextPack(
+        slots={
+            "input.visible_reply_material": ContextSlot(
+                name="input.visible_reply_material",
+                value={
+                    "source_text": "核心语义",
+                    "observed_text": "核心已经流出",
+                    "total_text": "核心累计内容",
+                    "pending_text": "待完成内容",
+                    "preserve_facts": True,
+                    "short_reply": True,
+                },
+                category="input",
+                source="test",
+            ),
+            "input.text": ContextSlot(
+                name="input.text",
+                value="当前用户输入",
+                category="input",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine().render(pack)
+
+    assert result.system_prompt is None
+    assert result.metadata["rendered_slots"] == [
+        "input.text",
+        "input.visible_reply_material",
+    ]
+    assert len(result.messages) == 1
+    message = result.messages[0]
+    assert message["role"] == "user"
+    assert isinstance(message["content"], list)
+    material_text = message["content"][0]["text"]
+    assert "<visible_reply_material>" in material_text
+    assert "<observed_text>" in material_text
+    assert "核心已经流出" in material_text
+    assert "当前用户输入" in message["content"][1]["text"]
+    assert "extensions" not in material_text
 
 
 def test_render_engine_emits_debug_log_for_render_result():

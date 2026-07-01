@@ -91,7 +91,7 @@
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的统一插件输出 helper
 - `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；router 自身任务说明直接作为原生 system base 注入，上下文包含裁剪后的聊天记录、interaction memory，以及 router-scoped contributor 提供的本地/拟人层能力说明，但不内置任何具体插件协议
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
-  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`
+  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 说明直接进入原生 `system.base`，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功
 - 旧 `finalizer.py` 已删除；core final reply 不再走独立 finalizer provider
 - stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成

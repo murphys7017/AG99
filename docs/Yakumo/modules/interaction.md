@@ -144,6 +144,7 @@ Input Runtime / Observation
 - 本身不做 LLM 调用，只做编排
 - 当前默认输出契约是严格 `tool_call`：注册虚拟工具 `persona_expression`，返回 `spoken_reply` 与 `effect_calls`，且 `allow_text_fallback=False`
 - 当 renderer/provider 明确不支持协议级 tool-call 时，才受控降级为 prompt-only JSON；这不是 router/decision 的职责
+- Persona Runtime 自身的表达规则是原生 `system.base`，不是 `extension.system`；本轮待表达语义、核心流式 `observed_text / total_text / pending_text` 等材料进入原生 `input.visible_reply_material`
 - 对 DeepSeek-V4 / `deepseek-reasoner` 这类 reasoning 模型，首轮 persona user input 会额外注入一次“角色沉浸模式” marker，
   用于约束 `<think>` 里的思维风格；稳定人格设定仍留在 `system`，marker 不作为长期人格本体
 
@@ -336,6 +337,7 @@ class Main(star.Star):
 
 `collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。router purpose 下视图会被裁剪为路由所需的轻量上下文；persona_reply purpose 下才暴露人格、完整表达材料等。
 如果插件希望 router 知道“某类请求可由本地/拟人层完整处理”，应在 `view.purpose == "router"` 时返回精简的 `PromptExtension` 能力说明。router 只按这类通用能力描述决定 `self_reply` / `hybrid`，不理解也不应硬编码插件私有协议、动作参数或输出 schema；具体参数生成仍属于 persona/output/plugin 层。
+如果插件希望影响 persona visible-reply，应在 `view.purpose == "persona_reply"` 时返回插件自己的 `PromptExtension`。中间件自己的 persona runtime 指令和 visible reply material 不走 extension。
 常用字段：
 
 - `view.turn_id`

@@ -14,8 +14,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 from astrbot import logger
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
-from astrbot.core.prompt.context_collect import build_prompt_extension_slots
-from astrbot.core.prompt.extensions import PromptExtension
+from astrbot.core.prompt.context_types import ContextSlot
 from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
@@ -90,11 +89,17 @@ def validate_persona_expression_result(
 def build_persona_runtime_system_prompt() -> str:
     return (
         "你负责以当前人格对用户表达。\n"
-        "根据本次调用提供的场景，生成自然语言表达以及必要的人格 effect 调用。\n"
+        "根据本次调用提供的 visible_reply_material，生成自然语言表达以及必要的人格 effect 调用。\n"
         "必须按本次输出契约返回只包含 spoken_reply 与 effect_calls 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
+        "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
+        "immediate_reply 是本轮之前已经说过的短回复，可参考但不要矛盾或重复。\n"
+        "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
+        "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
+        "short_reply 为 true 时只说一句简短口语短句，尽量控制在 20 字以内。\n"
+        "allow_empty 为 true 且当前没有必要说话时，可以让 spoken_reply 为空字符串。\n"
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
@@ -371,14 +376,8 @@ def _build_expression_prompt_for_contract(
     req: PersonaExpressionRequest,
     compiled_output_contract: CompiledOutputContract | None,
 ) -> str:
-    prompt = _build_expression_prompt(req)
-    if (
-        isinstance(compiled_output_contract, CompiledOutputContract)
-        and compiled_output_contract.strategy == "prompt_only"
-        and compiled_output_contract.fallback_prompt_text
-    ):
-        return f"{prompt}\n\n{compiled_output_contract.fallback_prompt_text}"
-    return prompt
+    del compiled_output_contract
+    return _build_expression_prompt(req)
 
 
 def _should_require_tool_choice(output_contract: OutputContract | None) -> bool:
@@ -649,22 +648,19 @@ def add_persona_runtime_slots_to_pack(
     *,
     effects: Sequence[PersonaEffectSpec] = (),
 ) -> None:
-    extensions: list[PromptExtension] = [
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="system",
-            title="Persona runtime policy",
-            value_kind="text",
+    pack.add_slot(
+        ContextSlot(
+            name="system.base",
             value=build_persona_runtime_system_prompt(),
-            order=0,
-            meta={"scope": "static", "node_type": "interaction_persona_runtime_policy"},
+            category="system",
+            source="interaction_persona_runtime",
+            render_mode="text",
+            meta={
+                "scope": "static",
+                "node_type": "interaction_persona_runtime_system_prompt",
+            },
         )
-    ]
-    for slot in build_prompt_extension_slots(
-        extensions,
-        source="interaction_persona_runtime",
-    ):
-        pack.add_slot(slot)
+    )
     pack.meta["slot_count"] = len(pack.slots)
     pack.meta["output_contract"] = build_persona_expression_output_contract_for_effects(
         effects
@@ -697,51 +693,16 @@ def add_visible_reply_material_slots_to_pack(
     }
     if not scene_payload:
         return
-
-    policy_lines = ["当前会提供当前轮次的表达材料。"]
-    if source_text:
-        policy_lines.append("如果提供了待表达语义材料，应以它为准组织用户可见回应。")
-    if req.preserve_facts:
-        policy_lines.append("表达时必须保留原始事实、数字、结论，不要编造。")
-    if immediate_reply:
-        policy_lines.append(
-            f"可以参考本轮之前已经说过的短回复，但不要和它矛盾：{immediate_reply}"
-        )
-    if observed_text:
-        policy_lines.append("当前处于执行过程中的短暂插话场景，不要冒充最终结果。")
-    if req.short_reply:
-        policy_lines.append("如果需要说话，只说一句简短口语短句，尽量控制在 20 字以内。")
-    if req.allow_empty:
-        policy_lines.append("如果当前没有必要说话，可以让 spoken_reply 为空字符串。")
-
-    extensions: list[PromptExtension] = [
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="system",
-            title="Visible reply material policy",
-            value_kind="text",
-            value="\n".join(policy_lines),
-            order=5,
-            meta={
-                "scope": "dynamic",
-                "node_type": "interaction_visible_reply_policy",
-            },
-        ),
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="context",
-            title="Visible reply material",
-            value_kind="mapping",
+    pack.add_slot(
+        ContextSlot(
+            name="input.visible_reply_material",
             value=scene_payload,
-            order=10,
+            category="input",
+            source="interaction_visible_reply_material",
+            render_mode="structured",
             meta={
                 "scope": "dynamic",
                 "node_type": "interaction_visible_reply_material",
             },
-        ),
-    ]
-    for slot in build_prompt_extension_slots(
-        extensions,
-        source="interaction_visible_reply_material",
-    ):
-        pack.add_slot(slot)
+        )
+    )
