@@ -624,6 +624,24 @@ class BasePromptRenderer:
 
         rendered_slot_names: list[str] = []
 
+        plugin_directory_slot = self._find_slot(
+            slots,
+            "capability.router_plugin_directory",
+        )
+        if plugin_directory_slot is not None and isinstance(
+            plugin_directory_slot.value, dict
+        ):
+            plugins = self._coerce_list(plugin_directory_slot.value.get("plugins"))
+            if self._render_record_list(
+                target,
+                parent_tag="local_plugins",
+                item_tag="plugin",
+                items=plugins,
+                body_keys=("name", "description"),
+                meta={},
+            ):
+                rendered_slot_names.append(plugin_directory_slot.name)
+
         skills_slot = self._find_slot(slots, "capability.skills_prompt")
         if skills_slot is not None and isinstance(skills_slot.value, dict):
             skills_inventory = self._coerce_list(skills_slot.value.get("skills"))

@@ -5,6 +5,7 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.context_types import ContextSlot
+from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
@@ -12,7 +13,6 @@ from astrbot.core.star.context import Context
 
 from .context_builder import (
     InteractionPromptContributorError,
-    append_interaction_prompt_extensions_to_pack,
     build_prompt_render_provider_request,
     build_router_context_pack,
     clone_interaction_context_pack,
@@ -42,11 +42,12 @@ def build_interaction_router_system_prompt() -> str:
     return (
         "你是 Interaction Router，一个严格的二分类选择器。\n"
         "任务：根据当前用户输入、聊天记录、memory 和 router 上下文，从候选标签中选择一个。\n"
+        "router 上下文可能包含插件目录；插件目录只说明本地插件是什么、负责什么。\n"
         "候选标签：\n"
-        "- self_reply：拟人层或上下文声明的本地能力即可完整处理，不需要核心 Agent。\n"
-        "- hybrid：需要核心 Agent 执行工具、检索、文件、代码、事实核验、复杂推理，"
-        "或本地/拟人层能力无法确认覆盖。\n"
-        "判断规则：只按上下文提供的能力描述判断，不推断具体插件协议。\n"
+        "- self_reply：拟人层或插件目录声明的本地插件职责即可完整处理，不需要核心 Agent。\n"
+        "- hybrid：其他所有情况，交给核心 Agent。\n"
+        "判断规则：只判断本地插件/拟人层是否明确能完整处理；不要限制或枚举核心 Agent 的能力范围。\n"
+        "不要推断具体插件协议、动作参数或输出 schema。\n"
         "输出约束：不要生成用户回复，不要输出 JSON，只返回 self_reply 或 hybrid。"
     )
 
@@ -160,7 +161,7 @@ class InteractionRouterAgent:
         except InteractionPromptContributorError as exc:
             raise InteractionRouterError(exc.reason, str(exc)) from exc
         route_pack = clone_interaction_context_pack(router_pack)
-        append_interaction_prompt_extensions_to_pack(route_pack, prompt_extensions)
+        add_router_plugin_directory_slots_to_pack(route_pack, prompt_extensions)
         add_interaction_router_slots_to_pack(
             pack=route_pack,
         )
@@ -172,6 +173,56 @@ class InteractionRouterAgent:
             provider_request=build_prompt_render_provider_request(event, provider),
         )
 
+
+
+def add_router_plugin_directory_slots_to_pack(
+    pack,
+    prompt_extensions: list[PromptExtension],
+) -> None:
+    plugins = _extract_router_plugin_directory(prompt_extensions)
+    if not plugins:
+        return
+    pack.add_slot(
+        ContextSlot(
+            name="capability.router_plugin_directory",
+            value={"plugins": plugins},
+            category="capability",
+            source="interaction_router",
+            render_mode="structured",
+            meta={"scope": "static"},
+        )
+    )
+    pack.meta["slot_count"] = len(pack.slots)
+
+
+def _extract_router_plugin_directory(
+    prompt_extensions: list[PromptExtension],
+) -> list[dict[str, str]]:
+    plugins: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for extension in prompt_extensions:
+        if not isinstance(extension, PromptExtension):
+            continue
+        if extension.mount != "capability" or not isinstance(extension.value, dict):
+            continue
+        raw_plugins = extension.value.get("plugins")
+        if isinstance(raw_plugins, dict):
+            raw_plugins = [raw_plugins]
+        if not isinstance(raw_plugins, list):
+            continue
+        for item in raw_plugins:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "") or "").strip()
+            description = str(item.get("description", "") or "").strip()
+            if not name or not description:
+                continue
+            key = (name, description)
+            if key in seen:
+                continue
+            seen.add(key)
+            plugins.append({"name": name, "description": description})
+    return plugins
 
 
 def add_interaction_router_slots_to_pack(

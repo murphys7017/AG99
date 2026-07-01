@@ -167,7 +167,7 @@ class PurposeAwarePromptContributor:
 
 
 class RouterScopedPromptContributor:
-    plugin_id = "example.local_presence"
+    plugin_id = "example.plugin_catalog"
 
     def __init__(self):
         self.views = []
@@ -178,17 +178,14 @@ class RouterScopedPromptContributor:
             return PromptExtension(
                 plugin_id=self.plugin_id,
                 mount="capability",
-                title="Local Interaction Capability",
                 value={
-                    "local_interaction": {
-                        "can_handle": [
-                            "brief acknowledgements",
-                            "local presence actions",
-                        ]
-                    }
+                    "plugins": [
+                        {
+                            "name": "Local Presence",
+                            "description": "负责本地角色的待机、注意力和轻量身体表现。",
+                        }
+                    ]
                 },
-                order=10,
-                meta={"scope": "dynamic", "node_type": "router_local_capability"},
             )
         return []
 
@@ -198,7 +195,11 @@ def test_router_system_prompt_uses_generic_local_capability_boundary():
 
     assert "严格的二分类选择器" in prompt
     assert "聊天记录、memory 和 router 上下文" in prompt
-    assert "不推断具体插件协议" in prompt
+    assert "插件目录只说明本地插件是什么、负责什么" in prompt
+    assert "其他所有情况，交给核心 Agent" in prompt
+    assert "不要限制或枚举核心 Agent 的能力范围" in prompt
+    assert "不要推断具体插件协议" in prompt
+    assert "工具、检索、文件、代码、事实核验、复杂推理" not in prompt
 
 
 @pytest.mark.asyncio
@@ -449,11 +450,22 @@ async def test_router_prompt_includes_router_scoped_capability_extensions(monkey
 
     class RenderEngine:
         def render(self, pack, *, event, **kwargs):
-            capability_slot = pack.get_slot("extension.capability")
-            titles = []
-            if capability_slot is not None and isinstance(capability_slot.value, dict):
-                titles = [item["title"] for item in capability_slot.value["items"]]
-            return RenderResult(messages=[], system_prompt="\n".join(titles))
+            assert pack.get_slot("extension.capability") is None
+            directory_slot = pack.get_slot("capability.router_plugin_directory")
+            assert directory_slot is not None
+            assert directory_slot.value == {
+                "plugins": [
+                    {
+                        "name": "Local Presence",
+                        "description": "负责本地角色的待机、注意力和轻量身体表现。",
+                    }
+                ]
+            }
+            plugin = directory_slot.value["plugins"][0]
+            return RenderResult(
+                messages=[],
+                system_prompt=f"{plugin['name']}: {plugin['description']}",
+            )
 
     event = Event()
     provider = Provider()
@@ -485,4 +497,5 @@ async def test_router_prompt_includes_router_scoped_capability_extensions(monkey
 
     assert contributor.views[0].purpose == "router"
     assert contributor.views[0].phase == "route"
-    assert "Local Interaction Capability" in render_result.system_prompt
+    assert "Local Presence" in render_result.system_prompt
+    assert "example.plugin_catalog" not in render_result.system_prompt

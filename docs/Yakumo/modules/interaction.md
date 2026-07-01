@@ -50,7 +50,7 @@ Input Runtime / Observation
 - 入站媒体 materialization
 - interaction STT
 - observation / reflex 前置判断
-- fast route classifier：只输出 `self_reply` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取裁剪后的聊天记录、interaction memory，以及 router purpose 的通用能力说明，不为单个插件打补丁
+- fast route classifier：只输出 `self_reply` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取裁剪后的聊天记录、interaction memory，以及 router purpose 的本地插件目录，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - SELF_REPLY / HYBRID / DELEGATE_TO_CORE 编排
 - live audio protocol route
 - Desktop Body Output intent 调度点
@@ -288,55 +288,38 @@ from astrbot.api import star
 from astrbot.core.prompt import PromptExtension
 
 
-class MotionPromptContributor:
-    plugin_id = "example.motion"
+class LocalPluginDirectoryContributor:
+    plugin_id = "example.plugin_catalog"
     priority = 50
 
     async def collect(self, event, plugin_context, view):
-        return [
-            PromptExtension(
+        if view.purpose == "router":
+            return PromptExtension(
                 plugin_id=self.plugin_id,
                 mount="capability",
-                title="Motion Contract",
                 value={
-                    "motion_available": True,
-                    "supported_actions": ["nod", "shake_head", "wave"],
+                    "plugins": [
+                        {
+                            "name": "AG99 Live Adapter",
+                            "description": "负责本地虚拟角色的动作、表情、语音和前端显示。",
+                        }
+                    ]
                 },
-                value_kind="mapping",
-                order=10,
-                meta={
-                    "scope": "static",
-                    "node_type": "motion_contract",
-                },
-            ),
-            PromptExtension(
-                plugin_id=self.plugin_id,
-                mount="context",
-                title="Motion Runtime State",
-                value={
-                    "current_pose": "idle",
-                    "can_interrupt": True,
-                },
-                value_kind="mapping",
-                order=20,
-                meta={
-                    "scope": "dynamic",
-                    "node_type": "motion_runtime_state",
-                },
-            ),
-        ]
+            )
+
+        return None
 
 
 class Main(star.Star):
     def __init__(self, context: star.Context) -> None:
         self.context = context
         self.context.register_interaction_prompt_contributor(
-            MotionPromptContributor()
+            LocalPluginDirectoryContributor()
         )
 ```
 
 `collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。router purpose 下视图会被裁剪为路由所需的轻量上下文；persona_reply purpose 下才暴露人格、完整表达材料等。
-如果插件希望 router 知道“某类请求可由本地/拟人层完整处理”，应在 `view.purpose == "router"` 时返回精简的 `PromptExtension` 能力说明。router 只按这类通用能力描述决定 `self_reply` / `hybrid`，不理解也不应硬编码插件私有协议、动作参数或输出 schema；具体参数生成仍属于 persona/output/plugin 层。
+如果插件希望 router 知道有哪些本地插件，应在 `view.purpose == "router"` 时返回精简的插件目录。插件目录只说明插件是什么、负责什么；router 会丢弃 `PromptExtension` 的运输外壳字段，只把插件 `name` / `description` 放进最终 prompt。router 只判断当前请求是否明确可由本地插件/拟人层完整处理，能则 `self_reply`，否则 `hybrid` 交给核心 Agent。router 不理解也不应硬编码插件私有协议、动作参数或输出 schema；具体参数生成仍属于 persona/output/plugin 层。
 如果插件希望影响 persona visible-reply，应在 `view.purpose == "persona_reply"` 时返回插件自己的 `PromptExtension`。中间件自己的 persona runtime 指令和 visible reply material 不走 extension。
 常用字段：
 
@@ -352,7 +335,7 @@ class Main(star.Star):
 
 推荐 mount 选择：
 
-- `capability`: 稳定能力契约，例如插件能提供哪些动作、哪些协议、哪些输出能力。
+- `capability`: 对 router 推荐放精简插件目录；对 persona_reply 可放插件自己的稳定能力契约。
 - `context`: 当前请求动态事实，例如设备状态、运行时状态、临时 session facts。
 - `system`: 仅用于稳定决策规则；不要放动态事实。
 - `input`: 仅用于确实需要贴近当前用户输入的补充材料。

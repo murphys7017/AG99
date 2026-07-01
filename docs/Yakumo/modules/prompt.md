@@ -170,7 +170,7 @@ interaction middleware 在 fast route 与 persona reply 阶段也复用 prompt r
 - 普通 core prompt extension 影响主 Agent 可见上下文。
 - interaction prompt contributor 只影响 middleware router / persona prompt。
 - 两者都使用 `PromptExtension` 数据结构，但作用阶段不同。
-- router 自身分类器任务说明直接使用原生 system base，不会作为插件 extension 注入；`purpose="router"` 的 contributor 只负责补充精简能力描述，用来判断请求是否可由本地/拟人层完整处理；不要把具体插件协议写进 router 策略。
+- router 自身分类器任务说明直接使用原生 system base，不会作为插件 extension 注入；`purpose="router"` 的 contributor 推荐只补充精简插件目录，用来说明本地有哪些插件以及它们负责什么。router 会把插件目录提取为原生 `capability.router_plugin_directory`，最终 prompt 只保留插件 `name` / `description`。router 只判断请求是否明确可由本地插件/拟人层完整处理；其他情况交给核心 Agent，不枚举或限制核心 Agent 的能力范围，也不要把具体插件协议写进 router 策略。
 - persona visible-reply 自身运行时说明直接使用原生 system base；本轮表达材料使用 `input.visible_reply_material`。只有插件贡献的额外能力/上下文才通过 interaction prompt contributor 注入 extension。
 
 ## 仍需继续收口
