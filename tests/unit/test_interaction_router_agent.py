@@ -4,6 +4,7 @@ import pytest
 
 from astrbot.core.interaction.router_agent import (
     InteractionRouterAgent,
+    build_interaction_router_system_prompt,
     extract_interaction_route_payload,
 )
 from astrbot.core.interaction.effects import PersonaEffectCall
@@ -132,9 +133,9 @@ def test_route_decision_to_legacy_interaction_decision_omits_core_task_spec():
 def test_route_decision_keeps_selected_persona_effect_calls():
     decision = InteractionRouteDecision(mode=FastRouteMode.SELF_REPLY)
     effect_call = PersonaEffectCall(
-        name="ag99live.motion",
-        arguments={"axes": {"head_yaw": 40}},
-        plugin_id="plugin_a",
+        name="example.effect",
+        arguments={"intent": "acknowledge"},
+        plugin_id="example_plugin",
     )
 
     selected = decision.to_interaction_decision(
@@ -146,7 +147,7 @@ def test_route_decision_keeps_selected_persona_effect_calls():
 
 
 class PurposeAwarePromptContributor:
-    plugin_id = "ag99live.motion"
+    plugin_id = "example.local_presence"
 
     def __init__(self):
         self.views = []
@@ -157,12 +158,97 @@ class PurposeAwarePromptContributor:
             return PromptExtension(
                 plugin_id=self.plugin_id,
                 mount="capability",
-                title="AG99live Motion Prompt",
-                value={"ag99live_motion": {"enabled": True}},
+                title="Persona-only Local Capability",
+                value={"local_presence": {"enabled": True}},
                 order=10,
-                meta={"scope": "static", "node_type": "ag99live_motion_prompt"},
+                meta={"scope": "static", "node_type": "local_presence_capability"},
             )
         return []
+
+
+class RouterScopedPromptContributor:
+    plugin_id = "example.local_presence"
+
+    def __init__(self):
+        self.views = []
+
+    async def collect(self, event, plugin_context, view):
+        self.views.append(view)
+        if view.purpose == "router":
+            return PromptExtension(
+                plugin_id=self.plugin_id,
+                mount="capability",
+                title="Local Interaction Capability",
+                value={
+                    "local_interaction": {
+                        "can_handle": [
+                            "brief acknowledgements",
+                            "local presence actions",
+                        ]
+                    }
+                },
+                order=10,
+                meta={"scope": "dynamic", "node_type": "router_local_capability"},
+            )
+        return []
+
+
+def test_router_system_prompt_uses_generic_local_capability_boundary():
+    prompt = build_interaction_router_system_prompt()
+
+    assert "严格的二分类选择器" in prompt
+    assert "聊天记录、memory 和 router 上下文" in prompt
+    assert "不推断具体插件协议" in prompt
+
+
+@pytest.mark.asyncio
+async def test_router_system_prompt_renders_as_native_system_base_not_extension():
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        message_str = "hello"
+        message_obj = type("Message", (), {"message": []})()
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+        def get_platform_name(self):
+            return "webchat"
+
+    class Provider:
+        pass
+
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "get_config": lambda self, umo=None: {},
+            "list_interaction_prompt_contributors": lambda self: [],
+        },
+    )()
+    agent = InteractionRouterAgent(memory_store=None)
+
+    render_result = await agent._prepare_render_result(
+        Event(),
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(),
+        provider=Provider(),
+    )
+
+    assert "<base" in render_result.system_prompt
+    assert "extension.system" not in render_result.metadata["selected_slot_names"]
+    assert "system.base" in render_result.metadata["selected_slot_names"]
 
 
 @pytest.mark.asyncio
@@ -328,4 +414,75 @@ async def test_router_prompt_excludes_persona_only_prompt_extensions(monkeypatch
     assert contributor.views[0].interaction_memory == {}
     assert contributor.views[0].capabilities == {}
     assert contributor.views[0].input["text"] == "hello"
-    assert "AG99live Motion Prompt" not in render_result.system_prompt
+    assert "Persona-only Local Capability" not in render_result.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_router_prompt_includes_router_scoped_capability_extensions(monkeypatch):
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        message_str = "please do the local thing"
+        message_obj = type("Message", (), {"message": []})()
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+        def get_platform_name(self):
+            return "webchat"
+
+    class Provider:
+        pass
+
+    contributor = RouterScopedPromptContributor()
+
+    class RenderEngine:
+        def render(self, pack, *, event, **kwargs):
+            capability_slot = pack.get_slot("extension.capability")
+            titles = []
+            if capability_slot is not None and isinstance(capability_slot.value, dict):
+                titles = [item["title"] for item in capability_slot.value["items"]]
+            return RenderResult(messages=[], system_prompt="\n".join(titles))
+
+    event = Event()
+    provider = Provider()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "get_config": lambda self, umo=None: {},
+            "list_interaction_prompt_contributors": lambda self: [contributor],
+        },
+    )()
+    agent = InteractionRouterAgent(memory_store=None)
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.router_agent.Provider",
+        Provider,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.router_agent.PromptRenderEngine",
+        lambda: RenderEngine(),
+    )
+
+    render_result = await agent._prepare_render_result(
+        event,
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(),
+        provider=provider,
+    )
+
+    assert contributor.views[0].purpose == "router"
+    assert contributor.views[0].phase == "route"
+    assert "Local Interaction Capability" in render_result.system_prompt

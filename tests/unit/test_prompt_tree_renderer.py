@@ -87,6 +87,26 @@ def test_base_prompt_renderer_returns_nested_node_structure():
     assert structure["extension"] == "system/extensions"
 
 
+def test_prompt_renderer_places_router_instruction_in_native_system_base():
+    pack = ContextPack(
+        slots={
+            "system.base": ContextSlot(
+                name="system.base",
+                value="You are a strict router.",
+                category="system",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=BasePromptRenderer()).render(pack)
+
+    assert result.system_prompt is not None
+    assert "<base" in result.system_prompt
+    assert "You are a strict router." in result.system_prompt
+    assert "system.base" in result.metadata["selected_slot_names"]
+
+
 def test_render_engine_selects_anthropic_renderer_from_event_provider():
     class ProviderStub:
         provider_config = {"type": "anthropic_chat_completion"}

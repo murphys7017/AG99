@@ -78,6 +78,9 @@ class InteractionMemoryCollector(ContextCollectorInterface):
 
 
 class InteractionConversationHistoryCollector(ContextCollectorInterface):
+    def __init__(self, *, recent_turn_limit: int | None = None) -> None:
+        self.recent_turn_limit = recent_turn_limit
+
     async def collect(
         self,
         event: AstrMessageEvent,
@@ -212,6 +215,8 @@ class InteractionConversationHistoryCollector(ContextCollectorInterface):
 
         if not turns:
             return None
+        if self.recent_turn_limit is not None:
+            turns = turns[-max(self.recent_turn_limit, 0) :]
 
         return {
             "source": source_name,

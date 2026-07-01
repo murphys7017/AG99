@@ -4,8 +4,7 @@ import asyncio
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.prompt.context_collect import build_prompt_extension_slots
-from astrbot.core.prompt.extensions import PromptExtension
+from astrbot.core.prompt.context_types import ContextSlot
 from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.selector import _extract_json_object
 from astrbot.core.provider import Provider
@@ -41,10 +40,14 @@ class InteractionRouterError(RuntimeError):
 
 def build_interaction_router_system_prompt() -> str:
     return (
-        "只判断当前输入是否需要执行层。\n"
-        "self_reply：寒暄、情绪回应、轻量闲聊。\n"
-        "hybrid：工具、检索、文件、代码、外部动作、事实核验、复杂推理，或不确定。\n"
-        "不要生成用户回复，不要输出 JSON，只返回 self_reply 或 hybrid 其中一个词。"
+        "你是 Interaction Router，一个严格的二分类选择器。\n"
+        "任务：根据当前用户输入、聊天记录、memory 和 router 上下文，从候选标签中选择一个。\n"
+        "候选标签：\n"
+        "- self_reply：拟人层或上下文声明的本地能力即可完整处理，不需要核心 Agent。\n"
+        "- hybrid：需要核心 Agent 执行工具、检索、文件、代码、事实核验、复杂推理，"
+        "或本地/拟人层能力无法确认覆盖。\n"
+        "判断规则：只按上下文提供的能力描述判断，不推断具体插件协议。\n"
+        "输出约束：不要生成用户回复，不要输出 JSON，只返回 self_reply 或 hybrid。"
     )
 
 
@@ -136,7 +139,12 @@ class InteractionRouterAgent:
     ):
         build_config = _build_decision_build_config(plugin_context, event)
         # Router 直接构建最小 Pack，不触碰共享 context_material
-        router_pack = await build_router_context_pack(event, plugin_context, build_config)
+        router_pack = await build_router_context_pack(
+            event,
+            plugin_context,
+            build_config,
+            self.memory_store,
+        )
         # Router prompt extensions（purpose="router"），不缓存
         input_payload = extract_input_payload(router_pack)
         decision_context = {"input": input_payload}
@@ -170,20 +178,17 @@ def add_interaction_router_slots_to_pack(
     *,
     pack,
 ) -> None:
-    extensions = [
-        PromptExtension(
-            plugin_id="astrbot.interaction",
-            mount="system",
-            title="Interaction middleware router policy",
-            value_kind="text",
+    pack.add_slot(
+        ContextSlot(
+            name="system.base",
             value=build_interaction_router_system_prompt(),
-            order=0,
+            category="system",
+            source="interaction_router",
+            render_mode="text",
             meta={
                 "scope": "static",
-                "node_type": "interaction_router_policy",
+                "node_type": "interaction_router_system_prompt",
             },
-        ),
-    ]
-    for slot in build_prompt_extension_slots(extensions, source="interaction_router"):
-        pack.add_slot(slot)
+        )
+    )
     pack.meta["slot_count"] = len(pack.slots)

@@ -2,7 +2,7 @@
 Prompt Profile - 按运行时职责定义 ContextPack 的内容边界。
 
 三个内置 Profile：
-  ROUTER_PROMPT_PROFILE         — 只含输入摘要，用于路由判断
+  ROUTER_PROMPT_PROFILE         — 含输入摘要 + 轻量历史/记忆，用于路由判断
   PERSONA_PROMPT_PROFILE        — 含 persona + interaction memory，无完整历史和工具
   CORE_EXECUTION_PROMPT_PROFILE — 含工具/技能/MCP/知识库，无 persona 和完整历史
 """
@@ -33,13 +33,15 @@ class PromptProfile:
     blocked_slots: frozenset[str] = frozenset()
 
 
-# Router 只看输入内容，绝对不含人格/记忆/工具
+# Router 只看输入内容和轻量上下文，绝对不含人格/工具
 ROUTER_PROMPT_PROFILE = PromptProfile(
     purpose=PromptRuntimePurpose.ROUTER,
     allowed_slots=frozenset(
         {
             "input.text",
             "input.quoted_text",
+            "conversation.history",
+            "memory.interaction",
         }
     ),
 )

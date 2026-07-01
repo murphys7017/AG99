@@ -29,6 +29,7 @@ from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
 from .collectors import (
+    InteractionConversationHistoryCollector,
     InteractionMemoryCollector,
 )
 from .contributors import (
@@ -80,13 +81,33 @@ async def build_router_context_pack(
     event,
     plugin_context: Context,
     config,
+    memory_store: InteractionMemoryStore | None = None,
 ) -> ContextPack:
-    """Router 专用最小 Pack：仅含输入内容，无人格/记忆/历史/工具。"""
-    del plugin_context, config
+    """Router 专用轻量 Pack：含输入、轻量历史/记忆，无人格/工具。"""
     source_pack = build_minimal_router_context_pack(
         event,
         provider_request=event.get_extra("provider_request"),
     )
+    provider_request = event.get_extra("provider_request")
+    router_collectors: list[ContextCollectorInterface] = [
+        InteractionConversationHistoryCollector(recent_turn_limit=4),
+    ]
+    if memory_store is not None:
+        router_collectors.append(
+            InteractionMemoryCollector(
+                memory_store,
+                recent_turn_limit=4,
+                brief=True,
+            )
+        )
+    for collector in router_collectors:
+        for slot in await collector.collect(
+            event,
+            plugin_context,
+            config,
+            provider_request=provider_request,
+        ):
+            source_pack.add_slot(slot)
     router_pack = filter_context_pack_for_profile(source_pack, ROUTER_PROMPT_PROFILE)
     attachment_summary = _build_router_attachment_summary(source_pack)
     if attachment_summary:

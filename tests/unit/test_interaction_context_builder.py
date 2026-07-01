@@ -10,6 +10,7 @@ from astrbot.core.interaction.context_builder import (
     _build_router_attachment_summary,
     append_interaction_prompt_extensions_to_pack,
     build_interaction_collectors,
+    build_router_context_pack,
     collect_interaction_prompt_extensions,
     extract_recent_messages,
     get_or_collect_interaction_prompt_extensions,
@@ -31,6 +32,8 @@ from astrbot.core.prompt.profiles import (
     PERSONA_PROMPT_PROFILE,
     ROUTER_PROMPT_PROFILE,
 )
+from astrbot.core.db.po import Conversation
+from astrbot.core.provider.entities import ProviderRequest
 
 
 def test_extract_recent_messages_includes_interaction_memory_turns():
@@ -166,6 +169,34 @@ def test_persona_profile_removes_history_tools_and_skills():
     assert filtered.meta["prompt_purpose"] == "persona_reply"
 
 
+def test_router_profile_keeps_history_and_interaction_memory_without_tools_or_persona():
+    pack = ContextPack()
+    for name, category in (
+        ("input.text", "input"),
+        ("conversation.history", "memory"),
+        ("memory.interaction", "memory"),
+        ("persona.prompt", "persona"),
+        ("capability.tools_schema", "tools"),
+    ):
+        pack.add_slot(
+            ContextSlot(
+                name=name,
+                value={"name": name},
+                category=category,
+                source="unit",
+            )
+        )
+
+    filtered = filter_context_pack_for_profile(pack, ROUTER_PROMPT_PROFILE)
+
+    assert set(filtered.slots) == {
+        "input.text",
+        "conversation.history",
+        "memory.interaction",
+    }
+    assert filtered.meta["prompt_purpose"] == "router"
+
+
 def test_core_profile_removes_persona_state_from_memory():
     pack = ContextPack()
     for name in (
@@ -219,6 +250,97 @@ def test_router_attachment_summary_keeps_counts_without_media_refs():
     assert summary == {"images": 1, "files": 2}
     assert "input.images" not in filtered.slots
     assert "input.files" not in filtered.slots
+
+
+@pytest.mark.asyncio
+async def test_build_router_context_pack_collects_trimmed_history_and_memory():
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        message_str = "current"
+        message_obj = type("Message", (), {"message": []})()
+
+        def __init__(self, provider_request):
+            self._extras = {"provider_request": provider_request}
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    req = ProviderRequest()
+    req.conversation = Conversation(
+        platform_id="webchat",
+        user_id="user",
+        cid="conv-id",
+        history=(
+            '[{"role":"user","content":"u1"},{"role":"assistant","content":"a1"},'
+            '{"role":"user","content":"u2"},{"role":"assistant","content":"a2"},'
+            '{"role":"user","content":"u3"},{"role":"assistant","content":"a3"},'
+            '{"role":"user","content":"u4"},{"role":"assistant","content":"a4"},'
+            '{"role":"user","content":"u5"},{"role":"assistant","content":"a5"}]'
+        ),
+    )
+    snapshot = InteractionMemorySnapshot(
+        session_id="webchat:friend:session-1",
+        recent_turns=[
+            {"user": "mu1", "assistant": "ma1"},
+            {"user": "mu2", "assistant": "ma2"},
+            {"user": "mu3", "assistant": "ma3"},
+            {"user": "mu4", "assistant": "ma4"},
+            {"user": "mu5", "assistant": "ma5"},
+        ],
+        recent_topics=["topic"],
+        ongoing_threads=["thread"],
+        last_impression_summary="summary",
+    )
+    store = type(
+        "Store",
+        (),
+        {"load_interaction_memory": AsyncMock(return_value=snapshot)},
+    )()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "conversation_manager": None,
+            "get_config": lambda self, umo=None: {},
+        },
+    )()
+
+    pack = await build_router_context_pack(
+        Event(req),
+        plugin_context,
+        config={},
+        memory_store=store,
+    )
+
+    history_slot = pack.get_slot("conversation.history")
+    memory_slot = pack.get_slot("memory.interaction")
+    assert pack.get_slot("input.text").value == "current"
+    assert history_slot is not None
+    assert history_slot.value["turn_count"] == 4
+    assert [turn["user_message"]["content"] for turn in history_slot.value["turns"]] == [
+        "u2",
+        "u3",
+        "u4",
+        "u5",
+    ]
+    assert memory_slot is not None
+    assert memory_slot.value == {
+        "recent_turns": [
+            {"user": "mu1", "assistant": "ma1"},
+            {"user": "mu2", "assistant": "ma2"},
+            {"user": "mu3", "assistant": "ma3"},
+            {"user": "mu4", "assistant": "ma4"},
+        ],
+        "recent_topics": ["topic"],
+        "ongoing_threads": ["thread"],
+        "last_impression_summary": "summary",
+    }
 
 
 @pytest.mark.asyncio

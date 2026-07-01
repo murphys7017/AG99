@@ -50,7 +50,7 @@ Input Runtime / Observation
 - 入站媒体 materialization
 - interaction STT
 - observation / reflex 前置判断
-- fast route classifier：只输出 `self_reply` / `hybrid`，不承担用户可见回复或 effect 输出
+- fast route classifier：只输出 `self_reply` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取裁剪后的聊天记录、interaction memory，以及 router purpose 的通用能力说明，不为单个插件打补丁
 - SELF_REPLY / HYBRID / DELEGATE_TO_CORE 编排
 - live audio protocol route
 - Desktop Body Output intent 调度点
@@ -334,7 +334,8 @@ class Main(star.Star):
         )
 ```
 
-`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。router purpose 下视图会被裁剪为最小上下文；persona_reply purpose 下才暴露人格、记忆、能力等表达材料。
+`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。router purpose 下视图会被裁剪为路由所需的轻量上下文；persona_reply purpose 下才暴露人格、完整表达材料等。
+如果插件希望 router 知道“某类请求可由本地/拟人层完整处理”，应在 `view.purpose == "router"` 时返回精简的 `PromptExtension` 能力说明。router 只按这类通用能力描述决定 `self_reply` / `hybrid`，不理解也不应硬编码插件私有协议、动作参数或输出 schema；具体参数生成仍属于 persona/output/plugin 层。
 常用字段：
 
 - `view.turn_id`
