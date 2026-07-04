@@ -11,8 +11,8 @@ Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: cached `upstream/master` at `756469a39` (`fix: remove unused vocechat logo and update xmas hat image`)
-- Remote refresh status: the latest successful refresh is reflected in the cached `upstream/master` above; an additional HTTPS `git fetch upstream --prune` attempt on 2026-07-04 failed with `Recv failure: Connection was reset`, so topic review below is based on the cached upstream ref already present locally.
+- Last local upstream snapshot checked: `upstream/master` at `b43cc6dee` (`feat: improve ChatUI attachment display`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-04; upstream currently includes releases through `v4.26.4` and follow-up commits through `b43cc6dee`.
 - Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
 - Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
 
@@ -39,6 +39,40 @@ Current local upstream-sync commits:
 - `77afdf864` Absorb upstream v4.26.0-beta.4 small repair batch.
 - `f40f3db4d` Absorb upstream update/restart fixes.
 - `d070b4ccd` Absorb upstream compatibility fixes.
+- `7da11bbf2` Absorb upgrade recovery auth compatibility.
+
+## 2026-07-04 post-v4.26.4 safety and compatibility batch
+
+Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
+
+Absorbed by local rewrite:
+
+- Security / path confinement:
+  - `5266d170a`: local Quart KB upload route now sanitizes uploaded filenames with basename extraction before composing `kb_upload_*` temp paths, including Windows separator handling and empty-name fallback.
+  - `3c7956e8c`: local plugin upload route now sanitizes uploaded plugin archive filenames before composing `plugin_upload_*` temp paths.
+- Scheduling correctness:
+  - `df4d93d72`: recurring cron jobs now normalize standard crontab numeric weekdays (`0`/`7` as Sunday) to APScheduler weekday names before scheduling. Added focused coverage for Sunday scheduling and weekday normalization.
+- OpenAPI / auth compatibility:
+  - `967ed01cf`: local API key scope allowlist and Settings UI now include the `data` scope.
+  - `b7cadfe70`: local dashboard auth middleware now validates dashboard JWT and plugin-page asset token candidates independently, so an expired/invalid dashboard token no longer prevents a valid scoped plugin-page asset token from loading protected assets.
+- Pipeline stop semantics:
+  - `9daf8f0a8`: `OnWaitingLLMRequestEvent` stop results now return before acquiring the session lock. This preserves local Yakumo prompt/memory/postprocess flow and only changes the pre-lock stop behavior.
+
+Already present / no local change needed:
+
+- `0cfe4163c`: local defaults already use `max_context_length = -1` and `dequeue_context_length = 1`.
+
+Deferred from this first post-v4.26.4 pass:
+
+- Login-page public version details (`421d71804`) are left for a dedicated dashboard pass because this fork's frontend API layer differs from upstream and the upgrade-recovery dialog already covers the highest-value version-mismatch path.
+- FastAPI/OpenAPI service-layer migrations, ChatUI project workspace/attachment display work, broader plugin install/update source tracking, KB API contract pagination/cleanup changes, and provider/media compatibility fixes remain for later topic batches.
+
+Validation for this batch:
+
+- Python: `pytest tests/unit/test_cron_manager.py -q`
+- Python: `pytest tests/test_dashboard.py::test_plugin_page_content_issues_scoped_asset_token -q`
+- Lint: `uv run ruff check` on touched Python files and focused tests.
+- Frontend: `pnpm --dir dashboard typecheck`
 
 ## 2026-07-04 upgrade recovery and auth compatibility batch
 

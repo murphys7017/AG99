@@ -307,6 +307,7 @@ const apiKeyExpiryOptions = computed(() => [
 const availableScopes = [
     { value: 'chat', label: 'chat' },
     { value: 'config', label: 'config' },
+    { value: 'data', label: 'data' },
     { value: 'file', label: 'file' },
     { value: 'im', label: 'im' }
 ];

@@ -5,7 +5,7 @@ import os
 import socket
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import jwt
 import psutil
@@ -263,37 +263,58 @@ class AstrBotDashboard:
         ):
             return None
         is_plugin_page_path = PluginPageAuth.is_protected_path(request.path)
-        token = self._extract_dashboard_jwt()
-        if not token and is_plugin_page_path:
-            token = PluginPageAuth.extract_asset_token()
-        if not token:
+        dashboard_token = self._extract_dashboard_jwt()
+        asset_token = PluginPageAuth.extract_asset_token() if is_plugin_page_path else None
+        token_candidates = []
+        if dashboard_token:
+            token_candidates.append(dashboard_token)
+        if asset_token and asset_token != dashboard_token:
+            token_candidates.append(asset_token)
+        if not token_candidates:
             r = jsonify(Response().error("未授权").__dict__)
             r.status_code = 401
             return r
+
+        token_errors: list[str] = []
+        for token in token_candidates:
+            payload, token_error = self._validate_dashboard_token(token, request.path)
+            if payload is not None:
+                g.username = cast(str, payload["username"])
+                return None
+            token_errors.append(token_error)
+
+        error_message = (
+            "Token 过期"
+            if token_errors and all(item == "Token 过期" for item in token_errors)
+            else "Token 无效"
+        )
+        r = jsonify(Response().error(error_message).__dict__)
+        r.status_code = 401
+        return r
+
+    def _validate_dashboard_token(
+        self,
+        token: str,
+        path: str,
+    ) -> tuple[dict[str, Any] | None, str]:
         try:
             payload = jwt.decode(token, self._jwt_secret, algorithms=["HS256"])
-            if PluginPageAuth.is_asset_token(
-                payload
-            ) and not PluginPageAuth.is_scope_valid(
-                payload,
-                request.path,
-            ):
-                r = jsonify(Response().error("Token 无效").__dict__)
-                r.status_code = 401
-                return r
-
-            username = payload.get("username")
-            if not isinstance(username, str) or not username.strip():
-                raise jwt.InvalidTokenError("missing username in token payload")
-            g.username = username
         except jwt.ExpiredSignatureError:
-            r = jsonify(Response().error("Token 过期").__dict__)
-            r.status_code = 401
-            return r
+            return None, "Token 过期"
         except jwt.InvalidTokenError:
-            r = jsonify(Response().error("Token 无效").__dict__)
-            r.status_code = 401
-            return r
+            return None, "Token 无效"
+
+        if PluginPageAuth.is_asset_token(payload) and not PluginPageAuth.is_scope_valid(
+            payload,
+            path,
+        ):
+            return None, "Token 无效"
+
+        username = payload.get("username")
+        if not isinstance(username, str) or not username.strip():
+            return None, "Token 无效"
+
+        return payload, ""
 
     @staticmethod
     def _extract_dashboard_jwt() -> str | None:

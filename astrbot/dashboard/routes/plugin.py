@@ -1785,9 +1785,10 @@ class PluginRoute(Route):
                 str(form_data.get("ignore_version_check", "false")).lower() == "true"
             )
             logger.info(f"正在安装用户上传的插件 {file.filename}")
+            filename = str(file.filename or "plugin.zip").replace("\\", "/")
             file_path = os.path.join(
                 get_astrbot_temp_path(),
-                f"plugin_upload_{file.filename}",
+                f"plugin_upload_{os.path.basename(filename) or 'plugin.zip'}",
             )
             await file.save(file_path)
             plugin_info = await self.plugin_manager.install_plugin_from_file(

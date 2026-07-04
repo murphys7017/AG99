@@ -682,6 +682,11 @@ async def test_plugin_page_content_issues_scoped_asset_token(
     anonymous_client = app.test_client()
     app_js_response = await anonymous_client.get(app_js_url.group(1))
     assert app_js_response.status_code == 200
+    app_js_with_invalid_dashboard_token = await anonymous_client.get(
+        app_js_url.group(1),
+        headers={"Authorization": "Bearer invalid-dashboard-token"},
+    )
+    assert app_js_with_invalid_dashboard_token.status_code == 200
     bridge_response = await anonymous_client.get(bridge_sdk_url.group(1))
     assert bridge_response.status_code == 200
     css_response = await anonymous_client.get(css_url.group(1))

@@ -4,6 +4,7 @@ import asyncio
 import os
 import traceback
 import uuid
+from pathlib import Path
 from typing import Any
 
 import aiofiles
@@ -721,7 +722,9 @@ class KnowledgeBaseRoute(Route):
 
             # 处理每个文件
             for file in file_list:
-                file_name = file.filename
+                file_name = Path(str(file.filename or "document").replace("\\", "/")).name
+                if file_name in {"", ".", ".."}:
+                    file_name = "document"
 
                 # 保存到临时文件
                 temp_file_path = os.path.join(
