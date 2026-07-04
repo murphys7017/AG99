@@ -20,6 +20,10 @@ from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db import BaseDatabase
 from astrbot.core.db.migration.helper import check_migration_needed_v4
 from astrbot.core.db.po import ProviderStat
+from astrbot.core.desktop_runtime import (
+    DESKTOP_MANAGED_RESTART_MESSAGE,
+    is_desktop_managed_backend,
+)
 from astrbot.core.utils.astrbot_path import get_astrbot_path
 from astrbot.core.utils.auth_password import (
     is_default_dashboard_password,
@@ -70,6 +74,8 @@ class StatRoute(Route):
                 .error("You are not permitted to do this operation in demo mode")
                 .__dict__
             )
+        if is_desktop_managed_backend():
+            return Response().error(DESKTOP_MANAGED_RESTART_MESSAGE).__dict__
 
         await self.core_lifecycle.restart()
         return Response().ok().__dict__

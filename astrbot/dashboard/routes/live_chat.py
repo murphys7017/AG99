@@ -208,6 +208,8 @@ class LiveChatRoute(Route):
             "web_search_tavily",
             "web_search_bocha",
             "web_search_brave",
+            "web_search_firecrawl",
+            "web_search_exa",
         ]
         web_search_results = {}
         tool_call_parts = [

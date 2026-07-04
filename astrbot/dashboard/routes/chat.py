@@ -425,6 +425,8 @@ class ChatRoute(Route):
             "web_search_tavily",
             "web_search_bocha",
             "web_search_brave",
+            "web_search_firecrawl",
+            "web_search_exa",
         ]
         # 从 accumulated_parts 中找到所有 web_search_tavily 的工具调用结果
         web_search_results = {}

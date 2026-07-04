@@ -40,6 +40,41 @@ Current local upstream-sync commits:
 - `f40f3db4d` Absorb upstream update/restart fixes.
 - `d070b4ccd` Absorb upstream compatibility fixes.
 - `7da11bbf2` Absorb upgrade recovery auth compatibility.
+- `0ba12f7f9` Absorb provider media compatibility updates.
+
+## 2026-07-04 small upstream fixes batch
+
+Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
+
+Absorbed by local rewrite:
+
+- Web search:
+  - `ae29a7eaf`: added Exa web search support through the local builtin tool system: `web_search_exa`, `exa_get_contents`, `websearch_exa_key`, provider metadata, main-agent mounting, and WebChat citation/ref parsing.
+  - `534ad0ccc`: `_KeyRotator` now resets a stale index when the configured key list shrinks, preventing index errors after config edits.
+- Local shell/runtime stability:
+  - `b5e29511a`: local shell execution now uses `Popen.communicate()` so Windows timeouts can terminate the whole process tree via `taskkill /F /T /PID` before falling back to killing the parent process.
+- Desktop-managed update/restart guard:
+  - `b673cb375`: desktop-managed backends (`ASTRBOT_DESKTOP_MANAGED=1`) now reject WebUI core restart/update actions and bottom-level updater reboot attempts with a clear message.
+  - `3b41a870f`: non-frozen Windows restarts now spawn a new console process and exit the current process instead of `execv` reuse.
+- Download safety:
+  - `70a52ea6d`: `download_file()` now rejects non-200 responses in both normal and SSL-fallback paths before writing a target file.
+
+Local adaptation notes:
+
+- Dashboard restart/update guards were rewritten into this fork's Quart route layer instead of upstream's newer FastAPI service layout.
+- The Exa integration uses the existing local prompt/provider flow and only participates through the existing `provider_settings.web_search` provider switch.
+- The download helper preserves this fork's existing Chinese progress output and progress callback payload shape.
+
+Deferred / intentionally not included in this batch:
+
+- FastAPI/OpenAPI migration, settings-system refactor, auth/TOTP, theme-mode refactor, ChatUI workspace/attachment-display work, KB API pagination/cleanup, and broader plugin install/source tracking remain separate topic batches.
+
+Validation for this batch:
+
+- Python targeted tests: `uv run pytest tests/unit/test_web_search_tools.py tests/unit/test_astr_main_agent.py::TestBuiltinToolInjection tests/test_local_shell_component.py tests/unit/test_io_download_file.py tests/test_updator_socks.py::test_astrbot_updator_exec_reboot_spawns_new_console_on_windows tests/test_dashboard.py::test_restart_core_rejects_desktop_managed_backend tests/test_dashboard.py::test_do_update_rejects_desktop_managed_backend -q`
+- Python focused lint: `uv run ruff check` on touched Python source and test files.
+- Frontend: `pnpm --dir dashboard typecheck`
+- Hygiene: `git diff --check` (only existing LF/CRLF normalization warnings on Windows).
 
 ## 2026-07-04 provider/media compatibility batch
 

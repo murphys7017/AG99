@@ -113,6 +113,7 @@ DEFAULT_CONFIG = {
         "websearch_brave_key": [],
         "websearch_baidu_app_builder_key": "",
         "websearch_firecrawl_key": [],
+        "websearch_exa_key": [],
         "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
@@ -3321,6 +3322,7 @@ CONFIG_METADATA_3 = {
                             "bocha",
                             "brave",
                             "firecrawl",
+                            "exa",
                         ],
                         "condition": {
                             "provider_settings.web_search": True,
@@ -3363,6 +3365,16 @@ CONFIG_METADATA_3 = {
                         "hint": "可添加多个 Key 进行轮询。",
                         "condition": {
                             "provider_settings.websearch_provider": "firecrawl",
+                            "provider_settings.web_search": True,
+                        },
+                    },
+                    "provider_settings.websearch_exa_key": {
+                        "description": "Exa API Key",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "hint": "可添加多个 Key 进行轮询。Get a key at https://dashboard.exa.ai",
+                        "condition": {
+                            "provider_settings.websearch_provider": "exa",
                             "provider_settings.web_search": True,
                         },
                     },

@@ -2,7 +2,7 @@
 
 import datetime
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -571,6 +571,36 @@ class TestBuiltinToolInjection:
         tool_mgr.get_builtin_tool.assert_called_once_with(module.BaiduWebSearchTool)
         assert req.func_tool is not None
         assert req.func_tool.get_tool("web_search_baidu") is builtin_tool
+
+    @pytest.mark.asyncio
+    async def test_apply_web_search_tools_mounts_exa_tools(
+        self, mock_event, mock_context
+    ):
+        module = ama
+        req = ProviderRequest()
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "web_search": True,
+                "websearch_provider": "exa",
+            }
+        }
+        exa_search_tool = MagicMock(spec=FunctionTool)
+        exa_search_tool.name = "web_search_exa"
+        exa_contents_tool = MagicMock(spec=FunctionTool)
+        exa_contents_tool.name = "exa_get_contents"
+        tool_mgr = MagicMock()
+        tool_mgr.get_builtin_tool.side_effect = [exa_search_tool, exa_contents_tool]
+        mock_context.get_llm_tool_manager.return_value = tool_mgr
+
+        await module._apply_web_search_tools(mock_event, req, mock_context)
+
+        assert tool_mgr.get_builtin_tool.call_args_list == [
+            call(module.ExaWebSearchTool),
+            call(module.ExaGetContentsTool),
+        ]
+        assert req.func_tool is not None
+        assert req.func_tool.get_tool("web_search_exa") is exa_search_tool
+        assert req.func_tool.get_tool("exa_get_contents") is exa_contents_tool
 
     def test_apply_web_search_citation_prompt_appends_once(self, mock_event):
         """Test web search citation prompt is appended once before agent run."""

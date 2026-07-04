@@ -10,6 +10,10 @@ from astrbot.core import DEMO_MODE, logger, pip_installer
 from astrbot.core.config.default import VERSION
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db.migration.helper import check_migration_needed_v4, do_migration_v4
+from astrbot.core.desktop_runtime import (
+    DESKTOP_MANAGED_RESTART_MESSAGE,
+    is_desktop_managed_backend,
+)
 from astrbot.core.updator import AstrBotUpdator
 from astrbot.core.utils.astrbot_path import (
     get_astrbot_data_path,
@@ -194,6 +198,9 @@ class UpdateRoute(Route):
             return Response().error(e.__str__()).__dict__
 
     async def update_project(self):
+        if is_desktop_managed_backend():
+            return Response().error(DESKTOP_MANAGED_RESTART_MESSAGE).__dict__
+
         data = await request.json
         version = data.get("version", "")
         reboot = data.get("reboot", True)
