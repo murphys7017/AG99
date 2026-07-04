@@ -631,16 +631,53 @@ class ProviderOpenAIOfficial(Provider):
             tool_calls = msg.get("tool_calls")
             reasoning_content = msg.get("reasoning_content")
 
-            if _is_empty(content) and not tool_calls and not reasoning_content:
-                logger.warning(f"过滤第 {idx} 条空 assistant 消息 (无工具调用)")
-                continue
-
-            if _is_empty(content) and tool_calls:
+            if _is_empty(content) and not tool_calls:
+                if not reasoning_content:
+                    logger.debug(
+                        "过滤第 %d 条空 assistant 消息 (无 content | tool_calls | reasoning_content)",
+                        idx,
+                    )
+                    continue
+                msg["content"] = ""
+            elif _is_empty(content) and tool_calls:
                 msg["content"] = None
 
             cleaned_messages.append(msg)
 
-        payloads["messages"] = cleaned_messages
+        pending_tool_call_ids: set[str] = set()
+        final_messages: list[Any] = []
+        removed_tool_messages = 0
+        for msg in cleaned_messages:
+            if not isinstance(msg, dict):
+                final_messages.append(msg)
+                pending_tool_call_ids = set()
+                continue
+
+            role = msg.get("role")
+            if role == "assistant" and msg.get("tool_calls"):
+                pending_tool_call_ids = {
+                    tool_call["id"]
+                    for tool_call in msg["tool_calls"]
+                    if isinstance(tool_call, dict) and tool_call.get("id")
+                }
+                final_messages.append(msg)
+            elif role == "tool":
+                tool_call_id = msg.get("tool_call_id")
+                if tool_call_id in pending_tool_call_ids:
+                    final_messages.append(msg)
+                    pending_tool_call_ids.remove(tool_call_id)
+                else:
+                    removed_tool_messages += 1
+            else:
+                pending_tool_call_ids = set()
+                final_messages.append(msg)
+
+        if removed_tool_messages:
+            logger.debug(
+                "Filtered %d orphaned or duplicate tool message(s)",
+                removed_tool_messages,
+            )
+        payloads["messages"] = final_messages
 
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         if tools:
@@ -1025,8 +1062,11 @@ class ProviderOpenAIOfficial(Provider):
         llm_response.raw_completion = completion
         llm_response.id = completion.id
 
-        if completion.usage:
-            llm_response.usage = self._extract_usage(completion.usage)
+        llm_response.usage = (
+            self._extract_usage(completion.usage)
+            if completion.usage
+            else TokenUsage()
+        )
 
         return llm_response
 
@@ -1086,9 +1126,9 @@ class ProviderOpenAIOfficial(Provider):
         """Finally convert the payload. Such as think part conversion, tool inject."""
         model = payloads.get("model", "").lower()
         is_gemini = "gemini" in model
+        deepseek_v4_markers = ("deepseek-reasoner", "deepseek-v4")
         is_deepseek_v4_reasoning = (
-            model.startswith("deepseek-reasoner")
-            or model.startswith("deepseek-v4")
+            any(marker in model for marker in deepseek_v4_markers)
             or "api.deepseek.com" in self.client.base_url.host
         )
         mimo_reasoning_models = {

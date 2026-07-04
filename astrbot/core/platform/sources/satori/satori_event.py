@@ -1,3 +1,4 @@
+import base64
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
@@ -15,6 +16,7 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
+from astrbot.core.utils.media_utils import detect_image_mime_type_async
 
 if TYPE_CHECKING:
     from .satori_adapter import SatoriPlatformAdapter
@@ -184,12 +186,14 @@ class SatoriPlatformEvent(AstrMessageEvent):
                                 await self.send(temp_chain)
                                 content_parts = []
                             try:
-                                image_base64 = await component.convert_to_base64()
-                                if image_base64:
+                                image_data_url = await self._image_to_data_url(
+                                    component,
+                                )
+                                if image_data_url:
                                     img_chain = MessageChain(
                                         [
                                             Plain(
-                                                text=f'<img src="data:image/jpeg;base64,{image_base64}"/>',
+                                                text=f'<img src="{image_data_url}"/>',
                                             ),
                                         ],
                                     )
@@ -228,9 +232,9 @@ class SatoriPlatformEvent(AstrMessageEvent):
 
             elif isinstance(component, Image):
                 try:
-                    image_base64 = await component.convert_to_base64()
-                    if image_base64:
-                        return f'<img src="data:image/jpeg;base64,{image_base64}"/>'
+                    image_data_url = await self._image_to_data_url(component)
+                    if image_data_url:
+                        return f'<img src="{image_data_url}"/>'
                 except Exception as e:
                     logger.error(f"图片转换为base64失败: {e}")
 
@@ -321,9 +325,9 @@ class SatoriPlatformEvent(AstrMessageEvent):
 
             elif isinstance(component, Image):
                 try:
-                    image_base64 = await component.convert_to_base64()
-                    if image_base64:
-                        return f'<img src="data:image/jpeg;base64,{image_base64}"/>'
+                    image_data_url = await cls._image_to_data_url(component)
+                    if image_data_url:
+                        return f'<img src="{image_data_url}"/>'
                 except Exception as e:
                     logger.error(f"图片转换为base64失败: {e}")
 
@@ -411,6 +415,15 @@ class SatoriPlatformEvent(AstrMessageEvent):
         except Exception as e:
             logger.error(f"转换合并转发消息失败: {e}")
             return ""
+
+    @classmethod
+    async def _image_to_data_url(cls, component: Image) -> str | None:
+        image_base64 = await component.convert_to_base64()
+        if not image_base64:
+            return None
+        image_bytes = base64.b64decode(image_base64)
+        mime_type = await detect_image_mime_type_async(image_bytes)
+        return f"data:{mime_type};base64,{image_base64}"
 
     @classmethod
     async def _convert_nodes_to_satori_static(cls, nodes: Nodes) -> str:

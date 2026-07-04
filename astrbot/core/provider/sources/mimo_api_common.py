@@ -18,13 +18,6 @@ DEFAULT_MIMO_TTS_MODEL = "mimo-v2-tts"
 DEFAULT_MIMO_TTS_VOICE = "mimo_default"
 DEFAULT_MIMO_TTS_SEED_TEXT = "Hello, MiMo, have you had lunch?"
 DEFAULT_MIMO_STT_MODEL = "mimo-v2-omni"
-DEFAULT_MIMO_STT_SYSTEM_PROMPT = (
-    "You are a speech transcription assistant. "
-    "Transcribe the spoken content from the audio exactly and return only the transcription text."
-)
-DEFAULT_MIMO_STT_USER_PROMPT = (
-    "Please transcribe the content of the audio and return only the transcription text."
-)
 
 
 class MiMoAPIError(Exception):
@@ -118,7 +111,7 @@ async def prepare_audio_input(audio_source: str) -> tuple[str, list[Path]]:
             source_path = converted_path
 
     encoded_audio = base64.b64encode(source_path.read_bytes()).decode("utf-8")
-    return encoded_audio, cleanup_paths
+    return f"data:audio/wav;base64,{encoded_audio}", cleanup_paths
 
 
 def cleanup_files(paths: list[Path]) -> None:

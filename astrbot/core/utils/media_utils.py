@@ -22,6 +22,55 @@ IMAGE_COMPRESS_DEFAULT_QUALITY = 95
 IMAGE_COMPRESS_DEFAULT_OPTIMIZE = True
 IMAGE_COMPRESS_DEFAULT_MIN_FILE_SIZE_MB = 1.0
 
+IMAGE_FORMAT_MIME_TYPES: dict[str, str] = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "GIF": "image/gif",
+    "WEBP": "image/webp",
+    "BMP": "image/bmp",
+}
+
+MEDIA_MIME_EXTENSIONS: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+}
+
+
+def detect_image_mime_type(
+    image_source: bytes | str | Path,
+    *,
+    default_mime_type: str | None = "image/jpeg",
+) -> str | None:
+    """Detect an image MIME type from encoded bytes or a local image path."""
+
+    try:
+        image_file = (
+            io.BytesIO(image_source)
+            if isinstance(image_source, bytes)
+            else image_source
+        )
+        with PILImage.open(image_file) as image:
+            image.verify()
+            image_format = str(image.format or "").upper()
+    except Exception:
+        return default_mime_type
+    return IMAGE_FORMAT_MIME_TYPES.get(image_format, default_mime_type)
+
+
+async def detect_image_mime_type_async(
+    image_source: bytes | str | Path,
+    *,
+    default_mime_type: str | None = "image/jpeg",
+) -> str | None:
+    return await asyncio.to_thread(
+        detect_image_mime_type,
+        image_source,
+        default_mime_type=default_mime_type,
+    )
+
 
 async def get_media_duration(file_path: str) -> int | None:
     """使用ffprobe获取媒体文件时长
@@ -354,28 +403,48 @@ async def extract_video_cover(
 
 
 def _compress_image_sync(
-    data: bytes,
+    source: bytes | Path,
     temp_dir: Path,
     max_size: int,
     quality: int,
     optimize: bool,
-) -> str:
+) -> str | None:
     """Run image compression synchronously via ``asyncio.to_thread``."""
-    with PILImage.open(io.BytesIO(data)) as opened_img:
-        img = opened_img
+    fp = io.BytesIO(source) if isinstance(source, bytes) else source
+    with PILImage.open(fp) as opened_img:
         converted_img: PILImage.Image | None = None
 
         try:
-            if img.mode != "RGB":
-                converted_img = img.convert("RGB")
-                img = converted_img
+            if (
+                getattr(opened_img, "is_animated", False)
+                or getattr(opened_img, "n_frames", 1) > 1
+            ):
+                return None
 
-            if max(img.size) > max_size:
-                img.thumbnail((max_size, max_size), PILImage.Resampling.LANCZOS)
+            image_has_alpha = opened_img.mode in {"RGBA", "LA"} or (
+                opened_img.mode == "P" and "transparency" in opened_img.info
+            )
+            output_format = "PNG" if image_has_alpha else "JPEG"
+            output_suffix = ".png" if image_has_alpha else ".jpg"
+            working_img = opened_img
+
+            if image_has_alpha and opened_img.mode != "RGBA":
+                converted_img = opened_img.convert("RGBA")
+                working_img = converted_img
+            elif not image_has_alpha and opened_img.mode != "RGB":
+                converted_img = opened_img.convert("RGB")
+                working_img = converted_img
+
+            if max(working_img.size) > max_size:
+                working_img.thumbnail((max_size, max_size), PILImage.Resampling.LANCZOS)
 
             new_uuid = uuid.uuid4().hex
-            save_path = temp_dir / f"compressed_{new_uuid}.jpg"
-            img.save(save_path, "JPEG", quality=quality, optimize=optimize)
+            save_path = temp_dir / f"compressed_{new_uuid}{output_suffix}"
+            save_kwargs: dict[str, int | bool] = {"optimize": optimize}
+            if output_format == "JPEG":
+                save_kwargs["quality"] = quality
+                save_kwargs["subsampling"] = 0
+            working_img.save(save_path, output_format, **save_kwargs)
             logger.debug(f"Image compressed successfully: {save_path}")
             return str(save_path)
         finally:
@@ -403,7 +472,7 @@ async def compress_image(
     quality = min(max(int(quality), 1), 100)
     optimize = IMAGE_COMPRESS_DEFAULT_OPTIMIZE
     min_file_size_bytes = int(IMAGE_COMPRESS_DEFAULT_MIN_FILE_SIZE_MB * 1024 * 1024)
-    data = None
+    image_source: bytes | Path | None = None
 
     def _exceeds_max_size(source: bytes | Path) -> bool:
         try:
@@ -418,8 +487,10 @@ async def compress_image(
         return url_or_path
     elif url_or_path.startswith("data:image"):
         _header, encoded = url_or_path.split(",", 1)
-        data = base64.b64decode(encoded)
-        if len(data) < min_file_size_bytes and not _exceeds_max_size(data):
+        image_source = base64.b64decode(encoded)
+        if len(image_source) < min_file_size_bytes and not _exceeds_max_size(
+            image_source
+        ):
             return url_or_path
     else:
         local_path = Path(url_or_path)
@@ -429,21 +500,21 @@ async def compress_image(
             local_path
         ):
             return url_or_path
-        with local_path.open("rb") as f:
-            data = f.read()
+        image_source = local_path
 
-    if not data:
+    if image_source is None:
         return url_or_path
 
     temp_dir = Path(get_astrbot_temp_path())
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     # Offload the blocking image processing task to a thread.
-    return await asyncio.to_thread(
+    compressed_path = await asyncio.to_thread(
         _compress_image_sync,
-        data,
+        image_source,
         temp_dir,
         max_size,
         quality,
         optimize,
     )
+    return compressed_path or url_or_path

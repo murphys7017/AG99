@@ -1,4 +1,5 @@
 import asyncio
+import audioop
 import base64
 import os
 import subprocess
@@ -8,6 +9,8 @@ from io import BytesIO
 
 from astrbot.core import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+
+_PYSILK_SUPPORTED_RATES = frozenset({8000, 12000, 16000, 24000, 32000, 48000})
 
 
 async def tencent_silk_to_wav(silk_path: str, output_path: str) -> str:
@@ -30,34 +33,36 @@ async def tencent_silk_to_wav(silk_path: str, output_path: str) -> str:
     return output_path
 
 
-async def wav_to_tencent_silk(wav_path: str, output_path: str) -> int:
+async def wav_to_tencent_silk(wav_path: str, output_path: str) -> float:
     """返回 duration"""
     try:
-        import pilk
+        import pysilk
     except (ImportError, ModuleNotFoundError) as _:
         raise Exception(
-            "pilk 模块未安装，请前往管理面板->平台日志->安装pip库 安装 pilk 这个库",
+            "pysilk is not installed. Install the silk-python package from the "
+            "dashboard platform logs page.",
         )
-    # with wave.open(wav_path, 'rb') as wav:
-    #     wav_data = wav.readframes(wav.getnframes())
-    #     wav_data = BytesIO(wav_data)
-    #     output_io = BytesIO()
-    #     pysilk.encode(wav_data, output_io, 24000, 24000)
-    #     output_io.seek(0)
 
-    #     # 在首字节添加 \x02,去除结尾的\xff\xff
-    #     silk_data = output_io.read()
-    #     silk_data_with_prefix = b'\x02' + silk_data[:-2]
-
-    #     # return BytesIO(silk_data_with_prefix)
-    #     with open(output_path, "wb") as f:
-    #         f.write(silk_data_with_prefix)
-
-    #     return 0
     with wave.open(wav_path, "rb") as wav:
         rate = wav.getframerate()
-        duration = pilk.encode(wav_path, output_path, pcm_rate=rate, tencent=True)
-        return duration
+        channels = wav.getnchannels()
+        sampwidth = wav.getsampwidth()
+        pcm_data = wav.readframes(wav.getnframes())
+
+    if channels == 2:
+        pcm_data = audioop.tomono(pcm_data, sampwidth, 0.5, 0.5)
+    if rate not in _PYSILK_SUPPORTED_RATES:
+        pcm_data, _ = audioop.ratecv(pcm_data, sampwidth, 1, rate, 24000, None)
+        rate = 24000
+    if sampwidth != 2:
+        pcm_data = audioop.lin2lin(pcm_data, sampwidth, 2)
+
+    input_io = BytesIO(pcm_data)
+    output_io = BytesIO()
+    pysilk.encode(input_io, output_io, rate, rate, tencent=True)
+    with open(output_path, "wb") as f:
+        f.write(output_io.getvalue())
+    return len(pcm_data) / (2 * rate) if rate else 0
 
 
 async def convert_to_pcm_wav(input_path: str, output_path: str) -> str:
@@ -112,11 +117,6 @@ async def audio_to_tencent_silk_base64(audio_path: str) -> tuple[str, float]:
     - silk_b64: Base64 编码的 Silk 字符串
     - duration: 音频时长（秒）
     """
-    try:
-        import pilk
-    except ImportError as e:
-        raise Exception("未安装 pilk: pip install pilk") from e
-
     temp_dir = get_astrbot_temp_path()
     os.makedirs(temp_dir, exist_ok=True)
 
@@ -137,9 +137,6 @@ async def audio_to_tencent_silk_base64(audio_path: str) -> tuple[str, float]:
     else:
         wav_path = audio_path
 
-    with wave.open(wav_path, "rb") as wav_file:
-        rate = wav_file.getframerate()
-
     silk_path = tempfile.NamedTemporaryFile(
         prefix="tencent_record_",
         suffix=".silk",
@@ -148,13 +145,7 @@ async def audio_to_tencent_silk_base64(audio_path: str) -> tuple[str, float]:
     ).name
 
     try:
-        duration = await asyncio.to_thread(
-            pilk.encode,
-            wav_path,
-            silk_path,
-            pcm_rate=rate,
-            tencent=True,
-        )
+        duration = await wav_to_tencent_silk(wav_path, silk_path)
 
         with open(silk_path, "rb") as f:
             silk_bytes = await asyncio.to_thread(f.read)

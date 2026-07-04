@@ -41,6 +41,40 @@ Current local upstream-sync commits:
 - `d070b4ccd` Absorb upstream compatibility fixes.
 - `7da11bbf2` Absorb upgrade recovery auth compatibility.
 
+## 2026-07-04 provider/media compatibility batch
+
+Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
+
+Absorbed by local rewrite:
+
+- Media format preservation:
+  - `c6b2c65b0` / `d6738a03f`: image MIME detection and compression now preserve PNG/GIF/WebP/BMP where possible instead of forcing JPEG. Alpha images are compressed as PNG, animated images are left unchanged, and JPEG output keeps explicit quality/subsampling settings.
+  - Local platform sends now use detected image formats where this fork previously hardcoded JPEG: Satori data URLs, WebChat attachment filenames, Slack upload filenames, and Mattermost upload content types.
+  - `astrbot/core/computer/file_read_utils.py` now treats non-compressible images as "keep original" rather than failing the read path.
+- Provider compatibility:
+  - `8213c14cc`: Anthropic payloads now remove orphaned/stale `tool_result` blocks, merge consecutive same-role messages, and keep valid tool results before user text.
+  - `3db778ff0` / `d4fa9d3d5`: OpenAI-compatible payload sanitization now keeps reasoning-only assistant history, drops orphaned or duplicate tool messages, and returns an empty `TokenUsage` when the provider omits usage.
+  - `3667487dd`: DeepSeek V4 reasoning-history handling now recognizes marker substrings such as proxy model names containing `deepseek-v4`.
+  - `b8f4c7d51`: MiMo STT now sends audio-only `input_audio` data URLs, removes the old STT prompt fields, and falls back to `reasoning_content` when `content` is empty.
+- Tencent SILK:
+  - `4cf210e50`: Tencent SILK encoding now follows upstream's `silk-python` / `pysilk` path, including mono downmix, unsupported-rate resampling to 24 kHz, 16-bit PCM conversion, and `tencent=True` output.
+  - The local `audio_to_tencent_silk_base64` helper was kept but rewired to the same `wav_to_tencent_silk` implementation so this fork no longer mixes `pilk` and `pysilk`.
+
+Local adaptation notes:
+
+- Upstream's newer `MediaResolver` / `_LocalMediaFile` abstractions are not present in this fork, so media behavior was rewritten against the current local `Image`, `Record`, `compress_image`, and platform send APIs.
+- No FastAPI/OpenAPI, settings-system, dashboard theme, auth/TOTP, or formal version-bump changes were pulled into this batch.
+
+Validation for this batch:
+
+- Python targeted new/regression coverage: `uv run pytest tests/test_openai_source.py::test_sanitize_assistant_messages_removes_orphaned_tool_messages tests/test_openai_source.py::test_sanitize_assistant_messages_keeps_valid_tool_messages_only tests/test_openai_source.py::test_sanitize_assistant_messages_removes_stale_duplicate_tool_message tests/test_anthropic_kimi_code_provider.py::test_sanitize_assistant_messages_removes_orphaned_tool_results_and_merges tests/test_anthropic_kimi_code_provider.py::test_sanitize_assistant_messages_keeps_valid_tool_results_only tests/test_anthropic_kimi_code_provider.py::test_sanitize_assistant_messages_removes_stale_duplicate_tool_result tests/test_anthropic_kimi_code_provider.py::test_sanitize_assistant_messages_puts_tool_results_before_user_text tests/test_mimo_api_sources.py::test_mimo_stt_payload_includes_audio_only tests/test_mimo_api_sources.py::test_mimo_stt_prepare_audio_input_returns_data_url tests/test_mimo_api_sources.py::test_mimo_stt_get_text_uses_reasoning_content tests/test_mimo_api_sources.py::test_mimo_stt_get_text_handles_null_message tests/test_media_utils.py -q`
+- Python focused source lint: `uv run ruff check` on touched provider, media, platform, config, and computer Python files.
+- Hygiene: `git diff --check`
+
+Known validation gap:
+
+- A broader targeted run, `uv run pytest tests/test_openai_source.py tests/test_anthropic_kimi_code_provider.py tests/test_mimo_api_sources.py tests/test_media_utils.py -q`, still has pre-existing `tests/test_openai_source.py` failures unrelated to this batch: missing `_summarize_messages` / `_summarize_completion`, Windows `file://` path separator expectations, and localhost file-URI image materialization.
+
 ## 2026-07-04 post-v4.26.4 safety and compatibility batch
 
 Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
@@ -65,7 +99,7 @@ Already present / no local change needed:
 Deferred from this first post-v4.26.4 pass:
 
 - Login-page public version details (`421d71804`) are left for a dedicated dashboard pass because this fork's frontend API layer differs from upstream and the upgrade-recovery dialog already covers the highest-value version-mismatch path.
-- FastAPI/OpenAPI service-layer migrations, ChatUI project workspace/attachment display work, broader plugin install/update source tracking, KB API contract pagination/cleanup changes, and provider/media compatibility fixes remain for later topic batches.
+- FastAPI/OpenAPI service-layer migrations, ChatUI project workspace/attachment display work, broader plugin install/update source tracking, and KB API contract pagination/cleanup changes remain for later topic batches. Provider/media compatibility was handled in the 2026-07-04 provider/media compatibility batch.
 
 Validation for this batch:
 

@@ -303,15 +303,19 @@ async def _compress_image_bytes_to_base64(data: bytes) -> dict[str, str | int]:
     def _run() -> dict[str, str | int]:
         temp_dir = Path(get_astrbot_temp_path())
         temp_dir.mkdir(parents=True, exist_ok=True)
-        compressed_path = Path(
-            _compress_image_sync(
-                data,
-                temp_dir,
-                IMAGE_COMPRESS_DEFAULT_MAX_SIZE,
-                IMAGE_COMPRESS_DEFAULT_QUALITY,
-                IMAGE_COMPRESS_DEFAULT_OPTIMIZE,
-            )
+        compressed_path_str = _compress_image_sync(
+            data,
+            temp_dir,
+            IMAGE_COMPRESS_DEFAULT_MAX_SIZE,
+            IMAGE_COMPRESS_DEFAULT_QUALITY,
+            IMAGE_COMPRESS_DEFAULT_OPTIMIZE,
         )
+        if compressed_path_str is None:
+            return {
+                "size_bytes": len(data),
+                "base64": base64.b64encode(data).decode("utf-8"),
+            }
+        compressed_path = Path(compressed_path_str)
         try:
             compressed_bytes = compressed_path.read_bytes()
         finally:

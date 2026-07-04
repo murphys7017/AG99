@@ -1506,6 +1506,111 @@ def test_sanitize_keeps_reasoning_only_assistant_message():
     ]
 
 
+def test_sanitize_assistant_messages_removes_orphaned_tool_messages():
+    payloads = {
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {
+                "role": "tool",
+                "tool_call_id": "missing_call",
+                "content": "stale result",
+            },
+            {"role": "user", "content": "continue"},
+        ]
+    }
+
+    ProviderOpenAIOfficial._sanitize_assistant_messages(payloads)
+
+    assert payloads["messages"] == [
+        {"role": "user", "content": "hello"},
+        {"role": "user", "content": "continue"},
+    ]
+
+
+def test_sanitize_assistant_messages_keeps_valid_tool_messages_only():
+    payloads = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_00",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_00", "content": "one"},
+            {
+                "role": "tool",
+                "tool_call_id": "",
+                "content": "empty id should not be valid",
+            },
+        ]
+    }
+
+    ProviderOpenAIOfficial._sanitize_assistant_messages(payloads)
+
+    assert payloads["messages"] == [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_00",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_00", "content": "one"},
+    ]
+
+
+def test_sanitize_assistant_messages_removes_stale_duplicate_tool_message():
+    payloads = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_00",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_00", "content": "one"},
+            {
+                "role": "tool",
+                "tool_call_id": "call_00",
+                "content": "stale duplicate",
+            },
+            {"role": "assistant", "content": "done"},
+        ]
+    }
+
+    ProviderOpenAIOfficial._sanitize_assistant_messages(payloads)
+
+    assert payloads["messages"] == [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_00",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_00", "content": "one"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+
 def test_mimo_reasoning_model_adds_empty_reasoning_content_to_assistant_history():
     provider = ProviderOpenAIOfficial.__new__(ProviderOpenAIOfficial)
     provider.client = SimpleNamespace(base_url=SimpleNamespace(host="example.com"))
