@@ -41,6 +41,29 @@ Current local upstream-sync commits:
 - `d070b4ccd` Absorb upstream compatibility fixes.
 - `7da11bbf2` Absorb upgrade recovery auth compatibility.
 - `0ba12f7f9` Absorb provider media compatibility updates.
+- `1198d9a86` Absorb small upstream stability fixes.
+
+## 2026-07-04 plugin embedded page bridge parity follow-up
+
+Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
+
+Absorbed by local rewrite:
+
+- Plugin embedded WebUI pages:
+  - The main plugin page implementation was already present locally: page discovery under `pages/<page>/index.html`, scoped asset tokens, bridge SDK injection, iframe rendering, card/sidebar entries, theme context, and plugin-page docs.
+  - This follow-up aligned the remaining bridge details with upstream while preserving the local Quart dashboard and `/api/plug/<plugin>/<endpoint>` dynamic plugin API path.
+  - `bridge.upload()` now sends file payloads through `ArrayBuffer` plus `postMessage` transfer lists instead of relying on cloning `File`/`Blob` objects across the sandbox boundary.
+  - Plugin-page SSE now uses authenticated `fetch()` stream reading, preserves SSE `event:` names as `eventType`, supports explicit abort cleanup, and reports response-body errors through the bridge.
+
+Local adaptation notes:
+
+- Upstream's FastAPI `plugin_page_service.py` layout was not copied; the equivalent behavior remains in this fork's existing Quart `astrbot/dashboard/routes/plugin.py` implementation.
+- Sidebar MDI icon support and plugin page theme propagation were already present locally, so this follow-up only touched the bridge transport layer.
+
+Validation for this follow-up:
+
+- Frontend: `pnpm --dir dashboard typecheck`
+- Python: `uv run pytest tests/test_dashboard.py -q -k "plugin_page"`
 
 ## 2026-07-04 small upstream fixes batch
 
