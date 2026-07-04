@@ -1330,3 +1330,97 @@ async def test_ensure_plugin_requirements_does_not_mask_install_error_when_clean
         )
 
     assert any("删除临时插件依赖文件失败" in log for log in warning_logs)
+
+
+@pytest.mark.asyncio
+async def test_reload_deactivated_plugin_preserves_registered_tools(
+    plugin_manager_pm: PluginManager, monkeypatch
+):
+    plugin_name = "demo_plugin"
+    module_path = f"data.plugins.{plugin_name}.main"
+    metadata = star_manager_module.StarMetadata(
+        name=plugin_name,
+        root_dir_name=plugin_name,
+        module_path=module_path,
+        activated=False,
+    )
+    plugin_tool = FunctionTool(
+        name="plugin_search",
+        description="plugin search",
+        parameters={"type": "object", "properties": {}},
+        handler_module_path=f"{module_path}.tools.search",
+    )
+
+    original_star_map = dict(star_manager_module.star_map)
+    original_star_registry = list(star_manager_module.star_registry)
+    original_func_list = llm_tools.func_list[:]
+    star_manager_module.star_map.clear()
+    star_manager_module.star_registry.clear()
+    star_manager_module.star_map[module_path] = metadata
+    star_manager_module.star_registry.append(metadata)
+    llm_tools.func_list = [plugin_tool]
+
+    async def mock_terminate(_smd):
+        return None
+
+    async def mock_load(specified_module_path=None, **_kwargs):
+        assert specified_module_path == module_path
+        return True, None
+
+    monkeypatch.setattr(plugin_manager_pm, "_terminate_plugin", mock_terminate)
+    monkeypatch.setattr(plugin_manager_pm, "load", mock_load)
+
+    try:
+        await plugin_manager_pm.reload(plugin_name)
+        assert plugin_tool in llm_tools.func_list
+    finally:
+        star_manager_module.star_map.clear()
+        star_manager_module.star_map.update(original_star_map)
+        star_manager_module.star_registry.clear()
+        star_manager_module.star_registry.extend(original_star_registry)
+        llm_tools.func_list = original_func_list
+
+
+@pytest.mark.asyncio
+async def test_reload_activated_plugin_still_unbinds(
+    plugin_manager_pm: PluginManager, monkeypatch
+):
+    plugin_name = "demo_plugin"
+    module_path = f"data.plugins.{plugin_name}.main"
+    metadata = star_manager_module.StarMetadata(
+        name=plugin_name,
+        root_dir_name=plugin_name,
+        module_path=module_path,
+        activated=True,
+    )
+    unbound = []
+
+    original_star_map = dict(star_manager_module.star_map)
+    original_star_registry = list(star_manager_module.star_registry)
+    star_manager_module.star_map.clear()
+    star_manager_module.star_registry.clear()
+    star_manager_module.star_map[module_path] = metadata
+    star_manager_module.star_registry.append(metadata)
+
+    async def mock_terminate(_smd):
+        return None
+
+    async def mock_unbind(name, path):
+        unbound.append((name, path))
+
+    async def mock_load(specified_module_path=None, **_kwargs):
+        assert specified_module_path == module_path
+        return True, None
+
+    monkeypatch.setattr(plugin_manager_pm, "_terminate_plugin", mock_terminate)
+    monkeypatch.setattr(plugin_manager_pm, "_unbind_plugin", mock_unbind)
+    monkeypatch.setattr(plugin_manager_pm, "load", mock_load)
+
+    try:
+        await plugin_manager_pm.reload(plugin_name)
+        assert unbound == [(plugin_name, module_path)]
+    finally:
+        star_manager_module.star_map.clear()
+        star_manager_module.star_map.update(original_star_map)
+        star_manager_module.star_registry.clear()
+        star_manager_module.star_registry.extend(original_star_registry)

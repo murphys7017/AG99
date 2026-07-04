@@ -589,6 +589,32 @@ export const useExtensionPage = () => {
     if (!dirName) return;
     uninstall({ kind: "failed", id: dirName }, { skipConfirm: false });
   };
+
+  const normalizeVersionParts = (value) =>
+    String(value || "")
+      .trim()
+      .replace(/^v/i, "")
+      .split("-", 1)[0]
+      .split(".")
+      .map((part) => Number.parseInt(part, 10) || 0);
+
+  const compareVersions = (left, right) => {
+    const leftParts = normalizeVersionParts(left);
+    const rightParts = normalizeVersionParts(right);
+    const maxLength = Math.max(leftParts.length, rightParts.length);
+    for (let index = 0; index < maxLength; index += 1) {
+      const leftValue = leftParts[index] || 0;
+      const rightValue = rightParts[index] || 0;
+      if (leftValue !== rightValue) {
+        return leftValue > rightValue ? 1 : -1;
+      }
+    }
+    return 0;
+  };
+
+  const isKnownPluginVersion = (value) =>
+    /^v?\d+/.test(String(value || "").trim()) &&
+    String(value || "").trim() !== tm("status.unknown");
   
   const checkUpdate = () => {
     const onlinePluginsMap = new Map();
@@ -613,10 +639,21 @@ export const useExtensionPage = () => {
       const matchedPlugin = repoKey ? onlinePlugin : onlinePluginByName;
   
       if (matchedPlugin) {
-        extension.online_version = matchedPlugin.version;
+        const localVersion = String(extension.version || "").trim();
+        const onlineVersion = String(matchedPlugin.version || "").trim();
+        const hasKnownVersions =
+          isKnownPluginVersion(localVersion) && isKnownPluginVersion(onlineVersion);
+        const versionCompare = hasKnownVersions
+          ? compareVersions(localVersion, onlineVersion)
+          : 0;
+
+        extension.online_version = onlineVersion;
         extension.has_update =
-          extension.version !== matchedPlugin.version &&
-          matchedPlugin.version !== tm("status.unknown");
+          hasKnownVersions &&
+          (versionCompare < 0 ||
+            (versionCompare === 0 &&
+              localVersion.includes("-") &&
+              !onlineVersion.includes("-")));
       } else {
         extension.online_version = "";
         extension.has_update = false;

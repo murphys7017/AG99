@@ -42,6 +42,33 @@ Current local upstream-sync commits:
 - `7da11bbf2` Absorb upgrade recovery auth compatibility.
 - `0ba12f7f9` Absorb provider media compatibility updates.
 - `1198d9a86` Absorb small upstream stability fixes.
+- `13626e7db` Align plugin page bridge behavior.
+
+## 2026-07-04 small runtime and dashboard compatibility follow-up
+
+Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
+
+Absorbed by local rewrite:
+
+- Local file tools:
+  - `41f896030`: `astrbot_file_read_tool` now returns a clear directory-path error before trying to read a directory as a file. This keeps local workspace path validation intact and only improves the post-normalization error path.
+- Plugin reload:
+  - `152fb3be8`: specified-plugin reload now skips `_unbind_plugin()` for deactivated plugins, preserving their registered LLM tools until the plugin is explicitly re-enabled. Full reload behavior is unchanged.
+- Discord slash commands:
+  - `029e9c84a`: Discord command registration now accepts lowercase Unicode word characters, underscores, hyphens, and apostrophes instead of only ASCII lowercase names.
+- Plugin update display:
+  - `b5784abc5`: installed plugins are marked as updatable only when the marketplace version is a known newer semantic version, including pre-release-to-stable transitions. Unknown or older marketplace versions no longer show false update badges.
+
+Deferred / intentionally not included in this follow-up:
+
+- `8a31cf01f` Web search API-key failover is useful but touches a larger shared tool file and deserves a dedicated test pass.
+- ChatUI project workspaces/attachment display, KB CRUD pagination/cleanup, FastAPI/OpenAPI service migration, TOTP/auth expansion, settings/theme refactors, and broad plugin install-source tracking remain separate batches.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/test_computer_fs_tools.py::test_file_read_tool_rejects_directory_with_clear_message tests/test_plugin_manager.py::test_reload_deactivated_plugin_preserves_registered_tools tests/test_plugin_manager.py::test_reload_activated_plugin_still_unbinds -q`
+- Python lint: `uv run ruff check astrbot/core/tools/computer_tools/fs.py astrbot/core/star/star_manager.py astrbot/core/platform/sources/discord/discord_platform_adapter.py tests/test_computer_fs_tools.py tests/test_plugin_manager.py`
+- Frontend: `pnpm --dir dashboard typecheck`
 
 ## 2026-07-04 plugin embedded page bridge parity follow-up
 
