@@ -515,6 +515,190 @@ class _FakeFirecrawlSession:
         return self.response
 
 
+class _CycleSession:
+    def __init__(self, responses: list):
+        self.responses = responses
+        self.cursor = 0
+        self.trust_env = None
+        self.entered = False
+        self.exited = False
+        self.calls: list[dict] = []
+
+    async def __aenter__(self):
+        self.entered = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited = True
+        return None
+
+    def post(self, url, json, headers):
+        response = self.responses[self.cursor]
+        self.cursor = (self.cursor + 1) % len(self.responses)
+        self.calls.append({"url": url, "json": json, "headers": headers})
+        return response
+
+
+@pytest.fixture(autouse=True)
+def _reset_key_rotators():
+    rotators = (
+        tools._TAVILY_KEY_ROTATOR,
+        tools._BOCHA_KEY_ROTATOR,
+        tools._BRAVE_KEY_ROTATOR,
+        tools._FIRECRAWL_KEY_ROTATOR,
+        tools._EXA_KEY_ROTATOR,
+    )
+    for rotator in rotators:
+        rotator.index = 0
+    yield
+    for rotator in rotators:
+        rotator.index = 0
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_key_failover_on_quota_exceeded(monkeypatch):
+    session = _CycleSession(
+        [
+            _FakeFirecrawlResponse(status=432, text_data="quota exceeded"),
+            _FakeFirecrawlResponse(
+                status=200,
+                json_data={
+                    "results": [
+                        {
+                            "title": "AstrBot",
+                            "url": "https://example.com",
+                            "content": "OK",
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    def fake_client_session(*, trust_env):
+        session.trust_env = trust_env
+        return session
+
+    monkeypatch.setattr(tools.aiohttp, "ClientSession", fake_client_session)
+
+    results = await tools._tavily_search(
+        {"websearch_tavily_key": ["bad-key", "good-key"]},
+        {"query": "AstrBot"},
+    )
+
+    assert results == [
+        tools.SearchResult(
+            title="AstrBot",
+            url="https://example.com",
+            snippet="OK",
+            favicon=None,
+        )
+    ]
+    assert len(session.calls) == 2
+    assert session.calls[0]["headers"]["Authorization"] == "Bearer bad-key"
+    assert session.calls[1]["headers"]["Authorization"] == "Bearer good-key"
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_key_failover_on_rate_limit(monkeypatch):
+    session = _CycleSession(
+        [
+            _FakeFirecrawlResponse(status=429, text_data="rate limited"),
+            _FakeFirecrawlResponse(
+                status=200,
+                json_data={
+                    "results": [
+                        {
+                            "title": "Recovered",
+                            "url": "https://example.org",
+                            "content": "OK",
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    def fake_client_session(*, trust_env):
+        session.trust_env = trust_env
+        return session
+
+    monkeypatch.setattr(tools.aiohttp, "ClientSession", fake_client_session)
+
+    results = await tools._tavily_search(
+        {"websearch_tavily_key": ["rate-limited-key", "good-key"]},
+        {"query": "AstrBot"},
+    )
+
+    assert results[0].title == "Recovered"
+    assert len(session.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_raises_last_error_after_all_keys_fail(monkeypatch):
+    session = _CycleSession(
+        [
+            _FakeFirecrawlResponse(status=432, text_data="quota exceeded"),
+            _FakeFirecrawlResponse(status=429, text_data="rate limited"),
+        ]
+    )
+
+    def fake_client_session(*, trust_env):
+        session.trust_env = trust_env
+        return session
+
+    monkeypatch.setattr(tools.aiohttp, "ClientSession", fake_client_session)
+
+    with pytest.raises(
+        Exception,
+        match="Tavily web search failed: rate limited, status: 429",
+    ):
+        await tools._tavily_search(
+            {"websearch_tavily_key": ["bad-key-1", "bad-key-2"]},
+            {"query": "AstrBot"},
+        )
+
+    assert len(session.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_does_not_failover_on_server_error(monkeypatch):
+    session = _CycleSession(
+        [
+            _FakeFirecrawlResponse(status=500, text_data="server error"),
+            _FakeFirecrawlResponse(
+                status=200,
+                json_data={
+                    "results": [
+                        {
+                            "title": "Should not be used",
+                            "url": "https://example.net",
+                            "content": "OK",
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    def fake_client_session(*, trust_env):
+        session.trust_env = trust_env
+        return session
+
+    monkeypatch.setattr(tools.aiohttp, "ClientSession", fake_client_session)
+
+    with pytest.raises(
+        Exception,
+        match="Tavily web search failed: server error, status: 500",
+    ):
+        await tools._tavily_search(
+            {"websearch_tavily_key": ["key-1", "key-2"]},
+            {"query": "AstrBot"},
+        )
+
+    assert len(session.calls) == 1
+
+
 def _context_with_provider_settings(provider_settings):
     config = {"provider_settings": provider_settings}
     agent_context = SimpleNamespace(

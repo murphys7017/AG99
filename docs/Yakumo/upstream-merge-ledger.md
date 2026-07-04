@@ -43,6 +43,28 @@ Current local upstream-sync commits:
 - `0ba12f7f9` Absorb provider media compatibility updates.
 - `1198d9a86` Absorb small upstream stability fixes.
 - `13626e7db` Align plugin page bridge behavior.
+- `d39001dcd` Absorb small runtime compatibility fixes.
+
+## 2026-07-05 web search API key failover follow-up
+
+Reviewed upstream baseline: `upstream/master` at `b43cc6dee`
+
+Absorbed by local rewrite:
+
+- Web search provider reliability:
+  - `8a31cf01f`: multi-key web search providers now fail over to the next configured API key for key-specific HTTP failures: `401`, `403`, `429`, and Tavily quota status `432`.
+  - The behavior was rewritten around a local `_run_with_key_failover()` helper and applied to Tavily search/extract, BoCha, Brave, Firecrawl search/scrape, and Exa search/contents.
+  - Non-key-specific failures such as `500` still fail fast, so provider outages are not hidden by rotating through unrelated keys.
+  - `_KeyRotator` still preserves the earlier local guard for runtime key-list shrinkage.
+
+Deferred / intentionally not included in this follow-up:
+
+- ChatUI project workspaces and attachment-display changes, KB CRUD contract/pagination/cleanup, FastAPI/OpenAPI service migration, TOTP/auth expansion, settings/theme refactors, and plugin install-source tracking remain separate batches.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/unit/test_web_search_tools.py -q`
+- Python lint: `uv run ruff check astrbot/core/tools/web_search_tools.py tests/unit/test_web_search_tools.py`
 
 ## 2026-07-04 small runtime and dashboard compatibility follow-up
 
@@ -61,7 +83,6 @@ Absorbed by local rewrite:
 
 Deferred / intentionally not included in this follow-up:
 
-- `8a31cf01f` Web search API-key failover is useful but touches a larger shared tool file and deserves a dedicated test pass.
 - ChatUI project workspaces/attachment display, KB CRUD pagination/cleanup, FastAPI/OpenAPI service migration, TOTP/auth expansion, settings/theme refactors, and broad plugin install-source tracking remain separate batches.
 
 Validation for this follow-up:
