@@ -18,6 +18,7 @@ import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 import axios from 'axios';
 import { waitForRouterReadyInBackground } from './utils/routerReadiness.mjs';
+import { UPGRADE_RECOVERY_TOKEN_KEY } from './utils/upgradeRecovery';
 
 (self as any).MonacoEnvironment = {
   getWorker(_: string, label: string) {
@@ -108,32 +109,123 @@ setupI18n().then(async () => {
 
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  if (token) {
+  const headers = config.headers as Record<string, unknown>;
+  const hasAuthorization =
+    typeof (config.headers as any)?.has === 'function'
+      ? (config.headers as any).has('Authorization')
+      : Boolean(headers?.Authorization || headers?.authorization);
+  if (token && !hasAuthorization) {
     config.headers['Authorization'] = `Bearer ${token}`;
   }
   const locale = localStorage.getItem('astrbot-locale');
-  if (locale) {
+  const hasAcceptLanguage =
+    typeof (config.headers as any)?.has === 'function'
+      ? (config.headers as any).has('Accept-Language')
+      : Boolean(headers?.['Accept-Language'] || headers?.['accept-language']);
+  if (locale && !hasAcceptLanguage) {
     config.headers['Accept-Language'] = locale;
   }
   return config;
 });
+
+function clearStoredDashboardSession() {
+  localStorage.removeItem('user');
+  localStorage.removeItem('token');
+  localStorage.removeItem('change_pwd_hint');
+  localStorage.removeItem('legacy_pwd_hint');
+  localStorage.removeItem('password_upgrade_required');
+  sessionStorage.removeItem(UPGRADE_RECOVERY_TOKEN_KEY);
+}
+
+function getCurrentRouteForRedirect() {
+  const hash = window.location.hash || '';
+  if (!hash.startsWith('#/')) {
+    return '/';
+  }
+  return hash.slice(1) || '/';
+}
+
+function isAuthChallengePath(pathname: string) {
+  return [
+    '/api/auth/login',
+    '/api/auth/setup',
+    '/api/auth/setup-status',
+    '/api/auth/setup-authenticated'
+  ].includes(pathname);
+}
+
+function redirectToLoginIfNeeded() {
+  const currentRoute = getCurrentRouteForRedirect();
+  if (currentRoute.startsWith('/auth/login')) {
+    return;
+  }
+  const redirect = encodeURIComponent(currentRoute);
+  window.location.hash = `/auth/login?redirect=${redirect}`;
+}
+
+function maybeHandleUnauthorized(urlLike: string, status: number) {
+  if (status !== 401) {
+    return;
+  }
+  try {
+    const resolvedUrl = new URL(urlLike || '/', window.location.origin);
+    if (resolvedUrl.origin !== window.location.origin) {
+      return;
+    }
+    if (!resolvedUrl.pathname.startsWith('/api/')) {
+      return;
+    }
+    if (isAuthChallengePath(resolvedUrl.pathname)) {
+      return;
+    }
+  } catch {
+    return;
+  }
+  clearStoredDashboardSession();
+  redirectToLoginIfNeeded();
+}
+
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const requestUrl = error?.config?.url || '';
+    const baseURL = error?.config?.baseURL;
+    const resolvedUrl =
+      requestUrl && baseURL && !/^([a-z][a-z\d+\-.]*:)?\/\//i.test(requestUrl)
+        ? `${String(baseURL).replace(/\/+$/, '')}/${String(requestUrl).replace(/^\/+/, '')}`
+        : requestUrl;
+    maybeHandleUnauthorized(resolvedUrl, error?.response?.status);
+    return Promise.reject(error);
+  }
+);
 
 // Keep fetch() calls consistent with axios by automatically attaching the JWT.
 // Some parts of the UI use fetch directly; without this, those requests will 401.
 const _origFetch = window.fetch.bind(window);
 window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   const token = localStorage.getItem('token');
-  if (!token) return _origFetch(input, init);
+  const locale = localStorage.getItem('astrbot-locale');
 
   const headers = new Headers(init?.headers || (typeof input !== 'string' && 'headers' in input ? (input as Request).headers : undefined));
-  if (!headers.has('Authorization')) {
+  if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const locale = localStorage.getItem('astrbot-locale');
   if (locale && !headers.has('Accept-Language')) {
     headers.set('Accept-Language', locale);
   }
-  return _origFetch(input, { ...init, headers });
+  const requestInit = token || locale ? { ...init, headers } : init;
+  return _origFetch(input, requestInit).then((response) => {
+    let requestUrl = '';
+    if (typeof input === 'string') {
+      requestUrl = input;
+    } else if (input instanceof URL) {
+      requestUrl = input.toString();
+    } else {
+      requestUrl = input.url;
+    }
+    maybeHandleUnauthorized(requestUrl, response.status);
+    return response;
+  });
 };
 
 loader.config({ monaco })

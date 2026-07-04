@@ -5,14 +5,14 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-06-18
+Last updated: 2026-07-04
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `2c5165e92` (`chore(release): 4.26.0-beta.4`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-06-17; upstream currently includes `v4.26.0-beta.4` and follow-up commits through `2c5165e92`.
+- Last local upstream snapshot checked: cached `upstream/master` at `756469a39` (`fix: remove unused vocechat logo and update xmas hat image`)
+- Remote refresh status: the latest successful refresh is reflected in the cached `upstream/master` above; an additional HTTPS `git fetch upstream --prune` attempt on 2026-07-04 failed with `Recv failure: Connection was reset`, so topic review below is based on the cached upstream ref already present locally.
 - Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
 - Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
 
@@ -39,6 +39,29 @@ Current local upstream-sync commits:
 - `77afdf864` Absorb upstream v4.26.0-beta.4 small repair batch.
 - `f40f3db4d` Absorb upstream update/restart fixes.
 - `d070b4ccd` Absorb upstream compatibility fixes.
+
+## 2026-07-04 upgrade recovery and auth compatibility batch
+
+Reviewed upstream baseline: cached `upstream/master` at `756469a39`
+
+Absorbed by local rewrite:
+
+- Upgrade recovery / restart compatibility:
+  - `19864b3f8`: added a local `UpgradeRecoveryDialog` mounted from `App.vue`, adapted to the current Quart dashboard and axios-based frontend. It detects mismatched core/WebUI versions, offers a restart action, and polls `/api/stat/start-time` until recovery completes.
+  - `12b1b2782`: folded the restart-wait hardening into the local recovery dialog flow so interrupted updates can recover without forcing a fresh manual login loop.
+- Login / auth-session compatibility:
+  - `d5f563128` / `08fc56517`: instead of upstream's v1 auth client path, the local `auth` store now uses the existing `/api/auth/login` response token to probe `/api/stat/version`. On detected core/WebUI mismatch it stores a temporary recovery token in session storage and opens the recovery dialog rather than proceeding into a broken post-login state.
+  - `cdfb0bdf9`: rewritten into the current `dashboard/src/main.ts` axios/fetch bootstrap so same-origin API `401` responses clear stale dashboard session state and redirect back to `/auth/login`, while still excluding auth challenge endpoints.
+
+Intentionally not copied literally:
+
+- Upstream `dashboard/src/api/http.ts` / `dashboard/src/api/v1.ts` changes were not merged as-is because this fork still uses the older axios bootstrap in `dashboard/src/main.ts` plus Quart routes. The behavior was rewritten against the local structure instead of introducing upstream's API client layer.
+- Upstream TOTP / recovery-code login form staging was not pulled into this batch. This fork's current dashboard auth flow does not yet mirror the upstream multi-stage login UI, and the practical recovery value here was the upgrade/session mismatch handling rather than the full auth-surface rewrite.
+
+Validation for this batch:
+
+- Frontend: `pnpm --dir dashboard typecheck`
+- Hygiene: `git diff --check`
 
 ## 2026-06-18 post-v4.26.0-beta.4 small update/restart batch
 

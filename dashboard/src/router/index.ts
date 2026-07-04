@@ -17,7 +17,10 @@ export const router = createRouter({
 interface AuthStore {
   username: string;
   returnUrl: string | null;
-  login(username: string, password: string): Promise<void>;
+  login(
+    username: string,
+    password: string,
+  ): Promise<void | 'upgrade_recovery_required'>;
   logout(): void;
   has_token(): boolean;
 }

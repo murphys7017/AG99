@@ -48,6 +48,17 @@
     "waiting": "Waiting for AstrBot to restart...",
     "maxRetriesReached": "Maximum retry attempts reached, please check manually."
   },
+  "upgradeRecovery": {
+    "title": "Incomplete upgrade detected",
+    "description": "The current core version {coreVersion} does not match the WebUI version {dashboardVersion}. This usually means an update was interrupted, and restarting the core will usually recover it.",
+    "hint": "If you just ran an update, restarting the AstrBot core now is recommended.",
+    "laterButton": "Later",
+    "restartButton": "Restart now",
+    "restarting": "Sending restart request...",
+    "waiting": "Waiting for AstrBot to come back...",
+    "ready": "AstrBot is back. Reloading...",
+    "failed": "Recovery timed out. Please check the backend manually."
+  },
   "readme": {
     "title": "Extension Documentation",
     "buttons": {

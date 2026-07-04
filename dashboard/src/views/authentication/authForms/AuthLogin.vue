@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, useCssModule } from 'vue';
+import { ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { Form } from 'vee-validate';
 import { useModuleI18n } from '@/i18n/composables';
@@ -13,14 +13,13 @@ const username = ref('');
 const loading = ref(false);
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-async function validate(values: any, { setErrors }: any) {
+async function validate(_values: any, { setErrors }: any) {
   loading.value = true;
 
   const authStore = useAuthStore();
   // @ts-ignore
   authStore.returnUrl = new URLSearchParams(window.location.search).get('redirect');
-  return authStore.login(username.value, password.value).then((res) => {
-    console.log(res);
+  return authStore.login(username.value, password.value).then((_res) => {
     loading.value = false;
   }).catch((err) => {
     setErrors({ apiError: err });

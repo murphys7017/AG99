@@ -48,6 +48,17 @@
     "waiting": "正在等待 AstrBot 重启...",
     "maxRetriesReached": "拉取状态达到最大次数，请手动检查。"
   },
+  "upgradeRecovery": {
+    "title": "检测到更新未完全生效",
+    "description": "当前核心版本 {coreVersion} 与 WebUI 版本 {dashboardVersion} 不一致。这通常意味着更新过程中断，重启核心后通常可以恢复。",
+    "hint": "如果刚刚执行过更新，建议现在重启 AstrBot 核心以完成恢复。",
+    "laterButton": "稍后处理",
+    "restartButton": "立即重启",
+    "restarting": "正在发送重启请求...",
+    "waiting": "正在等待 AstrBot 重新启动...",
+    "ready": "AstrBot 已恢复，正在刷新页面...",
+    "failed": "恢复等待超时，请手动检查后端状态。"
+  },
   "readme": {
     "title": "插件说明文档",
     "buttons": {

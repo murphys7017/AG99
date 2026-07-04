@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia';
 import { router } from '@/router';
 import axios from 'axios';
+import {
+  UPGRADE_RECOVERY_EVENT,
+  UPGRADE_RECOVERY_TOKEN_KEY,
+  versionsMismatch,
+} from '@/utils/upgradeRecovery';
+
+type LoginResult = void | 'upgrade_recovery_required';
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
@@ -46,7 +53,7 @@ export const useAuthStore = defineStore("auth", {
         router.push('/welcome');
       }
     },
-    async login(username: string, password: string): Promise<void> {
+    async login(username: string, password: string): Promise<LoginResult> {
       try {
         const res = await axios.post('/api/auth/login', {
           username: username,
@@ -55,6 +62,36 @@ export const useAuthStore = defineStore("auth", {
     
         if (res.data.status === 'error') {
           return Promise.reject(res.data.message);
+        }
+
+        const legacyToken = String(res.data.data?.token || '');
+        if (legacyToken) {
+          try {
+            const versionRes = await axios.get('/api/stat/version', {
+              headers: {
+                Authorization: `Bearer ${legacyToken}`
+              },
+              validateStatus: () => true
+            });
+            const versionData = versionRes.data?.data || {};
+            if (
+              versionRes.status < 400 &&
+              versionsMismatch(versionData.version, versionData.dashboard_version)
+            ) {
+              sessionStorage.setItem(UPGRADE_RECOVERY_TOKEN_KEY, legacyToken);
+              window.dispatchEvent(
+                new CustomEvent(UPGRADE_RECOVERY_EVENT, {
+                  detail: {
+                    version: versionData.version,
+                    dashboard_version: versionData.dashboard_version
+                  }
+                })
+              );
+              return 'upgrade_recovery_required';
+            }
+          } catch (_error) {
+            // Version probing is best-effort; a successful login should still proceed.
+          }
         }
 
         await this.finishAuthenticatedSession(res.data.data);
@@ -116,6 +153,7 @@ export const useAuthStore = defineStore("auth", {
       localStorage.removeItem('change_pwd_hint');
       localStorage.removeItem('legacy_pwd_hint');
       localStorage.removeItem('password_upgrade_required');
+      sessionStorage.removeItem(UPGRADE_RECOVERY_TOKEN_KEY);
       void axios.post('/api/auth/logout').catch(() => undefined);
       router.push('/auth/login');
     },
