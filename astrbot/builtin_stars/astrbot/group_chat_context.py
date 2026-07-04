@@ -91,6 +91,9 @@ class GroupChatContext(PromptExtensionCollectorInterface):
             "image_caption": image_caption,
             "image_caption_prompt": image_caption_prompt,
             "image_caption_provider_id": image_caption_provider_id,
+            "image_caption_whitelist": group_context_cfg.get(
+                "image_caption_whitelist", []
+            ),
             "enable_active_reply": active_reply.get("enable", False),
             "ar_method": active_reply.get("method", "possibility_reply"),
             "ar_possibility": active_reply.get("possibility_reply", 0),
@@ -273,7 +276,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
             if isinstance(comp, Plain):
                 parts.append(f" {comp.text}")
             elif isinstance(comp, Image):
-                if cfg["image_caption"]:
+                if cfg["image_caption"] and _image_caption_allowed(event, cfg):
                     try:
                         url = comp.url if comp.url else comp.file
                         if not url:
@@ -371,6 +374,29 @@ def _positive_int(value, fallback: int) -> int:
     except (TypeError, ValueError):
         return fallback
     return parsed if parsed > 0 else fallback
+
+
+def _image_caption_allowed(event: AstrMessageEvent, cfg: dict) -> bool:
+    whitelist = _normalize_whitelist(cfg.get("image_caption_whitelist", []))
+    if not whitelist:
+        return True
+
+    group_id = event.get_group_id()
+    allowed_ids = {event.unified_msg_origin}
+    if group_id:
+        allowed_ids.add(str(group_id))
+    return bool(allowed_ids & whitelist)
+
+
+def _normalize_whitelist(value: object) -> set[str]:
+    if isinstance(value, str):
+        items = [value]
+    else:
+        try:
+            items = list(value)
+        except TypeError:
+            items = []
+    return {str(item).strip() for item in items if str(item).strip()}
 
 
 def _resolve_prompt_pipeline_mode(config: "MainAgentBuildConfig") -> str:

@@ -1002,6 +1002,10 @@
           "description": "群聊图片转述模型",
           "hint": "用于群聊上下文感知的图片理解，与默认图片转述模型分开配置。"
         },
+        "image_caption_whitelist": {
+          "description": "群聊图片预转述白名单",
+          "hint": "仅限制群聊上下文构建时的图片预转述；为空时不限制。可填写 /sid 获取的 ID 或群号。"
+        },
         "active_reply": {
           "enable": {
             "description": "主动回复"

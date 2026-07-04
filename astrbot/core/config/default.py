@@ -244,6 +244,7 @@ DEFAULT_CONFIG = {
         "group_message_max_cnt": 300,
         "image_caption": False,
         "image_caption_provider_id": "",
+        "image_caption_whitelist": [],
         "active_reply": {
             "enable": False,
             "method": "possibility_reply",
@@ -2992,6 +2993,10 @@ CONFIG_METADATA_2 = {
                     "image_caption_provider_id": {
                         "type": "string",
                     },
+                    "image_caption_whitelist": {
+                        "type": "list",
+                        "items": {"type": "string"},
+                    },
                     "image_caption_prompt": {
                         "type": "string",
                     },
@@ -4233,6 +4238,15 @@ CONFIG_METADATA_3 = {
                         "type": "string",
                         "_special": "select_provider",
                         "hint": "用于群聊上下文感知的图片理解，与默认图片转述模型分开配置。",
+                        "condition": {
+                            "provider_ltm_settings.image_caption": True,
+                        },
+                    },
+                    "provider_ltm_settings.image_caption_whitelist": {
+                        "description": "群聊图片预转述白名单",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "hint": "仅限制群聊上下文构建时的图片预转述；为空时不限制。可填写 /sid 获取的 ID 或群号。",
                         "condition": {
                             "provider_ltm_settings.image_caption": True,
                         },

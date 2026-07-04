@@ -1000,6 +1000,10 @@
           "description": "Group Chat Image Caption Model",
           "hint": "Used for image understanding in group chat context awareness, configured separately from the default image caption model."
         },
+        "image_caption_whitelist": {
+          "description": "Group Chat Image Pre-caption Whitelist",
+          "hint": "Only limits image pre-captioning while building group chat context. Leave empty to disable filtering. Fill in IDs from /sid or group IDs."
+        },
         "active_reply": {
           "enable": {
             "description": "Active Reply"

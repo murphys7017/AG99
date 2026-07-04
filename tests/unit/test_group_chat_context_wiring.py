@@ -46,12 +46,20 @@ def make_event(umo: str = "aiocqhttp:GroupMessage:user_123_group_456"):
     return event
 
 
-def make_config(*, group_icl_enable: bool = True, active_reply: bool = False):
+def make_config(
+    *,
+    group_icl_enable: bool = True,
+    active_reply: bool = False,
+    image_caption: bool = False,
+    image_caption_whitelist: list[str] | None = None,
+):
     return {
         "provider_ltm_settings": {
             "group_icl_enable": group_icl_enable,
             "group_message_max_cnt": 300,
-            "image_caption": False,
+            "image_caption": image_caption,
+            "image_caption_provider_id": "caption-provider" if image_caption else "",
+            "image_caption_whitelist": image_caption_whitelist or [],
             "active_reply": {
                 "enable": active_reply,
                 "method": "possibility_reply",
@@ -275,6 +283,65 @@ async def test_group_chat_context_describes_reply_chain_and_truncates_text():
     assert "[Quote(Bob: quoted chain[Image])]" in text
     assert f"[Quote(Carol: {'x' * 200}...)]" in text
     assert "x" * 240 not in text
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_captions_image_when_caption_whitelist_empty():
+    context = MagicMock()
+    context.get_config.return_value = make_config(image_caption=True)
+    group_context = GroupChatContext(MagicMock(), context)
+    group_context.get_image_caption = AsyncMock(return_value="a cat")
+    event = make_event()
+    event.message_obj.message = [Image(file="image.png")]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Image: a cat]" in text
+    group_context.get_image_caption.assert_awaited_once_with(
+        "image.png",
+        "caption-provider",
+        "describe",
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_captions_image_when_group_matches_caption_whitelist():
+    context = MagicMock()
+    context.get_config.return_value = make_config(
+        image_caption=True,
+        image_caption_whitelist=["456"],
+    )
+    group_context = GroupChatContext(MagicMock(), context)
+    group_context.get_image_caption = AsyncMock(return_value="a cat")
+    event = make_event()
+    event.message_obj.message = [Image(file="image.png")]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Image: a cat]" in text
+    group_context.get_image_caption.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_skips_image_caption_when_caption_whitelist_misses():
+    context = MagicMock()
+    context.get_config.return_value = make_config(
+        image_caption=True,
+        image_caption_whitelist=["999"],
+    )
+    group_context = GroupChatContext(MagicMock(), context)
+    group_context.get_image_caption = AsyncMock(return_value="a cat")
+    event = make_event()
+    event.message_obj.message = [Image(file="image.png")]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Image]" in text
+    assert "[Image:" not in text
+    group_context.get_image_caption.assert_not_awaited()
 
 
 @pytest.mark.asyncio
