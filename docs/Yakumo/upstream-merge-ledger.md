@@ -45,6 +45,35 @@ Current local upstream-sync commits:
 - `13626e7db` Align plugin page bridge behavior.
 - `d39001dcd` Absorb small runtime compatibility fixes.
 - `d98dd7f71` Add web search API key failover.
+- `0e9a08277` Absorb upstream runtime reliability fixes.
+
+## 2026-07-05 background wakeup and webhook response follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Background task wakeups:
+  - `413340fca`: background tool/subagent result wakeups now build the main agent with the current UMO provider settings, including fallback chat model configuration and retry settings.
+  - Rewritten into this fork's `FunctionToolExecutor._wake_main_agent_for_background_result()` path without changing the local Yakumo prompt/memory/postprocess request construction.
+- Webhook response preservation:
+  - `1e3b12acc`: QQ Official webhook URL validation (`op=13`) is accepted before regular event signature enforcement, matching the platform handshake behavior while keeping signature checks for normal events.
+  - The local Quart unified webhook route already returns adapter responses directly, so plain-text and tuple responses are preserved instead of being wrapped into dashboard JSON envelopes. Added focused coverage for that behavior.
+  - `ea19be1d0`: WeCom URL verification now returns a `text/plain` Quart response, so enterprise WeChat receives the raw echo string instead of JSON.
+
+Deferred / intentionally not included in this follow-up:
+
+- Upstream FastAPI `dashboard/api/platform.py` wrapper changes were not copied because this fork still uses the local Quart route implementation.
+- Broader WeCom proactive-send metadata changes and upstream `MediaResolver` rewrites are left for separate platform/media batches; this follow-up only covers webhook response correctness.
+
+Validation for this follow-up:
+
+- Python: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run pytest tests/unit/test_astr_agent_tool_exec.py tests/test_qqofficial_webhook_signature.py tests/test_platform_webhook_responses.py -q`
+- Python lint: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run ruff check astrbot/core/astr_agent_tool_exec.py astrbot/core/platform/sources/qqofficial_webhook/qo_webhook_server.py astrbot/core/platform/sources/wecom/wecom_adapter.py tests/unit/test_astr_agent_tool_exec.py tests/test_qqofficial_webhook_signature.py tests/test_platform_webhook_responses.py`
+
+Known validation note:
+
+- In this sandbox, the default uv cache under the user profile and pytest cache directory are not writable, so validation uses a repo-local `UV_CACHE_DIR`; pytest still reports a cache-write warning after passing tests.
 
 ## 2026-07-05 tool-call sanitation follow-up
 

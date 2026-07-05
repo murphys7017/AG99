@@ -112,7 +112,7 @@ class WecomServer:
                 args.get("echostr"),
             )
             logger.info("验证请求有效性成功。")
-            return echo_str
+            return quart.Response(echo_str, content_type="text/plain")
         except InvalidSignatureException:
             logger.error("验证请求有效性失败，签名异常，请检查配置。")
             raise
