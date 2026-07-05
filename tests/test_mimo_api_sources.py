@@ -1,4 +1,6 @@
 import asyncio
+import base64
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ from astrbot.core.provider.sources.elevenlabs_tts_source import (
 )
 from astrbot.core.provider.sources.mimo_api_common import (
     MiMoAPIError,
+    _validate_wav_payload,
     build_headers,
     prepare_audio_input,
 )
@@ -16,7 +19,9 @@ from astrbot.core.provider.sources.mimo_stt_api_source import ProviderMiMoSTTAPI
 from astrbot.core.provider.sources.mimo_tts_api_source import ProviderMiMoTTSAPI
 from astrbot.core.provider.sources.minimax_tts_api_source import ProviderMiniMaxTTSAPI
 
-MIMO_STT_TEST_AUDIO_DATA_URL = "data:audio/wav;base64,ZmFrZQ=="
+MIMO_STT_TEST_WAV_HEADER = b"RIFF$\x00\x00\x00WAVEfmt "
+MIMO_STT_TEST_AUDIO_BASE64 = base64.b64encode(MIMO_STT_TEST_WAV_HEADER).decode()
+MIMO_STT_TEST_AUDIO_DATA_URL = f"data:audio/wav;base64,{MIMO_STT_TEST_AUDIO_BASE64}"
 
 
 def _make_tts_provider(overrides: dict | None = None) -> ProviderMiMoTTSAPI:
@@ -38,7 +43,7 @@ def _make_stt_provider(overrides: dict | None = None) -> ProviderMiMoSTTAPI:
     provider_config = {
         "id": "test-mimo-stt",
         "type": "mimo_stt_api",
-        "model": "mimo-v2-omni",
+        "model": "mimo-v2.5-asr",
         "api_key": "test-key",
     }
     if overrides:
@@ -340,7 +345,7 @@ async def test_mimo_tts_get_audio_handles_empty_choices():
 
 
 @pytest.mark.asyncio
-async def test_mimo_stt_payload_includes_audio_only(monkeypatch):
+async def test_mimo_stt_asr_model_payload_includes_audio_only(monkeypatch):
     provider = _make_stt_provider(
         {
             "mimo-stt-system-prompt": "system prompt",
@@ -392,6 +397,86 @@ async def test_mimo_stt_payload_includes_audio_only(monkeypatch):
     ]
 
 
+def test_mimo_stt_default_model_is_v25_asr():
+    provider = ProviderMiMoSTTAPI(
+        provider_config={
+            "id": "test-mimo-stt",
+            "type": "mimo_stt_api",
+            "api_key": "test-key",
+        },
+        provider_settings={},
+    )
+    try:
+        assert provider.model_name == "mimo-v2.5-asr"
+    finally:
+        asyncio.run(provider.terminate())
+
+
+@pytest.mark.asyncio
+async def test_mimo_stt_multimodal_model_payload_includes_transcription_prompts(
+    monkeypatch,
+):
+    provider = _make_stt_provider({"model": "mimo-v2.5"})
+
+    captured: dict = {}
+
+    async def fake_prepare_audio_input(_audio_source: str):
+        return MIMO_STT_TEST_AUDIO_DATA_URL, []
+
+    class _Response:
+        status_code = 200
+        text = '{"choices":[{"message":{"content":"transcribed text"}}]}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "transcribed text"}}]}
+
+    async def fake_post(_url, headers=None, json=None):
+        captured["headers"] = headers
+        captured["json"] = json
+        return _Response()
+
+    monkeypatch.setattr(
+        "astrbot.core.provider.sources.mimo_stt_api_source.prepare_audio_input",
+        fake_prepare_audio_input,
+    )
+    provider.client = SimpleNamespace(post=fake_post)
+
+    result = await provider.get_text("/tmp/test.wav")
+
+    assert result == "transcribed text"
+    assert captured["json"]["messages"] == [
+        {
+            "role": "system",
+            "content": (
+                "You are a speech transcription assistant. "
+                "Transcribe the spoken content from the audio exactly "
+                "and return only the transcription text."
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": MIMO_STT_TEST_AUDIO_DATA_URL,
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Please transcribe the content of the audio "
+                        "and return only the transcription text."
+                    ),
+                },
+            ],
+        },
+    ]
+
+
 @pytest.mark.asyncio
 async def test_mimo_stt_prepare_audio_input_returns_data_url(tmp_path):
     audio_path = tmp_path / "test.wav"
@@ -401,6 +486,50 @@ async def test_mimo_stt_prepare_audio_input_returns_data_url(tmp_path):
 
     assert audio_data.startswith("data:audio/wav;base64,")
     assert cleanup_paths == []
+
+
+@pytest.mark.asyncio
+async def test_mimo_stt_prepare_audio_input_rejects_non_wav_payload(tmp_path):
+    audio_path = tmp_path / "test.wav"
+    audio_path.write_bytes(b"\x02#!SILK_V3" + b"\x00" * 16)
+
+    with pytest.raises(MiMoAPIError, match="SILK"):
+        await prepare_audio_input(str(audio_path))
+
+
+@pytest.mark.asyncio
+async def test_mimo_stt_prepare_audio_input_converts_non_wav_file(
+    monkeypatch,
+    tmp_path,
+):
+    audio_path = tmp_path / "test.mp3"
+    audio_path.write_bytes(b"ID3" + b"\x00" * 16)
+
+    async def fake_convert_to_pcm_wav(input_path: str, output_path: str):
+        assert input_path == str(audio_path)
+        Path(output_path).write_bytes(MIMO_STT_TEST_WAV_HEADER + b"\x00" * 16)
+        return output_path
+
+    monkeypatch.setattr(
+        "astrbot.core.provider.sources.mimo_api_common.convert_to_pcm_wav",
+        fake_convert_to_pcm_wav,
+    )
+
+    audio_data, cleanup_paths = await prepare_audio_input(str(audio_path))
+
+    assert audio_data.startswith("data:audio/wav;base64,")
+    encoded = audio_data.removeprefix("data:audio/wav;base64,")
+    assert base64.b64decode(encoded)[: len(MIMO_STT_TEST_WAV_HEADER)] == (
+        MIMO_STT_TEST_WAV_HEADER
+    )
+    assert cleanup_paths
+    assert cleanup_paths[0].suffix == ".wav"
+
+
+def test_mimo_stt_wav_validation_accepts_unpadded_base64_header():
+    wav_base64 = base64.b64encode(MIMO_STT_TEST_WAV_HEADER).decode().rstrip("=")
+
+    _validate_wav_payload(wav_base64, "/tmp/test.wav")
 
 
 @pytest.mark.asyncio

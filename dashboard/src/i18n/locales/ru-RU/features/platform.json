@@ -161,6 +161,9 @@
     "created": "Готово",
     "startFailed": "Не удалось запустить QR-регистрацию",
     "pollFailed": "Не удалось получить статус",
+    "platformIdLabel": "ID бота",
+    "platformIdRequired": "ID бота обязателен",
+    "platformIdInvalid": "ID бота не может содержать пробелы, ':' или '!'",
     "mode": {
       "title": "Способ создания",
       "scan": "QR-регистрация",

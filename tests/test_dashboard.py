@@ -1142,6 +1142,44 @@ async def test_batch_delete_sessions_uses_batch_lookup(
 
 
 @pytest.mark.asyncio
+async def test_get_chat_session_rejects_session_owned_by_another_user(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    session_id = f"foreign_get_session_{uuid.uuid4().hex[:8]}"
+
+    await core_lifecycle_td.db.create_platform_session(
+        creator="not_dashboard_user",
+        platform_id="webchat",
+        session_id=session_id,
+        display_name="Foreign Session",
+        is_group=0,
+    )
+    await core_lifecycle_td.platform_message_history_manager.insert(
+        platform_id="webchat",
+        user_id=session_id,
+        content={
+            "type": "user",
+            "message": [{"type": "text", "text": "foreign session secret"}],
+        },
+        sender_id="not_dashboard_user",
+        sender_name="not_dashboard_user",
+    )
+
+    response = await test_client.get(
+        f"/api/chat/get_session?session_id={session_id}",
+        headers=authenticated_header,
+    )
+
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "error"
+    assert data["message"] == "Permission denied"
+
+
+@pytest.mark.asyncio
 async def test_plugins(
     app: Quart,
     authenticated_header: dict,
@@ -1768,6 +1806,7 @@ async def test_do_update_uses_atomic_download_and_apply_flow(
 ):
     test_client = app.test_client()
     calls = []
+    staging_parent = tmp_path / "astrbot-temp" / "updates"
 
     dashboard_zip = tmp_path / "dashboard.zip"
     _write_test_zip(dashboard_zip, {"dist/index.html": "<html></html>"})
@@ -1803,6 +1842,10 @@ async def test_do_update_uses_atomic_download_and_apply_flow(
         mock_download_dashboard,
     )
     monkeypatch.setattr(
+        "astrbot.dashboard.routes.update.get_astrbot_temp_path",
+        lambda: str(tmp_path / "astrbot-temp"),
+    )
+    monkeypatch.setattr(
         core_lifecycle_td.astrbot_updator,
         "download_update_package",
         mock_download_update_package,
@@ -1833,9 +1876,13 @@ async def test_do_update_uses_atomic_download_and_apply_flow(
     assert calls[0][0] == "dashboard_download"
     assert calls[0][2] is False
     assert calls[1][0] == "core_download"
+    assert Path(calls[0][1]).resolve().is_relative_to(staging_parent.resolve())
+    assert Path(calls[1][1]).resolve().is_relative_to(staging_parent.resolve())
     assert calls[2][0] == "core_apply"
     assert calls[3][0] == "dashboard_extract"
     assert calls[4][0] == "pip_install"
+    assert not Path(calls[0][1]).parent.exists()
+    assert not Path(calls[1][1]).parent.exists()
 
     progress_response = await test_client.get(
         "/api/update/progress?id=atomic-progress",

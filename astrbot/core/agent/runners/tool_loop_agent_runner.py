@@ -146,6 +146,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
     REPEATED_TOOL_NOTICE_L1_THRESHOLD = 3
     REPEATED_TOOL_NOTICE_L2_THRESHOLD = 4
     REPEATED_TOOL_NOTICE_L3_THRESHOLD = 5
+    MALFORMED_TOOL_NAME_PLACEHOLDER = "__malformed_tool_name__"
     REPEATED_TOOL_NOTICE_L1_TEMPLATE = (
         "\n\n[SYSTEM NOTICE] By the way, you have executed the same tool "
         "`{tool_name}` {streak} times consecutively. Double-check whether another "
@@ -536,6 +537,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                                     )
                                     break
 
+                                self._sanitize_malformed_tool_calls(resp)
                                 yield resp
                                 return
 
@@ -684,6 +686,14 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             tool_name=tool_name,
             streak=streak,
         )
+
+    def _sanitize_malformed_tool_calls(self, llm_resp: LLMResponse) -> None:
+        llm_resp.tools_call_name = [
+            self.MALFORMED_TOOL_NAME_PLACEHOLDER
+            if tool_name is None or str(tool_name).strip() == ""
+            else str(tool_name)
+            for tool_name in llm_resp.tools_call_name
+        ]
 
     @override
     async def step(self):
@@ -1303,6 +1313,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                 )
                 if requery_resp:
                     llm_resp = requery_resp
+                    self._sanitize_malformed_tool_calls(llm_resp)
 
                 # If the re-query still returns no tool calls, and also does not have a meaningful assistant reply,
                 # we consider it as a failure of the LLM to follow the tool-use instruction,
@@ -1329,6 +1340,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                     )
                     if repair_resp:
                         llm_resp = repair_resp
+                        self._sanitize_malformed_tool_calls(llm_resp)
 
         return llm_resp, subset
 

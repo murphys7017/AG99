@@ -17,7 +17,14 @@ DEFAULT_MIMO_API_BASE = "https://api.xiaomimimo.com/v1"
 DEFAULT_MIMO_TTS_MODEL = "mimo-v2-tts"
 DEFAULT_MIMO_TTS_VOICE = "mimo_default"
 DEFAULT_MIMO_TTS_SEED_TEXT = "Hello, MiMo, have you had lunch?"
-DEFAULT_MIMO_STT_MODEL = "mimo-v2-omni"
+DEFAULT_MIMO_STT_MODEL = "mimo-v2.5-asr"
+DEFAULT_MIMO_STT_SYSTEM_PROMPT = (
+    "You are a speech transcription assistant. "
+    "Transcribe the spoken content from the audio exactly and return only the transcription text."
+)
+DEFAULT_MIMO_STT_USER_PROMPT = (
+    "Please transcribe the content of the audio and return only the transcription text."
+)
 
 
 class MiMoAPIError(Exception):
@@ -110,8 +117,46 @@ async def prepare_audio_input(audio_source: str) -> tuple[str, list[Path]]:
                 await convert_to_pcm_wav(str(source_path), str(converted_path))
             source_path = converted_path
 
+    if source_path.suffix.lower() != ".wav":
+        converted_path = get_temp_dir() / f"mimo_audio_{uuid.uuid4().hex[:8]}.wav"
+        cleanup_paths.append(converted_path)
+        logger.info("Converting audio file to wav for MiMo STT...")
+        await convert_to_pcm_wav(str(source_path), str(converted_path))
+        source_path = converted_path
+
     encoded_audio = base64.b64encode(source_path.read_bytes()).decode("utf-8")
+    _validate_wav_payload(encoded_audio, audio_source)
     return f"data:audio/wav;base64,{encoded_audio}", cleanup_paths
+
+
+def _decode_base64_header(base64_data: str) -> bytes:
+    chunk = "".join(base64_data[:64].split())
+    padding = len(chunk) % 4
+    if padding:
+        chunk += "=" * (4 - padding)
+    return base64.b64decode(chunk)
+
+
+def _validate_wav_payload(base64_data: str, audio_source: str) -> None:
+    try:
+        header = _decode_base64_header(base64_data)
+    except Exception:
+        header = b""
+
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WAVE":
+        return
+
+    if header.startswith((b"#!SILK_V3", b"\x02#!SILK_V3")):
+        raise MiMoAPIError(
+            "Audio for MiMo STT is still Tencent SILK data after WAV conversion; "
+            "check that silk-python is installed and working: "
+            f"{audio_source}"
+        )
+
+    raise MiMoAPIError(
+        "Audio for MiMo STT could not be converted to WAV "
+        f"(unrecognized audio bytes): {audio_source}"
+    )
 
 
 def cleanup_files(paths: list[Path]) -> None:

@@ -44,6 +44,17 @@
                     </v-radio-group>
 
                     <div v-if="larkCreationMode === 'scan'" class="registration-inline mt-3">
+                      <v-text-field
+                        :model-value="selectedPlatformConfig.id || ''"
+                        :label="tm('registrationAction.platformIdLabel')"
+                        :error="Boolean(scanPlatformIdError)"
+                        :error-messages="scanPlatformIdError"
+                        variant="outlined"
+                        density="compact"
+                        hide-details="auto"
+                        class="registration-platform-id-field"
+                        @update:model-value="setScanPlatformId"
+                      />
                       <PlatformRegistrationAction
                         :platform-config="selectedPlatformConfig"
                         :active="larkCreationMode === 'scan'"
@@ -79,6 +90,17 @@
                     </v-radio-group>
 
                     <div v-if="dingtalkCreationMode === 'scan'" class="registration-inline mt-3">
+                      <v-text-field
+                        :model-value="selectedPlatformConfig.id || ''"
+                        :label="tm('registrationAction.platformIdLabel')"
+                        :error="Boolean(scanPlatformIdError)"
+                        :error-messages="scanPlatformIdError"
+                        variant="outlined"
+                        density="compact"
+                        hide-details="auto"
+                        class="registration-platform-id-field"
+                        @update:model-value="setScanPlatformId"
+                      />
                       <PlatformRegistrationAction
                         :platform-config="selectedPlatformConfig"
                         :active="dingtalkCreationMode === 'scan'"
@@ -100,7 +122,18 @@
                     </div>
                   </div>
 
-                  <div v-else-if="isWeixinOcPlatform" class="weixin-oc-registration-inline mt-4">
+                  <div v-else-if="isWeixinOcPlatform" class="registration-inline mt-4">
+                    <v-text-field
+                      :model-value="selectedPlatformConfig.id || ''"
+                      :label="tm('registrationAction.platformIdLabel')"
+                      :error="Boolean(scanPlatformIdError)"
+                      :error-messages="scanPlatformIdError"
+                      variant="outlined"
+                      density="compact"
+                      hide-details="auto"
+                      class="registration-platform-id-field"
+                      @update:model-value="setScanPlatformId"
+                    />
                     <PlatformRegistrationAction
                       :platform-config="selectedPlatformConfig"
                       :active="isWeixinOcPlatform"
@@ -467,6 +500,7 @@ export default {
 
       // 保存更新前的平台 ID，防止用户修改 ID 后丢失原始定位
       originalUpdatingPlatformId: null,
+      scanPlatformIdManuallyEdited: false,
     };
   },
   setup() {
@@ -554,6 +588,19 @@ export default {
     isDingtalkPlatform() {
       return this.selectedPlatformConfig?.type === 'dingtalk';
     },
+    scanPlatformIdError() {
+      if (!this.selectedPlatformConfig) {
+        return '';
+      }
+      const id = this.selectedPlatformConfig.id;
+      if (!id || String(id).length === 0) {
+        return this.tm('registrationAction.platformIdRequired');
+      }
+      if (!this.isPlatformIdValid(id)) {
+        return this.tm('registrationAction.platformIdInvalid');
+      }
+      return '';
+    },
     messageTypeOptions() {
       return [
         { label: this.tm('createDialog.messageTypeOptions.all'), value: '*' },
@@ -568,10 +615,12 @@ export default {
         this.selectedPlatformConfig = JSON.parse(JSON.stringify(this.platformTemplates[newType]));
         this.larkCreationMode = '';
         this.dingtalkCreationMode = '';
+        this.scanPlatformIdManuallyEdited = false;
       } else {
         this.selectedPlatformConfig = null;
         this.larkCreationMode = '';
         this.dingtalkCreationMode = '';
+        this.scanPlatformIdManuallyEdited = false;
       }
     },
     selectedAbConfId(newConfigId) {
@@ -679,6 +728,7 @@ export default {
       this.configDrawerTargetId = null;
 
       this.originalUpdatingPlatformId = null;
+      this.scanPlatformIdManuallyEdited = false;
     },
     closeDialog() {
       this.resetForm();
@@ -975,6 +1025,9 @@ export default {
       if (!this.selectedPlatformConfig || !data) {
         return;
       }
+      if (this.scanPlatformIdManuallyEdited) {
+        return;
+      }
       const currentId = String(this.selectedPlatformConfig.id || '').trim();
       const platformType = this.selectedPlatformConfig.type;
       if (!currentId) {
@@ -1013,7 +1066,15 @@ export default {
       if (!id) {
         return false;
       }
-      return !/[!:]/.test(id);
+      return !/[\s!:]/.test(String(id));
+    },
+
+    setScanPlatformId(value) {
+      if (!this.selectedPlatformConfig) {
+        return;
+      }
+      this.scanPlatformIdManuallyEdited = true;
+      this.selectedPlatformConfig.id = value;
     },
 
     // 获取该平台适配器使用的所有配置文件（新版本：直接操作路由表）
@@ -1256,5 +1317,18 @@ export default {
   flex: 1;
   overflow-y: auto;
   padding: 16px 16px 24px 16px;
+}
+
+.registration-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 320px;
+  gap: 8px;
+}
+
+.registration-platform-id-field {
+  width: 300px;
 }
 </style>

@@ -632,25 +632,51 @@ class FunctionToolManager:
         if shutdown_event is None:
             shutdown_event = asyncio.Event()
 
-        mcp_client: MCPClient | None = None
-        try:
-            mcp_client = await asyncio.wait_for(
-                self._init_mcp_client(name, cfg),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError as exc:
-            raise MCPInitTimeoutError(
-                f"Connected to MCP server {name} timeout ({timeout:g} seconds)"
-            ) from exc
-        except Exception:
-            logger.error(f"Failed to initialize MCP client {name}", exc_info=True)
-            raise
-        finally:
-            if mcp_client is None:
-                async with self._runtime_lock:
-                    self._mcp_starting.discard(name)
+        mcp_client = MCPClient()
+        mcp_client.name = name
+        connect_done = asyncio.Event()
+        connect_error: BaseException | None = None
 
-        async def lifecycle() -> None:
+        async def connect_and_lifecycle() -> None:
+            nonlocal connect_error
+            try:
+                await mcp_client.connect_to_server(cfg, name)
+                tools_res = await mcp_client.list_tools_and_save()
+            except asyncio.CancelledError:
+                logger.debug(f"MCP client {name} task was cancelled")
+                try:
+                    await mcp_client.cleanup()
+                except BaseException:
+                    pass
+                raise
+            except Exception as exc:
+                connect_error = exc
+                try:
+                    await mcp_client.cleanup()
+                except Exception:
+                    pass
+                connect_done.set()
+                return
+
+            logger.debug(f"MCP server {name} list tools response: {tools_res}")
+            self.func_list = [
+                f
+                for f in self.func_list
+                if not (isinstance(f, MCPTool) and f.mcp_server_name == name)
+            ]
+
+            for tool in mcp_client.tools:
+                func_tool = MCPTool(
+                    mcp_tool=tool,
+                    mcp_client=mcp_client,
+                    mcp_server_name=name,
+                )
+                self.func_list.append(func_tool)
+
+            tool_names = [tool.name for tool in mcp_client.tools]
+            logger.info(f"Connected to MCP server {name}, Tools: {tool_names}")
+            connect_done.set()
+
             try:
                 await shutdown_event.wait()
                 logger.info(f"Received shutdown signal for MCP client {name}")
@@ -660,7 +686,9 @@ class FunctionToolManager:
             finally:
                 await self._terminate_mcp_client(name)
 
-        lifecycle_task = asyncio.create_task(lifecycle(), name=f"mcp-client:{name}")
+        lifecycle_task = asyncio.create_task(
+            connect_and_lifecycle(), name=f"mcp-client:{name}"
+        )
         async with self._runtime_lock:
             self._mcp_server_runtime[name] = _MCPServerRuntime(
                 name=name,
@@ -669,6 +697,32 @@ class FunctionToolManager:
                 lifecycle_task=lifecycle_task,
             )
             self._mcp_starting.discard(name)
+
+        try:
+            await asyncio.wait_for(connect_done.wait(), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            lifecycle_task.cancel()
+            await asyncio.gather(lifecycle_task, return_exceptions=True)
+            async with self._runtime_lock:
+                self._mcp_starting.discard(name)
+                self._mcp_server_runtime.pop(name, None)
+            raise MCPInitTimeoutError(
+                f"Connected to MCP server {name} timeout ({timeout:g} seconds)"
+            ) from exc
+        except asyncio.CancelledError:
+            lifecycle_task.cancel()
+            await asyncio.gather(lifecycle_task, return_exceptions=True)
+            async with self._runtime_lock:
+                self._mcp_starting.discard(name)
+                self._mcp_server_runtime.pop(name, None)
+            raise
+
+        if connect_error is not None:
+            async with self._runtime_lock:
+                self._mcp_starting.discard(name)
+                self._mcp_server_runtime.pop(name, None)
+            logger.error(f"Failed to initialize MCP client {name}", exc_info=True)
+            raise connect_error
 
     async def _shutdown_runtimes(
         self,
@@ -733,41 +787,6 @@ class FunctionToolManager:
             logger.error(
                 f"Failed to cleanup MCP client resources {name}: {cleanup_exc}"
             )
-
-    async def _init_mcp_client(self, name: str, config: dict) -> MCPClient:
-        """初始化单个MCP客户端"""
-        mcp_client = MCPClient()
-        mcp_client.name = name
-        try:
-            await mcp_client.connect_to_server(config, name)
-            tools_res = await mcp_client.list_tools_and_save()
-        except asyncio.CancelledError:
-            await self._cleanup_mcp_client_safely(mcp_client, name)
-            raise
-        except Exception:
-            await self._cleanup_mcp_client_safely(mcp_client, name)
-            raise
-        logger.debug(f"MCP server {name} list tools response: {tools_res}")
-        tool_names = [tool.name for tool in tools_res.tools]
-
-        # 移除该MCP服务之前的工具（如有）
-        self.func_list = [
-            f
-            for f in self.func_list
-            if not (isinstance(f, MCPTool) and f.mcp_server_name == name)
-        ]
-
-        # 将 MCP 工具转换为 FuncTool 并添加到 func_list
-        for tool in mcp_client.tools:
-            func_tool = MCPTool(
-                mcp_tool=tool,
-                mcp_client=mcp_client,
-                mcp_server_name=name,
-            )
-            self.func_list.append(func_tool)
-
-        logger.info(f"Connected to MCP server {name}, Tools: {tool_names}")
-        return mcp_client
 
     async def _terminate_mcp_client(self, name: str) -> None:
         """关闭并清理MCP客户端"""
@@ -1023,11 +1042,14 @@ class FunctionToolManager:
                             "mcp_server_list",
                             [],
                         )
-                        local_mcp_config = self.load_mcp_config()
+                        local_mcp_config = copy.deepcopy(self.load_mcp_config())
 
-                        synced_count = 0
+                        mcp_servers = local_mcp_config.setdefault("mcpServers", {})
+                        synced_servers: list[tuple[str, dict]] = []
                         for server in mcp_server_list:
-                            server_name = server["name"]
+                            server_name = server.get("name")
+                            if not server_name:
+                                continue
                             operational_urls = server.get("operational_urls", [])
                             if not operational_urls:
                                 continue
@@ -1036,28 +1058,28 @@ class FunctionToolManager:
                             if not server_url:
                                 continue
                             # 添加到配置中(同名会覆盖)
-                            local_mcp_config["mcpServers"][server_name] = {
+                            server_config = {
                                 "url": server_url,
                                 "transport": "sse",
                                 "active": True,
                                 "provider": "modelscope",
                             }
-                            synced_count += 1
+                            mcp_servers[server_name] = server_config
+                            synced_servers.append((server_name, server_config))
 
-                        if synced_count > 0:
+                        if synced_servers:
                             self.save_mcp_config(local_mcp_config)
                             tasks = []
-                            for server in mcp_server_list:
-                                name = server["name"]
+                            for name, config in synced_servers:
                                 tasks.append(
                                     self.enable_mcp_server(
                                         name=name,
-                                        config=local_mcp_config["mcpServers"][name],
+                                        config=config,
                                     ),
                                 )
                             await asyncio.gather(*tasks)
                             logger.info(
-                                f"从 ModelScope 同步了 {synced_count} 个 MCP 服务器",
+                                f"从 ModelScope 同步了 {len(synced_servers)} 个 MCP 服务器",
                             )
                         else:
                             logger.warning("没有找到可用的 ModelScope MCP 服务器")

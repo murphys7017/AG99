@@ -5,14 +5,14 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `b43cc6dee` (`feat: improve ChatUI attachment display`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-04; upstream currently includes releases through `v4.26.4` and follow-up commits through `b43cc6dee`.
+- Last local upstream snapshot checked: `upstream/master` at `25cbd41e0` (`feat: add sanitation for malformed tool call names in ToolLoopAgentRunner (#9144)`)
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-05; upstream currently includes releases through `v4.26.4` and follow-up commits through `25cbd41e0`.
 - Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
 - Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
 
@@ -44,6 +44,154 @@ Current local upstream-sync commits:
 - `1198d9a86` Absorb small upstream stability fixes.
 - `13626e7db` Align plugin page bridge behavior.
 - `d39001dcd` Absorb small runtime compatibility fixes.
+- `d98dd7f71` Add web search API key failover.
+
+## 2026-07-05 tool-call sanitation follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Tool loop robustness:
+  - `25cbd41e0`: provider-returned malformed tool-call names (`None`, empty strings, or whitespace-only strings) are normalized to `__malformed_tool_name__` before execution handling.
+  - The rewrite keeps the existing "tool not found" path responsible for reporting the bad call, instead of allowing malformed provider payloads to destabilize the agent loop.
+  - Applied to both the primary/fallback final LLM response path and the `skills_like` requery/repair response path.
+
+Deferred / intentionally not included in this follow-up:
+
+- MiMo STT V2.5/WAV validation, QQ Official `None` retry, secure project update temp staging, ChatUI session ownership, FastAPI/OpenAPI migration, settings/theme refactors, and auth/TOTP expansion remain separate batches.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/test_tool_loop_agent_runner.py::test_sanitize_malformed_tool_call_names -q`
+- Python lint: `uv run ruff check astrbot/core/agent/runners/tool_loop_agent_runner.py tests/test_tool_loop_agent_runner.py`
+
+## 2026-07-05 MiMo STT and QQ Official retry follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- MiMo STT compatibility:
+  - `c9eed7b65`: the default MiMo STT model is now `mimo-v2.5-asr`, replacing the retired `mimo-v2-omni` default.
+  - Dedicated ASR models keep the existing bare `input_audio` payload; non-ASR multimodal MiMo models add transcription system/user prompts required by the v2.5 audio-understanding path.
+  - The local download/AMR/SILK conversion flow is preserved, with an added RIFF/WAVE header check before sending audio to the API. Tencent SILK bytes that survive conversion now fail locally with an actionable error instead of surfacing as an opaque API 400.
+  - Non-WAV local/downloaded audio paths are converted to WAV before validation, so the new header check does not narrow existing MiMo STT compatibility for common formats such as MP3.
+- QQ Official reliability:
+  - `cc0b34750`: QQ Official C2C send and group/C2C media upload paths now treat API `None` responses as transient failures and retry through the existing tenacity retry policy.
+  - Message-send `None` retries are capped at 3 attempts; media upload retries keep the existing 5-attempt behavior. Existing final return behavior is preserved (`None` for skipped media/message send after retry exhaustion).
+
+Deferred / intentionally not included in this follow-up:
+
+- Broader updater service-layer migration is left out because this fork still uses the current Quart route implementation.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/test_mimo_api_sources.py -q`
+- Python: `uv run pytest tests/unit/test_qqofficial_message_split.py -q`
+- Python lint: `uv run ruff check astrbot/core/provider/sources/mimo_api_common.py astrbot/core/provider/sources/mimo_stt_api_source.py astrbot/core/platform/sources/qqofficial/qqofficial_message_event.py tests/test_mimo_api_sources.py`
+
+## 2026-07-05 ChatUI session read ownership follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- ChatUI session privacy:
+  - `041fba4df`: reading a ChatUI session now first verifies that the session exists and that `session.creator` matches the authenticated dashboard user.
+  - Rewritten into this fork's local Quart `ChatRoute.get_session()` path instead of upstream's newer `ChatService` layer.
+  - Foreign sessions now return `Permission denied` before message history, project metadata, thread metadata, or running-state information can be exposed.
+
+Deferred / intentionally not included in this follow-up:
+
+- The upstream `/api/v1/chat/sessions/{session_id}` service-route shape was not copied because this fork still serves the current `/api/chat/get_session` route for this behavior.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/test_dashboard.py::test_get_chat_session_rejects_session_owned_by_another_user -q`
+- Python lint: `uv run ruff check astrbot/dashboard/routes/chat.py tests/test_dashboard.py`
+
+## 2026-07-05 secure update staging follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Project update staging:
+  - `30426c4f6`: project update downloads now stage core/WebUI archives inside a per-run `TemporaryDirectory` under AstrBot's private temp path (`get_astrbot_temp_path()/updates`) instead of a fixed shared system-temp `updates` directory.
+  - The staging parent is created with restricted permissions where supported, and a symlink at that location is removed before creating the directory.
+  - Temporary update archives are cleaned up by the temporary-directory context after download, verification, apply, dependency update, and optional restart handling complete.
+
+Local adaptation notes:
+
+- Rewritten into this fork's local `astrbot/dashboard/routes/update.py` route instead of upstream's `UpdateService` class.
+- Existing local atomic update behavior is preserved: WebUI and core archives are both downloaded and verified before either package is applied.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/test_dashboard.py::test_do_update tests/test_dashboard.py::test_do_update_uses_atomic_download_and_apply_flow tests/test_dashboard.py::test_do_update_rejects_desktop_managed_backend -q`
+- Python lint: `uv run ruff check astrbot/dashboard/routes/update.py tests/test_dashboard.py`
+
+## 2026-07-05 upstream test/docs-only review
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Reviewed with no local runtime rewrite:
+
+- `3b8caf37e`: POSIX file URI root-preservation test coverage only. The local runtime path handling was not changed in this batch.
+- `85b653b6f`: upstream documentation note about cross-platform compatibility and Python version support. No local code behavior to absorb.
+
+Validation:
+
+- No dedicated validation required; these were reviewed as test/docs-only upstream changes.
+
+## 2026-07-05 MCP runtime reliability follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- ModelScope MCP sync:
+  - `89b80a6ca`: syncing ModelScope MCP servers now enables only servers that were actually accepted into the local config. Entries without a server name, without operational URLs, or without a usable URL are skipped instead of later causing a `KeyError` during enable.
+  - The loaded MCP config is deep-copied before modification, so fallback/default config objects are not mutated in place.
+- MCP lifecycle cleanup:
+  - `3ce66576f`: MCP client connect, tool-list registration, lifecycle wait, and cleanup now run in one lifecycle task. `_start_mcp_server()` waits for a connection-complete signal, so initialization still reports success/failure synchronously while cleanup remains in the same task that entered the MCP client contexts.
+  - Timeout and cancellation paths cancel the lifecycle task, gather it, and remove runtime bookkeeping. Failed connection/list-tools paths clean up the client and remove runtime state before surfacing the original error.
+
+Local adaptation notes:
+
+- Rewritten against this fork's existing `_MCPServerRuntime` / read-only runtime view structure.
+- Unlike the upstream patch text, cleanup is awaited directly in the lifecycle task rather than wrapped with `asyncio.shield(coro)`, because shielding a coroutine schedules a separate task and would reintroduce cross-task cleanup in this code path.
+
+Deferred / intentionally not included in this follow-up:
+
+- `6d798908a` / `20008f179` custom workspace path changes were reviewed but not applied because this fork does not currently have upstream's `astrbot/core/workspace.py` / ChatUI project workspace service shape. Absorbing them would require the broader project-workspace feature batch.
+
+Validation for this follow-up:
+
+- Python: `uv run pytest tests/unit/test_func_tool_manager.py -q`
+- Python lint: `uv run ruff check astrbot/core/provider/func_tool_manager.py tests/unit/test_func_tool_manager.py`
+
+## 2026-07-05 scan registration custom bot ID follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Platform scan registration UI:
+  - `9f50c900b`: scan-based platform creation now lets the user edit the platform/bot ID before completing the QR registration flow.
+  - Rewritten into the local `AddNewPlatform.vue` shape for the existing scan flows in this fork: Lark, DingTalk, and Weixin OC.
+  - Empty IDs, whitespace, `:`, and `!` are rejected through the shared `isPlatformIdValid()` check, so invalid IDs cannot be saved or used in generated UMOP routes.
+  - Once the user manually edits the scan ID, QR registration callbacks no longer overwrite it with bot-name/random suffix data. Switching platform templates resets that manual-edit guard.
+  - Added Chinese, English, and Russian dashboard strings for the new ID field and validation errors.
+
+Deferred / intentionally not included in this follow-up:
+
+- Upstream's QQ Official QR scan UI path was not introduced in this batch because the local platform creation dialog does not currently expose that scan branch. Absorbing it should be handled with the broader QQ Official platform UI alignment work if needed.
+
+Validation for this follow-up:
+
+- Frontend: `dashboard\node_modules\.bin\vue-tsc.cmd --noEmit`
 
 ## 2026-07-05 web search API key failover follow-up
 

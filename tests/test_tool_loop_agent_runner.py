@@ -426,6 +426,25 @@ def _make_large_tool_result_text() -> str:
     return "x" * 100000
 
 
+def test_sanitize_malformed_tool_call_names():
+    runner = ToolLoopAgentRunner()
+    response = LLMResponse(
+        role="assistant",
+        tools_call_name=[None, "", "   ", "valid_tool"],  # type: ignore[list-item]
+        tools_call_args=[{}, {}, {}, {}],
+        tools_call_ids=["call_1", "call_2", "call_3", "call_4"],
+    )
+
+    runner._sanitize_malformed_tool_calls(response)
+
+    assert response.tools_call_name == [
+        runner.MALFORMED_TOOL_NAME_PLACEHOLDER,
+        runner.MALFORMED_TOOL_NAME_PLACEHOLDER,
+        runner.MALFORMED_TOOL_NAME_PLACEHOLDER,
+        "valid_tool",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_max_step_limit_functionality(
     runner, mock_provider, provider_request, mock_tool_executor, mock_hooks

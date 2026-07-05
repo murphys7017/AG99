@@ -1292,12 +1292,17 @@ class ChatRoute(Route):
         if not session_id:
             return Response().error("Missing key: session_id").__dict__
 
-        # 获取会话信息以确定 platform_id
+        username = g.get("username", "guest")
+
+        # 获取会话信息以确定 platform_id，并校验当前用户是否拥有该会话
         session = await self.db.get_platform_session_by_id(session_id)
-        platform_id = session.platform_id if session else "webchat"
+        if not session:
+            return Response().error(f"Session {session_id} not found").__dict__
+        if session.creator != username:
+            return Response().error("Permission denied").__dict__
+        platform_id = session.platform_id
 
         # 获取项目信息（如果会话属于某个项目）
-        username = g.get("username", "guest")
         project_info = await self.db.get_project_by_session(
             session_id=session_id, creator=username
         )
