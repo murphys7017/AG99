@@ -648,7 +648,7 @@ class BasePromptRenderer:
             skills_whitelist = self._extract_name_whitelist(
                 pack.get_slot("persona.skills_whitelist")
             )
-            filtered_skills = self._filter_named_items(
+            filtered_skills = self._filter_skill_items(
                 skills_inventory, skills_whitelist
             )
             if filtered_skills:
@@ -2359,6 +2359,27 @@ class BasePromptRenderer:
             item
             for item in items
             if isinstance(item.get("name"), str) and item["name"] in whitelist
+        ]
+
+    def _filter_skill_items(
+        self,
+        items: list[dict[str, Any]],
+        whitelist: set[str] | None,
+    ) -> list[dict[str, Any]]:
+        if whitelist is None:
+            return list(items)
+        if not whitelist:
+            return []
+        return [
+            item
+            for item in items
+            if (
+                item.get("source_type") == "workspace"
+                or (
+                    isinstance(item.get("name"), str)
+                    and item["name"] in whitelist
+                )
+            )
         ]
 
     def _add_parent_tag(

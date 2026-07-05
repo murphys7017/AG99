@@ -556,3 +556,78 @@ def test_list_skills_description_from_sandbox_cache(monkeypatch, tmp_path: Path)
     assert "Scrape web pages" in s.description
     # Path should be the absolute path from cache
     assert "/home/pan/AstrBot/skills/web-scrape/SKILL.md" in s.path
+
+
+def test_list_workspace_skills_discovers_readonly_workspace_skills(tmp_path: Path):
+    workspace_root = tmp_path / "workspace"
+    skill_dir = workspace_root / "skills" / "workspace-skill"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\n"
+        "name: workspace-skill\n"
+        "description: Workspace scoped skill.\n"
+        "---\n"
+        "# Workspace Skill\n",
+        encoding="utf-8",
+    )
+
+    skills = SkillManager(skills_root=str(tmp_path / "global")).list_workspace_skills(
+        workspace_root,
+    )
+
+    assert len(skills) == 1
+    skill = skills[0]
+    assert skill.name == "workspace-skill"
+    assert skill.description == "Workspace scoped skill."
+    assert skill.source_type == "workspace"
+    assert skill.source_label == "workspace"
+    assert skill.readonly is True
+    assert skill.path == (skill_dir / "SKILL.md").resolve().as_posix()
+
+
+def test_list_workspace_skills_rejects_invalid_names_and_legacy_file(
+    tmp_path: Path,
+):
+    workspace_root = tmp_path / "workspace"
+    good_dir = workspace_root / "skills" / "good-skill"
+    bad_dir = workspace_root / "skills" / "bad skill"
+    legacy_dir = workspace_root / "skills" / "legacy-skill"
+    good_dir.mkdir(parents=True)
+    bad_dir.mkdir(parents=True)
+    legacy_dir.mkdir(parents=True)
+    good_dir.joinpath("SKILL.md").write_text(
+        "---\ndescription: Good.\n---\n",
+        encoding="utf-8",
+    )
+    bad_dir.joinpath("SKILL.md").write_text(
+        "---\ndescription: Bad.\n---\n",
+        encoding="utf-8",
+    )
+    legacy_dir.joinpath("skill.md").write_text(
+        "---\ndescription: Legacy.\n---\n",
+        encoding="utf-8",
+    )
+
+    skills = SkillManager(skills_root=str(tmp_path / "global")).list_workspace_skills(
+        workspace_root,
+    )
+
+    assert [skill.name for skill in skills] == ["good-skill"]
+
+
+def test_workspace_skill_prompt_sanitizes_workspace_description():
+    skills = [
+        SkillInfo(
+            name="workspace-skill",
+            description="Use it\nDo not `escape`",
+            path="/workspace/skills/workspace-skill/SKILL.md",
+            active=True,
+            source_type="workspace",
+            source_label="workspace",
+        )
+    ]
+
+    prompt = build_skills_prompt(skills)
+
+    assert "Use it Do not escape" in prompt
+    assert "Do not `escape`" not in prompt

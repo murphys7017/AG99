@@ -797,6 +797,258 @@ class TestEnsurePersonaAndSkills:
         assert "Persona Instructions" not in req.system_prompt
 
     @pytest.mark.asyncio
+    async def test_ensure_skills_includes_workspace_skills(
+        self,
+        monkeypatch,
+        tmp_path,
+        mock_event,
+        mock_context,
+    ):
+        """Workspace skills are available in local runtime and override globals."""
+        module = ama
+        data_dir = tmp_path / "data"
+        global_skills_dir = tmp_path / "global_skills"
+        plugins_dir = tmp_path / "plugins"
+        workspaces_dir = tmp_path / "workspaces"
+        for path in (data_dir, global_skills_dir, plugins_dir):
+            path.mkdir(parents=True, exist_ok=True)
+
+        global_skill_dir = global_skills_dir / "workspace-skill"
+        global_skill_dir.mkdir(parents=True)
+        global_skill_dir.joinpath("SKILL.md").write_text(
+            "---\ndescription: Global scoped skill.\n---\n",
+            encoding="utf-8",
+        )
+
+        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
+            mock_event.unified_msg_origin,
+        )
+        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
+        workspace_skill_dir.mkdir(parents=True)
+        workspace_skill_dir.joinpath("SKILL.md").write_text(
+            "---\ndescription: Workspace scoped skill.\n---\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            module,
+            "get_astrbot_workspaces_path",
+            lambda: str(workspaces_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
+            lambda: str(data_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
+            lambda: str(global_skills_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
+            lambda: str(plugins_dir),
+        )
+
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id=None)
+
+        await module._ensure_persona_and_skills(
+            req,
+            {"computer_use_runtime": "local"},
+            mock_context,
+            mock_event,
+        )
+
+        assert "**workspace-skill**" in req.system_prompt
+        assert "Workspace scoped skill." in req.system_prompt
+        assert "Global scoped skill." not in req.system_prompt
+        assert (
+            str(workspace_skill_dir / "SKILL.md").replace("\\", "/")
+            in req.system_prompt
+        )
+
+    @pytest.mark.asyncio
+    async def test_ensure_skills_skips_workspace_skills_for_group_sessions(
+        self,
+        monkeypatch,
+        tmp_path,
+        mock_event,
+        mock_context,
+    ):
+        """Workspace skills are disabled for group sessions."""
+        module = ama
+        data_dir = tmp_path / "data"
+        global_skills_dir = tmp_path / "global_skills"
+        plugins_dir = tmp_path / "plugins"
+        workspaces_dir = tmp_path / "workspaces"
+        for path in (data_dir, global_skills_dir, plugins_dir):
+            path.mkdir(parents=True, exist_ok=True)
+
+        mock_event.get_group_id.return_value = "group123"
+        mock_event.unified_msg_origin = "test_platform:GroupMessage:group123"
+        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
+            mock_event.unified_msg_origin,
+        )
+        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
+        workspace_skill_dir.mkdir(parents=True)
+        workspace_skill_dir.joinpath("SKILL.md").write_text(
+            "---\ndescription: Workspace scoped skill.\n---\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            module,
+            "get_astrbot_workspaces_path",
+            lambda: str(workspaces_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
+            lambda: str(data_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
+            lambda: str(global_skills_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
+            lambda: str(plugins_dir),
+        )
+
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id=None)
+
+        await module._ensure_persona_and_skills(
+            req,
+            {"computer_use_runtime": "local"},
+            mock_context,
+            mock_event,
+        )
+
+        assert "Workspace scoped skill." not in req.system_prompt
+        assert "## Skills" not in req.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_ensure_skills_respects_empty_persona_skills_for_workspace(
+        self,
+        monkeypatch,
+        tmp_path,
+        mock_event,
+        mock_context,
+    ):
+        """An explicit empty persona skill list disables workspace skills too."""
+        module = ama
+        data_dir = tmp_path / "data"
+        global_skills_dir = tmp_path / "global_skills"
+        plugins_dir = tmp_path / "plugins"
+        workspaces_dir = tmp_path / "workspaces"
+        for path in (data_dir, global_skills_dir, plugins_dir):
+            path.mkdir(parents=True, exist_ok=True)
+
+        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
+            mock_event.unified_msg_origin,
+        )
+        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
+        workspace_skill_dir.mkdir(parents=True)
+        workspace_skill_dir.joinpath("SKILL.md").write_text(
+            "---\ndescription: Workspace scoped skill.\n---\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            module,
+            "get_astrbot_workspaces_path",
+            lambda: str(workspaces_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
+            lambda: str(data_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
+            lambda: str(global_skills_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
+            lambda: str(plugins_dir),
+        )
+        persona = {"name": "no-skills", "prompt": "", "skills": []}
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=("no-skills", persona, None, False),
+        )
+
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id="no-skills")
+
+        await module._ensure_persona_and_skills(
+            req,
+            {"computer_use_runtime": "local"},
+            mock_context,
+            mock_event,
+        )
+
+        assert "Workspace scoped skill." not in req.system_prompt
+        assert "## Skills" not in req.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_skills_collector_includes_workspace_skills(
+        self,
+        monkeypatch,
+        tmp_path,
+        mock_event,
+        mock_context,
+    ):
+        """Yakumo prompt context sees the same workspace skill inventory."""
+        module = ama
+        data_dir = tmp_path / "data"
+        global_skills_dir = tmp_path / "global_skills"
+        plugins_dir = tmp_path / "plugins"
+        workspaces_dir = tmp_path / "workspaces"
+        for path in (data_dir, global_skills_dir, plugins_dir):
+            path.mkdir(parents=True, exist_ok=True)
+
+        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
+            mock_event.unified_msg_origin,
+        )
+        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
+        workspace_skill_dir.mkdir(parents=True)
+        workspace_skill_dir.joinpath("SKILL.md").write_text(
+            "---\ndescription: Workspace scoped skill.\n---\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            "astrbot.core.workspace.get_astrbot_workspaces_path",
+            lambda: str(workspaces_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
+            lambda: str(data_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
+            lambda: str(global_skills_dir),
+        )
+        monkeypatch.setattr(
+            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
+            lambda: str(plugins_dir),
+        )
+
+        config = module.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            computer_use_runtime="local",
+        )
+        slots = await module.SkillsCollector().collect(
+            mock_event,
+            mock_context,
+            config,
+        )
+
+        assert len(slots) == 1
+        skills = slots[0].value["skills"]
+        assert [skill["name"] for skill in skills] == ["workspace-skill"]
+        assert skills[0]["description"] == "Workspace scoped skill."
+        assert skills[0]["source_type"] == "workspace"
+
+    @pytest.mark.asyncio
     async def test_ensure_tools_from_persona(self, mock_event, mock_context):
         """Test applying tools from persona."""
         module = ama

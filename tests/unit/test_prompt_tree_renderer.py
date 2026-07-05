@@ -13,10 +13,9 @@ from astrbot.core.prompt.render import (
     PromptRenderEngine,
     SerializedRenderValue,
 )
-from astrbot.core.provider.sources.kimi_code_source import ProviderKimiCode
-from astrbot.core.provider.sources.openrouter_source import ProviderOpenRouter
-from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 from astrbot.core.prompt.render.engine import logger as render_logger
+from astrbot.core.provider.sources.kimi_code_source import ProviderKimiCode
+from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 
 
 def test_prompt_builder_builds_nested_tag_tree():
@@ -962,7 +961,7 @@ def test_render_engine_applies_persona_whitelists_to_capabilities():
                 value={
                     "format": "skills_inventory_v1",
                     "runtime": "local",
-                    "skill_count": 2,
+                    "skill_count": 3,
                     "skills": [
                         {
                             "name": "skill_a",
@@ -970,6 +969,16 @@ def test_render_engine_applies_persona_whitelists_to_capabilities():
                             "path": "/skills/a/SKILL.md",
                             "source_type": "local_only",
                             "source_label": "local",
+                            "active": True,
+                            "local_exists": True,
+                            "sandbox_exists": False,
+                        },
+                        {
+                            "name": "workspace_skill",
+                            "description": "Workspace skill",
+                            "path": "/workspace/skills/workspace_skill/SKILL.md",
+                            "source_type": "workspace",
+                            "source_label": "workspace",
                             "active": True,
                             "local_exists": True,
                             "sandbox_exists": False,
@@ -1023,6 +1032,7 @@ def test_render_engine_applies_persona_whitelists_to_capabilities():
     result = engine.render(pack)
 
     assert "skill_a" in result.system_prompt
+    assert "workspace_skill" in result.system_prompt
     assert "skill_b" not in result.system_prompt
     assert result.tool_schema == [
         {

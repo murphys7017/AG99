@@ -47,6 +47,39 @@ Current local upstream-sync commits:
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
 
+## 2026-07-06 Workspace-local Skills follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Workspace-local Skills discovery:
+  - `29d66b84b` / `6cac0881f` / `6fcac65bd`: `SkillManager` now discovers request-scoped skills from `<resolved_workspace>/skills/<skill_name>/SKILL.md`, with strict skill-name validation, exact `SKILL.md` casing, bounded frontmatter reads, and path checks that keep resolved skill files under the workspace skills root.
+  - `b7da25978`: workspace-local Skills are disabled for group sessions.
+  - This fork resolves the workspace through the local `astrbot.core.workspace` helper, so ChatUI project/shared/custom workspaces from the previous batch are honored. Non-WebChat sessions keep the legacy per-UMO workspace.
+  - Both the legacy `_ensure_persona_and_skills()` prompt injection path and the local Yakumo `SkillsCollector` structured prompt slot now see the same workspace-local skill inventory.
+  - Workspace Skills override same-name local/plugin/sandbox Skills for the current request only. Explicit persona `skills=[]` still disables all Skills, including workspace Skills; persona allowlists continue to filter global/plugin/sandbox Skills without filtering request-scoped workspace Skills.
+
+Local compatibility notes:
+
+- Workspace Skills are local-runtime only and are not synced into sandbox sessions in this batch.
+- Workspace Skills remain request-scoped: they are not written to `skills.json` and are not shown in the global Skills management page.
+- Workspace Skill descriptions are sanitized before prompt rendering, matching the existing sandbox-only prompt-hardening path.
+
+Documentation:
+
+- Updated `docs/zh/use/skills.md` and `docs/en/use/skills.md` with skill-source priority, workspace scope, group-session behavior, and sandbox limitations.
+
+Validation for this follow-up:
+
+- Python targeted tests: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run pytest tests/test_skill_metadata_enrichment.py tests/unit/test_astr_main_agent.py::TestEnsurePersonaAndSkills tests/unit/test_prompt_tree_renderer.py::test_render_engine_applies_persona_whitelists_to_capabilities -q`
+- Python focused lint: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run ruff check astrbot/core/skills/skill_manager.py astrbot/core/astr_main_agent.py astrbot/core/prompt/collectors/skills_collector.py astrbot/core/prompt/render/interfaces.py tests/test_skill_metadata_enrichment.py tests/unit/test_astr_main_agent.py tests/unit/test_prompt_tree_renderer.py`
+- Hygiene: `git diff --check`
+
+Known validation note:
+
+- Focused pytest passed with existing third-party deprecation warnings from `jieba/pkg_resources` and Python `audioop`.
+
 ## 2026-07-06 ChatUI project workspace follow-up
 
 Reviewed upstream baseline: `upstream/master` at `25cbd41e0`

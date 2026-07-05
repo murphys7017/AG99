@@ -7,10 +7,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
+from astrbot.core.db import BaseDatabase
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo, SkillManager
 from astrbot.core.star.context import Context
+from astrbot.core.workspace import (
+    default_workspace_root,
+    resolve_workspace_root_for_umo,
+)
 
 from ..context_types import ContextSlot
 from ..interfaces.context_collector_inferface import ContextCollectorInterface
@@ -33,12 +38,22 @@ class SkillsCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
-        del event, plugin_context, provider_request
+        del provider_request
 
         runtime = self._resolve_runtime(config)
 
         try:
             skills = self._load_active_skills(runtime)
+            workspace_skills = await self._load_workspace_skills(
+                event,
+                plugin_context,
+                runtime,
+            )
+            if workspace_skills:
+                skills_by_name = {skill.name: skill for skill in skills}
+                for skill in workspace_skills:
+                    skills_by_name[skill.name] = skill
+                skills = [skills_by_name[name] for name in sorted(skills_by_name)]
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to collect active skills: runtime=%s error=%s",
@@ -62,6 +77,40 @@ class SkillsCollector(ContextCollectorInterface):
     def _load_active_skills(self, runtime: str) -> list[SkillInfo]:
         manager = SkillManager()
         return manager.list_skills(active_only=True, runtime=runtime)
+
+    async def _load_workspace_skills(
+        self,
+        event: AstrMessageEvent,
+        plugin_context: Context,
+        runtime: str,
+    ) -> list[SkillInfo]:
+        if runtime != "local" or self._event_has_group_context(event):
+            return []
+        workspace_root = default_workspace_root(event.unified_msg_origin)
+        db = getattr(plugin_context, "_db", None)
+        if isinstance(db, BaseDatabase):
+            try:
+                workspace_root = await resolve_workspace_root_for_umo(
+                    event.unified_msg_origin,
+                    db,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "Failed to resolve workspace skills root for %s: %s",
+                    event.unified_msg_origin,
+                    exc,
+                )
+        return SkillManager().list_workspace_skills(workspace_root)
+
+    @staticmethod
+    def _event_has_group_context(event: AstrMessageEvent) -> bool:
+        get_group_id = getattr(event, "get_group_id", None)
+        if not callable(get_group_id):
+            return False
+        try:
+            return bool(get_group_id())
+        except Exception:
+            return False
 
     def _build_skills_slot(
         self,
