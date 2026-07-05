@@ -47,6 +47,21 @@ Current local upstream-sync commits:
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
 
+## 2026-07-06 Markdown streaming performance follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Markdown streaming performance:
+  - `372b9f5bf`: chat Markdown rendering now uses a shared `MARKDOWN_RENDER_MAX_LIVE_NODES = 320` limit instead of disabling the live-node cap with `0`.
+  - Applied to the local message Markdown part, threaded Markdown part, and reasoning timeline Markdown rendering, preserving the fork's existing ChatUI component layout.
+  - Frontend Markdown dependencies were aligned with upstream for this fix: `markstream-vue` `1.0.5-beta.0`, `stream-markdown` `^0.0.16`, and `shiki` `^3.23.0`.
+
+Validation for this follow-up:
+
+- Frontend: `pnpm --dir dashboard typecheck`
+
 ## 2026-07-06 KB cleanup and retrieval resilience follow-up
 
 Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
