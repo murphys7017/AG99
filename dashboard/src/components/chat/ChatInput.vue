@@ -88,7 +88,7 @@
           >
             <div
               class="attachment-icon"
-              :style="{ color: filePresentation(file).color }"
+              :style="{ '--attachment-color': filePresentation(file).color }"
             >
               <v-icon :icon="filePresentation(file).icon" size="24"></v-icon>
               <span class="attachment-ext">{{
@@ -329,6 +329,7 @@ import CommandSuggestion, {
 } from "./CommandSuggestion.vue";
 import ProviderModelMenu from "./ProviderModelMenu.vue";
 import StyledMenu from "@/components/shared/StyledMenu.vue";
+import { attachmentPresentation } from "@/components/chat/attachmentPresentation";
 import type { Session } from "@/composables/useSessions";
 
 interface StagedFileInfo {
@@ -530,62 +531,8 @@ const hasStagedAttachments = computed(() => {
   );
 });
 
-const fileTypeStyles: Record<
-  string,
-  { color: string; icon: string; label: string }
-> = {
-  pdf: { color: "#d32f2f", icon: "mdi-file-pdf-box", label: "PDF" },
-  txt: { color: "#1976d2", icon: "mdi-file-document-outline", label: "TXT" },
-  md: { color: "#1976d2", icon: "mdi-language-markdown-outline", label: "MD" },
-  markdown: {
-    color: "#1976d2",
-    icon: "mdi-language-markdown-outline",
-    label: "MD",
-  },
-  doc: { color: "#2b579a", icon: "mdi-file-word-box", label: "DOC" },
-  docx: { color: "#2b579a", icon: "mdi-file-word-box", label: "DOCX" },
-  xls: { color: "#217346", icon: "mdi-file-excel-box", label: "XLS" },
-  xlsx: { color: "#217346", icon: "mdi-file-excel-box", label: "XLSX" },
-  csv: { color: "#217346", icon: "mdi-file-delimited-outline", label: "CSV" },
-  ppt: { color: "#d24726", icon: "mdi-file-powerpoint-box", label: "PPT" },
-  pptx: { color: "#d24726", icon: "mdi-file-powerpoint-box", label: "PPTX" },
-  zip: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "ZIP" },
-  rar: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "RAR" },
-  "7z": { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "7Z" },
-  tar: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "TAR" },
-  gz: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "GZ" },
-  json: { color: "#6a1b9a", icon: "mdi-code-json", label: "JSON" },
-  yaml: { color: "#6a1b9a", icon: "mdi-code-braces", label: "YAML" },
-  yml: { color: "#6a1b9a", icon: "mdi-code-braces", label: "YML" },
-  js: { color: "#b8860b", icon: "mdi-language-javascript", label: "JS" },
-  ts: { color: "#3178c6", icon: "mdi-language-typescript", label: "TS" },
-  html: { color: "#e34c26", icon: "mdi-language-html5", label: "HTML" },
-  css: { color: "#264de4", icon: "mdi-language-css3", label: "CSS" },
-  py: { color: "#3776ab", icon: "mdi-language-python", label: "PY" },
-  java: { color: "#b07219", icon: "mdi-language-java", label: "JAVA" },
-  mp3: { color: "#00897b", icon: "mdi-file-music-outline", label: "MP3" },
-  wav: { color: "#00897b", icon: "mdi-file-music-outline", label: "WAV" },
-  flac: { color: "#00897b", icon: "mdi-file-music-outline", label: "FLAC" },
-  mp4: { color: "#5e35b1", icon: "mdi-file-video-outline", label: "MP4" },
-  mov: { color: "#5e35b1", icon: "mdi-file-video-outline", label: "MOV" },
-  webm: { color: "#5e35b1", icon: "mdi-file-video-outline", label: "WEBM" },
-};
-
-function fileExtension(file: StagedFileInfo) {
-  const name = file.original_name || file.filename || "";
-  const extension = name.split(".").pop()?.toLowerCase() || "";
-  return extension === name.toLowerCase() ? "" : extension;
-}
-
 function filePresentation(file: StagedFileInfo) {
-  const extension = fileExtension(file);
-  return (
-    fileTypeStyles[extension] || {
-      color: "#607d8b",
-      icon: "mdi-file-document-outline",
-      label: extension ? extension.slice(0, 4).toUpperCase() : "FILE",
-    }
-  );
+  return attachmentPresentation(file);
 }
 
 // Ctrl+B 长按录音相关
@@ -1134,6 +1081,7 @@ defineExpose({
 }
 
 .attachment-card {
+  --attachment-color: #607d8b;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -1173,6 +1121,7 @@ defineExpose({
   gap: 1px;
   flex-shrink: 0;
   min-width: 34px;
+  color: var(--attachment-color);
 }
 
 .attachment-icon--audio {
@@ -1187,6 +1136,7 @@ defineExpose({
   font-size: 10px;
   font-weight: 700;
   line-height: 12px;
+  color: var(--attachment-color);
 }
 
 .attachment-name {

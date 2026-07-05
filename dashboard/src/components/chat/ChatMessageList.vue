@@ -61,7 +61,10 @@
                   variant="text"
                   :loading="
                     downloadingFiles.has(
-                      part.attachment_id || part.filename || '',
+                      part.attachment_id ||
+                        part.stored_filename ||
+                        part.filename ||
+                        '',
                     )
                   "
                   @click="downloadPart(part)"
@@ -206,15 +209,21 @@
                     />
 
                     <div v-else-if="part.type === 'file'" class="file-part">
-                      <v-icon size="20">mdi-file-document-outline</v-icon>
-                      <span>{{ part.filename || "file" }}</span>
+                      <v-icon
+                        :icon="attachmentPresentation(part).icon"
+                        size="20"
+                      />
+                      <span>{{ attachmentName(part) }}</span>
                       <v-btn
                         icon="mdi-download"
                         size="x-small"
                         variant="text"
                         :loading="
                           downloadingFiles.has(
-                            part.attachment_id || part.filename || '',
+                            part.attachment_id ||
+                              part.stored_filename ||
+                              part.filename ||
+                              '',
                           )
                         "
                         @click="downloadPart(part)"
@@ -397,6 +406,10 @@ import ActionRef from "@/components/chat/message_list_comps/ActionRef.vue";
 import MarkdownMessagePart from "@/components/chat/message_list_comps/MarkdownMessagePart.vue";
 import ThemeAwareMarkdownCodeBlock from "@/components/shared/ThemeAwareMarkdownCodeBlock.vue";
 import StyledMenu from "@/components/shared/StyledMenu.vue";
+import {
+  attachmentName as sharedAttachmentName,
+  attachmentPresentation as sharedAttachmentPresentation,
+} from "@/components/chat/attachmentPresentation";
 import {
   displayParts as displayMessageParts,
   messageBlocks as buildMessageBlocks,
@@ -593,72 +606,12 @@ function hasFollowingContentBlock(message: ChatRecord, blockIndex: number) {
     .some((block) => block.kind === "content");
 }
 
-const attachmentTypeStyles: Record<
-  string,
-  { color: string; icon: string; label: string }
-> = {
-  pdf: { color: "#d32f2f", icon: "mdi-file-pdf-box", label: "PDF" },
-  txt: { color: "#1976d2", icon: "mdi-file-document-outline", label: "TXT" },
-  md: { color: "#1976d2", icon: "mdi-language-markdown-outline", label: "MD" },
-  markdown: {
-    color: "#1976d2",
-    icon: "mdi-language-markdown-outline",
-    label: "MD",
-  },
-  doc: { color: "#2b579a", icon: "mdi-file-word-box", label: "DOC" },
-  docx: { color: "#2b579a", icon: "mdi-file-word-box", label: "DOCX" },
-  xls: { color: "#217346", icon: "mdi-file-excel-box", label: "XLS" },
-  xlsx: { color: "#217346", icon: "mdi-file-excel-box", label: "XLSX" },
-  csv: { color: "#217346", icon: "mdi-file-delimited-outline", label: "CSV" },
-  ppt: { color: "#d24726", icon: "mdi-file-powerpoint-box", label: "PPT" },
-  pptx: { color: "#d24726", icon: "mdi-file-powerpoint-box", label: "PPTX" },
-  zip: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "ZIP" },
-  rar: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "RAR" },
-  "7z": { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "7Z" },
-  tar: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "TAR" },
-  gz: { color: "#7b5e00", icon: "mdi-folder-zip-outline", label: "GZ" },
-  json: { color: "#6a1b9a", icon: "mdi-code-json", label: "JSON" },
-  yaml: { color: "#6a1b9a", icon: "mdi-code-braces", label: "YAML" },
-  yml: { color: "#6a1b9a", icon: "mdi-code-braces", label: "YML" },
-  js: { color: "#b8860b", icon: "mdi-language-javascript", label: "JS" },
-  ts: { color: "#3178c6", icon: "mdi-language-typescript", label: "TS" },
-  html: { color: "#e34c26", icon: "mdi-language-html5", label: "HTML" },
-  css: { color: "#264de4", icon: "mdi-language-css3", label: "CSS" },
-  py: { color: "#3776ab", icon: "mdi-language-python", label: "PY" },
-  java: { color: "#b07219", icon: "mdi-language-java", label: "JAVA" },
-  mp3: { color: "#00897b", icon: "mdi-file-music-outline", label: "MP3" },
-  wav: { color: "#00897b", icon: "mdi-file-music-outline", label: "WAV" },
-  flac: { color: "#00897b", icon: "mdi-file-music-outline", label: "FLAC" },
-  mp4: { color: "#5e35b1", icon: "mdi-file-video-outline", label: "MP4" },
-  mov: { color: "#5e35b1", icon: "mdi-file-video-outline", label: "MOV" },
-  webm: { color: "#5e35b1", icon: "mdi-file-video-outline", label: "WEBM" },
-};
-
 function attachmentName(part: MessagePart) {
-  return part.embedded_file?.filename || part.filename || part.type || "file";
-}
-
-function attachmentExtension(part: MessagePart) {
-  const name = attachmentName(part);
-  const extension = name.split(".").pop()?.toLowerCase() || "";
-  return extension === name.toLowerCase() ? "" : extension;
+  return sharedAttachmentName(part);
 }
 
 function attachmentPresentation(part: MessagePart) {
-  if (part.type === "record") {
-    return { color: "#00897b", icon: "mdi-microphone", label: "AUDIO" };
-  }
-  if (part.type === "video") {
-    return { color: "#5e35b1", icon: "mdi-file-video-outline", label: "VIDEO" };
-  }
-  const extension = attachmentExtension(part);
-  return (
-    attachmentTypeStyles[extension] || {
-      color: "#607d8b",
-      icon: "mdi-file-document-outline",
-      label: extension ? extension.slice(0, 4).toUpperCase() : "FILE",
-    }
-  );
+  return sharedAttachmentPresentation(part);
 }
 
 function handleMouseUp(event: MouseEvent, message: ChatRecord) {
@@ -687,8 +640,9 @@ function partUrl(part: MessagePart) {
       part.attachment_id,
     )}`;
   }
-  if (part.filename) {
-    return `/api/chat/get_file?filename=${encodeURIComponent(part.filename)}`;
+  const lookupFilename = part.stored_filename || part.filename;
+  if (lookupFilename) {
+    return `/api/chat/get_file?filename=${encodeURIComponent(lookupFilename)}`;
   }
   return "";
 }
@@ -815,7 +769,7 @@ async function copyMessage(message: ChatRecord) {
 }
 
 async function downloadPart(part: MessagePart) {
-  const key = part.attachment_id || part.filename || "";
+  const key = part.attachment_id || part.stored_filename || part.filename || "";
   if (!key) return;
   downloadingFiles.value = new Set(downloadingFiles.value).add(key);
   try {

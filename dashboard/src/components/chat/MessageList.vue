@@ -107,15 +107,21 @@
                     />
 
                     <div v-else-if="part.type === 'file'" class="file-part">
-                      <v-icon size="20">mdi-file-document-outline</v-icon>
-                      <span>{{ part.filename || "file" }}</span>
+                      <v-icon
+                        :icon="attachmentPresentation(part).icon"
+                        size="20"
+                      />
+                      <span>{{ attachmentName(part) }}</span>
                       <v-btn
                         icon="mdi-download"
                         size="x-small"
                         variant="text"
                         :loading="
                           downloadingFiles.has(
-                            part.attachment_id || part.filename || '',
+                            part.attachment_id ||
+                              part.stored_filename ||
+                              part.filename ||
+                              '',
                           )
                         "
                         @click="downloadPart(part)"
@@ -259,6 +265,10 @@ import ToolCallItem from "@/components/chat/message_list_comps/ToolCallItem.vue"
 import ActionRef from "@/components/chat/message_list_comps/ActionRef.vue";
 import ThemeAwareMarkdownCodeBlock from "@/components/shared/ThemeAwareMarkdownCodeBlock.vue";
 import {
+  attachmentName,
+  attachmentPresentation,
+} from "@/components/chat/attachmentPresentation";
+import {
   displayParts as displayMessageParts,
   messageBlocks as buildMessageBlocks,
   type MessageDisplayBlock,
@@ -341,8 +351,9 @@ function partUrl(part: MessagePart) {
       part.attachment_id,
     )}`;
   }
-  if (part.filename) {
-    return `/api/chat/get_file?filename=${encodeURIComponent(part.filename)}`;
+  const lookupFilename = part.stored_filename || part.filename;
+  if (lookupFilename) {
+    return `/api/chat/get_file?filename=${encodeURIComponent(lookupFilename)}`;
   }
   return "";
 }
@@ -475,7 +486,7 @@ async function copyMessage(message: ChatRecord) {
 }
 
 async function downloadPart(part: MessagePart) {
-  const key = part.attachment_id || part.filename || "";
+  const key = part.attachment_id || part.stored_filename || part.filename || "";
   if (!key) return;
   downloadingFiles.value = new Set(downloadingFiles.value).add(key);
   try {

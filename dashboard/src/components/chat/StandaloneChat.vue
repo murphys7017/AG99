@@ -86,8 +86,11 @@
                       />
 
                       <div v-else-if="part.type === 'file'" class="file-part">
-                        <v-icon size="20">mdi-file-document-outline</v-icon>
-                        <span>{{ part.filename || "file" }}</span>
+                        <v-icon
+                          :icon="attachmentPresentation(part).icon"
+                          size="20"
+                        />
+                        <span>{{ attachmentName(part) }}</span>
                       </div>
 
                       <div
@@ -194,6 +197,10 @@ import RefNode from "@/components/chat/message_list_comps/RefNode.vue";
 import ToolCallCard from "@/components/chat/message_list_comps/ToolCallCard.vue";
 import ToolCallItem from "@/components/chat/message_list_comps/ToolCallItem.vue";
 import ThemeAwareMarkdownCodeBlock from "@/components/shared/ThemeAwareMarkdownCodeBlock.vue";
+import {
+  attachmentName,
+  attachmentPresentation,
+} from "@/components/chat/attachmentPresentation";
 import { useMediaHandling } from "@/composables/useMediaHandling";
 import {
   displayParts as displayMessageParts,
@@ -417,8 +424,9 @@ function partUrl(part: MessagePart) {
     return `/api/chat/get_attachment?attachment_id=${encodeURIComponent(
       part.attachment_id,
     )}`;
-  if (part.filename)
-    return `/api/chat/get_file?filename=${encodeURIComponent(part.filename)}`;
+  const lookupFilename = part.stored_filename || part.filename;
+  if (lookupFilename)
+    return `/api/chat/get_file?filename=${encodeURIComponent(lookupFilename)}`;
   return "";
 }
 

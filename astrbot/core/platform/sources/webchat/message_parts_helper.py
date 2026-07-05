@@ -3,7 +3,7 @@ import mimetypes
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from astrbot.core.db.po import Attachment
@@ -26,6 +26,16 @@ ReplyHistoryGetter = Callable[
 ]
 
 MEDIA_PART_TYPES = {"image", "record", "file", "video"}
+
+
+def _safe_display_filename(filename: str | None) -> str:
+    """Return a safe basename for display-only filenames."""
+    if not filename:
+        return ""
+    basename = (
+        PurePosixPath(str(filename).replace("\\", "/")).name.replace("\x00", "").strip()
+    )
+    return "" if basename in {"", ".", ".."} else basename
 
 
 def strip_message_parts_path_fields(message_parts: list[dict]) -> list[dict]:
@@ -223,14 +233,16 @@ async def build_webchat_message_parts(
             continue
 
         attachment_path = Path(attachment.path)
-        message_parts.append(
-            {
-                "type": attachment.type,
-                "attachment_id": attachment.attachment_id,
-                "filename": attachment_path.name,
-                "path": str(attachment_path),
-            }
-        )
+        display_name = _safe_display_filename(part.get("filename")) or attachment_path.name
+        message_part = {
+            "type": attachment.type,
+            "attachment_id": attachment.attachment_id,
+            "filename": display_name,
+            "path": str(attachment_path),
+        }
+        if display_name != attachment_path.name:
+            message_part["stored_filename"] = attachment_path.name
+        message_parts.append(message_part)
 
     return message_parts
 
@@ -334,6 +346,7 @@ async def create_attachment_part_from_existing_file(
     insert_attachment: AttachmentInserter,
     attachments_dir: str | Path,
     fallback_dirs: Sequence[str | Path] = (),
+    display_name: str | None = None,
 ) -> dict | None:
     basename = Path(filename).name
     candidate_paths = [Path(attachments_dir) / basename]
@@ -352,11 +365,15 @@ async def create_attachment_part_from_existing_file(
     if not attachment:
         return None
 
-    return {
+    safe_display_name = _safe_display_filename(display_name)
+    part = {
         "type": attach_type,
         "attachment_id": attachment.attachment_id,
-        "filename": file_path.name,
+        "filename": safe_display_name or file_path.name,
     }
+    if part["filename"] != file_path.name:
+        part["stored_filename"] = file_path.name
+    return part
 
 
 async def message_chain_to_storage_message_parts(
@@ -458,8 +475,11 @@ async def _copy_file_to_attachment_part(
     if not attachment:
         return None
 
-    return {
+    part = {
         "type": attach_type,
         "attachment_id": attachment.attachment_id,
-        "filename": display_name or src_path.name,
+        "filename": _safe_display_filename(display_name) or src_path.name,
     }
+    if part["filename"] != target_path.name:
+        part["stored_filename"] = target_path.name
+    return part

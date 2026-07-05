@@ -47,6 +47,34 @@ Current local upstream-sync commits:
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
 
+## 2026-07-06 ChatUI attachment display follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- WebChat attachment filenames:
+  - `b43cc6dee`: WebChat file sends now preserve both the stored UUID filename and the original display filename. Stored names remain available as `stored_filename` for file lookup, while `filename` is kept user-facing.
+  - Message-part builders sanitize display filenames to a basename, reject unusable names such as `.` / `..`, and record `stored_filename` when the display name differs from the disk name.
+- ChatUI rendering:
+  - Frontend message parsing understands `stored_filename` and uses it for legacy `/api/chat/get_file` lookups while still showing the original filename.
+  - File attachment presentation is shared through `attachmentPresentation.ts`, reducing duplicated extension/icon/color logic across the composer, main message list, legacy message list, and standalone chat.
+
+Deferred / intentionally not included in this follow-up:
+
+- Upstream FastAPI/OpenAPI generated type and schema changes were not copied because this fork still uses the local Quart dashboard route layer.
+- MDI subset binary/font churn was not committed directly; the existing dashboard build scripts regenerate the subset from source usage.
+
+Validation for this follow-up:
+
+- Python: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run pytest tests/unit/test_webchat_message_parts.py -q`
+- Python lint: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run ruff check astrbot/core/platform/sources/webchat/message_parts_helper.py astrbot/core/platform/sources/webchat/webchat_event.py tests/unit/test_webchat_message_parts.py`
+- Frontend: `pnpm --dir dashboard typecheck`
+
+Known validation note:
+
+- The focused pytest run passed with existing third-party deprecation warnings from `jieba/pkg_resources` and Python `audioop`.
+
 ## 2026-07-06 Markdown streaming performance follow-up
 
 Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
