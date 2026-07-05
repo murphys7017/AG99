@@ -5,14 +5,14 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 Current comparison baseline:
 
 - Local branch: `master`
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
 - Last local upstream snapshot checked: `upstream/master` at `25cbd41e0` (`feat: add sanitation for malformed tool call names in ToolLoopAgentRunner (#9144)`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-05; upstream currently includes releases through `v4.26.4` and follow-up commits through `25cbd41e0`.
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-06; upstream currently includes releases through `v4.26.4` and follow-up commits through `25cbd41e0`.
 - Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
 - Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
 
@@ -46,6 +46,35 @@ Current local upstream-sync commits:
 - `d39001dcd` Absorb small runtime compatibility fixes.
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
+
+## 2026-07-06 KB cleanup and retrieval resilience follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Knowledge base creation:
+  - `aecee6fc9`: duplicate KB names are checked before insert, and concurrent unique-constraint collisions are converted to the same user-facing duplicate-name error instead of relying on fragile string matching.
+- Retrieval resilience:
+  - `468eea99c`: dense retrieval failures for an individual KB are logged and skipped even when only one KB was requested, allowing sparse retrieval/fusion paths to continue where possible.
+  - Rerank provider selection now follows the initialized `vec_db.rerank_provider` instead of requiring the persisted provider ID to match, preserving behavior when the helper already resolved the usable provider.
+- Knowledge base cleanup/statistics:
+  - `e2f3b0008`: deleting a document also deletes related `KBMedia` rows in the metadata database before removing vector chunks.
+  - KB chunk statistics now count vector documents with `metadata_filter={"kb_id": kb_id}`, so one KB's stats do not include chunks from other KBs.
+
+Deferred / intentionally not included in this follow-up:
+
+- `ea9e3421d` KB CRUD API contract and pagination alignment remains deferred because it is tied to upstream's FastAPI/OpenAPI service-route shape, while this fork still uses the local Quart dashboard routes.
+- ChatUI project workspace and attachment-display work remains a separate frontend/backend feature batch.
+
+Validation for this follow-up:
+
+- Python: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run pytest tests/unit/test_kb_manager_resilience.py tests/unit/test_kb_document_cleanup.py -q`
+- Python lint: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run ruff check astrbot/core/knowledge_base/kb_mgr.py astrbot/core/knowledge_base/kb_db_sqlite.py astrbot/core/knowledge_base/retrieval/manager.py tests/unit/test_kb_manager_resilience.py tests/unit/test_kb_document_cleanup.py`
+
+Known validation note:
+
+- The focused pytest run passed with the existing third-party `jieba/pkg_resources` deprecation warning.
 
 ## 2026-07-05 background wakeup and webhook response follow-up
 

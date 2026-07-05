@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 
 @pytest.fixture
@@ -55,6 +56,7 @@ def mock_kb_db():
     db.get_db = MagicMock()
     db.list_kbs = AsyncMock(return_value=[])
     db.get_kb_by_id = AsyncMock()
+    db.get_kb_by_name = AsyncMock(return_value=None)
     return db
 
 
@@ -303,3 +305,179 @@ async def test_ensure_vec_db_sets_init_error_on_failure(
         # Verify: init_error should NOT be cleared (still has previous error)
         # Note: _ensure_vec_db doesn't set init_error; that's done by the caller
         assert helper.init_error is not None
+
+
+@pytest.mark.asyncio
+async def test_create_kb_rejects_duplicate_name_before_insert(
+    stub_provider_manager_module,
+    mock_provider_manager,
+    mock_kb_db,
+    mock_knowledge_base,
+):
+    """create_kb should fail fast when the name already exists."""
+    from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
+
+    mock_kb_db.get_kb_by_name.return_value = mock_knowledge_base
+
+    kb_mgr = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
+    kb_mgr.provider_manager = mock_provider_manager
+    kb_mgr.kb_db = mock_kb_db
+    kb_mgr.kb_insts = {}
+
+    with pytest.raises(ValueError, match="已存在"):
+        await kb_mgr.create_kb(
+            kb_name="test_kb",
+            embedding_provider_id="test-embedding-provider",
+        )
+
+    mock_kb_db.get_db.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_kb_converts_integrity_error_to_duplicate_name(
+    stub_provider_manager_module,
+    mock_provider_manager,
+    mock_kb_db,
+):
+    """A concurrent duplicate insert should return the same user-facing error."""
+    from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
+
+    mock_session = MagicMock()
+    mock_session.add = MagicMock()
+    mock_session.flush = AsyncMock(
+        side_effect=IntegrityError("insert", {}, Exception("uix_kb_name")),
+    )
+    mock_session.commit = AsyncMock()
+
+    class MockDbContext:
+        async def __aenter__(self):
+            return mock_session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    mock_kb_db.get_db.return_value = MockDbContext()
+
+    kb_mgr = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
+    kb_mgr.provider_manager = mock_provider_manager
+    kb_mgr.kb_db = mock_kb_db
+    kb_mgr.kb_insts = {}
+
+    with pytest.raises(ValueError, match="已存在"):
+        await kb_mgr.create_kb(
+            kb_name="test_kb",
+            embedding_provider_id="test-embedding-provider",
+        )
+
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dense_retrieve_skips_single_kb_failure():
+    """Dense retrieval failures should be logged and skipped, not raised."""
+    from astrbot.core.knowledge_base.retrieval.manager import RetrievalManager
+
+    vec_db = MagicMock()
+    vec_db.retrieve = AsyncMock(side_effect=RuntimeError("vector store unavailable"))
+    manager = RetrievalManager(
+        sparse_retriever=MagicMock(),
+        rank_fusion=MagicMock(),
+        kb_db=MagicMock(),
+    )
+
+    results = await manager._dense_retrieve(
+        query="hello",
+        kb_ids=["kb-1"],
+        kb_options={
+            "kb-1": {
+                "vec_db": vec_db,
+                "top_k_dense": 5,
+            },
+        },
+    )
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_retrieve_uses_first_available_vec_db_rerank_provider():
+    """Rerank provider selection follows initialized vec_db state."""
+    from astrbot.core.db.vec_db.base import Result
+    from astrbot.core.knowledge_base.retrieval.manager import RetrievalManager
+
+    rerank_provider = MagicMock()
+    rerank_provider.rerank = AsyncMock(return_value=[])
+
+    vec_db = MagicMock()
+    vec_db.rerank_provider = rerank_provider
+    vec_db.retrieve = AsyncMock(
+        return_value=[
+            Result(
+                similarity=0.9,
+                data={
+                    "metadata": {
+                        "kb_doc_id": "doc-1",
+                        "kb_id": "kb-1",
+                        "chunk_index": 0,
+                    },
+                    "id": "chunk-1",
+                    "text": "content",
+                },
+            ),
+        ],
+    )
+
+    kb = MagicMock()
+    kb.top_k_dense = 5
+    kb.top_k_sparse = 5
+    kb.top_m_final = 5
+    kb.rerank_provider_id = "stale-provider-id"
+
+    helper = MagicMock()
+    helper.kb = kb
+    helper.vec_db = vec_db
+
+    sparse_retriever = MagicMock()
+    sparse_retriever.retrieve = AsyncMock(return_value=[])
+
+    rank_fusion = MagicMock()
+    rank_fusion.fuse = AsyncMock(
+        return_value=[
+            MagicMock(
+                chunk_id="chunk-1",
+                doc_id="doc-1",
+                kb_id="kb-1",
+                content="content",
+                score=0.9,
+                chunk_index=0,
+            ),
+        ],
+    )
+
+    document = MagicMock()
+    document.doc_name = "doc.txt"
+    knowledge_base = MagicMock()
+    knowledge_base.kb_name = "kb"
+    kb_db = MagicMock()
+    kb_db.get_documents_with_metadata_batch = AsyncMock(
+        return_value={
+            "doc-1": {
+                "document": document,
+                "knowledge_base": knowledge_base,
+            },
+        },
+    )
+
+    manager = RetrievalManager(
+        sparse_retriever=sparse_retriever,
+        rank_fusion=rank_fusion,
+        kb_db=kb_db,
+    )
+
+    await manager.retrieve(
+        query="hello",
+        kb_ids=["kb-1"],
+        kb_id_helper_map={"kb-1": helper},
+    )
+
+    rerank_provider.rerank.assert_awaited_once()
