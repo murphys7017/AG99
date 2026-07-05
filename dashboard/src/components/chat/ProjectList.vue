@@ -71,6 +71,9 @@ export interface Project {
   title: string;
   emoji?: string;
   description?: string;
+  workspace_type?: "session" | "project" | "custom";
+  workspace_path?: string | null;
+  resolved_workspace_path?: string | null;
   created_at: string;
   updated_at: string;
 }

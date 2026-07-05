@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import axios from 'axios';
 import type { Project } from '@/components/chat/ProjectList.vue';
+import type { ProjectFormData } from '@/components/chat/ProjectDialog.vue';
 
 export function useProjects() {
     const projects = ref<Project[]>([]);
@@ -18,12 +19,14 @@ export function useProjects() {
         }
     }
 
-    async function createProject(title: string, emoji?: string, description?: string) {
+    async function createProject(formData: ProjectFormData) {
         try {
             const res = await axios.post('/api/chatui_project/create', {
-                title,
-                emoji: emoji || '📁',
-                description
+                title: formData.title,
+                emoji: formData.emoji || '📁',
+                description: formData.description,
+                workspace_type: formData.workspace_type,
+                workspace_path: formData.workspace_path
             });
             if (res.data.status === 'ok') {
                 await getProjects();
@@ -34,13 +37,15 @@ export function useProjects() {
         }
     }
 
-    async function updateProject(projectId: string, title?: string, emoji?: string, description?: string) {
+    async function updateProject(projectId: string, formData: ProjectFormData) {
         try {
             const res = await axios.post('/api/chatui_project/update', {
                 project_id: projectId,
-                title,
-                emoji,
-                description
+                title: formData.title,
+                emoji: formData.emoji,
+                description: formData.description,
+                workspace_type: formData.workspace_type,
+                workspace_path: formData.workspace_path
             });
             if (res.data.status === 'ok') {
                 await getProjects();

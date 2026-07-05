@@ -1,5 +1,5 @@
 <template>
-    <v-dialog v-model="isOpen" max-width="500" @update:model-value="handleDialogChange">
+    <v-dialog v-model="isOpen" max-width="560" @update:model-value="handleDialogChange">
         <v-card>
             <v-card-title class="dialog-title">
                 {{ isEditing ? tm('project.edit') : tm('project.create') }}
@@ -9,6 +9,29 @@
                 <v-text-field v-model="form.title" :label="tm('project.name')" flat variant="solo-filled" hide-details class="mb-3" autofocus
                     @keyup.enter="handleSave" />
                 <v-textarea v-model="form.description" :label="tm('project.description')" flat variant="solo-filled" hide-details rows="3" rounded="lg" />
+                <v-select
+                    v-model="form.workspace_type"
+                    :items="workspaceTypeItems"
+                    :label="tm('project.workspace.type')"
+                    item-title="title"
+                    item-value="value"
+                    flat
+                    variant="solo-filled"
+                    hide-details
+                    class="mt-3 mb-3"
+                />
+                <v-text-field
+                    v-if="form.workspace_type === 'custom'"
+                    v-model="form.workspace_path"
+                    :label="tm('project.workspace.path')"
+                    flat
+                    variant="solo-filled"
+                    hide-details
+                    class="mb-2"
+                />
+                <div v-if="props.project?.resolved_workspace_path" class="workspace-path">
+                    {{ props.project.resolved_workspace_path }}
+                </div>
             </v-card-text>
             <v-card-actions>
                 <v-spacer></v-spacer>
@@ -28,6 +51,9 @@ export interface Project {
     title: string;
     emoji?: string;
     description?: string;
+    workspace_type?: 'session' | 'project' | 'custom';
+    workspace_path?: string | null;
+    resolved_workspace_path?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -36,6 +62,8 @@ export interface ProjectFormData {
     emoji: string;
     title: string;
     description: string;
+    workspace_type: 'session' | 'project' | 'custom';
+    workspace_path?: string | null;
 }
 
 interface Props {
@@ -61,8 +89,16 @@ const isEditing = ref(false);
 const form = ref<ProjectFormData>({
     emoji: '📁',
     title: '',
-    description: ''
+    description: '',
+    workspace_type: 'session',
+    workspace_path: ''
 });
+
+const workspaceTypeItems = [
+    { title: tm('project.workspace.session'), value: 'session' },
+    { title: tm('project.workspace.project'), value: 'project' },
+    { title: tm('project.workspace.custom'), value: 'custom' }
+] as const;
 
 watch(() => props.modelValue, (newVal) => {
     isOpen.value = newVal;
@@ -73,14 +109,18 @@ watch(() => props.modelValue, (newVal) => {
             form.value = {
                 emoji: props.project.emoji || '📁',
                 title: props.project.title,
-                description: props.project.description || ''
+                description: props.project.description || '',
+                workspace_type: props.project.workspace_type || 'session',
+                workspace_path: props.project.workspace_path || ''
             };
         } else {
             isEditing.value = false;
             form.value = {
                 emoji: '📁',
                 title: '',
-                description: ''
+                description: '',
+                workspace_type: 'session',
+                workspace_path: ''
             };
         }
     }
@@ -100,7 +140,11 @@ function handleSave() {
         return;
     }
 
-    emit('save', { ...form.value }, props.project?.project_id);
+    const payload = { ...form.value };
+    if (payload.workspace_type !== 'custom') {
+        payload.workspace_path = null;
+    }
+    emit('save', payload, props.project?.project_id);
     isOpen.value = false;
     emit('update:modelValue', false);
 }
@@ -110,5 +154,11 @@ function handleSave() {
 .dialog-title {
     font-size: 22px;
     font-weight: 500;
+}
+
+.workspace-path {
+    font-size: 12px;
+    color: rgba(var(--v-theme-on-surface), 0.6);
+    overflow-wrap: anywhere;
 }
 </style>

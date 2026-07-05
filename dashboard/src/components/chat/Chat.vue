@@ -956,16 +956,11 @@ async function deleteProjectSession(sessionId: string) {
 
 async function saveProject(formData: ProjectFormData, projectId?: string) {
   if (projectId) {
-    await updateProject(
-      projectId,
-      formData.title,
-      formData.emoji,
-      formData.description,
-    );
+    await updateProject(projectId, formData);
     return;
   }
 
-  await createProject(formData.title, formData.emoji, formData.description);
+  await createProject(formData);
 }
 
 async function selectSession(sessionId: string, pushRoute = true) {

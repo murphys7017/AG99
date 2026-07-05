@@ -742,6 +742,8 @@ async def read_file_tool_result(
     if not content:
         return "No content found at the requested line offset."
 
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
     if validation_error := _validate_text_output(content):
         return validation_error
 

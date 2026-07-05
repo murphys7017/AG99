@@ -30,6 +30,7 @@ from astrbot.core.astr_main_agent_resources import (
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
 )
 from astrbot.core.conversation_mgr import Conversation
+from astrbot.core.db import BaseDatabase
 from astrbot.core.interaction.collectors import InteractionMemoryCollector
 from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
 from astrbot.core.interaction.memory_store import (
@@ -159,6 +160,7 @@ from astrbot.core.utils.quoted_message_parser import (
     extract_quoted_message_text,
 )
 from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
+from astrbot.core.workspace import resolve_workspace_root_for_umo
 
 CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY = "conversation_save_user_message"
 LLM_ERROR_MESSAGE_EXTRA_KEY = "_llm_error_message"
@@ -893,18 +895,27 @@ def _apply_prompt_prefix(req: ProviderRequest, cfg: dict) -> None:
         req.prompt = f"{prefix}{req.prompt}"
 
 
-def _get_workspace_path_for_umo(umo: str) -> Path:
-    normalized_umo = normalize_umo_for_workspace(umo)
-    return Path(get_astrbot_workspaces_path()) / normalized_umo
+async def _get_workspace_path_for_umo(umo: str, plugin_context: Context) -> Path:
+    fallback_root = (
+        Path(get_astrbot_workspaces_path()) / normalize_umo_for_workspace(umo)
+    ).resolve(strict=False)
+    db = getattr(plugin_context, "_db", None)
+    if not isinstance(db, BaseDatabase):
+        return fallback_root
+    try:
+        return await resolve_workspace_root_for_umo(umo, db)
+    except Exception:
+        return fallback_root
 
 
-def _apply_workspace_extra_prompt(
+async def _apply_workspace_extra_prompt(
     event: AstrMessageEvent,
     req: ProviderRequest,
+    plugin_context: Context,
 ) -> None:
-    extra_prompt_path = _get_workspace_path_for_umo(event.unified_msg_origin) / (
-        "EXTRA_PROMPT.md"
-    )
+    extra_prompt_path = (
+        await _get_workspace_path_for_umo(event.unified_msg_origin, plugin_context)
+    ) / "EXTRA_PROMPT.md"
     if not extra_prompt_path.is_file():
         return
 
@@ -1628,7 +1639,7 @@ async def _decorate_llm_request(
     if tz is None:
         tz = plugin_context.get_config().get("timezone")
     _append_system_reminders(event, req, cfg, tz)
-    _apply_workspace_extra_prompt(event, req)
+    await _apply_workspace_extra_prompt(event, req, plugin_context)
 
 
 def _get_user_content_part_type(part: object) -> str | None:
@@ -2436,9 +2447,13 @@ async def build_main_agent(
         )
 
         if config.computer_use_runtime == "local":
+            workspace_path = await _get_workspace_path_for_umo(
+                event.unified_msg_origin,
+                plugin_context,
+            )
             tool_prompt += (
                 f"\nCurrent workspace you can use: "
-                f"`{_get_workspace_path_for_umo(event.unified_msg_origin)}`\n"
+                f"`{workspace_path}`\n"
                 "Unless the user explicitly specifies a different directory, "
                 "perform all file-related operations in this workspace.\n"
             )

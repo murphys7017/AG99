@@ -5,6 +5,7 @@ from copy import copy
 from astrbot.core import logger
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import get_interaction_turn_state
+from astrbot.core.message.components import ComponentType
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -68,6 +69,27 @@ class RespondStage(Stage):
         if result.is_model_result():
             return OutputOrigin.CORE.value
         return None
+
+    @staticmethod
+    def _is_current_session_send_message_duplicate(result, event: AstrMessageEvent) -> bool:
+        sent_plain_texts = event.get_extra(
+            "_send_message_to_user_current_session_plain_texts",
+            [],
+        )
+        if not isinstance(sent_plain_texts, list):
+            return False
+        result_plain_text = result.get_plain_text().strip()
+        if not result_plain_text or result_plain_text not in sent_plain_texts:
+            return False
+        return all(
+            comp.type
+            in {
+                ComponentType.Plain,
+                ComponentType.Reply,
+                ComponentType.At,
+            }
+            for comp in result.chain
+        )
 
     def _schedule_after_message_sent_postprocess(
         self,
@@ -188,6 +210,11 @@ class RespondStage(Stage):
             return
         if result.result_content_type == ResultContentType.STREAMING_FINISH:
             event.set_extra("_streaming_finished", True)
+            return
+        if self._is_current_session_send_message_duplicate(result, event):
+            logger.info(
+                "send_message_to_user already delivered the same text in this session; skipping duplicate respond-stage delivery.",
+            )
             return
 
         logger.debug(

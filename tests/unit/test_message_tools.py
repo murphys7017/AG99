@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot.core.message.message_event_result import MessageEventResult
+from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.tools.computer_tools.util import normalize_umo_for_workspace
 from astrbot.core.tools.message_tools import SendMessageToUserTool
 
@@ -22,19 +24,65 @@ def _make_context(
             "computer_use_runtime": runtime,
         }
     }
+    extras = {}
+    event = SimpleNamespace(
+        unified_msg_origin=current_session,
+        role=role,
+        _has_send_oper=False,
+        get_sender_id=lambda: "user-1",
+    )
+    event.set_extra = lambda key, value: extras.__setitem__(key, value)
+    event.get_extra = lambda key, default=None: extras.get(key, default)
     return SimpleNamespace(
         context=SimpleNamespace(
-            event=SimpleNamespace(
-                unified_msg_origin=current_session,
-                role=role,
-                get_sender_id=lambda: "user-1",
-            ),
+            event=event,
             context=SimpleNamespace(
                 get_config=lambda umo: cfg,
                 send_message=AsyncMock(),
             ),
         )
     )
+
+
+class _DummyRespondEvent:
+    def __init__(self, result_text: str, sent_plain_texts: list[str]) -> None:
+        self._extras = {
+            "_send_message_to_user_current_session_plain_texts": sent_plain_texts,
+        }
+        self._result = MessageEventResult().message(result_text)
+        self.send = AsyncMock()
+        self.plugins_name = []
+
+    def get_result(self):
+        return self._result
+
+    def set_extra(self, key, value) -> None:
+        self._extras[key] = value
+
+    def get_extra(self, key, default=None):
+        return self._extras.get(key, default)
+
+    def get_sender_name(self) -> str:
+        return "tester"
+
+    def get_sender_id(self) -> str:
+        return "user-1"
+
+    def get_platform_id(self) -> str:
+        return "test"
+
+    def get_platform_name(self) -> str:
+        return "test"
+
+    def _outline_chain(self, chain) -> str:
+        return " ".join(comp.text for comp in chain if hasattr(comp, "text"))
+
+
+def _make_respond_stage() -> RespondStage:
+    stage = RespondStage()
+    stage.config = {"provider_settings": {}}
+    stage.platform_settings = {"path_mapping": []}
+    return stage
 
 
 @pytest.mark.asyncio
@@ -82,6 +130,45 @@ async def test_send_message_defaults_to_current_session():
     call_args = ctx.context.context.send_message.call_args
     target_session = call_args[0][0]
     assert str(target_session) == "feishu:GroupMessage:oc_xxx"
+    assert ctx.context.event._has_send_oper is True
+    assert ctx.context.event.get_extra(
+        "_send_message_to_user_current_session_plain_texts",
+    ) == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_other_session_does_not_record_current_text():
+    """Messages sent to another session do not affect current-session dedupe."""
+    tool = SendMessageToUserTool()
+    ctx = _make_context(current_session="feishu:GroupMessage:oc_xxx")
+    result = await tool.call(
+        ctx,
+        messages=[{"type": "plain", "text": "hello"}],
+        session="feishu:GroupMessage:oc_other",
+    )
+    assert "Message sent to session" in result
+    assert ctx.context.event._has_send_oper is False
+    assert (
+        ctx.context.event.get_extra(
+            "_send_message_to_user_current_session_plain_texts",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_skips_same_text_after_send_message_to_user():
+    """RespondStage skips only when the tool already sent the same text."""
+    stage = _make_respond_stage()
+    event = _DummyRespondEvent(
+        result_text="duplicate reply",
+        sent_plain_texts=["duplicate reply"],
+    )
+
+    result = await stage.process(event)
+
+    assert result is None
+    event.send.assert_not_awaited()
 
 
 @pytest.mark.asyncio

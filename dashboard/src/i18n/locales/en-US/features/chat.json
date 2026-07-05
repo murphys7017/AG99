@@ -131,6 +131,13 @@
     "name": "Project Name",
     "emoji": "Icon (Emoji)",
     "description": "Description (Optional)",
+    "workspace": {
+      "type": "Workspace",
+      "session": "Per conversation",
+      "project": "Shared by project",
+      "custom": "Custom path",
+      "path": "Workspace path"
+    },
     "noSessions": "No conversations in this project",
     "confirmDelete": "Are you sure you want to delete project \"{title}\"? Conversations in this project will not be deleted."
   },

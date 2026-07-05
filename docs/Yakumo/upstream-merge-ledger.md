@@ -47,6 +47,42 @@ Current local upstream-sync commits:
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
 
+## 2026-07-06 ChatUI project workspace follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Duplicate proactive replies:
+  - `de572e3fe`: when `send_message_to_user` sends plain text to the current session, the tool now records that text on the event and marks the event as having sent output. `RespondStage` skips a later same-text plain/Reply/At result so tool-delivered text is not sent twice.
+- ChatUI project workspaces:
+  - `e7d5be632`: project records now carry `workspace_type` and optional `workspace_path`, with existing projects defaulting to per-session workspace behavior.
+  - Local workspace resolution now supports `session`, `project`, and `custom` modes. WebChat UMOs resolve their project through the existing ChatUI project relation table; non-WebChat sessions keep the legacy per-UMO workspace.
+  - Local Python, shell, filesystem, and `send_message_to_user` file-resolution paths now use the resolved project/custom workspace when the tool context has database access. Legacy sync `workspace_root()` behavior is preserved for older call sites and tests.
+  - The local main-agent workspace prompt and `EXTRA_PROMPT.md` lookup now use the resolved project/custom workspace without changing the Yakumo prompt/memory/postprocess pipeline.
+  - The existing Quart `/api/chatui_project/*` routes now serialize workspace fields and validate custom paths through a small local service layer. Relative custom paths must stay under AstrBot workspaces; absolute custom paths are preserved, matching `6d798908a` / `20008f179`.
+  - The customized ChatUI project dialog now exposes workspace mode and custom path fields without importing upstream's broader header/layout rewrite.
+
+Local compatibility notes:
+
+- Existing projects and sessions remain on `workspace_type=session`, so current per-session workspace behavior is unchanged until a project is explicitly switched to shared or custom workspace mode.
+- Text file reads normalize CRLF/CR to LF before returning tool output, keeping filesystem-tool output stable on Windows after the workspace changes.
+
+Deferred / intentionally not included in this follow-up:
+
+- Upstream FastAPI service routes, generated OpenAPI types, MDI subset assets, and the large ChatUI header/layout redesign were not copied because this fork still uses local Quart routes and customized ChatUI layout.
+- Workspace-local Skills discovery is not added in this batch because the current local `SkillManager` does not expose upstream's `list_workspace_skills()` surface; project workspace path resolution is now ready for that as a later focused batch.
+
+Validation for this follow-up:
+
+- Python: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run pytest tests/unit/test_message_tools.py tests/unit/test_chatui_project_workspace.py tests/unit/test_python_tools.py tests/test_computer_fs_tools.py -q`
+- Python lint: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run ruff check astrbot/core/workspace.py astrbot/core/computer/file_read_utils.py astrbot/core/tools/computer_tools/util.py astrbot/core/tools/computer_tools/python.py astrbot/core/tools/computer_tools/shell.py astrbot/core/tools/computer_tools/fs.py astrbot/core/tools/message_tools.py astrbot/core/pipeline/respond/stage.py astrbot/core/db/po.py astrbot/core/db/__init__.py astrbot/core/db/sqlite.py astrbot/core/astr_main_agent.py astrbot/dashboard/routes/chatui_project.py astrbot/dashboard/services/chatui_project_service.py tests/unit/test_message_tools.py tests/unit/test_chatui_project_workspace.py`
+- Frontend: `pnpm --dir dashboard typecheck`
+
+Known validation note:
+
+- Focused pytest passed with existing third-party deprecation warnings from `jieba/pkg_resources` and Python `audioop`.
+
 ## 2026-07-06 ChatUI attachment display follow-up
 
 Reviewed upstream baseline: `upstream/master` at `25cbd41e0`

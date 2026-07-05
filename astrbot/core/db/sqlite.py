@@ -64,6 +64,7 @@ class SQLiteDatabase(BaseDatabase):
             await self._ensure_persona_skills_column(conn)
             await self._ensure_persona_custom_error_message_column(conn)
             await self._ensure_platform_message_history_checkpoint_column(conn)
+            await self._ensure_chatui_project_workspace_columns(conn)
             await conn.commit()
 
     async def _ensure_persona_folder_columns(self, conn) -> None:
@@ -125,6 +126,26 @@ class SQLiteDatabase(BaseDatabase):
                     "CREATE INDEX IF NOT EXISTS "
                     "ix_platform_message_history_llm_checkpoint_id "
                     "ON platform_message_history (llm_checkpoint_id)"
+                )
+            )
+
+    async def _ensure_chatui_project_workspace_columns(self, conn) -> None:
+        """Ensure existing ChatUI project tables have workspace columns."""
+        result = await conn.execute(text("PRAGMA table_info(chatui_projects)"))
+        columns = {row[1] for row in result.fetchall()}
+
+        if "workspace_type" not in columns:
+            await conn.execute(
+                text(
+                    "ALTER TABLE chatui_projects "
+                    "ADD COLUMN workspace_type VARCHAR(32) NOT NULL DEFAULT 'session'"
+                )
+            )
+        if "workspace_path" not in columns:
+            await conn.execute(
+                text(
+                    "ALTER TABLE chatui_projects "
+                    "ADD COLUMN workspace_path VARCHAR(1024) DEFAULT NULL"
                 )
             )
 
@@ -1875,6 +1896,8 @@ class SQLiteDatabase(BaseDatabase):
         title: str,
         emoji: str | None = "📁",
         description: str | None = None,
+        workspace_type: str = "session",
+        workspace_path: str | None = None,
     ) -> ChatUIProject:
         """Create a new ChatUI project."""
         async with self.get_db() as session:
@@ -1885,6 +1908,8 @@ class SQLiteDatabase(BaseDatabase):
                     title=title,
                     emoji=emoji,
                     description=description,
+                    workspace_type=workspace_type,
+                    workspace_path=workspace_path,
                 )
                 session.add(project)
                 await session.flush()
@@ -1927,6 +1952,8 @@ class SQLiteDatabase(BaseDatabase):
         title: str | None = None,
         emoji: str | None = None,
         description: str | None = None,
+        workspace_type: str | None = None,
+        workspace_path: str | None = None,
     ) -> None:
         """Update a ChatUI project."""
         async with self.get_db() as session:
@@ -1939,6 +1966,9 @@ class SQLiteDatabase(BaseDatabase):
                     values["emoji"] = emoji
                 if description is not None:
                     values["description"] = description
+                if workspace_type is not None:
+                    values["workspace_type"] = workspace_type
+                    values["workspace_path"] = workspace_path
 
                 await session.execute(
                     update(ChatUIProject)

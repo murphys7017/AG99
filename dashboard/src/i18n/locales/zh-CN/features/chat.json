@@ -131,6 +131,13 @@
     "name": "项目名称",
     "emoji": "图标 (Emoji)",
     "description": "项目描述（可选）",
+    "workspace": {
+      "type": "工作区",
+      "session": "每个对话独立",
+      "project": "项目共享",
+      "custom": "自定义路径",
+      "path": "工作区路径"
+    },
     "noSessions": "该项目暂无对话",
     "confirmDelete": "确定要删除项目 \"{title}\" 吗？项目中的对话不会被删除。"
   },
