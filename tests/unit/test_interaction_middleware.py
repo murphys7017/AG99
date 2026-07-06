@@ -118,6 +118,37 @@ def webchat_event():
 
 
 @pytest.fixture
+def aiocqhttp_empty_notice_event():
+    platform_meta = PlatformMetadata(
+        name="aiocqhttp",
+        description="aiocqhttp",
+        id="alice",
+    )
+    message = AstrBotMessage()
+    message.type = MessageType.FRIEND_MESSAGE
+    message.self_id = "2762018040"
+    message.session_id = "815049548"
+    message.message_id = "notice123"
+    message.sender = MessageMember(user_id="815049548", nickname="815049548")
+    message.message = []
+    message.message_str = ""
+    message.raw_message = {
+        "post_type": "notice",
+        "notice_type": "notify",
+        "sub_type": "input_status",
+        "status_text": "对方正在输入...",
+    }
+    event = ConcreteAstrMessageEvent(
+        message_str="",
+        message_obj=message,
+        platform_meta=platform_meta,
+        session_id="815049548",
+    )
+    event.is_at_or_wake_command = True
+    return event
+
+
+@pytest.fixture
 def streaming_event(webchat_event):
     event = StreamingAstrMessageEvent(
         message_str=webchat_event.message_str,
@@ -403,6 +434,45 @@ class TestInteractionMiddleware:
         middleware.persona_runtime.express_visible_reply.assert_awaited_once()
         middleware.router_agent.route.assert_awaited_once()
         assert webchat_event.get_extra("_interaction_route_handled") is True
+        assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_handle_pipeline_event_skips_empty_notice_event(
+        self,
+        aiocqhttp_empty_notice_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "stream_observation_enabled": False,
+                    "stream_interjection_enabled": False,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(middleware)
+
+        middleware.prepare_pipeline_event(aiocqhttp_empty_notice_event)
+        await middleware.handle_pipeline_event(aiocqhttp_empty_notice_event)
+
+        middleware.persona_runtime.express_visible_reply.assert_not_awaited()
+        middleware.router_agent.route.assert_not_awaited()
+        assert (
+            aiocqhttp_empty_notice_event.get_extra(
+                "_interaction_route_skipped_reason"
+            )
+            == "empty_non_content_event"
+        )
+        assert (
+            aiocqhttp_empty_notice_event.get_extra("_interaction_route_handled")
+            is True
+        )
         assert queue.empty()
 
     @pytest.mark.asyncio

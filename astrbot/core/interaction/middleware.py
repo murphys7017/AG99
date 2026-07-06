@@ -285,8 +285,50 @@ class InteractionMiddleware:
         if not is_middleware_enabled(runtime_config):
             return
         self.prepare_pipeline_event(event)
+        if not self._has_routeable_user_content(event):
+            event.set_extra("_interaction_route_handled", True)
+            event.set_extra(
+                "_interaction_route_skipped_reason",
+                "empty_non_content_event",
+            )
+            logger.debug(
+                "Interaction middleware skipped empty non-content event: platform_id=%s session_id=%s raw_type=%s",
+                event.get_platform_id(),
+                event.session_id,
+                self._get_raw_event_field(event, "post_type"),
+            )
+            return
         await self._handle_inbound_async(event, enqueue_core=False)
         event.set_extra("_interaction_route_handled", True)
+
+    @staticmethod
+    def _has_routeable_user_content(event: AstrMessageEvent) -> bool:
+        if InteractionMiddleware._is_live_mode_event(event):
+            return True
+        if event.get_extra("provider_request") is not None:
+            return True
+        if (event.message_str or "").strip():
+            return True
+        for comp in event.get_messages() or []:
+            if isinstance(comp, Plain):
+                if (comp.text or "").strip():
+                    return True
+            else:
+                return True
+        return False
+
+    @staticmethod
+    def _get_raw_event_field(event: AstrMessageEvent, field: str) -> Any:
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        getter = getattr(raw_message, "get", None)
+        if callable(getter):
+            try:
+                return getter(field)
+            except Exception:
+                return None
+        if isinstance(raw_message, Mapping):
+            return raw_message.get(field)
+        return None
 
     def _spawn_inbound_task(self, event: AstrMessageEvent) -> None:
         task = asyncio.create_task(
