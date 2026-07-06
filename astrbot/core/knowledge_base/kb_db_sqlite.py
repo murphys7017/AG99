@@ -239,12 +239,16 @@ class KBSQLiteDatabase:
         kb_id: str,
         offset: int = 0,
         limit: int = 100,
+        search: str | None = None,
     ) -> list[KBDocument]:
         """列出知识库的所有文档"""
         async with self.get_db() as session:
+            conditions = [col(KBDocument.kb_id) == kb_id]
+            if search:
+                conditions.append(col(KBDocument.doc_name).contains(search))
             stmt = (
                 select(KBDocument)
-                .where(col(KBDocument.kb_id) == kb_id)
+                .where(*conditions)
                 .offset(offset)
                 .limit(limit)
                 .order_by(desc(KBDocument.created_at))
@@ -252,12 +256,17 @@ class KBSQLiteDatabase:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def count_documents_by_kb(self, kb_id: str) -> int:
+    async def count_documents_by_kb(
+        self,
+        kb_id: str,
+        search: str | None = None,
+    ) -> int:
         """统计知识库的文档数量"""
         async with self.get_db() as session:
-            stmt = select(func.count(col(KBDocument.id))).where(
-                col(KBDocument.kb_id) == kb_id,
-            )
+            conditions = [col(KBDocument.kb_id) == kb_id]
+            if search:
+                conditions.append(col(KBDocument.doc_name).contains(search))
+            stmt = select(func.count(col(KBDocument.id))).where(*conditions)
             result = await session.execute(stmt)
             return result.scalar() or 0
 

@@ -109,3 +109,59 @@ async def test_update_kb_stats_counts_chunks_for_target_kb(tmp_path):
         )
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_list_documents_by_kb_supports_search_and_total(tmp_path):
+    db = KBSQLiteDatabase(str(tmp_path / "kb.db"))
+    await db.initialize()
+
+    try:
+        kb = KnowledgeBase(
+            kb_name="kb",
+            embedding_provider_id="embedding",
+        )
+        docs = [
+            KBDocument(
+                doc_id="doc-guide-1",
+                kb_id=kb.kb_id,
+                doc_name="setup-guide.txt",
+                file_type="txt",
+                file_size=1,
+                file_path="/tmp/setup-guide.txt",
+            ),
+            KBDocument(
+                doc_id="doc-guide-2",
+                kb_id=kb.kb_id,
+                doc_name="user-guide.txt",
+                file_type="txt",
+                file_size=1,
+                file_path="/tmp/user-guide.txt",
+            ),
+            KBDocument(
+                doc_id="doc-notes",
+                kb_id=kb.kb_id,
+                doc_name="notes.txt",
+                file_type="txt",
+                file_size=1,
+                file_path="/tmp/notes.txt",
+            ),
+        ]
+        async with db.get_db() as session, session.begin():
+            session.add(kb)
+            for doc in docs:
+                session.add(doc)
+
+        listed = await db.list_documents_by_kb(
+            kb_id=kb.kb_id,
+            offset=0,
+            limit=1,
+            search="guide",
+        )
+        total = await db.count_documents_by_kb(kb.kb_id, search="guide")
+
+        assert len(listed) == 1
+        assert listed[0].doc_name in {"setup-guide.txt", "user-guide.txt"}
+        assert total == 2
+    finally:
+        await db.close()

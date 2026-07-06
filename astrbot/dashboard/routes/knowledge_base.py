@@ -70,6 +70,30 @@ class KnowledgeBaseRoute(Route):
     def _get_kb_manager(self):
         return self.core_lifecycle.kb_manager
 
+    @staticmethod
+    def _coerce_positive_int(value: Any, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(parsed, 1)
+
+    @staticmethod
+    def _extract_kb_name(data: dict[str, Any]) -> str | None:
+        kb_name = data.get("kb_name")
+        if kb_name is None:
+            kb_name = data.get("name")
+        if isinstance(kb_name, str):
+            kb_name = kb_name.strip()
+        return kb_name or None
+
+    @staticmethod
+    def _normalize_search(value: str | None) -> str | None:
+        if not value:
+            return None
+        value = value.strip()
+        return value or None
+
     def _init_task(self, task_id: str, status: str = "pending") -> None:
         self.upload_tasks[task_id] = {
             "status": status,
@@ -322,14 +346,17 @@ class KnowledgeBaseRoute(Route):
         """
         try:
             kb_manager = self._get_kb_manager()
-            page = request.args.get("page", 1, type=int)
-            page_size = request.args.get("page_size", 20, type=int)
+            page = self._coerce_positive_int(request.args.get("page"), 1)
+            page_size = self._coerce_positive_int(request.args.get("page_size"), 20)
 
             kbs = await kb_manager.list_kbs()
+            total = len(kbs)
+            start = (page - 1) * page_size
+            paged_kbs = kbs[start : start + page_size]
 
             # 转换为字典列表
             kb_list = []
-            for kb in kbs:
+            for kb in paged_kbs:
                 kb_dict = kb.model_dump()
                 # include init_error from KBHelper if present
                 kb_helper = await kb_manager.get_kb(kb.kb_id)
@@ -339,7 +366,14 @@ class KnowledgeBaseRoute(Route):
 
             return (
                 Response()
-                .ok({"items": kb_list, "page": page, "page_size": page_size})
+                .ok(
+                    {
+                        "items": kb_list,
+                        "page": page,
+                        "page_size": page_size,
+                        "total": total,
+                    },
+                )
                 .__dict__
             )
         except ValueError as e:
@@ -367,7 +401,10 @@ class KnowledgeBaseRoute(Route):
         try:
             kb_manager = self._get_kb_manager()
             data = await request.json
-            kb_name = data.get("kb_name")
+            if not isinstance(data, dict):
+                return Response().error("Invalid request payload").__dict__
+
+            kb_name = self._extract_kb_name(data)
             if not kb_name:
                 return Response().error("知识库名称不能为空").__dict__
 
@@ -491,58 +528,65 @@ class KnowledgeBaseRoute(Route):
         try:
             kb_manager = self._get_kb_manager()
             data = await request.json
+            if not isinstance(data, dict):
+                return Response().error("Invalid request payload").__dict__
 
             kb_id = data.get("kb_id")
             if not kb_id:
                 return Response().error("缺少参数 kb_id").__dict__
 
-            kb_name = data.get("kb_name")
-            description = data.get("description")
-            emoji = data.get("emoji")
-            embedding_provider_id = data.get("embedding_provider_id")
-            rerank_provider_id = data.get("rerank_provider_id")
-            chunk_size = data.get("chunk_size")
-            chunk_overlap = data.get("chunk_overlap")
-            top_k_dense = data.get("top_k_dense")
-            top_k_sparse = data.get("top_k_sparse")
-            top_m_final = data.get("top_m_final")
-
-            # 检查是否至少提供了一个更新字段
-            if all(
-                v is None
-                for v in [
-                    kb_name,
-                    description,
-                    emoji,
-                    embedding_provider_id,
-                    rerank_provider_id,
-                    chunk_size,
-                    chunk_overlap,
-                    top_k_dense,
-                    top_k_sparse,
-                    top_m_final,
-                ]
-            ):
-                return Response().error("至少需要提供一个更新字段").__dict__
-
-            kb_helper = await kb_manager.update_kb(
-                kb_id=kb_id,
-                kb_name=kb_name,
-                description=description,
-                emoji=emoji,
-                embedding_provider_id=embedding_provider_id,
-                rerank_provider_id=rerank_provider_id,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                top_k_dense=top_k_dense,
-                top_k_sparse=top_k_sparse,
-                top_m_final=top_m_final,
-            )
-
+            kb_helper = await kb_manager.get_kb(kb_id)
             if not kb_helper:
                 return Response().error("知识库不存在").__dict__
 
+            field_names = {
+                "kb_name",
+                "name",
+                "description",
+                "emoji",
+                "embedding_provider_id",
+                "rerank_provider_id",
+                "chunk_size",
+                "chunk_overlap",
+                "top_k_dense",
+                "top_k_sparse",
+                "top_m_final",
+            }
+            if not any(field in data for field in field_names):
+                return Response().error("至少需要提供一个更新字段").__dict__
+
             kb = kb_helper.kb
+            kb_name = (
+                self._extract_kb_name(data)
+                if ("kb_name" in data or "name" in data)
+                else kb.kb_name
+            )
+            if not kb_name:
+                return Response().error("知识库名称不能为空").__dict__
+
+            updated_helper = await kb_manager.update_kb(
+                kb_id=kb_id,
+                kb_name=kb_name,
+                description=data.get("description", kb.description),
+                emoji=data.get("emoji", kb.emoji),
+                embedding_provider_id=data.get(
+                    "embedding_provider_id",
+                    kb.embedding_provider_id,
+                ),
+                rerank_provider_id=data.get(
+                    "rerank_provider_id",
+                    kb.rerank_provider_id,
+                ),
+                chunk_size=data.get("chunk_size", kb.chunk_size),
+                chunk_overlap=data.get("chunk_overlap", kb.chunk_overlap),
+                top_k_dense=data.get("top_k_dense", kb.top_k_dense),
+                top_k_sparse=data.get("top_k_sparse", kb.top_k_sparse),
+                top_m_final=data.get("top_m_final", kb.top_m_final),
+            )
+            if not updated_helper:
+                return Response().error("知识库不存在").__dict__
+
+            kb = updated_helper.kb
             return Response().ok(kb.model_dump(), "更新知识库成功").__dict__
 
         except ValueError as e:
@@ -633,19 +677,32 @@ class KnowledgeBaseRoute(Route):
             if not kb_helper:
                 return Response().error("知识库不存在").__dict__
 
-            page = request.args.get("page", 1, type=int)
-            page_size = request.args.get("page_size", 100, type=int)
+            page = self._coerce_positive_int(request.args.get("page"), 1)
+            page_size = self._coerce_positive_int(request.args.get("page_size"), 100)
+            search = self._normalize_search(request.args.get("search"))
 
             offset = (page - 1) * page_size
             limit = page_size
 
-            doc_list = await kb_helper.list_documents(offset=offset, limit=limit)
+            doc_list = await kb_helper.list_documents(
+                offset=offset,
+                limit=limit,
+                search=search,
+            )
+            total = await kb_helper.count_documents(search=search)
 
             doc_list = [doc.model_dump() for doc in doc_list]
 
             return (
                 Response()
-                .ok({"items": doc_list, "page": page, "page_size": page_size})
+                .ok(
+                    {
+                        "items": doc_list,
+                        "page": page,
+                        "page_size": page_size,
+                        "total": total,
+                    },
+                )
                 .__dict__
             )
 

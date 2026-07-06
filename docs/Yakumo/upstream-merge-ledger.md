@@ -47,6 +47,39 @@ Current local upstream-sync commits:
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
 
+## 2026-07-06 KB CRUD contract and pagination follow-up
+
+Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
+
+Absorbed by local rewrite:
+
+- Knowledge-base CRUD contract:
+  - `ea9e3421d`: local Quart `/api/kb/create` now accepts canonical `kb_name` and legacy `name`, still requires `embedding_provider_id`, and keeps the existing provider validation before creation.
+  - Local Quart `/api/kb/update` now treats omitted fields as "preserve current value" while still allowing explicit `rerank_provider_id: null` to clear rerank provider selection.
+- Knowledge-base list pagination:
+  - `758e43273`: local `/api/kb/list` clamps `page` / `page_size` to positive integers, slices the in-memory manager list, and returns `items`, `page`, `page_size`, and `total`.
+- Document list pagination and search:
+  - Local `/api/kb/document/list` now accepts `page`, `page_size`, and `search`, returns `total`, and routes search through `KBHelper` into the SQLite metadata store.
+  - Dashboard KB list and document table now use server-side pagination. The document table uses the local Vuetify `v-data-table-server` path and keeps the existing axios-based dashboard API style instead of importing upstream's generated `knowledgeApi`.
+
+Local compatibility notes:
+
+- The upstream FastAPI route/service/schema/OpenAPI generated client changes were not copied. This fork still serves these behaviors from `astrbot/dashboard/routes/knowledge_base.py`.
+- The Yakumo prompt, memory, retrieval, and postprocess paths are not touched by this batch; only KB metadata/listing API behavior and its dashboard consumers changed.
+- Explicit null clearing is intentionally limited to `rerank_provider_id`, matching the existing manager behavior. Omitted text/icon fields are preserved.
+
+Validation for this follow-up:
+
+- Python targeted tests: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run pytest tests/unit/test_knowledge_base_quart_contract.py tests/unit/test_kb_document_cleanup.py tests/test_kb_import.py -q`
+- Python focused lint: `$env:UV_CACHE_DIR='.uv-cache-local'; uv run ruff check astrbot/dashboard/routes/knowledge_base.py astrbot/core/knowledge_base/kb_db_sqlite.py astrbot/core/knowledge_base/kb_helper.py tests/unit/test_knowledge_base_quart_contract.py tests/unit/test_kb_document_cleanup.py`
+- Frontend: `pnpm --dir dashboard typecheck`
+- Hygiene: `git diff --check`
+
+Known validation note:
+
+- Focused pytest passed with existing third-party/plugin deprecation warnings from `jieba/pkg_resources`, Python `audioop`, and a local data plugin decorator.
+- `git diff --check` passed; Git reported the repository's normal LF-to-CRLF working-copy notices on Windows.
+
 ## 2026-07-06 Workspace-local Skills follow-up
 
 Reviewed upstream baseline: `upstream/master` at `25cbd41e0`
@@ -764,7 +797,7 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 | Platform adapters and outbound media | Mostly absorbed | Active reply images, Weixin OC send failures/session timeout, Telegram media group errors, Discord startup quota, KOOK role mentions, QQ Official markdown/send fixes, Dingtalk/Feishu QR setup | Active reply image, SILK, Weixin OC send failure/session timeout, Telegram media group logging, Discord command-sync quota handling, QQ Official markdown/active-push fixes, KOOK role mentions, message-tool path handling, and Dingtalk/Lark/Weixin OC one-click QR registration were absorbed. | Re-check only when new upstream platform adapter commits appear; remaining platform `git cherry` positives in this snapshot are rewrite-equivalent. |
 | Dashboard UX and WebUI | Mostly absorbed | IME Enter, console layout, provider config UI, inline edit/regenerate, plugin UI, Noto Sans Cyrillic support, initial password UX, stale `data/dist` fallback | IME, console, upload sanitization, provider test feedback, provider config panel/model-add flow, T2I template error feedback, Baidu search-key visibility, bundled dashboard fallback for stale `data/dist`, Noto Sans Cyrillic font stack, always-visible outlined action buttons, setup-page initial password UX, and local inline/thread compatibility gaps were absorbed. | Keep larger plugin/dashboard rewrites separate; do not import broad upstream history rewrites unless the local checkpoint/prompt semantics are explicitly redesigned. |
 | Plugin system | Mostly absorbed | Plugin pages, plugin i18n, plugin changelogs/update system, plugin storage downloads, install cleanup, plugin-page theme/sidebar | Dynamic plugin Web API routing, plugin page i18n bridge/context, plugin changelog/readme surfaces, update download URLs, `pages`/`icon` metadata, plugin page theme propagation, sidebar plugin page entries, and install cleanup are absorbed. | Re-check only if later upstream adds new plugin runtime surfaces beyond the current page/API/update/sidebar paths. |
-| Knowledge base and retrieval | Mostly absorbed | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, RST/ADOC upload, Firecrawl search tools | FTS5 sparse retrieval with BM25 fallback, EPUB parser/upload/read support, RST/ADOC upload support, blank-prompt KB retrieval skip, and Firecrawl config/tool hook are absorbed. | Re-check only if later upstream changes retrieval ranking/storage semantics or adds new document formats. |
+| Knowledge base and retrieval | Mostly absorbed | FTS5 sparse retrieval, EPUB upload, blank-prompt KB retrieval skip, RST/ADOC upload, Firecrawl search tools, KB CRUD contract/pagination | FTS5 sparse retrieval with BM25 fallback, EPUB parser/upload/read support, RST/ADOC upload support, blank-prompt KB retrieval skip, Firecrawl config/tool hook, and local Quart KB CRUD/list pagination contract are absorbed. | Re-check only if later upstream changes retrieval ranking/storage semantics, adds new document formats, or changes KB API behavior beyond the local Quart contract. |
 | Computer use / sandbox | Mostly absorbed | Shipyard profile selection, readiness gate, idle sandbox expiry, CUA native upload, sandbox image download delivery | CUA runtime, native file upload/write fallback, idle timeout cleanup, WebUI idle-timeout config, explicit/auto Shipyard Neo profile behavior, readiness gate, stale sandbox cleanup, and sandbox image download delivery are absorbed. | Re-check only if later upstream changes sandbox lifecycle, capability contracts, or CUA SDK compatibility. |
 | Auth, CLI, deployment, update | Mostly absorbed | Initial dashboard password env var, legacy password messages, update progress dialog, deploy scripts, Dingtalk/Lark/Weixin OC QR registration | Platform QR registration (Dingtalk/Lark/Weixin OC), update progress tracking/dialog, PBKDF2 dashboard password storage/setup flow, core and CLI initial password env support, `astrbot password`, and the final docs-public install scripts were absorbed. | Re-check only if later upstream changes install/update operational contracts. |
 | Docs, version bumps, dependency chores | Mostly absorbed | Version bumps, README/docs URL updates, pnpm action bumps, release instructions, FAQ/deploy/tool docs corrections | User-approved release-maintenance passes aligned versions/changelogs through the current fork version, refreshed README badge/contributor URLs where still stale, bumped pnpm/docker GitHub Actions, updated source-deploy docs for generated initial passwords, and selectively absorbed FAQ/deploy/tool docs corrections that affect this fork's current behavior. | Keep broad docs translations and process-only docs separate unless the user asks for another docs sweep. |

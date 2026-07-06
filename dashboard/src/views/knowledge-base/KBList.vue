@@ -79,6 +79,15 @@
           </v-tooltip>
         </template>
       </OutlinedActionListItem>
+
+      <v-pagination
+        v-if="total > pageSize"
+        v-model="page"
+        :length="Math.ceil(total / pageSize)"
+        :total-visible="7"
+        class="mt-4"
+        @update:model-value="loadKnowledgeBases()"
+      />
     </div>
 
     <!-- 空状态 -->
@@ -152,7 +161,9 @@
 
             <v-select v-model="formData.embedding_provider_id" :items="embeddingProviders"
               :item-title="item => item.embedding_model || item.id" :item-value="'id'"
-              :label="t('create.embeddingModelLabel')" variant="outlined" class="mb-4" :disabled="editingKB !== null" hint="嵌入模型选择后无法修改，如需更换请创建新的知识库。" persistent-hint>
+              :label="t('create.embeddingModelLabel')" variant="outlined" class="mb-4" :disabled="editingKB !== null"
+              :rules="[v => editingKB !== null || !!v || t('create.embeddingModelRequired')]" required
+              hint="嵌入模型选择后无法修改，如需更换请创建新的知识库。" persistent-hint>
               <template #item="{ props, item }">
                 <v-list-item v-bind="props">
                   <template #subtitle>
@@ -269,6 +280,9 @@ const loading = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const kbList = ref<any[]>([])
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 const embeddingProviders = ref<any[]>([])
 const rerankProviders = ref<any[]>([])
 const originalEmbeddingProvider = ref<string | null>(null)
@@ -324,14 +338,19 @@ const emojiCategories = [
 const loadKnowledgeBases = async (refreshStats = false) => {
   loading.value = true
   try {
-    const params: any = {}
+    const params: any = {
+      page: page.value,
+      page_size: pageSize.value
+    }
     if (refreshStats) {
       params.refresh_stats = 'true'
     }
 
     const response = await axios.get('/api/kb/list', { params })
     if (response.data.status === 'ok') {
-      kbList.value = response.data.data.items || []
+      const data = response.data.data
+      kbList.value = data.items || []
+      total.value = data.total || 0
     } else {
       showSnackbar(response.data.message || t('messages.loadError'), 'error')
     }
@@ -407,6 +426,9 @@ const deleteKB = async () => {
 
     if (response.data.status === 'ok') {
       showSnackbar(t('messages.deleteSuccess'))
+      if (kbList.value.length === 1 && page.value > 1) {
+        page.value -= 1
+      }
       // 先刷新列表，再关闭对话框
       await loadKnowledgeBases()
       showDeleteDialog.value = false
@@ -450,6 +472,7 @@ const submitForm = async () => {
     if (response.data.status === 'ok') {
       showSnackbar(editingKB.value ? t('messages.updateSuccess') : t('messages.createSuccess'))
       closeCreateDialog()
+      page.value = 1
       await loadKnowledgeBases()
     } else {
       showSnackbar(response.data.message || (editingKB.value ? t('messages.updateFailed') : t('messages.createFailed')), 'error')
