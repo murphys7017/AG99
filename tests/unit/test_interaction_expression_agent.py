@@ -15,6 +15,7 @@ from astrbot.core.interaction.expression_agent import (
     build_persona_expression_tool_parameters,
     extract_persona_expression_result,
     maybe_inject_deepseek_first_turn_reasoning_marker,
+    remove_redundant_media_slots_for_visible_reply_material,
     validate_persona_expression_result,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
@@ -402,6 +403,54 @@ def test_visible_reply_material_renders_as_native_input_message_with_stream_text
     assert "核心累计内容" in material_text
     assert "待完成内容" in material_text
     assert "extensions" not in material_text
+
+
+def test_visible_reply_material_removes_redundant_media_slots():
+    pack = ContextPack(
+        slots={
+            "input.images": ContextSlot(
+                name="input.images",
+                value=[{"ref": "https://example.com/image.png"}],
+                category="input",
+                source="event_input",
+            ),
+            "input.image_captions": ContextSlot(
+                name="input.image_captions",
+                value=[{"caption": "already described"}],
+                category="input",
+                source="image_caption_provider",
+            ),
+        }
+    )
+
+    remove_redundant_media_slots_for_visible_reply_material(
+        pack,
+        PersonaExpressionRequest(source_text="核心已经描述图片"),
+    )
+
+    assert pack.get_slot("input.images") is None
+    assert pack.get_slot("input.image_captions") is None
+    assert pack.meta["slot_count"] == 0
+
+
+def test_direct_reply_keeps_media_slots():
+    pack = ContextPack(
+        slots={
+            "input.images": ContextSlot(
+                name="input.images",
+                value=[{"ref": "https://example.com/image.png"}],
+                category="input",
+                source="event_input",
+            )
+        }
+    )
+
+    remove_redundant_media_slots_for_visible_reply_material(
+        pack,
+        PersonaExpressionRequest(),
+    )
+
+    assert pack.get_slot("input.images") is not None
 
 
 def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():

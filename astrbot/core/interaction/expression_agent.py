@@ -577,6 +577,7 @@ class InteractionExpressionAgent:
             expression_pack,
             prompt_extensions,
         )
+        remove_redundant_media_slots_for_visible_reply_material(expression_pack, req)
         add_visible_reply_material_slots_to_pack(expression_pack, req)
         injected_reasoning_marker = maybe_inject_deepseek_first_turn_reasoning_marker(
             event,
@@ -704,5 +705,33 @@ def add_visible_reply_material_slots_to_pack(
                 "scope": "dynamic",
                 "node_type": "interaction_visible_reply_material",
             },
+        )
+    )
+
+
+def remove_redundant_media_slots_for_visible_reply_material(
+    pack,
+    req: PersonaExpressionRequest,
+) -> None:
+    if not _has_visible_reply_material(req):
+        return
+    for slot_name in (
+        "input.images",
+        "input.quoted_images",
+        "input.image_captions",
+        "input.quoted_image_captions",
+    ):
+        pack.slots.pop(slot_name, None)
+    pack.meta["slot_count"] = len(pack.slots)
+
+
+def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:
+    return any(
+        value.strip()
+        for value in (
+            req.source_text,
+            req.observed_text,
+            req.total_text,
+            req.pending_text,
         )
     )
