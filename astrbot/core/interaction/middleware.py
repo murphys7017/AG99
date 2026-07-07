@@ -6,7 +6,7 @@ from types import MethodType
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.message.components import Image, Plain, Record
+from astrbot.core.message.components import File, Image, Plain, Record, Reply, Video
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.postprocess import dispatch_postprocess
@@ -62,6 +62,17 @@ from .types import (
 LOCAL_FAST_EXPRESSION_FALLBACK_RESULT = PersonaExpressionResult(
     spoken_reply="我先看一下。"
 )
+
+CORE_MEDIA_COMPONENT_TYPES = (File, Image, Record, Video)
+
+
+def _contains_core_media(components: list[Any]) -> bool:
+    for comp in components:
+        if isinstance(comp, CORE_MEDIA_COMPONENT_TYPES):
+            return True
+        if isinstance(comp, Reply) and _contains_core_media(comp.chain or []):
+            return True
+    return False
 
 
 def _merge_runtime_config(base: Any, override: Any) -> Any:
@@ -507,6 +518,7 @@ class InteractionMiddleware:
                 first_response=expression.spoken_reply,
                 effect_calls=expression.effect_calls,
             )
+            self._suppress_hybrid_immediate_for_core_media(event, decision)
             self._record_decision_diagnostics(event, decision)
             self.attach_event_context(
                 event,
@@ -519,14 +531,18 @@ class InteractionMiddleware:
         expression_task, route_task = tasks
         try:
             expression = await expression_task
+            has_core_media_input = self._has_core_media_input(event)
+            immediate_reply = (expression.spoken_reply or "").strip() or None
             fast_decision = InteractionDecision(
                 route_mode=RouteMode.HYBRID,
-                should_emit_immediate_reply=bool(
-                    (expression.spoken_reply or "").strip()
+                should_emit_immediate_reply=bool(immediate_reply)
+                and not has_core_media_input,
+                immediate_spoken_reply=(
+                    immediate_reply if not has_core_media_input else None
                 ),
-                immediate_spoken_reply=(expression.spoken_reply or "").strip()
-                or None,
-                effect_calls=list(expression.effect_calls),
+                effect_calls=(
+                    list(expression.effect_calls) if not has_core_media_input else []
+                ),
                 reason="fast_expression_pending_route",
             )
             if fast_decision.should_emit_immediate_reply:
@@ -545,6 +561,7 @@ class InteractionMiddleware:
                 first_response=expression.spoken_reply,
                 effect_calls=expression.effect_calls,
             )
+            self._suppress_hybrid_immediate_for_core_media(event, decision)
             self._record_decision_diagnostics(event, decision)
             self.attach_event_context(
                 event,
@@ -631,6 +648,40 @@ class InteractionMiddleware:
         if decision.should_emit_immediate_reply and not immediate_already_emitted:
             await self._emit_immediate_reply_or_record_failure(event, decision)
         self._forward_to_core(event, enqueue_core=enqueue_core)
+
+    def _suppress_hybrid_immediate_for_core_media(
+        self,
+        event: AstrMessageEvent,
+        decision: InteractionDecision,
+    ) -> None:
+        if decision.route_mode != RouteMode.HYBRID:
+            return
+        if not decision.should_emit_immediate_reply:
+            return
+        if not self._has_core_media_input(event):
+            return
+        decision.should_emit_immediate_reply = False
+        decision.immediate_spoken_reply = None
+        decision.effect_calls = []
+        decision.reason = (
+            f"{decision.reason}:suppress_immediate_for_core_media"
+            if decision.reason
+            else "suppress_immediate_for_core_media"
+        )
+        event.set_extra(
+            "_interaction_immediate_reply_suppressed_reason",
+            "core_media_input",
+        )
+        logger.debug(
+            "Interaction immediate reply suppressed for core media input: platform_id=%s session_id=%s route_mode=%s",
+            event.get_platform_id(),
+            event.session_id,
+            decision.route_mode.value,
+        )
+
+    @staticmethod
+    def _has_core_media_input(event: AstrMessageEvent) -> bool:
+        return _contains_core_media(event.get_messages() or [])
 
     async def _generate_expression(
         self,

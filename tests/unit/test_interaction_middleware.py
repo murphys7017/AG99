@@ -21,7 +21,7 @@ from astrbot.core.interaction.types import (
     InteractionRouteDecision,
     RouteMode,
 )
-from astrbot.core.message.components import Plain, Record, Reply
+from astrbot.core.message.components import Image, Plain, Record, Reply
 from astrbot.core.message.message_event_result import (
     MessageChain,
     MessageEventResult,
@@ -111,6 +111,27 @@ def webchat_event():
     message.message_str = "Hello world"
     return ConcreteAstrMessageEvent(
         message_str="Hello world",
+        message_obj=message,
+        platform_meta=platform_meta,
+        session_id="webchat!user!session123",
+    )
+
+
+@pytest.fixture
+def image_event(webchat_event):
+    platform_meta = webchat_event.platform_meta
+    message = AstrBotMessage()
+    message.type = MessageType.FRIEND_MESSAGE
+    message.self_id = "bot123"
+    message.session_id = "webchat!user!session123"
+    message.message_id = "image-msg-123"
+    message.sender = MessageMember(user_id="user123", nickname="TestUser")
+    message.message = [
+        Image(file="image.png", url="https://example.com/image.png")
+    ]
+    message.message_str = ""
+    return ConcreteAstrMessageEvent(
+        message_str="",
         message_obj=message,
         platform_meta=platform_meta,
         session_id="webchat!user!session123",
@@ -994,6 +1015,82 @@ class TestInteractionMiddleware:
         assert queue.get_nowait() is webchat_event
         controller.emit_immediate_spoken_reply.assert_awaited_once()
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_media_input_suppresses_immediate_reply(
+        self,
+        image_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="在等你提问题啊，笨蛋。",
+            mode=FastRouteMode.HYBRID,
+        )
+
+        middleware.handle_inbound(image_event)
+        await _drain_inbound_tasks(middleware)
+
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
+        assert queue.get_nowait() is image_event
+        assert (
+            image_event.get_extra("_interaction_immediate_reply_suppressed_reason")
+            == "core_media_input"
+        )
+        turn_state = get_interaction_turn_state(image_event)
+        assert turn_state is not None
+        assert turn_state.decision is not None
+        assert turn_state.decision.route_mode == RouteMode.HYBRID
+        assert turn_state.decision.should_emit_immediate_reply is False
+        assert turn_state.decision.immediate_spoken_reply is None
+        assert turn_state.decision.effect_calls == []
+
+    @pytest.mark.asyncio
+    async def test_self_reply_media_input_keeps_immediate_reply(
+        self,
+        image_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                }
+            },
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="这张图我能直接看。",
+            mode=FastRouteMode.SELF_REPLY,
+        )
+
+        middleware.handle_inbound(image_event)
+        await _drain_inbound_tasks(middleware)
+
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
+        assert queue.empty()
+        turn_state = get_interaction_turn_state(image_event)
+        assert turn_state is not None
+        assert turn_state.decision is not None
+        assert turn_state.decision.route_mode == RouteMode.SELF_REPLY
+        assert turn_state.decision.should_emit_immediate_reply is True
 
     @pytest.mark.asyncio
     async def test_handle_inbound_refreshes_runtime_interaction_config(
