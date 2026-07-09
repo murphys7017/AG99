@@ -590,6 +590,30 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         decision: InteractionDecision,
     ) -> None:
+        router_source = str(
+            event.get_extra("_interaction_router_result_source", "fallback")
+        )
+        router_failure_reason = str(
+            event.get_extra("_interaction_router_failure_reason", "") or ""
+        )
+        router_raw_output = str(
+            event.get_extra("_interaction_router_raw_output", "") or ""
+        )
+        router_context_nodes = event.get_extra(
+            "_interaction_router_context_nodes", []
+        )
+        if not isinstance(router_context_nodes, list):
+            router_context_nodes = []
+        logger.info(
+            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s raw_output=%s context_nodes=%s",
+            event.get_platform_id(),
+            event.session_id,
+            decision.route_mode.value,
+            router_source,
+            router_failure_reason,
+            router_raw_output,
+            router_context_nodes,
+        )
         logger.info(
             "DIAG decision.effect_calls: platform_id=%s session_id=%s route_mode=%s effect_calls=%s payload_present=%s",
             event.get_platform_id(),
@@ -739,6 +763,7 @@ class InteractionMiddleware:
                 "_interaction_router_failure_reason",
                 "plugin_context_unavailable",
             )
+            event.set_extra("_interaction_router_result_source", "fallback")
             return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
         try:
             return await self.router_agent.route(
@@ -755,6 +780,7 @@ class InteractionMiddleware:
 
         event.set_extra("_interaction_router_failed", True)
         event.set_extra("_interaction_router_failure_reason", str(error))
+        event.set_extra("_interaction_router_result_source", "fallback")
         record_interaction_turn_failure(
             event,
             stage="router",

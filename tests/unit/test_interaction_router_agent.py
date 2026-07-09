@@ -114,6 +114,8 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
     )
 
     assert route.mode == FastRouteMode.SELF_REPLY
+    assert event.get_extra("_interaction_router_result_source") == "parsed"
+    assert event.get_extra("_interaction_router_raw_output") == "self_reply"
     assert "tool_choice" not in provider.calls[0]
     assert "output_contract" not in provider.calls[0]
     assert "compiled_output_contract" not in provider.calls[0]
@@ -194,11 +196,12 @@ def test_router_system_prompt_uses_generic_local_capability_boundary():
     prompt = build_interaction_router_system_prompt()
 
     assert "严格的二分类选择器" in prompt
-    assert "聊天记录、memory 和 router 上下文" in prompt
-    assert "插件目录只说明本地插件是什么、负责什么" in prompt
+    assert "当前用户输入是首要依据" in prompt
+    assert "只能辅助判断当前消息是否明确延续既有任务" in prompt
+    assert "不能单独成为选择 hybrid 的理由" in prompt
     assert "普通寒暄、情绪回应、轻量吐槽、短确认" in prompt
     assert "无明确执行意图的短消息也属于拟人层可处理" in prompt
-    assert "含义很弱的短消息如果没有明确任务意图，默认 self_reply" in prompt
+    assert "含义很弱的短消息默认 self_reply，即使历史或 memory 中出现过任务" in prompt
     assert "明确需要核心 Agent 参与" in prompt
     assert "不要限制或枚举核心 Agent 的能力范围" in prompt
     assert "不要推断具体插件协议" in prompt

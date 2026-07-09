@@ -41,12 +41,12 @@ class InteractionRouterError(RuntimeError):
 def build_interaction_router_system_prompt() -> str:
     return (
         "你是 Interaction Router，一个严格的二分类选择器。\n"
-        "任务：根据当前用户输入、聊天记录、memory 和 router 上下文，从候选标签中选择一个。\n"
-        "router 上下文可能包含插件目录；插件目录只说明本地插件是什么、负责什么。\n"
+        "任务：从候选标签中选择一个。当前用户输入是首要依据；聊天记录、memory 和 router 上下文只能辅助判断当前消息是否明确延续既有任务。\n"
+        "router 上下文可能包含插件目录；插件目录只说明本地插件是什么、负责什么，不能单独成为选择 hybrid 的理由。\n"
         "候选标签：\n"
         "- self_reply：拟人层或插件目录声明的本地插件职责即可完整处理，不需要核心 Agent；普通寒暄、情绪回应、轻量吐槽、短确认、表情或无明确执行意图的短消息也属于拟人层可处理。\n"
         "- hybrid：当前输入明确需要核心 Agent 参与，或聊天记录显示它正在继续一个需要核心 Agent 的任务。\n"
-        "判断规则：只判断本地插件/拟人层是否明确能完整处理；含义很弱的短消息如果没有明确任务意图，默认 self_reply；不要限制或枚举核心 Agent 的能力范围。\n"
+        "判断规则：只有当前消息本身表达明确任务意图，或明确指向未完成的核心任务时才选择 hybrid；含义很弱的短消息默认 self_reply，即使历史或 memory 中出现过任务。不要限制或枚举核心 Agent 的能力范围。\n"
         "不要推断具体插件协议、动作参数或输出 schema。\n"
         "输出约束：不要生成用户回复，不要输出 JSON，只返回 self_reply 或 hybrid。"
     )
@@ -117,17 +117,21 @@ class InteractionRouterAgent:
         except Exception as exc:  # noqa: BLE001
             raise InteractionRouterError("model_error", str(exc)) from exc
 
-        payload = extract_interaction_route_payload(
-            llm_resp.completion_text,
+        event.set_extra(
+            "_interaction_router_raw_output",
+            _truncate_router_diagnostic(llm_resp.completion_text),
         )
+        payload = extract_interaction_route_payload(llm_resp.completion_text)
         route = InteractionRouteDecision.from_mapping(payload)
         if route is None:
             raise InteractionRouterError("invalid_payload")
+        event.set_extra("_interaction_router_result_source", "parsed")
         logger.info(
-            "Interaction router parsed: platform_id=%s session_id=%s mode=%s",
+            "Interaction router parsed: platform_id=%s session_id=%s mode=%s raw_output=%s",
             event.get_platform_id(),
             event.session_id,
             route.mode.value,
+            event.get_extra("_interaction_router_raw_output"),
         )
         return route
 
@@ -165,13 +169,29 @@ class InteractionRouterAgent:
         add_interaction_router_slots_to_pack(
             pack=route_pack,
         )
-        return PromptRenderEngine().render(
+        render_result = PromptRenderEngine().render(
             route_pack,
             event=event,
             plugin_context=plugin_context,
             config=build_config,
             provider_request=build_prompt_render_provider_request(event, provider),
         )
+        metadata = (
+            render_result.metadata
+            if isinstance(render_result.metadata, dict)
+            else {}
+        )
+        slot_names = metadata.get("selected_slot_names", [])
+        event.set_extra(
+            "_interaction_router_context_nodes",
+            [str(name) for name in slot_names] if isinstance(slot_names, list) else [],
+        )
+        return render_result
+
+
+def _truncate_router_diagnostic(value: object, *, limit: int = 160) -> str:
+    text = str(value or "").replace("\n", " ").strip()
+    return text if len(text) <= limit else f"{text[:limit]}..."
 
 
 
