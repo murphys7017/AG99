@@ -581,6 +581,30 @@ class AstrMessageEvent(abc.ABC):
 
         await self.send(message)
 
+    async def emit_progress(
+        self,
+        message: MessageChain,
+        *,
+        mode: str = "direct",
+    ) -> None:
+        """Send a visible plugin progress update without finalizing the turn.
+
+        Use this before yielding a ``ProviderRequest`` when the core Agent is
+        expected to provide the final reply. Without the interaction middleware,
+        this falls back to the platform's regular send behavior.
+        """
+        controller = self.get_extra("_interaction_output_controller")
+        if controller is not None:
+            await controller.capture_plugin_output(
+                message,
+                self,
+                mode=mode,
+                finalize=False,
+            )
+            return
+
+        await self.send(message)
+
     async def send_direct(
         self,
         message: MessageChain,
@@ -600,6 +624,16 @@ class AstrMessageEvent(abc.ABC):
         Equivalent to ``emit_output(message, mode="persona")``.
         """
         await self.emit_output(message, mode="persona")
+
+    async def send_progress(
+        self,
+        message: MessageChain,
+    ) -> None:
+        """Deliver a direct plugin progress update.
+
+        Equivalent to ``emit_progress(message, mode="direct")``.
+        """
+        await self.emit_progress(message, mode="direct")
 
     async def react(self, emoji: str) -> None:
         """对消息添加表情回应。

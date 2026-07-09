@@ -248,42 +248,6 @@ def test_prepend_explicit_contexts_preserves_rendered_contexts():
     ]
 
 
-def test_select_image_chat_provider_uses_image_fallback():
-    text_provider = MagicMock(spec=Provider)
-    text_provider.provider_config = {
-        "id": "text-provider",
-        "modalities": ["text", "tool_use"],
-    }
-    image_provider = MagicMock(spec=Provider)
-    image_provider.provider_config = {
-        "id": "image-provider",
-        "modalities": ["text", "image", "tool_use"],
-    }
-    req = ProviderRequest(prompt="describe", image_urls=["/tmp/image.jpg"])
-
-    selected = ama._select_image_chat_provider(text_provider, req, [image_provider])
-
-    assert selected is image_provider
-
-
-def test_select_image_chat_provider_keeps_provider_without_image_fallback():
-    text_provider = MagicMock(spec=Provider)
-    text_provider.provider_config = {
-        "id": "text-provider",
-        "modalities": ["text", "tool_use"],
-    }
-    fallback_provider = MagicMock(spec=Provider)
-    fallback_provider.provider_config = {
-        "id": "fallback-provider",
-        "modalities": ["text", "tool_use"],
-    }
-    req = ProviderRequest(prompt="describe", image_urls=["/tmp/image.jpg"])
-
-    selected = ama._select_image_chat_provider(text_provider, req, [fallback_provider])
-
-    assert selected is text_provider
-
-
 class TestMainAgentBuildConfig:
     """Tests for MainAgentBuildConfig dataclass."""
 
@@ -1224,7 +1188,7 @@ class TestDecorateLlmRequest:
                 provider=mock_provider,
             )
 
-        assert req.image_urls == ["/tmp/image.jpg"]
+        assert req.image_urls == []
         assert not any(
             "[Image Captioning Failed]" in getattr(part, "text", "")
             for part in req.extra_user_content_parts
@@ -1265,7 +1229,7 @@ class TestDecorateLlmRequest:
                 provider=mock_provider,
             )
 
-        assert req.image_urls == ["/tmp/image.jpg"]
+        assert req.image_urls == []
         assert not any(
             "[Image Captioning Failed]" in getattr(part, "text", "")
             for part in req.extra_user_content_parts

@@ -2441,6 +2441,31 @@ async def test_capture_plugin_output_records_visible_output_and_finalized_materi
 
 
 @pytest.mark.asyncio
+async def test_capture_plugin_progress_does_not_finalize_or_persist_turn(webchat_event):
+    queue = asyncio.Queue()
+    persist_callback = AsyncMock()
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        controller = InteractionOutputController(
+            interaction_config=InteractionAgentConfig(),
+            persist_callback=persist_callback,
+        )
+        await controller.capture_plugin_output(
+            MessageChain([Plain("working")]),
+            webchat_event,
+            mode="direct",
+            finalize=False,
+        )
+
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert any("working" in output.get("text", "") for output in outputs)
+    assert get_interaction_turn_finalized_material(webchat_event) is None
+    persist_callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_capture_plugin_output_skip_when_message_is_none(webchat_event):
     """capture_plugin_output(None) should be a no-op."""
     controller = InteractionOutputController(

@@ -1369,35 +1369,6 @@ def _provider_supports_modality(provider: Provider, modality: str) -> bool:
     return isinstance(modalities, list) and modality in modalities
 
 
-def _select_image_chat_provider(
-    provider: Provider,
-    req: ProviderRequest,
-    fallback_providers: list[Provider],
-) -> Provider:
-    if not req.image_urls or _provider_supports_modality(provider, "image"):
-        return provider
-
-    provider_id = provider.provider_config.get("id", "<unknown>")
-    for fallback_provider in fallback_providers:
-        if not _provider_supports_modality(fallback_provider, "image"):
-            continue
-        fallback_id = fallback_provider.provider_config.get("id", "<unknown>")
-        logger.warning(
-            "Chat provider %s does not support image input, switching this request "
-            "to fallback provider %s.",
-            provider_id,
-            fallback_id,
-        )
-        return fallback_provider
-
-    logger.warning(
-        "Chat provider %s does not support image input and no image-capable fallback "
-        "provider is available.",
-        provider_id,
-    )
-    return provider
-
-
 def _get_image_compress_args(
     provider_settings: dict[str, object] | None,
 ) -> tuple[bool, int, int]:
@@ -1622,31 +1593,30 @@ async def _decorate_llm_request(
     if req.conversation:
         await _ensure_persona_and_skills(req, cfg, plugin_context, event)
 
-        img_cap_prov_id: str = cfg.get("default_image_caption_provider_id") or ""
-        if req.image_urls and main_provider_supports_image:
-            logger.debug(
-                "Skipping image captioning because the main provider supports image input."
-            )
-        elif img_cap_prov_id and req.image_urls:
-            if _resolve_image_caption_provider(
-                plugin_context,
-                img_cap_prov_id,
-                source="current",
-            ):
-                await _ensure_img_caption(
-                    event,
-                    req,
-                    cfg,
-                    plugin_context,
-                    img_cap_prov_id,
-                )
-        elif req.image_urls:
-            logger.debug(
-                "No dedicated image caption provider configured. "
-                "Skipping current image captioning."
-            )
+    img_cap_prov_id: str = cfg.get("default_image_caption_provider_id") or ""
+    if req.image_urls and main_provider_supports_image:
+        logger.debug(
+            "Skipping image captioning because the main provider supports image input."
+        )
+    elif req.image_urls and img_cap_prov_id and _resolve_image_caption_provider(
+        plugin_context,
+        img_cap_prov_id,
+        source="current",
+    ):
+        await _ensure_img_caption(
+            event,
+            req,
+            cfg,
+            plugin_context,
+            img_cap_prov_id,
+        )
+    elif req.image_urls:
+        logger.debug(
+            "Skipping current image input because the main provider has no image modality "
+            "and no usable caption provider is configured."
+        )
+        req.image_urls = []
 
-    img_cap_prov_id = cfg.get("default_image_caption_provider_id") or ""
     quoted_message_settings = _get_quoted_message_parser_settings(cfg)
     await _process_quote_message(
         event,
@@ -2114,41 +2084,6 @@ def _get_compress_provider(
     return provider
 
 
-def _get_fallback_chat_providers(
-    provider: Provider, plugin_context: Context, provider_settings: dict
-) -> list[Provider]:
-    fallback_ids = provider_settings.get("fallback_chat_models", [])
-    if not isinstance(fallback_ids, list):
-        logger.warning(
-            "fallback_chat_models setting is not a list, skip fallback providers."
-        )
-        return []
-
-    provider_id = str(provider.provider_config.get("id", ""))
-    seen_provider_ids: set[str] = {provider_id} if provider_id else set()
-    fallbacks: list[Provider] = []
-
-    for fallback_id in fallback_ids:
-        if not isinstance(fallback_id, str) or not fallback_id:
-            continue
-        if fallback_id in seen_provider_ids:
-            continue
-        fallback_provider = plugin_context.get_provider_by_id(fallback_id)
-        if fallback_provider is None:
-            logger.warning("Fallback chat provider `%s` not found, skip.", fallback_id)
-            continue
-        if not isinstance(fallback_provider, Provider):
-            logger.warning(
-                "Fallback chat provider `%s` is invalid type: %s, skip.",
-                fallback_id,
-                type(fallback_provider),
-            )
-            continue
-        fallbacks.append(fallback_provider)
-        seen_provider_ids.add(fallback_id)
-    return fallbacks
-
-
 async def build_main_agent(
     *,
     event: AstrMessageEvent,
@@ -2436,16 +2371,6 @@ async def build_main_agent(
                 SendMessageToUserTool
             )
         )
-
-    fallback_providers = _get_fallback_chat_providers(
-        provider, plugin_context, config.provider_settings
-    )
-    selected_provider = _select_image_chat_provider(provider, req, fallback_providers)
-    if selected_provider is not provider:
-        provider = selected_provider
-        if req.model:
-            req.model = None
-        fallback_providers = [p for p in fallback_providers if p is not provider]
 
     if provider.provider_config.get("max_context_tokens", 0) <= 0:
         model = provider.get_model()

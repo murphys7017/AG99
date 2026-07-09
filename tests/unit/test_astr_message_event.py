@@ -851,7 +851,7 @@ class TestDefensiveGetattr:
 
 
 class TestPluginOutputHelpers:
-    """Tests for emit_output, send_direct, send_persona."""
+    """Tests for plugin output and progress helpers."""
 
     @pytest.mark.asyncio
     async def test_emit_output_direct_fallback_when_no_controller(
@@ -894,6 +894,16 @@ class TestPluginOutputHelpers:
         astr_message_event.send.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_send_progress_falls_back_to_send_without_controller(
+        self, astr_message_event
+    ):
+        astr_message_event.send = AsyncMock()
+
+        await astr_message_event.send_progress(MessageChain([Plain("working")]))
+
+        astr_message_event.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_emit_output_with_controller_delegates_to_capture_plugin_output(
         self, astr_message_event
     ):
@@ -918,3 +928,18 @@ class TestPluginOutputHelpers:
         controller.capture_plugin_output.assert_awaited_once()
         args = controller.capture_plugin_output.await_args
         assert args.kwargs["mode"] == "persona"
+
+    @pytest.mark.asyncio
+    async def test_emit_progress_with_controller_does_not_finalize_turn(
+        self, astr_message_event
+    ):
+        controller = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        astr_message_event.set_extra("_interaction_output_controller", controller)
+
+        await astr_message_event.emit_progress(
+            MessageChain([Plain("working")]), mode="persona"
+        )
+
+        args = controller.capture_plugin_output.await_args
+        assert args.kwargs == {"mode": "persona", "finalize": False}

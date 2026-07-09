@@ -340,6 +340,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         *,
         mode: str = PluginOutputMode.DIRECT.value,
+        finalize: bool = True,
     ) -> None:
         """Entry point for plugin-origin output through the Output Runtime.
 
@@ -348,6 +349,9 @@ class InteractionOutputController:
         * **direct** — deliver the message as-is.
         * **persona** — extract plain text, pass it through the unified
           visible-reply persona layer, then deliver the rewritten text.
+
+        ``finalize=False`` is for a visible progress update that will be
+        followed by another output in the same interaction turn.
         """
         if message is None:
             return
@@ -400,8 +404,10 @@ class InteractionOutputController:
             message_kind=resolved_kind,
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
-            memory_relevant=True,
+            memory_relevant=finalize,
         )
+        if not finalize:
+            return
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
 
