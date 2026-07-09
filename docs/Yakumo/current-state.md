@@ -89,7 +89,7 @@
 - 所有用户可见自然语言已经收口到统一的 visible-reply persona 入口：
   `first_response`、插件 persona 输出、core final reply、stream interjection 不再各自维护独立文案生成器
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的统一插件输出 helper
-- `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；router 自身任务说明直接作为原生 system base 注入，上下文包含裁剪后的聊天记录、interaction memory，以及 router-scoped contributor 提供的本地插件目录；插件目录在最终 prompt 中只保留插件 `name` / `description`；它只判断本地插件/拟人层是否明确能完整处理，其他情况交给核心 Agent，不枚举或限制核心 Agent 的能力范围，也不内置任何具体插件协议
+- `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；router 自身任务说明直接作为原生 system base 注入，上下文包含裁剪后的聊天记录、interaction memory，以及 router-scoped contributor 提供的本地插件目录；插件目录在最终 prompt 中只保留插件 `name` / `description`；它只判断本地插件/拟人层是否明确能完整处理，普通寒暄、情绪回应、轻量反应、短确认和无明确执行意图的短消息默认属于拟人层可处理；明确需要核心 Agent 参与或聊天记录显示正在继续核心任务时才走 `hybrid`；不枚举或限制核心 Agent 的能力范围，也不内置任何具体插件协议
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 说明直接进入原生 `system.base`，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功

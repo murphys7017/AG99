@@ -196,7 +196,10 @@ def test_router_system_prompt_uses_generic_local_capability_boundary():
     assert "严格的二分类选择器" in prompt
     assert "聊天记录、memory 和 router 上下文" in prompt
     assert "插件目录只说明本地插件是什么、负责什么" in prompt
-    assert "其他所有情况，交给核心 Agent" in prompt
+    assert "普通寒暄、情绪回应、轻量吐槽、短确认" in prompt
+    assert "无明确执行意图的短消息也属于拟人层可处理" in prompt
+    assert "含义很弱的短消息如果没有明确任务意图，默认 self_reply" in prompt
+    assert "明确需要核心 Agent 参与" in prompt
     assert "不要限制或枚举核心 Agent 的能力范围" in prompt
     assert "不要推断具体插件协议" in prompt
     assert "工具、检索、文件、代码、事实核验、复杂推理" not in prompt
