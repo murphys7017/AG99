@@ -7,6 +7,7 @@ from astrbot.core.interaction.router_agent import (
     build_interaction_router_system_prompt,
     extract_interaction_route_payload,
 )
+from astrbot.core.interaction.context_builder import InteractionPromptContributorError
 from astrbot.core.interaction.effects import PersonaEffectCall
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
@@ -505,3 +506,62 @@ async def test_router_prompt_includes_router_scoped_capability_extensions(monkey
     assert contributor.views[0].phase == "route"
     assert "Local Presence" in render_result.system_prompt
     assert "example.plugin_catalog" not in render_result.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_router_ignores_failed_optional_prompt_contributors(monkeypatch):
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        message_str = "hello"
+        message_obj = type("Message", (), {"message": []})()
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+        def get_platform_name(self):
+            return "webchat"
+
+    class Provider:
+        pass
+
+    event = Event()
+    agent = InteractionRouterAgent(memory_store=None)
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "get_config": lambda self, umo=None: {},
+            "list_interaction_prompt_contributors": lambda self: [],
+        },
+    )()
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.router_agent.Provider",
+        Provider,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.router_agent.collect_interaction_prompt_extensions",
+        AsyncMock(side_effect=InteractionPromptContributorError("collector_timeout")),
+    )
+
+    render_result = await agent._prepare_render_result(
+        event,
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(),
+        provider=Provider(),
+    )
+
+    assert render_result is not None
+    assert event.get_extra("_interaction_router_extension_error") == "collector_timeout"

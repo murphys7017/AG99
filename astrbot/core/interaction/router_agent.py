@@ -163,7 +163,15 @@ class InteractionRouterAgent:
                 phase="route",
             )
         except InteractionPromptContributorError as exc:
-            raise InteractionRouterError(exc.reason, str(exc)) from exc
+            event.set_extra("_interaction_router_extension_error", exc.reason)
+            logger.warning(
+                "Interaction router prompt contributors failed; continuing without plugin directory: platform_id=%s session_id=%s reason=%s error=%s",
+                event.get_platform_id(),
+                event.session_id,
+                exc.reason,
+                exc,
+            )
+            prompt_extensions = []
         route_pack = clone_interaction_context_pack(router_pack)
         add_router_plugin_directory_slots_to_pack(route_pack, prompt_extensions)
         add_interaction_router_slots_to_pack(

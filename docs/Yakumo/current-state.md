@@ -57,6 +57,7 @@
 - builtin 群聊上下文已接入 prompt pipeline：`GroupChatContext` 作为 prompt extension collector 向 `extension.context` 提供群聊上下文，同时保留 legacy `on_llm_request` 兜底出口；该层只提供群聊上下文材料，不接管 Yakumo memory。
 - `PromptRenderEngine` 已支持按 provider metadata 的 `prompt_renderer_family` 自动选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`），输出对应 API 原生格式
 - prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；当前 interaction fast router 不使用结构化输出契约，只返回固定路由词；persona visible-reply 使用统一的 `persona_expression` 虚拟 tool-call 契约，只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON
+- 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。
 - TODO: 将上下文预算改为显式可配置策略，按 provider/model 支持的 `max_context_tokens` 分配 history/system/tools/memory 的预算，补齐 1M context 模型适配；现阶段 token 统计仍主要依赖估算器，容易保守截断，尚未充分利用大窗口模型
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
 
@@ -88,8 +89,8 @@
 - **新增** `persona_runtime.py`：`InteractionPersonaRuntime`，Persona Runtime 种子代码
 - 所有用户可见自然语言已经收口到统一的 visible-reply persona 入口：
   `first_response`、插件 persona 输出、core final reply、stream interjection 不再各自维护独立文案生成器
-- **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的统一插件输出 helper
-- `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；router 自身任务说明直接作为原生 system base 注入，上下文包含裁剪后的聊天记录、interaction memory，以及 router-scoped contributor 提供的本地插件目录；插件目录在最终 prompt 中只保留插件 `name` / `description`；它只判断本地插件/拟人层是否明确能完整处理，普通寒暄、情绪回应、轻量反应、短确认和无明确执行意图的短消息默认属于拟人层可处理；明确需要核心 Agent 参与或聊天记录显示正在继续核心任务时才走 `hybrid`；不枚举或限制核心 Agent 的能力范围，也不内置任何具体插件协议
+- **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
+- `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；router 自身任务说明直接作为原生 system base 注入，上下文包含裁剪后的聊天记录、interaction memory，以及 router-scoped contributor 提供的本地插件目录；插件目录在最终 prompt 中只保留插件 `name` / `description`；当前输入优先，历史与 memory 仅辅助判断是否明确续接未完成的核心任务；普通寒暄、情绪回应、轻量反应、短确认和无明确执行意图的短消息默认属于拟人层可处理；明确需要核心 Agent 参与或明确续接核心任务时才走 `hybrid`；不枚举或限制核心 Agent 的能力范围，也不内置任何具体插件协议。router-scoped contributor 仅是可选插件目录，失败时跳过而不使 Router 降级；每轮会记录 `parsed` / `fallback` 来源、失败原因、可选目录错误、模型原始标签和渲染上下文节点，供排查误路由。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 说明直接进入原生 `system.base`，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功

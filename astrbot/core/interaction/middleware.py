@@ -604,13 +604,17 @@ class InteractionMiddleware:
         )
         if not isinstance(router_context_nodes, list):
             router_context_nodes = []
+        router_extension_error = str(
+            event.get_extra("_interaction_router_extension_error", "") or ""
+        )
         logger.info(
-            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s raw_output=%s context_nodes=%s",
+            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s extension_error=%s raw_output=%s context_nodes=%s",
             event.get_platform_id(),
             event.session_id,
             decision.route_mode.value,
             router_source,
             router_failure_reason,
+            router_extension_error,
             router_raw_output,
             router_context_nodes,
         )

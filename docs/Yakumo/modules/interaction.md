@@ -70,7 +70,7 @@ Input Runtime / Observation
 
 - 捕获 interaction turn 的 `send` / `send_streaming`
 - 分类 immediate reply、passthrough、core reply、core stream、streaming finish marker
-- **新增** `capture_plugin_output()` — 插件输出的独立入口，支持 `direct` / `persona` 两种模式
+- **新增** `capture_plugin_output()` — 插件输出的独立入口，支持 `direct` / `persona` 两种模式；默认 finalizes turn，`finalize=False` 仅用于随后还会有最终输出的进度消息
 - 统一 visible-reply persona 入口、result contributor、reply prefix、reasoning display、TTS、t2i
 - 记录 `InteractionUtterance` 与 visible output
 - 产出 finalized turn material 后请求 middleware finalization
@@ -81,6 +81,11 @@ Input Runtime / Observation
 
 - `plugin_direct` — 插件输出，不经人格改写
 - `plugin_persona` — 插件输出，经人格改写
+
+插件输出所有权约束：
+
+- `event.send()`、`emit_output()`、`send_direct()`、`send_persona()` 是最终输出，会完成 interaction turn。
+- 插件需要在 yield `ProviderRequest` 前提示用户时，使用 `emit_progress()` 或 `send_progress()`；它们可见但不写入 finalized material，也不触发 turn completion。
 
 当前失败策略：
 
