@@ -70,6 +70,13 @@ from .turn_state import (
 )
 from .types import InteractionAgentConfig, RouteMode
 
+PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY = (
+    "_interaction_plugin_output_transaction_active"
+)
+PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY = (
+    "_interaction_plugin_output_transaction_start"
+)
+
 
 def _merge_runtime_config(
     base: Mapping[str, Any], override: Mapping[str, Any]
@@ -382,6 +389,9 @@ class InteractionOutputController:
 
         event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
         semantic_text = message.get_plain_text()
+        deferred_by_transaction = finalize and self._begin_plugin_output_transaction(
+            event
+        )
 
         (
             message,
@@ -404,9 +414,9 @@ class InteractionOutputController:
             message_kind=resolved_kind,
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
-            memory_relevant=finalize,
+            memory_relevant=finalize and not deferred_by_transaction,
         )
-        if not finalize:
+        if not finalize or deferred_by_transaction:
             return
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
@@ -424,6 +434,7 @@ class InteractionOutputController:
         resolved_kind = "plugin_direct"
         event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
         event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
+        deferred_by_transaction = self._begin_plugin_output_transaction(event)
         stream_text_parts: list[str] = []
 
         async def _observe_plugin_stream() -> AsyncGenerator[MessageChain, None]:
@@ -467,10 +478,54 @@ class InteractionOutputController:
             event,
             message_kind=resolved_kind,
             text=text,
-            memory_relevant=True,
+            memory_relevant=not deferred_by_transaction,
         )
+        if deferred_by_transaction:
+            return
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
+
+    async def finalize_plugin_output_transaction(
+        self,
+        event: AstrMessageEvent,
+        *,
+        delegated_to_core: bool,
+    ) -> None:
+        """Commit pending plugin output only when the handler owns the final reply."""
+        active = bool(event.get_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY))
+        start = event.get_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY)
+        event.set_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY, False)
+        event.set_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY, None)
+        if not active or delegated_to_core or not isinstance(start, int):
+            return
+
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None or start >= len(turn_state.visible_outputs):
+            return
+
+        final_index = len(turn_state.visible_outputs) - 1
+        for index in range(start, len(turn_state.visible_outputs)):
+            memory_relevant = index == final_index
+            turn_state.visible_outputs[index]["memory_relevant"] = memory_relevant
+            if index < len(turn_state.utterances):
+                turn_state.utterances[index].memory_relevant = memory_relevant
+
+        outputs = [dict(output) for output in turn_state.visible_outputs]
+        event.set_extra("_visible_turn_outputs", outputs)
+        event.set_extra("_postprocess_visible_outputs", outputs)
+        self._materialize_finalized_turn(event)
+        await self._persist_interaction_turn(event)
+
+    @staticmethod
+    def _begin_plugin_output_transaction(event: AstrMessageEvent) -> bool:
+        if not event.get_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY, False):
+            return False
+        start = event.get_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY)
+        if not isinstance(start, int):
+            turn_state = get_interaction_turn_state(event)
+            start = len(turn_state.visible_outputs) if turn_state is not None else 0
+            event.set_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY, start)
+        return True
 
     async def capture_visible_completion(
         self,

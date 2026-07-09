@@ -35,6 +35,7 @@ from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.postprocess.types import PostProcessTrigger
+from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
 
@@ -505,6 +506,7 @@ class TestInteractionMiddleware:
         controller = MagicMock()
         controller.capture_message_chain = AsyncMock()
         controller.capture_plugin_output = AsyncMock()
+        controller.finalize_plugin_output_transaction = AsyncMock()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -539,8 +541,58 @@ class TestInteractionMiddleware:
             mode="direct",
         )
         controller.capture_message_chain.assert_not_awaited()
+        controller.finalize_plugin_output_transaction.assert_awaited_once_with(
+            webchat_event,
+            delegated_to_core=False,
+        )
         assert webchat_event.get_extra("_interaction_route_handled") is None
         assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_process_stage_treats_plugin_send_before_provider_request_as_progress(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.capture_message_chain = AsyncMock()
+        controller.capture_plugin_output = AsyncMock()
+        controller.finalize_plugin_output_transaction = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        stage = ProcessStage()
+        stage.ctx = MagicMock()
+        stage.ctx.interaction_middleware = middleware
+        stage.ctx.astrbot_config = {"provider_settings": {"enable": False}}
+        stage.star_request_sub_stage = MagicMock()
+        stage.agent_sub_stage = MagicMock()
+        stage._run_interaction_before_core_agent = AsyncMock()
+        message = MessageChain([Plain("working")])
+        request = ProviderRequest(prompt="complete this")
+
+        async def _plugin_process(event):
+            await event.send(message)
+            yield request
+
+        async def _agent_process(event):
+            assert event.get_extra("provider_request") is request
+            yield None
+
+        stage.star_request_sub_stage.process = _plugin_process
+        stage.agent_sub_stage.process = _agent_process
+        webchat_event.set_extra("activated_handlers", [MagicMock()])
+
+        async for _ in stage.process(webchat_event):
+            pass
+
+        controller.finalize_plugin_output_transaction.assert_awaited_once_with(
+            webchat_event,
+            delegated_to_core=True,
+        )
+        stage._run_interaction_before_core_agent.assert_awaited_once_with(webchat_event)
 
     @pytest.mark.asyncio
     async def test_plugin_send_defaults_to_plugin_output_after_forwarding(

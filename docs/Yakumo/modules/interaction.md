@@ -84,8 +84,9 @@ Input Runtime / Observation
 
 插件输出所有权约束：
 
-- `event.send()`、`emit_output()`、`send_direct()`、`send_persona()` 是最终输出，会完成 interaction turn。
+- `event.send()`、`emit_output()`、`send_direct()`、`send_persona()` 默认是最终输出；官方 plugin handler 的输出事务会在 handler 结束前暂缓其 turn completion。
 - 插件需要在 yield `ProviderRequest` 前提示用户时，使用 `emit_progress()` 或 `send_progress()`；它们可见但不写入 finalized material，也不触发 turn completion。
+- 为兼容旧插件，官方 plugin handler 执行期间的普通 `event.send()` 会先进入输出事务：若 handler 后续 yield `ProviderRequest`，此前输出自动作为 progress；若 handler 正常结束且没有核心请求，则最后一条输出提交为最终回复。
 
 当前失败策略：
 

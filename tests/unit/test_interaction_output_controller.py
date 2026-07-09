@@ -2466,6 +2466,101 @@ async def test_capture_plugin_progress_does_not_finalize_or_persist_turn(webchat
 
 
 @pytest.mark.asyncio
+async def test_plugin_output_transaction_commits_last_output_without_core(webchat_event):
+    queue = asyncio.Queue()
+    persist_callback = AsyncMock()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(),
+        persist_callback=persist_callback,
+    )
+    webchat_event.set_extra("_interaction_plugin_output_transaction_active", True)
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_plugin_output(
+            MessageChain([Plain("first")]), webchat_event, mode="direct"
+        )
+        await controller.capture_plugin_output(
+            MessageChain([Plain("final")]), webchat_event, mode="direct"
+        )
+        await controller.finalize_plugin_output_transaction(
+            webchat_event,
+            delegated_to_core=False,
+        )
+
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert [output["memory_relevant"] for output in outputs] == [False, True]
+    material = get_interaction_turn_finalized_material(webchat_event)
+    assert material is not None
+    assert material["assistant_text"] == "final"
+    persist_callback.assert_awaited_once_with(webchat_event)
+
+
+@pytest.mark.asyncio
+async def test_plugin_output_transaction_keeps_output_as_progress_for_core(webchat_event):
+    queue = asyncio.Queue()
+    persist_callback = AsyncMock()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(),
+        persist_callback=persist_callback,
+    )
+    webchat_event.set_extra("_interaction_plugin_output_transaction_active", True)
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        await controller.capture_plugin_output(
+            MessageChain([Plain("working")]), webchat_event, mode="direct"
+        )
+        await controller.finalize_plugin_output_transaction(
+            webchat_event,
+            delegated_to_core=True,
+        )
+
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert outputs[0]["memory_relevant"] is False
+    assert get_interaction_turn_finalized_material(webchat_event) is None
+    persist_callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_plugin_stream_transaction_keeps_output_as_progress_for_core(
+    webchat_event,
+):
+    persist_callback = AsyncMock()
+    controller = InteractionOutputController(
+        interaction_config=InteractionAgentConfig(),
+        persist_callback=persist_callback,
+    )
+    webchat_event.set_extra("_interaction_plugin_output_transaction_active", True)
+
+    async def _send_stream(generator, **kwargs):
+        del kwargs
+        async for _ in generator:
+            pass
+
+    webchat_event.send_interaction_streaming = _send_stream
+
+    async def _stream():
+        yield MessageChain([Plain("working stream")])
+
+    await controller.capture_plugin_streaming(_stream(), webchat_event, mode="direct")
+    await controller.finalize_plugin_output_transaction(
+        webchat_event,
+        delegated_to_core=True,
+    )
+
+    outputs = get_interaction_turn_visible_outputs(webchat_event)
+    assert outputs[0]["text"] == "working stream"
+    assert outputs[0]["memory_relevant"] is False
+    assert get_interaction_turn_finalized_material(webchat_event) is None
+    persist_callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_capture_plugin_output_skip_when_message_is_none(webchat_event):
     """capture_plugin_output(None) should be a no-op."""
     controller = InteractionOutputController(

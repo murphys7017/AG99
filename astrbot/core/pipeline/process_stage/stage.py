@@ -56,22 +56,41 @@ class ProcessStage(Stage):
             return
         # 有插件 Handler 被激活
         if activated_handlers:
-            async for resp in self.star_request_sub_stage.process(event):
-                # 生成器返回值处理
-                if isinstance(resp, ProviderRequest):
-                    # Handler 的 LLM 请求
-                    event.set_extra("provider_request", resp)
-                    await self._run_interaction_before_core_agent(event)
-                    if event.is_stopped():
-                        return
-                    _t = False
-                    async for _ in self.agent_sub_stage.process(event):
-                        _t = True
+            middleware = self.ctx.interaction_middleware
+            output_controller = (
+                middleware.output_controller if middleware is not None else None
+            )
+            event.set_extra("_interaction_plugin_output_transaction_active", True)
+            delegated_to_core = False
+            try:
+                async for resp in self.star_request_sub_stage.process(event):
+                    # 生成器返回值处理
+                    if isinstance(resp, ProviderRequest):
+                        # Handler 的 LLM 请求。此前可见插件输出是进度，不拥有最终 turn。
+                        delegated_to_core = True
+                        if output_controller is not None:
+                            await output_controller.finalize_plugin_output_transaction(
+                                event,
+                                delegated_to_core=True,
+                            )
+                        event.set_extra("provider_request", resp)
+                        await self._run_interaction_before_core_agent(event)
+                        if event.is_stopped():
+                            return
+                        _t = False
+                        async for _ in self.agent_sub_stage.process(event):
+                            _t = True
+                            yield
+                        if not _t:
+                            yield
+                    else:
                         yield
-                    if not _t:
-                        yield
-                else:
-                    yield
+            finally:
+                if output_controller is not None and not delegated_to_core:
+                    await output_controller.finalize_plugin_output_transaction(
+                        event,
+                        delegated_to_core=False,
+                    )
 
         # 调用 LLM 相关请求
         if not self.ctx.astrbot_config["provider_settings"].get("enable", True):
