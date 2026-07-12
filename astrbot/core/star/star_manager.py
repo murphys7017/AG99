@@ -1682,6 +1682,7 @@ class PluginManager:
         # module_path is like "data.plugins.my_plugin.main", extract prefix like "data.plugins.my_plugin"
         module_prefix = ".".join(plugin_module_path.split(".")[:-1])
         if module_prefix:
+            self._remove_plugin_runtime_extensions(module_prefix)
             unregistered_adapters = unregister_platform_adapters_by_module(
                 module_prefix
             )
@@ -1697,6 +1698,20 @@ class PluginManager:
             root_dir_name=plugin.root_dir_name,
             is_reserved=plugin.reserved,
         )
+
+    def _remove_plugin_runtime_extensions(self, module_prefix: str) -> None:
+        self.context.remove_prompt_extension_collectors_by_module_prefix(module_prefix)
+        self.context.remove_interaction_prompt_contributors_by_module_prefix(
+            module_prefix
+        )
+        self.context.remove_interaction_result_contributors_by_module_prefix(
+            module_prefix
+        )
+        self.context.remove_interaction_stream_deciders_by_module_prefix(module_prefix)
+        self.context.remove_interaction_lifecycle_observers_by_module_prefix(
+            module_prefix
+        )
+        self.context.unregister_persona_effects(module_prefix=module_prefix)
 
     async def update_plugin(
         self, plugin_name: str, proxy="", download_url: str = ""

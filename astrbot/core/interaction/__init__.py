@@ -1,6 +1,7 @@
 from .config import is_middleware_enabled, load_interaction_agent_config
 from .contributors import (
     InteractionDecisionView,
+    InteractionLifecycleView,
     InteractionOutputContribution,
     InteractionOutputDraft,
     InteractionResultContribution,
@@ -49,9 +50,11 @@ from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
     InteractionContextMaterial,
+    InteractionLifecycleStage,
     InteractionStreamState,
     InteractionTurnCompletionState,
     InteractionTurnState,
+    InteractionTurnStatus,
     InteractionUtterance,
     ensure_interaction_turn_state,
     get_interaction_turn_state,
@@ -89,6 +92,8 @@ __all__ = [
     "InteractionContextMaterial",
     "InteractionDecision",
     "InteractionDecisionView",
+    "InteractionLifecycleStage",
+    "InteractionLifecycleView",
     "InteractionExpressionAgent",
     "InteractionExpressionError",
     "InteractionMiddleware",
@@ -101,6 +106,7 @@ __all__ = [
     "InteractionTurnCompletionState",
     "InteractionStreamView",
     "InteractionTurnState",
+    "InteractionTurnStatus",
     "InteractionUtterance",
     "InteractionResultContribution",
     "InteractionResultView",

@@ -90,6 +90,11 @@ def _merge_runtime_config(
     return merged
 
 
+def _visible_message_ids_from_extras(extras: Mapping[str, Any]) -> list[str]:
+    visible_message_id = str(extras.get("visible_message_id", "") or "").strip()
+    return [visible_message_id] if visible_message_id else []
+
+
 @dataclass(slots=True)
 class StreamObservationDecision:
     should_interject: bool = False
@@ -113,6 +118,10 @@ class InteractionOutputController:
             ]
             | None
         ) = None,
+        lifecycle_callback: (
+            Callable[[AstrMessageEvent, str, dict[str, Any] | None], Awaitable[None]]
+            | None
+        ) = None,
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
@@ -120,6 +129,7 @@ class InteractionOutputController:
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
         self.visible_reply_renderer = visible_reply_renderer
+        self.lifecycle_callback = lifecycle_callback
         self._refresh_outbound_materialization_config()
 
     def _refresh_outbound_materialization_config(
@@ -290,6 +300,7 @@ class InteractionOutputController:
                 message_kind="immediate_reply",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
+                metadata=materialization,
             )
             return
 
@@ -329,6 +340,7 @@ class InteractionOutputController:
                 message_kind="passthrough",
                 text=semantic_text,
                 delivered_message_ids=delivered_message_ids,
+                metadata=materialization,
             )
             self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(event)
@@ -414,6 +426,7 @@ class InteractionOutputController:
             message_kind=resolved_kind,
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
+            metadata=materialization,
             memory_relevant=finalize and not deferred_by_transaction,
         )
         if not finalize or deferred_by_transaction:
@@ -444,17 +457,23 @@ class InteractionOutputController:
                     stream_text_parts.append(chunk_text)
                 yield chain
 
+        platform_extras = {
+            **self.build_platform_output_extras(
+                event,
+                message_kind=resolved_kind,
+            ),
+            "interaction_plugin_streaming": True,
+            "plugin_output_mode": resolved_mode.value,
+        }
+        await self._notify_lifecycle(
+            event,
+            "speaking",
+            {"message_kind": resolved_kind},
+        )
         try:
             await event.send_interaction_streaming(
                 _observe_plugin_stream(),
-                platform_extras={
-                    **self.build_platform_output_extras(
-                        event,
-                        message_kind=resolved_kind,
-                    ),
-                    "interaction_plugin_streaming": True,
-                    "plugin_output_mode": resolved_mode.value,
-                },
+                platform_extras=platform_extras,
                 use_fallback=use_fallback,
             )
         except Exception as exc:
@@ -478,6 +497,7 @@ class InteractionOutputController:
             event,
             message_kind=resolved_kind,
             text=text,
+            delivered_message_ids=_visible_message_ids_from_extras(platform_extras),
             memory_relevant=not deferred_by_transaction,
         )
         if deferred_by_transaction:
@@ -557,13 +577,19 @@ class InteractionOutputController:
     ) -> None:
         set_interaction_turn_core_streaming_active(event, True)
         observed_generator = self._wrap_core_stream(generator, event)
+        platform_extras = self.build_platform_output_extras(
+            event,
+            message_kind="core_stream",
+        )
+        await self._notify_lifecycle(
+            event,
+            "speaking",
+            {"message_kind": "core_stream"},
+        )
         try:
             await event.send_interaction_streaming(
                 observed_generator,
-                platform_extras=self.build_platform_output_extras(
-                    event,
-                    message_kind="core_stream",
-                ),
+                platform_extras=platform_extras,
                 use_fallback=use_fallback,
             )
         except Exception as exc:
@@ -579,7 +605,12 @@ class InteractionOutputController:
             )
             raise
         else:
-            self._finalize_interaction_stream_output(event)
+            self._finalize_interaction_stream_output(
+                event,
+                delivered_message_ids=_visible_message_ids_from_extras(
+                    platform_extras
+                ),
+            )
             await self._persist_interaction_turn(event)
         finally:
             set_interaction_turn_core_streaming_active(event, False)
@@ -679,12 +710,18 @@ class InteractionOutputController:
             pending_text=next_pending,
         )
 
-    def _finalize_interaction_stream_output(self, event: AstrMessageEvent) -> None:
+    def _finalize_interaction_stream_output(
+        self,
+        event: AstrMessageEvent,
+        *,
+        delivered_message_ids: list[str] | None = None,
+    ) -> None:
         mark_interaction_turn_core_streaming_result_consumed(event)
         self._record_visible_output(
             event,
             message_kind="core_stream",
             text=get_interaction_turn_stream_text(event),
+            delivered_message_ids=delivered_message_ids,
         )
         self._materialize_finalized_turn(event)
 
@@ -1094,6 +1131,11 @@ class InteractionOutputController:
             "interaction_stream_reply": True,
             "stream_window_index": window_index,
         }
+        await self._notify_lifecycle(
+            event,
+            "speaking",
+            {"message_kind": "stream_interjection"},
+        )
         await self._send_platform_message(
             materialized_message,
             event,
@@ -1108,6 +1150,7 @@ class InteractionOutputController:
             delivered_message_ids=(
                 [visible_message_id] if visible_message_id else None
             ),
+            metadata=materialization,
             memory_relevant=False,
         )
 
@@ -1182,6 +1225,7 @@ class InteractionOutputController:
             message_kind="core_reply",
             text=semantic_text,
             delivered_message_ids=delivered_message_ids,
+            metadata=materialization,
         )
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
@@ -1828,6 +1872,11 @@ class InteractionOutputController:
         semantic_text = (
             message.get_plain_text() if semantic_text is None else semantic_text
         )
+        await self._notify_lifecycle(
+            event,
+            "speaking",
+            {"message_kind": message_kind},
+        )
 
         async def _send(chain: MessageChain) -> None:
             output_extras = {
@@ -1858,6 +1907,15 @@ class InteractionOutputController:
         )
         return delivered_message_ids if sent else []
 
+    async def _notify_lifecycle(
+        self,
+        event: AstrMessageEvent,
+        stage: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if self.lifecycle_callback is not None:
+            await self.lifecycle_callback(event, stage, metadata)
+
     @staticmethod
     def _strip_message_identity_extras(
         platform_extras: dict[str, Any],
@@ -1881,6 +1939,7 @@ class InteractionOutputController:
         message_kind: str,
         text: str | None,
         delivered_message_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         memory_relevant: bool = True,
     ) -> None:
         append_interaction_turn_visible_output(
@@ -1889,7 +1948,7 @@ class InteractionOutputController:
             text=text,
             message_id=(delivered_message_ids[0] if delivered_message_ids else None),
             delivered_message_ids=delivered_message_ids,
-            metadata=None,
+            metadata=metadata,
             memory_relevant=memory_relevant,
         )
 

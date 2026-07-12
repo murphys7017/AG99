@@ -896,6 +896,12 @@ class TestInteractionMiddleware:
         assert turn_state.visible_outputs == [
             {
                 "turn_id": forwarded_event.get_extra("_turn_id"),
+                "message_id": (
+                    f"{forwarded_event.get_extra('_turn_id')}::plugin_direct::0001"
+                ),
+                "delivered_message_ids": [
+                    f"{forwarded_event.get_extra('_turn_id')}::plugin_direct::0001"
+                ],
                 "kind": "plugin_direct",
                 "text": "plugin stream",
                 "memory_relevant": True,
@@ -961,6 +967,12 @@ class TestInteractionMiddleware:
             "visible_outputs": [
                 {
                     "turn_id": forwarded_event.get_extra("_turn_id"),
+                    "message_id": (
+                        f"{forwarded_event.get_extra('_turn_id')}::core_stream::0001"
+                    ),
+                    "delivered_message_ids": [
+                        f"{forwarded_event.get_extra('_turn_id')}::core_stream::0001"
+                    ],
                     "kind": "core_stream",
                     "text": "stream final",
                     "memory_relevant": True,

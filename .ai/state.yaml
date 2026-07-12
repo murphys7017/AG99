@@ -1,8 +1,8 @@
 task:
-  class: refactor
-  risk: medium
-  phase: interaction_prompt_profiles_complete
-  scope: Separate Router, Persona, and delegated Core prompt contexts while preserving structured plugin hints
+  class: feature
+  risk: high
+  phase: interaction_lifecycle_observer_complete
+  scope: Add a generic interaction lifecycle observer, explicit turn completion status, and stable visible-output identity without changing routing or delivery ownership
 context:
   confidence: high
   assumptions:
@@ -36,6 +36,9 @@ context:
 architecture:
   stability: stable
   boundary_changes:
+    - Interaction plugins can register a read-only lifecycle observer; middleware/output runtime publish generic turn stages while thinking/tool-running remain reserved for execution backends.
+    - Interaction completion distinguishes active/completed/failed/cancelled, and visible output snapshots retain utterance message identity.
+    - Plugin unbind clears prompt/result/stream/lifecycle/effect runtime registrations by module prefix so reload cannot reactivate stale contributors.
     - SQLite async engines now use NullPool and connect-time PRAGMAs in core and knowledge-base DB paths.
     - "`documents.doc_id` now gets a guarded unique index migration when no duplicate legacy IDs exist."
     - Dashboard markdown rendering receives streaming state for smooth incremental output.
@@ -72,6 +75,12 @@ architecture:
     - Shared structured-output parsing uses json-repair only after standard JSON parsing fails, and still accepts repaired mappings only.
 verification:
   checks_run:
+    - python -m pytest tests/test_plugin_manager.py -q (39 passed)
+    - python -m pytest plugin runtime cleanup plus lifecycle observer tests -q (6 passed)
+    - python -m pytest all tests/unit/test_interaction_*.py -q (193 passed)
+    - python -m pytest tests/unit/test_postprocess.py tests/unit/test_memory_runtime.py -q (103 passed)
+    - python -m ruff check all lifecycle implementation and affected interaction tests
+    - YAML parse check for .ai/state.yaml and git diff --check
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_message_tools.py -q
     - .venv\Scripts\python -m pytest tests/test_openai_source.py::test_query_stream_extracts_usage_from_empty_choices_chunk tests/test_openai_source.py::test_query_stream_filters_empty_assistant_message -q
     - .venv\Scripts\python -m pytest tests/test_tool_loop_agent_runner.py::test_skills_like_requery_passes_extra_user_content_parts tests/test_tool_loop_agent_runner.py::test_skills_like_requery_preserves_original_visible_reply tests/test_epub_parser.py -q
@@ -161,6 +170,6 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "Live provider calls and the full backend suite were not run. The focused interaction prompt-profile suite passed, Ruff and py_compile passed, and the expanded prompt-context run passed 246 tests with one previously existing quoted-image caption fixture failure."
+  validation_gap: "Real-platform lifecycle delivery and live provider calls were not run. The complete interaction unit set plus postprocess/memory suites passed; pytest still reports existing aiosqlite event-loop-close warnings in some interaction tests."
 runtime:
   mode: minimal_v1

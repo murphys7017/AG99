@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from astrbot.core.prompt.context_types import ContextPack
@@ -11,6 +12,25 @@ from astrbot.core.prompt.extensions import PromptExtension
 from .types import InteractionDecision
 
 INTERACTION_TURN_STATE_EXTRA_KEY = "_interaction_turn_state"
+
+
+class InteractionTurnStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class InteractionLifecycleStage(str, Enum):
+    RECEIVED = "received"
+    ROUTING = "routing"
+    DELEGATED = "delegated"
+    THINKING = "thinking"
+    TOOL_RUNNING = "tool_running"
+    SPEAKING = "speaking"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 _VALID_UTTERANCE_KINDS = frozenset(
     {
@@ -71,6 +91,7 @@ class InteractionStreamState:
 
 @dataclass(slots=True)
 class InteractionTurnCompletionState:
+    status: InteractionTurnStatus = InteractionTurnStatus.ACTIVE
     material_finalized: bool = False
     legacy_memory_persisted: bool = False
     postprocess_dispatched: bool = False
@@ -125,6 +146,8 @@ class InteractionTurnState:
     core_streaming_result_consumed: bool = False
     core_final_result_consumed: bool = False
     visible_message_counter: int = 0
+    lifecycle_stage: InteractionLifecycleStage | None = None
+    lifecycle_transitions: list[dict[str, Any]] = field(default_factory=list)
     stream_interjections_emitted: int = 0
     completion_state: InteractionTurnCompletionState = field(
         default_factory=InteractionTurnCompletionState
@@ -154,6 +177,8 @@ def materialize_utterance(
         str(item).strip() for item in (delivered_message_ids or []) if str(item).strip()
     ]
     if message_id is None:
+        if not delivered_ids:
+            turn_state.visible_message_counter += 1
         message_id = (
             delivered_ids[0]
             if delivered_ids
@@ -262,7 +287,51 @@ def mark_interaction_turn_completed(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.completion_state.completed = completed
+    state.completion_state.status = (
+        InteractionTurnStatus.COMPLETED if completed else InteractionTurnStatus.ACTIVE
+    )
     event.set_extra("_interaction_turn_completed", completed)
+    event.set_extra("_interaction_turn_status", state.completion_state.status.value)
+
+
+def mark_interaction_turn_failed(event) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.completed = False
+    state.completion_state.status = InteractionTurnStatus.FAILED
+    event.set_extra("_interaction_turn_completed", False)
+    event.set_extra("_interaction_turn_status", InteractionTurnStatus.FAILED.value)
+
+
+def mark_interaction_turn_cancelled(event) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.completed = False
+    state.completion_state.status = InteractionTurnStatus.CANCELLED
+    event.set_extra("_interaction_turn_completed", False)
+    event.set_extra("_interaction_turn_status", InteractionTurnStatus.CANCELLED.value)
+
+
+def transition_interaction_lifecycle(
+    event,
+    stage: InteractionLifecycleStage,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[InteractionLifecycleStage | None, dict[str, Any]]:
+    state = ensure_interaction_turn_state(event)
+    previous_stage = state.lifecycle_stage
+    transition = {
+        "stage": stage.value,
+        "previous_stage": previous_stage.value if previous_stage is not None else None,
+        "created_at": time.time(),
+        "metadata": dict(metadata or {}),
+    }
+    state.lifecycle_stage = stage
+    state.lifecycle_transitions.append(transition)
+    event.set_extra("_interaction_lifecycle_stage", stage.value)
+    event.set_extra(
+        "_interaction_lifecycle_transitions",
+        [dict(item) for item in state.lifecycle_transitions],
+    )
+    return previous_stage, transition
 
 
 def record_interaction_turn_completion_failure(
@@ -352,14 +421,7 @@ def append_interaction_turn_visible_output(
     if not clean_text:
         return
     state = ensure_interaction_turn_state(event)
-    item = {
-        "turn_id": state.turn_id,
-        "kind": message_kind,
-        "text": clean_text,
-        "memory_relevant": memory_relevant,
-    }
-    state.visible_outputs.append(item)
-    materialize_utterance(
+    utterance = materialize_utterance(
         state,
         kind=message_kind,
         text=clean_text,
@@ -368,6 +430,15 @@ def append_interaction_turn_visible_output(
         metadata=metadata,
         memory_relevant=memory_relevant,
     )
+    item = {
+        "turn_id": state.turn_id,
+        "message_id": utterance.message_id,
+        "delivered_message_ids": list(utterance.delivered_message_ids),
+        "kind": message_kind,
+        "text": clean_text,
+        "memory_relevant": memory_relevant,
+    }
+    state.visible_outputs.append(item)
     outputs = [dict(output) for output in state.visible_outputs]
     event.set_extra("_visible_turn_outputs", outputs)
     event.set_extra("_postprocess_visible_outputs", outputs)

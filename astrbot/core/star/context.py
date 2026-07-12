@@ -217,6 +217,10 @@ class Context:
             _InteractionContributorRegistration
         ] = []
         self._interaction_stream_decider_seq = 0
+        self._interaction_lifecycle_observers: list[
+            _InteractionContributorRegistration
+        ] = []
+        self._interaction_lifecycle_observer_seq = 0
         self._persona_effects: list[_PersonaEffectRegistration] = []
         self._persona_effect_seq = 0
 
@@ -762,6 +766,29 @@ class Context:
             registry_attr="_interaction_stream_deciders",
             module_prefix=module_prefix,
             contributor_type="stream decider",
+        )
+
+    def register_interaction_lifecycle_observer(self, observer: Any) -> None:
+        self._register_interaction_contributor(
+            observer,
+            registry_attr="_interaction_lifecycle_observers",
+            seq_attr="_interaction_lifecycle_observer_seq",
+            contributor_type="lifecycle observer",
+        )
+
+    def list_interaction_lifecycle_observers(self) -> list[Any]:
+        return self._list_interaction_contributors(
+            self._interaction_lifecycle_observers
+        )
+
+    def remove_interaction_lifecycle_observers_by_module_prefix(
+        self,
+        module_prefix: str,
+    ) -> int:
+        return self._remove_interaction_contributors_by_module_prefix(
+            registry_attr="_interaction_lifecycle_observers",
+            module_prefix=module_prefix,
+            contributor_type="lifecycle observer",
         )
 
     def register_persona_effect(self, effect: PersonaEffectSpec) -> None:

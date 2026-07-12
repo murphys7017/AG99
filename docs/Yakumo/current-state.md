@@ -80,7 +80,11 @@
 当前已完成：
 
 - `InteractionTurnState`、`InteractionUtterance`、`InteractionStreamState` 已成为主状态模型
-- prompt / result / stream 插件扩展点已收口到只读阶段视图
+- prompt / result / stream 插件扩展点已收口到只读阶段视图；通用 lifecycle observer 可读取
+  `received` / `routing` / `delegated` / `speaking` / `completed` / `failed` / `cancelled`
+  状态，`thinking` / `tool_running` 已作为后续执行器可上报的通用协议状态预留
+- turn completion 已具有 `active` / `completed` / `failed` / `cancelled` 显式状态；
+  visible output snapshot 复用 utterance 的 `message_id` / `delivered_message_ids`
 - SELF_REPLY / HYBRID / DELEGATE_TO_CORE 主链路已由 middleware 持有 turn owner 语义
 - interaction outbound phase 已迁入 `InteractionOutputController`
 - core 旧流程与 middleware 新流程共享 voice service
@@ -98,14 +102,12 @@
 - stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成
 - **origin 路由**：`send_wrapper` / `send_streaming_wrapper` 通过 `_interaction_output_origin` 区分 core/plugin 输出，
   `respond/stage.py` 中的 event.send / event.send_streaming 调用已加 CORE origin 标记；未标记的插件主动流式输出会走 plugin output path，不再记录为 `core_stream`
+- 插件通过 `return/yield MessageEventResult` 交给 `RespondStage` 的非流式官方结果已按 plugin output 进入 interaction Output Runtime；core model result 和 core streaming result 仍通过 CORE origin 进入核心输出路径
 
 当前仍需继续收口：
 
 - output gateway：`capture_plugin_output()` 已建立，但 `event.send` / `event.send_streaming`
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
-- 插件通过 `return/yield MessageEventResult` 交给 `RespondStage` / 平台适配器发送的官方结果路径，
-  仍需接入 interaction Output Runtime，并按 plugin output 归类；当前已覆盖的是插件主动
-  `event.send(...)` 与 `event.send_streaming(...)` 路径
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
 

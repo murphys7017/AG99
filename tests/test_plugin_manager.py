@@ -31,6 +31,47 @@ class MockStar:
         self.info = {"repo": TEST_PLUGIN_REPO, "readme": ""}
 
 
+def test_remove_plugin_runtime_extensions_clears_all_plugin_registries():
+    manager = PluginManager.__new__(PluginManager)
+    manager.context = context = SimpleNamespace(
+        remove_prompt_extension_collectors_by_module_prefix=lambda prefix: 1,
+        remove_interaction_prompt_contributors_by_module_prefix=lambda prefix: 1,
+        remove_interaction_result_contributors_by_module_prefix=lambda prefix: 1,
+        remove_interaction_stream_deciders_by_module_prefix=lambda prefix: 1,
+        remove_interaction_lifecycle_observers_by_module_prefix=lambda prefix: 1,
+        unregister_persona_effects=lambda **kwargs: 1,
+    )
+    prefix = "data.plugins.demo"
+
+    calls: list[tuple[str, str]] = []
+    for name in (
+        "remove_prompt_extension_collectors_by_module_prefix",
+        "remove_interaction_prompt_contributors_by_module_prefix",
+        "remove_interaction_result_contributors_by_module_prefix",
+        "remove_interaction_stream_deciders_by_module_prefix",
+        "remove_interaction_lifecycle_observers_by_module_prefix",
+    ):
+        setattr(
+            context,
+            name,
+            lambda value, method=name: calls.append((method, value)),
+        )
+    context.unregister_persona_effects = lambda **kwargs: calls.append(
+        ("unregister_persona_effects", kwargs["module_prefix"])
+    )
+
+    manager._remove_plugin_runtime_extensions(prefix)
+
+    assert calls == [
+        ("remove_prompt_extension_collectors_by_module_prefix", prefix),
+        ("remove_interaction_prompt_contributors_by_module_prefix", prefix),
+        ("remove_interaction_result_contributors_by_module_prefix", prefix),
+        ("remove_interaction_stream_deciders_by_module_prefix", prefix),
+        ("remove_interaction_lifecycle_observers_by_module_prefix", prefix),
+        ("unregister_persona_effects", prefix),
+    ]
+
+
 def _write_local_test_plugin(plugin_path: Path, repo_url: str):
     """Creates a minimal valid plugin structure."""
     plugin_path.mkdir(parents=True, exist_ok=True)

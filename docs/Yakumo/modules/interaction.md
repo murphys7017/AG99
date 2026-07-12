@@ -63,6 +63,11 @@ Input Runtime / Observation
 - postprocess 是 completion consumer boundary
 - memory service 是 interaction turn 的主记忆写入 owner
 - `completed=True` 表示 middleware lifecycle handoff completed，不表示 memory 一定已经写入
+- `completion_state.status` 明确区分 `active` / `completed` / `failed` / `cancelled`
+- lifecycle observer 是只读快速通知边界，当前由 middleware/output runtime 发布
+  `received` / `routing` / `delegated` / `speaking` / `completed` / `failed` / `cancelled`；
+  `thinking` / `tool_running` 保留给 Core 或可替换执行器按真实执行状态上报。observer
+  应只做本地入队等快速操作，异步处理超过统一短预算会被取消并记录诊断，不阻塞主回复
 
 ### `output_controller.py`
 
@@ -73,6 +78,7 @@ Input Runtime / Observation
 - **新增** `capture_plugin_output()` — 插件输出的独立入口，支持 `direct` / `persona` 两种模式；默认 finalizes turn，`finalize=False` 仅用于随后还会有最终输出的进度消息
 - 统一 visible-reply persona 入口、result contributor、reply prefix、reasoning display、TTS、t2i
 - 记录 `InteractionUtterance` 与 visible output
+- visible output snapshot 保留与 utterance 相同的 `message_id` / `delivered_message_ids`
 - 产出 finalized turn material 后请求 middleware finalization
 - 持有一个可注入的 `visible_reply_renderer: Callable`，所有用户可见自然语言都经这一个 persona 入口；
   output_controller 自身不直接调 provider 或独立拼装 persona prompt
@@ -112,9 +118,11 @@ Input Runtime / Observation
 
 职责：
 
-- prompt / result / stream 插件扩展点视图
+- prompt / result / stream / lifecycle 插件扩展点视图
 - 插件只拿阶段 snapshot，不拿可变 turn state
 - 保留外部签名兼容，但内部正确性不依赖旧 dict 可变对象
+- 插件卸载或热重载时按 module prefix 清理 prompt/result/stream/lifecycle/effect 注册，
+  避免旧实例恢复为 active 后造成重复贡献或重复状态通知
 
 ### `memory_store.py`
 

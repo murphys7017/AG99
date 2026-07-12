@@ -30,6 +30,7 @@ from .expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
 )
+from .lifecycle import dispatch_interaction_lifecycle
 from .memory_store import (
     INTERACTION_MEMORY_STORE_EXTRA_KEY,
     InteractionMemoryStore,
@@ -40,12 +41,15 @@ from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
+    InteractionLifecycleStage,
     ensure_interaction_turn_state,
     get_interaction_turn_finalized_material,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     is_interaction_turn_completed,
+    mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
+    mark_interaction_turn_failed,
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
@@ -115,7 +119,21 @@ class InteractionMiddleware:
         self.output_controller.visible_reply_renderer = (
             self._render_visible_reply_via_persona
         )
+        self.output_controller.lifecycle_callback = self._emit_lifecycle_from_output
         self._inflight_tasks: set[asyncio.Task] = set()
+
+    async def _emit_lifecycle_from_output(
+        self,
+        event: AstrMessageEvent,
+        stage: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage(stage),
+            metadata=metadata,
+        )
 
     def set_plugin_context(self, plugin_context: Any) -> None:
         self.plugin_context = plugin_context
@@ -399,36 +417,64 @@ class InteractionMiddleware:
         *,
         enqueue_core: bool = True,
     ) -> None:
-        runtime_config = self._get_runtime_config(event)
-        self._reject_development_fallback_policy(runtime_config)
-        if isinstance(runtime_config, Mapping):
-            event.set_extra("_astrbot_config", runtime_config)
-        interaction_config = load_interaction_agent_config(runtime_config)
-        turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
-        turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
-        await self._materialize_inbound_media(event)
-        if self._is_live_mode_event(event):
-            decision = self._build_live_mode_decision(event)
-            self.attach_event_context(
+        try:
+            runtime_config = self._get_runtime_config(event)
+            self._reject_development_fallback_policy(runtime_config)
+            if isinstance(runtime_config, Mapping):
+                event.set_extra("_astrbot_config", runtime_config)
+            interaction_config = load_interaction_agent_config(runtime_config)
+            turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
+            turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
+            await dispatch_interaction_lifecycle(
                 event,
-                turn_id=turn_state.turn_id,
-                decision=decision,
+                self.plugin_context,
+                InteractionLifecycleStage.RECEIVED,
             )
-        else:
-            decision = self._maybe_build_protocol_command_bypass(event)
-            if decision is None:
-                await self._handle_async_fast_response_and_route(
+            await self._materialize_inbound_media(event)
+            if self._is_live_mode_event(event):
+                decision = self._build_live_mode_decision(event)
+                self.attach_event_context(
                     event,
-                    interaction_config,
-                    enqueue_core=enqueue_core,
+                    turn_id=turn_state.turn_id,
+                    decision=decision,
                 )
-                return
-            self.attach_event_context(
+            else:
+                decision = self._maybe_build_protocol_command_bypass(event)
+                if decision is None:
+                    await dispatch_interaction_lifecycle(
+                        event,
+                        self.plugin_context,
+                        InteractionLifecycleStage.ROUTING,
+                    )
+                    await self._handle_async_fast_response_and_route(
+                        event,
+                        interaction_config,
+                        enqueue_core=enqueue_core,
+                    )
+                    return
+                self.attach_event_context(
+                    event,
+                    turn_id=turn_state.turn_id,
+                    decision=decision,
+                )
+            await self._apply_decision(event, decision, enqueue_core=enqueue_core)
+        except asyncio.CancelledError:
+            mark_interaction_turn_cancelled(event)
+            await dispatch_interaction_lifecycle(
                 event,
-                turn_id=turn_state.turn_id,
-                decision=decision,
+                self.plugin_context,
+                InteractionLifecycleStage.CANCELLED,
             )
-        await self._apply_decision(event, decision, enqueue_core=enqueue_core)
+            raise
+        except Exception as exc:
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={"reason": str(exc)},
+            )
+            raise
 
     def _build_live_mode_decision(
         self,
@@ -671,11 +717,25 @@ class InteractionMiddleware:
         if decision.route_mode == RouteMode.HYBRID:
             if not immediate_already_emitted:
                 await self._emit_immediate_reply_or_record_failure(event, decision)
+            await self._emit_delegated(event, decision)
             self._forward_to_core(event, enqueue_core=enqueue_core)
             return
         if decision.should_emit_immediate_reply and not immediate_already_emitted:
             await self._emit_immediate_reply_or_record_failure(event, decision)
+        await self._emit_delegated(event, decision)
         self._forward_to_core(event, enqueue_core=enqueue_core)
+
+    async def _emit_delegated(
+        self,
+        event: AstrMessageEvent,
+        decision: InteractionDecision,
+    ) -> None:
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.DELEGATED,
+            metadata={"route_mode": decision.route_mode.value},
+        )
 
     def _suppress_hybrid_immediate_for_core_media(
         self,
@@ -1179,6 +1239,13 @@ class InteractionMiddleware:
                 event,
                 "missing_finalized_turn_material",
             )
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={"reason": "missing_finalized_turn_material"},
+            )
             logger.error(
                 "Interaction turn finalization failed: missing finalized material platform_id=%s session_id=%s turn_id=%s",
                 event.get_platform_id(),
@@ -1190,6 +1257,13 @@ class InteractionMiddleware:
         if not turn_id:
             self._record_turn_finalization_failure(event, "missing_turn_id")
             record_interaction_turn_completion_failure(event, "missing_turn_id")
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={"reason": "missing_turn_id"},
+            )
             return
 
         canonical_reply = str(material.get("assistant_text", "") or "").strip()
@@ -1202,11 +1276,23 @@ class InteractionMiddleware:
                 event,
                 "missing_canonical_reply",
             )
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={"reason": "missing_canonical_reply"},
+            )
             return
 
         self._schedule_turn_postprocess(event)
         mark_interaction_turn_postprocess_dispatched(event)
         mark_interaction_turn_completed(event)
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.COMPLETED,
+        )
 
     @staticmethod
     def _record_turn_finalization_failure(

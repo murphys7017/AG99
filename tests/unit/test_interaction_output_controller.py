@@ -774,12 +774,16 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::immediate_reply::0001",
+            "delivered_message_ids": ["turn-1::immediate_reply::0001"],
             "kind": "immediate_reply",
             "text": "行，等我查一下。",
             "memory_relevant": True,
         },
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::core_reply::0002",
+            "delivered_message_ids": ["turn-1::core_reply::0002"],
             "kind": "core_reply",
             "text": "设计问题，我改不了。",
             "memory_relevant": True,
@@ -866,6 +870,8 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::passthrough::0001",
+            "delivered_message_ids": ["turn-1::passthrough::0001"],
             "kind": "passthrough",
             "text": "command result",
             "memory_relevant": True,
@@ -880,6 +886,8 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
+                "message_id": "turn-1::passthrough::0001",
+                "delivered_message_ids": ["turn-1::passthrough::0001"],
                 "kind": "passthrough",
                 "text": "command result",
                 "memory_relevant": True,
@@ -895,7 +903,10 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
 ):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
-        interaction_config=InteractionAgentConfig(),
+        interaction_config=InteractionAgentConfig(
+            stream_observation_enabled=False,
+            stream_interjection_enabled=False,
+        ),
         persist_callback=_mark_completed_callback,
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
@@ -940,12 +951,16 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::core_stream::0001",
+            "delivered_message_ids": ["turn-1::core_stream::0001"],
             "kind": "core_stream",
             "text": "stream final",
             "memory_relevant": True,
         },
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::core_reply::0002",
+            "delivered_message_ids": ["turn-1::core_reply::0002"],
             "kind": "core_reply",
             "text": "可以执行cmd，限制当前工作目录。没联网权限。",
             "memory_relevant": True,
@@ -1174,18 +1189,24 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
+                "message_id": "turn-1::immediate_reply::0001",
+                "delivered_message_ids": [],
                 "kind": "immediate_reply",
                 "text": "等我看看。",
                 "memory_relevant": True,
             },
             {
                 "turn_id": "turn-1",
+                "message_id": "turn-1::stream_interjection::0002",
+                "delivered_message_ids": [],
                 "kind": "stream_interjection",
                 "text": "还在查。",
                 "memory_relevant": False,
             },
             {
                 "turn_id": "turn-1",
+                "message_id": "turn-1::core_reply::0003",
+                "delivered_message_ids": ["turn-1::core_reply::0003"],
                 "kind": "core_reply",
                 "text": "你可以执行工作区命令。",
                 "memory_relevant": True,
@@ -1398,6 +1419,8 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::core_stream::0001",
+            "delivered_message_ids": ["turn-1::core_stream::0001"],
             "kind": "core_stream",
             "text": "hello world",
             "memory_relevant": True,
@@ -1410,6 +1433,8 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
+                "message_id": "turn-1::core_stream::0001",
+                "delivered_message_ids": ["turn-1::core_stream::0001"],
                 "kind": "core_stream",
                 "text": "hello world",
                 "memory_relevant": True,
@@ -1463,6 +1488,8 @@ async def test_capture_streaming_uses_audio_chunk_text_for_live_material(
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
+                "message_id": "turn-1::core_stream::0001",
+                "delivered_message_ids": ["turn-1::core_stream::0001"],
                 "kind": "core_stream",
                 "text": "spoken",
                 "memory_relevant": True,
@@ -1566,12 +1593,16 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::stream_interjection::0002",
+            "delivered_message_ids": ["turn-1::stream_interjection::0002"],
             "kind": "stream_interjection",
             "text": "嗯，我听着。",
             "memory_relevant": False,
         },
         {
             "turn_id": "turn-1",
+            "message_id": "turn-1::core_stream::0001",
+            "delivered_message_ids": ["turn-1::core_stream::0001"],
             "kind": "core_stream",
             "text": "hello core",
             "memory_relevant": True,
@@ -1745,7 +1776,7 @@ async def test_stream_interjection_provider_missing_records_turn_failure(
         for failure in turn_state.failures
         if failure.stage == "stream_interjection"
     ]
-    assert failure_reasons == ["invalid_plugin_payload"]
+    assert failure_reasons == ["invalid_plugin_payload", "persona_render_failed"]
     assert all(
         failure.user_visible_action == "continue_core_stream"
         for failure in turn_state.failures
@@ -1888,7 +1919,10 @@ async def test_tts_materialization_records_record_delivery_but_memory_uses_text(
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
     assert turn_state.utterances[0].text == "semantic answer"
-    assert turn_state.utterances[0].metadata == {}
+    assert turn_state.utterances[0].metadata["delivered_as"] == "record"
+    assert turn_state.utterances[0].metadata["tts"][0]["tts_provider_id"] == (
+        "tts-provider"
+    )
     assert webchat_event.get_extra("_interaction_finalized_turn_material")[
         "assistant_text"
     ] == "semantic answer"

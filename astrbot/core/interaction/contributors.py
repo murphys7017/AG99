@@ -237,6 +237,60 @@ class InteractionStreamView:
 
 
 @dataclass(slots=True)
+class InteractionLifecycleView:
+    turn_id: str
+    platform_id: str
+    session_id: str
+    stage: str
+    previous_stage: str | None
+    turn_status: str
+    transition: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def as_read_only_mapping(self) -> MappingProxyType:
+        return MappingProxyType(
+            {
+                "turn_id": self.turn_id,
+                "platform_id": self.platform_id,
+                "session_id": self.session_id,
+                "stage": self.stage,
+                "previous_stage": self.previous_stage,
+                "turn_status": self.turn_status,
+                "transition": freeze_interaction_snapshot(self.transition),
+                "metadata": freeze_interaction_snapshot(self.metadata),
+            }
+        )
+
+    def copy_read_only(self) -> InteractionLifecycleView:
+        return replace(
+            self,
+            transition=freeze_interaction_snapshot(self.transition),
+            metadata=freeze_interaction_snapshot(self.metadata),
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        return self.as_read_only_mapping()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.as_read_only_mapping())
+
+    def __len__(self) -> int:
+        return len(self.as_read_only_mapping())
+
+    def keys(self):
+        return self.as_read_only_mapping().keys()
+
+    def items(self):
+        return self.as_read_only_mapping().items()
+
+    def values(self):
+        return self.as_read_only_mapping().values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.as_read_only_mapping().get(key, default)
+
+
+@dataclass(slots=True)
 class InteractionResultView:
     turn_id: str
     platform_id: str
