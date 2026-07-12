@@ -12,8 +12,8 @@
 
 | 能力 | 上游 AstrBot | Yakumo Fork |
 |------|:------------:|:-----------:|
-| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **拟人层** → 决策 → 核心处理 → 拟人层整理 → 回复 |
-| 快速回复 | 不支持 | 支持「临时回复」，边想边说 |
+| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **路由与拟人表达并发** → 按需执行 Core → 统一拟人化 → 回复 |
+| 快速回复 | 不支持 | 唯一拟人层可先产生即时表达，不必等待 Core |
 | 回复风格控制 | 仅靠 prompt | 拟人层统一管理表达方式 |
 | 记忆系统 | 会话历史 | 会话历史 + **长期记忆沉淀** |
 | Prompt 组织 | 字符串拼接 | **结构化上下文**（collect → select → render → apply） |
@@ -27,24 +27,30 @@
 
 大多数 Agent 框架的流程是：**收到消息 → 交给大模型 → 等待完整答案 → 回复用户**。
 
-这个 fork 在中间加了一层「拟人层」：
+这个 fork 在官方 Pipeline 与核心 Agent 之间增加 Interaction Middleware，并把用户可见表达收口到唯一的 Persona Runtime：
 
 ```
 用户发消息
     ↓
-拟人层接住消息，判断这一轮该怎么处理
+官方 EventBus / Pipeline 完成事件过滤、权限和插件处理
     ↓
-    ├── 轻量互动（寒暄、确认、简单问答）→ 拟人层直接回复
-    └── 重度任务（查资料、调工具、写代码）→ 交给核心 Agent
-         ↓
-    核心执行中，拟人层实时提取中间结果反馈给用户
-         ↓
-    核心处理完毕
-         ↓
-    拟人层整理最终结果，用更自然的表达方式呈现
-         ↓
-    写入记忆链路（长期记忆 + 本轮上下文）
+Interaction Middleware 建立本轮交互并整理输入
+    ↓
+    ├── Router：只判断是否需要 Core
+    └── Persona Runtime：基于当前材料生成即时表达
+        （两者并发，彼此不承担对方职责）
+    ↓
+    ├── 无需 Core → 将拟人表达交给 Output Runtime
+    └── 需要 Core → 执行工具、知识库、搜索或复杂任务
+                       ↓
+                  Core 的中间材料与最终结果回到同一个 Persona Runtime
+    ↓
+Output Runtime 负责文本、流式与 TTS 等输出物化和平台发送
+    ↓
+Finalized Turn Material → Postprocess / Memory
 ```
+
+“快速拟人回复”不是第二套回复生成器，只是 Persona Runtime 在 Core 完成前的一次调用。Core 结果、插件提交的待表达材料和流式插话也复用同一个入口。Motion、Live2D 等具体表现能力由插件通过通用 effect 契约扩展，核心交互流程只传递 effect，不理解具体动作含义。
 
 **上下文分离** — 拟人层和核心 Agent 各自维护独立的上下文：
 
@@ -59,8 +65,11 @@
 
 这是本 fork 的核心架构之一，一个通用的交互中间件：
 
-- **输入侧**：在核心 decision 之前完成 turn state、入站媒体 materialization、STT、路由决策
+- **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
+- **输入侧**：完成 turn state、入站媒体 materialization、STT，并并发启动轻量 Router 与即时拟人表达
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
+- **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
+- **扩展侧**：effect 是通用插件协议，Motion 或 Live2D 的解析和执行不属于主流程
 - **Completion 收口**：middleware 产出 finalized material，postprocess / memory service 消费同一份 material 写记忆
 - **Voice 共享**：core 旧流程和 middleware 新流程共享 `voice/*`，failure policy 由调用方决定
 
@@ -87,8 +96,8 @@ collect → select → render → apply
 
 | 功能 | 状态 | 说明 |
 |------|:----:|------|
-| 拟人层决策 | 🟡 开发中 | 核心逻辑已通，关键路径验证中 |
-| 临时回复 | 🟡 开发中 | 流式交互已支持，表达优化进行中 |
+| 路由与拟人表达 | 🟡 开发中 | 两者并发且职责分离，关键路径继续验证 |
+| 即时表达 | 🟡 开发中 | 已复用统一 Persona Runtime，流式体验继续优化 |
 | 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
 | Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
 | 结构化 Prompt | 🟡 开发中 | collect/render/apply 已跑通，select 筛选层待完善 |

@@ -70,8 +70,8 @@
 
 职责：
 
-- 在 adapter 与 core queue 之间维护 interaction turn state
-- 在 core decision 之前处理入站媒体、STT、route decision 与 immediate reply
+- 在官方 EventBus / Pipeline 完成过滤、权限与插件处理后、核心 Agent 开始前维护 interaction turn state
+- 处理入站媒体与 STT，并并发启动 route decision 和统一 Persona Runtime 的 immediate expression
 - 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
 - 统一 visible-reply persona layer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
 - 将 turn completion 收口为：middleware 产出 finalized material，postprocess consumers 再消费 material；当前 memory service 与 interaction conversation history 都在 `AFTER_TURN_COMPLETED` 阶段落地
@@ -93,6 +93,10 @@
 - **新增** `persona_runtime.py`：`InteractionPersonaRuntime`，Persona Runtime 种子代码
 - 所有用户可见自然语言已经收口到统一的 visible-reply persona 入口：
   `first_response`、插件 persona 输出、core final reply、stream interjection 不再各自维护独立文案生成器
+- “快速拟人回复”只是统一 Persona Runtime 在 Core 完成前的一次表达，不是独立拟人组件；
+  Output Runtime 只消费其结果并负责 TTS、文本或流式输出物化
+- Core 只保存和转发通用 `effect_calls`；Motion、Live2D 等具体 effect 的解释与执行由插件负责，
+  不属于 interaction 主流程的领域知识
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
 - `router_agent` 是轻量固定枚举分类器：只判断 `self_reply` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；当前 Turn State 保存纯 `InteractionRouteDecision`，即时回复和 effect 只随对应的 `PersonaExpressionResult` 进入输出链路，不再并入 route；router 自身任务说明直接作为原生 system base 注入，上下文包含裁剪后的聊天记录、interaction memory，以及 router-scoped contributor 提供的本地插件目录；插件目录在最终 prompt 中只保留插件 `name` / `description`；当前输入优先，历史与 memory 仅辅助判断是否明确续接未完成的核心任务；普通寒暄、情绪回应、轻量反应、短确认和无明确执行意图的短消息默认属于拟人层可处理；明确需要核心 Agent 参与或明确续接核心任务时才走 `hybrid`；不枚举或限制核心 Agent 的能力范围，也不内置任何具体插件协议。router-scoped contributor 仅是可选插件目录，失败时跳过而不使 Router 降级；每轮会记录 `parsed` / `fallback` 来源、失败原因、可选目录错误、模型原始标签和渲染上下文节点，供排查误路由。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：

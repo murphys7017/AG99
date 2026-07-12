@@ -4,7 +4,7 @@
 
 ## 目标
 
-所有用户可见输出都应汇入 Interaction Output Runtime，由它统一完成文本发送、TTS、动作、平台扩展、turn/message identity、打断、历史记录和完成回执。
+所有用户可见输出都应汇入 Interaction Output Runtime，由它统一完成文本发送、TTS、通用 effect 交付、平台扩展、turn/message identity、打断、历史记录和完成回执。具体动作或客户端表现由插件解释，Output Runtime 不理解其领域语义。
 
 执行层只产出结果，不直接决定平台表现：
 
@@ -28,7 +28,7 @@ input
 
 ### Output Enrichment Plugin
 
-表现增强插件负责修饰输出，例如 AG99live motion、TTS hint、前端 client object、平台卡片建议。它不回答用户问题，不拥有最终文本，只补充输出表现。
+表现增强插件负责修饰输出，例如 TTS hint、动作 effect、前端 client object、平台卡片建议。它不回答用户问题，不拥有最终文本，只补充输出表现。
 
 ### Delivery Plugin
 
@@ -112,33 +112,15 @@ Interaction Output Runtime 构造 `InteractionOutputDraft`，绑定 turn、phase
 
 ### 6. Delivery
 
-Interaction 统一发送文本、语音、motion client object、平台 extras，并记录 visible output、utterance ledger、finalized material 和完成状态。
+Interaction 统一发送文本、语音、通用 client object、平台 extras，并记录 visible output、utterance ledger、finalized material 和完成状态。插件私有 effect 的执行结果可以通过这些通用载荷交付，但不进入 Core 固定字段。
 
-## Motion 规则
+## Effect 规则
 
-AG99live motion 是 Output Enrichment Plugin，不是 Execution Plugin。
-
-推荐策略：
-
-```text
-plugin_hints.ag99live_motion exists
-  -> use it directly
-
-self_reply without motion hints
-  -> local fallback or default pose
-  -> never block on remote motion LLM
-
-delegate_to_core / hybrid final output without motion hints
-  -> may use realtime motion generation
-  -> bounded timeout required
-  -> fallback must record reason
-
-deferred motion
-  -> may be emitted as later client object
-  -> must bind turn_id and visible message id when available
-```
-
-所有 fallback 都必须写入 metadata reason，避免只看到 `default_pose` 而不知道是缺 hint、provider 不可用、超时还是 selector 输出无效。
+- effect 名称和参数 schema 由注册插件拥有，Core 不为具体插件增加专用字段。
+- 插件只消费属于自己的 `effect_calls`，未知 effect 应保持隔离而不是猜测执行。
+- effect 的解释、资源选择、设备约束和 fallback 都由插件负责。
+- 延迟执行的 client object 应尽量绑定 `turn_id` 和 visible message id。
+- fallback 应记录可诊断原因，不能把默认表现伪装成模型成功输出。
 
 ## 硬约束
 
