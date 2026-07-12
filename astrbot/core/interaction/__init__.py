@@ -16,10 +16,10 @@ from .conversation_postprocessor import (
 )
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-    INTERACTION_DECISION_EXTRA_KEY,
+    INTERACTION_ROUTE_DECISION_EXTRA_KEY,
     apply_interaction_core_task_spec,
     get_core_task_spec,
-    get_interaction_decision,
+    get_interaction_route_decision,
 )
 from .effects import (
     PersonaEffectCall,
@@ -63,7 +63,6 @@ from .types import (
     CoreTaskSpec,
     FastRouteMode,
     InteractionAgentConfig,
-    InteractionDecision,
     InteractionRouteDecision,
     RouteMode,
 )
@@ -85,12 +84,11 @@ __all__ = [
     "InteractionPersonaRuntime",
     "FastRouteMode",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
-    "INTERACTION_DECISION_EXTRA_KEY",
+    "INTERACTION_ROUTE_DECISION_EXTRA_KEY",
     "INTERACTION_TURN_STATE_EXTRA_KEY",
     "InteractionAgentConfig",
     "InteractionConversationPostProcessor",
     "InteractionContextMaterial",
-    "InteractionDecision",
     "InteractionDecisionView",
     "InteractionLifecycleStage",
     "InteractionLifecycleView",
@@ -118,7 +116,7 @@ __all__ = [
     "ensure_interaction_turn_state",
     "get_interaction_turn_state",
     "get_core_task_spec",
-    "get_interaction_decision",
+    "get_interaction_route_decision",
     "is_middleware_enabled",
     "load_interaction_agent_config",
     "effect_calls_to_legacy_plugin_hints",

@@ -91,7 +91,7 @@ def _stub_fast_response_route(
     )
     middleware.router_agent = MagicMock()
     middleware.router_agent.route = AsyncMock(
-        return_value=InteractionRouteDecision(mode=mode)
+        return_value=InteractionRouteDecision(route_mode=RouteMode(mode.value))
     )
 
 
@@ -281,6 +281,32 @@ class TestInteractionMiddlewareConfig:
 
 
 class TestInteractionMiddleware:
+    @pytest.mark.asyncio
+    async def test_core_reply_handler_persona_renders_before_output_materialization(
+        self,
+        webchat_event,
+    ):
+        controller = MagicMock()
+        controller.deliver_prepared_core_reply = AsyncMock()
+        middleware = InteractionMiddleware({}, asyncio.Queue(), controller)
+        middleware.plugin_context = MagicMock(spec=Context)
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
+            return_value=PersonaExpressionResult(spoken_reply="整理后的回复")
+        )
+
+        await controller.core_reply_handler(
+            MessageChain([Plain("raw core reply")]),
+            webchat_event,
+        )
+
+        middleware.persona_runtime.express_visible_reply.assert_awaited_once()
+        request = middleware.persona_runtime.express_visible_reply.await_args.kwargs[
+            "request"
+        ]
+        assert request.source_text == "raw core reply"
+        prepared = controller.deliver_prepared_core_reply.await_args.args[1]
+        assert prepared.spoken_reply == "整理后的回复"
+
     @pytest.mark.asyncio
     async def test_handle_inbound_schedules_async_for_enabled_platform(
         self, webchat_event
@@ -1115,11 +1141,9 @@ class TestInteractionMiddleware:
         )
         turn_state = get_interaction_turn_state(image_event)
         assert turn_state is not None
-        assert turn_state.decision is not None
-        assert turn_state.decision.route_mode == RouteMode.HYBRID
-        assert turn_state.decision.should_emit_immediate_reply is False
-        assert turn_state.decision.immediate_spoken_reply is None
-        assert turn_state.decision.effect_calls == []
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode == RouteMode.HYBRID
+        assert turn_state.immediate_reply is None
 
     @pytest.mark.asyncio
     async def test_self_reply_media_input_keeps_immediate_reply(
@@ -1152,9 +1176,8 @@ class TestInteractionMiddleware:
         assert queue.empty()
         turn_state = get_interaction_turn_state(image_event)
         assert turn_state is not None
-        assert turn_state.decision is not None
-        assert turn_state.decision.route_mode == RouteMode.SELF_REPLY
-        assert turn_state.decision.should_emit_immediate_reply is True
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode == RouteMode.SELF_REPLY
 
     @pytest.mark.asyncio
     async def test_handle_inbound_refreshes_runtime_interaction_config(
@@ -1222,7 +1245,7 @@ class TestInteractionMiddleware:
 
         assert queue.get_nowait() is webchat_event
         controller.emit_immediate_spoken_reply.assert_not_awaited()
-        decision = webchat_event.get_extra("_interaction_decision")
+        decision = webchat_event.get_extra("_interaction_route_decision")
         assert decision.route_mode == RouteMode.DELEGATE_TO_CORE
         assert decision.reason == "protocol command bypass"
 
@@ -1253,9 +1276,10 @@ class TestInteractionMiddleware:
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
         assert turn_state.failures == []
-        assert turn_state.decision is not None
-        assert turn_state.decision.route_mode == RouteMode.HYBRID
-        assert turn_state.decision.immediate_spoken_reply == "我先看一下。"
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode == RouteMode.HYBRID
+        expression = controller.emit_immediate_spoken_reply.await_args.args[0]
+        assert expression.spoken_reply == "我先看一下。"
 
     def test_fallback_policy_is_rejected_during_development(
         self,
@@ -1422,10 +1446,11 @@ class TestInteractionMiddleware:
         )
         turn_state = get_interaction_turn_state(live_event)
         assert turn_state is not None
-        assert turn_state.decision is not None
-        assert turn_state.decision.route_mode == RouteMode.DELEGATE_TO_CORE
-        assert turn_state.decision.should_emit_immediate_reply is False
-        assert turn_state.decision.reason == "live_mode_requires_audio_chunk_stream"
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode == RouteMode.DELEGATE_TO_CORE
+        assert (
+            turn_state.route_decision.reason == "live_mode_requires_audio_chunk_stream"
+        )
         assert turn_state.failures == []
 
     @pytest.mark.asyncio

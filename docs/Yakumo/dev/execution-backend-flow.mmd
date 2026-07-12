@@ -1,0 +1,134 @@
+%% 可替换执行器改造流程
+%% 状态：架构讨论稿
+%% 左侧描述当前实现，右侧描述目标设计；目标设计尚未落地。
+%%
+%% 设计约束：
+%% 1. 保留官方 EventBus、Pipeline、权限过滤和插件事件机制。
+%% 2. Interaction Middleware 位于官方 Pipeline 之后、Core Agent 之前。
+%% 3. Router 只判断是否进入 Core，不选择执行器。
+%% 4. 唯一拟人层的即时表达与 Router 判断并发；“快速”是阶段，不是独立组件。
+%% 5. Prompt Builder 是唯一上下文构建入口。
+%% 6. 外部执行器通过 execution-scoped Capability Gateway 使用 AstrBot 能力。
+%% 7. 所有用户可见的回复材料先进入唯一拟人层，再交给 Interaction Output Runtime。
+%% 8. Motion 等具体表现能力属于插件实现，不进入 Core 主流程模型。
+%% 当前实现：Core 最终结果由 Output Controller 的捕获入口交回 Middleware，Middleware 调用同一个
+%% Persona Runtime 后再把显式 PersonaExpressionResult 交给输出物化；route 不承载回复或 effect。
+
+flowchart LR
+    subgraph CURRENT[当前消息流程]
+        direction TB
+        C_A[平台适配器<br/>QQ / 微信 / WebChat / 其他平台] --> C_B[Event Queue]
+        C_B --> C_C[EventBus]
+        C_C --> C_D[官方 Pipeline]
+        C_D --> C_D1[事件类型识别与过滤]
+        C_D1 --> C_D2[权限 / 白名单 / 唤醒规则]
+        C_D2 --> C_D3[插件事件处理器]
+        C_D3 --> C_E[ProcessStage]
+
+        C_E --> C_F[Interaction Middleware]
+        C_F --> C_F1[建立 Interaction Turn]
+        C_F1 --> C_F2[输入物化<br/>文本 / 语音 / 图片]
+        C_F2 --> C_G1[Router 决策]
+        C_F2 -->|即时表达材料| C_G2[唯一拟人层<br/>Persona Runtime]
+
+        C_G1 --> C_H{是否委派给 Core?}
+        C_G2 -->|统一表达结果| C_I2[Output Controller<br/>文本 / 流式 / TTS 输出物化]
+        C_H -- 否 --> C_J[不启动 Core]
+        C_H -- 是 --> C_K[AgentRequestSubStage]
+        C_K --> C_L{agent_runner_type}
+
+        C_L -- local --> C_M[InternalAgentSubStage]
+        C_L -- third-party --> C_N[ThirdPartyAgentSubStage]
+
+        C_M --> C_O[build_main_agent]
+        C_O --> C_O1[组织 ProviderRequest]
+        C_O1 --> C_O2[Prompt / Memory / Knowledge / Tools]
+        C_O2 --> C_O3[AstrBot Agent Runner]
+        C_O3 --> C_O4[Provider + Tool Loop]
+
+        C_N --> C_P[第三方 Runner 请求]
+        C_P --> C_P1[简化上下文与请求]
+
+        C_O4 --> C_Q[Core 结果 / 中间输出]
+        C_P1 --> C_Q
+        C_Q --> C_I0[Output Controller<br/>Core 结果捕获入口]
+        C_I0 -->|交回 Middleware 的待表达材料| C_G2
+
+        C_I2 --> C_R[平台发送]
+        C_R --> C_S[Finalized Turn Material]
+        C_S --> C_T[Postprocess / Memory]
+    end
+
+    subgraph TARGET[可替换执行器目标流程]
+        direction TB
+        T_A[平台适配器] --> T_B[Event Queue]
+        T_B --> T_C[EventBus]
+        T_C --> T_D[官方 Pipeline]
+        T_D --> T_D1[官方过滤 / 权限 / 插件事件处理]
+        T_D1 --> T_E[ProcessStage]
+
+        T_E --> T_F[Interaction Middleware]
+        T_F --> T_F1[Interaction Turn + 输入物化]
+        T_F1 --> T_G1[Router<br/>只判断是否进入 Core]
+        T_F1 -->|即时表达材料| T_G2[唯一拟人层<br/>Persona Runtime]
+
+        T_G2 -->|统一表达结果| T_O[Interaction Output Runtime]
+        T_G1 --> T_H{是否委派给 Core?}
+        T_H -- 否 --> T_STOP[不启动 Core]
+        T_H -- 是 --> T_I[CoreExecutionService]
+
+        T_I --> T_I1[prepare_core_execution]
+        T_I1 --> T_J[Prompt Builder]
+        T_I1 --> T_K[Capability Resolver]
+
+        T_J --> T_J1[ContextPack / Prompt Tree]
+        T_J1 --> T_L[ExecutionPlan]
+
+        T_K --> T_K1[按会话、插件、权限和策略筛选]
+        T_K1 --> T_K2[CapabilitySnapshot]
+        T_K2 --> T_L
+
+        T_L --> T_M[ExecutionBackendResolver]
+        T_M --> T_N1[NativeAstrBotBackend]
+        T_M --> T_N2[CodexBackend]
+        T_M --> T_N3[OpenCodeBackend]
+
+        T_N1 --> T_P1[AstrBot Provider + Agent Tool Loop]
+        T_N2 --> T_P2[Codex Prompt Renderer]
+        T_N3 --> T_P3[OpenCode Prompt Renderer]
+        T_P2 --> T_Q[外部执行器]
+        T_P3 --> T_Q
+
+        T_K2 --> T_R[Capability Gateway]
+        T_R --> T_R1[MCP Tool Projection]
+        T_R1 --> T_Q
+        T_Q --> T_R2[MCP Tool Call]
+        T_R2 --> T_R
+        T_R --> T_R3[现有 FunctionToolExecutor]
+        T_R3 --> T_R4[插件工具 / 知识库 / 搜索 / 其他能力]
+        T_R4 --> T_R
+
+        T_P1 --> T_S[ExecutionEvent / ExecutionResult]
+        T_Q --> T_S
+        T_S --> T_T[Core 生命周期事件<br/>thinking / tool_running / delegated]
+        T_S --> T_U[Core 输出材料]
+        T_T -. 需要用户可见时 .-> T_G2
+        T_U --> T_G2
+
+        T_O --> T_O2[文本 / 流式 / TTS 输出物化]
+        T_O2 --> T_V[平台发送]
+        T_V --> T_W[Finalized Turn Material]
+        T_W --> T_X[Postprocess / Memory]
+    end
+
+    C_T ~~~ T_X
+
+    classDef current fill:#eef5ff,stroke:#3973ac,color:#172b3a
+    classDef target fill:#eef9f0,stroke:#3d7d4a,color:#19351f
+    classDef decision fill:#fff4d6,stroke:#a67400,color:#493400
+    classDef boundary fill:#f8f0ff,stroke:#76519a,color:#2f1d40
+
+    class C_A,C_B,C_C,C_D,C_D1,C_D2,C_D3,C_E,C_F,C_F1,C_F2,C_G1,C_G2,C_I0,C_J,C_K,C_L,C_M,C_N,C_O,C_O1,C_O2,C_O3,C_O4,C_P,C_P1,C_Q,C_I2,C_R,C_S,C_T current
+    class T_A,T_B,T_C,T_D,T_D1,T_E,T_F,T_F1,T_G1,T_G2,T_STOP,T_J,T_J1,T_K,T_K1,T_K2,T_L,T_M,T_N1,T_N2,T_N3,T_P1,T_P2,T_P3,T_Q,T_R,T_R1,T_R2,T_R3,T_R4,T_S,T_T,T_U,T_O2,T_V,T_W,T_X target
+    class C_H,T_H decision
+    class T_I,T_I1,T_O boundary

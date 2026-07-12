@@ -461,7 +461,8 @@ event.set_extra("_interaction_plugin_hints", ...)
 event.set_extra("_interaction_effect_calls", ...)
 ```
 
-只有 Persona 结果被当前交互采用后，Effect Calls 才能进入 `InteractionDecision`、`InteractionResultView` 或兼容 event extra。
+只有 Persona 结果被当前交互采用后，Effect Calls 才能随本次
+`PersonaExpressionResult` 进入 `InteractionResultView` 或兼容 event extra；route decision 不承载 effect。
 
 未选中的并行分支不得污染共享事件。
 
@@ -495,7 +496,6 @@ view.plugin_hints
 第一阶段不要求立即实现专用 Dispatcher。可以继续由 Interaction Result Contributor 消费 Effect Calls，并转换为：
 
 - `client_objects`。
-- `motion_hints`。
 - `tts_hints`。
 - `platform_extras`。
 

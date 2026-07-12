@@ -569,7 +569,7 @@ class InteractionDecisionAgent:
         )
         turn_state = get_interaction_turn_state(event)
         if turn_state is not None:
-            turn_state.decision = decision
+            turn_state.legacy_decision = decision
         return decision
 
     async def _build_or_reuse_context_material(

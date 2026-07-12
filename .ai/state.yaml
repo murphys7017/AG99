@@ -1,8 +1,8 @@
 task:
-  class: feature
+  class: refactor
   risk: high
-  phase: interaction_lifecycle_observer_complete
-  scope: Add a generic interaction lifecycle observer, explicit turn completion status, and stable visible-output identity without changing routing or delivery ownership
+  phase: interaction_route_persona_output_boundaries_complete
+  scope: Separate route decisions from persona expression results, move Core final persona rendering back to Middleware, and remove Motion-specific fields from the generic output contract
 context:
   confidence: high
   assumptions:
@@ -36,6 +36,10 @@ context:
 architecture:
   stability: stable
   boundary_changes:
+    - Current interaction Turn State stores a pure InteractionRouteDecision; immediate replies and effect calls travel only with the PersonaExpressionResult that produced them.
+    - Core final output is returned to Middleware through core_reply_handler, rendered by the single Persona Runtime, then delivered as an explicit prepared result by Output Controller.
+    - InteractionResultView exposes route_decision and phase-local effect_calls; final contributors cannot observe stale immediate effects through route state.
+    - InteractionOutputContribution no longer defines motion_hints; concrete motion behavior remains plugin-owned through generic effect_calls, platform_extras, or client_objects.
     - Interaction plugins can register a read-only lifecycle observer; middleware/output runtime publish generic turn stages while thinking/tool-running remain reserved for execution backends.
     - Interaction completion distinguishes active/completed/failed/cancelled, and visible output snapshots retain utterance message identity.
     - Plugin unbind clears prompt/result/stream/lifecycle/effect runtime registrations by module prefix so reload cannot reactivate stale contributors.
@@ -75,6 +79,10 @@ architecture:
     - Shared structured-output parsing uses json-repair only after standard JSON parsing fails, and still accepts repaired mappings only.
 verification:
   checks_run:
+    - .venv\Scripts\python.exe -m pytest full interaction boundary suite -q (193 passed)
+    - .venv\Scripts\python.exe -m pytest tests/unit/test_postprocess.py tests/unit/test_memory_runtime.py -q (103 passed)
+    - .venv\Scripts\python.exe -m ruff check changed interaction boundary files and tests (passed)
+    - Python compile, state YAML parse, boundary legacy-reference scan, and git diff --check (passed)
     - python -m pytest tests/test_plugin_manager.py -q (39 passed)
     - python -m pytest plugin runtime cleanup plus lifecycle observer tests -q (6 passed)
     - python -m pytest all tests/unit/test_interaction_*.py -q (193 passed)

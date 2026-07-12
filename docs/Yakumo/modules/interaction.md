@@ -80,7 +80,9 @@ Input Runtime / Observation
 - 记录 `InteractionUtterance` 与 visible output
 - visible output snapshot 保留与 utterance 相同的 `message_id` / `delivered_message_ids`
 - 产出 finalized turn material 后请求 middleware finalization
-- 持有一个可注入的 `visible_reply_renderer: Callable`，所有用户可见自然语言都经这一个 persona 入口；
+- Core 最终结果的捕获入口通过 `core_reply_handler` 交回 Middleware，由 Middleware 调用唯一
+  Persona Runtime，再把显式 `PersonaExpressionResult` 交给输出物化；插件 persona 模式与流式插话
+  仍复用同一个可注入 `visible_reply_renderer`；
   output_controller 自身不直接调 provider 或独立拼装 persona prompt
 
 输出分类中的新 message kind：

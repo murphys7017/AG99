@@ -4,7 +4,7 @@ import asyncio
 import random
 import time
 import traceback
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +25,7 @@ from .contributors import (
     InteractionStreamView,
     merge_result_contributions,
 )
-from .core_bridge import get_interaction_decision
+from .core_bridge import get_interaction_route_decision
 from .expression_agent import PersonaExpressionRequest, PersonaExpressionResult
 from .memory_store import (
     InteractionMemoryStore,
@@ -118,6 +118,9 @@ class InteractionOutputController:
             ]
             | None
         ) = None,
+        core_reply_handler: (
+            Callable[[MessageChain, AstrMessageEvent], Awaitable[None]] | None
+        ) = None,
         lifecycle_callback: (
             Callable[[AstrMessageEvent, str, dict[str, Any] | None], Awaitable[None]]
             | None
@@ -129,6 +132,7 @@ class InteractionOutputController:
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
         self.visible_reply_renderer = visible_reply_renderer
+        self.core_reply_handler = core_reply_handler
         self.lifecycle_callback = lifecycle_callback
         self._refresh_outbound_materialization_config()
 
@@ -234,10 +238,10 @@ class InteractionOutputController:
 
     async def emit_immediate_spoken_reply(
         self,
-        decision,
+        result: PersonaExpressionResult,
         event: AstrMessageEvent,
     ) -> None:
-        reply = (decision.immediate_spoken_reply or "").strip()
+        reply = (result.spoken_reply or "").strip()
         if not reply:
             return
         set_interaction_turn_immediate_reply(event, reply)
@@ -247,6 +251,7 @@ class InteractionOutputController:
                 await self.capture_message_chain(
                     MessageChain([Plain(reply)]),
                     event,
+                    prepared_expression=result,
                 )
         finally:
             event.set_extra("_interaction_emitting_immediate_reply", False)
@@ -255,6 +260,8 @@ class InteractionOutputController:
         self,
         message: MessageChain | None,
         event: AstrMessageEvent,
+        *,
+        prepared_expression: PersonaExpressionResult | None = None,
     ) -> None:
         if message is None:
             await self.capture_visible_completion(event)
@@ -270,6 +277,11 @@ class InteractionOutputController:
                 final_result=semantic_text,
                 phase="immediate",
                 candidate_message_kind="immediate_reply",
+                effect_calls=(
+                    prepared_expression.effect_calls
+                    if prepared_expression is not None
+                    else ()
+                ),
             )
             merged = merge_result_contributions(contributions)
             if merged.final_text_override is not None:
@@ -351,6 +363,9 @@ class InteractionOutputController:
 
         mark_interaction_turn_core_final_result_consumed(event)
         full_message = self._get_full_core_final_message(event, message)
+        if self.core_reply_handler is not None:
+            await self.core_reply_handler(full_message, event)
+            return
         await self._deliver_core_reply(full_message, event)
 
     async def capture_plugin_output(
@@ -1184,7 +1199,16 @@ class InteractionOutputController:
                 "_interaction_final_response_effect_calls",
                 list(result.effect_calls),
             )
-        final_message = message.derive([Plain(result.spoken_reply)])
+        await self.deliver_prepared_core_reply(message, result, event)
+
+    async def deliver_prepared_core_reply(
+        self,
+        source_message: MessageChain,
+        result: PersonaExpressionResult,
+        event: AstrMessageEvent,
+    ) -> None:
+        core_result_text = source_message.get_plain_text()
+        final_message = source_message.derive([Plain(result.spoken_reply)])
 
         contributions = await self._collect_result_contributions(
             event,
@@ -1192,10 +1216,11 @@ class InteractionOutputController:
             final_result=final_message.get_plain_text(),
             phase="final",
             candidate_message_kind="core_reply",
+            effect_calls=result.effect_calls,
         )
         merged = merge_result_contributions(contributions)
         if merged.final_text_override is not None:
-            final_message = message.derive([Plain(merged.final_text_override)])
+            final_message = source_message.derive([Plain(merged.final_text_override)])
 
         platform_extras = self.build_platform_output_base_extras(
             event,
@@ -1284,6 +1309,7 @@ class InteractionOutputController:
         final_result: str | None,
         phase: str,
         candidate_message_kind: str,
+        effect_calls: Sequence[Any] = (),
     ) -> list[InteractionResultContribution]:
         if self.plugin_context is None:
             return []
@@ -1295,15 +1321,13 @@ class InteractionOutputController:
         if not callable(list_contributors):
             return []
 
-        decision_obj = get_interaction_decision(event)
-        decision_payload = decision_obj.to_dict() if decision_obj is not None else None
-        route_mode = decision_obj.route_mode.value if decision_obj is not None else None
-        purpose = "persona_reply" if phase == "immediate" else "core_reply"
-        effect_calls = (
-            tuple(decision_obj.effect_calls)
-            if decision_obj is not None and isinstance(decision_obj.effect_calls, list)
-            else ()
+        route_decision = get_interaction_route_decision(event)
+        route_payload = route_decision.to_dict() if route_decision is not None else None
+        route_mode = (
+            route_decision.route_mode.value if route_decision is not None else None
         )
+        purpose = "persona_reply" if phase == "immediate" else "core_reply"
+        effect_calls = tuple(effect_calls)
         logger.info(
             "DIAG result_view.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s",
             event.get_platform_id(),
@@ -1335,7 +1359,7 @@ class InteractionOutputController:
             platform_id=event.get_platform_id(),
             session_id=event.unified_msg_origin,
             purpose=purpose,
-            decision=decision_payload,
+            route_decision=route_payload,
             output_draft=output_draft.to_mapping(),
             immediate_reply=get_interaction_turn_immediate_reply(event),
             core_result=core_result,
@@ -1991,7 +2015,7 @@ class InteractionOutputController:
 
         result = event.get_result()
         result_is_model = bool(result and result.is_model_result())
-        decision = get_interaction_decision(event)
+        decision = get_interaction_route_decision(event)
         route_mode = decision.route_mode if decision is not None else None
         streamed = has_interaction_turn_core_streaming_result_consumed(event)
         streaming_active = is_interaction_turn_core_streaming_active(event)

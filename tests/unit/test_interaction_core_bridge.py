@@ -1,10 +1,14 @@
 from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
-    get_interaction_decision,
+    get_interaction_route_decision,
 )
 from astrbot.core.interaction.turn_state import InteractionTurnState
-from astrbot.core.interaction.types import CoreTaskSpec, InteractionDecision, RouteMode
+from astrbot.core.interaction.types import (
+    CoreTaskSpec,
+    InteractionRouteDecision,
+    RouteMode,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
@@ -46,7 +50,7 @@ def test_apply_interaction_core_task_spec_injects_execution_prompt():
         "_interaction_turn_state",
         InteractionTurnState(
             turn_id="turn-1",
-            decision=InteractionDecision(core_task_spec=task_spec),
+            core_task_spec=task_spec,
         ),
     )
     req = ProviderRequest(prompt="查天气", system_prompt="base")
@@ -83,16 +87,17 @@ def test_core_bridge_reads_decision_and_task_spec_from_turn_state_first():
         task_summary="来自 turn state",
         execution_prompt="按 turn state 执行。",
     )
-    state_decision = InteractionDecision(
+    state_decision = InteractionRouteDecision(
         route_mode=RouteMode.HYBRID,
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="我看看。",
-        core_task_spec=state_spec,
         reason="turn_state",
     )
     event.set_extra(
         "_interaction_turn_state",
-        InteractionTurnState(turn_id="turn-1", decision=state_decision),
+        InteractionTurnState(
+            turn_id="turn-1",
+            route_decision=state_decision,
+            core_task_spec=state_spec,
+        ),
     )
-    assert get_interaction_decision(event) is state_decision
+    assert get_interaction_route_decision(event) is state_decision
     assert get_core_task_spec(event) is state_spec

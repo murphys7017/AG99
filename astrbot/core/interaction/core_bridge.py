@@ -7,27 +7,28 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 
 from .turn_state import get_interaction_turn_state
-from .types import CoreTaskSpec, InteractionDecision
+from .types import CoreTaskSpec, InteractionRouteDecision
 
 INTERACTION_CORE_TASK_SPEC_EXTRA_KEY = "_interaction_core_task_spec"
-INTERACTION_DECISION_EXTRA_KEY = "_interaction_decision"
+INTERACTION_ROUTE_DECISION_EXTRA_KEY = "_interaction_route_decision"
 
 
-def get_interaction_decision(event: AstrMessageEvent) -> InteractionDecision | None:
+def get_interaction_route_decision(
+    event: AstrMessageEvent,
+) -> InteractionRouteDecision | None:
     turn_state = get_interaction_turn_state(event)
-    if turn_state is not None and isinstance(turn_state.decision, InteractionDecision):
-        return turn_state.decision
+    if turn_state is not None and isinstance(
+        turn_state.route_decision,
+        InteractionRouteDecision,
+    ):
+        return turn_state.route_decision
     return None
 
 
 def get_core_task_spec(event: AstrMessageEvent) -> CoreTaskSpec | None:
     turn_state = get_interaction_turn_state(event)
-    if (
-        turn_state is not None
-        and isinstance(turn_state.decision, InteractionDecision)
-        and isinstance(turn_state.decision.core_task_spec, CoreTaskSpec)
-    ):
-        return turn_state.decision.core_task_spec
+    if turn_state is not None and isinstance(turn_state.core_task_spec, CoreTaskSpec):
+        return turn_state.core_task_spec
     return None
 
 

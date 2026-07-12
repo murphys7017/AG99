@@ -51,7 +51,6 @@ class InteractionOutputContribution:
     client_objects: list[dict[str, Any]] = field(default_factory=list)
     platform_extras: dict[str, Any] = field(default_factory=dict)
     tts_hints: dict[str, Any] = field(default_factory=dict)
-    motion_hints: dict[str, Any] = field(default_factory=dict)
     delivery_hints: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     latency_class: str = "fast"
@@ -61,8 +60,6 @@ class InteractionOutputContribution:
         platform_extras = dict(self.platform_extras)
         if self.tts_hints:
             platform_extras["tts_hints"] = dict(self.tts_hints)
-        if self.motion_hints:
-            platform_extras["motion_hints"] = dict(self.motion_hints)
         if self.delivery_hints:
             platform_extras["delivery_hints"] = dict(self.delivery_hints)
         metadata = dict(self.metadata)
@@ -295,7 +292,7 @@ class InteractionResultView:
     turn_id: str
     platform_id: str
     session_id: str
-    decision: Any
+    route_decision: Any
     output_draft: Mapping[str, Any] | None = None
     immediate_reply: str | None = None
     core_result: str | None = None
@@ -316,7 +313,7 @@ class InteractionResultView:
                 "platform_id": self.platform_id,
                 "session_id": self.session_id,
                 "purpose": self.purpose,
-                "decision": freeze_interaction_snapshot(self.decision),
+                "route_decision": freeze_interaction_snapshot(self.route_decision),
                 "output_draft": freeze_interaction_snapshot(self.output_draft),
                 "immediate_reply": self.immediate_reply,
                 "core_result": self.core_result,
@@ -340,7 +337,7 @@ class InteractionResultView:
     def copy_read_only(self) -> InteractionResultView:
         return replace(
             self,
-            decision=freeze_interaction_snapshot(self.decision),
+            route_decision=freeze_interaction_snapshot(self.route_decision),
             output_draft=freeze_interaction_snapshot(self.output_draft),
             effect_calls=freeze_interaction_snapshot(self.effect_calls),
             visible_outputs=freeze_interaction_snapshot(self.visible_outputs),

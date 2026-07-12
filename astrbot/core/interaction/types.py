@@ -59,6 +59,8 @@ class CoreTaskSpec:
 
 @dataclass(slots=True)
 class InteractionDecision:
+    """Legacy combined decision used only by the retired heavy decision agent."""
+
     route_mode: RouteMode = RouteMode.DELEGATE_TO_CORE
     should_emit_immediate_reply: bool = False
     immediate_spoken_reply: str | None = None
@@ -108,41 +110,30 @@ class InteractionDecision:
 
 @dataclass(slots=True)
 class InteractionRouteDecision:
-    mode: FastRouteMode = FastRouteMode.HYBRID
+    route_mode: RouteMode = RouteMode.HYBRID
+    reason: str = "fast_route"
 
     @classmethod
     def from_mapping(cls, payload: object) -> InteractionRouteDecision | None:
         if not isinstance(payload, dict):
             return None
         raw_mode = str(payload.get("mode", "") or payload.get("route_mode", ""))
-        if raw_mode == RouteMode.DELEGATE_TO_CORE.value:
-            raw_mode = FastRouteMode.HYBRID.value
+        if raw_mode not in {
+            FastRouteMode.SELF_REPLY.value,
+            FastRouteMode.HYBRID.value,
+        }:
+            return None
         try:
-            mode = FastRouteMode(raw_mode)
+            route_mode = RouteMode(raw_mode)
         except ValueError:
             return None
-        return cls(mode=mode)
+        return cls(route_mode=route_mode)
 
-    def to_interaction_decision(
-        self,
-        *,
-        first_response: str | None,
-        effect_calls: list[PersonaEffectCall] | None = None,
-    ) -> InteractionDecision:
-        reply = (first_response or "").strip() or None
-        route_mode = (
-            RouteMode.SELF_REPLY
-            if self.mode == FastRouteMode.SELF_REPLY
-            else RouteMode.HYBRID
-        )
-        return InteractionDecision(
-            route_mode=route_mode,
-            should_emit_immediate_reply=bool(reply),
-            immediate_spoken_reply=reply,
-            core_task_spec=None,
-            effect_calls=list(effect_calls) if isinstance(effect_calls, list) else [],
-            reason="fast_route",
-        )
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "route_mode": self.route_mode.value,
+            "reason": self.reason,
+        }
 
 
 def _coerce_effect_calls(value: object) -> list[PersonaEffectCall]:

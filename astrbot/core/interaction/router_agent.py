@@ -29,6 +29,7 @@ from .types import (
     FastRouteMode,
     InteractionAgentConfig,
     InteractionRouteDecision,
+    RouteMode,
 )
 
 
@@ -82,7 +83,7 @@ class InteractionRouterAgent:
     ) -> InteractionRouteDecision:
         bypass = _maybe_bypass_protocol_command(event, plugin_context)
         if bypass is not None:
-            return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
+            return InteractionRouteDecision(route_mode=RouteMode.HYBRID)
 
         provider = plugin_context.get_provider_by_id(
             interaction_config.router_provider_id
@@ -130,7 +131,7 @@ class InteractionRouterAgent:
             "Interaction router parsed: platform_id=%s session_id=%s mode=%s raw_output=%s",
             event.get_platform_id(),
             event.session_id,
-            route.mode.value,
+            route.route_mode.value,
             event.get_extra("_interaction_router_raw_output"),
         )
         return route
@@ -200,8 +201,6 @@ class InteractionRouterAgent:
 def _truncate_router_diagnostic(value: object, *, limit: int = 160) -> str:
     text = str(value or "").replace("\n", " ").strip()
     return text if len(text) <= limit else f"{text[:limit]}..."
-
-
 
 def add_router_plugin_directory_slots_to_pack(
     pack,

@@ -21,7 +21,7 @@ from astrbot.core.voice import (
 from .config import is_middleware_enabled, load_interaction_agent_config
 from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-    INTERACTION_DECISION_EXTRA_KEY,
+    INTERACTION_ROUTE_DECISION_EXTRA_KEY,
 )
 from .decision_agent import _maybe_bypass_protocol_command
 from .expression_agent import (
@@ -53,12 +53,11 @@ from .turn_state import (
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
-    set_interaction_turn_decision,
+    set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
+    set_interaction_turn_route_decision,
 )
 from .types import (
-    FastRouteMode,
-    InteractionDecision,
     InteractionRouteDecision,
     RouteMode,
 )
@@ -119,6 +118,7 @@ class InteractionMiddleware:
         self.output_controller.visible_reply_renderer = (
             self._render_visible_reply_via_persona
         )
+        self.output_controller.core_reply_handler = self._handle_core_reply_via_persona
         self.output_controller.lifecycle_callback = self._emit_lifecycle_from_output
         self._inflight_tasks: set[asyncio.Task] = set()
 
@@ -151,6 +151,33 @@ class InteractionMiddleware:
                 self._get_runtime_config(event)
             ),
             request=request,
+        )
+
+    async def _handle_core_reply_via_persona(
+        self,
+        message: MessageChain,
+        event: AstrMessageEvent,
+    ) -> None:
+        core_result_text = message.get_plain_text()
+        turn_state = get_interaction_turn_state(event)
+        immediate_reply = turn_state.immediate_reply if turn_state is not None else None
+        result = await self._render_visible_reply_via_persona(
+            event,
+            PersonaExpressionRequest(
+                source_text=core_result_text,
+                immediate_reply=immediate_reply or "",
+                preserve_facts=True,
+            ),
+        )
+        if result.effect_calls:
+            event.set_extra(
+                "_interaction_final_response_effect_calls",
+                list(result.effect_calls),
+            )
+        await self.output_controller.deliver_prepared_core_reply(
+            message,
+            result,
+            event,
         )
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
@@ -216,7 +243,7 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         *,
         turn_id: str,
-        decision: InteractionDecision | None = None,
+        route_decision: InteractionRouteDecision | None = None,
     ) -> None:
         event.set_extra("_interaction_enabled", True)
         event.set_extra("_turn_id", turn_id)
@@ -224,14 +251,9 @@ class InteractionMiddleware:
         event.set_extra("_interaction_output_controller", self.output_controller)
         event.set_extra(INTERACTION_MEMORY_STORE_EXTRA_KEY, self.memory_store)
         self._install_core_output_interceptor(event)
-        if decision is not None:
-            set_interaction_turn_decision(event, decision)
-            event.set_extra(INTERACTION_DECISION_EXTRA_KEY, decision)
-            if decision.core_task_spec is not None:
-                event.set_extra(
-                    INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-                    decision.core_task_spec,
-                )
+        if route_decision is not None:
+            set_interaction_turn_route_decision(event, route_decision)
+            event.set_extra(INTERACTION_ROUTE_DECISION_EXTRA_KEY, route_decision)
 
     def _install_core_output_interceptor(self, event: AstrMessageEvent) -> None:
         if event.get_extra("_interaction_output_interceptor_installed", False):
@@ -432,15 +454,15 @@ class InteractionMiddleware:
             )
             await self._materialize_inbound_media(event)
             if self._is_live_mode_event(event):
-                decision = self._build_live_mode_decision(event)
+                route_decision = self._build_live_mode_decision(event)
                 self.attach_event_context(
                     event,
                     turn_id=turn_state.turn_id,
-                    decision=decision,
+                    route_decision=route_decision,
                 )
             else:
-                decision = self._maybe_build_protocol_command_bypass(event)
-                if decision is None:
+                route_decision = self._maybe_build_protocol_command_bypass(event)
+                if route_decision is None:
                     await dispatch_interaction_lifecycle(
                         event,
                         self.plugin_context,
@@ -455,9 +477,14 @@ class InteractionMiddleware:
                 self.attach_event_context(
                     event,
                     turn_id=turn_state.turn_id,
-                    decision=decision,
+                    route_decision=route_decision,
                 )
-            await self._apply_decision(event, decision, enqueue_core=enqueue_core)
+            await self._apply_route(
+                event,
+                route_decision,
+                expression=None,
+                enqueue_core=enqueue_core,
+            )
         except asyncio.CancelledError:
             mark_interaction_turn_cancelled(event)
             await dispatch_interaction_lifecycle(
@@ -479,7 +506,7 @@ class InteractionMiddleware:
     def _build_live_mode_decision(
         self,
         event: AstrMessageEvent,
-    ) -> InteractionDecision:
+    ) -> InteractionRouteDecision:
         event.set_extra("_interaction_live_mode_protocol_route", "core_audio_stream")
         event.set_extra(
             "_interaction_live_mode_protocol_reason",
@@ -491,20 +518,30 @@ class InteractionMiddleware:
             event.session_id,
             event.get_extra("_turn_id"),
         )
-        return InteractionDecision(
+        return InteractionRouteDecision(
             route_mode=RouteMode.DELEGATE_TO_CORE,
-            should_emit_immediate_reply=False,
-            immediate_spoken_reply=None,
             reason="live_mode_requires_audio_chunk_stream",
         )
 
     def _maybe_build_protocol_command_bypass(
         self,
         event: AstrMessageEvent,
-    ) -> InteractionDecision | None:
+    ) -> InteractionRouteDecision | None:
         if self.plugin_context is None:
             return None
-        return _maybe_bypass_protocol_command(event, self.plugin_context)
+        legacy_decision = _maybe_bypass_protocol_command(event, self.plugin_context)
+        if legacy_decision is None:
+            return None
+        if legacy_decision.core_task_spec is not None:
+            set_interaction_turn_core_task_spec(event, legacy_decision.core_task_spec)
+            event.set_extra(
+                INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
+                legacy_decision.core_task_spec,
+            )
+        return InteractionRouteDecision(
+            route_mode=legacy_decision.route_mode,
+            reason=legacy_decision.reason,
+        )
 
     async def _build_fast_response_and_route(
         self,
@@ -560,65 +597,56 @@ class InteractionMiddleware:
                 event,
                 interaction_config,
             )
-            decision = route.to_interaction_decision(
-                first_response=expression.spoken_reply,
-                effect_calls=expression.effect_calls,
+            expression = self._apply_immediate_expression_policy(
+                event,
+                route,
+                expression,
             )
-            self._suppress_hybrid_immediate_for_core_media(event, decision)
-            self._record_decision_diagnostics(event, decision)
+            self._record_route_diagnostics(event, route)
             self.attach_event_context(
                 event,
                 turn_id=str(event.get_extra("_turn_id", "") or ""),
-                decision=decision,
+                route_decision=route,
             )
-            await self._apply_decision(event, decision, enqueue_core=enqueue_core)
+            await self._apply_route(
+                event,
+                route,
+                expression=expression,
+                enqueue_core=enqueue_core,
+            )
             return
 
         expression_task, route_task = tasks
         try:
             expression = await expression_task
             has_core_media_input = self._has_core_media_input(event)
-            immediate_reply = (expression.spoken_reply or "").strip() or None
-            fast_decision = InteractionDecision(
-                route_mode=RouteMode.HYBRID,
-                should_emit_immediate_reply=bool(immediate_reply)
-                and not has_core_media_input,
-                immediate_spoken_reply=(
-                    immediate_reply if not has_core_media_input else None
-                ),
-                effect_calls=(
-                    list(expression.effect_calls) if not has_core_media_input else []
-                ),
-                reason="fast_expression_pending_route",
+            immediate_emitted = bool(expression.spoken_reply.strip()) and not (
+                has_core_media_input
             )
-            if fast_decision.should_emit_immediate_reply:
-                self.attach_event_context(
-                    event,
-                    turn_id=str(event.get_extra("_turn_id", "") or ""),
-                    decision=fast_decision,
-                )
+            if immediate_emitted:
                 await self._emit_immediate_reply_or_record_failure(
                     event,
-                    fast_decision,
+                    expression,
                 )
 
             route = await route_task
-            decision = route.to_interaction_decision(
-                first_response=expression.spoken_reply,
-                effect_calls=expression.effect_calls,
+            expression = self._apply_immediate_expression_policy(
+                event,
+                route,
+                expression,
             )
-            self._suppress_hybrid_immediate_for_core_media(event, decision)
-            self._record_decision_diagnostics(event, decision)
+            self._record_route_diagnostics(event, route)
             self.attach_event_context(
                 event,
                 turn_id=str(event.get_extra("_turn_id", "") or ""),
-                decision=decision,
+                route_decision=route,
             )
-            await self._apply_decision(
+            await self._apply_route(
                 event,
-                decision,
+                route,
+                expression=expression,
                 enqueue_core=enqueue_core,
-                immediate_already_emitted=fast_decision.should_emit_immediate_reply,
+                immediate_already_emitted=immediate_emitted,
             )
         finally:
             pending_tasks = [
@@ -631,10 +659,10 @@ class InteractionMiddleware:
             if pending_tasks:
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-    def _record_decision_diagnostics(
+    def _record_route_diagnostics(
         self,
         event: AstrMessageEvent,
-        decision: InteractionDecision,
+        route: InteractionRouteDecision,
     ) -> None:
         router_source = str(
             event.get_extra("_interaction_router_result_source", "fallback")
@@ -645,9 +673,7 @@ class InteractionMiddleware:
         router_raw_output = str(
             event.get_extra("_interaction_router_raw_output", "") or ""
         )
-        router_context_nodes = event.get_extra(
-            "_interaction_router_context_nodes", []
-        )
+        router_context_nodes = event.get_extra("_interaction_router_context_nodes", [])
         if not isinstance(router_context_nodes, list):
             router_context_nodes = []
         router_extension_error = str(
@@ -657,32 +683,28 @@ class InteractionMiddleware:
             "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s extension_error=%s raw_output=%s context_nodes=%s",
             event.get_platform_id(),
             event.session_id,
-            decision.route_mode.value,
+            route.route_mode.value,
             router_source,
             router_failure_reason,
             router_extension_error,
             router_raw_output,
             router_context_nodes,
         )
-        logger.info(
-            "DIAG decision.effect_calls: platform_id=%s session_id=%s route_mode=%s effect_calls=%s payload_present=%s",
-            event.get_platform_id(),
-            event.session_id,
-            decision.route_mode.value,
-            [call.name for call in decision.effect_calls],
-            bool(decision.effect_calls),
-        )
 
-    async def _apply_decision(
+    async def _apply_route(
         self,
         event: AstrMessageEvent,
-        decision: InteractionDecision,
+        route: InteractionRouteDecision,
         *,
+        expression: PersonaExpressionResult | None,
         enqueue_core: bool,
         immediate_already_emitted: bool = False,
     ) -> None:
-        if decision.route_mode == RouteMode.SELF_REPLY:
-            if not decision.should_emit_immediate_reply:
+        has_immediate_reply = bool(
+            expression is not None and expression.spoken_reply.strip()
+        )
+        if route.route_mode == RouteMode.SELF_REPLY:
+            if not has_immediate_reply:
                 event.set_extra("_interaction_self_reply_invalid", True)
                 event.set_extra(
                     "_interaction_self_reply_invalid_reason",
@@ -702,60 +724,51 @@ class InteractionMiddleware:
                 )
                 raise RuntimeError("Interaction self reply decision missing reply")
             if not immediate_already_emitted:
-                await self._emit_immediate_reply_or_record_failure(event, decision)
+                await self._emit_immediate_reply_or_record_failure(event, expression)
             completed = await self._complete_visible_turn_or_record_failure(
                 event,
             )
             if completed:
                 self._materialize_self_reply_turn(
                     event,
-                    reply=decision.immediate_spoken_reply,
+                    reply=expression.spoken_reply,
                 )
                 await self._finalize_turn(event)
             event.stop_event()
             return
-        if decision.route_mode == RouteMode.HYBRID:
-            if not immediate_already_emitted:
-                await self._emit_immediate_reply_or_record_failure(event, decision)
-            await self._emit_delegated(event, decision)
+        if route.route_mode == RouteMode.HYBRID:
+            if has_immediate_reply and not immediate_already_emitted:
+                await self._emit_immediate_reply_or_record_failure(event, expression)
+            await self._emit_delegated(event, route)
             self._forward_to_core(event, enqueue_core=enqueue_core)
             return
-        if decision.should_emit_immediate_reply and not immediate_already_emitted:
-            await self._emit_immediate_reply_or_record_failure(event, decision)
-        await self._emit_delegated(event, decision)
+        if has_immediate_reply and not immediate_already_emitted:
+            await self._emit_immediate_reply_or_record_failure(event, expression)
+        await self._emit_delegated(event, route)
         self._forward_to_core(event, enqueue_core=enqueue_core)
 
     async def _emit_delegated(
         self,
         event: AstrMessageEvent,
-        decision: InteractionDecision,
+        route: InteractionRouteDecision,
     ) -> None:
         await dispatch_interaction_lifecycle(
             event,
             self.plugin_context,
             InteractionLifecycleStage.DELEGATED,
-            metadata={"route_mode": decision.route_mode.value},
+            metadata={"route_mode": route.route_mode.value},
         )
 
-    def _suppress_hybrid_immediate_for_core_media(
+    def _apply_immediate_expression_policy(
         self,
         event: AstrMessageEvent,
-        decision: InteractionDecision,
-    ) -> None:
-        if decision.route_mode != RouteMode.HYBRID:
-            return
-        if not decision.should_emit_immediate_reply:
-            return
-        if not self._has_core_media_input(event):
-            return
-        decision.should_emit_immediate_reply = False
-        decision.immediate_spoken_reply = None
-        decision.effect_calls = []
-        decision.reason = (
-            f"{decision.reason}:suppress_immediate_for_core_media"
-            if decision.reason
-            else "suppress_immediate_for_core_media"
-        )
+        route: InteractionRouteDecision,
+        expression: PersonaExpressionResult,
+    ) -> PersonaExpressionResult | None:
+        if route.route_mode != RouteMode.HYBRID:
+            return expression
+        if not expression.spoken_reply.strip() or not self._has_core_media_input(event):
+            return expression
         event.set_extra(
             "_interaction_immediate_reply_suppressed_reason",
             "core_media_input",
@@ -764,8 +777,9 @@ class InteractionMiddleware:
             "Interaction immediate reply suppressed for core media input: platform_id=%s session_id=%s route_mode=%s",
             event.get_platform_id(),
             event.session_id,
-            decision.route_mode.value,
+            route.route_mode.value,
         )
+        return None
 
     @staticmethod
     def _has_core_media_input(event: AstrMessageEvent) -> bool:
@@ -828,7 +842,7 @@ class InteractionMiddleware:
                 "plugin_context_unavailable",
             )
             event.set_extra("_interaction_router_result_source", "fallback")
-            return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
+            return InteractionRouteDecision(route_mode=RouteMode.HYBRID)
         try:
             return await self.router_agent.route(
                 event,
@@ -860,7 +874,7 @@ class InteractionMiddleware:
             error,
             exc_info=(type(error), error, error.__traceback__),
         )
-        return InteractionRouteDecision(mode=FastRouteMode.HYBRID)
+        return InteractionRouteDecision(route_mode=RouteMode.HYBRID)
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:
         runtime_config = self._get_runtime_config(event)
@@ -1014,19 +1028,20 @@ class InteractionMiddleware:
     async def _emit_immediate_reply(
         self,
         event: AstrMessageEvent,
-        decision: InteractionDecision,
+        expression: PersonaExpressionResult,
     ) -> None:
-        if not decision.immediate_spoken_reply:
+        if not expression.spoken_reply.strip():
             return
-        await self.output_controller.emit_immediate_spoken_reply(decision, event)
+        await self.output_controller.emit_immediate_spoken_reply(expression, event)
 
     async def _emit_immediate_reply_or_record_failure(
         self,
         event: AstrMessageEvent,
-        decision: InteractionDecision,
+        expression: PersonaExpressionResult,
     ) -> bool:
         try:
-            await self._emit_immediate_reply(event, decision)
+            await self._emit_immediate_reply(event, expression)
+            event.set_extra("_interaction_immediate_reply_emitted", True)
             return True
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_immediate_reply_failed", True)
@@ -1144,11 +1159,11 @@ class InteractionMiddleware:
         event.is_at_or_wake_command = True
         event._extras.pop("provider", None)
         turn_state = get_interaction_turn_state(event)
-        decision = turn_state.decision if turn_state is not None else None
+        route = turn_state.route_decision if turn_state is not None else None
         if (
-            isinstance(decision, InteractionDecision)
-            and decision.route_mode in {RouteMode.DELEGATE_TO_CORE, RouteMode.HYBRID}
-            and decision.should_emit_immediate_reply
+            isinstance(route, InteractionRouteDecision)
+            and route.route_mode in {RouteMode.DELEGATE_TO_CORE, RouteMode.HYBRID}
+            and bool(event.get_extra("_interaction_immediate_reply_emitted", False))
             and event._has_send_oper
         ):
             event._has_send_oper = False

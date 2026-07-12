@@ -409,7 +409,7 @@ async def test_decision_agent_reuses_turn_state_context_material():
     decision_context = event.get_extra("_interaction_decision_context")
     assert decision_context["persona"]["persona_id"] == "alice"
     assert len(decision_context["recent_messages"]) == 1
-    assert turn_state.decision is decision
+    assert turn_state.legacy_decision is decision
     assert turn_state.prompt_build_config is not None
     assert turn_state.context_material is not None
     assert turn_state.context_material.decision_context == decision_context

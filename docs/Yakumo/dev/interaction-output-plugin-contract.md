@@ -10,7 +10,7 @@
 
 ```text
 input
-  -> Interaction decision
+  -> Interaction route decision
   -> self_reply / delegate_to_core / hybrid
   -> core, tool, or plugin execution result
   -> Interaction output draft
@@ -67,8 +67,10 @@ input
 - `client_objects`: 面向前端或平台 adapter 的结构化对象。
 - `platform_extras`: 平台额外 payload。
 - `tts_hints`: TTS 建议。
-- `motion_hints`: 动作建议。
 - `delivery_hints`: 投递建议。
+
+动作、灯光或客户端表现等具体领域信息不进入 Core 的固定字段。插件应消费属于自己的
+`effect_calls`，并通过通用 `platform_extras` 或 `client_objects` 输出不透明载荷。
 - `metadata`: 诊断元数据。
 - `latency_class`: `fast | bounded | deferred`。
 - `priority`: 合并顺序。
@@ -79,7 +81,7 @@ input
 
 ### 1. Decision
 
-Interaction decision 只决定回复编排方式：
+Interaction route decision 只决定是否由 Core 参与；用户可见表达与 effect 不属于 route：
 
 - `self_reply`: Interaction 直接生成最终回复。
 - `delegate_to_core`: core 生成主结果，再回到 Interaction 输出。

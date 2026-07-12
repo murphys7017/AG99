@@ -2,19 +2,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot.core.interaction.context_builder import InteractionPromptContributorError
 from astrbot.core.interaction.router_agent import (
     InteractionRouterAgent,
     build_interaction_router_system_prompt,
     extract_interaction_route_payload,
 )
-from astrbot.core.interaction.context_builder import InteractionPromptContributorError
-from astrbot.core.interaction.effects import PersonaEffectCall
 from astrbot.core.interaction.turn_state import (
     InteractionContextMaterial,
     InteractionTurnState,
 )
 from astrbot.core.interaction.types import (
-    FastRouteMode,
     InteractionAgentConfig,
     InteractionRouteDecision,
     RouteMode,
@@ -29,16 +27,15 @@ def test_route_decision_accepts_self_reply_mode():
     decision = InteractionRouteDecision.from_mapping({"mode": "self_reply"})
 
     assert decision is not None
-    assert decision.mode == FastRouteMode.SELF_REPLY
+    assert decision.route_mode == RouteMode.SELF_REPLY
 
 
-def test_route_decision_maps_legacy_delegate_to_hybrid():
+def test_route_decision_rejects_delegate_mode_from_router_payload():
     decision = InteractionRouteDecision.from_mapping(
         {"route_mode": RouteMode.DELEGATE_TO_CORE.value}
     )
 
-    assert decision is not None
-    assert decision.mode == FastRouteMode.HYBRID
+    assert decision is None
 
 
 def test_route_decision_rejects_invalid_payload():
@@ -114,7 +111,7 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
         InteractionAgentConfig(router_provider_id="router"),
     )
 
-    assert route.mode == FastRouteMode.SELF_REPLY
+    assert route.route_mode == RouteMode.SELF_REPLY
     assert event.get_extra("_interaction_router_result_source") == "parsed"
     assert event.get_extra("_interaction_router_raw_output") == "self_reply"
     assert "tool_choice" not in provider.calls[0]
@@ -122,31 +119,16 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
     assert "compiled_output_contract" not in provider.calls[0]
 
 
-def test_route_decision_to_legacy_interaction_decision_omits_core_task_spec():
-    decision = InteractionRouteDecision(mode=FastRouteMode.HYBRID)
-
-    legacy = decision.to_interaction_decision(first_response="我先看看。")
-
-    assert legacy.route_mode == RouteMode.HYBRID
-    assert legacy.should_emit_immediate_reply is True
-    assert legacy.immediate_spoken_reply == "我先看看。"
-    assert legacy.core_task_spec is None
-
-
-def test_route_decision_keeps_selected_persona_effect_calls():
-    decision = InteractionRouteDecision(mode=FastRouteMode.SELF_REPLY)
-    effect_call = PersonaEffectCall(
-        name="example.effect",
-        arguments={"intent": "acknowledge"},
-        plugin_id="example_plugin",
+def test_route_decision_contains_only_route_data():
+    decision = InteractionRouteDecision(
+        route_mode=RouteMode.SELF_REPLY,
+        reason="router",
     )
 
-    selected = decision.to_interaction_decision(
-        first_response="嗯。",
-        effect_calls=[effect_call],
-    )
-
-    assert selected.effect_calls == [effect_call]
+    assert decision.to_dict() == {
+        "route_mode": "self_reply",
+        "reason": "router",
+    }
 
 
 class PurposeAwarePromptContributor:

@@ -23,12 +23,12 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     mark_interaction_turn_completed,
-    set_interaction_turn_decision,
     set_interaction_turn_finalized_material,
+    set_interaction_turn_route_decision,
 )
 from astrbot.core.interaction.types import (
     InteractionAgentConfig,
-    InteractionDecision,
+    InteractionRouteDecision,
     RouteMode,
 )
 from astrbot.core.message.components import Image, Json, Plain, Record
@@ -63,7 +63,6 @@ def test_output_contribution_converts_to_result_contribution():
         client_objects=[{"type": "motion"}],
         platform_extras={"visible": True},
         tts_hints={"voice": "alice"},
-        motion_hints={"latency": "fast"},
         delivery_hints={"dedupe": True},
         metadata={"reason": "ok"},
         latency_class="fast",
@@ -77,7 +76,6 @@ def test_output_contribution_converts_to_result_contribution():
     assert result.client_objects == [{"type": "motion"}]
     assert result.platform_extras["visible"] is True
     assert result.platform_extras["tts_hints"] == {"voice": "alice"}
-    assert result.platform_extras["motion_hints"] == {"latency": "fast"}
     assert result.platform_extras["delivery_hints"] == {"dedupe": True}
     assert result.metadata == {
         "reason": "ok",
@@ -109,7 +107,13 @@ def webchat_event():
         session_id="webchat!user!session123",
     )
     event.set_extra("_turn_id", "turn-1")
-    set_interaction_turn_decision(event, InteractionDecision(reason="test"))
+    set_interaction_turn_route_decision(
+        event,
+        InteractionRouteDecision(
+            route_mode=RouteMode.DELEGATE_TO_CORE,
+            reason="test",
+        ),
+    )
     return event
 
 
@@ -215,7 +219,7 @@ class MutatingResultContributor:
 
     async def collect(self, event, plugin_context, result_view):
         with pytest.raises(TypeError):
-            result_view.decision["route_mode"] = "self_reply"
+            result_view.route_decision["route_mode"] = "self_reply"
         with pytest.raises(TypeError):
             result_view.metadata["bad"] = True
         with pytest.raises(TypeError):
@@ -249,7 +253,7 @@ class InspectingResultContributor:
     async def collect(self, event, plugin_context, result_view):
         assert isinstance(result_view, InteractionResultView)
         assert result_view["turn_id"] == "turn-1"
-        assert result_view["decision"]["route_mode"] == "delegate_to_core"
+        assert result_view["route_decision"]["route_mode"] == "delegate_to_core"
         assert result_view.visible_outputs[0]["kind"] == "immediate_reply"
         assert result_view.utterances[0]["kind"] == "immediate_reply"
         assert result_view.turn_material_snapshot["assistant"] == "final answer"
@@ -431,16 +435,15 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
         interaction_config=InteractionAgentConfig(),
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我来看看。",
+    expression = PersonaExpressionResult(
+        spoken_reply="嗯，我来看看。",
     )
 
     with patch(
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
-        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+        await controller.emit_immediate_spoken_reply(expression, webchat_event)
 
     payload = queue.get_nowait()
     assert payload["data"] == "嗯，我马上看。"
@@ -465,20 +468,23 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
 @pytest.mark.asyncio
 async def test_result_contributor_sees_selected_persona_effect_calls(webchat_event):
     queue = asyncio.Queue()
-    effect_call = PersonaEffectCall(
-        name="ag99live.motion",
+    immediate_effect = PersonaEffectCall(
+        name="example.immediate",
+        arguments={"intent": "acknowledge"},
+        plugin_id="plugin_a",
+    )
+    final_effect = PersonaEffectCall(
+        name="example.motion",
         arguments={"axes": {"head_yaw": 40}},
         plugin_id="plugin_a",
     )
+    effects_by_purpose = {}
 
     class EffectCallsContributor:
         plugin_id = "effect_calls"
 
         async def collect(self, event, plugin_context, view):
-            assert view.purpose == "core_reply"
-            assert view["effect_calls"][0]["name"] == effect_call.name
-            assert view["effect_calls"][0]["plugin_id"] == effect_call.plugin_id
-            assert view["effect_calls"][0]["arguments"]["axes"]["head_yaw"] == 40
+            effects_by_purpose[view.purpose] = view["effect_calls"]
             return InteractionResultContribution(
                 plugin_id=self.plugin_id,
                 priority=1,
@@ -492,7 +498,12 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
         plugin_context=plugin_context,
         interaction_config=InteractionAgentConfig(),
         persist_callback=_mark_completed_callback,
-        visible_reply_renderer=_identity_visible_reply_renderer,
+        visible_reply_renderer=AsyncMock(
+            return_value=PersonaExpressionResult(
+                spoken_reply="final answer",
+                effect_calls=[final_effect],
+            )
+        ),
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -500,13 +511,10 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
             result_content_type=ResultContentType.LLM_RESULT,
         )
     )
-    set_interaction_turn_decision(
+    set_interaction_turn_route_decision(
         webchat_event,
-        InteractionDecision(
+        InteractionRouteDecision(
             route_mode=RouteMode.HYBRID,
-            should_emit_immediate_reply=True,
-            immediate_spoken_reply="嗯。",
-            effect_calls=[effect_call],
         ),
     )
 
@@ -514,10 +522,21 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
+        await controller.emit_immediate_spoken_reply(
+            PersonaExpressionResult(
+                spoken_reply="我先看看。",
+                effect_calls=[immediate_effect],
+            ),
+            webchat_event,
+        )
         await controller.capture_message_chain(
             MessageChain([Plain("final answer")]),
             webchat_event,
         )
+
+    assert effects_by_purpose["persona_reply"][0]["name"] == "example.immediate"
+    assert effects_by_purpose["core_reply"][0]["name"] == "example.motion"
+    assert effects_by_purpose["core_reply"][0]["arguments"]["axes"]["head_yaw"] == 40
 
 
 @pytest.mark.asyncio
@@ -546,9 +565,8 @@ async def test_immediate_reply_materializes_tts_without_reasoning_or_t2i(webchat
     )
     controller.show_reasoning = True
     webchat_event.set_extra("_llm_reasoning_content", "hidden chain of thought")
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我来看看。",
+    expression = PersonaExpressionResult(
+        spoken_reply="嗯，我来看看。",
     )
 
     with (
@@ -570,7 +588,7 @@ async def test_immediate_reply_materializes_tts_without_reasoning_or_t2i(webchat
             new=AsyncMock(side_effect=AssertionError("immediate reply must not use t2i")),
         ),
     ):
-        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+        await controller.emit_immediate_spoken_reply(expression, webchat_event)
 
     payload = queue.get_nowait()
     assert payload["type"] == "record"
@@ -624,9 +642,8 @@ async def test_immediate_reply_uses_session_scoped_tts_config(webchat_event):
         interaction_config=InteractionAgentConfig(),
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我来看看。",
+    expression = PersonaExpressionResult(
+        spoken_reply="嗯，我来看看。",
     )
 
     with (
@@ -644,7 +661,7 @@ async def test_immediate_reply_uses_session_scoped_tts_config(webchat_event):
             new=AsyncMock(return_value=True),
         ),
     ):
-        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+        await controller.emit_immediate_spoken_reply(expression, webchat_event)
 
     payload = queue.get_nowait()
     assert payload["type"] == "record"
@@ -676,9 +693,8 @@ async def test_immediate_reply_dual_output_keeps_single_semantic_text(
         interaction_config=InteractionAgentConfig(),
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="行，马上。",
+    expression = PersonaExpressionResult(
+        spoken_reply="行，马上。",
     )
 
     with (
@@ -696,7 +712,7 @@ async def test_immediate_reply_dual_output_keeps_single_semantic_text(
             new=AsyncMock(return_value=True),
         ),
     ):
-        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+        await controller.emit_immediate_spoken_reply(expression, webchat_event)
 
     record_payload = queue.get_nowait()
     plain_payload = queue.get_nowait()
@@ -731,9 +747,8 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
         interaction_config=InteractionAgentConfig(),
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="行，等我查一下。",
+    expression = PersonaExpressionResult(
+        spoken_reply="行，等我查一下。",
     )
     webchat_event.set_result(
         MessageEventResult(
@@ -746,7 +761,7 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
         "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
         return_value=queue,
     ):
-        await controller.emit_immediate_spoken_reply(decision, webchat_event)
+        await controller.emit_immediate_spoken_reply(expression, webchat_event)
         await controller.capture_message_chain(
             MessageChain([Plain("设计问题，我改不了。")]),
             webchat_event,
@@ -806,12 +821,11 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
 async def test_immediate_reply_uses_generic_event_send_for_non_webchat(generic_event):
     controller = InteractionOutputController()
     generic_event.send = AsyncMock()
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我在。",
+    expression = PersonaExpressionResult(
+        spoken_reply="嗯，我在。",
     )
 
-    await controller.emit_immediate_spoken_reply(decision, generic_event)
+    await controller.emit_immediate_spoken_reply(expression, generic_event)
 
     generic_event.send.assert_awaited_once()
     message = generic_event.send.await_args.args[0]
@@ -824,12 +838,11 @@ async def test_immediate_reply_does_not_mark_generic_event_as_core_sent(
     generic_event,
 ):
     controller = InteractionOutputController()
-    decision = InteractionDecision(
-        should_emit_immediate_reply=True,
-        immediate_spoken_reply="嗯，我在。",
+    expression = PersonaExpressionResult(
+        spoken_reply="嗯，我在。",
     )
 
-    await controller.emit_immediate_spoken_reply(decision, generic_event)
+    await controller.emit_immediate_spoken_reply(expression, generic_event)
 
     assert generic_event._has_send_oper is False
 
@@ -910,12 +923,10 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
         persist_callback=_mark_completed_callback,
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
-    set_interaction_turn_decision(
+    set_interaction_turn_route_decision(
         webchat_event,
-        InteractionDecision(
+        InteractionRouteDecision(
             route_mode=RouteMode.HYBRID,
-            should_emit_immediate_reply=True,
-            immediate_spoken_reply="我看看。",
             reason="hybrid",
         ),
     )
@@ -1034,9 +1045,8 @@ async def test_result_contributor_receives_read_only_view(webchat_event):
         return_value=queue,
     ):
         await controller.emit_immediate_spoken_reply(
-            InteractionDecision(
-                should_emit_immediate_reply=True,
-                immediate_spoken_reply="行，等我查一下。",
+            PersonaExpressionResult(
+                spoken_reply="行，等我查一下。",
             ),
             webchat_event,
         )
