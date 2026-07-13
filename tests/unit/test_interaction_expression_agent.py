@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -8,11 +8,12 @@ from astrbot.core.interaction.expression_agent import (
     InteractionExpressionError,
     PersonaExpressionRequest,
     PersonaExpressionResult,
+    _log_persona_prompt_size_diagnostics,
     add_persona_runtime_slots_to_pack,
     add_visible_reply_material_slots_to_pack,
-    build_persona_runtime_system_prompt,
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
+    build_persona_runtime_system_prompt,
     extract_persona_expression_result,
     maybe_inject_deepseek_first_turn_reasoning_marker,
     remove_redundant_media_slots_for_visible_reply_material,
@@ -28,6 +29,40 @@ from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
+
+
+def test_persona_prompt_size_diagnostics_logs_sizes_without_content(monkeypatch):
+    log = Mock()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.logger.info",
+        log,
+    )
+
+    class Event:
+        session_id = "session"
+
+        @staticmethod
+        def get_platform_id():
+            return "platform"
+
+    result = RenderResult(
+        system_prompt="private system text",
+        messages=[{"role": "user", "content": "private message text"}],
+        tool_schema=[{"name": "private_tool"}],
+        metadata={"prompt_slot_sizes": {"persona.prompt": 120}},
+    )
+
+    _log_persona_prompt_size_diagnostics(
+        Event(),
+        PersonaExpressionRequest(source_text="private source text"),
+        result,
+    )
+
+    args = log.call_args.args
+    assert args[0].startswith("DIAG expression.prompt_size:")
+    assert args[-1] == {"persona.prompt": 120}
+    assert "private system text" not in repr(args)
+    assert "private message text" not in repr(args)
 
 
 def test_persona_expression_empty_result_without_effects_is_rejected():

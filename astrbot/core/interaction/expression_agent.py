@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -458,6 +459,7 @@ class InteractionExpressionAgent:
                 else None
             ),
         )
+        _log_persona_prompt_size_diagnostics(event, req, render_result)
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
@@ -589,6 +591,10 @@ class InteractionExpressionAgent:
             expression_pack,
             effects=persona_effect_specs,
         )
+        prompt_slot_sizes = {
+            str(name): _serialized_size(slot.value)
+            for name, slot in expression_pack.slots.items()
+        }
         render_result = PromptRenderEngine().render(
             expression_pack,
             event=event,
@@ -605,6 +611,7 @@ class InteractionExpressionAgent:
                 _resolve_provider_model(provider),
             )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
+        render_result.metadata["prompt_slot_sizes"] = prompt_slot_sizes
         return render_result
 
     @staticmethod
@@ -642,6 +649,35 @@ def _describe_expression_request(req: PersonaExpressionRequest) -> str:
     if req.source_text.strip():
         return "material_reply"
     return "direct_reply"
+
+
+def _log_persona_prompt_size_diagnostics(event, req, render_result) -> None:
+    raw_slot_sizes = render_result.metadata.get("prompt_slot_sizes", {})
+    slot_sizes = raw_slot_sizes if isinstance(raw_slot_sizes, dict) else {}
+
+    section_sizes = {
+        "system": len(render_result.system_prompt or ""),
+        "messages": _serialized_size(render_result.messages),
+        "tool_schema": _serialized_size(render_result.tool_schema or []),
+    }
+    total_chars = sum(section_sizes.values())
+    logger.info(
+        "DIAG expression.prompt_size: platform_id=%s session_id=%s phase=%s total_chars=%s estimated_tokens=%s sections=%s slots=%s",
+        event.get_platform_id(),
+        event.session_id,
+        _describe_expression_request(req),
+        total_chars,
+        math.ceil(total_chars / 4),
+        section_sizes,
+        dict(sorted(slot_sizes.items(), key=lambda item: item[1], reverse=True)),
+    )
+
+
+def _serialized_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return len(str(value or ""))
 
 
 def add_persona_runtime_slots_to_pack(
