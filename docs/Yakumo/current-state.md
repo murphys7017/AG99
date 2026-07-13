@@ -60,6 +60,7 @@
 - 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。
 - TODO: 将上下文预算改为显式可配置策略，按 provider/model 支持的 `max_context_tokens` 分配 history/system/tools/memory 的预算，补齐 1M context 模型适配；现阶段 token 统计仍主要依赖估算器，容易保守截断，尚未充分利用大窗口模型
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
+- prompt collector 默认保持 required/fail-fast；只有显式 optional collector 才会局部失败并记录 `collector_failures`。当前 `MemoryCollector` 为 optional，long-term embedding/检索失败只清空长期召回，仍保留本地 Topic、ShortTerm、Experience 与 PersonaState。
 
 ### 2.5 Interaction Middleware
 

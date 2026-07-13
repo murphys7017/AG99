@@ -57,7 +57,9 @@
 
 同时支持插件通过 prompt extension 注册补充上下文。extension 会被规范化为 `ContextSlot`，并按 mount 进入 renderer。
 
-当前 collect 阶段仍保留非严格模式下的 fail-open 行为：collector 异常会记录 warning 并继续；严格模式由 `is_prompt_pipeline_strict(config)` 控制。这里是 prompt 子系统边界的临时保护，不应作为主链路正确性的证明。
+collect 阶段的 collector 默认是 `required`，异常会中止本次 Prompt Pack 构建；只有明确声明 `failure_policy="optional"` 的 collector 才会在失败时跳过自身 slots，并把 `collector`、错误类型和原因写入 `ContextPack.meta["collector_failures"]`。这避免可选能力拖垮主 Prompt，同时也不会静默吞掉 System、Input、Persona 等关键上下文错误。
+
+`MemoryCollector` 当前属于 optional collector。Memory Snapshot 内部还会单独隔离 long-term retrieval：embedding 或长期记忆检索失败时保留 Topic、ShortTerm、Experience 和 PersonaState，并在 `debug_meta.degraded_components` 中记录降级原因。
 
 ## Select 阶段
 

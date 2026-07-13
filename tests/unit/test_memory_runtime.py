@@ -1107,6 +1107,56 @@ class StubSnapshotDocumentSearchService:
         ]
 
 
+@pytest.mark.asyncio
+async def test_memory_snapshot_preserves_local_state_when_vector_search_fails():
+    store = MagicMock()
+    store.config = MemoryConfig()
+    topic_state = MagicMock()
+    short_term_memory = MagicMock()
+    experience = MagicMock()
+    persona_state = MagicMock()
+    store.get_topic_state = AsyncMock(return_value=topic_state)
+    store.get_short_term_memory = AsyncMock(return_value=short_term_memory)
+    store.get_recent_turn_records = AsyncMock(return_value=[])
+    store.list_recent_experiences = AsyncMock(return_value=[experience])
+    store.get_persona_state = AsyncMock(return_value=persona_state)
+    document_search_service = MagicMock()
+    document_search_service.search_long_term_memories = AsyncMock(
+        side_effect=RuntimeError("embedding unavailable")
+    )
+    builder = MemorySnapshotBuilder(
+        store,
+        document_search_service=document_search_service,
+    )
+
+    snapshot = await builder.build_snapshot(
+        TEST_UMO,
+        "conv-1",
+        query="remember this",
+        identity=MemoryIdentity(
+            umo=TEST_UMO,
+            platform_id=TEST_PLATFORM_ID,
+            sender_user_id="user-1",
+            sender_nickname="User",
+            canonical_user_id=TEST_CANONICAL_USER_ID,
+            platform_user_key=TEST_PLATFORM_USER_KEY,
+        ),
+    )
+
+    assert snapshot.topic_state is topic_state
+    assert snapshot.short_term_memory is short_term_memory
+    assert snapshot.experiences == [experience]
+    assert snapshot.long_term_memories == []
+    assert snapshot.persona_state is persona_state
+    assert snapshot.debug_meta["degraded_components"] == [
+        {
+            "component": "long_term_retrieval",
+            "error_type": "RuntimeError",
+            "reason": "embedding unavailable",
+        }
+    ]
+
+
 class FailingManualVectorIndex:
     async def ensure_ready(self) -> None:
         return None

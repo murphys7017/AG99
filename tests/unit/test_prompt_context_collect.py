@@ -2051,7 +2051,7 @@ async def test_collect_context_pack_memory_debug_fields_can_be_included(
 
 
 @pytest.mark.asyncio
-async def test_collect_context_pack_memory_raises_when_snapshot_request_raises(
+async def test_collect_context_pack_memory_failure_is_recorded_without_aborting_pack(
     _patch_memory_service,
 ):
     event, _ = _make_event()
@@ -2063,14 +2063,22 @@ async def test_collect_context_pack_memory_raises_when_snapshot_request_raises(
     )
     _patch_memory_service.get_snapshot.side_effect = RuntimeError("memory down")
 
-    with pytest.raises(RuntimeError, match="memory down"):
-        await collect_context_pack(
-            event=event,
-            plugin_context=context,
-            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
-            provider_request=req,
-            collectors=[MemoryCollector()],
-        )
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[MemoryCollector()],
+    )
+
+    assert pack.slots == {}
+    assert pack.meta["collector_failures"] == [
+        {
+            "collector": "MemoryCollector",
+            "error_type": "RuntimeError",
+            "reason": "memory down",
+        }
+    ]
 
 
 @pytest.mark.asyncio

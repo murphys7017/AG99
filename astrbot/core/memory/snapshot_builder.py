@@ -100,15 +100,32 @@ class MemorySnapshotBuilder:
         experiences = []
         long_term_memories = []
         persona_state = None
+        degraded_components: list[dict[str, str]] = []
         if canonical_user_id:
             if options.enabled and options.long_term.enabled:
-                long_term_memories = await self._load_snapshot_long_term_memories(
-                    umo=umo,
-                    canonical_user_id=canonical_user_id,
-                    conversation_id=conversation_id,
-                    query=query,
-                    read_options=options,
-                )
+                try:
+                    long_term_memories = await self._load_snapshot_long_term_memories(
+                        umo=umo,
+                        canonical_user_id=canonical_user_id,
+                        conversation_id=conversation_id,
+                        query=query,
+                        read_options=options,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    degraded_components.append(
+                        {
+                            "component": "long_term_retrieval",
+                            "error_type": type(exc).__name__,
+                            "reason": str(exc),
+                        }
+                    )
+                    logger.warning(
+                        "memory long-term retrieval failed; continuing with local snapshot: umo=%s conversation_id=%s error=%s",
+                        umo,
+                        conversation_id,
+                        exc,
+                        exc_info=True,
+                    )
             if options.enabled and options.experiences.enabled:
                 experiences = await self._load_snapshot_experiences(
                     canonical_user_id=canonical_user_id,
@@ -144,7 +161,14 @@ class MemorySnapshotBuilder:
             experiences=experiences,
             long_term_memories=long_term_memories,
             persona_state=persona_state,
-            debug_meta={"query": query} if query is not None else {},
+            debug_meta={
+                **({"query": query} if query is not None else {}),
+                **(
+                    {"degraded_components": degraded_components}
+                    if degraded_components
+                    else {}
+                ),
+            },
         )
 
     async def _load_snapshot_long_term_memories(

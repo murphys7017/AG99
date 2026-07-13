@@ -36,6 +36,15 @@ class ContextCollectorInterface(ABC):
         """
         return "dynamic"
 
+    @property
+    def failure_policy(self) -> str:
+        """Return whether collection failure aborts the whole prompt build.
+
+        Collectors are required by default. Optional collectors must be
+        explicitly marked so core prompt material cannot disappear silently.
+        """
+        return "required"
+
     @abstractmethod
     async def collect(
         self,

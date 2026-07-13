@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 class MemoryCollector(ContextCollectorInterface):
     """Collect prompt memory context from the current memory snapshot."""
 
+    @property
+    def failure_policy(self) -> str:
+        return "optional"
+
     async def collect(
         self,
         event: AstrMessageEvent,

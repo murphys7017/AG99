@@ -374,7 +374,9 @@ async def collect_context_pack(
     """
     Collect prompt context into a single pack.
 
-    This stage is fail-fast for internal collectors and does not mutate ProviderRequest.
+    Required collectors are fail-fast. Explicitly optional collectors record a
+    diagnostic and contribute no slots when unavailable. This stage does not
+    mutate ProviderRequest.
     """
     catalog = get_catalog(strict=True)
     collector_list = (
@@ -407,12 +409,30 @@ async def collect_context_pack(
             slots = deepcopy(cached_items)
             pack.meta.setdefault("cached_collectors", []).append(collector_name)
         else:
-            slots = await collector.collect(
-                event,
-                plugin_context,
-                config,
-                provider_request=provider_request,
-            )
+            try:
+                slots = await collector.collect(
+                    event,
+                    plugin_context,
+                    config,
+                    provider_request=provider_request,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if getattr(collector, "failure_policy", "required") != "optional":
+                    raise
+                logger.warning(
+                    "Optional prompt collector failed; continuing without its slots: collector=%s error=%s",
+                    collector_name,
+                    exc,
+                    exc_info=True,
+                )
+                pack.meta.setdefault("collector_failures", []).append(
+                    {
+                        "collector": collector_name,
+                        "error_type": type(exc).__name__,
+                        "reason": str(exc),
+                    }
+                )
+                slots = []
             if lifecycle == "static":
                 _store_static_cache_entry(
                     static_context_cache,
