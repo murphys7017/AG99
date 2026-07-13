@@ -1352,6 +1352,34 @@ class TestBuildMainAgent:
 
         assert result is not None
         assert isinstance(result, module.MainAgentBuildResult)
+        assert mock_runner.reset.await_args.kwargs["fallback_providers"] == []
+
+    def test_get_fallback_chat_providers_filters_invalid_and_duplicate_entries(
+        self, mock_provider
+    ):
+        fallback_provider = MagicMock(spec=Provider)
+        fallback_provider.provider_config = {"id": "fallback-provider"}
+        plugin_context = MagicMock()
+        plugin_context.get_provider_by_id.side_effect = lambda provider_id: {
+            "fallback-provider": fallback_provider,
+        }.get(provider_id)
+
+        result = ama._get_fallback_chat_providers(
+            mock_provider,
+            plugin_context,
+            {
+                "fallback_chat_models": [
+                    "test-provider",
+                    "fallback-provider",
+                    "fallback-provider",
+                    "missing-provider",
+                    "",
+                    None,
+                ]
+            },
+        )
+
+        assert result == [fallback_provider]
 
     @pytest.mark.asyncio
     async def test_build_main_agent_no_provider(self, mock_event, mock_context):

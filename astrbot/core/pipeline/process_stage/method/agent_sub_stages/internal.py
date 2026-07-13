@@ -21,6 +21,7 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildResult,
     build_main_agent,
 )
+from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -432,7 +433,8 @@ class InternalAgentSubStage(Stage):
             error_text = custom_error_message or (
                 f"Error occurred while processing agent request: {e}"
             )
-            await event.send(MessageChain().message(error_text))
+            with temporary_output_origin(event, OutputOrigin.CORE.value):
+                await event.send(MessageChain().message(error_text))
         finally:
             if typing_requested:
                 try:
