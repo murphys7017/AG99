@@ -53,6 +53,7 @@ from .turn_state import (
     InteractionLifecycleStage,
     InteractionStreamState,
     InteractionTurnCompletionState,
+    InteractionTurnOutcome,
     InteractionTurnState,
     InteractionTurnStatus,
     InteractionUtterance,
@@ -61,9 +62,9 @@ from .turn_state import (
 )
 from .types import (
     CoreTaskSpec,
-    FastRouteMode,
     InteractionAgentConfig,
     InteractionRouteDecision,
+    InteractionRouteMode,
     RouteMode,
 )
 
@@ -82,7 +83,6 @@ __all__ = [
     "PersonaEffectSpec",
     "PersonaEffectValidationError",
     "InteractionPersonaRuntime",
-    "FastRouteMode",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
     "INTERACTION_ROUTE_DECISION_EXTRA_KEY",
     "INTERACTION_TURN_STATE_EXTRA_KEY",
@@ -102,6 +102,7 @@ __all__ = [
     "InteractionOutputDraft",
     "InteractionStreamState",
     "InteractionTurnCompletionState",
+    "InteractionTurnOutcome",
     "InteractionStreamView",
     "InteractionTurnState",
     "InteractionTurnStatus",
@@ -109,6 +110,7 @@ __all__ = [
     "InteractionResultContribution",
     "InteractionResultView",
     "InteractionRouteDecision",
+    "InteractionRouteMode",
     "InteractionRouterAgent",
     "InteractionRouterError",
     "RouteMode",

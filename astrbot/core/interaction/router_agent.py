@@ -21,15 +21,13 @@ from .context_builder import (
 )
 from .decision_agent import (
     _build_decision_build_config,
-    _maybe_bypass_protocol_command,
     build_interaction_decision_contexts,
 )
 from .memory_store import InteractionMemoryStore
 from .types import (
-    FastRouteMode,
     InteractionAgentConfig,
     InteractionRouteDecision,
-    RouteMode,
+    InteractionRouteMode,
 )
 
 
@@ -41,20 +39,21 @@ class InteractionRouterError(RuntimeError):
 
 def build_interaction_router_system_prompt() -> str:
     return (
-        "你是 Interaction Router，一个严格的二分类选择器。\n"
-        "任务：从候选标签中选择一个。当前用户输入是首要依据；聊天记录、memory 和 router 上下文只能辅助判断当前消息是否明确延续既有任务。\n"
+        "你是 Interaction Router，一个严格的三分类选择器。\n"
+        "任务：从候选标签中选择一个。当前用户输入是首要依据；聊天记录、memory 和 router 上下文用于理解当前对话。\n"
         "router 上下文可能包含插件目录；插件目录只说明本地插件是什么、负责什么，不能单独成为选择 hybrid 的理由。\n"
         "候选标签：\n"
-        "- self_reply：拟人层或插件目录声明的本地插件职责即可完整处理，不需要核心 Agent；普通寒暄、情绪回应、轻量吐槽、短确认、表情或无明确执行意图的短消息也属于拟人层可处理。\n"
+        "- silent：当前观察不适合回应，保持沉默比说话更自然。\n"
+        "- persona：统一拟人层可以直接完成回应，不需要核心 Agent。\n"
         "- hybrid：当前输入明确需要核心 Agent 参与，或聊天记录显示它正在继续一个需要核心 Agent 的任务。\n"
-        "判断规则：只有当前消息本身表达明确任务意图，或明确指向未完成的核心任务时才选择 hybrid；含义很弱的短消息默认 self_reply，即使历史或 memory 中出现过任务。不要限制或枚举核心 Agent 的能力范围。\n"
+        "普通寒暄、情绪回应、轻量吐槽、短确认通常选择 persona；明确不需要回应、并且沉默更自然时选择 silent。不要限制或枚举核心 Agent 的能力范围。\n"
         "不要推断具体插件协议、动作参数或输出 schema。\n"
-        "输出约束：不要生成用户回复，不要输出 JSON，只返回 self_reply 或 hybrid。"
+        "输出约束：不要生成用户回复，不要输出 JSON，只返回 silent、persona 或 hybrid。"
     )
 
 
 def build_interaction_router_prompt() -> str:
-    return "请只输出 self_reply 或 hybrid。"
+    return "请只输出 silent、persona 或 hybrid。"
 
 
 def extract_interaction_route_payload(
@@ -66,7 +65,11 @@ def extract_interaction_route_payload(
     if not isinstance(text, str):
         return None
     raw = text.strip().strip('"').strip("'").lower()
-    if raw in {FastRouteMode.SELF_REPLY.value, FastRouteMode.HYBRID.value}:
+    if raw in {
+        InteractionRouteMode.SILENT.value,
+        InteractionRouteMode.PERSONA.value,
+        InteractionRouteMode.HYBRID.value,
+    }:
         return {"mode": raw}
     return None
 
@@ -81,10 +84,6 @@ class InteractionRouterAgent:
         plugin_context: Context,
         interaction_config: InteractionAgentConfig,
     ) -> InteractionRouteDecision:
-        bypass = _maybe_bypass_protocol_command(event, plugin_context)
-        if bypass is not None:
-            return InteractionRouteDecision(route_mode=RouteMode.HYBRID)
-
         provider = plugin_context.get_provider_by_id(
             interaction_config.router_provider_id
         )

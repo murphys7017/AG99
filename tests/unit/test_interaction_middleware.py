@@ -12,14 +12,15 @@ from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
+    InteractionTurnOutcome,
     InteractionTurnState,
+    get_interaction_turn_finalized_material,
     get_interaction_turn_state,
 )
 from astrbot.core.interaction.types import (
-    FastRouteMode,
     InteractionAgentConfig,
     InteractionRouteDecision,
-    RouteMode,
+    InteractionRouteMode,
 )
 from astrbot.core.message.components import Image, Plain, Record, Reply
 from astrbot.core.message.message_event_result import (
@@ -78,7 +79,7 @@ def _stub_fast_response_route(
     middleware: InteractionMiddleware,
     *,
     first_response: str = "嗯。",
-    mode: FastRouteMode = FastRouteMode.HYBRID,
+    mode: InteractionRouteMode = InteractionRouteMode.HYBRID,
 ) -> None:
     if not isinstance(
         getattr(middleware.output_controller, "emit_immediate_spoken_reply", None),
@@ -91,7 +92,7 @@ def _stub_fast_response_route(
     )
     middleware.router_agent = MagicMock()
     middleware.router_agent.route = AsyncMock(
-        return_value=InteractionRouteDecision(route_mode=RouteMode(mode.value))
+        return_value=InteractionRouteDecision(route_mode=mode)
     )
 
 
@@ -1054,7 +1055,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯，我来处理。",
-            mode=FastRouteMode.HYBRID,
+            mode=InteractionRouteMode.HYBRID,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock(
             side_effect=_wait_for_persist_release
@@ -1092,7 +1093,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="等我看看。",
-            mode=FastRouteMode.HYBRID,
+            mode=InteractionRouteMode.HYBRID,
         )
         persisted = asyncio.Event()
         middleware.memory_store.update_interaction_memory = AsyncMock(
@@ -1127,7 +1128,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="在等你提问题啊，笨蛋。",
-            mode=FastRouteMode.HYBRID,
+            mode=InteractionRouteMode.HYBRID,
         )
 
         middleware.handle_inbound(image_event)
@@ -1142,11 +1143,11 @@ class TestInteractionMiddleware:
         turn_state = get_interaction_turn_state(image_event)
         assert turn_state is not None
         assert turn_state.route_decision is not None
-        assert turn_state.route_decision.route_mode == RouteMode.HYBRID
+        assert turn_state.route_decision.route_mode == InteractionRouteMode.HYBRID
         assert turn_state.immediate_reply is None
 
     @pytest.mark.asyncio
-    async def test_self_reply_media_input_keeps_immediate_reply(
+    async def test_persona_media_input_keeps_immediate_reply(
         self,
         image_event,
     ):
@@ -1166,7 +1167,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="这张图我能直接看。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
 
         middleware.handle_inbound(image_event)
@@ -1177,7 +1178,46 @@ class TestInteractionMiddleware:
         turn_state = get_interaction_turn_state(image_event)
         assert turn_state is not None
         assert turn_state.route_decision is not None
-        assert turn_state.route_decision.route_mode == RouteMode.SELF_REPLY
+        assert turn_state.route_decision.route_mode == InteractionRouteMode.PERSONA
+
+    @pytest.mark.asyncio
+    async def test_silent_route_completes_without_visible_output_or_core(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="这条回复不应该发出。",
+            mode=InteractionRouteMode.SILENT,
+        )
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
+        middleware.persona_runtime.express_visible_reply.assert_not_awaited()
+        assert queue.empty()
+        assert webchat_event.is_stopped()
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode == InteractionRouteMode.SILENT
+        assert turn_state.completion_state.completed is True
+        assert turn_state.completion_state.outcome == InteractionTurnOutcome.SILENT
+        material = get_interaction_turn_finalized_material(webchat_event)
+        assert material is not None
+        assert material["outcome"] == "silent"
+        assert material["assistant_text"] == ""
+        assert material["visible_outputs"] == []
 
     @pytest.mark.asyncio
     async def test_handle_inbound_refreshes_runtime_interaction_config(
@@ -1245,9 +1285,12 @@ class TestInteractionMiddleware:
 
         assert queue.get_nowait() is webchat_event
         controller.emit_immediate_spoken_reply.assert_not_awaited()
-        decision = webchat_event.get_extra("_interaction_route_decision")
-        assert decision.route_mode == RouteMode.DELEGATE_TO_CORE
-        assert decision.reason == "protocol command bypass"
+        assert webchat_event.get_extra("_interaction_route_decision") is None
+        assert webchat_event.get_extra("_interaction_protocol_core_bypass") is True
+        assert (
+            webchat_event.get_extra("_interaction_protocol_core_bypass_reason")
+            == "protocol command bypass"
+        )
 
     @pytest.mark.asyncio
     async def test_missing_plugin_context_uses_local_reply_and_hybrid(
@@ -1277,7 +1320,7 @@ class TestInteractionMiddleware:
         assert turn_state is not None
         assert turn_state.failures == []
         assert turn_state.route_decision is not None
-        assert turn_state.route_decision.route_mode == RouteMode.HYBRID
+        assert turn_state.route_decision.route_mode == InteractionRouteMode.HYBRID
         expression = controller.emit_immediate_spoken_reply.await_args.args[0]
         assert expression.spoken_reply == "我先看一下。"
 
@@ -1399,7 +1442,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯，我来处理。",
-            mode=FastRouteMode.HYBRID,
+            mode=InteractionRouteMode.HYBRID,
         )
 
         middleware.handle_inbound(webchat_event)
@@ -1446,15 +1489,16 @@ class TestInteractionMiddleware:
         )
         turn_state = get_interaction_turn_state(live_event)
         assert turn_state is not None
-        assert turn_state.route_decision is not None
-        assert turn_state.route_decision.route_mode == RouteMode.DELEGATE_TO_CORE
+        assert turn_state.route_decision is None
+        assert live_event.get_extra("_interaction_protocol_core_bypass") is True
         assert (
-            turn_state.route_decision.reason == "live_mode_requires_audio_chunk_stream"
+            live_event.get_extra("_interaction_protocol_core_bypass_reason")
+            == "live_mode_requires_audio_chunk_stream"
         )
         assert turn_state.failures == []
 
     @pytest.mark.asyncio
-    async def test_self_reply_immediate_reply_failure_fail_fast_records_failure(
+    async def test_persona_reply_failure_fail_fast_records_failure(
         self,
         webchat_event,
     ):
@@ -1476,7 +1520,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
 
         middleware.handle_inbound(webchat_event)
@@ -1490,7 +1534,7 @@ class TestInteractionMiddleware:
         assert turn_state.failures[-1].reason == "send_failed"
 
     @pytest.mark.asyncio
-    async def test_self_reply_without_immediate_reply_is_rejected(
+    async def test_persona_without_immediate_reply_is_rejected(
         self,
         webchat_event,
     ):
@@ -1509,25 +1553,25 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
 
         middleware.handle_inbound(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
-        assert webchat_event.get_extra("_interaction_self_reply_invalid") is True
+        assert webchat_event.get_extra("_interaction_persona_reply_invalid") is True
         assert (
-            webchat_event.get_extra("_interaction_self_reply_invalid_reason")
+            webchat_event.get_extra("_interaction_persona_reply_invalid_reason")
             == "missing_immediate_reply"
         )
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
         assert turn_state.failures[-1].stage == "decision"
-        assert turn_state.failures[-1].reason == "missing_self_reply"
+        assert turn_state.failures[-1].reason == "missing_persona_reply"
 
     @pytest.mark.asyncio
-    async def test_self_reply_completion_does_not_write_legacy_interaction_memory(
+    async def test_persona_completion_does_not_write_legacy_interaction_memory(
         self,
         webchat_event,
     ):
@@ -1552,7 +1596,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
@@ -1577,7 +1621,7 @@ class TestInteractionMiddleware:
         assert turn_state.completion_state.failure_reason is None
 
     @pytest.mark.asyncio
-    async def test_self_reply_does_not_persist_if_visible_completion_fails(
+    async def test_persona_does_not_persist_if_visible_completion_fails(
         self,
         webchat_event,
     ):
@@ -1602,7 +1646,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
@@ -1663,7 +1707,7 @@ class TestInteractionMiddleware:
         )
 
     @pytest.mark.asyncio
-    async def test_self_reply_completes_visible_turn_after_immediate_reply(
+    async def test_persona_completes_visible_turn_after_immediate_reply(
         self,
         webchat_event,
     ):
@@ -1688,7 +1732,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
@@ -1727,7 +1771,7 @@ class TestInteractionMiddleware:
         }
 
     @pytest.mark.asyncio
-    async def test_self_reply_dispatches_postprocess_as_memory_owner(
+    async def test_persona_dispatches_postprocess_as_memory_owner(
         self,
         webchat_event,
     ):
@@ -1752,7 +1796,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
         order: list[str] = []
@@ -1769,7 +1813,7 @@ class TestInteractionMiddleware:
         assert order == ["postprocess"]
 
     @pytest.mark.asyncio
-    async def test_self_reply_sets_runtime_config_for_postprocess(
+    async def test_persona_sets_runtime_config_for_postprocess(
         self,
         webchat_event,
     ):
@@ -1808,7 +1852,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
 
         with patch(
@@ -1826,7 +1870,7 @@ class TestInteractionMiddleware:
         )
 
     @pytest.mark.asyncio
-    async def test_self_reply_does_not_persist_conversation_history_inline(
+    async def test_persona_does_not_persist_conversation_history_inline(
         self,
         webchat_event,
     ):
@@ -1856,7 +1900,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
 
         with patch(
@@ -1871,7 +1915,7 @@ class TestInteractionMiddleware:
         conversation_manager.add_message_pair.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_self_reply_does_not_record_conversation_history_failure_inline(
+    async def test_persona_does_not_record_conversation_history_failure_inline(
         self,
         webchat_event,
     ):
@@ -1903,7 +1947,7 @@ class TestInteractionMiddleware:
         _stub_fast_response_route(
             middleware,
             first_response="嗯。",
-            mode=FastRouteMode.SELF_REPLY,
+            mode=InteractionRouteMode.PERSONA,
         )
 
         with patch(

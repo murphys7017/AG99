@@ -1052,16 +1052,12 @@
                 },
                 "expression_timeout": {
                     "description": "Таймаут выражения (сек)"
-                },
-                "parallel_expression_router": {
-                    "description": "Параллельные Expression и Router",
-                    "hint": "Если включено, Fast Expression и Router запрашиваются одновременно, чтобы совместить скорость первого ответа и точность маршрутизации."
                 }
             }
         },
         "router": {
             "description": "Router",
-            "hint": "Только выбирает self_reply / hybrid. Router не генерирует ответы, не декомпозирует задачи и не выводит причины или уверенность.",
+            "hint": "Только выбирает silent / persona / hybrid. Router не генерирует ответы, не декомпозирует задачи и не выводит причины или уверенность.",
             "interaction_middleware": {
                 "router_provider_id": {
                     "description": "Провайдер модели маршрутизации",

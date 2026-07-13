@@ -21,6 +21,11 @@ class InteractionTurnStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class InteractionTurnOutcome(str, Enum):
+    REPLIED = "replied"
+    SILENT = "silent"
+
+
 class InteractionLifecycleStage(str, Enum):
     RECEIVED = "received"
     ROUTING = "routing"
@@ -92,6 +97,7 @@ class InteractionStreamState:
 @dataclass(slots=True)
 class InteractionTurnCompletionState:
     status: InteractionTurnStatus = InteractionTurnStatus.ACTIVE
+    outcome: InteractionTurnOutcome | None = None
     material_finalized: bool = False
     legacy_memory_persisted: bool = False
     postprocess_dispatched: bool = False
@@ -262,6 +268,15 @@ def set_interaction_turn_finalized_material(
     normalized = dict(material) if isinstance(material, dict) else None
     state.finalized_turn_material = normalized
     state.completion_state.material_finalized = normalized is not None
+    if normalized is not None:
+        try:
+            state.completion_state.outcome = InteractionTurnOutcome(
+                str(normalized.get("outcome", InteractionTurnOutcome.REPLIED.value))
+            )
+        except ValueError:
+            state.completion_state.outcome = None
+    else:
+        state.completion_state.outcome = None
     event.set_extra("_interaction_finalized_turn_material", normalized)
     event.set_extra(
         "_interaction_turn_material_finalized",

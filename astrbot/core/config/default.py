@@ -221,7 +221,6 @@ DEFAULT_CONFIG = {
         "router_provider_id": "",
         "router_temperature": 0.0,
         "router_timeout": 3.0,
-        "parallel_expression_router": True,
         "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
@@ -4324,17 +4323,12 @@ CONFIG_METADATA_3 = {
                         "description": "表达超时秒数",
                         "type": "float",
                     },
-                    "interaction_middleware.parallel_expression_router": {
-                        "description": "并发表达和路由",
-                        "type": "bool",
-                        "hint": "开启后 Fast Expression 和 Router 同时请求，以兼顾首响速度和路由准确性。",
-                    },
                 },
             },
             "router": {
                 "description": "Router",
                 "type": "object",
-                "hint": "只判断 self_reply / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
+                "hint": "只判断 silent / persona / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
                 "items": {
                     "interaction_middleware.router_provider_id": {
                         "description": "路由模型提供商",

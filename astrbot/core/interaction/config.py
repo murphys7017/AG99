@@ -64,9 +64,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
             interaction_config.get("router_timeout", 3.0),
             3.0,
         ),
-        parallel_expression_router=bool(
-            interaction_config.get("parallel_expression_router", True)
-        ),
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
         stream_observation_enabled=bool(
             interaction_config.get("stream_observation_enabled", True)

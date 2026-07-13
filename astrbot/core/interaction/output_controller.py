@@ -68,7 +68,7 @@ from .turn_state import (
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
-from .types import InteractionAgentConfig, RouteMode
+from .types import InteractionAgentConfig, InteractionRouteMode
 
 PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY = (
     "_interaction_plugin_output_transaction_active"
@@ -2023,7 +2023,10 @@ class InteractionOutputController:
         if result_is_model:
             return "core_final_model_result"
         if (
-            route_mode in {RouteMode.HYBRID, RouteMode.DELEGATE_TO_CORE}
+            (
+                route_mode == InteractionRouteMode.HYBRID
+                or bool(event.get_extra("_interaction_protocol_core_bypass", False))
+            )
             and streamed
             and not streaming_active
             and message.type

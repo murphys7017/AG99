@@ -15,7 +15,7 @@ from astrbot.core.interaction.turn_state import (
 from astrbot.core.interaction.types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
-    RouteMode,
+    InteractionRouteMode,
 )
 from astrbot.core.prompt.context_types import ContextPack
 from astrbot.core.prompt.extensions import PromptExtension
@@ -23,17 +23,15 @@ from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
 
 
-def test_route_decision_accepts_self_reply_mode():
-    decision = InteractionRouteDecision.from_mapping({"mode": "self_reply"})
+def test_route_decision_accepts_persona_mode():
+    decision = InteractionRouteDecision.from_mapping({"mode": "persona"})
 
     assert decision is not None
-    assert decision.route_mode == RouteMode.SELF_REPLY
+    assert decision.route_mode == InteractionRouteMode.PERSONA
 
 
 def test_route_decision_rejects_delegate_mode_from_router_payload():
-    decision = InteractionRouteDecision.from_mapping(
-        {"route_mode": RouteMode.DELEGATE_TO_CORE.value}
-    )
+    decision = InteractionRouteDecision.from_mapping({"route_mode": "delegate_to_core"})
 
     assert decision is None
 
@@ -45,13 +43,18 @@ def test_route_decision_rejects_invalid_payload():
 @pytest.mark.parametrize(
     ("text", "mode"),
     [
-        ('{"mode":"self_reply"}', "self_reply"),
+        ('{"mode":"silent"}', "silent"),
+        ('{"mode":"persona"}', "persona"),
         ("hybrid", "hybrid"),
-        ('"self_reply"', "self_reply"),
+        ('"persona"', "persona"),
     ],
 )
 def test_extract_route_payload_accepts_json_and_plain_mode(text, mode):
     assert extract_interaction_route_payload(text) == {"mode": mode}
+
+
+def test_extract_route_payload_rejects_legacy_self_reply_mode():
+    assert extract_interaction_route_payload("self_reply") is None
 
 
 @pytest.mark.asyncio
@@ -81,7 +84,7 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
 
         async def text_chat(self, **kwargs):
             self.calls.append(kwargs)
-            return LLMResponse(role="assistant", completion_text="self_reply")
+            return LLMResponse(role="assistant", completion_text="persona")
 
     provider = Provider()
     plugin_context = type(
@@ -111,9 +114,9 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
         InteractionAgentConfig(router_provider_id="router"),
     )
 
-    assert route.route_mode == RouteMode.SELF_REPLY
+    assert route.route_mode == InteractionRouteMode.PERSONA
     assert event.get_extra("_interaction_router_result_source") == "parsed"
-    assert event.get_extra("_interaction_router_raw_output") == "self_reply"
+    assert event.get_extra("_interaction_router_raw_output") == "persona"
     assert "tool_choice" not in provider.calls[0]
     assert "output_contract" not in provider.calls[0]
     assert "compiled_output_contract" not in provider.calls[0]
@@ -121,12 +124,12 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
 
 def test_route_decision_contains_only_route_data():
     decision = InteractionRouteDecision(
-        route_mode=RouteMode.SELF_REPLY,
+        route_mode=InteractionRouteMode.PERSONA,
         reason="router",
     )
 
     assert decision.to_dict() == {
-        "route_mode": "self_reply",
+        "route_mode": "persona",
         "reason": "router",
     }
 
@@ -178,13 +181,13 @@ class RouterScopedPromptContributor:
 def test_router_system_prompt_uses_generic_local_capability_boundary():
     prompt = build_interaction_router_system_prompt()
 
-    assert "严格的二分类选择器" in prompt
+    assert "严格的三分类选择器" in prompt
     assert "当前用户输入是首要依据" in prompt
-    assert "只能辅助判断当前消息是否明确延续既有任务" in prompt
+    assert "用于理解当前对话" in prompt
     assert "不能单独成为选择 hybrid 的理由" in prompt
     assert "普通寒暄、情绪回应、轻量吐槽、短确认" in prompt
-    assert "无明确执行意图的短消息也属于拟人层可处理" in prompt
-    assert "含义很弱的短消息默认 self_reply，即使历史或 memory 中出现过任务" in prompt
+    assert "保持沉默比说话更自然" in prompt
+    assert "统一拟人层可以直接完成回应" in prompt
     assert "明确需要核心 Agent 参与" in prompt
     assert "不要限制或枚举核心 Agent 的能力范围" in prompt
     assert "不要推断具体插件协议" in prompt

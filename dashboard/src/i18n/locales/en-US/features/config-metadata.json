@@ -1051,16 +1051,12 @@
         },
         "expression_timeout": {
           "description": "Expression Timeout Seconds"
-        },
-        "parallel_expression_router": {
-          "description": "Parallel Expression and Router",
-          "hint": "When enabled, Fast Expression and Router request at the same time to balance first-response speed and routing accuracy."
         }
       }
     },
     "router": {
       "description": "Router",
-      "hint": "Only decides self_reply / hybrid. Router does not generate replies, decompose tasks, or output reasons or confidence.",
+      "hint": "Only decides silent / persona / hybrid. Router does not generate replies, decompose tasks, or output reasons or confidence.",
       "interaction_middleware": {
         "router_provider_id": {
           "description": "Router Model Provider",

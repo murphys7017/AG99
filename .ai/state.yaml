@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: interaction_route_persona_output_boundaries_complete
-  scope: Separate route decisions from persona expression results, move Core final persona rendering back to Middleware, and remove Motion-specific fields from the generic output contract
+  phase: persona_runtime_route_contract_step_1_complete
+  scope: Restrict conversational routing to silent/persona/hybrid, separate protocol Core bypass from Router decisions, and make silent turns complete without visible output
 context:
   confidence: high
   assumptions:
@@ -36,6 +36,9 @@ context:
 architecture:
   stability: stable
   boundary_changes:
+    - Conversational Router decisions are limited to silent/persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
+    - Actual Persona Expression starts only after Router selection so silent turns cannot emit or record speculative expression failures.
+    - Silent turns finalize with an explicit silent outcome, no assistant text, no platform output, and no conversation-pair postprocess.
     - Current interaction Turn State stores a pure InteractionRouteDecision; immediate replies and effect calls travel only with the PersonaExpressionResult that produced them.
     - Core final output is returned to Middleware through core_reply_handler, rendered by the single Persona Runtime, then delivered as an explicit prepared result by Output Controller.
     - InteractionResultView exposes route_decision and phase-local effect_calls; final contributors cannot observe stale immediate effects through route state.
@@ -79,6 +82,10 @@ architecture:
     - Shared structured-output parsing uses json-repair only after standard JSON parsing fails, and still accepts repaired mappings only.
 verification:
   checks_run:
+    - python -m pytest all interaction unit files -q (198 passed)
+    - python -m pytest tests/unit/test_config.py -q -k interaction_middleware (3 passed)
+    - python -m ruff check changed interaction files and tests (passed)
+    - JSON locale parse and git diff --check (passed)
     - .venv\Scripts\python.exe -m pytest full interaction boundary suite -q (193 passed)
     - .venv\Scripts\python.exe -m pytest tests/unit/test_postprocess.py tests/unit/test_memory_runtime.py -q (103 passed)
     - .venv\Scripts\python.exe -m ruff check changed interaction boundary files and tests (passed)
@@ -172,6 +179,7 @@ verification:
     - .venv\Scripts\python.exe -m pytest prompt selector and interaction structured-output parser suites -q
     - uv lock --check
   checks_failed:
+    - Expanded interaction plus core-lifecycle run passed 222 tests but retained 2 existing core-lifecycle fixture failures because direct lifecycle construction does not initialize interaction_middleware; no affected lifecycle source was changed.
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.

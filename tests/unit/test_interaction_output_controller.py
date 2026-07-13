@@ -29,7 +29,7 @@ from astrbot.core.interaction.turn_state import (
 from astrbot.core.interaction.types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
-    RouteMode,
+    InteractionRouteMode,
 )
 from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_event_result import (
@@ -110,7 +110,7 @@ def webchat_event():
     set_interaction_turn_route_decision(
         event,
         InteractionRouteDecision(
-            route_mode=RouteMode.DELEGATE_TO_CORE,
+            route_mode=InteractionRouteMode.HYBRID,
             reason="test",
         ),
     )
@@ -219,7 +219,7 @@ class MutatingResultContributor:
 
     async def collect(self, event, plugin_context, result_view):
         with pytest.raises(TypeError):
-            result_view.route_decision["route_mode"] = "self_reply"
+            result_view.route_decision["route_mode"] = "persona"
         with pytest.raises(TypeError):
             result_view.metadata["bad"] = True
         with pytest.raises(TypeError):
@@ -253,7 +253,7 @@ class InspectingResultContributor:
     async def collect(self, event, plugin_context, result_view):
         assert isinstance(result_view, InteractionResultView)
         assert result_view["turn_id"] == "turn-1"
-        assert result_view["route_decision"]["route_mode"] == "delegate_to_core"
+        assert result_view["route_decision"]["route_mode"] == "hybrid"
         assert result_view.visible_outputs[0]["kind"] == "immediate_reply"
         assert result_view.utterances[0]["kind"] == "immediate_reply"
         assert result_view.turn_material_snapshot["assistant"] == "final answer"
@@ -514,7 +514,7 @@ async def test_result_contributor_sees_selected_persona_effect_calls(webchat_eve
     set_interaction_turn_route_decision(
         webchat_event,
         InteractionRouteDecision(
-            route_mode=RouteMode.HYBRID,
+            route_mode=InteractionRouteMode.HYBRID,
         ),
     )
 
@@ -911,8 +911,10 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
 
 
 @pytest.mark.asyncio
-async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
+@pytest.mark.parametrize("route_kind", ["hybrid", "protocol"])
+async def test_core_stream_followup_send_is_not_classified_as_passthrough(
     webchat_event,
+    route_kind,
 ):
     queue = asyncio.Queue()
     controller = InteractionOutputController(
@@ -923,13 +925,17 @@ async def test_hybrid_stream_followup_send_is_not_classified_as_passthrough(
         persist_callback=_mark_completed_callback,
         visible_reply_renderer=_identity_visible_reply_renderer,
     )
-    set_interaction_turn_route_decision(
-        webchat_event,
-        InteractionRouteDecision(
-            route_mode=RouteMode.HYBRID,
-            reason="hybrid",
-        ),
-    )
+    if route_kind == "hybrid":
+        set_interaction_turn_route_decision(
+            webchat_event,
+            InteractionRouteDecision(
+                route_mode=InteractionRouteMode.HYBRID,
+                reason="hybrid",
+            ),
+        )
+    else:
+        set_interaction_turn_route_decision(webchat_event, None)
+        webchat_event.set_extra("_interaction_protocol_core_bypass", True)
 
     async def generator():
         yield MessageChain([Plain("stream final")])

@@ -13,8 +13,9 @@ class RouteMode(str, Enum):
     HYBRID = "hybrid"
 
 
-class FastRouteMode(str, Enum):
-    SELF_REPLY = "self_reply"
+class InteractionRouteMode(str, Enum):
+    SILENT = "silent"
+    PERSONA = "persona"
     HYBRID = "hybrid"
 
 
@@ -110,7 +111,7 @@ class InteractionDecision:
 
 @dataclass(slots=True)
 class InteractionRouteDecision:
-    route_mode: RouteMode = RouteMode.HYBRID
+    route_mode: InteractionRouteMode = InteractionRouteMode.HYBRID
     reason: str = "fast_route"
 
     @classmethod
@@ -119,12 +120,13 @@ class InteractionRouteDecision:
             return None
         raw_mode = str(payload.get("mode", "") or payload.get("route_mode", ""))
         if raw_mode not in {
-            FastRouteMode.SELF_REPLY.value,
-            FastRouteMode.HYBRID.value,
+            InteractionRouteMode.SILENT.value,
+            InteractionRouteMode.PERSONA.value,
+            InteractionRouteMode.HYBRID.value,
         }:
             return None
         try:
-            route_mode = RouteMode(raw_mode)
+            route_mode = InteractionRouteMode(raw_mode)
         except ValueError:
             return None
         return cls(route_mode=route_mode)
@@ -159,7 +161,6 @@ class InteractionAgentConfig:
     router_provider_id: str = ""
     router_temperature: float = 0.0
     router_timeout: float = 3.0
-    parallel_expression_router: bool = True
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200

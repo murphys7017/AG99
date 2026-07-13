@@ -7,7 +7,7 @@ from astrbot.core.interaction.turn_state import InteractionTurnState
 from astrbot.core.interaction.types import (
     CoreTaskSpec,
     InteractionRouteDecision,
-    RouteMode,
+    InteractionRouteMode,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
@@ -88,7 +88,7 @@ def test_core_bridge_reads_decision_and_task_spec_from_turn_state_first():
         execution_prompt="按 turn state 执行。",
     )
     state_decision = InteractionRouteDecision(
-        route_mode=RouteMode.HYBRID,
+        route_mode=InteractionRouteMode.HYBRID,
         reason="turn_state",
     )
     event.set_extra(
