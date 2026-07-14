@@ -1,6 +1,9 @@
 import asyncio
 from types import SimpleNamespace
 
+from astrbot.core.output_contract import OutputContract
+from astrbot.core.prompt.context_types import ContextPack
+from astrbot.core.prompt.render import PromptRenderEngine
 from astrbot.core.provider.sources.deepseek_source import ProviderDeepSeek
 
 
@@ -18,6 +21,32 @@ def _make_provider(overrides: dict | None = None) -> ProviderDeepSeek:
         provider_config=provider_config,
         provider_settings={},
     )
+
+
+def test_deepseek_uses_protocol_tool_call_output_contract():
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {}},
+        preferred_tool_name="persona_expression",
+        allow_text_fallback=False,
+    ).to_dict()
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type(
+            "RequestStub",
+            (),
+            {"provider_type": "deepseek_chat_completion"},
+        )(),
+    )
+
+    assert result.metadata["renderer_name"] == "openai"
+    assert result.compiled_output_contract is not None
+    assert result.compiled_output_contract.strategy == "protocol_tool_call"
+    assert result.compiled_output_contract.tool_name == "persona_expression"
+    assert result.compiled_output_contract.degraded is False
 
 
 def test_deepseek_thinking_mode_removes_tool_choice_from_payload_and_extra_body():
