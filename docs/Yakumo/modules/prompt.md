@@ -76,7 +76,7 @@ Renderer 处理 system/messages、content blocks、图片来源、tool schema �
 
 官方 `filter.on_llm_request` 钩子继续保留。Core 主链路会先完成统一 Prompt 渲染，再把最终 `ProviderRequest` 交给该钩子；插件已有的底层请求修改不会被后续 Prompt 渲染覆盖。需要贡献模型上下文的新插件应优先注册 `PromptExtensionCollectorInterface`，只有确实需要修改最终请求、工具或 provider 参数时才使用 `on_llm_request`。
 
-内置群聊上下文不再注册第二个 `on_llm_request` 注入器，因为它已经通过 `conversation.group_recent` 进入统一管线。删除的是这条重复实现，不是官方插件钩子。`apply_interaction_core_task_spec` 作为显式管理 `ProviderRequest` 的兼容接口继续导出；主链路使用 `CoreTaskCollector`，不会同时调用两者。
+Core 主管线中的群聊上下文只通过 `conversation.group_recent` 进入统一管线，不再由 `on_llm_request` 重复注入。Dify、Coze 等尚未接入 ContextPack 的官方 Agent runner 仍通过同一个官方钩子获得等价上下文；桥接会检查 Prompt Apply 标记并跳过已完成统一渲染的请求。这是非主管线的能力兼容，不是恢复旧的双重 Prompt 来源。`apply_interaction_core_task_spec` 作为显式管理 `ProviderRequest` 的兼容接口继续导出；主链路使用 `CoreTaskCollector`，不会同时调用两者。
 
 会话持久化使用单独生成的、去除 request context 和 Prompt 标签的用户消息，避免把内部脚手架写入官方历史。
 
@@ -96,7 +96,7 @@ Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明�
 
 ## 群聊上下文
 
-`GroupChatContext` 是动态 Prompt Extension Collector。它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。它没有第二个 `on_llm_request` 文本注入出口。
+`GroupChatContext` 是动态 Prompt Extension Collector。对 Router、Persona、Core 统一管线，它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。对尚未接入统一管线的官方 Agent runner，它提供受 Prompt Apply 标记保护的 `on_llm_request` 兼容桥接。
 
 ## 仍需继续收口
 

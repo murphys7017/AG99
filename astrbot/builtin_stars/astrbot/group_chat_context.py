@@ -22,8 +22,13 @@ from astrbot.api.message_components import (
 )
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import Provider, ProviderRequest
+from astrbot.core.agent.message import TextPart
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
-from astrbot.core.prompt import PromptExtension, PromptExtensionCollectorInterface
+from astrbot.core.prompt import (
+    PROMPT_APPLY_RESULT_EXTRA_KEY,
+    PromptExtension,
+    PromptExtensionCollectorInterface,
+)
 
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
@@ -241,6 +246,23 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                 return []
 
             return raw_list[:prompt_idx]
+
+    async def decorate_external_agent_request(
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest,
+    ) -> None:
+        """Bridge group context to official agent runners outside PromptContext."""
+        if event.get_extra(PROMPT_APPLY_RESULT_EXTRA_KEY) is not None:
+            return
+        if not self.group_context_enabled(event):
+            return
+
+        records = await self._snapshot_records_before_current(event)
+        if records:
+            req.extra_user_content_parts.append(
+                TextPart(text=_format_group_history_block(records))
+            )
 
     async def _format_message(self, event: AstrMessageEvent, cfg: dict) -> str:
         datetime_str = datetime.datetime.now().strftime("%H:%M:%S")

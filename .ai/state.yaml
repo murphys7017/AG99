@@ -78,7 +78,7 @@ architecture:
     - Quoted images are no longer captioned twice when the selected chat provider supports image input, and the main provider is no longer used as an implicit quoted-image caption fallback without a configured caption provider.
     - Command APIs expose normalized per-config wake prefixes for dashboard command suggestions.
     - Plugin APIs expose `marketplace_name` so local plugin entries can match marketplace names that differ only by underscore/hyphen normalization.
-    - Builtin group chat context uses one structured prompt-extension exit and no longer mutates ProviderRequest through `on_llm_request`.
+    - Builtin group chat context uses one structured prompt-extension exit on the canonical Core path; an Apply-marker-protected `on_llm_request` bridge preserves group context for official agent runners outside ContextPack without duplicating Core injection.
     - LLM context compression now uses round-based token-ratio recent preservation and compression-provider modality sanitization; it remains a runner-level request/messages optimization and does not own Yakumo memory storage or retrieval.
     - Memory snapshot reads accept an explicit current-event identity override; legacy callers without an identity retain latest-turn fallback behavior.
     - Session prompt metadata marks the current speaker and distinguishes group multi-user scope from private single-user scope.
@@ -96,6 +96,7 @@ architecture:
     - The exported apply_interaction_core_task_spec direct-request interface remains available for plugin compatibility, while the canonical Main Agent path uses CoreTaskCollector exclusively.
 verification:
   checks_run:
+    - Official-hook compatibility follow-up: focused group-context/prompt/internal-agent tests (69 passed), broad prompt/interaction/Main Agent tests (455 passed), postprocess/memory/tool-loop tests (138 passed), ruff, and public import smoke test (passed)
     - .venv\Scripts\python.exe -m pytest tests\unit -q -k "prompt or interaction or group_chat_context_wiring or astr_main_agent" --basetemp .tmp\pytest-prompt-review (450 passed, 707 deselected)
     - .venv\Scripts\python.exe -m pytest tests\unit\test_postprocess.py tests\unit\test_memory_runtime.py tests\test_tool_loop_agent_runner.py -q --basetemp .tmp\pytest-prompt-review-post (138 passed)
     - Public filter.on_llm_request and apply_interaction_core_task_spec import check, focused Core bridge/prompt integration tests, ruff, and git diff --check (passed)

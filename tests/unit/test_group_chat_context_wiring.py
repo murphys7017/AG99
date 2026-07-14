@@ -12,6 +12,7 @@ from astrbot.builtin_stars.astrbot.group_chat_context import (
     GroupChatContext,
 )
 from astrbot.builtin_stars.astrbot.main import Main
+from astrbot.core.prompt import PROMPT_APPLY_RESULT_EXTRA_KEY
 from astrbot.core.provider.entities import ProviderRequest
 
 
@@ -165,6 +166,61 @@ async def test_group_chat_context_directed_message_sees_all_prior_ambient_record
         "[Bob/10:00:00]: first",
         "[Carol/10:01:00]: second",
     ]
+
+
+@pytest.mark.asyncio
+async def test_external_agent_request_receives_group_context_through_hook_bridge():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.is_at_or_wake_command = True
+    group_context.raw_records[event.unified_msg_origin] = deque(
+        ["[Bob/10:00:00]: first", "[Carol/10:01:00]: second"]
+    )
+    group_context._record_ids[event.unified_msg_origin] = deque(["r1", "r2"])
+    req = ProviderRequest(prompt="@bot answer me")
+
+    await group_context.decorate_external_agent_request(event, req)
+
+    assert len(req.extra_user_content_parts) == 1
+    assert "[Bob/10:00:00]: first" in req.extra_user_content_parts[0].text
+    assert "[Carol/10:01:00]: second" in req.extra_user_content_parts[0].text
+
+
+@pytest.mark.asyncio
+async def test_external_agent_hook_bridge_skips_canonical_prompt_request():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, object())
+    group_context.raw_records[event.unified_msg_origin] = deque(
+        ["[Bob/10:00:00]: first"]
+    )
+    group_context._record_ids[event.unified_msg_origin] = deque(["r1"])
+    req = ProviderRequest(prompt="hello")
+
+    await group_context.decorate_external_agent_request(event, req)
+
+    assert req.extra_user_content_parts == []
+
+
+@pytest.mark.asyncio
+async def test_main_on_llm_request_delegates_external_group_context_bridge():
+    main = Main.__new__(Main)
+    main.group_chat_context = SimpleNamespace(
+        decorate_external_agent_request=AsyncMock()
+    )
+    event = make_event()
+    req = ProviderRequest(prompt="hello")
+
+    await main.preserve_group_context_for_external_agent(event, req)
+
+    main.group_chat_context.decorate_external_agent_request.assert_awaited_once_with(
+        event,
+        req,
+    )
 
 
 @pytest.mark.asyncio

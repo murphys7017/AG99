@@ -1,8 +1,12 @@
 """Tests for prompt tree building and base renderer routing."""
 
 import json
+from html import escape
 from unittest.mock import patch
 
+from astrbot.core.astr_main_agent_resources import (
+    COMPUTER_USE_DISABLED_SKILLS_PROMPT,
+)
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import (
     AnthropicPromptRenderer,
@@ -1120,6 +1124,40 @@ def test_render_engine_applies_persona_whitelists_to_capabilities():
             },
         }
     ]
+
+
+def test_render_engine_preserves_computer_use_disabled_skills_warning():
+    pack = ContextPack(
+        slots={
+            "capability.skills_prompt": ContextSlot(
+                name="capability.skills_prompt",
+                value={
+                    "format": "skills_inventory_v1",
+                    "runtime": "none",
+                    "skill_count": 1,
+                    "skills": [
+                        {
+                            "name": "skill_a",
+                            "description": "Alpha skill",
+                            "path": "/skills/a/SKILL.md",
+                            "source_type": "local_only",
+                            "source_label": "local",
+                            "active": True,
+                            "local_exists": True,
+                            "sandbox_exists": False,
+                        }
+                    ],
+                },
+                category="tools",
+                source="test",
+            )
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=BasePromptRenderer()).render(pack)
+
+    assert "skill_a" in result.system_prompt
+    assert escape(COMPUTER_USE_DISABLED_SKILLS_PROMPT) in result.system_prompt
 
 
 def test_render_engine_compiles_user_input_and_merged_tool_schema():

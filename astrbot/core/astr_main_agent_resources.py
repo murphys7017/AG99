@@ -41,6 +41,13 @@ TOOL_CALL_PROMPT_SKILLS_LIKE_MODE = (
     " Keep the role-play and style consistent throughout the conversation."
 )
 
+COMPUTER_USE_DISABLED_SKILLS_PROMPT = (
+    "User has not enabled the Computer Use feature. "
+    "You cannot use shell or Python to perform skills. "
+    "If you need to use these capabilities, ask the user to enable Computer Use "
+    "in the AstrBot WebUI -> Config."
+)
+
 
 CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT = (
     "You are a calm, patient friend with a systems-oriented way of thinking.\n"

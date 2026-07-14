@@ -25,10 +25,11 @@ Collect facts
 - `PromptTreeBuilder` 已从 Render Engine 抽离。
 - provider renderer 已负责协议序列化，并建立了输出契约落地接口。
 - 会话保存使用去除 Prompt 脚手架的用户消息。
-- 群聊上下文只以动态结构化 slot 进入三个目标。
+- 群聊上下文在 Router、Persona、Core 主管线只以动态结构化 slot 进入；未接入 ContextPack 的官方 Agent runner 保留受 Apply 标记保护的钩子桥接。
 - 主 Agent 不再直接拼接 Persona、skills、knowledge、policy、tool instruction、历史、图片或文件 Prompt；模型可见内容只有 ContextPack 一条来源。
 - persona begin dialogs、官方历史、插件显式 contexts 和当前输入已按所有权建立固定顺序。
 - 官方 `on_llm_request` 仍作为最终 `ProviderRequest` 的低层插件钩子；统一 Prompt 渲染在它之前完成，因此钩子修改不会被覆盖。
+- 官方第三方 Agent runner 仍可通过该钩子获得群聊上下文，Core 主管线会跳过桥接，避免形成第二份上下文。
 - 已公开的 `apply_interaction_core_task_spec` 保留为直接请求兼容接口；主链路只使用 `CoreTaskCollector`，不形成双重注入。
 
 ## 当前确认问题

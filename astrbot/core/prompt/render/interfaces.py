@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from hashlib import sha1
 from typing import TYPE_CHECKING, Any
 
+from astrbot.core.astr_main_agent_resources import (
+    COMPUTER_USE_DISABLED_SKILLS_PROMPT,
+)
 from astrbot.core.output_contract import (
     CompiledOutputContract,
     OutputContract,
@@ -715,6 +718,13 @@ class BasePromptRenderer:
                 skills_prompt = (
                     build_skills_prompt(skill_infos) if skill_infos else None
                 )
+                if (
+                    skills_prompt
+                    and skills_slot.value.get("runtime") == "none"
+                ):
+                    skills_prompt = (
+                        f"{skills_prompt}\n{COMPUTER_USE_DISABLED_SKILLS_PROMPT}"
+                    )
                 if self._add_text_tag(
                     target,
                     "skills",

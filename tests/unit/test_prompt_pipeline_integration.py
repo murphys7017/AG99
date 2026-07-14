@@ -41,6 +41,7 @@ from astrbot.core.prompt.render import (
 )
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo
+from astrbot.core.star.star_handler import EventType
 
 
 def _make_event():
@@ -678,6 +679,71 @@ async def test_internal_history_save_uses_prompt_scaffold_free_user_message():
     rendered_history = json.dumps(history, ensure_ascii=False)
     assert "<request_context>" not in rendered_history
     assert "<user_input>" not in rendered_history
+
+
+@pytest.mark.asyncio
+async def test_internal_agent_preserves_post_render_on_llm_request_hook():
+    stage = object.__new__(InternalAgentSubStage)
+    stage.streaming_response = False
+    stage.unsupported_streaming_strategy = "turn_off"
+    stage.main_agent_cfg = ama.MainAgentBuildConfig(tool_call_timeout=60)
+    stage.ctx = MagicMock()
+
+    event, _ = _make_event()
+    event.send_typing = AsyncMock()
+    event.stop_typing = AsyncMock()
+
+    request = ProviderRequest(
+        prompt="rendered user input",
+        system_prompt="rendered system prompt",
+    )
+    reset_coro = MagicMock()
+    agent_runner = MagicMock()
+    provider = MagicMock()
+    provider.provider_config = {"api_base": "https://example.com"}
+    build_result = ama.MainAgentBuildResult(
+        agent_runner=agent_runner,
+        provider_request=request,
+        provider=provider,
+        reset_coro=reset_coro,
+    )
+
+    observed_hooks: list[EventType] = []
+
+    async def _call_hook(_event, hook_type, *args):
+        observed_hooks.append(hook_type)
+        if hook_type is EventType.OnWaitingLLMRequestEvent:
+            return False
+        assert hook_type is EventType.OnLLMRequestEvent
+        assert args == (request,)
+        assert request.system_prompt == "rendered system prompt"
+        request.system_prompt += "\nplugin hook prompt"
+        return True
+
+    with (
+        patch(
+            "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.build_main_agent",
+            new=AsyncMock(return_value=build_result),
+        ),
+        patch(
+            "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.call_event_hook",
+            new=_call_hook,
+        ),
+        patch(
+            "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.try_capture_follow_up",
+            return_value=None,
+        ),
+    ):
+        yielded = [item async for item in stage.process(event, "")]
+
+    assert yielded == []
+    assert observed_hooks == [
+        EventType.OnWaitingLLMRequestEvent,
+        EventType.OnLLMRequestEvent,
+    ]
+    assert request.system_prompt.endswith("plugin hook prompt")
+    reset_coro.close.assert_called_once_with()
+    event.stop_typing.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ import astrbot.api.message_components as Comp
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import Image, Plain
-from astrbot.api.provider import LLMResponse
+from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.core import logger
 from astrbot.core.utils.session_waiter import (
     FILTERS,
@@ -215,6 +215,20 @@ class Main(star.Star):
                 except BaseException as e:
                     logger.error(traceback.format_exc())
                     logger.error(f"主动回复失败: {e}")
+
+    @filter.on_llm_request()
+    async def preserve_group_context_for_external_agent(
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest,
+    ) -> None:
+        """Preserve group context for official runners outside the Core pipeline."""
+        if not self.group_chat_context:
+            return
+        try:
+            await self.group_chat_context.decorate_external_agent_request(event, req)
+        except BaseException as exc:
+            logger.error("Failed to add group context to external agent request: %s", exc)
 
     @filter.on_llm_response()
     async def record_llm_resp_to_ltm(
