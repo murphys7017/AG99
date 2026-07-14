@@ -586,7 +586,7 @@ class InteractionExpressionAgent:
             expression_pack,
             provider,
         )
-        persona_effect_specs = self._list_persona_effects(plugin_context)
+        persona_effect_specs = self._list_persona_effects(plugin_context, event)
         add_persona_runtime_slots_to_pack(
             expression_pack,
             effects=persona_effect_specs,
@@ -618,11 +618,12 @@ class InteractionExpressionAgent:
     @staticmethod
     def _list_persona_effects(
         plugin_context: Context,
+        event,
     ) -> list[PersonaEffectSpec]:
         list_effects = getattr(plugin_context, "list_persona_effects", None)
         if not callable(list_effects):
             return []
-        effects = list_effects()
+        effects = list_effects(event=event)
         return effects if isinstance(effects, list) else []
 
     async def _build_or_reuse_context_material(

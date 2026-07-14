@@ -145,6 +145,7 @@ class _PersonaEffectRegistration:
     """Internal registration record for persona effects."""
 
     effect: PersonaEffectSpec
+    event_filter: Callable[[AstrMessageEvent], bool] | None
     definition_module_path: str
     owner_module_path: str | None
     seq: int
@@ -791,13 +792,20 @@ class Context:
             contributor_type="lifecycle observer",
         )
 
-    def register_persona_effect(self, effect: PersonaEffectSpec) -> None:
+    def register_persona_effect(
+        self,
+        effect: PersonaEffectSpec,
+        *,
+        event_filter: Callable[[AstrMessageEvent], bool] | None = None,
+    ) -> None:
         from astrbot.core.interaction.effects import (
             clone_persona_effect_spec,
             validate_persona_effect_spec,
         )
 
         validate_persona_effect_spec(effect)
+        if event_filter is not None and not callable(event_filter):
+            raise TypeError("Persona effect event_filter must be callable")
         self._ensure_persona_effect_name_available(effect)
 
         definition_module_path = getattr(type(effect), "__module__", "") or getattr(
@@ -810,6 +818,7 @@ class Context:
         self._persona_effects.append(
             _PersonaEffectRegistration(
                 effect=clone_persona_effect_spec(effect),
+                event_filter=event_filter,
                 definition_module_path=str(definition_module_path),
                 owner_module_path=owner_module_path,
                 seq=self._persona_effect_seq,
@@ -822,13 +831,18 @@ class Context:
             effect.name,
         )
 
-    def list_persona_effects(self) -> list[PersonaEffectSpec]:
+    def list_persona_effects(
+        self,
+        *,
+        event: AstrMessageEvent | None = None,
+    ) -> list[PersonaEffectSpec]:
         from astrbot.core.interaction.effects import clone_persona_effect_spec
 
         registrations = [
             registration
             for registration in self._persona_effects
             if self._is_persona_effect_active(registration)
+            and self._persona_effect_matches_event(registration, event)
         ]
         registrations.sort(
             key=lambda registration: (
@@ -841,6 +855,25 @@ class Context:
             clone_persona_effect_spec(registration.effect)
             for registration in registrations
         ]
+
+    @staticmethod
+    def _persona_effect_matches_event(
+        registration: _PersonaEffectRegistration,
+        event: AstrMessageEvent | None,
+    ) -> bool:
+        if event is None or registration.event_filter is None:
+            return True
+        try:
+            return bool(registration.event_filter(event))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Persona effect event filter failed: plugin_id=%s name=%s error=%s",
+                registration.effect.plugin_id,
+                registration.effect.name,
+                exc,
+                exc_info=True,
+            )
+            return False
 
     def unregister_persona_effects(
         self,

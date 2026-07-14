@@ -10,6 +10,7 @@ from astrbot.core.interaction.effects import (
     parse_persona_effect_calls_with_issues,
 )
 from astrbot.core.interaction.expression_agent import (
+    InteractionExpressionAgent,
     build_persona_expression_tool_parameters,
 )
 from astrbot.core.star.context import Context
@@ -144,6 +145,51 @@ def test_context_lists_effects_by_enabled_state_and_stable_order():
         "ag99live.motion",
         "voice.emotion",
     ]
+
+
+def test_context_filters_effects_for_current_event_without_hiding_registrations():
+    ctx = _init_effect_registry(_context())
+    ctx.register_persona_effect(
+        _effect(),
+        event_filter=lambda event: event.platform_id == "olv_pet_adapter",
+    )
+
+    matching_event = type("Event", (), {"platform_id": "olv_pet_adapter"})()
+    other_event = type("Event", (), {"platform_id": "aiocqhttp"})()
+
+    assert [effect.name for effect in ctx.list_persona_effects()] == [
+        "ag99live.motion"
+    ]
+    assert [
+        effect.name for effect in ctx.list_persona_effects(event=matching_event)
+    ] == ["ag99live.motion"]
+    assert ctx.list_persona_effects(event=other_event) == []
+
+
+def test_context_fails_closed_when_persona_effect_event_filter_raises():
+    ctx = _init_effect_registry(_context())
+
+    def broken_filter(_event):
+        raise RuntimeError("filter failed")
+
+    ctx.register_persona_effect(_effect(), event_filter=broken_filter)
+
+    assert ctx.list_persona_effects(event=object()) == []
+
+
+def test_expression_agent_resolves_persona_effects_for_current_event():
+    event = object()
+    seen_events = []
+
+    class ContextStub:
+        def list_persona_effects(self, *, event=None):
+            seen_events.append(event)
+            return [_effect()]
+
+    effects = InteractionExpressionAgent._list_persona_effects(ContextStub(), event)
+
+    assert seen_events == [event]
+    assert [effect.name for effect in effects] == ["ag99live.motion"]
 
 
 def test_context_returns_copies_and_unregisters_by_plugin():

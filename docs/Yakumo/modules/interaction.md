@@ -234,12 +234,15 @@ Persona Runtime 可以随 `spoken_reply` 生成通用 `effect_calls`。Core 只�
 插件负责：
 
 - 注册自己拥有的 effect 名称及参数 schema。
+- 通过 `register_persona_effect(..., event_filter=...)` 声明 effect 对当前事件是否可用；平台、设备或运行时不匹配时，不应让该 effect 进入 Persona 输出契约。
 - 从当前阶段的 `InteractionResultView.effect_calls` 读取属于自己的调用。
 - 将参数解释为插件私有行为，并通过 `platform_extras`、`client_objects` 或插件自己的传输链路交付。
 - 自行处理设备能力、资源映射、动作约束和降级策略。
 
 插件不得假设其他插件认识自己的 effect，也不应要求 Router 或 Core Agent 理解具体动作语义。
 AG99live、Live2D 或桌面身体表现只是这一通用扩展机制的消费者，不是 Interaction 主流程节点。
+`list_persona_effects(event=event)` 用于构建当前 Persona 契约；不传 `event` 的调用只用于注册表管理和诊断，仍会列出所有已启用注册项。
+`event_filter` 必须是同步、无副作用的判断函数；判断抛出异常时 Core 会关闭当前事件上的该 effect，避免把不适用的 schema 暴露给模型。
 
 ## 插件侧两个接口
 
