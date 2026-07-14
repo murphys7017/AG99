@@ -131,7 +131,7 @@ interaction fast router 是一个轻量分类器，不属于 OutputContract 高�
 
 运行规则：
 
-- 只判断 `self_reply` / `hybrid`。
+- 只判断 `silent` / `persona` / `hybrid`。
 - 不生成用户可见回复。
 - 不输出 `effect_calls`。
 - 不注册 tool-call，不要求 JSON。

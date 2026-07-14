@@ -94,9 +94,9 @@
 5. `PipelineScheduler.execute()`
 6. 官方前置 stage 执行：唤醒、白名单、会话状态、限流、内容安全、预处理
 7. 进入 `ProcessStage`
-8. 如果即将启动 core agent，则先由 interaction middleware 创建 turn state、执行路由和快速拟人回复
-9. 需要 core 执行时继续调用 core agent
-8. pipeline 内部调用插件、主 Agent、工具等能力
+8. interaction middleware 创建 turn state；协议任务走独立 Core bypass，普通对话由 Router 选择 `silent` / `persona` / `hybrid`
+9. 按路由结果调用统一 Persona Expression，并在 `hybrid` 或协议 bypass 时继续调用 core agent
+10. pipeline 内部调用插件、主 Agent、工具等能力
 
 interaction turn 的输出路径与普通事件不同：
 

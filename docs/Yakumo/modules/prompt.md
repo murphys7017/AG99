@@ -137,7 +137,7 @@ prompt module 的职责是声明与编译契约，并把 `output_contract` / `co
 - `protocol_tool_call` 是 strict 结构化输出的主要协议级落地。
 - `prompt_only` 不总是“退化”；普通 `json_object` 契约可以原生落到 prompt-only。
 - persona visible-reply 当前是 strict `tool_call` 的高约束场景，优先走 `protocol_tool_call`；只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON。
-- interaction fast router 不使用输出契约，只输出固定路由词 `self_reply` / `hybrid`。
+- interaction Router 不使用输出契约，只输出固定路由词 `silent` / `persona` / `hybrid`。
 
 ## 主 Agent 接入方式
 

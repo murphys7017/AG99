@@ -7,7 +7,7 @@
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
 - 对启用平台，输入先经过官方 EventBus、Pipeline、权限和插件处理，再在核心 Agent 开始前进入 middleware。
-- middleware 并发启动轻量 Router 与 Persona Runtime 即时表达；Router 只判断是否需要 Core。
+- middleware 先运行轻量 Router，再根据 `silent` / `persona` / `hybrid` 调用统一 Persona Expression 或 Core；直播音频和协议命令使用独立 Core bypass。
 - 对 interaction turn，用户可见输出由 `InteractionOutputController` 统一 materialize、发送、记录。
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
@@ -51,9 +51,9 @@ Input Runtime / Observation
 - 入站媒体 materialization
 - interaction STT
 - observation / reflex 前置判断
-- fast route classifier：只输出 `self_reply` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取裁剪后的聊天记录、interaction memory，以及 router purpose 的本地插件目录，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
-- SELF_REPLY / HYBRID / DELEGATE_TO_CORE 编排
-- live audio protocol route
+- Router：只输出 `silent` / `persona` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取裁剪后的聊天记录、interaction memory，以及 router purpose 的本地插件目录，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
+- SILENT / PERSONA / HYBRID 编排
+- live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义
 - finalized material 校验
 - 调度 `AFTER_TURN_COMPLETED` postprocess
@@ -205,7 +205,7 @@ Input Runtime / Observation
 - effect 的 `arguments` 由注册的 `PersonaEffectSpec.parameters` 决定。
 - motion 类 effect 如果包含 `axes`，运行时会把 `axes.*` 统一视为 `number` schema。
 - `intent_tags` 是否必填不由 persona 顶层决定，而由具体 effect schema 决定；例如 motion effect 可在 `arguments` 内要求它。
-- fast router 不输出这个结构；它只返回 `self_reply` 或 `hybrid`。
+- Router 不输出这个结构；它只返回 `silent`、`persona` 或 `hybrid`。
 
 ## Postprocess / Memory 边界
 
@@ -249,7 +249,7 @@ interaction middleware 对插件主要暴露两个阶段接口：
    - 在 middleware fast route / persona reply 前运行。
    - 用于向 interaction router 或 persona prompt 注入结构化信息。
    - 返回 `PromptExtension` 或 `list[PromptExtension]`。
-   - 影响中间件如何判断本轮应该 `self_reply` 还是 `hybrid`，或影响 persona visible-reply 如何表达。
+   - 影响中间件如何判断本轮应该 `silent`、`persona` 还是 `hybrid`，或影响 persona visible-reply 如何表达。
 
 2. `register_interaction_result_contributor(...)`
    - 在 interaction 输出阶段运行。
@@ -300,7 +300,7 @@ class Main(star.Star):
 ```
 
 `collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionDecisionView`。router purpose 下视图会被裁剪为路由所需的轻量上下文；persona_reply purpose 下才暴露人格、完整表达材料等。
-如果插件希望 router 知道有哪些本地插件，应在 `view.purpose == "router"` 时返回精简的插件目录。插件目录只说明插件是什么、负责什么；router 会丢弃 `PromptExtension` 的运输外壳字段，只把插件 `name` / `description` 放进最终 prompt。router 只判断当前请求是否明确可由本地插件/拟人层完整处理，能则 `self_reply`，否则 `hybrid` 交给核心 Agent。router 不理解也不应硬编码插件私有协议、动作参数或输出 schema；具体参数生成仍属于 persona/output/plugin 层。
+如果插件希望 router 知道有哪些本地插件，应在 `view.purpose == "router"` 时返回精简的插件目录。插件目录只说明插件是什么、负责什么；router 会丢弃 `PromptExtension` 的运输外壳字段，只把插件 `name` / `description` 放进最终 prompt。router 判断本轮应保持 `silent`、由统一拟人层直接 `persona` 回复，还是以 `hybrid` 委派 Core；它不理解也不应硬编码插件私有协议、动作参数或输出 schema，具体参数生成仍属于 persona/output/plugin 层。
 如果插件希望影响 persona visible-reply，应在 `view.purpose == "persona_reply"` 时返回插件自己的 `PromptExtension`。中间件自己的 persona runtime 指令和 visible reply material 不走 extension。
 常用字段：
 

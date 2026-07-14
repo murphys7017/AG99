@@ -82,7 +82,7 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 
 - 位置：复用官方 EventBus、Pipeline、权限和插件过滤，紧接在核心 Agent 之前。
-- 输入侧：完成 turn state、入站媒体 materialization、STT，并并发启动 Router 与 Persona Runtime 的即时表达。
+- 输入侧：完成 turn state、入站媒体 materialization 和 STT；协议任务走独立 Core bypass，普通对话先由 Router 选择 `silent` / `persona` / `hybrid`，再按结果调用统一 Persona Runtime 或 Core。
 - 输出侧：接管 interaction turn 的 send / streaming 语义，统一 finalizer、result contributor、TTS、t2i、utterance ledger 与 finalized turn material。
 - 表达侧：即时表达、Core 结果、插件待表达材料和流式插话共用唯一 Persona Runtime；Output Runtime 只负责物化和发送。
 - 扩展侧：主流程只传递通用 effect call，不理解或执行 Motion、Live2D 等插件领域行为。

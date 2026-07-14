@@ -11,7 +11,7 @@
 ```text
 input
   -> Interaction route decision
-  -> self_reply / delegate_to_core / hybrid
+  -> silent / persona / hybrid
   -> core, tool, or plugin execution result
   -> Interaction output draft
   -> output plugin contributions
@@ -45,10 +45,10 @@ input
 - `turn_id`: 当前 interaction turn。
 - `message_id`: 可选；发送阶段分配 visible message id 后再绑定。
 - `source`: `interaction | core | plugin | system`。
-- `route_mode`: `self_reply | delegate_to_core | hybrid`。
+- `route_mode`: `silent | persona | hybrid`；协议 Core bypass 不伪造 route。
 - `phase`: `immediate | final | background`。
 - `text`: 当前阶段的候选用户可见文本。
-- `semantic_text`: 当前阶段的候选语义文本，供 TTS、motion、memory、analytics 使用。
+- `semantic_text`: 当前阶段的候选语义文本，供 TTS、memory、analytics 或插件表现增强使用。
 - `attachments`: 待输出附件。
 - `message_kind`: 输出类型，例如 `immediate_reply`、`core_reply`、`plugin_notice`。
 - `latency_policy`: `fast | normal | deferred`。
@@ -81,11 +81,13 @@ input
 
 ### 1. Decision
 
-Interaction route decision 只决定是否由 Core 参与；用户可见表达与 effect 不属于 route：
+Interaction route decision 只选择本轮对话的处理路径；用户可见表达与 effect 不属于 route：
 
-- `self_reply`: Interaction 直接生成最终回复。
-- `delegate_to_core`: core 生成主结果，再回到 Interaction 输出。
-- `hybrid`: Interaction 先给过渡回复，再输出 core 主结果。
+- `silent`: 不调用 Persona Expression 或 Core，以无可见输出的合法 material 完成本轮。
+- `persona`: 统一 Persona Expression 直接生成最终回复。
+- `hybrid`: Persona Expression 生成委派确认，Core 生成主结果；目标态由二者并发执行并通过同一 Output Arbiter 仲裁。
+
+直播音频和协议命令使用独立 Core bypass，不进入对话 Router，也不创建伪造的 route decision。
 
 `confidence` 不属于该契约。它没有外部校准来源，不能参与路由或输出策略。
 
@@ -99,7 +101,7 @@ Interaction Output Runtime 构造 `InteractionOutputDraft`，绑定 turn、phase
 
 ### 4. Fast Enrichment
 
-只运行低延迟、本地、可预测的表现增强。`self_reply` 默认只允许这一阶段的增强，不能被远程 LLM 表现补全阻塞。
+只运行低延迟、本地、可预测的表现增强。`persona` 直接回复默认只允许这一阶段的增强，不能被远程 LLM 表现补全阻塞。
 
 当前兼容实现里，旧 `InteractionResultContribution.final_text_override` 与表现增强仍在同一轮 contributor 收集中。新的插件不应继续依赖该字段。后续应拆成 `text_transform` 先确定最终文本，再进入 `output_enrich`。
 
@@ -126,7 +128,7 @@ Interaction 统一发送文本、语音、通用 client object、平台 extras�
 
 - 表现增强插件默认不能改 `final_text`。
 - 旧 `final_text_override` 是兼容路径；新表现插件不要把文本改写和表现注入混在一起。
-- 远程表现生成不能阻塞 `self_reply` 快路径。
+- 远程表现生成不能阻塞 `persona` 直接回复路径。
 - 输出贡献必须声明 stage 和 latency class。
 - client object 必须尽量绑定 turn/message identity。
 - 插件主动输出必须逐步收口到 Interaction output queue。
