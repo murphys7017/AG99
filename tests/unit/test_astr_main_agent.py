@@ -8,11 +8,13 @@ import pytest
 
 from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.mcp_client import MCPTool
+from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.message.components import File, Image, Plain, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
+from astrbot.core.prompt.collectors import ExplicitContextCollector
 from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -170,41 +172,21 @@ def test_provider_supports_modality_requires_explicit_list():
     assert not ama._provider_supports_modality(provider, "image")
 
 
-def test_interaction_core_collectors_use_brief_memory_without_persona_or_history():
-    event = MagicMock()
-    event.get_extra.return_value = None
-    collectors = ama._build_interaction_core_collectors(event)
-    collector_names = [collector.__class__.__name__ for collector in collectors]
+def test_interaction_core_collectors_only_add_execution_context():
+    collector_names = {
+        collector.__class__.__name__
+        for collector in ama._build_interaction_core_collectors()
+    }
 
-    assert "PersonaCollector" not in collector_names
-    assert "ConversationHistoryCollector" not in collector_names
-    assert "SkillsCollector" in collector_names
+    assert "ExplicitContextCollector" in collector_names
     assert "ToolsCollector" in collector_names
-    interaction_memory = next(
-        collector
-        for collector in collectors
-        if collector.__class__.__name__ == "InteractionMemoryCollector"
-    )
-    assert interaction_memory.recent_turn_limit == 2
-    assert interaction_memory.brief is True
+    assert "KnowledgeCollector" in collector_names
+    assert "InputCollector" not in collector_names
+    assert "InteractionMemoryCollector" not in collector_names
 
 
-def test_interaction_core_collectors_reuse_event_memory_store():
-    event = MagicMock()
-    memory_store = ama.InteractionMemoryStore()
-    event.get_extra.return_value = memory_store
-
-    collectors = ama._build_interaction_core_collectors(event)
-
-    interaction_memory = next(
-        collector
-        for collector in collectors
-        if collector.__class__.__name__ == "InteractionMemoryCollector"
-    )
-    assert interaction_memory.store is memory_store
-
-
-def test_extract_interaction_explicit_contexts_removes_history_prefix():
+@pytest.mark.asyncio
+async def test_explicit_context_collector_removes_history_prefix():
     history = [
         {"role": "user", "content": "old question"},
         {"role": "assistant", "content": "old answer"},
@@ -215,12 +197,18 @@ def test_extract_interaction_explicit_contexts_removes_history_prefix():
         conversation=MagicMock(history=history),
     )
 
-    explicit = ama._extract_interaction_explicit_contexts(req)
+    slots = await ExplicitContextCollector().collect(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        provider_request=req,
+    )
 
-    assert explicit == [plugin_context]
+    assert slots[0].value == [plugin_context]
 
 
-def test_extract_interaction_explicit_contexts_keeps_replacement_contexts():
+@pytest.mark.asyncio
+async def test_explicit_context_collector_keeps_replacement_contexts():
     plugin_context = {"role": "system", "content": "plugin supplied context"}
     req = ProviderRequest(
         contexts=[plugin_context],
@@ -229,23 +217,31 @@ def test_extract_interaction_explicit_contexts_keeps_replacement_contexts():
         ),
     )
 
-    explicit = ama._extract_interaction_explicit_contexts(req)
-
-    assert explicit == [plugin_context]
-
-
-def test_prepend_explicit_contexts_preserves_rendered_contexts():
-    explicit = [{"role": "system", "content": "plugin supplied context"}]
-    req = ProviderRequest(
-        contexts=[{"role": "assistant", "content": "compact memory"}]
+    slots = await ExplicitContextCollector().collect(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        provider_request=req,
     )
 
-    ama._prepend_explicit_contexts(req, explicit)
+    assert slots[0].value == [plugin_context]
 
-    assert req.contexts == [
-        *explicit,
-        {"role": "assistant", "content": "compact memory"},
-    ]
+
+@pytest.mark.asyncio
+async def test_explicit_context_collector_preserves_user_content_parts():
+    parts = [TextPart(text="plugin attachment context")]
+    req = ProviderRequest(extra_user_content_parts=parts)
+
+    slots = await ExplicitContextCollector().collect(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        provider_request=req,
+    )
+
+    slot = next(item for item in slots if item.name == "input.explicit_content_parts")
+    assert slot.value == parts
+    assert slot.value is not parts
 
 
 class TestMainAgentBuildConfig:
@@ -446,7 +442,7 @@ class TestApplyKb:
         )
 
         with patch(
-            "astrbot.core.astr_main_agent.retrieve_knowledge_base",
+            "astrbot.core.astr_main_agent.retrieve_knowledge_base_with_cache",
             AsyncMock(return_value="KB result"),
         ):
             await module._apply_kb(mock_event, req, mock_context, config)
@@ -488,7 +484,7 @@ class TestApplyKb:
         )
 
         with patch(
-            "astrbot.core.astr_main_agent.retrieve_knowledge_base",
+            "astrbot.core.astr_main_agent.retrieve_knowledge_base_with_cache",
             AsyncMock(return_value=None),
         ):
             await module._apply_kb(mock_event, req, mock_context, config)
@@ -1514,7 +1510,10 @@ class TestBuildMainAgent:
         assert result is not None
         assert [
             part.text for part in result.provider_request.extra_user_content_parts
-        ] == ["[Video Attachment: name video.mp4, path path/to/video.mp4]"]
+        ] == [
+            "<user_input>\n  <text>Hello</text>\n</user_input>",
+            "[Video Attachment: name video.mp4, path path/to/video.mp4]",
+        ]
 
     @pytest.mark.asyncio
     async def test_build_main_agent_with_quoted_video_attachment(

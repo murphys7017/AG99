@@ -44,6 +44,7 @@ class ToolsCollector(ContextCollectorInterface):
             toolset, selection_mode = self._build_persona_toolset(
                 plugin_context,
                 persona,
+                provider_request,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -89,7 +90,18 @@ class ToolsCollector(ContextCollectorInterface):
         self,
         plugin_context: Context,
         persona: dict | None,
+        provider_request: ProviderRequest | None,
     ) -> tuple[ToolSet, str]:
+        request_toolset = (
+            provider_request.func_tool if provider_request is not None else None
+        )
+        if isinstance(request_toolset, ToolSet):
+            active_toolset = ToolSet()
+            for tool in request_toolset:
+                if isinstance(tool, FunctionTool) and getattr(tool, "active", True):
+                    active_toolset.add_tool(tool)
+            return active_toolset, "provider_request"
+
         tool_manager = plugin_context.get_llm_tool_manager()
         if tool_manager is None:
             return ToolSet(), "none"
@@ -97,9 +109,7 @@ class ToolsCollector(ContextCollectorInterface):
         if (persona and persona.get("tools") is None) or not persona:
             full_toolset = tool_manager.get_full_tool_set()
             if not isinstance(full_toolset, ToolSet):
-                raise TypeError(
-                    f"Expected ToolSet from get_full_tool_set(), got {type(full_toolset)}"
-                )
+                return ToolSet(), "unavailable"
 
             active_toolset = ToolSet()
             for tool in full_toolset:

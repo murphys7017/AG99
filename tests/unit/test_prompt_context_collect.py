@@ -10,6 +10,7 @@ import pytest
 from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.agent import Agent
 from astrbot.core.agent.handoff import HandoffTool
+from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.astr_main_agent_resources import (
     CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
@@ -47,7 +48,7 @@ from astrbot.core.prompt.context_collect import (
     collect_context_pack,
     log_context_pack,
 )
-from astrbot.core.prompt.context_types import ContextSlot
+from astrbot.core.prompt.context_types import ContextSlot, PromptContextConflictError
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.input_annotations import (
     INPUT_ITEM_ANNOTATIONS_EXTRA_KEY,
@@ -260,7 +261,9 @@ async def test_collect_context_pack_collects_persona_prompt():
     assert slot.value == "You are a helpful assistant."
     assert pack.provider_request_ref is req
     segments_slot = pack.get_slot("persona.segments")
+    summary_slot = pack.get_slot("persona.summary")
     assert segments_slot is not None
+    assert summary_slot is not None
     assert segments_slot.value["unparsed_sections"] == ["You are a helpful assistant."]
 
 
@@ -403,7 +406,9 @@ async def test_build_main_agent_runs_prompt_pipeline_in_shadow_mode():
     assert shadow_request is not result.provider_request
     assert shadow_request.prompt is not None
     assert shadow_request.prompt.startswith("<request_context>")
-    assert shadow_request.extra_user_content_parts
+    assert shadow_request.extra_user_content_parts == [
+        TextPart(text="<user_input>\n  <text>hello</text>\n</user_input>")
+    ]
     assert result.provider_request.prompt == "hello"
     assert shadow_diff["changed"] is True
     assert "prompt" in shadow_diff["changed_fields"]
@@ -1402,6 +1407,7 @@ async def test_collect_context_pack_default_collectors_include_session_collector
         "PolicyCollector",
         "MemoryCollector",
         "ConversationHistoryCollector",
+        "ExplicitContextCollector",
         "SkillsCollector",
         "ToolsCollector",
         "SubagentCollector",
@@ -2934,6 +2940,18 @@ class _StaticCollector(ContextCollectorInterface):
         ]
 
 
+class _ConflictingCollector(ContextCollectorInterface):
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        return [
+            ContextSlot(
+                name="input.text",
+                value="different",
+                category="input",
+                source="conflict",
+            )
+        ]
+
+
 @pytest.mark.asyncio
 async def test_collect_context_pack_raises_when_a_collector_raises():
     event, _ = _make_event()
@@ -2968,6 +2986,20 @@ async def test_collect_context_pack_raises_when_collector_fails_with_strict_mode
                 prompt_pipeline_strict_mode=True,
             ),
             collectors=[_BrokenCollector(), _StaticCollector()],
+        )
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_rejects_conflicting_duplicate_slots():
+    event, _ = _make_event()
+    context = _make_context()
+
+    with pytest.raises(PromptContextConflictError, match="input.text"):
+        await collect_context_pack(
+            event=event,
+            plugin_context=context,
+            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+            collectors=[_StaticCollector(), _ConflictingCollector()],
         )
 
 

@@ -65,7 +65,7 @@ class PersonaCollector(ContextCollectorInterface):
                 conversation_persona_id = req.conversation.persona_id
 
             # 步骤 2: 调用 persona_manager.resolve_selected_persona()
-            persona_mgr = plugin_context.persona_manager
+            persona_mgr = getattr(plugin_context, "persona_manager", None)
             if not persona_mgr:
                 logger.warning(
                     "PersonaManager not available, skipping persona collection"
@@ -127,16 +127,30 @@ class PersonaCollector(ContextCollectorInterface):
                 and isinstance(prompt_slot.value, str)
                 and prompt_slot.value.strip()
             ):
+                persona_segments = parse_legacy_persona_prompt(prompt_slot.value)
                 slots.append(
                     ContextSlot(
                         name="persona.segments",
-                        value=parse_legacy_persona_prompt(prompt_slot.value),
+                        value=persona_segments,
                         category="persona",
                         source="persona_parser",
                         meta={
                             "persona_id": persona_id,
                             "source_slot": "persona.prompt",
                             "parser": "legacy_prompt_v1",
+                        },
+                    )
+                )
+                slots.append(
+                    ContextSlot(
+                        name="persona.summary",
+                        value=_build_persona_summary(persona_segments),
+                        category="persona",
+                        source="persona_parser",
+                        meta={
+                            "persona_id": persona_id,
+                            "source_slot": "persona.segments",
+                            "format": "persona_summary_v1",
                         },
                     )
                 )
@@ -201,3 +215,17 @@ class PersonaCollector(ContextCollectorInterface):
             logger.warning(f"Failed to collect persona context: {e}", exc_info=True)
 
         return slots
+
+
+def _build_persona_summary(segments: dict[str, object]) -> dict[str, list[str]]:
+    """Keep only stable identity cues needed by lightweight consumers."""
+
+    summary: dict[str, list[str]] = {}
+    for key in ("identity", "core_persona", "dialogue_style", "stable_rules"):
+        value = segments.get(key)
+        if not isinstance(value, list):
+            continue
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        if normalized:
+            summary[key] = normalized[:6]
+    return summary

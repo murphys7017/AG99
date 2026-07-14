@@ -16,6 +16,7 @@ from astrbot.core.prompt.render import (
 from astrbot.core.prompt.render.engine import logger as render_logger
 from astrbot.core.provider.sources.kimi_code_source import ProviderKimiCode
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
+from astrbot.core.provider.sources.openrouter_source import ProviderOpenRouter
 
 
 def test_prompt_builder_builds_nested_tag_tree():

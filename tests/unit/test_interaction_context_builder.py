@@ -24,14 +24,9 @@ from astrbot.core.interaction.memory_store import (
     update_interaction_memory_from_turn,
 )
 from astrbot.core.interaction.turn_state import InteractionContextMaterial
-from astrbot.core.prompt.context_collect import filter_context_pack_for_profile
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
-from astrbot.core.prompt.profiles import (
-    CORE_EXECUTION_PROMPT_PROFILE,
-    PERSONA_PROMPT_PROFILE,
-    ROUTER_PROMPT_PROFILE,
-)
+from astrbot.core.prompt.targets import PromptTarget, project_context_pack
 from astrbot.core.db.po import Conversation
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -131,95 +126,8 @@ def test_extract_recent_messages_uses_only_interaction_memory_turns():
 def test_build_interaction_collectors_uses_only_interaction_collectors():
     collectors = build_interaction_collectors(InteractionMemoryStore())
 
-    assert len(collectors) == 3
-    assert all(
-        collector.__class__.__name__ != "InteractionConversationHistoryCollector"
-        for collector in collectors
-    )
-    assert collectors[-1].__class__.__name__ == "InteractionMemoryCollector"
-
-
-def test_persona_profile_removes_history_tools_and_skills():
-    pack = ContextPack()
-    for name, category in (
-        ("persona.prompt", "persona"),
-        ("memory.interaction", "memory"),
-        ("input.text", "input"),
-        ("conversation.history", "memory"),
-        ("capability.tools_schema", "tools"),
-        ("capability.skills_prompt", "tools"),
-        ("system.tool_call_instruction", "system"),
-    ):
-        pack.add_slot(
-            ContextSlot(
-                name=name,
-                value={"name": name},
-                category=category,
-                source="unit",
-            )
-        )
-
-    filtered = filter_context_pack_for_profile(pack, PERSONA_PROMPT_PROFILE)
-
-    assert set(filtered.slots) == {
-        "persona.prompt",
-        "memory.interaction",
-        "input.text",
-    }
-    assert filtered.meta["prompt_purpose"] == "persona_reply"
-
-
-def test_router_profile_keeps_history_and_interaction_memory_without_tools_or_persona():
-    pack = ContextPack()
-    for name, category in (
-        ("input.text", "input"),
-        ("conversation.history", "memory"),
-        ("memory.interaction", "memory"),
-        ("persona.prompt", "persona"),
-        ("capability.tools_schema", "tools"),
-    ):
-        pack.add_slot(
-            ContextSlot(
-                name=name,
-                value={"name": name},
-                category=category,
-                source="unit",
-            )
-        )
-
-    filtered = filter_context_pack_for_profile(pack, ROUTER_PROMPT_PROFILE)
-
-    assert set(filtered.slots) == {
-        "input.text",
-        "conversation.history",
-        "memory.interaction",
-    }
-    assert filtered.meta["prompt_purpose"] == "router"
-
-
-def test_core_profile_removes_persona_state_from_memory():
-    pack = ContextPack()
-    for name in (
-        "memory.short_term",
-        "memory.persona_state",
-        "memory.interaction",
-        "capability.tools_schema",
-    ):
-        pack.add_slot(
-            ContextSlot(
-                name=name,
-                value={"name": name},
-                category="memory",
-                source="unit",
-            )
-        )
-
-    filtered = filter_context_pack_for_profile(pack, CORE_EXECUTION_PROMPT_PROFILE)
-
-    assert "memory.persona_state" not in filtered.slots
-    assert "memory.short_term" in filtered.slots
-    assert "memory.interaction" in filtered.slots
-    assert "capability.tools_schema" in filtered.slots
+    assert len(collectors) == 1
+    assert collectors[0].__class__.__name__ == "InputCollector"
 
 
 def test_router_attachment_summary_keeps_counts_without_media_refs():
@@ -245,7 +153,7 @@ def test_router_attachment_summary_keeps_counts_without_media_refs():
     )
 
     summary = _build_router_attachment_summary(pack)
-    filtered = filter_context_pack_for_profile(pack, ROUTER_PROMPT_PROFILE)
+    filtered = project_context_pack(pack, PromptTarget.ROUTER)
 
     assert summary == {"images": 1, "files": 2}
     assert "input.images" not in filtered.slots
@@ -322,15 +230,18 @@ async def test_build_router_context_pack_collects_trimmed_history_and_memory():
     memory_slot = pack.get_slot("memory.interaction")
     assert pack.get_slot("input.text").value == "current"
     assert history_slot is not None
-    assert history_slot.value["turn_count"] == 4
-    assert [turn["user_message"]["content"] for turn in history_slot.value["turns"]] == [
-        "u2",
-        "u3",
-        "u4",
-        "u5",
-    ]
+    assert history_slot.value["turn_count"] == 5
     assert memory_slot is not None
-    assert memory_slot.value == {
+    assert len(memory_slot.value["recent_turns"]) == 5
+
+    router_pack = project_context_pack(pack, PromptTarget.ROUTER)
+    router_history = router_pack.get_slot("conversation.history")
+    router_memory = router_pack.get_slot("memory.interaction")
+    assert router_history.value["turn_count"] == 4
+    assert [
+        turn["user_message"]["content"] for turn in router_history.value["turns"]
+    ] == ["u2", "u3", "u4", "u5"]
+    assert router_memory.value == {
         "recent_turns": [
             {"user": "mu1", "assistant": "ma1"},
             {"user": "mu2", "assistant": "ma2"},
@@ -634,10 +545,12 @@ async def test_prompt_contributor_receives_read_only_decision_view():
     assert capability_slot.value["items"][0]["meta"] == {
         "scope": "static",
         "node_type": "capability_contract",
+        "targets": ["persona"],
     }
     assert context_slot.value["items"][0]["meta"] == {
         "scope": "dynamic",
         "node_type": "runtime_state",
+        "targets": ["persona"],
     }
 
 

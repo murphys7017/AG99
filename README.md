@@ -16,7 +16,7 @@
 | 快速回复 | 不支持 | 唯一拟人层可先产生即时表达，不必等待 Core |
 | 回复风格控制 | 仅靠 prompt | 拟人层统一管理表达方式 |
 | 记忆系统 | 会话历史 | 会话历史 + **长期记忆沉淀** |
-| Prompt 组织 | 字符串拼接 | **结构化上下文**（collect → select → render → apply） |
+| Prompt 组织 | 字符串拼接 | **结构化上下文**（collect → build → project → render → apply） |
 | Interaction 语义 | 分散在各处 | **Interaction Middleware** 统一接管 |
 | 前端展示 | 最终回复 | 临时回复 / 核心结果 / 最终表达 分阶段展示 |
 | 本地 provider 支持 | 基础 | 保留并扩展 Ark / Doubao 等本地场景 |
@@ -82,12 +82,14 @@ Finalized Turn Material → Postprocess / Memory
 上游的 prompt 是直接在 `astr_main_agent.py` 里组织模型可见上下文。这个 fork 推进了一套新的 prompt 子系统：
 
 ```
-collect → select → render → apply
+collect → build → target projection → prompt tree → provider render → apply
 ```
 
 - **collect**：把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge 等信息结构化收集成 `ContextPack`
-- **select**：给后续筛选层预留接口
-- **render**：由 renderer 决定节点结构和模型可见输出
+- **build**：合并为带版本的规范 `ContextPack`，冲突不再静默覆盖
+- **target projection**：为 Router、Persona、Core 生成范围明确的确定性视图
+- **prompt tree**：构建与 provider 无关的语义树
+- **provider render**：序列化为对应 provider 的消息、媒体和工具协议
 - **apply**：把 render 结果投影回 `ProviderRequest`
 
 ---
@@ -100,7 +102,7 @@ collect → select → render → apply
 | 即时表达 | 🟡 开发中 | 已复用统一 Persona Runtime，流式体验继续优化 |
 | 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
 | Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
-| 结构化 Prompt | 🟡 开发中 | collect/render/apply 已跑通，select 筛选层待完善 |
+| 结构化 Prompt | 🟡 开发中 | collect/build/project/tree/render/apply 已跑通，继续收口 layout policy 与上下文预算 |
 | 上游兼容 | 🟢 稳定 | 安全修复、provider 稳定修复持续同步 |
 
 > [!NOTE]

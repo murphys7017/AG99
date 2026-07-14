@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 
 class ConversationHistoryCollector(ContextCollectorInterface):
+    def __init__(self, *, recent_turn_limit: int | None = None) -> None:
+        self.recent_turn_limit = recent_turn_limit
+
     """Collect the current conversation history as normalized turn pairs."""
 
     async def collect(
@@ -36,10 +39,9 @@ class ConversationHistoryCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
-        del plugin_context
-
         history_payload = await self._resolve_history_source(
             event,
+            plugin_context,
             config,
             provider_request,
         )
@@ -52,9 +54,17 @@ class ConversationHistoryCollector(ContextCollectorInterface):
     async def _resolve_history_source(
         self,
         event: AstrMessageEvent,
+        plugin_context: Context,
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None,
     ) -> dict[str, Any] | None:
+        conversation_payload = await self._load_current_conversation_history(
+            event,
+            plugin_context,
+        )
+        if conversation_payload is not None:
+            return conversation_payload
+
         memory_payload = await self._load_memory_turn_records(
             event,
             config,
@@ -79,6 +89,44 @@ class ConversationHistoryCollector(ContextCollectorInterface):
             raw_history=getattr(provider_request, "contexts", None),
             source_name="provider_request.contexts",
         )
+
+    async def _load_current_conversation_history(
+        self,
+        event: AstrMessageEvent,
+        plugin_context: Context,
+    ) -> dict[str, Any] | None:
+        conversation_manager = getattr(plugin_context, "conversation_manager", None)
+        if conversation_manager is None:
+            return None
+
+        try:
+            conversation_id = await conversation_manager.get_curr_conversation_id(
+                event.unified_msg_origin
+            )
+            if not conversation_id:
+                return None
+            conversation = await conversation_manager.get_conversation(
+                event.unified_msg_origin,
+                conversation_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to collect current official conversation history: umo=%s error=%s",
+                event.unified_msg_origin,
+                exc,
+                exc_info=True,
+            )
+            return None
+
+        if conversation is None:
+            return None
+        payload = self._load_conversation_history(
+            raw_history=getattr(conversation, "history", None),
+            source_name="conversation_manager.current_conversation.history",
+        )
+        if payload is not None:
+            payload["conversation_id"] = getattr(conversation, "cid", conversation_id)
+        return payload
 
     async def _load_memory_turn_records(
         self,
@@ -185,7 +233,9 @@ class ConversationHistoryCollector(ContextCollectorInterface):
         history_payload: dict[str, Any],
         config: MainAgentBuildConfig,
     ) -> dict[str, Any]:
-        max_context_length = getattr(config, "max_context_length", -1)
+        max_context_length = self.recent_turn_limit
+        if max_context_length is None:
+            max_context_length = getattr(config, "max_context_length", -1)
         if not isinstance(max_context_length, int) or max_context_length < 0:
             return history_payload
 

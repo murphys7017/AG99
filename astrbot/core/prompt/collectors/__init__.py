@@ -5,6 +5,7 @@
 """
 
 from .conversation_history_collector import ConversationHistoryCollector
+from .explicit_context_collector import ExplicitContextCollector
 from .input_collector import InputCollector
 from .knowledge_collector import KnowledgeCollector
 from .memory_collector import MemoryCollector
@@ -18,6 +19,7 @@ from .tools_collector import ToolsCollector
 
 __all__ = [
     "ConversationHistoryCollector",
+    "ExplicitContextCollector",
     "InputCollector",
     "KnowledgeCollector",
     "MemoryCollector",

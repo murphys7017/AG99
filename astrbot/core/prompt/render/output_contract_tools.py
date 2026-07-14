@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from astrbot.core.agent.tool import FunctionTool, ToolSet
-
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 
 

@@ -11,9 +11,9 @@ from astrbot import logger
 from astrbot.core.output_contract import OutputContract
 from astrbot.core.prompt.context_collect import build_prompt_extension_slots
 from astrbot.core.prompt.extensions import PromptExtension
-from astrbot.core.prompt.render import PromptRenderEngine
+from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
 from astrbot.core.prompt.render.interfaces import RenderResult
-from astrbot.core.prompt.render.selector import _extract_json_object
+from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
@@ -172,7 +172,7 @@ def extract_interaction_decision_payload(
     )
     if tool_payload is not None:
         return tool_payload
-    payload = _extract_json_object(text)
+    payload = extract_json_object(text)
     if payload is not None:
         return payload
     if _should_disallow_text_fallback(output_contract):
@@ -481,6 +481,7 @@ class InteractionDecisionAgent:
         )
         render_result = PromptRenderEngine().render(
             decision_pack,
+            target=PromptTarget.PERSONA,
             event=event,
             plugin_context=plugin_context,
             config=build_config,
@@ -585,6 +586,27 @@ class InteractionDecisionAgent:
             turn_state.prompt_build_config = build_config
             cached_material = turn_state.context_material
             if cached_material is not None:
+                if cached_material.collected_scopes == {"interaction_base"}:
+                    cached_material.prompt_context_pack = (
+                        await build_interaction_context_pack(
+                            event,
+                            plugin_context,
+                            build_config,
+                            self.memory_store,
+                        )
+                    )
+                    cached_material.collected_scopes.add("persona_input")
+                    cached_material.persona_payload = extract_persona_payload(
+                        cached_material.prompt_context_pack
+                    )
+                    cached_material.memory_payload = (
+                        extract_interaction_memory_payload(
+                            cached_material.prompt_context_pack
+                        )
+                    )
+                    cached_material.input_payload = extract_input_payload(
+                        cached_material.prompt_context_pack
+                    )
                 cached_recent_messages = cached_material.recent_messages
                 desired_window = interaction_config.memory_window_size
                 if desired_window > 0:
@@ -635,7 +657,7 @@ class InteractionDecisionAgent:
                 "input": input_payload,
                 "core_capabilities": capability_payload,
             },
-            context_packs_by_purpose={"persona_reply": prompt_context_pack},
+            collected_scopes={"interaction_full"},
         )
         event.set_extra("_interaction_prompt_context_pack", prompt_context_pack)
         event.set_extra("_interaction_decision_context", material.decision_context)
@@ -661,6 +683,7 @@ def add_interaction_decision_slots_to_pack(
             meta={
                 "scope": "static",
                 "node_type": "interaction_decision_policy",
+                "targets": ["persona"],
             },
         ),
         PromptExtension(
@@ -673,6 +696,7 @@ def add_interaction_decision_slots_to_pack(
             meta={
                 "scope": "static",
                 "node_type": "interaction_output_contract",
+                "targets": ["persona"],
             },
         ),
         PromptExtension(
@@ -685,6 +709,7 @@ def add_interaction_decision_slots_to_pack(
             meta={
                 "scope": "dynamic",
                 "node_type": "interaction_core_capabilities",
+                "targets": ["persona"],
             },
         ),
         PromptExtension(
@@ -701,6 +726,7 @@ def add_interaction_decision_slots_to_pack(
             meta={
                 "scope": "dynamic",
                 "node_type": "interaction_session",
+                "targets": ["persona"],
             },
         ),
     ]

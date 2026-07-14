@@ -112,13 +112,16 @@ async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_dou
 
     assert len(extensions) == 1
     extension = extensions[0]
-    assert extension.mount == "context"
-    assert extension.value_kind == "text"
-    assert "previous" in extension.value
-    assert "[Alice/10:01:00]: current" not in extension.value
+    assert extension.mount == "conversation"
+    assert extension.value_kind == "mapping"
+    assert extension.value["records"] == ["[Bob/10:00:00]: previous"]
+    assert "[Alice/10:01:00]: current" not in extension.value["text"]
     assert event.get_extra(GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA) is True
     assert req.extra_user_content_parts == []
-    assert list(group_context.raw_records[event.unified_msg_origin]) == []
+    assert list(group_context.raw_records[event.unified_msg_origin]) == [
+        "[Bob/10:00:00]: previous",
+        "[Alice/10:01:00]: current",
+    ]
 
 
 @pytest.mark.asyncio
@@ -144,8 +147,33 @@ async def test_group_chat_context_collector_treats_empty_prompt_mode_as_apply_vi
     await group_context.on_req_llm(event, req)
 
     assert len(extensions) == 1
-    assert "previous" in extensions[0].value
+    assert "previous" in extensions[0].value["text"]
     assert req.extra_user_content_parts == []
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_directed_message_sees_all_prior_ambient_records():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.is_at_or_wake_command = True
+    group_context.raw_records[event.unified_msg_origin] = deque(
+        ["[Bob/10:00:00]: first", "[Carol/10:01:00]: second"]
+    )
+    group_context._record_ids[event.unified_msg_origin] = deque(["r1", "r2"])
+
+    extensions = await group_context.collect(
+        event,
+        context,
+        MagicMock(prompt_pipeline_mode="apply_visible"),
+        provider_request=ProviderRequest(prompt="@bot answer me"),
+    )
+
+    assert extensions[0].value["records"] == [
+        "[Bob/10:00:00]: first",
+        "[Carol/10:01:00]: second",
+    ]
 
 
 @pytest.mark.asyncio
@@ -168,7 +196,7 @@ async def test_group_chat_context_legacy_request_injects_when_prompt_pipeline_di
     assert isinstance(req.extra_user_content_parts[0], TextPart)
     assert "previous" in req.extra_user_content_parts[0].text
     assert "[Alice/10:01:00]: current" not in req.extra_user_content_parts[0].text
-    assert list(group_context.raw_records[event.unified_msg_origin]) == []
+    assert len(group_context.raw_records[event.unified_msg_origin]) == 2
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.context import Context
 
 from .collectors.conversation_history_collector import ConversationHistoryCollector
+from .collectors.explicit_context_collector import ExplicitContextCollector
 from .collectors.input_collector import InputCollector
 from .collectors.knowledge_collector import KnowledgeCollector
 from .collectors.memory_collector import MemoryCollector
@@ -26,14 +27,13 @@ from .collectors.subagent_collector import SubagentCollector
 from .collectors.system_collector import SystemCollector
 from .collectors.tools_collector import ToolsCollector
 from .context_catalog import get_catalog
-from .context_types import ContextPack, ContextSlot
+from .context_types import ContextPack, ContextSlot, PromptContextConflictError
 from .extensions.types import (
     PROMPT_EXTENSION_MOUNTS,
     PROMPT_EXTENSION_VALUE_KINDS,
     PromptExtension,
 )
 from .interfaces.context_collector_inferface import ContextCollectorInterface
-from .profiles import PromptProfile
 
 PROMPT_CONTEXT_PACK_EXTRA_KEY = "prompt_context_pack"
 PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY = "_prompt_static_context_cache"
@@ -53,6 +53,7 @@ def _default_collectors() -> list[ContextCollectorInterface]:
         PolicyCollector(),
         MemoryCollector(),
         ConversationHistoryCollector(),
+        ExplicitContextCollector(),
         SkillsCollector(),
         ToolsCollector(),
         SubagentCollector(),
@@ -134,6 +135,24 @@ def _get_event_dict_extra(event: AstrMessageEvent, key: str) -> dict:
     return {}
 
 
+def _add_collected_slot(
+    pack: ContextPack,
+    slot: ContextSlot,
+    *,
+    producer: str,
+) -> None:
+    existing = pack.get_slot(slot.name)
+    if existing is None:
+        pack.add_slot(slot)
+        return
+    if existing.value == slot.value:
+        return
+    raise PromptContextConflictError(
+        f"conflicting prompt context slot in one collection: {slot.name} "
+        f"({existing.source} != {producer})"
+    )
+
+
 def _find_static_cache_entry(
     cache: dict,
     key: str,
@@ -208,6 +227,7 @@ def build_prompt_extension_slots(
     grouped_items: dict[str, list[dict[str, object]]] = {
         mount: [] for mount in PROMPT_EXTENSION_MOUNTS
     }
+    direct_slots: list[ContextSlot] = []
     for extension in extensions:
         if not isinstance(extension.plugin_id, str) or not extension.plugin_id.strip():
             raise ValueError("Prompt extension must define a non-empty plugin_id")
@@ -219,9 +239,24 @@ def build_prompt_extension_slots(
             raise ValueError(
                 f"Prompt extension has invalid value_kind: plugin_id={extension.plugin_id} value_kind={extension.value_kind}"
             )
+        direct_slot_name = extension.meta.get("context_slot")
+        if isinstance(direct_slot_name, str) and direct_slot_name.strip():
+            direct_slots.append(
+                ContextSlot(
+                    name=direct_slot_name.strip(),
+                    value=deepcopy(extension.value),
+                    category=str(
+                        extension.meta.get("context_category", "extension")
+                    ),
+                    source=extension.plugin_id,
+                    render_mode="structured",
+                    meta=deepcopy(extension.meta),
+                )
+            )
+            continue
         grouped_items[extension.mount].append(_build_prompt_extension_record(extension))
 
-    slots: list[ContextSlot] = []
+    slots: list[ContextSlot] = direct_slots
     for mount, items in grouped_items.items():
         if not items:
             continue
@@ -369,7 +404,6 @@ async def collect_context_pack(
     provider_request=None,
     collectors: Iterable[ContextCollectorInterface] | None = None,
     include_prompt_extensions: bool = True,
-    profile: PromptProfile | None = None,
 ) -> ContextPack:
     """
     Collect prompt context into a single pack.
@@ -450,14 +484,7 @@ async def collect_context_pack(
                     collector_name,
                 )
 
-            if pack.has_slot(slot.name):
-                logger.warning(
-                    "Prompt context slot overwritten: slot=%s collector=%s",
-                    slot.name,
-                    collector_name,
-                )
-
-            pack.add_slot(slot)
+            _add_collected_slot(pack, slot, producer=collector_name)
 
     event.set_extra(PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY, static_context_cache)
 
@@ -478,42 +505,14 @@ async def collect_context_pack(
                     "PromptExtensionCollectors",
                 )
 
-            if pack.has_slot(slot.name):
-                logger.warning(
-                    "Prompt context slot overwritten: slot=%s collector=%s",
-                    slot.name,
-                    "PromptExtensionCollectors",
-                )
-
-            pack.add_slot(slot)
+            _add_collected_slot(
+                pack,
+                slot,
+                producer="PromptExtensionCollectors",
+            )
 
     pack.meta["slot_count"] = len(pack.slots)
-    if profile is not None:
-        return filter_context_pack_for_profile(pack, profile)
     return pack
-
-
-def filter_context_pack_for_profile(
-    pack: ContextPack,
-    profile: PromptProfile,
-) -> ContextPack:
-    """返回新 ContextPack，只保留 profile 允许的槽位。不修改原始 pack。"""
-    new_pack = ContextPack(
-        provider_request_ref=pack.provider_request_ref,
-        meta=deepcopy(pack.meta),
-    )
-    for name, slot in pack.slots.items():
-        # 白名单优先：非空时只保留白名单内的槽
-        if profile.allowed_slots and name not in profile.allowed_slots:
-            continue
-        # 黑名单：始终过滤
-        if name in profile.blocked_slots:
-            continue
-        new_pack.add_slot(slot)
-    new_pack.meta["prompt_purpose"] = profile.purpose.value
-    new_pack.meta["filtered_slot_names"] = sorted(new_pack.slots.keys())
-    new_pack.meta["slot_count"] = len(new_pack.slots)
-    return new_pack
 
 
 def log_context_pack(

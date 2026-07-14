@@ -16,8 +16,8 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 from astrbot import logger
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.prompt.context_types import ContextSlot
-from astrbot.core.prompt.render import PromptRenderEngine
-from astrbot.core.prompt.render.selector import _extract_json_object
+from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
+from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
@@ -254,7 +254,7 @@ def _coerce_json_like(value: object) -> Any:
     except (ValueError, TypeError):
         pass
 
-    extracted = _extract_json_object(cleaned)
+    extracted = extract_json_object(cleaned)
     if extracted is not None:
         return extracted
 
@@ -353,7 +353,7 @@ def extract_persona_expression_result(
             "persona_expression tool call missing",
         )
     # 2. JSON object fallback
-    payload = _extract_json_object(text)
+    payload = extract_json_object(text)
     if isinstance(payload, dict) and "spoken_reply" in payload:
         return _build_persona_expression_result_from_payload(
             payload,
@@ -597,6 +597,7 @@ class InteractionExpressionAgent:
         }
         render_result = PromptRenderEngine().render(
             expression_pack,
+            target=PromptTarget.PERSONA,
             event=event,
             plugin_context=plugin_context,
             config=build_config,

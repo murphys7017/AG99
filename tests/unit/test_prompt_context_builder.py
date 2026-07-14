@@ -1,0 +1,87 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from astrbot.core.prompt import (
+    ContextPack,
+    ContextSlot,
+    PromptContextBuilder,
+    PromptContextConflictError,
+    merge_context_packs,
+)
+
+
+def _slot(name: str, value, source: str = "test") -> ContextSlot:
+    return ContextSlot(
+        name=name,
+        value=value,
+        category="input",
+        source=source,
+    )
+
+
+def test_merge_context_packs_returns_new_versioned_snapshot():
+    base = ContextPack(
+        slots={"input.text": _slot("input.text", "before")},
+        meta={"context_version": 1, "collection_scopes": ["base"], "base": True},
+    )
+    fragment = ContextPack(
+        slots={"input.quoted_text": _slot("input.quoted_text", "quote")},
+        meta={"fragment": True},
+    )
+
+    merged = merge_context_packs(base, fragment, scope="persona")
+
+    assert set(merged.slots) == {"input.text", "input.quoted_text"}
+    assert merged.meta["context_version"] == 2
+    assert merged.meta["collection_scopes"] == ["base", "persona"]
+    assert merged.meta["base"] is True
+    assert merged.meta["fragment"] is True
+    assert set(base.slots) == {"input.text"}
+    assert "context_version" not in fragment.meta
+
+
+def test_merge_context_packs_rejects_implicit_replacement():
+    base = ContextPack(slots={"input.text": _slot("input.text", "before", "a")})
+    fragment = ContextPack(
+        slots={"input.text": _slot("input.text", "after", "b")}
+    )
+
+    with pytest.raises(PromptContextConflictError, match="input.text"):
+        merge_context_packs(base, fragment)
+
+
+def test_merge_context_packs_allows_declared_replacement():
+    base = ContextPack(slots={"input.text": _slot("input.text", "before")})
+    fragment = ContextPack(slots={"input.text": _slot("input.text", "after")})
+
+    merged = merge_context_packs(
+        base,
+        fragment,
+        replace_slots=frozenset({"input.text"}),
+    )
+
+    assert merged.get_slot("input.text").value == "after"
+    assert base.get_slot("input.text").value == "before"
+
+
+@pytest.mark.asyncio
+async def test_prompt_context_builder_delegates_collection_then_merges():
+    fragment = ContextPack(slots={"input.text": _slot("input.text", "hello")})
+    collector = MagicMock()
+    request = MagicMock()
+    with patch(
+        "astrbot.core.prompt.builder.collect_context_pack",
+        new=AsyncMock(return_value=fragment),
+    ) as collect:
+        result = await PromptContextBuilder(
+            MagicMock(), MagicMock(), MagicMock()
+        ).build(
+            collectors=[collector],
+            provider_request=request,
+            scope="router",
+        )
+
+    assert result.get_slot("input.text").value == "hello"
+    assert result.meta["collection_scopes"] == ["router"]
+    collect.assert_awaited_once()

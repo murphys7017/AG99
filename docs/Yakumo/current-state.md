@@ -53,8 +53,8 @@
 - `astr_main_agent.py` 职责过载
 - Agent 层直接感知 plugin context、persona、knowledge base、skills、cron、sandbox
 - Agent 内核和 AstrBot 业务实现没有明确隔离
-- 新的 `prompt` 模块已经完成 collect/select/render/apply 主链路，当前默认 `apply_visible` 会接管模型可见 `ProviderRequest` 字段；shadow/legacy 仍作为显式配置模式存在
-- builtin 群聊上下文已接入 prompt pipeline：`GroupChatContext` 作为 prompt extension collector 向 `extension.context` 提供群聊上下文，同时保留 legacy `on_llm_request` 兜底出口；该层只提供群聊上下文材料，不接管 Yakumo memory。
+- 新的 `prompt` 模块已经完成 collect/build/target projection/prompt tree/provider render/apply 主链路。目标投影是确定性代码策略，不使用 LLM Selector；当前默认 `apply_visible` 会接管模型可见 `ProviderRequest` 字段，shadow/legacy 仍作为显式配置模式存在
+- builtin 群聊上下文已接入 prompt pipeline：`GroupChatContext` 作为动态 prompt extension collector 提供结构化 `conversation.group_recent`，同时保留 legacy `on_llm_request` 兼容出口；滚动记录不会因一次渲染被消费，该层只提供群聊上下文材料，不接管 Yakumo memory。
 - `PromptRenderEngine` 已支持按 provider metadata 的 `prompt_renderer_family` 自动选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`），输出对应 API 原生格式
 - prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；当前 interaction fast router 不使用结构化输出契约，只返回固定路由词；persona visible-reply 使用统一的 `persona_expression` 虚拟 tool-call 契约，只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON
 - 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。

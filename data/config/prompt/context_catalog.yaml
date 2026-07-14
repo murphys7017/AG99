@@ -53,6 +53,14 @@ contexts:
     lifecycle: session
     notes: "人格设定 prompt"
 
+  - id: persona.summary
+    category: persona
+    slots: [persona]
+    required: false
+    multiple: false
+    lifecycle: session
+    notes: "供 Router 等轻量目标使用的人格摘要"
+
   - id: persona.segments
     category: persona
     slots: [persona]
@@ -87,12 +95,28 @@ contexts:
 
   # ========== Memory 类 (rolling) ==========
   - id: conversation.history
-    category: memory
+    category: conversation
     slots: [history]
     required: false
     multiple: false
     lifecycle: rolling
     notes: "对话历史记录"
+
+  - id: conversation.group_recent
+    category: conversation
+    slots: [history]
+    required: false
+    multiple: false
+    lifecycle: rolling
+    notes: "当前消息之前的近期群聊观察"
+
+  - id: conversation.explicit_contexts
+    category: conversation
+    slots: [history]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "插件直接加入 ProviderRequest 的显式上下文消息"
 
   - id: memory.topic_state
     category: memory
@@ -150,6 +174,22 @@ contexts:
     multiple: false
     lifecycle: ephemeral
     notes: "当前用户输入的文本；附件-only 输入允许无文本"
+
+  - id: input.router_attachment_summary
+    category: input
+    slots: [user_input]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "Router 使用的附件数量摘要，不包含附件正文"
+
+  - id: input.explicit_content_parts
+    category: input
+    slots: [user_input]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "插件或官方请求阶段直接加入的多模态用户内容块"
 
   - id: input.images
     category: input

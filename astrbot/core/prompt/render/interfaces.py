@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -53,41 +52,6 @@ class SerializedRenderValue:
     kind: str
     value: Any
     meta: dict[str, Any] = field(default_factory=dict)
-
-
-class PromptSelectorInterface(ABC):
-    """Abstract selector interface for prompt context packs."""
-
-    @abstractmethod
-    def select(
-        self,
-        pack: ContextPack,
-        *,
-        event: AstrMessageEvent | None = None,
-        plugin_context: Context | None = None,
-        config: MainAgentBuildConfig | None = None,
-        provider_request: ProviderRequest | None = None,
-    ) -> ContextPack:
-        """Select the context pack to pass into the render layer."""
-        raise NotImplementedError
-
-    async def select_async(
-        self,
-        pack: ContextPack,
-        *,
-        event: AstrMessageEvent | None = None,
-        plugin_context: Context | None = None,
-        config: MainAgentBuildConfig | None = None,
-        provider_request: ProviderRequest | None = None,
-    ) -> ContextPack:
-        """Select the context pack asynchronously when a selector needs I/O."""
-        return self.select(
-            pack,
-            event=event,
-            plugin_context=plugin_context,
-            config=config,
-            provider_request=provider_request,
-        )
 
 
 class BasePromptRenderer:
@@ -258,6 +222,20 @@ class BasePromptRenderer:
                 if prompt_text:
                     target.add(prompt_text, meta=self._slot_meta(prompt_slot))
                     rendered_slot_names.append(prompt_slot.name)
+            else:
+                summary_slot = self._find_slot(slots, "persona.summary")
+                if self._render_mapping_slot(
+                    target,
+                    "summary",
+                    summary_slot,
+                    body_keys=(
+                        "identity",
+                        "core_persona",
+                        "dialogue_style",
+                        "stable_rules",
+                    ),
+                ):
+                    rendered_slot_names.append("persona.summary")
 
         begin_dialogs_slot = pack.get_slot("persona.begin_dialogs")
         if begin_dialogs_slot is not None and isinstance(
@@ -357,6 +335,28 @@ class BasePromptRenderer:
             ),
         ):
             rendered_slot_names.append("input.visible_reply_material")
+
+        router_attachment_slot = self._find_slot(
+            slots,
+            "input.router_attachment_summary",
+        )
+        if self._render_mapping_slot(
+            resolve_node("user_input/attachment_summary"),
+            "value",
+            router_attachment_slot,
+            body_keys=("images", "quoted_images", "files", "quoted_files"),
+        ):
+            rendered_slot_names.append("input.router_attachment_summary")
+
+        explicit_parts_slot = self._find_slot(slots, "input.explicit_content_parts")
+        if explicit_parts_slot is not None and isinstance(
+            explicit_parts_slot.value,
+            list,
+        ):
+            resolve_node("user_input").node.meta["explicit_content_parts"] = deepcopy(
+                explicit_parts_slot.value
+            )
+            rendered_slot_names.append(explicit_parts_slot.name)
 
         quoted_text_slot = self._find_slot(slots, "input.quoted_text")
         if quoted_text_slot is not None:
@@ -547,16 +547,37 @@ class BasePromptRenderer:
         config: MainAgentBuildConfig | None = None,
         provider_request: ProviderRequest | None = None,
     ) -> list[str]:
-        del pack, resolve_node, event, plugin_context, config, provider_request
+        del pack, event, plugin_context, config, provider_request
+
+        rendered_slot_names: list[str] = []
+        group_recent_slot = self._find_slot(slots, "conversation.group_recent")
+        if group_recent_slot is not None and isinstance(
+            group_recent_slot.value,
+            dict,
+        ):
+            if self._add_text_tag(
+                resolve_node("context/group_recent"),
+                "recent_messages",
+                self._clean_text(group_recent_slot.value.get("text")),
+                meta=self._slot_meta(group_recent_slot),
+            ):
+                rendered_slot_names.append(group_recent_slot.name)
+
+        explicit_slot = self._find_slot(slots, "conversation.explicit_contexts")
+        if explicit_slot is not None and isinstance(explicit_slot.value, list):
+            target.node.meta["explicit_context_messages"] = deepcopy(
+                explicit_slot.value
+            )
+            rendered_slot_names.append(explicit_slot.name)
 
         history_slot = self._find_slot(slots, "conversation.history")
         if history_slot is None or not isinstance(history_slot.value, dict):
-            return []
+            return rendered_slot_names
 
         payload = history_slot.value
         turns = payload.get("turns")
         if not isinstance(turns, list) or not turns:
-            return []
+            return rendered_slot_names
 
         if self._render_turn_pairs(
             target,
@@ -571,8 +592,8 @@ class BasePromptRenderer:
                 },
             ),
         ):
-            return [history_slot.name]
-        return []
+            rendered_slot_names.append(history_slot.name)
+        return rendered_slot_names
 
     def render_knowledge_context(
         self,
@@ -894,6 +915,17 @@ class BasePromptRenderer:
     def _compile_messages(self, prompt_tree: PromptBuilder) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
 
+        conversation_node = self._find_tag_path(prompt_tree, "history/conversation")
+        explicit_messages = (
+            conversation_node.meta.get("explicit_context_messages", [])
+            if conversation_node is not None
+            else []
+        )
+        if isinstance(explicit_messages, list):
+            messages.extend(
+                deepcopy(item) for item in explicit_messages if isinstance(item, dict)
+            )
+
         for history_path in ("history/begin_dialogs", "history/conversation"):
             history_node = self._find_tag_path(prompt_tree, history_path)
             if history_node is None:
@@ -902,6 +934,7 @@ class BasePromptRenderer:
 
         for context_path in (
             "context/extensions",
+            "context/group_recent",
             "context/memory",
             "context/knowledge",
         ):
@@ -949,6 +982,9 @@ class BasePromptRenderer:
             return None
 
         content_parts: list[dict[str, Any]] = []
+        explicit_content_parts = self._serialize_explicit_content_parts(
+            user_input_node.meta.get("explicit_content_parts", [])
+        )
 
         text_node = self._find_tag_path(prompt_tree, "user_input/text")
         current_text = (
@@ -1126,6 +1162,7 @@ class BasePromptRenderer:
             and not quoted_image_parts
             and not attachment_image_parts
             and not file_text_parts
+            and not explicit_content_parts
         ):
             return {"role": "user", "content": current_text}
 
@@ -1162,6 +1199,7 @@ class BasePromptRenderer:
         content_parts.extend(quoted_image_parts)
         content_parts.extend(attachment_image_parts)
         content_parts.extend(file_text_parts)
+        content_parts.extend(explicit_content_parts)
 
         if not content_parts:
             fallback_content = self._render_subtree_text(
@@ -1174,6 +1212,22 @@ class BasePromptRenderer:
             return {"role": "user", "content": fallback_content}
 
         return {"role": "user", "content": content_parts}
+
+    @staticmethod
+    def _serialize_explicit_content_parts(parts: object) -> list[dict[str, Any]]:
+        if not isinstance(parts, list):
+            return []
+        serialized: list[dict[str, Any]] = []
+        for part in parts:
+            if isinstance(part, dict):
+                serialized.append(deepcopy(part))
+                continue
+            model_dump = getattr(part, "model_dump", None)
+            if callable(model_dump):
+                payload = model_dump(exclude_none=True)
+                if isinstance(payload, dict):
+                    serialized.append(payload)
+        return serialized
 
     def _compile_tool_schema(
         self, prompt_tree: PromptBuilder

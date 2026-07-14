@@ -114,7 +114,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         if not self.group_context_enabled(event):
             return []
 
-        records = await self._consume_records_before_current(event)
+        records = await self._snapshot_records_before_current(event)
         if not records:
             return []
 
@@ -122,12 +122,21 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         return [
             PromptExtension(
                 plugin_id=self.plugin_id,
-                mount="context",
+                mount="conversation",
                 title="Group Chat Context",
-                value=_format_group_history_block(records),
-                value_kind="text",
+                value={
+                    "format": "group_recent_v1",
+                    "records": records,
+                    "text": _format_group_history_block(records),
+                },
+                value_kind="mapping",
                 order=30,
-                meta={"record_count": len(records)},
+                meta={
+                    "record_count": len(records),
+                    "targets": ["router", "persona", "core"],
+                    "context_slot": "conversation.group_recent",
+                    "context_category": "conversation",
+                },
             )
         ]
 
@@ -219,24 +228,19 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         if not self.group_context_enabled(event):
             return
 
-        records = await self._consume_records_before_current(event)
+        records = await self._snapshot_records_before_current(event)
         if records:
             req.extra_user_content_parts.append(
                 TextPart(text=_format_group_history_block(records))
             )
 
-    async def _consume_records_before_current(
+    async def _snapshot_records_before_current(
         self,
         event: AstrMessageEvent,
     ) -> list[str]:
         umo = event.unified_msg_origin
         record_id = event.get_extra(GROUP_CONTEXT_RECORD_ID_EXTRA, None)
         prompt_idx = event.get_extra(GROUP_CONTEXT_RAW_IDX_EXTRA, -1)
-        if not isinstance(record_id, str) and (
-            not isinstance(prompt_idx, int) or prompt_idx < 0
-        ):
-            return []
-
         async with self._get_lock(umo):
             records = self.raw_records.get(umo)
             if not records:
@@ -244,23 +248,17 @@ class GroupChatContext(PromptExtensionCollectorInterface):
 
             raw_list = list(records)
             id_list = list(self._record_ids.get(umo, deque()))
+            if not isinstance(record_id, str) and (
+                not isinstance(prompt_idx, int) or prompt_idx < 0
+            ):
+                return raw_list
             if isinstance(record_id, str) and record_id in id_list:
                 prompt_idx = id_list.index(record_id)
 
             if prompt_idx >= len(raw_list):
                 return []
 
-            records_to_inject = raw_list[:prompt_idx]
-            remaining = raw_list[prompt_idx + 1 :]
-            remaining_ids = id_list[prompt_idx + 1 :] if id_list else []
-            records.clear()
-            records.extend(remaining)
-            if id_list:
-                record_ids = self._record_ids[umo]
-                record_ids.clear()
-                record_ids.extend(remaining_ids)
-
-        return records_to_inject
+            return raw_list[:prompt_idx]
 
     async def _format_message(self, event: AstrMessageEvent, cfg: dict) -> str:
         datetime_str = datetime.datetime.now().strftime("%H:%M:%S")

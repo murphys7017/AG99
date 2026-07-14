@@ -12,13 +12,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+
+class PromptContextConflictError(RuntimeError):
+    """Raised when prompt context producers disagree about one canonical fact."""
+
 # ========== 枚举类型 ==========
 
 CategoryType = Literal[
     "system",  # 系统
     "persona",  # 人格
+    "conversation",  # 对话与群聊观察
     "memory",  # 记忆
     "input",  # 输入
+    "knowledge",  # 知识数据
+    "capability",  # 工具与执行能力
     "rag",  # 知识库检索
     "tools",  # 工具
     "session",  # 会话

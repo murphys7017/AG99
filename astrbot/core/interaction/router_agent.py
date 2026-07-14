@@ -6,8 +6,8 @@ from typing import Any
 from astrbot import logger
 from astrbot.core.prompt.context_types import ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
-from astrbot.core.prompt.render import PromptRenderEngine
-from astrbot.core.prompt.render.selector import _extract_json_object
+from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
+from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
@@ -59,7 +59,7 @@ def build_interaction_router_prompt() -> str:
 def extract_interaction_route_payload(
     text: object,
 ) -> dict[str, Any] | None:
-    payload = _extract_json_object(text)
+    payload = extract_json_object(text)
     if payload is not None:
         return payload
     if not isinstance(text, str):
@@ -143,7 +143,7 @@ class InteractionRouterAgent:
         provider: Provider,
     ):
         build_config = _build_decision_build_config(plugin_context, event)
-        # Router 直接构建最小 Pack，不触碰共享 context_material
+        # Router starts the shared lightweight turn snapshot.
         router_pack = await build_router_context_pack(
             event,
             plugin_context,
@@ -179,6 +179,7 @@ class InteractionRouterAgent:
         )
         render_result = PromptRenderEngine().render(
             route_pack,
+            target=PromptTarget.ROUTER,
             event=event,
             plugin_context=plugin_context,
             config=build_config,

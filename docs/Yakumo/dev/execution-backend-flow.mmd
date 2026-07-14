@@ -9,7 +9,7 @@ flowchart LR
 %% 4. 直播音频与协议命令通过内部 protocol Core bypass，不伪装成 Router 结果。
 %% 5. Router 先完成分类，实际 Persona Expression 再按 route purpose 调用。
 %% 6. 快速回复与 Core 最终回复使用同一个 Persona Expression。
-%% 7. Prompt Builder 是唯一上下文构建入口。
+%% 7. Prompt 链路统一为 Collectors -> ContextBuilder -> Target Projection -> PromptTreeBuilder -> Provider Renderer。
 %% 8. 所有普通用户可见回复都经过 Interaction Output Runtime。
 %% 9. Motion、Live2D 和具体 effect 语义属于插件，不进入主流程。
 
@@ -91,9 +91,9 @@ flowchart LR
         T_G3 --> T_A0
 
         T_I --> T_I1[prepare_core_execution]
-        T_I1 --> T_J[Prompt Builder]
+        T_I1 --> T_J[Prompt Pipeline]
         T_I1 --> T_K[Capability Resolver]
-        T_J --> T_J1[ContextPack / Prompt Tree]
+        T_J --> T_J1[ContextPack<br/>Target Projection<br/>Prompt Tree]
         T_J1 --> T_L[ExecutionPlan]
         T_K --> T_K1[按会话 / 插件 / 权限 / 策略筛选]
         T_K1 --> T_K2[CapabilitySnapshot]

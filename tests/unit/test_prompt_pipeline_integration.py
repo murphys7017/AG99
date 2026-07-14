@@ -14,6 +14,7 @@ from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.message import Message, TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.db.po import Conversation
+from astrbot.core.memory.config import MemoryConfig
 from astrbot.core.memory.types import (
     Experience,
     LongTermMemoryIndex,
@@ -169,6 +170,8 @@ class _IntegrationExtensionCollector(PromptExtensionCollectorInterface):
 @pytest.fixture
 def memory_service_mock():
     service = MagicMock()
+    service.initialize = AsyncMock()
+    service.identity_resolver = None
     service.get_snapshot = AsyncMock(
         return_value=MemorySnapshot(
             umo="test_platform:private:test-session",
@@ -176,12 +179,16 @@ def memory_service_mock():
         )
     )
 
+    memory_config = MemoryConfig()
+    memory_config.injection.experiences.enabled = True
+    memory_config.injection.persona_state = True
+
     with patch(
         "astrbot.core.prompt.collectors.memory_collector.get_memory_service",
         return_value=service,
     ), patch(
         "astrbot.core.prompt.collectors.memory_collector.get_memory_config",
-        return_value=MagicMock(enabled=True),
+        return_value=memory_config,
     ):
         yield service
 

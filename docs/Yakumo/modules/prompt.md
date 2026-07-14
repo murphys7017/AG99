@@ -1,183 +1,105 @@
 # Prompt Module
 
-`astrbot/core/prompt/*` 是本 fork 相对上游最核心的改动之一。它把原本散落在主 Agent、pipeline、provider request 组装过程里的模型可见上下文，收口成结构化的 `ContextPack -> Select -> Render -> ProviderRequest` 链路。
+`astrbot/core/prompt/*` 负责把运行时事实转换成不同模型角色可消费的 Prompt。当前主链路是：
 
-这份文档描述当前代码状态，不再沿用早期设计草案中的占位内容。
+```text
+Collectors
+  -> PromptContextBuilder / ContextPack
+  -> project_context_pack(target)
+  -> PromptTreeBuilder
+  -> Provider Renderer
+  -> RenderResult
+  -> ProviderRequestAdapter
+```
 
-## 当前定位
+这是一条确定性数据管线。它不使用 LLM Selector，也不让 provider renderer 决定应该读取哪些业务数据。
 
-上游 AstrBot 主线更偏向在 `astrbot/core/astr_main_agent.py` 和相关 pipeline 阶段里直接拼装 `ProviderRequest`。
+## 边界
 
-本 fork 仍保留主 Agent 的能力装配责任，但新增了 prompt pipeline：
+### Collectors
 
-- collect：由 collector 把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge、extension 等信息收集成 `ContextPack`。
-- select：由 selector 决定本轮真正进入模型请求的上下文。
-- render：由 `PromptRenderEngine` 和 renderer 把 `ContextPack` 渲染为 `RenderResult`。
-- apply：由 `ProviderRequestAdapter` 把 `RenderResult` 投影回 `ProviderRequest`。
+Collector 只读取事实，并输出命名明确的 `ContextSlot`。默认来源包括 system、persona、input、session、policy、memory、official conversation history、skills、tools、subagent、knowledge，以及插件显式写入 `ProviderRequest` 的上下文。
 
-当前默认模式已经不是纯 shadow。`prompt_pipeline_mode` 未配置时会进入 `apply_visible`，即 prompt pipeline 会覆盖模型可见字段；只有显式配置 legacy/shadow 时才走旧链路或影子对比。
+同一次收集中，同名 slot 不能用不同值静默覆盖。两个生产者对同一事实有分歧时直接失败；跨阶段确实需要刷新某个 slot 时，调用方必须通过 `replace_slots` 明确声明。
 
-## 主要代码位置
+Collector 默认 required。只有明确声明 optional 的 Collector 才允许局部失败并把诊断写入 `ContextPack.meta["collector_failures"]`。当前 `MemoryCollector` 是 optional。
 
-- `astrbot/core/prompt/context_collect.py`
-- `astrbot/core/prompt/context_types.py`
-- `astrbot/core/prompt/context_catalog.py`
-- `astrbot/core/prompt/collectors/*`
-- `astrbot/core/prompt/render/selector.py`
-- `astrbot/core/prompt/render/engine.py`
-- `astrbot/core/prompt/render/interfaces.py`
-- `astrbot/core/prompt/render/request_adapter.py`
-- `astrbot/core/prompt/render/openai_renderer.py`
-- `astrbot/core/prompt/render/anthropic_renderer.py`
-- `astrbot/core/prompt/render/minimax_renderer.py`
-- `astrbot/core/prompt/extensions/*`
-- `data/config/prompt/context_catalog.yaml`
-- `astrbot/core/astr_main_agent.py`
-- `astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py`
+所谓 static Collector 只表示同一个 event、同一个 config 和同一个 `ProviderRequest` 对象内可复用，即 turn-static；它不是跨回合或全局缓存。
 
-结构化输出契约的跨层细节见 `docs/Yakumo/dev/output-contract.md`。
+### PromptContextBuilder
 
-## Collect 阶段
+`PromptContextBuilder` 是构建和增量丰富 `ContextPack` 的统一入口。每次合并返回新快照，不修改输入 Pack，并维护：
 
-入口是 `collect_context_pack(...)`。
+- `context_version`
+- `collection_scopes`
+- `slot_count`
+- 各收集片段提供的诊断 metadata
 
-默认 collector 包括：
+插件 extension 也先规范化成 slot，再进入同一条构建链路。插件原有 `ProviderRequest.contexts` 与 `extra_user_content_parts` 由 `ExplicitContextCollector` 保留，不在渲染后补丁式追加。
 
-- `SystemCollector`
-- `PersonaCollector`
-- `InputCollector`
-- `SessionCollector`
-- `PolicyCollector`
-- `MemoryCollector`
-- `ConversationHistoryCollector`
-- `SkillsCollector`
-- `ToolsCollector`
-- `SubAgentCollector`
-- `KnowledgeCollector`
+### Target Projection
 
-同时支持插件通过 prompt extension 注册补充上下文。extension 会被规范化为 `ContextSlot`，并按 mount 进入 renderer。
+`project_context_pack(...)` 从同一份规范 Pack 生成目标视图。投影是白名单和裁剪规则，不是一次额外模型调用。
 
-collect 阶段的 collector 默认是 `required`，异常会中止本次 Prompt Pack 构建；只有明确声明 `failure_policy="optional"` 的 collector 才会在失败时跳过自身 slots，并把 `collector`、错误类型和原因写入 `ContextPack.meta["collector_failures"]`。这避免可选能力拖垮主 Prompt，同时也不会静默吞掉 System、Input、Persona 等关键上下文错误。
+| 目标 | 当前上下文范围 |
+|---|---|
+| Router | 当前输入、附件摘要、最近几轮历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 |
+| Persona | 完整人格、官方对话历史、群聊上下文、memory/persona state、当前输入、待表达材料与 Core 结果 |
+| Core | 官方对话历史、群聊上下文、当前输入与附件、system/policy、tools、skills、knowledge、subagent 与插件执行上下文；不读取人格和 effect 语义 |
 
-`MemoryCollector` 当前属于 optional collector。Memory Snapshot 内部还会单独隔离 long-term retrieval：embedding 或长期记忆检索失败时保留 Topic、ShortTerm、Experience 和 PersonaState，并在 `debug_meta.degraded_components` 中记录降级原因。
+Prompt extension 的 `meta.targets` 对 Router、Persona 和 Core 一致生效。未声明 targets 的普通 extension 默认属于 Core；interaction contributor 会明确标记 Persona 或 Router。
 
-## Select 阶段
+### PromptTreeBuilder
 
-入口是 `build_prompt_selector(config)` 和 `select_context_pack_async(...)`。
+`PromptTreeBuilder` 把目标视图转换成 provider-neutral 的语义树。它负责 slot 分组、节点布局和 rendered-slot trace。`PromptRenderEngine` 只编排目标投影、建树、renderer 选择和日志，不再自己遍历业务 slot。
 
-当前默认 selector 配置在 `provider_settings.prompt_selector` 下，默认 `enable=False`。在未启用 LLM selector 时，主要行为是规则化/透传选择；启用后可以使用独立 provider/model 做更细粒度的上下文筛选。
+当前仍保留 `BasePromptRenderer.render_*_context` 扩展点，以兼容已有自定义布局。后续如要继续收紧，可以把这些语义布局方法迁到独立 layout policy；这不是当前 provider serializer 的职责扩张理由。
 
-selector 的输出会写入事件 extra：
+### Provider Renderer
 
-- `prompt_selected_context_pack`
+Renderer 将语义树序列化为 provider 可用格式：
 
-## Render 阶段
+- `OpenAIPromptRenderer`
+- `AnthropicPromptRenderer`
+- `MiniMaxPromptRenderer`
+- `BasePromptRenderer`
 
-入口是 `PromptRenderEngine.render(...)`。
+Renderer 处理 system/messages、content blocks、图片来源、tool schema 和 `OutputContract` 的协议落地。它不重新选择 Router、Persona 或 Core 的业务上下文。
 
-`PromptRenderEngine._resolve_renderer(...)` 会根据当前 provider 类型自动选择 renderer：
+### Apply
 
-- `prompt_renderer_family="openai"` → `OpenAIPromptRenderer`
-- `prompt_renderer_family="anthropic"` → `AnthropicPromptRenderer`
-- `prompt_renderer_family="minimax"` → `MiniMaxPromptRenderer`
-- 其他或未知 family → `BasePromptRenderer`
+`ProviderRequestAdapter` 把 `RenderResult` 应用到现有 `ProviderRequest`。结构化文本块和插件显式 content parts 保持各自边界，不为了兼容单字符串字段而全局合并。
 
-`prompt_renderer_family` 来自 provider 注册元数据；`ProviderRequest.provider_type` 和 event extra 里的 provider proxy 也会通过同一元数据解析。provider 实例若显式提供 `provider_config["prompt_renderer_family"]`，engine 会优先使用该值；未知 family 会回落到 `base`，不静默伪装成已支持协议能力。
+应用范围包括 system prompt、history、当前 user message、媒体 content parts，以及 output contract。工具运行时对象和 conversation 等非模型可见状态保持不变。
 
-各 provider-specific renderer 输出对应 API 原生格式（content blocks、tool schema、image source 等），`ProviderRequestAdapter` 会将不同 renderer 的输出统一适配回 `ProviderRequest` contract。
+会话持久化使用单独生成的、去除 request context 和 Prompt 标签的用户消息，避免把内部脚手架写入官方历史。
 
-`RenderResult` 包括：
+## 主 Agent 模式
 
-- `system_prompt`
-- history/context messages
-- 当前 user message
-- tool schema 相关输出
-- `output_contract`
-- `compiled_output_contract`
-- prompt tree / trace 信息
-
-extension mount 的当前语义：
-
-- `system`：稳定系统规则。
-- `capability`：稳定能力契约。
-- `context`：当前请求动态事实，渲染为 history 后、memory/knowledge 前的 `_no_save` context message。
-- `input`：贴近当前用户输入的补充材料。
-
-动态运行时事实不应塞进稳定 system prefix，否则会污染 prompt cache 和系统级语义。
-
-## Apply 阶段
-
-入口是 `apply_render_result_to_request(...)`。
-
-`ProviderRequestAdapter` 当前会原地更新：
-
-- `request.system_prompt`
-- `request.contexts`
-- `request.prompt`
-- `request.extra_user_content_parts`
-- `request.image_urls`
-- `request.audio_urls`
-- `request.output_contract`
-- `request.compiled_output_contract`
-
-它只负责把 `RenderResult` 投影到 AstrBot 现有 `ProviderRequest` contract，不负责 provider-specific 发送细节。后续的 modalities 修正、provider 适配、工具执行仍在主 Agent 和 provider source 链路中完成。
+- `apply_visible`：当前默认，RenderResult 应用到 live request。
+- `shadow`：应用到克隆 request，仅记录差异。
+- `legacy`：显式保留旧链路。
 
 ## 输出契约
 
-输出约束是横跨 prompt、render、request、provider 和 parser 的公共机制，不属于某一个 render 阶段的私有能力。
+结构化输出链路为：
 
-当前链路为：
+```text
+OutputContract
+  -> CompiledOutputContract
+  -> ProviderRequest
+  -> provider protocol or prompt-only fallback
+  -> parser
+```
 
-`OutputContract -> CompiledOutputContract -> ProviderRequest -> provider -> parser`
+Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明确不支持工具协议时才受控降级为 prompt-only JSON。Router 只返回固定路由词，不使用工具调用或 JSON 契约。
 
-prompt module 的职责是声明与编译契约，并把 `output_contract` / `compiled_output_contract` 投影到 `ProviderRequest`。provider 负责协议级落地，parser 负责按契约判断是否允许 fallback。
+## 群聊上下文
 
-详细策略边界见 `docs/Yakumo/dev/output-contract.md`。这里需要记住的当前事实是：
-
-- `protocol_tool_call` 是 strict 结构化输出的主要协议级落地。
-- `prompt_only` 不总是“退化”；普通 `json_object` 契约可以原生落到 prompt-only。
-- persona visible-reply 当前是 strict `tool_call` 的高约束场景，优先走 `protocol_tool_call`；只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON。
-- interaction Router 不使用输出契约，只输出固定路由词 `silent` / `persona` / `hybrid`。
-
-## 主 Agent 接入方式
-
-`astrbot/core/astr_main_agent.py` 当前存在三种模式：
-
-- `apply_visible`：渲染结果直接应用到 live `ProviderRequest`，这是当前默认。
-- `shadow`：克隆 request 后应用渲染结果，只记录 diff，不影响实际请求。
-- `legacy`：不使用 prompt pipeline 接管模型可见字段。
-
-相关诊断 extra 包括：
-
-- `prompt_render_result`
-- `prompt_apply_result`
-- `prompt_shadow_provider_request`
-- `prompt_shadow_apply_result`
-- `prompt_shadow_diff`
-
-会话保存也会优先使用 prompt pipeline 生成的当前用户消息表达，避免把内部 context message 或附件结构错误写入普通会话历史。
-
-## 和 Memory 的关系
-
-prompt module 不直接写 memory。它通过 `MemoryCollector` 读取 `MemorySnapshot`，把 memory service 已经产出的短期、中期、长期记忆投影到模型可见上下文。
-
-memory 写入发生在回合完成后的 postprocess/memory service 链路中。interaction turn 也遵循同一原则：middleware 产出 finalized material，postprocess/memory 消费 material，prompt 下轮只读 snapshot。
-
-## 和 Interaction Middleware 的关系
-
-interaction middleware 在 fast route 与 persona reply 阶段也复用 prompt render 能力。插件通过 `register_interaction_prompt_contributor(...)` 提供的 `PromptExtension` 会按 purpose 进入 router 或 persona prompt，而不是普通 core prompt 的直接替代品。
-
-当前约束：
-
-- 普通 core prompt extension 影响主 Agent 可见上下文。
-- interaction prompt contributor 只影响 middleware router / persona prompt。
-- 两者都使用 `PromptExtension` 数据结构，但作用阶段不同。
-- router 自身分类器任务说明直接使用原生 system base，不会作为插件 extension 注入；`purpose="router"` 的 contributor 推荐只补充精简插件目录，用来说明本地有哪些插件以及它们负责什么。router 会把插件目录提取为原生 `capability.router_plugin_directory`，最终 prompt 只保留插件 `name` / `description`。router 只判断请求是否明确可由本地插件/拟人层完整处理；其他情况交给核心 Agent，不枚举或限制核心 Agent 的能力范围，也不要把具体插件协议写进 router 策略。
-- persona visible-reply 自身运行时说明直接使用原生 system base；本轮表达材料使用 `input.visible_reply_material`。只有插件贡献的额外能力/上下文才通过 interaction prompt contributor 注入 extension。
+`GroupChatContext` 是动态 Prompt Extension Collector。它提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。非 `apply_visible` 模式仍保留官方 `on_llm_request` 兼容出口，并通过 consumed 标记避免双重注入。
 
 ## 仍需继续收口
 
-- `astr_main_agent.py` 仍承担过多能力装配逻辑，prompt pipeline 还没有把主 Agent 完全拆薄。
-- collect 阶段非严格模式仍有 fail-open 行为，后续需要按主链路要求继续收紧。
-- selector 默认未启用 LLM 选择，当前多数场景仍是规则化/透传选择。
-- prompt trace、conversation save、attachment projection 仍需要结合真实平台日志继续验证。
+- `astr_main_agent.py` 仍承担能力装配和 request 生命周期，尚未完全拆成可替换执行器端口。
+- Base renderer 中的语义布局兼容方法仍可进一步迁移到独立 layout policy。
+- 真实平台的多模态、长历史预算和 provider token 上限仍需持续验证。

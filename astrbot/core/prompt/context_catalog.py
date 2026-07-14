@@ -108,8 +108,11 @@ class ContextCatalogLoader:
     VALID_CATEGORIES: set[str] = {
         "system",
         "persona",
+        "conversation",
         "memory",
         "input",
+        "knowledge",
+        "capability",
         "rag",
         "tools",
         "session",

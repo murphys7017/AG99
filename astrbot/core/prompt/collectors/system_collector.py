@@ -260,5 +260,9 @@ class SystemCollector(ContextCollectorInterface):
             config,
             provider_request,
         )
-        toolset, _ = tools_collector._build_persona_toolset(plugin_context, persona)
+        toolset, _ = tools_collector._build_persona_toolset(
+            plugin_context,
+            persona,
+            provider_request,
+        )
         return not toolset.empty()

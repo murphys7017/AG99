@@ -16,6 +16,7 @@ from astrbot.core.agent.message import (
 )
 from astrbot.core.agent.response import AgentStats
 from astrbot.core.astr_main_agent import (
+    CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY,
     LLM_ERROR_MESSAGE_EXTRA_KEY,
     MainAgentBuildConfig,
     MainAgentBuildResult,
@@ -490,6 +491,16 @@ class InternalAgentSubStage(Stage):
             if message.role in ["assistant", "user"] and message._no_save:
                 continue
             messages_to_save.append(message)
+
+        save_user_message = event.get_extra(
+            CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY
+        )
+        if isinstance(save_user_message, dict):
+            for index in range(len(messages_to_save) - 1, -1, -1):
+                if messages_to_save[index].role != "user":
+                    continue
+                messages_to_save[index] = Message.model_validate(save_user_message)
+                break
 
         checkpoint_id = event.get_extra("llm_checkpoint_id")
         message_to_save = dump_messages_with_checkpoints(messages_to_save)

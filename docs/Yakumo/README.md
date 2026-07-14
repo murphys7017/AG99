@@ -41,8 +41,10 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 这个分支额外推进了一套新的 prompt 子系统，核心代码在 `astrbot/core/prompt/*`，当前方向是：
 
 - 先 collect：把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge、extension 等信息结构化收集成 `ContextPack`
-- 再 select：给后续筛选层预留接口
-- 再 render：由 renderer 决定节点结构和模型可见输出
+- 再 build：合并为带版本的规范 `ContextPack`，重复事实冲突失败
+- 再 project：按 Router、Persona、Core 生成确定性目标视图
+- 再 build tree：构建 provider-neutral 的语义树
+- 再 render：由 provider renderer 序列化消息、媒体与工具协议
 - 再 apply：把 render 结果投影回 `ProviderRequest`
 
 也就是说，这里的 prompt 文档描述的是“新 prompt pipeline 的设计和落地情况”，不是官方旧链路的逐字复述。
@@ -93,7 +95,7 @@ WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 
 尤其在 prompt 方向，这个分支的策略不是一次性把官方链路全部替掉，而是分阶段推进：
 
-- 先把 collect / render / apply 跑通
+- 先把 collect / build / project / tree / render / apply 跑通
 - 先接管模型可见上下文
 - 工具执行、subagent、旧 hook 等链路先尽量复用已有实现
 - 再逐步把旧的 prompt 组织逻辑收口
