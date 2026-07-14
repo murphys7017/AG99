@@ -1,9 +1,10 @@
 import asyncio
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot.core.db.po import Conversation
 from astrbot.core.interaction.collectors import InteractionMemoryCollector
 from astrbot.core.interaction.context_builder import (
     InteractionPromptContributorError,
@@ -27,7 +28,6 @@ from astrbot.core.interaction.turn_state import InteractionContextMaterial
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.targets import PromptTarget, project_context_pack
-from astrbot.core.db.po import Conversation
 from astrbot.core.provider.entities import ProviderRequest
 
 
@@ -179,6 +179,12 @@ async def test_build_router_context_pack_collects_trimmed_history_and_memory():
         def set_extra(self, key, value):
             self._extras[key] = value
 
+        def get_platform_name(self):
+            return "webchat"
+
+        def get_group_id(self):
+            return None
+
     req = ProviderRequest()
     req.conversation = Conversation(
         platform_id="webchat",
@@ -222,13 +228,16 @@ async def test_build_router_context_pack_collects_trimmed_history_and_memory():
     pack = await build_router_context_pack(
         Event(req),
         plugin_context,
-        config={},
+        config=SimpleNamespace(timezone="Asia/Shanghai"),
         memory_store=store,
     )
 
     history_slot = pack.get_slot("conversation.history")
     memory_slot = pack.get_slot("memory.interaction")
     assert pack.get_slot("input.text").value == "current"
+    assert pack.get_slot("session.datetime") is not None
+    assert pack.get_slot("session.datetime").value["timezone"] == "Asia/Shanghai"
+    assert pack.get_slot("session.user_info").value["is_group"] is False
     assert history_slot is not None
     assert history_slot.value["turn_count"] == 5
     assert memory_slot is not None
@@ -237,6 +246,9 @@ async def test_build_router_context_pack_collects_trimmed_history_and_memory():
     router_pack = project_context_pack(pack, PromptTarget.ROUTER)
     router_history = router_pack.get_slot("conversation.history")
     router_memory = router_pack.get_slot("memory.interaction")
+    assert router_pack.get_slot("session.datetime").value["timezone"] == (
+        "Asia/Shanghai"
+    )
     assert router_history.value["turn_count"] == 4
     assert [
         turn["user_message"]["content"] for turn in router_history.value["turns"]

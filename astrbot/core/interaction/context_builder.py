@@ -12,6 +12,7 @@ from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors import ConversationHistoryCollector
 from astrbot.core.prompt.collectors.input_collector import InputCollector
 from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
+from astrbot.core.prompt.collectors.session_collector import SessionCollector
 from astrbot.core.prompt.context_catalog import get_catalog
 from astrbot.core.prompt.context_collect import (
     build_prompt_extension_slots,
@@ -82,6 +83,7 @@ async def build_router_context_pack(
     provider_request = event.get_extra("provider_request")
     router_collectors: list[ContextCollectorInterface] = [
         PersonaCollector(),
+        SessionCollector(),
         ConversationHistoryCollector(),
     ]
     if memory_store is not None:
@@ -268,6 +270,7 @@ async def build_persona_context_pack(
     if base is None:
         collectors = [
             PersonaCollector(),
+            SessionCollector(),
             ConversationHistoryCollector(),
             InteractionMemoryCollector(memory_store),
             *collectors,

@@ -1133,6 +1133,28 @@ async def test_collect_context_pack_collects_session_slots_for_private_chat():
 
 
 @pytest.mark.asyncio
+async def test_collect_context_pack_treats_empty_group_id_as_private_chat():
+    event, _ = _make_event()
+    event.get_group_id.return_value = ""
+    context = _make_context()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        collectors=[SessionCollector()],
+    )
+
+    user_info = pack.get_slot("session.user_info").value
+    assert user_info["group_id"] is None
+    assert user_info["is_group"] is False
+    assert user_info["conversation_scope"] == "private_single_user"
+
+
+@pytest.mark.asyncio
 async def test_collect_context_pack_collects_group_session_info():
     event, _ = _make_event()
     event.unified_msg_origin = "test_platform:group:test-session"

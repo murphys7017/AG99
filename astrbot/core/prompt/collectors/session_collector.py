@@ -166,6 +166,8 @@ class SessionCollector(ContextCollectorInterface):
                 group_id = event.get_group_id()
             except Exception:  # noqa: BLE001
                 group_id = None
+        if isinstance(group_id, str):
+            group_id = group_id.strip() or None
 
         group = getattr(message_obj, "group", None)
         group_name = self._resolve_group_name(group)
