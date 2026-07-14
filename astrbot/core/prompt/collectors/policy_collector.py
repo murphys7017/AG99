@@ -118,6 +118,18 @@ class PolicyCollector(ContextCollectorInterface):
                 "Do not treat ad-hoc generated files as reusable Neo skills unless they are captured via payload/candidate/release.\n"
                 "To update an existing skill, create a new payload/candidate and promote a new release version; avoid patching old local folders directly.\n"
             )
+        elif config.sandbox_cfg.get("booter") == "cua":
+            prompt += (
+                "\n[CUA Desktop Control]\n"
+                "Use `astrbot_execute_shell` with `background=true` to launch GUI apps. "
+                'Use Firefox for browser tasks, for example `firefox "https://example.com"`. '
+                "After each visible step, call `astrbot_cua_screenshot` with "
+                "`send_to_user=true` and `return_image_to_llm=true` so the user can "
+                "monitor progress. When typing, inspect the screenshot first and confirm "
+                "the target field is focused and empty or safe to append to. Use "
+                "`astrbot_cua_mouse_click` for coordinates and `astrbot_cua_keyboard_type` "
+                "for text input; use text=`\\n` for Enter.\n"
+            )
 
         return ContextSlot(
             name="policy.sandbox_prompt",

@@ -17,46 +17,58 @@ Collect facts
 
 - Collector 输出统一 `ContextSlot`。
 - `PromptContextBuilder` 支持不可变快照式合并、版本与收集 scope。
-- 同批重复 slot 冲突失败；跨阶段替换必须显式声明。
+- 通过 Builder 收集和合并时，同批重复 slot 冲突失败，跨阶段替换可显式声明。
 - Router、Persona、Core 使用统一目标投影，不再使用 LLM Selector。
-- Router 使用近期历史和人格摘要；Persona 使用完整官方历史和人格材料；Core 使用官方历史与执行能力，但不读取人格/effect 语义。
+- Router 使用近期历史和人格摘要；Persona 使用完整官方历史和人格材料；Core 的目标投影明确排除人格和 effect 语义。
 - 插件 extension targets 在三个目标上统一过滤。
 - 插件显式 contexts/content parts 进入 Collector，不再依赖渲染后的补偿追加。
 - `PromptTreeBuilder` 已从 Render Engine 抽离。
-- provider renderer 负责协议序列化与输出契约落地。
+- provider renderer 已负责协议序列化，并建立了输出契约落地接口。
 - 会话保存使用去除 Prompt 脚手架的用户消息。
-- 群聊上下文以动态结构化 slot 进入三个目标，并保留 legacy 兼容出口。
+- 群聊上下文只以动态结构化 slot 进入三个目标。
+- 主 Agent 不再直接拼接 Persona、skills、knowledge、policy、tool instruction、历史、图片或文件 Prompt；模型可见内容只有 ContextPack 一条来源。
+- persona begin dialogs、官方历史、插件显式 contexts 和当前输入已按所有权建立固定顺序。
+- 官方 `on_llm_request` 仍作为最终 `ProviderRequest` 的低层插件钩子；统一 Prompt 渲染在它之前完成，因此钩子修改不会被覆盖。
+- 已公开的 `apply_interaction_core_task_spec` 保留为直接请求兼容接口；主链路只使用 `CoreTaskCollector`，不形成双重注入。
 
-## 下一阶段
+## 当前确认问题
 
-### 1. Layout Policy 收口
+### 1. Provider Renderer 与输出契约能力判断分离
 
-把 Base renderer 中剩余的 `render_*_context` 语义布局方法迁到独立 layout policy。迁移期间保留兼容适配器，完成后 provider renderer 只处理序列化。
+renderer family 决定协议序列化，Provider 的 `supports_output_contract_strategy()` 决定实际契约能力，两者当前没有统一校验。遗漏 renderer metadata 的工具型 Provider 可能静默退回 `prompt_only`。
 
-验收条件：新增一个 provider renderer 不需要理解 ContextSlot 业务选择规则。
+目标：建立统一 Provider Prompt Capability，明确 renderer family、原生 tool call、输出契约和受控降级能力；禁止按单个 Provider ID 打补丁。
 
-### 2. 上下文预算
+### 2. ContextPack 仍可绕过 Builder 被直接修改
 
-引入按 target 与 provider/model 上限分配的预算策略，分别约束 history、memory、knowledge、tools 和 system material。预算只裁剪目标视图，不回写规范 Pack。
+Router、Persona 和 interaction enrichment 仍可直接 `add_slot()` 或删除 slot，同名值会被静默覆盖，绕过 Builder 的冲突检测、显式替换、版本和 collection scope。
 
-验收条件：同一 ContextPack 可针对不同模型窗口稳定渲染，裁剪结果可诊断。
+目标：所有跨阶段 enrichment 通过返回新快照的 derive/replace API 完成；直接覆盖必须失败，删除也必须形成可诊断的投影或派生操作。
 
-### 3. 执行器端口
+### 3. Prompt tool schema 与实际执行工具不是同一事实来源
 
-让 Core 的目标视图和 capability snapshot 可以交给 Native AstrBot、Codex、OpenCode 等执行后端。知识库、插件工具和 skills 通过统一 capability gateway 暴露，不把第三方执行器协议写入 Collector。
+RenderResult 可以生成 tool schema，但 Request Adapter 不会据此更新实际 `func_tool`；Core 执行仍读取旧 ProviderRequest 中的工具对象。
 
-验收条件：替换执行器不改变 Router/Persona Prompt，也不复制知识库和插件注册逻辑。
+目标：明确 capability tree 是实际工具可见集的来源，或者将 RenderResult tool schema 降为纯诊断产物；不能长期维持两个看似等价的工具集合。
 
-### 4. 真实链路验证
+### 4. DeepSeek 首轮 Marker 的会话判断不完整
 
-覆盖 OpenAI、Anthropic、MiniMax 及至少一个第三方执行器，验证：
+当前只检查 interaction memory，没有检查官方 conversation history，也没有持久化会话级应用状态。memory 缺失或运行时重启后，已有历史的会话仍可能再次注入首轮 Marker。
 
-- 多模态 content parts 顺序
-- tool call 与 prompt-only 降级
-- 群聊 ambient context
-- 长历史裁剪
-- 会话保存无 Prompt 脚手架
-- interaction Core 最终材料回到统一 Persona Runtime
+目标：以官方历史和会话级状态判断首轮，不使用事件级 extra 充当长期状态。
+
+### 5. Context Catalog 尚未形成真实约束
+
+Catalog 中的 required、multiple、lifecycle、llm_exposure 和 redact_fn 多数只用于描述，收集与投影阶段没有统一执行，文档中还保留已经删除的 Selector 阶段说明。
+
+目标：要么让 Catalog 成为可执行契约并在收集、投影、诊断阶段校验，要么删除没有运行时含义的字段，避免提供虚假的安全和生命周期保证。
+
+## 处理顺序
+
+1. 统一 Provider Prompt Capability 与工具事实来源。
+2. 收口 ContextPack 派生接口，禁止直接覆盖。
+3. 修复首轮 Marker 和 Catalog 契约。
+4. 上述边界稳定后，再重新评估上下文预算、Collector 并发和可替换执行器。
 
 ## 非目标
 
@@ -64,3 +76,4 @@ Collect facts
 - 不针对单个插件修改 Router 或通用 schema。
 - 不让 Core 理解 Motion、Live2D、TTS 等插件领域语义。
 - 不把 static Collector 扩展成无失效协议的全局缓存。
+- 不把删除内部重复注入实现扩大成删除官方插件钩子或已公开请求接口。

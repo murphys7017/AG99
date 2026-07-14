@@ -724,13 +724,10 @@ async def test_collect_and_render_pipeline_includes_prompt_extensions(
     assert "desktop.sidecar" in extension_text_parts[0]
 
 
-def test_apply_visible_pipeline_replaces_legacy_request_with_group_context_extension():
+def test_prompt_pipeline_replaces_pre_render_request_with_group_context_extension():
     event, _ = _make_event()
     context = _make_context()
-    config = ama.MainAgentBuildConfig(
-        tool_call_timeout=60,
-        prompt_pipeline_mode="apply_visible",
-    )
+    config = ama.MainAgentBuildConfig(tool_call_timeout=60)
     group_context = (
         "<system_reminder>You are in a group chat.\n"
         "[Bob (user_id=20002)/10:00:00]: previous message"
@@ -781,7 +778,7 @@ def test_apply_visible_pipeline_replaces_legacy_request_with_group_context_exten
         extra_user_content_parts=[TextPart(text="legacy group injection")],
     )
 
-    ama._apply_prompt_pipeline_visible_mode(
+    ama._apply_prompt_pipeline(
         event=event,
         plugin_context=context,
         config=config,

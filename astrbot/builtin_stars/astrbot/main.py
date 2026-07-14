@@ -7,7 +7,7 @@ import astrbot.api.message_components as Comp
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import Image, Plain
-from astrbot.api.provider import LLMResponse, ProviderRequest
+from astrbot.api.provider import LLMResponse
 from astrbot.core import logger
 from astrbot.core.utils.session_waiter import (
     FILTERS,
@@ -215,17 +215,6 @@ class Main(star.Star):
                 except BaseException as e:
                     logger.error(traceback.format_exc())
                     logger.error(f"主动回复失败: {e}")
-
-    @filter.on_llm_request()
-    async def decorate_llm_req(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """在请求 LLM 前注入人格信息、Identifier、时间、回复内容等 System Prompt"""
-        if self.group_chat_context and self.ltm_enabled(event):
-            try:
-                await self.group_chat_context.on_req_llm(event, req)
-            except BaseException as e:
-                logger.error(f"ltm: {e}")
 
     @filter.on_llm_response()
     async def record_llm_resp_to_ltm(

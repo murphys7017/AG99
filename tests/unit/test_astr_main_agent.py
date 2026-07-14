@@ -1,6 +1,5 @@
 """Tests for astr_main_agent module."""
 
-import datetime
 import os
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -11,10 +10,10 @@ from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.conversation_mgr import Conversation
-from astrbot.core.message.components import File, Image, Plain, Reply, Video
+from astrbot.core.message.components import Image, Plain, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
-from astrbot.core.prompt.collectors import ExplicitContextCollector
+from astrbot.core.prompt.collectors import ExplicitContextCollector, InputCollector
 from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -120,58 +119,6 @@ def _setup_conversation_for_build(conv_mgr, cid: str = "conv-id") -> MagicMock:
     return conversation
 
 
-def test_append_system_reminders_includes_weekday(mock_event):
-    """Datetime system reminders include locale-independent weekday information."""
-    req = ProviderRequest(prompt="Hello")
-    fixed_now = datetime.datetime(
-        2026,
-        6,
-        8,
-        12,
-        34,
-        tzinfo=datetime.timezone.utc,
-    )
-
-    class FixedDateTime(datetime.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            if tz:
-                return fixed_now.astimezone(tz)
-            return fixed_now
-
-    with patch("astrbot.core.astr_main_agent.datetime.datetime", FixedDateTime):
-        ama._append_system_reminders(
-            mock_event,
-            req,
-            {"datetime_system_prompt": True},
-            "UTC",
-        )
-
-    assert [part.text for part in req.extra_user_content_parts] == [
-        "<system_reminder>Current datetime: "
-        "2026-06-08 12:34 (UTC), Weekday: Monday</system_reminder>"
-    ]
-
-
-def test_provider_supports_modality_requires_explicit_list():
-    provider = MagicMock(spec=Provider)
-
-    provider.provider_config = {"modalities": ["text", "image"]}
-    assert ama._provider_supports_modality(provider, "image")
-
-    provider.provider_config = {"modalities": ["text"]}
-    assert not ama._provider_supports_modality(provider, "image")
-
-    provider.provider_config = {"modalities": []}
-    assert not ama._provider_supports_modality(provider, "image")
-
-    provider.provider_config = {}
-    assert not ama._provider_supports_modality(provider, "image")
-
-    provider.provider_config = {"modalities": "image"}
-    assert not ama._provider_supports_modality(provider, "image")
-
-
 def test_interaction_core_collectors_only_add_execution_context():
     collector_names = {
         collector.__class__.__name__
@@ -244,6 +191,51 @@ async def test_explicit_context_collector_preserves_user_content_parts():
     assert slot.value is not parts
 
 
+@pytest.mark.asyncio
+async def test_explicit_context_collector_preserves_audio_urls():
+    req = ProviderRequest(audio_urls=["C:/media/sample.wav"])
+
+    slots = await ExplicitContextCollector().collect(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        provider_request=req,
+    )
+
+    slot = next(item for item in slots if item.name == "input.explicit_content_parts")
+    assert slot.value == [
+        {
+            "type": "audio_url",
+            "audio_url": {"url": "C:/media/sample.wav"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_input_collector_preserves_explicit_request_images(
+    mock_event,
+    mock_context,
+):
+    req = ProviderRequest(image_urls=["https://example.com/plugin-image.png"])
+
+    slots = await InputCollector().collect(
+        mock_event,
+        mock_context,
+        ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+    )
+
+    slot = next(item for item in slots if item.name == "input.images")
+    assert slot.value == [
+        {
+            "ref": "https://example.com/plugin-image.png",
+            "source": "provider_request",
+            "transport": "url",
+            "resolution": "explicit",
+        }
+    ]
+
+
 class TestMainAgentBuildConfig:
     """Tests for MainAgentBuildConfig dataclass."""
 
@@ -289,7 +281,7 @@ class TestSelectProvider:
     def test_select_provider_by_id(self, mock_event, mock_context, mock_provider):
         """Test selecting provider by ID from event extra."""
         module = ama
-        mock_event.get_extra.side_effect = lambda k: (
+        mock_event.get_extra.side_effect = lambda k, default=None: (
             "test-provider" if k == "selected_provider" else None
         )
         mock_context.get_provider_by_id.return_value = mock_provider
@@ -302,7 +294,7 @@ class TestSelectProvider:
     def test_select_provider_not_found(self, mock_event, mock_context):
         """Test selecting provider when ID is not found."""
         module = ama
-        mock_event.get_extra.side_effect = lambda k: (
+        mock_event.get_extra.side_effect = lambda k, default=None: (
             "non-existent" if k == "selected_provider" else None
         )
         mock_context.get_provider_by_id.return_value = None
@@ -316,7 +308,7 @@ class TestSelectProvider:
     def test_select_provider_invalid_type(self, mock_event, mock_context):
         """Test selecting provider when result is not a Provider instance."""
         module = ama
-        mock_event.get_extra.side_effect = lambda k: (
+        mock_event.get_extra.side_effect = lambda k, default=None: (
             "invalid" if k == "selected_provider" else None
         )
         mock_context.get_provider_by_id.return_value = "not a provider"
@@ -429,79 +421,26 @@ class TestGetSessionConv:
             await module._get_session_conv(mock_event, mock_context)
 
 
-class TestApplyKb:
-    """Tests for _apply_kb function."""
+class TestPrepareKnowledgeTools:
+    """Knowledge prompt material belongs to KnowledgeCollector; setup registers tools."""
 
-    @pytest.mark.asyncio
-    async def test_apply_kb_without_agentic_mode(self, mock_event, mock_context):
-        """Test applying knowledge base in non-agentic mode."""
-        module = ama
-        req = ProviderRequest(prompt="test question", system_prompt="System prompt")
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60, kb_agentic_mode=False
-        )
-
-        with patch(
-            "astrbot.core.astr_main_agent.retrieve_knowledge_base_with_cache",
-            AsyncMock(return_value="KB result"),
-        ):
-            await module._apply_kb(mock_event, req, mock_context, config)
-
-        assert "[Related Knowledge Base Results]:" in req.system_prompt
-        assert "KB result" in req.system_prompt
-
-    @pytest.mark.asyncio
-    async def test_apply_kb_with_agentic_mode(self, mock_event, mock_context):
-        """Test applying knowledge base in agentic mode."""
-        module = ama
-        req = ProviderRequest(prompt="test question")
-        config = module.MainAgentBuildConfig(tool_call_timeout=60, kb_agentic_mode=True)
-
-        await module._apply_kb(mock_event, req, mock_context, config)
-
-        assert req.func_tool is not None
-
-    @pytest.mark.asyncio
-    async def test_apply_kb_no_prompt(self, mock_event, mock_context):
-        """Test applying knowledge base when prompt is None."""
-        module = ama
-        req = ProviderRequest(prompt=None, system_prompt="System")
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60, kb_agentic_mode=False
-        )
-
-        await module._apply_kb(mock_event, req, mock_context, config)
-
-        assert req.system_prompt == "System"
-
-    @pytest.mark.asyncio
-    async def test_apply_kb_no_result(self, mock_event, mock_context):
-        """Test applying knowledge base when no result is returned."""
-        module = ama
+    def test_non_agentic_mode_does_not_mutate_request(self, mock_context):
         req = ProviderRequest(prompt="test", system_prompt="System")
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60, kb_agentic_mode=False
-        )
+        config = ama.MainAgentBuildConfig(tool_call_timeout=60, kb_agentic_mode=False)
 
-        with patch(
-            "astrbot.core.astr_main_agent.retrieve_knowledge_base_with_cache",
-            AsyncMock(return_value=None),
-        ):
-            await module._apply_kb(mock_event, req, mock_context, config)
+        ama._prepare_knowledge_tools(req, mock_context, config)
 
         assert req.system_prompt == "System"
+        assert req.func_tool is None
 
-    @pytest.mark.asyncio
-    async def test_apply_kb_with_existing_tools(self, mock_event, mock_context):
-        """Test applying knowledge base with existing toolset."""
-        module = ama
-        existing_tools = ToolSet()
-        req = ProviderRequest(prompt="test", func_tool=existing_tools)
-        config = module.MainAgentBuildConfig(tool_call_timeout=60, kb_agentic_mode=True)
+    def test_agentic_mode_registers_query_tool(self, mock_context):
+        req = ProviderRequest(prompt="test")
+        config = ama.MainAgentBuildConfig(tool_call_timeout=60, kb_agentic_mode=True)
 
-        await module._apply_kb(mock_event, req, mock_context, config)
+        ama._prepare_knowledge_tools(req, mock_context, config)
 
         assert req.func_tool is not None
+        assert "astr_kb_search" in req.func_tool.names()
 
 
 class TestBuiltinToolInjection:
@@ -562,33 +501,6 @@ class TestBuiltinToolInjection:
         assert req.func_tool.get_tool("web_search_exa") is exa_search_tool
         assert req.func_tool.get_tool("exa_get_contents") is exa_contents_tool
 
-    def test_apply_web_search_citation_prompt_appends_once(self, mock_event):
-        """Test web search citation prompt is appended once before agent run."""
-        module = ama
-        mock_event.get_platform_name.return_value = "webchat"
-        req = ProviderRequest(system_prompt="base prompt", func_tool=ToolSet())
-        web_search_tool = MagicMock(spec=FunctionTool)
-        web_search_tool.name = "web_search_baidu"
-        req.func_tool.add_tool(web_search_tool)
-
-        module._apply_web_search_citation_prompt(mock_event, req)
-        module._apply_web_search_citation_prompt(mock_event, req)
-
-        assert req.system_prompt.count(module.WEB_SEARCH_CITATION_PROMPT) == 1
-
-    def test_apply_web_search_citation_prompt_skips_non_webchat(self, mock_event):
-        """Test citation prompt remains WebChat-only."""
-        module = ama
-        mock_event.get_platform_name.return_value = "test_platform"
-        req = ProviderRequest(system_prompt="base prompt", func_tool=ToolSet())
-        web_search_tool = MagicMock(spec=FunctionTool)
-        web_search_tool.name = "web_search_baidu"
-        req.func_tool.add_tool(web_search_tool)
-
-        module._apply_web_search_citation_prompt(mock_event, req)
-
-        assert req.system_prompt == "base prompt"
-
     def test_proactive_cron_job_tools_uses_builtin_tool_manager(self, mock_context):
         """Test cron tool injection through the builtin tool manager."""
         module = ama
@@ -607,630 +519,10 @@ class TestBuiltinToolInjection:
         assert req.func_tool.get_tool("future_task") is future_task_tool
 
 
-class TestApplyFileExtract:
-    """Tests for _apply_file_extract function."""
 
-    @pytest.mark.asyncio
-    async def test_file_extract_basic(self, mock_event, sample_config):
-        """Test basic file extraction."""
-        module = ama
-        mock_file = MagicMock(spec=File)
-        mock_file.name = "test.pdf"
-        mock_file.get_file = AsyncMock(return_value="/path/to/test.pdf")
-        mock_event.message_obj.message = [mock_file]
 
-        req = ProviderRequest(prompt="Summarize")
 
-        with patch(
-            "astrbot.core.astr_main_agent.extract_file_moonshotai"
-        ) as mock_extract:
-            mock_extract.return_value = "File content"
 
-            await module._apply_file_extract(mock_event, req, sample_config)
-
-        assert len(req.contexts) == 1
-        assert "File Extract Results" in req.contexts[0]["content"]
-
-    @pytest.mark.asyncio
-    async def test_file_extract_no_files(self, mock_event, sample_config):
-        """Test file extraction when no files present."""
-        module = ama
-        mock_event.message_obj.message = [Plain(text="Hello")]
-        req = ProviderRequest(prompt="Hello")
-
-        await module._apply_file_extract(mock_event, req, sample_config)
-
-        assert len(req.contexts) == 0
-
-    @pytest.mark.asyncio
-    async def test_file_extract_in_reply(self, mock_event, sample_config):
-        """Test file extraction from reply chain."""
-        module = ama
-        mock_file = MagicMock(spec=File)
-        mock_file.name = "reply.pdf"
-        mock_file.get_file = AsyncMock(return_value="/path/to/reply.pdf")
-        mock_reply = MagicMock(spec=Reply)
-        mock_reply.chain = [mock_file]
-        mock_event.message_obj.message = [mock_reply]
-
-        req = ProviderRequest(prompt="Summarize")
-
-        with patch(
-            "astrbot.core.astr_main_agent.extract_file_moonshotai"
-        ) as mock_extract:
-            mock_extract.return_value = "Reply content"
-
-            await module._apply_file_extract(mock_event, req, sample_config)
-
-        assert len(req.contexts) == 1
-
-    @pytest.mark.asyncio
-    async def test_file_extract_no_prompt(self, mock_event, sample_config):
-        """Test file extraction when prompt is empty."""
-        module = ama
-        mock_file = MagicMock(spec=File)
-        mock_file.name = "test.pdf"
-        mock_file.get_file = AsyncMock(return_value="/path/to/test.pdf")
-        mock_event.message_obj.message = [mock_file]
-
-        req = ProviderRequest(prompt=None)
-
-        with patch(
-            "astrbot.core.astr_main_agent.extract_file_moonshotai"
-        ) as mock_extract:
-            mock_extract.return_value = "Content"
-
-            await module._apply_file_extract(mock_event, req, sample_config)
-
-        assert req.prompt == "总结一下文件里面讲了什么？"
-
-    @pytest.mark.asyncio
-    async def test_file_extract_no_api_key(self, mock_event):
-        """Test file extraction when no API key is configured."""
-        module = ama
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            file_extract_enabled=True,
-            file_extract_msh_api_key="",
-        )
-        mock_file = MagicMock(spec=File)
-        mock_file.name = "test.pdf"
-        mock_file.get_file = AsyncMock(return_value="/path/to/test.pdf")
-        mock_event.message_obj.message = [mock_file]
-
-        req = ProviderRequest(prompt="Summarize")
-
-        await module._apply_file_extract(mock_event, req, config)
-
-        assert len(req.contexts) == 0
-
-
-class TestEnsurePersonaAndSkills:
-    """Tests for _ensure_persona_and_skills function."""
-
-    @pytest.mark.asyncio
-    async def test_ensure_persona_from_session(self, mock_event, mock_context):
-        """Test applying persona from session service config."""
-        module = ama
-        persona = {"name": "test-persona", "prompt": "You are helpful."}
-        mock_context.persona_manager.personas_v3 = [persona]
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=("test-persona", persona, "test-persona", False)
-        )
-        mock_event.trace = MagicMock(record=MagicMock())
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id=None)
-
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
-
-        assert "You are helpful." in req.system_prompt
-
-    @pytest.mark.asyncio
-    async def test_ensure_persona_from_conversation(self, mock_event, mock_context):
-        """Test applying persona from conversation setting."""
-        module = ama
-        persona = {"name": "conv-persona", "prompt": "Custom persona."}
-        mock_context.persona_manager.personas_v3 = [persona]
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=("conv-persona", persona, None, False)
-        )
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id="conv-persona")
-
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
-
-        assert "Custom persona." in req.system_prompt
-
-    @pytest.mark.asyncio
-    async def test_ensure_persona_none_explicit(self, mock_event, mock_context):
-        """Test that [%None] persona is explicitly set to no persona."""
-        module = ama
-        mock_context.persona_manager.personas_v3 = []
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=("[%None]", None, None, False)
-        )
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id="[%None]")
-
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
-
-        assert "Persona Instructions" not in req.system_prompt
-
-    @pytest.mark.asyncio
-    async def test_ensure_skills_includes_workspace_skills(
-        self,
-        monkeypatch,
-        tmp_path,
-        mock_event,
-        mock_context,
-    ):
-        """Workspace skills are available in local runtime and override globals."""
-        module = ama
-        data_dir = tmp_path / "data"
-        global_skills_dir = tmp_path / "global_skills"
-        plugins_dir = tmp_path / "plugins"
-        workspaces_dir = tmp_path / "workspaces"
-        for path in (data_dir, global_skills_dir, plugins_dir):
-            path.mkdir(parents=True, exist_ok=True)
-
-        global_skill_dir = global_skills_dir / "workspace-skill"
-        global_skill_dir.mkdir(parents=True)
-        global_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Global scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
-            mock_event.unified_msg_origin,
-        )
-        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
-        workspace_skill_dir.mkdir(parents=True)
-        workspace_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Workspace scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            module,
-            "get_astrbot_workspaces_path",
-            lambda: str(workspaces_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
-            lambda: str(data_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-            lambda: str(global_skills_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
-            lambda: str(plugins_dir),
-        )
-
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id=None)
-
-        await module._ensure_persona_and_skills(
-            req,
-            {"computer_use_runtime": "local"},
-            mock_context,
-            mock_event,
-        )
-
-        assert "**workspace-skill**" in req.system_prompt
-        assert "Workspace scoped skill." in req.system_prompt
-        assert "Global scoped skill." not in req.system_prompt
-        assert (
-            str(workspace_skill_dir / "SKILL.md").replace("\\", "/")
-            in req.system_prompt
-        )
-
-    @pytest.mark.asyncio
-    async def test_ensure_skills_skips_workspace_skills_for_group_sessions(
-        self,
-        monkeypatch,
-        tmp_path,
-        mock_event,
-        mock_context,
-    ):
-        """Workspace skills are disabled for group sessions."""
-        module = ama
-        data_dir = tmp_path / "data"
-        global_skills_dir = tmp_path / "global_skills"
-        plugins_dir = tmp_path / "plugins"
-        workspaces_dir = tmp_path / "workspaces"
-        for path in (data_dir, global_skills_dir, plugins_dir):
-            path.mkdir(parents=True, exist_ok=True)
-
-        mock_event.get_group_id.return_value = "group123"
-        mock_event.unified_msg_origin = "test_platform:GroupMessage:group123"
-        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
-            mock_event.unified_msg_origin,
-        )
-        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
-        workspace_skill_dir.mkdir(parents=True)
-        workspace_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Workspace scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            module,
-            "get_astrbot_workspaces_path",
-            lambda: str(workspaces_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
-            lambda: str(data_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-            lambda: str(global_skills_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
-            lambda: str(plugins_dir),
-        )
-
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id=None)
-
-        await module._ensure_persona_and_skills(
-            req,
-            {"computer_use_runtime": "local"},
-            mock_context,
-            mock_event,
-        )
-
-        assert "Workspace scoped skill." not in req.system_prompt
-        assert "## Skills" not in req.system_prompt
-
-    @pytest.mark.asyncio
-    async def test_ensure_skills_respects_empty_persona_skills_for_workspace(
-        self,
-        monkeypatch,
-        tmp_path,
-        mock_event,
-        mock_context,
-    ):
-        """An explicit empty persona skill list disables workspace skills too."""
-        module = ama
-        data_dir = tmp_path / "data"
-        global_skills_dir = tmp_path / "global_skills"
-        plugins_dir = tmp_path / "plugins"
-        workspaces_dir = tmp_path / "workspaces"
-        for path in (data_dir, global_skills_dir, plugins_dir):
-            path.mkdir(parents=True, exist_ok=True)
-
-        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
-            mock_event.unified_msg_origin,
-        )
-        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
-        workspace_skill_dir.mkdir(parents=True)
-        workspace_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Workspace scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            module,
-            "get_astrbot_workspaces_path",
-            lambda: str(workspaces_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
-            lambda: str(data_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-            lambda: str(global_skills_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
-            lambda: str(plugins_dir),
-        )
-        persona = {"name": "no-skills", "prompt": "", "skills": []}
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=("no-skills", persona, None, False),
-        )
-
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id="no-skills")
-
-        await module._ensure_persona_and_skills(
-            req,
-            {"computer_use_runtime": "local"},
-            mock_context,
-            mock_event,
-        )
-
-        assert "Workspace scoped skill." not in req.system_prompt
-        assert "## Skills" not in req.system_prompt
-
-    @pytest.mark.asyncio
-    async def test_skills_collector_includes_workspace_skills(
-        self,
-        monkeypatch,
-        tmp_path,
-        mock_event,
-        mock_context,
-    ):
-        """Yakumo prompt context sees the same workspace skill inventory."""
-        module = ama
-        data_dir = tmp_path / "data"
-        global_skills_dir = tmp_path / "global_skills"
-        plugins_dir = tmp_path / "plugins"
-        workspaces_dir = tmp_path / "workspaces"
-        for path in (data_dir, global_skills_dir, plugins_dir):
-            path.mkdir(parents=True, exist_ok=True)
-
-        workspace_root = workspaces_dir / module.normalize_umo_for_workspace(
-            mock_event.unified_msg_origin,
-        )
-        workspace_skill_dir = workspace_root / "skills" / "workspace-skill"
-        workspace_skill_dir.mkdir(parents=True)
-        workspace_skill_dir.joinpath("SKILL.md").write_text(
-            "---\ndescription: Workspace scoped skill.\n---\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(
-            "astrbot.core.workspace.get_astrbot_workspaces_path",
-            lambda: str(workspaces_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_data_path",
-            lambda: str(data_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_skills_path",
-            lambda: str(global_skills_dir),
-        )
-        monkeypatch.setattr(
-            "astrbot.core.skills.skill_manager.get_astrbot_plugin_path",
-            lambda: str(plugins_dir),
-        )
-
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            computer_use_runtime="local",
-        )
-        slots = await module.SkillsCollector().collect(
-            mock_event,
-            mock_context,
-            config,
-        )
-
-        assert len(slots) == 1
-        skills = slots[0].value["skills"]
-        assert [skill["name"] for skill in skills] == ["workspace-skill"]
-        assert skills[0]["description"] == "Workspace scoped skill."
-        assert skills[0]["source_type"] == "workspace"
-
-    @pytest.mark.asyncio
-    async def test_ensure_tools_from_persona(self, mock_event, mock_context):
-        """Test applying tools from persona."""
-        module = ama
-        mock_tool = MagicMock()
-        mock_tool.name = "test_tool"
-        mock_tool.active = True
-        persona = {"name": "persona", "prompt": "Test", "tools": ["test_tool"]}
-        mock_context.persona_manager.personas_v3 = [persona]
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=("persona", persona, None, False)
-        )
-        tmgr = mock_context.get_llm_tool_manager.return_value
-        tmgr.get_func.return_value = mock_tool
-
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id="persona")
-
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
-
-        assert req.func_tool is not None
-
-    @pytest.mark.asyncio
-    async def test_subagent_dedupe_uses_default_persona_tools(
-        self, mock_event, mock_context
-    ):
-        """Test dedupe uses resolved default persona tools in subagent mode."""
-        module = ama
-        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
-            return_value=(None, None, None, False)
-        )
-        mock_context.persona_manager.get_persona_v3_by_id = MagicMock(
-            return_value={"name": "default", "tools": ["tool_a"]}
-        )
-
-        tool_a = FunctionTool(
-            name="tool_a",
-            parameters={"type": "object", "properties": {}},
-            description="tool a",
-        )
-        tool_b = FunctionTool(
-            name="tool_b",
-            parameters={"type": "object", "properties": {}},
-            description="tool b",
-        )
-        tmgr = mock_context.get_llm_tool_manager.return_value
-        tmgr.func_list = [tool_a, tool_b]
-        tmgr.get_full_tool_set.return_value = ToolSet([tool_a, tool_b])
-        tmgr.get_func.side_effect = lambda name: {
-            "tool_a": tool_a,
-            "tool_b": tool_b,
-        }.get(name)
-
-        handoff = MagicMock()
-        handoff.name = "transfer_to_planner"
-        mock_context.subagent_orchestrator = MagicMock(handoffs=[handoff])
-        mock_context.get_config.return_value = {
-            "subagent_orchestrator": {
-                "main_enable": True,
-                "remove_main_duplicate_tools": True,
-                "agents": [
-                    {
-                        "name": "planner",
-                        "enabled": True,
-                        "persona_id": "default",
-                    }
-                ],
-            }
-        }
-
-        req = ProviderRequest()
-        req.conversation = MagicMock(persona_id=None)
-
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
-
-        assert req.func_tool is not None
-        assert "transfer_to_planner" in req.func_tool.names()
-        assert "tool_a" not in req.func_tool.names()
-        assert "tool_b" in req.func_tool.names()
-
-
-class TestDecorateLlmRequest:
-    """Tests for _decorate_llm_request function."""
-
-    @pytest.mark.asyncio
-    async def test_decorate_llm_request_basic(
-        self, mock_event, mock_context, sample_config
-    ):
-        """Test basic LLM request decoration."""
-        module = ama
-        req = ProviderRequest(prompt="Hello", system_prompt="System")
-
-        await module._decorate_llm_request(mock_event, req, mock_context, sample_config)
-
-        assert req.prompt == "Hello"
-        assert req.system_prompt == "System"
-
-    @pytest.mark.asyncio
-    async def test_decorate_llm_request_with_prefix(self, mock_event, mock_context):
-        """Test LLM request decoration with prompt prefix."""
-        module = ama
-        req = ProviderRequest(prompt="Hello")
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60, provider_settings={"prompt_prefix": "AI: "}
-        )
-
-        with patch.object(mock_context, "get_config") as mock_get_config:
-            mock_get_config.return_value = {}
-
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
-
-        assert req.prompt == "AI: Hello"
-
-    @pytest.mark.asyncio
-    async def test_decorate_llm_request_prefix_with_placeholder(
-        self, mock_event, mock_context
-    ):
-        """Test prompt prefix with {{prompt}} placeholder."""
-        module = ama
-        req = ProviderRequest(prompt="Hello")
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            provider_settings={"prompt_prefix": "AI {{prompt}} - Please respond:"},
-        )
-
-        with patch.object(mock_context, "get_config") as mock_get_config:
-            mock_get_config.return_value = {}
-
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
-
-        assert req.prompt == "AI Hello - Please respond:"
-
-    @pytest.mark.asyncio
-    async def test_decorate_llm_request_no_conversation(self, mock_event, mock_context):
-        """Test decoration when no conversation exists."""
-        module = ama
-        req = ProviderRequest(prompt="Hello")
-        req.conversation = None
-        config = module.MainAgentBuildConfig(tool_call_timeout=60)
-
-        with patch.object(mock_context, "get_config") as mock_get_config:
-            mock_get_config.return_value = {}
-
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
-
-        assert req.prompt == "Hello"
-
-    @pytest.mark.asyncio
-    async def test_decorate_llm_request_skips_current_image_caption_without_caption_provider(
-        self, mock_event, mock_context, mock_provider
-    ):
-        """Current images should not be captioned when no caption provider is configured."""
-        module = ama
-        mock_provider.provider_config = {
-            "id": "text-provider",
-            "modalities": ["text", "tool_use"],
-        }
-        mock_provider.text_chat = AsyncMock()
-        req = ProviderRequest(prompt="Hello", image_urls=["/tmp/image.jpg"])
-        req.conversation = MagicMock()
-        mock_context.get_config.return_value = {"provider_settings": {}}
-        config = module.MainAgentBuildConfig(tool_call_timeout=60)
-
-        with patch.object(
-            module,
-            "_ensure_persona_and_skills",
-            new=AsyncMock(),
-        ):
-            await module._decorate_llm_request(
-                mock_event,
-                req,
-                mock_context,
-                config,
-                provider=mock_provider,
-            )
-
-        assert req.image_urls == []
-        assert not any(
-            "[Image Captioning Failed]" in getattr(part, "text", "")
-            for part in req.extra_user_content_parts
-        )
-        mock_provider.text_chat.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_decorate_llm_request_skips_current_image_caption_when_configured_provider_missing(
-        self, mock_event, mock_context, mock_provider
-    ):
-        """Missing caption providers should not add failure placeholders."""
-        module = ama
-        mock_provider.provider_config = {
-            "id": "text-provider",
-            "modalities": ["text", "tool_use"],
-        }
-        mock_provider.text_chat = AsyncMock()
-        req = ProviderRequest(prompt="Hello", image_urls=["/tmp/image.jpg"])
-        req.conversation = MagicMock()
-        mock_context.get_provider_by_id.return_value = None
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            provider_settings={
-                "default_image_caption_provider_id": "missing-caption-provider",
-            },
-        )
-
-        with patch.object(
-            module,
-            "_ensure_persona_and_skills",
-            new=AsyncMock(),
-        ):
-            await module._decorate_llm_request(
-                mock_event,
-                req,
-                mock_context,
-                config,
-                provider=mock_provider,
-            )
-
-        assert req.image_urls == []
-        assert not any(
-            "[Image Captioning Failed]" in getattr(part, "text", "")
-            for part in req.extra_user_content_parts
-        )
-        mock_provider.text_chat.assert_not_called()
 
 
 class TestPluginToolFix:
@@ -1766,7 +1058,9 @@ class TestBuildMainAgent:
         with (
             patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
             patch("astrbot.core.astr_main_agent.AstrAgentContext"),
-            patch("astrbot.core.astr_main_agent.logger") as mock_logger,
+            patch(
+                "astrbot.core.prompt.collectors.input_collector.logger"
+            ) as mock_logger,
             patch.object(
                 Video,
                 "convert_to_file_path",
@@ -1788,14 +1082,10 @@ class TestBuildMainAgent:
             "Video Attachment" in part.text
             for part in result.provider_request.extra_user_content_parts
         )
-        assert mock_logger.error.call_count == 2
-        assert (
-            "Error processing video attachment"
-            in mock_logger.error.call_args_list[0][0][0]
-        )
-        assert (
-            "Error processing quoted video attachment"
-            in mock_logger.error.call_args_list[1][0][0]
+        assert mock_logger.warning.call_count == 2
+        assert all(
+            "Failed to resolve video attachment" in call_args[0][0]
+            for call_args in mock_logger.warning.call_args_list
         )
 
     @pytest.mark.asyncio
@@ -1862,7 +1152,7 @@ class TestBuildMainAgent:
         """Test building main agent with existing ProviderRequest."""
         module = ama
         existing_req = ProviderRequest(prompt="Existing prompt")
-        mock_event.get_extra.side_effect = lambda k: (
+        mock_event.get_extra.side_effect = lambda k, default=None: (
             existing_req if k == "provider_request" else None
         )
 
@@ -2131,82 +1421,6 @@ class TestHandleWebchat:
         mock_db.update_platform_session.assert_not_called()
 
 
-class TestApplyLlmSafetyMode:
-    """Tests for _apply_llm_safety_mode function."""
-
-    def test_apply_llm_safety_mode_system_prompt_strategy(self):
-        """Test applying safety mode with system_prompt strategy."""
-        module = ama
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            llm_safety_mode=True,
-            safety_mode_strategy="system_prompt",
-        )
-        req = ProviderRequest(prompt="Test", system_prompt="Original prompt")
-
-        module._apply_llm_safety_mode(config, req)
-
-        assert "You are running in Safe Mode" in req.system_prompt
-        assert "Original prompt" in req.system_prompt
-
-    def test_apply_llm_safety_mode_prepends_safety_prompt(self):
-        """Test that safety prompt is prepended before original system prompt."""
-        module = ama
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            safety_mode_strategy="system_prompt",
-        )
-        req = ProviderRequest(prompt="Test", system_prompt="My custom prompt")
-
-        module._apply_llm_safety_mode(config, req)
-
-        assert req.system_prompt.startswith("You are running in Safe Mode")
-        assert "My custom prompt" in req.system_prompt
-
-    def test_apply_llm_safety_mode_with_none_system_prompt(self):
-        """Test applying safety mode when original system_prompt is None."""
-        module = ama
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            safety_mode_strategy="system_prompt",
-        )
-        req = ProviderRequest(prompt="Test", system_prompt=None)
-
-        module._apply_llm_safety_mode(config, req)
-
-        assert "You are running in Safe Mode" in req.system_prompt
-
-    def test_apply_llm_safety_mode_unsupported_strategy(self):
-        """Test that unsupported strategy logs warning and does nothing."""
-        module = ama
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            safety_mode_strategy="unsupported_strategy",
-        )
-        req = ProviderRequest(prompt="Test", system_prompt="Original")
-
-        with patch("astrbot.core.astr_main_agent.logger") as mock_logger:
-            module._apply_llm_safety_mode(config, req)
-
-        mock_logger.warning.assert_called_once()
-        assert (
-            "Unsupported llm_safety_mode strategy"
-            in mock_logger.warning.call_args[0][0]
-        )
-        assert req.system_prompt == "Original"
-
-    def test_apply_llm_safety_mode_empty_system_prompt(self):
-        """Test applying safety mode when original system_prompt is empty."""
-        module = ama
-        config = module.MainAgentBuildConfig(
-            tool_call_timeout=60,
-            safety_mode_strategy="system_prompt",
-        )
-        req = ProviderRequest(prompt="Test", system_prompt="")
-
-        module._apply_llm_safety_mode(config, req)
-
-        assert "You are running in Safe Mode" in req.system_prompt
 
 
 class TestApplySandboxTools:
@@ -2245,8 +1459,7 @@ class TestApplySandboxTools:
         assert "astrbot_upload_file" in tool_names
         assert "astrbot_download_file" in tool_names
 
-    def test_apply_sandbox_tools_adds_sandbox_prompt(self, mock_context):
-        """Test that sandbox mode prompt is added to system_prompt."""
+    def test_apply_sandbox_tools_does_not_mutate_system_prompt(self, mock_context):
         module = ama
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60,
@@ -2257,7 +1470,7 @@ class TestApplySandboxTools:
 
         module._apply_sandbox_tools(config, req, "session-123")
 
-        assert "sandboxed environment" in req.system_prompt
+        assert req.system_prompt == "Original prompt"
 
     def test_apply_sandbox_tools_with_shipyard_booter(self, monkeypatch, mock_context):
         """Test sandbox tools with shipyard booter configuration."""
@@ -2342,8 +1555,7 @@ class TestApplySandboxTools:
         assert "existing_tool" in req.func_tool.names()
         assert "astrbot_execute_shell" in req.func_tool.names()
 
-    def test_apply_sandbox_tools_appends_to_existing_system_prompt(self, mock_context):
-        """Test that sandbox prompt is appended to existing system prompt."""
+    def test_apply_sandbox_tools_preserves_existing_system_prompt(self, mock_context):
         module = ama
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60,
@@ -2354,11 +1566,9 @@ class TestApplySandboxTools:
 
         module._apply_sandbox_tools(config, req, "session-123")
 
-        assert req.system_prompt.startswith("Base prompt")
-        assert "sandboxed environment" in req.system_prompt
+        assert req.system_prompt == "Base prompt"
 
-    def test_apply_sandbox_tools_with_none_system_prompt(self, mock_context):
-        """Test that sandbox prompt is applied when system_prompt is None."""
+    def test_apply_sandbox_tools_preserves_none_system_prompt(self, mock_context):
         module = ama
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60,
@@ -2369,5 +1579,4 @@ class TestApplySandboxTools:
 
         module._apply_sandbox_tools(config, req, "session-123")
 
-        assert isinstance(req.system_prompt, str)
-        assert "sandboxed environment" in req.system_prompt
+        assert req.system_prompt is None

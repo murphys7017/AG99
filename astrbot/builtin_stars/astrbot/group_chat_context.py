@@ -22,7 +22,6 @@ from astrbot.api.message_components import (
 )
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import Provider, ProviderRequest
-from astrbot.core.agent.message import TextPart
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 from astrbot.core.prompt import PromptExtension, PromptExtensionCollectorInterface
 
@@ -42,11 +41,10 @@ GROUP_HISTORY_FOOTER = "\n--- END CONTEXT ---\n</system_reminder>"
 DEFAULT_GROUP_MESSAGE_MAX_CNT = 300
 GROUP_CONTEXT_RECORD_ID_EXTRA = "_group_context_record_id"
 GROUP_CONTEXT_RAW_IDX_EXTRA = "_group_context_raw_idx"
-GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA = "_group_context_prompt_consumed"
 
 
 class GroupChatContext(PromptExtensionCollectorInterface):
-    """Group chat context awareness with prompt-pipeline and legacy request exits."""
+    """Collect rolling group-chat context for the canonical prompt pipeline."""
 
     def __init__(self, acm: AstrBotConfigManager, context: star.Context) -> None:
         self.acm = acm
@@ -108,9 +106,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         config: "MainAgentBuildConfig",
         provider_request: ProviderRequest | None = None,
     ) -> list[PromptExtension]:
-        del plugin_context, provider_request
-        if _resolve_prompt_pipeline_mode(config) != "apply_visible":
-            return []
+        del plugin_context, config, provider_request
         if not self.group_context_enabled(event):
             return []
 
@@ -118,7 +114,6 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         if not records:
             return []
 
-        event.set_extra(GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA, True)
         return [
             PromptExtension(
                 plugin_id=self.plugin_id,
@@ -218,21 +213,8 @@ class GroupChatContext(PromptExtensionCollectorInterface):
             _trim_left(records, cfg["group_message_max_cnt"], record_ids)
             event.set_extra(GROUP_CONTEXT_RECORD_ID_EXTRA, record_id)
             event.set_extra(GROUP_CONTEXT_RAW_IDX_EXTRA, len(records) - 1)
-            event.set_extra(GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA, False)
 
         logger.debug(f"group_chat_context | {umo} | {final_message}")
-
-    async def on_req_llm(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
-        if event.get_extra(GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA, False):
-            return
-        if not self.group_context_enabled(event):
-            return
-
-        records = await self._snapshot_records_before_current(event)
-        if records:
-            req.extra_user_content_parts.append(
-                TextPart(text=_format_group_history_block(records))
-            )
 
     async def _snapshot_records_before_current(
         self,
@@ -395,11 +377,6 @@ def _normalize_whitelist(value: object) -> set[str]:
         except TypeError:
             items = []
     return {str(item).strip() for item in items if str(item).strip()}
-
-
-def _resolve_prompt_pipeline_mode(config: "MainAgentBuildConfig") -> str:
-    mode = (getattr(config, "prompt_pipeline_mode", "") or "").strip().lower()
-    return mode or "apply_visible"
 
 
 def _trim_left(

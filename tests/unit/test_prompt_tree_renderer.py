@@ -14,9 +14,10 @@ from astrbot.core.prompt.render import (
     SerializedRenderValue,
 )
 from astrbot.core.prompt.render.engine import logger as render_logger
+from astrbot.core.provider.entities import ProviderMetaData
+from astrbot.core.provider.register import provider_cls_map
 from astrbot.core.provider.sources.kimi_code_source import ProviderKimiCode
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
-from astrbot.core.provider.sources.openrouter_source import ProviderOpenRouter
 
 
 def test_prompt_builder_builds_nested_tag_tree():
@@ -560,7 +561,7 @@ def test_render_engine_selects_anthropic_renderer_for_kimi_code_provider_instanc
     ]
 
 
-def test_render_engine_selects_renderer_from_provider_type_metadata_proxy():
+def test_render_engine_selects_renderer_from_provider_type_metadata_proxy(monkeypatch):
     pack = ContextPack(
         slots={
             "input.text": ContextSlot(
@@ -571,13 +572,28 @@ def test_render_engine_selects_renderer_from_provider_type_metadata_proxy():
             )
         }
     )
+    for provider_type, renderer_family in (
+        ("proxy_openai", "openai"),
+        ("proxy_anthropic", "anthropic"),
+        ("proxy_minimax", "minimax"),
+    ):
+        monkeypatch.setitem(
+            provider_cls_map,
+            provider_type,
+            ProviderMetaData(
+                id="test",
+                model=None,
+                type=provider_type,
+                prompt_renderer_family=renderer_family,
+            ),
+        )
 
     openai_result = PromptRenderEngine().render(
         pack,
         provider_request=type(
             "RequestStub",
             (),
-            {"provider_type": "openrouter_chat_completion"},
+                {"provider_type": "proxy_openai"},
         )(),
     )
     anthropic_result = PromptRenderEngine().render(
@@ -585,7 +601,7 @@ def test_render_engine_selects_renderer_from_provider_type_metadata_proxy():
         provider_request=type(
             "RequestStub",
             (),
-            {"provider_type": "kimi_code_chat_completion"},
+                {"provider_type": "proxy_anthropic"},
         )(),
     )
     minimax_result = PromptRenderEngine().render(
@@ -593,7 +609,7 @@ def test_render_engine_selects_renderer_from_provider_type_metadata_proxy():
         provider_request=type(
             "RequestStub",
             (),
-            {"provider_type": "minimax_token_plan"},
+                {"provider_type": "proxy_minimax"},
         )(),
     )
 
@@ -845,6 +861,65 @@ def test_render_engine_compiles_history_before_dynamic_context_messages():
     assert "<knowledge>" in result.messages[3]["content"]
     assert "Cacheable prefix guidance." in result.messages[3]["content"]
     assert result.messages[4] == {"role": "user", "content": "Current question"}
+
+
+def test_render_engine_orders_begin_history_explicit_and_current_input():
+    pack = ContextPack(
+        slots={
+            "persona.begin_dialogs": ContextSlot(
+                name="persona.begin_dialogs",
+                value=[
+                    {"role": "user", "content": "Begin user"},
+                    {"role": "assistant", "content": "Begin assistant"},
+                ],
+                category="persona",
+                source="test",
+            ),
+            "conversation.history": ContextSlot(
+                name="conversation.history",
+                value={
+                    "format": "turn_pairs",
+                    "turns": [
+                        {
+                            "user_message": {
+                                "role": "user",
+                                "content": "History user",
+                            },
+                            "assistant_message": {
+                                "role": "assistant",
+                                "content": "History assistant",
+                            },
+                        }
+                    ],
+                },
+                category="conversation",
+                source="test",
+            ),
+            "conversation.explicit_contexts": ContextSlot(
+                name="conversation.explicit_contexts",
+                value=[{"role": "system", "content": "Plugin context"}],
+                category="conversation",
+                source="test",
+            ),
+            "input.text": ContextSlot(
+                name="input.text",
+                value="Current input",
+                category="input",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine(default_renderer=BasePromptRenderer()).render(pack)
+
+    assert [message["content"] for message in result.messages] == [
+        "Begin user",
+        "Begin assistant",
+        "History user",
+        "History assistant",
+        "Plugin context",
+        "Current input",
+    ]
 
 
 def test_render_engine_prunes_empty_persona_segment_nodes():

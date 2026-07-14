@@ -51,6 +51,14 @@ class ExplicitContextCollector(ContextCollectorInterface):
         content_parts = [
             deepcopy(item) for item in (provider_request.extra_user_content_parts or [])
         ]
+        content_parts.extend(
+            {
+                "type": "audio_url",
+                "audio_url": {"url": audio_url},
+            }
+            for audio_url in provider_request.audio_urls or []
+            if isinstance(audio_url, str) and audio_url
+        )
         if content_parts:
             slots.append(
                 ContextSlot(

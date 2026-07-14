@@ -173,6 +173,7 @@ class BasePromptRenderer:
             ("system.base", "base"),
             ("system.tool_call_instruction", "tool_call_instruction"),
             ("system.live_mode_prompt", "live_mode"),
+            ("system.web_search_citation_prompt", "web_search_citation"),
         ):
             slot = self._find_slot(slots, slot_name)
             if slot is None:
@@ -193,6 +194,24 @@ class BasePromptRenderer:
             body_keys=("path", "text"),
         ):
             rendered_slot_names.append("system.workspace_extra_prompt")
+
+        core_task_slot = self._find_slot(slots, "system.core_execution_context")
+        if self._render_mapping_slot(
+            target,
+            "core_execution_context",
+            core_task_slot,
+            body_keys=(
+                "instruction",
+                "platform_id",
+                "session_id",
+                "task_intent",
+                "task_summary",
+                "execution_prompt",
+                "suggested_capabilities",
+                "metadata",
+            ),
+        ):
+            rendered_slot_names.append("system.core_execution_context")
         return rendered_slot_names
 
     def render_persona_context(
@@ -348,15 +367,21 @@ class BasePromptRenderer:
         ):
             rendered_slot_names.append("input.router_attachment_summary")
 
-        explicit_parts_slot = self._find_slot(slots, "input.explicit_content_parts")
-        if explicit_parts_slot is not None and isinstance(
-            explicit_parts_slot.value,
-            list,
+        content_parts: list[Any] = []
+        for slot_name in (
+            "input.media_content_parts",
+            "input.explicit_content_parts",
         ):
-            resolve_node("user_input").node.meta["explicit_content_parts"] = deepcopy(
-                explicit_parts_slot.value
-            )
-            rendered_slot_names.append(explicit_parts_slot.name)
+            content_parts_slot = self._find_slot(slots, slot_name)
+            if content_parts_slot is None or not isinstance(
+                content_parts_slot.value,
+                list,
+            ):
+                continue
+            content_parts.extend(deepcopy(content_parts_slot.value))
+            rendered_slot_names.append(content_parts_slot.name)
+        if content_parts:
+            resolve_node("user_input").node.meta["explicit_content_parts"] = content_parts
 
         quoted_text_slot = self._find_slot(slots, "input.quoted_text")
         if quoted_text_slot is not None:
@@ -915,6 +940,12 @@ class BasePromptRenderer:
     def _compile_messages(self, prompt_tree: PromptBuilder) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
 
+        for history_path in ("history/begin_dialogs", "history/conversation"):
+            history_node = self._find_tag_path(prompt_tree, history_path)
+            if history_node is None:
+                continue
+            messages.extend(self._compile_turn_messages(prompt_tree, history_node))
+
         conversation_node = self._find_tag_path(prompt_tree, "history/conversation")
         explicit_messages = (
             conversation_node.meta.get("explicit_context_messages", [])
@@ -925,12 +956,6 @@ class BasePromptRenderer:
             messages.extend(
                 deepcopy(item) for item in explicit_messages if isinstance(item, dict)
             )
-
-        for history_path in ("history/begin_dialogs", "history/conversation"):
-            history_node = self._find_tag_path(prompt_tree, history_path)
-            if history_node is None:
-                continue
-            messages.extend(self._compile_turn_messages(prompt_tree, history_node))
 
         for context_path in (
             "context/extensions",

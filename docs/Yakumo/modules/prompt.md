@@ -20,7 +20,7 @@ Collectors
 
 Collector 只读取事实，并输出命名明确的 `ContextSlot`。默认来源包括 system、persona、input、session、policy、memory、official conversation history、skills、tools、subagent、knowledge，以及插件显式写入 `ProviderRequest` 的上下文。
 
-同一次收集中，同名 slot 不能用不同值静默覆盖。两个生产者对同一事实有分歧时直接失败；跨阶段确实需要刷新某个 slot 时，调用方必须通过 `replace_slots` 明确声明。
+同一次收集中，同名 slot 不能用不同值静默覆盖。两个生产者对同一事实有分歧时直接失败。当前跨阶段 enrichment 仍存在直接修改 Pack 的路径，尚未全部收口到 `replace_slots` 或派生快照 API。
 
 Collector 默认 required。只有明确声明 optional 的 Collector 才允许局部失败并把诊断写入 `ContextPack.meta["collector_failures"]`。当前 `MemoryCollector` 是 optional。
 
@@ -35,7 +35,7 @@ Collector 默认 required。只有明确声明 optional 的 Collector 才允许�
 - `slot_count`
 - 各收集片段提供的诊断 metadata
 
-插件 extension 也先规范化成 slot，再进入同一条构建链路。插件原有 `ProviderRequest.contexts` 与 `extra_user_content_parts` 由 `ExplicitContextCollector` 保留，不在渲染后补丁式追加。
+插件 extension 也先规范化成 slot，再进入同一条构建链路。插件原有 `ProviderRequest.contexts`、`extra_user_content_parts` 和显式媒体由 Collector 收集，不在渲染后补丁式追加。消息顺序固定为 persona begin dialogs、官方历史、插件显式 contexts、当前输入。
 
 ### Target Projection
 
@@ -45,7 +45,7 @@ Collector 默认 required。只有明确声明 optional 的 Collector 才允许�
 |---|---|
 | Router | 当前输入、附件摘要、最近几轮历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 |
 | Persona | 完整人格、官方对话历史、群聊上下文、memory/persona state、当前输入、待表达材料与 Core 结果 |
-| Core | 官方对话历史、群聊上下文、当前输入与附件、system/policy、tools、skills、knowledge、subagent 与插件执行上下文；不读取人格和 effect 语义 |
+| Core | 官方对话历史、群聊上下文、当前输入与附件、system/policy、tools、skills、knowledge、subagent 与插件执行上下文；排除人格、interaction memory 和 effect 语义 |
 
 Prompt extension 的 `meta.targets` 对 Router、Persona 和 Core 一致生效。未声明 targets 的普通 extension 默认属于 Core；interaction contributor 会明确标记 Persona 或 Router。
 
@@ -53,7 +53,7 @@ Prompt extension 的 `meta.targets` 对 Router、Persona 和 Core 一致生效�
 
 `PromptTreeBuilder` 把目标视图转换成 provider-neutral 的语义树。它负责 slot 分组、节点布局和 rendered-slot trace。`PromptRenderEngine` 只编排目标投影、建树、renderer 选择和日志，不再自己遍历业务 slot。
 
-当前仍保留 `BasePromptRenderer.render_*_context` 扩展点，以兼容已有自定义布局。后续如要继续收紧，可以把这些语义布局方法迁到独立 layout policy；这不是当前 provider serializer 的职责扩张理由。
+`BasePromptRenderer.render_*_context` 是语义布局接口。后续如要继续收紧，可以把这些方法迁到独立 layout policy；provider serializer 不负责选择业务上下文。
 
 ### Provider Renderer
 
@@ -64,21 +64,21 @@ Renderer 将语义树序列化为 provider 可用格式：
 - `MiniMaxPromptRenderer`
 - `BasePromptRenderer`
 
-Renderer 处理 system/messages、content blocks、图片来源、tool schema 和 `OutputContract` 的协议落地。它不重新选择 Router、Persona 或 Core 的业务上下文。
+Renderer 处理 system/messages、content blocks、图片来源、tool schema 和 `OutputContract` 的协议落地。它不重新选择 Router、Persona 或 Core 的业务上下文。当前 renderer family 与 Provider 输出契约能力仍分别声明，尚缺统一能力校验。
 
 ### Apply
 
 `ProviderRequestAdapter` 把 `RenderResult` 应用到现有 `ProviderRequest`。结构化文本块和插件显式 content parts 保持各自边界，不为了兼容单字符串字段而全局合并。
 
-应用范围包括 system prompt、history、当前 user message、媒体 content parts，以及 output contract。工具运行时对象和 conversation 等非模型可见状态保持不变。
+应用范围包括 system prompt、history、当前 user message、媒体 content parts，以及 output contract。工具运行时对象和 conversation 等非模型可见状态保持不变，因此 RenderResult tool schema 与实际 `func_tool` 目前仍不是同一事实来源。
+
+## 插件扩展边界
+
+官方 `filter.on_llm_request` 钩子继续保留。Core 主链路会先完成统一 Prompt 渲染，再把最终 `ProviderRequest` 交给该钩子；插件已有的底层请求修改不会被后续 Prompt 渲染覆盖。需要贡献模型上下文的新插件应优先注册 `PromptExtensionCollectorInterface`，只有确实需要修改最终请求、工具或 provider 参数时才使用 `on_llm_request`。
+
+内置群聊上下文不再注册第二个 `on_llm_request` 注入器，因为它已经通过 `conversation.group_recent` 进入统一管线。删除的是这条重复实现，不是官方插件钩子。`apply_interaction_core_task_spec` 作为显式管理 `ProviderRequest` 的兼容接口继续导出；主链路使用 `CoreTaskCollector`，不会同时调用两者。
 
 会话持久化使用单独生成的、去除 request context 和 Prompt 标签的用户消息，避免把内部脚手架写入官方历史。
-
-## 主 Agent 模式
-
-- `apply_visible`：当前默认，RenderResult 应用到 live request。
-- `shadow`：应用到克隆 request，仅记录差异。
-- `legacy`：显式保留旧链路。
 
 ## 输出契约
 
@@ -96,10 +96,12 @@ Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明�
 
 ## 群聊上下文
 
-`GroupChatContext` 是动态 Prompt Extension Collector。它提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。非 `apply_visible` 模式仍保留官方 `on_llm_request` 兼容出口，并通过 consumed 标记避免双重注入。
+`GroupChatContext` 是动态 Prompt Extension Collector。它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。它没有第二个 `on_llm_request` 文本注入出口。
 
 ## 仍需继续收口
 
-- `astr_main_agent.py` 仍承担能力装配和 request 生命周期，尚未完全拆成可替换执行器端口。
-- Base renderer 中的语义布局兼容方法仍可进一步迁移到独立 layout policy。
-- 真实平台的多模态、长历史预算和 provider token 上限仍需持续验证。
+- Provider renderer、输出契约和工具能力需要统一能力声明。
+- ContextPack enrichment 需要统一派生 API，禁止静默覆盖或删除 slot。
+- Context Catalog 需要从描述文件收口为真实契约，或删除未执行的声明。
+
+具体问题与处理顺序以 `docs/Yakumo/prompt-development-plan.md` 为准。

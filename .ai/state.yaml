@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: prompt_context_pipeline_refactor_complete
-  scope: Unify prompt fact collection, versioned context construction, deterministic Router/Persona/Core projection, semantic tree building, provider serialization, and scaffold-free history persistence
+  phase: prompt_context_pipeline_review_followup
+  scope: Remove remaining dual prompt sources, restore message ownership and chronology, and unify provider/context capability contracts before further prompt optimization
 context:
   confidence: high
   assumptions:
@@ -33,11 +33,16 @@ context:
     - Prompt memory injection must resolve identity from the current event; a shared group conversation's latest stored turn is not a valid proxy for the current speaker.
     - Group-chat prompt records use stable sender IDs when available, while nicknames remain display labels only.
     - Prompt target selection is deterministic code projection over one canonical ContextPack; the removed LLM/rule Prompt Selector is not part of the current architecture.
-    - Router receives recent history and a persona summary, Persona receives full official history and persona material, and Core receives official history plus execution capabilities without persona/effect semantics.
+    - Router, Persona, and Core target projections define distinct context boundaries over the single canonical ContextPack pipeline.
     - Static prompt collectors are cached only within one event/config/ProviderRequest identity and must not be treated as cross-turn global cache.
-  unresolved_questions: []
+    - Official on_llm_request remains a post-render low-level ProviderRequest hook; preserving it does not restore removed legacy/shadow prompt modes or internal duplicate injectors.
+  unresolved_questions:
+    - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
+    - Interaction enrichment can still mutate ContextPack directly and bypass Builder conflict/version semantics.
+    - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
+    - Context Catalog declares lifecycle and redaction rules that are not consistently enforced at runtime.
 architecture:
-  stability: stable
+  stability: review_required
   boundary_changes:
     - Conversational Router decisions are limited to silent/persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
     - Actual Persona Expression starts only after Router selection so silent turns cannot emit or record speculative expression failures.
@@ -73,7 +78,7 @@ architecture:
     - Quoted images are no longer captioned twice when the selected chat provider supports image input, and the main provider is no longer used as an implicit quoted-image caption fallback without a configured caption provider.
     - Command APIs expose normalized per-config wake prefixes for dashboard command suggestions.
     - Plugin APIs expose `marketplace_name` so local plugin entries can match marketplace names that differ only by underscore/hyphen normalization.
-    - Builtin group chat context now uses a shared `GroupChatContext` state with two exits: prompt-extension collection for Yakumo apply-visible prompt pipeline and legacy `on_llm_request` fallback for non-visible prompt modes.
+    - Builtin group chat context uses one structured prompt-extension exit and no longer mutates ProviderRequest through `on_llm_request`.
     - LLM context compression now uses round-based token-ratio recent preservation and compression-provider modality sanitization; it remains a runner-level request/messages optimization and does not own Yakumo memory storage or retrieval.
     - Memory snapshot reads accept an explicit current-event identity override; legacy callers without an identity retain latest-turn fallback behavior.
     - Session prompt metadata marks the current speaker and distinguishes group multi-user scope from private single-user scope.
@@ -84,11 +89,17 @@ architecture:
     - Router prompts receive attachment counts instead of image/file payloads, while Anthropic Persona contexts convert local image URLs to base64 image blocks.
     - Shared structured-output parsing uses json-repair only after standard JSON parsing fails, and still accepts repaired mappings only.
     - PromptTreeBuilder now owns semantic tree assembly; PromptRenderEngine orchestrates target projection, tree construction, provider renderer selection, and diagnostics.
-    - Prompt collection rejects conflicting duplicate slots; only explicit cross-phase replace_slots may replace a canonical fact.
+    - Builder-based prompt collection rejects conflicting duplicate slots and supports explicit cross-phase replacement; direct interaction enrichment still needs to move onto the same derivation contract.
     - Conversation persistence consumes the prompt pipeline's scaffold-free user message instead of saving internal request_context/user_input markup.
+    - Main Agent model-visible input now comes only from ContextPack collection and rendering; operational setup may register tools or runtime resources but cannot append Prompt text.
+    - Persona begin dialogs, official conversation history, plugin explicit contexts, and current input have a stable ownership-based message order.
+    - The exported apply_interaction_core_task_spec direct-request interface remains available for plugin compatibility, while the canonical Main Agent path uses CoreTaskCollector exclusively.
 verification:
   checks_run:
-    - .venv\Scripts\python.exe -m pytest prompt, interaction, group-context, and main-agent unit suites -q (463 passed)
+    - .venv\Scripts\python.exe -m pytest tests\unit -q -k "prompt or interaction or group_chat_context_wiring or astr_main_agent" --basetemp .tmp\pytest-prompt-review (450 passed, 707 deselected)
+    - .venv\Scripts\python.exe -m pytest tests\unit\test_postprocess.py tests\unit\test_memory_runtime.py tests\test_tool_loop_agent_runner.py -q --basetemp .tmp\pytest-prompt-review-post (138 passed)
+    - Public filter.on_llm_request and apply_interaction_core_task_spec import check, focused Core bridge/prompt integration tests, ruff, and git diff --check (passed)
+    - .venv\Scripts\python.exe -m pytest tests/unit -q -k "prompt or interaction or group_chat_context_wiring or astr_main_agent" (481 passed, 707 deselected)
     - .venv\Scripts\python.exe -m pytest tests/unit/test_postprocess.py tests/unit/test_memory_runtime.py tests/test_tool_loop_agent_runner.py -q (138 passed)
     - .venv\Scripts\python.exe -m ruff check prompt/interaction/main-agent/internal-stage/group-context implementation and affected tests (passed)
     - .venv\Scripts\python.exe -m py_compile prompt builder/targets/tree/engine, main agent, interaction context builder, and internal stage (passed)
@@ -123,7 +134,6 @@ verification:
     - pnpm --dir dashboard exec node scripts/subset-mdi-font.mjs
     - .venv\Scripts\python -m pytest tests/test_dashboard.py::test_do_update tests/unit/test_astr_main_agent.py::TestSelectProvider -q
     - .venv\Scripts\python -m ruff check astrbot/core/astr_main_agent.py astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py astrbot/core/updator.py astrbot/core/utils/io.py astrbot/core/zip_updator.py astrbot/dashboard/routes/update.py tests/test_dashboard.py tests/unit/test_astr_main_agent.py
-    - .venv\Scripts\python -m pytest tests/test_mimo_api_sources.py::test_mimo_tts_voicedesign_model_omits_voice_param tests/test_mimo_api_sources.py::test_mimo_tts_regular_model_includes_voice_param tests/test_openai_source.py::test_sanitize_keeps_reasoning_only_assistant_message tests/test_openai_source.py::test_mimo_reasoning_model_adds_empty_reasoning_content_to_assistant_history tests/unit/test_astr_main_agent.py::test_provider_supports_modality_requires_explicit_list tests/unit/test_astr_main_agent.py::test_select_image_chat_provider_uses_image_fallback tests/unit/test_astr_main_agent.py::test_select_image_chat_provider_keeps_provider_without_image_fallback tests/test_dashboard.py::test_plugin_get_stringifies_non_string_repo tests/test_dashboard.py::test_plugin_detail_stringifies_non_string_repo -q
     - .venv\Scripts\python -m ruff check astrbot/core/astr_main_agent.py astrbot/core/provider/sources/mimo_tts_api_source.py astrbot/core/provider/sources/openai_source.py astrbot/dashboard/routes/plugin.py tests/test_mimo_api_sources.py tests/test_openai_source.py tests/unit/test_astr_main_agent.py tests/test_dashboard.py
     - git diff --check
     - pnpm --dir dashboard install --lockfile-only
@@ -165,7 +175,6 @@ verification:
     - .venv\Scripts\python -m pytest tests/test_openai_source.py::test_resolve_image_part_preserves_base64_png_mime_type tests/test_openai_source.py::test_resolve_image_part_supports_base64_scheme tests/test_openai_source.py::test_encode_image_bs64_supports_base64_scheme tests/test_openai_source.py::test_encode_image_bs64_supports_file_uri tests/test_openai_source.py::test_image_ref_to_data_url_mode_controls_invalid_file_behavior tests/test_openai_source.py::test_encode_image_bs64_invalid_file_raises tests/test_openai_source.py::test_encode_image_bs64_missing_file_raises tests/test_media_utils.py tests/unit/test_aiocqhttp_reply.py tests/test_tool_loop_agent_runner.py::test_tool_result_includes_all_calltoolresult_content -q
     - .venv\Scripts\python -m pytest tests/agent/test_context_manager.py tests/unit/test_group_chat_context_wiring.py -q
     - .venv\Scripts\python -m ruff check astrbot/core/agent/context/compressor.py astrbot/core/agent/context/config.py astrbot/core/agent/context/manager.py astrbot/core/agent/context/round_utils.py astrbot/core/agent/runners/tool_loop_agent_runner.py astrbot/core/astr_main_agent.py astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py astrbot/builtin_stars/astrbot/group_chat_context.py astrbot/builtin_stars/astrbot/main.py astrbot/builtin_stars/builtin_commands/commands/conversation.py tests/agent/test_context_manager.py tests/unit/test_group_chat_context_wiring.py
-    - .venv\Scripts\python -m pytest tests/test_tool_loop_agent_runner.py::test_skills_like_requery_passes_extra_user_content_parts tests/test_tool_loop_agent_runner.py::test_skills_like_requery_preserves_original_visible_reply tests/unit/test_astr_main_agent.py::test_provider_supports_modality_requires_explicit_list tests/unit/test_astr_main_agent.py::test_select_image_chat_provider_uses_image_fallback tests/unit/test_astr_main_agent.py::test_select_image_chat_provider_keeps_provider_without_image_fallback -q
     - .venv\Scripts\python -c "import ast, pathlib; p=pathlib.Path('astrbot/core/config/default.py'); ast.parse(p.read_text(encoding='utf-8')); print('default.py ast ok')"
     - .venv\Scripts\python -m pytest tests/ -q --ignore=tests/test_openai_source.py --ignore=tests/test_anthropic_source.py --ignore=tests/test_aiocqhttp_platform.py -p no:cacheprovider
     - vue-tsc dashboard typecheck (no errors in any touched dashboard files)
@@ -174,10 +183,9 @@ verification:
     - .venv\Scripts\python -m pytest tests\unit\test_memory_runtime.py::test_memory_snapshot_current_identity_does_not_inherit_previous_group_sender -q -p no:cacheprovider --basetemp .tmp\pytest-memory-identity\run
     - .venv\Scripts\python -m pytest tests\unit\test_prompt_context_collect.py::test_collect_context_pack_collects_memory_slots_from_snapshot -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-identity\collector-run
     - .venv\Scripts\python -m ruff check astrbot\core\memory\snapshot_builder.py astrbot\core\memory\service.py astrbot\core\prompt\collectors\memory_collector.py astrbot\builtin_stars\astrbot\group_chat_context.py astrbot\core\prompt\collectors\session_collector.py astrbot\core\prompt\render\interfaces.py tests\unit\test_group_chat_context_wiring.py tests\unit\test_prompt_context_collect.py tests\unit\test_memory_runtime.py
-    - .venv\Scripts\python -m pytest tests\unit\test_prompt_pipeline_integration.py::test_apply_visible_pipeline_replaces_legacy_request_with_group_context_extension -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-owner
+    - .venv\Scripts\python -m pytest tests\unit\test_prompt_pipeline_integration.py::test_prompt_pipeline_replaces_pre_render_request_with_group_context_extension -q -p no:cacheprovider --basetemp .tmp\pytest-prompt-owner
     - .venv\Scripts\python -m ruff check tests\unit\test_prompt_pipeline_integration.py
     - git diff --check
-    - .venv\Scripts\python.exe -m pytest tests/unit/test_interaction_expression_agent.py tests/unit/test_interaction_router_agent.py tests/unit/test_interaction_middleware.py tests/unit/test_interaction_decision_agent.py tests/unit/test_interaction_context_builder.py tests/unit/test_interaction_output_controller.py tests/unit/test_astr_main_agent.py::test_interaction_core_collectors_use_brief_memory_without_persona_or_history tests/unit/test_astr_main_agent.py::test_interaction_core_collectors_reuse_event_memory_store tests/unit/test_astr_main_agent.py::test_provider_supports_modality_requires_explicit_list -q
     - .venv\Scripts\python.exe -m ruff check on all files changed by the interaction prompt-profile refactor
     - .venv\Scripts\python.exe -m py_compile astrbot/core/astr_main_agent.py astrbot/core/interaction/expression_agent.py astrbot/core/interaction/router_agent.py astrbot/core/interaction/middleware.py astrbot/core/prompt/profiles.py
     - git diff --check

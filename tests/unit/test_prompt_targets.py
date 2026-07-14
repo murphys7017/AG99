@@ -10,6 +10,11 @@ def _canonical_pack() -> ContextPack:
     return ContextPack(
         slots={
             "system.base": _slot("system.base", "system", "system"),
+            "system.core_execution_context": _slot(
+                "system.core_execution_context",
+                {"execution_prompt": "run core task"},
+                "system",
+            ),
             "persona.prompt": _slot("persona.prompt", "full persona", "persona"),
             "persona.summary": _slot("persona.summary", "brief persona", "persona"),
             "input.text": _slot("input.text", "current", "input"),
@@ -84,6 +89,7 @@ def test_persona_projection_keeps_history_and_hides_core_capabilities():
     assert projected.get_slot("memory.persona_state") is not None
     assert projected.get_slot("capability.tools_schema") is None
     assert projected.get_slot("knowledge.snippets") is None
+    assert projected.get_slot("system.core_execution_context") is None
 
 
 def test_core_projection_keeps_execution_context_without_persona_material():
@@ -98,6 +104,7 @@ def test_core_projection_keeps_execution_context_without_persona_material():
     assert projected.get_slot("memory.persona_state") is None
     assert projected.get_slot("memory.interaction") is None
     assert projected.get_slot("input.visible_reply_material") is None
+    assert projected.get_slot("system.core_execution_context") is not None
 
 
 def test_extension_targets_are_filtered_for_every_prompt_target():

@@ -12,12 +12,17 @@ from astrbot.core.astr_main_agent_resources import (
     LIVE_MODE_SYSTEM_PROMPT,
     TOOL_CALL_PROMPT,
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
+    WEB_SEARCH_CITATION_PROMPT,
+    WEB_SEARCH_CITATION_TOOL_NAMES,
 )
+from astrbot.core.db import BaseDatabase
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
-from astrbot.core.tools.computer_tools import normalize_umo_for_workspace
-from astrbot.core.utils.astrbot_path import get_astrbot_workspaces_path
+from astrbot.core.workspace import (
+    default_workspace_root,
+    resolve_workspace_root_for_umo,
+)
 
 from ..context_types import ContextSlot
 from ..interfaces.context_collector_inferface import ContextCollectorInterface
@@ -69,7 +74,10 @@ class SystemCollector(ContextCollectorInterface):
             )
 
         try:
-            workspace_prompt_slot = self._build_workspace_extra_prompt_slot(event)
+            workspace_prompt_slot = await self._build_workspace_extra_prompt_slot(
+                event,
+                plugin_context,
+            )
             if workspace_prompt_slot is not None:
                 slots.append(workspace_prompt_slot)
         except Exception as exc:  # noqa: BLE001
@@ -89,6 +97,13 @@ class SystemCollector(ContextCollectorInterface):
                 exc,
                 exc_info=True,
             )
+
+        web_search_slot = self._build_web_search_citation_slot(
+            event,
+            provider_request,
+        )
+        if web_search_slot is not None:
+            slots.append(web_search_slot)
 
         return slots
 
@@ -115,13 +130,13 @@ class SystemCollector(ContextCollectorInterface):
             },
         )
 
-    def _build_workspace_extra_prompt_slot(
+    async def _build_workspace_extra_prompt_slot(
         self,
         event: AstrMessageEvent,
+        plugin_context: Context,
     ) -> ContextSlot | None:
-        extra_prompt_path = self._get_workspace_extra_prompt_path(
-            event.unified_msg_origin
-        )
+        workspace_root = await self._get_workspace_root(event, plugin_context)
+        extra_prompt_path = workspace_root / "EXTRA_PROMPT.md"
         if not extra_prompt_path.is_file():
             return None
 
@@ -152,9 +167,27 @@ class SystemCollector(ContextCollectorInterface):
             },
         )
 
-    def _get_workspace_extra_prompt_path(self, umo: str) -> Path:
-        normalized_umo = normalize_umo_for_workspace(umo)
-        return Path(get_astrbot_workspaces_path()) / normalized_umo / "EXTRA_PROMPT.md"
+    async def _get_workspace_root(
+        self,
+        event: AstrMessageEvent,
+        plugin_context: Context,
+    ) -> Path:
+        workspace_root = default_workspace_root(event.unified_msg_origin)
+        db = getattr(plugin_context, "_db", None)
+        if not isinstance(db, BaseDatabase):
+            return workspace_root
+        try:
+            return await resolve_workspace_root_for_umo(
+                event.unified_msg_origin,
+                db,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "Failed to resolve prompt workspace root for %s: %s",
+                event.unified_msg_origin,
+                exc,
+            )
+            return workspace_root
 
     async def _build_tool_call_instruction_slot(
         self,
@@ -179,9 +212,10 @@ class SystemCollector(ContextCollectorInterface):
             else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
         )
         if config.computer_use_runtime == "local":
+            workspace_root = await self._get_workspace_root(event, plugin_context)
             tool_prompt += (
                 f"\nCurrent workspace you can use: "
-                f"`{self._get_workspace_extra_prompt_path(event.unified_msg_origin).parent}`\n"
+                f"`{workspace_root}`\n"
                 "Unless the user explicitly specifies a different directory, "
                 "perform all file-related operations in this workspace.\n"
             )
@@ -195,6 +229,26 @@ class SystemCollector(ContextCollectorInterface):
                 "requires_tools": True,
                 "runtime": config.computer_use_runtime,
             },
+        )
+
+    def _build_web_search_citation_slot(
+        self,
+        event: AstrMessageEvent,
+        provider_request: ProviderRequest | None,
+    ) -> ContextSlot | None:
+        if event.get_platform_name() != "webchat" or provider_request is None:
+            return None
+        tools = provider_request.func_tool
+        if not tools or not any(
+            tools.get_tool(name) for name in WEB_SEARCH_CITATION_TOOL_NAMES
+        ):
+            return None
+        return ContextSlot(
+            name="system.web_search_citation_prompt",
+            value=WEB_SEARCH_CITATION_PROMPT,
+            category="system",
+            source="web_search_policy",
+            meta={"platform": "webchat"},
         )
 
     def _build_live_mode_prompt_slot(

@@ -10,13 +10,14 @@ import pytest
 from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.agent import Agent
 from astrbot.core.agent.handoff import HandoffTool
-from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.astr_main_agent_resources import (
     CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
     LIVE_MODE_SYSTEM_PROMPT,
     LLM_SAFETY_MODE_SYSTEM_PROMPT,
     SANDBOX_MODE_PROMPT,
+    TOOL_CALL_PROMPT,
+    TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
 )
 from astrbot.core.memory.config import MemoryConfig
 from astrbot.core.memory.snapshot_builder import MemorySnapshotReadOptions
@@ -63,9 +64,6 @@ from astrbot.core.prompt.interfaces import (
 )
 from astrbot.core.prompt.render import (
     PROMPT_RENDER_RESULT_EXTRA_KEY,
-    PROMPT_SHADOW_APPLY_RESULT_EXTRA_KEY,
-    PROMPT_SHADOW_DIFF_EXTRA_KEY,
-    PROMPT_SHADOW_PROVIDER_REQUEST_EXTRA_KEY,
 )
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo
@@ -343,82 +341,6 @@ async def test_build_main_agent_stores_prompt_context_pack_in_event_extra():
     assert pack.get_slot("persona.segments") is not None
     assert result.provider_request.prompt is not None
     assert result.provider_request.prompt.startswith("<request_context>")
-
-
-@pytest.mark.asyncio
-async def test_build_main_agent_runs_prompt_pipeline_in_shadow_mode():
-    event, extras = _make_event()
-    context = _make_context()
-    provider = MagicMock()
-    provider.provider_config = {"id": "test-provider", "modalities": ["tool_use"]}
-    provider.get_model.return_value = "gpt-4"
-    context.get_using_provider.return_value = provider
-
-    conversation = _make_conversation(persona_id="persona-a")
-    context.conversation_manager.get_curr_conversation_id = AsyncMock(return_value=None)
-    context.conversation_manager.new_conversation = AsyncMock(return_value="conv-id")
-    context.conversation_manager.get_conversation = AsyncMock(return_value=conversation)
-
-    persona = {
-        "name": "persona-a",
-        "prompt": "You are a helpful assistant.",
-        "_begin_dialogs_processed": [],
-        "tools": None,
-        "skills": None,
-    }
-    context.persona_manager.resolve_selected_persona = AsyncMock(
-        return_value=("persona-a", persona, None, False)
-    )
-
-    with (
-        patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
-        patch("astrbot.core.astr_main_agent.AstrAgentContext"),
-    ):
-        mock_runner = MagicMock()
-        mock_runner.reset = AsyncMock()
-        mock_runner_cls.return_value = mock_runner
-
-        result = await ama.build_main_agent(
-            event=event,
-            plugin_context=context,
-            config=ama.MainAgentBuildConfig(
-                tool_call_timeout=60,
-                prompt_pipeline_mode="",
-                prompt_pipeline_shadow_mode=True,
-            ),
-        )
-
-    assert result is not None
-    assert PROMPT_CONTEXT_PACK_EXTRA_KEY in extras
-    assert PROMPT_RENDER_RESULT_EXTRA_KEY in extras
-    assert PROMPT_SHADOW_PROVIDER_REQUEST_EXTRA_KEY in extras
-    assert PROMPT_SHADOW_APPLY_RESULT_EXTRA_KEY in extras
-    assert PROMPT_SHADOW_DIFF_EXTRA_KEY in extras
-
-    render_result = extras[PROMPT_RENDER_RESULT_EXTRA_KEY]
-    shadow_request = extras[PROMPT_SHADOW_PROVIDER_REQUEST_EXTRA_KEY]
-    apply_result = extras[PROMPT_SHADOW_APPLY_RESULT_EXTRA_KEY]
-    shadow_diff = extras[PROMPT_SHADOW_DIFF_EXTRA_KEY]
-
-    assert render_result.messages
-    assert apply_result.used_user_message is True
-    assert apply_result.history_message_count == 0
-    assert shadow_request is not result.provider_request
-    assert shadow_request.prompt is not None
-    assert shadow_request.prompt.startswith("<request_context>")
-    assert shadow_request.extra_user_content_parts == [
-        TextPart(text="<user_input>\n  <text>hello</text>\n</user_input>")
-    ]
-    assert result.provider_request.prompt == "hello"
-    assert shadow_diff["changed"] is True
-    assert "prompt" in shadow_diff["changed_fields"]
-    assert "system_prompt" in shadow_diff["changed_fields"]
-    assert shadow_diff["diff"]["prompt"]["live"] == "hello"
-    assert (
-        shadow_diff["diff"]["system_prompt"]["live"]
-        == result.provider_request.system_prompt
-    )
-    assert isinstance(shadow_diff["diff"]["prompt"]["shadow"], str)
 
 
 @pytest.mark.asyncio
@@ -1401,6 +1323,7 @@ async def test_collect_context_pack_default_collectors_include_session_collector
 
     assert pack.meta["collectors"] == [
         "SystemCollector",
+        "CoreTaskCollector",
         "PersonaCollector",
         "InputCollector",
         "SessionCollector",
@@ -1483,12 +1406,8 @@ async def test_collect_context_pack_collects_workspace_extra_prompt(tmp_path):
 
     with (
         patch(
-            "astrbot.core.prompt.collectors.system_collector.get_astrbot_workspaces_path",
-            return_value=str(tmp_path),
-        ),
-        patch(
-            "astrbot.core.prompt.collectors.system_collector.normalize_umo_for_workspace",
-            return_value="normalized-umo",
+            "astrbot.core.prompt.collectors.system_collector.default_workspace_root",
+            return_value=workspace_dir,
         ),
     ):
         pack = await collect_context_pack(
@@ -1532,7 +1451,7 @@ async def test_collect_context_pack_collects_full_tool_call_instruction():
 
     instruction_slot = pack.get_slot("system.tool_call_instruction")
     assert instruction_slot is not None
-    assert instruction_slot.value == ama.TOOL_CALL_PROMPT
+    assert instruction_slot.value == TOOL_CALL_PROMPT
     assert instruction_slot.meta["tool_schema_mode"] == "full"
 
 
@@ -1541,15 +1460,10 @@ async def test_collect_context_pack_collects_skills_like_tool_call_instruction()
     event, _ = _make_event()
     context = _make_context()
 
-    with (
-        patch(
-            "astrbot.core.prompt.collectors.system_collector.get_astrbot_workspaces_path",
-            return_value="C:/AstrBot/workspaces",
-        ),
-        patch(
-            "astrbot.core.prompt.collectors.system_collector.normalize_umo_for_workspace",
-            return_value="normalized-umo",
-        ),
+    with patch.object(
+        SystemCollector,
+        "_get_workspace_root",
+        new=AsyncMock(return_value=Path("C:/AstrBot/workspaces/normalized-umo")),
     ):
         pack = await collect_context_pack(
             event=event,
@@ -1565,7 +1479,7 @@ async def test_collect_context_pack_collects_skills_like_tool_call_instruction()
 
     instruction_slot = pack.get_slot("system.tool_call_instruction")
     assert instruction_slot is not None
-    assert instruction_slot.value.startswith(ama.TOOL_CALL_PROMPT_SKILLS_LIKE_MODE)
+    assert instruction_slot.value.startswith(TOOL_CALL_PROMPT_SKILLS_LIKE_MODE)
     assert "normalized-umo" in instruction_slot.value
     assert instruction_slot.meta["tool_schema_mode"] == "skills-like"
     assert instruction_slot.meta["runtime"] == "local"
@@ -1613,7 +1527,7 @@ async def test_collect_context_pack_collects_tool_call_instruction_for_agentic_k
 
     instruction_slot = pack.get_slot("system.tool_call_instruction")
     assert instruction_slot is not None
-    assert instruction_slot.value == ama.TOOL_CALL_PROMPT
+    assert instruction_slot.value == TOOL_CALL_PROMPT
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,22 @@ contexts:
     lifecycle: static
     notes: "直播/实时模式提示"
 
+  - id: system.web_search_citation_prompt
+    category: system
+    slots: [system]
+    required: false
+    multiple: false
+    lifecycle: dynamic
+    notes: "WebChat 使用搜索工具时的引用格式要求"
+
+  - id: system.core_execution_context
+    category: system
+    slots: [system]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "Interaction Middleware 委派给 Core 的结构化执行意图"
+
   # ========== Persona 类 (session) ==========
   - id: persona.prompt
     category: persona
@@ -206,6 +222,14 @@ contexts:
     multiple: true
     lifecycle: ephemeral
     notes: "当前输入图片的描述结果；slot.value 为 list 结构"
+
+  - id: input.media_content_parts
+    category: input
+    slots: [user_input]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "当前消息及引用消息中的音频和视频内容块"
 
   - id: input.quoted_text
     category: input

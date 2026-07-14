@@ -7,13 +7,11 @@ import pytest
 from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.api.platform import MessageType
 from astrbot.builtin_stars.astrbot.group_chat_context import (
-    GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA,
     GROUP_CONTEXT_RAW_IDX_EXTRA,
     GROUP_CONTEXT_RECORD_ID_EXTRA,
     GroupChatContext,
 )
 from astrbot.builtin_stars.astrbot.main import Main
-from astrbot.core.agent.message import TextPart
 from astrbot.core.provider.entities import ProviderRequest
 
 
@@ -89,7 +87,7 @@ def test_group_chat_context_collector_is_dynamic():
 
 
 @pytest.mark.asyncio
-async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_double_inject():
+async def test_group_chat_context_collects_structured_prompt_extension():
     context = MagicMock()
     context.get_config.return_value = make_config()
     group_context = GroupChatContext(MagicMock(), context)
@@ -104,11 +102,9 @@ async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_dou
     extensions = await group_context.collect(
         event,
         context,
-        MagicMock(prompt_pipeline_mode="apply_visible"),
+        MagicMock(),
         provider_request=ProviderRequest(prompt="hello"),
     )
-    req = ProviderRequest(prompt="hello")
-    await group_context.on_req_llm(event, req)
 
     assert len(extensions) == 1
     extension = extensions[0]
@@ -116,8 +112,6 @@ async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_dou
     assert extension.value_kind == "mapping"
     assert extension.value["records"] == ["[Bob/10:00:00]: previous"]
     assert "[Alice/10:01:00]: current" not in extension.value["text"]
-    assert event.get_extra(GROUP_CONTEXT_PROMPT_CONSUMED_EXTRA) is True
-    assert req.extra_user_content_parts == []
     assert list(group_context.raw_records[event.unified_msg_origin]) == [
         "[Bob/10:00:00]: previous",
         "[Alice/10:01:00]: current",
@@ -125,7 +119,7 @@ async def test_group_chat_context_collects_prompt_extension_and_skips_legacy_dou
 
 
 @pytest.mark.asyncio
-async def test_group_chat_context_collector_treats_empty_prompt_mode_as_apply_visible():
+async def test_group_chat_context_collector_has_no_pipeline_mode_switch():
     context = MagicMock()
     context.get_config.return_value = make_config()
     group_context = GroupChatContext(MagicMock(), context)
@@ -140,15 +134,12 @@ async def test_group_chat_context_collector_treats_empty_prompt_mode_as_apply_vi
     extensions = await group_context.collect(
         event,
         context,
-        MagicMock(prompt_pipeline_mode=""),
+        MagicMock(),
         provider_request=ProviderRequest(prompt="hello"),
     )
-    req = ProviderRequest(prompt="hello")
-    await group_context.on_req_llm(event, req)
 
     assert len(extensions) == 1
     assert "previous" in extensions[0].value["text"]
-    assert req.extra_user_content_parts == []
 
 
 @pytest.mark.asyncio
@@ -166,7 +157,7 @@ async def test_group_chat_context_directed_message_sees_all_prior_ambient_record
     extensions = await group_context.collect(
         event,
         context,
-        MagicMock(prompt_pipeline_mode="apply_visible"),
+        MagicMock(),
         provider_request=ProviderRequest(prompt="@bot answer me"),
     )
 
@@ -174,57 +165,6 @@ async def test_group_chat_context_directed_message_sees_all_prior_ambient_record
         "[Bob/10:00:00]: first",
         "[Carol/10:01:00]: second",
     ]
-
-
-@pytest.mark.asyncio
-async def test_group_chat_context_legacy_request_injects_when_prompt_pipeline_did_not_consume():
-    context = MagicMock()
-    context.get_config.return_value = make_config()
-    group_context = GroupChatContext(MagicMock(), context)
-    event = make_event()
-    event.set_extra(GROUP_CONTEXT_RECORD_ID_EXTRA, "r2")
-    event.set_extra(GROUP_CONTEXT_RAW_IDX_EXTRA, 1)
-    group_context.raw_records[event.unified_msg_origin] = deque(
-        ["[Bob/10:00:00]: previous", "[Alice/10:01:00]: current"]
-    )
-    group_context._record_ids[event.unified_msg_origin] = deque(["r1", "r2"])
-    req = ProviderRequest(prompt="hello")
-
-    await group_context.on_req_llm(event, req)
-
-    assert len(req.extra_user_content_parts) == 1
-    assert isinstance(req.extra_user_content_parts[0], TextPart)
-    assert "previous" in req.extra_user_content_parts[0].text
-    assert "[Alice/10:01:00]: current" not in req.extra_user_content_parts[0].text
-    assert len(group_context.raw_records[event.unified_msg_origin]) == 2
-
-
-@pytest.mark.asyncio
-async def test_group_chat_context_collector_does_not_consume_in_non_visible_prompt_mode():
-    context = MagicMock()
-    context.get_config.return_value = make_config()
-    group_context = GroupChatContext(MagicMock(), context)
-    event = make_event()
-    event.set_extra(GROUP_CONTEXT_RECORD_ID_EXTRA, "r2")
-    event.set_extra(GROUP_CONTEXT_RAW_IDX_EXTRA, 1)
-    group_context.raw_records[event.unified_msg_origin] = deque(
-        ["[Bob/10:00:00]: previous", "[Alice/10:01:00]: current"]
-    )
-    group_context._record_ids[event.unified_msg_origin] = deque(["r1", "r2"])
-    config = MagicMock(prompt_pipeline_mode="legacy")
-
-    extensions = await group_context.collect(
-        event,
-        context,
-        config,
-        provider_request=ProviderRequest(prompt="hello"),
-    )
-    req = ProviderRequest(prompt="hello")
-    await group_context.on_req_llm(event, req)
-
-    assert extensions == []
-    assert len(req.extra_user_content_parts) == 1
-    assert "previous" in req.extra_user_content_parts[0].text
 
 
 @pytest.mark.asyncio

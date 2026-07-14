@@ -1,37 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-import datetime
 import json
 import os
-import platform
-import zoneinfo
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from astrbot.core import logger
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.mcp_client import MCPTool
-from astrbot.core.agent.message import AudioURLPart, ImageURLPart, TextPart
+from astrbot.core.agent.message import AudioURLPart, ImageURLPart
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
 from astrbot.core.astr_agent_run_util import AgentRunner
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
-from astrbot.core.astr_main_agent_resources import (
-    CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
-    LIVE_MODE_SYSTEM_PROMPT,
-    LLM_SAFETY_MODE_SYSTEM_PROMPT,
-    SANDBOX_MODE_PROMPT,
-    TOOL_CALL_PROMPT,
-    TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
-)
 from astrbot.core.conversation_mgr import Conversation
-from astrbot.core.db import BaseDatabase
-from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -39,6 +24,7 @@ from astrbot.core.persona_error_reply import (
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.collectors.core_task_collector import CoreTaskCollector
 from astrbot.core.prompt.collectors.explicit_context_collector import (
     ExplicitContextCollector,
 )
@@ -57,33 +43,14 @@ from astrbot.core.prompt.context_collect import (
 from astrbot.core.prompt.render import (
     PROMPT_APPLY_RESULT_EXTRA_KEY,
     PROMPT_RENDER_RESULT_EXTRA_KEY,
-    PROMPT_SHADOW_APPLY_RESULT_EXTRA_KEY,
-    PROMPT_SHADOW_DIFF_EXTRA_KEY,
-    PROMPT_SHADOW_PROVIDER_REQUEST_EXTRA_KEY,
     PromptRenderEngine,
     PromptTarget,
     apply_render_result_to_request,
 )
-from astrbot.core.prompt.runtime_cache import (
-    get_cached_file_extract,
-    get_cached_image_caption,
-    set_cached_file_extract,
-    set_cached_image_caption,
-)
-from astrbot.core.prompt.strict_mode import (
-    handle_prompt_pipeline_failure,
-    is_prompt_pipeline_strict,
-)
 from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.provider.register import llm_tools
-from astrbot.core.skills.skill_manager import (
-    SkillInfo,
-    SkillManager,
-    build_skills_prompt,
-)
 from astrbot.core.star.context import Context
-from astrbot.core.star.star import star_registry
 from astrbot.core.star.star_handler import star_map
 from astrbot.core.tools.computer_tools import (
     AnnotateExecutionTool,
@@ -112,12 +79,10 @@ from astrbot.core.tools.computer_tools import (
     RollbackSkillReleaseTool,
     RunBrowserSkillTool,
     SyncSkillReleaseTool,
-    normalize_umo_for_workspace,
 )
 from astrbot.core.tools.cron_tools import FutureTaskTool
 from astrbot.core.tools.knowledge_base_tools import (
     KnowledgeBaseQueryTool,
-    retrieve_knowledge_base_with_cache,
 )
 from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.tools.web_search_tools import (
@@ -134,56 +99,12 @@ from astrbot.core.tools.web_search_tools import (
 )
 from astrbot.core.utils.astrbot_path import (
     get_astrbot_system_tmp_path,
-    get_astrbot_workspaces_path,
 )
-from astrbot.core.utils.file_extract import extract_file_moonshotai
 from astrbot.core.utils.llm_metadata import LLM_METADATAS
-from astrbot.core.utils.media_utils import (
-    IMAGE_COMPRESS_DEFAULT_MAX_SIZE,
-    IMAGE_COMPRESS_DEFAULT_QUALITY,
-    compress_image,
-)
-from astrbot.core.utils.quoted_message.settings import (
-    SETTINGS as DEFAULT_QUOTED_MESSAGE_SETTINGS,
-)
-from astrbot.core.utils.quoted_message.settings import (
-    QuotedMessageParserSettings,
-)
-from astrbot.core.utils.quoted_message_parser import (
-    extract_quoted_message_images,
-    extract_quoted_message_text,
-)
 from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
-from astrbot.core.workspace import resolve_workspace_root_for_umo
 
 CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY = "conversation_save_user_message"
 LLM_ERROR_MESSAGE_EXTRA_KEY = "_llm_error_message"
-WEEKDAY_NAMES = (
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-)
-WEB_SEARCH_CITATION_TOOL_NAMES = frozenset(
-    {
-        "web_search_baidu",
-        "web_search_tavily",
-        "web_search_bocha",
-        "web_search_brave",
-        "web_search_exa",
-    }
-)
-WEB_SEARCH_CITATION_PROMPT = (
-    "Always cite web search results you rely on. "
-    "Index is a unique identifier for each search result. "
-    "Use the exact citation format <ref>index</ref> (e.g. <ref>abcd.3</ref>) "
-    "after the sentence that uses the information. Do not invent citations."
-)
-
-
 @dataclass(slots=True)
 class MainAgentBuildConfig:
     """The main agent build configuration.
@@ -244,14 +165,8 @@ class MainAgentBuildConfig:
     timezone: str | None = None
     max_quoted_fallback_images: int = 20
     """Maximum number of images injected from quoted-message fallback extraction."""
-    prompt_pipeline_shadow_mode: bool = False
-    """Whether to run the prompt collect->render->apply pipeline in shadow mode for debug."""
-    prompt_pipeline_mode: str = "apply_visible"
-    """Prompt pipeline mode: apply_visible, legacy, or shadow."""
     prompt_pipeline_strict_mode: bool = False
     """Whether to fail loudly when prompt-pipeline stages encounter errors."""
-    prompt_selector: dict = field(default_factory=dict)
-    """Prompt selector settings for context and capability exposure."""
 
 
 @dataclass(slots=True)
@@ -313,82 +228,6 @@ async def _get_session_conv(
     if not conversation:
         raise RuntimeError("无法创建新的对话。")
     return conversation
-
-
-def _clone_provider_request_for_prompt_shadow(req: ProviderRequest) -> ProviderRequest:
-    """Clone the request fields that the prompt adapter may rewrite."""
-    return ProviderRequest(
-        prompt=req.prompt,
-        session_id=req.session_id,
-        image_urls=list(req.image_urls or []),
-        audio_urls=list(req.audio_urls or []),
-        extra_user_content_parts=copy.deepcopy(req.extra_user_content_parts or []),
-        func_tool=req.func_tool,
-        contexts=copy.deepcopy(req.contexts or []),
-        system_prompt=req.system_prompt,
-        conversation=req.conversation,
-        tool_calls_result=copy.deepcopy(req.tool_calls_result),
-        model=req.model,
-        output_contract=copy.deepcopy(req.output_contract),
-        compiled_output_contract=copy.deepcopy(req.compiled_output_contract),
-    )
-
-
-def _serialize_provider_request_for_prompt_shadow(
-    req: ProviderRequest,
-) -> dict[str, object]:
-    """Serialize prompt-facing request fields into a debug-friendly payload."""
-    return {
-        "prompt": req.prompt,
-        "system_prompt": req.system_prompt,
-        "contexts": copy.deepcopy(req.contexts or []),
-        "extra_user_content_parts": [
-            part.model_dump() if hasattr(part, "model_dump") else str(part)
-            for part in (req.extra_user_content_parts or [])
-        ],
-        "image_urls": list(req.image_urls or []),
-        "audio_urls": list(req.audio_urls or []),
-        "func_tool_names": req.func_tool.names() if req.func_tool else [],
-        "model": req.model,
-        "session_id": req.session_id,
-        "output_contract": (
-            req.output_contract.to_dict() if req.output_contract is not None else None
-        ),
-        "compiled_output_contract": (
-            req.compiled_output_contract.to_dict()
-            if req.compiled_output_contract is not None
-            else None
-        ),
-    }
-
-
-def _build_prompt_shadow_diff(
-    live_request: ProviderRequest,
-    shadow_request: ProviderRequest,
-) -> dict[str, object]:
-    """Build a compact structured diff between the live and shadow requests."""
-    live_payload = _serialize_provider_request_for_prompt_shadow(live_request)
-    shadow_payload = _serialize_provider_request_for_prompt_shadow(shadow_request)
-    changed_fields: list[str] = []
-    field_diffs: dict[str, dict[str, object]] = {}
-
-    for field_name in live_payload:
-        live_value = live_payload[field_name]
-        shadow_value = shadow_payload[field_name]
-        if live_value == shadow_value:
-            continue
-        changed_fields.append(field_name)
-        field_diffs[field_name] = {
-            "live": live_value,
-            "shadow": shadow_value,
-        }
-
-    return {
-        "changed": bool(changed_fields),
-        "changed_fields": changed_fields,
-        "field_count": len(changed_fields),
-        "diff": field_diffs,
-    }
 
 
 def _preview_prompt_log_text(value: object, *, limit: int = 240) -> str | None:
@@ -456,6 +295,7 @@ def should_use_interaction_core_profile(event: AstrMessageEvent) -> bool:
 def _build_interaction_core_collectors():
     return [
         SystemCollector(),
+        CoreTaskCollector(),
         SessionCollector(),
         PolicyCollector(),
         MemoryCollector(),
@@ -555,92 +395,7 @@ def _build_conversation_save_user_message(
     return {"role": "user", "content": content}
 
 
-def _summarize_prompt_shadow_diff(shadow_diff: dict[str, object]) -> dict[str, object]:
-    return {
-        "changed": bool(shadow_diff.get("changed")),
-        "field_count": int(shadow_diff.get("field_count", 0) or 0),
-        "changed_fields": list(shadow_diff.get("changed_fields", []) or []),
-    }
-
-
-def _run_prompt_pipeline_shadow_mode(
-    *,
-    event: AstrMessageEvent,
-    plugin_context: Context,
-    config: MainAgentBuildConfig,
-    provider: Provider,
-    provider_request: ProviderRequest,
-    prompt_context_pack,
-    target: PromptTarget | None = None,
-) -> None:
-    """Execute the prompt pipeline in shadow mode without mutating the live request."""
-    event.set_extra("provider", provider)
-    render_engine = PromptRenderEngine()
-    render_result = render_engine.render(
-        prompt_context_pack,
-        target=target,
-        event=event,
-        plugin_context=plugin_context,
-        config=config,
-        provider_request=provider_request,
-    )
-    shadow_request = _clone_provider_request_for_prompt_shadow(provider_request)
-    apply_result = apply_render_result_to_request(render_result, shadow_request)
-    _modalities_fix(provider, shadow_request)
-    _sanitize_context_by_modalities(config, provider, shadow_request)
-    shadow_diff = _build_prompt_shadow_diff(provider_request, shadow_request)
-
-    event.set_extra(PROMPT_RENDER_RESULT_EXTRA_KEY, render_result)
-    event.set_extra(PROMPT_SHADOW_PROVIDER_REQUEST_EXTRA_KEY, shadow_request)
-    event.set_extra(PROMPT_SHADOW_APPLY_RESULT_EXTRA_KEY, apply_result)
-    event.set_extra(PROMPT_SHADOW_DIFF_EXTRA_KEY, shadow_diff)
-
-    logger.debug(
-        "Prompt shadow apply result: %s",
-        json.dumps(
-            _summarize_prompt_apply_result(apply_result),
-            ensure_ascii=False,
-            default=str,
-        ),
-    )
-    logger.debug(
-        "Prompt shadow provider request: %s",
-        json.dumps(
-            _summarize_provider_request_for_prompt_log(shadow_request),
-            ensure_ascii=False,
-            default=str,
-        ),
-    )
-    logger.debug(
-        "Prompt shadow request diff: %s",
-        json.dumps(
-            _summarize_prompt_shadow_diff(shadow_diff),
-            ensure_ascii=False,
-            default=str,
-        ),
-    )
-
-
-def _resolve_prompt_pipeline_mode(config: MainAgentBuildConfig) -> str:
-    mode = (getattr(config, "prompt_pipeline_mode", "") or "").strip().lower()
-    if mode in {"shadow", "apply_visible"}:
-        return mode
-    if mode == "legacy":
-        if config.prompt_pipeline_shadow_mode:
-            return "shadow"
-        return "legacy"
-    if mode == "":
-        if config.prompt_pipeline_shadow_mode:
-            return "shadow"
-        return "apply_visible"
-    if is_prompt_pipeline_strict(config):
-        raise ValueError(f"Unsupported prompt_pipeline_mode: {mode}")
-    if config.prompt_pipeline_shadow_mode:
-        return "shadow"
-    return "apply_visible"
-
-
-def _apply_prompt_pipeline_visible_mode(
+def _apply_prompt_pipeline(
     *,
     event: AstrMessageEvent,
     plugin_context: Context,
@@ -650,7 +405,7 @@ def _apply_prompt_pipeline_visible_mode(
     provider: Provider | None = None,
     target: PromptTarget | None = None,
 ) -> None:
-    """Render collected prompt context and overwrite only model-visible request fields."""
+    """Render the canonical context and replace all model-visible request fields."""
     if provider is not None:
         event.set_extra("provider", provider)
     render_engine = PromptRenderEngine()
@@ -686,157 +441,19 @@ def _apply_prompt_pipeline_visible_mode(
     )
 
 
-async def _apply_kb(
-    event: AstrMessageEvent,
+def _prepare_knowledge_tools(
     req: ProviderRequest,
     plugin_context: Context,
     config: MainAgentBuildConfig,
 ) -> None:
     if not config.kb_agentic_mode:
-        if req.prompt is None or not req.prompt.strip():
-            return
-        try:
-            kb_result = await retrieve_knowledge_base_with_cache(
-                query=req.prompt,
-                umo=event.unified_msg_origin,
-                context=plugin_context,
-                event=event,
-            )
-            if not kb_result:
-                return
-            if req.system_prompt is not None:
-                req.system_prompt += (
-                    f"\n\n[Related Knowledge Base Results]:\n{kb_result}"
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Error occurred while retrieving knowledge base: %s", exc)
-    else:
-        if req.func_tool is None:
-            req.func_tool = ToolSet()
-        req.func_tool.add_tool(
-            plugin_context.get_llm_tool_manager().get_builtin_tool(
-                KnowledgeBaseQueryTool
-            )
+        return
+    if req.func_tool is None:
+        req.func_tool = ToolSet()
+    req.func_tool.add_tool(
+        plugin_context.get_llm_tool_manager().get_builtin_tool(
+            KnowledgeBaseQueryTool
         )
-
-
-async def _apply_file_extract(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    config: MainAgentBuildConfig,
-) -> None:
-    file_paths = []
-    file_names = []
-    for comp in event.message_obj.message:
-        if isinstance(comp, File):
-            file_paths.append(await comp.get_file())
-            file_names.append(comp.name)
-        elif isinstance(comp, Reply) and comp.chain:
-            for reply_comp in comp.chain:
-                if isinstance(reply_comp, File):
-                    file_paths.append(await reply_comp.get_file())
-                    file_names.append(reply_comp.name)
-    if not file_paths:
-        return
-    if not req.prompt:
-        req.prompt = "总结一下文件里面讲了什么？"
-    if config.file_extract_prov == "moonshotai":
-        if not config.file_extract_msh_api_key:
-            logger.error("Moonshot AI API key for file extract is not set")
-            return
-        file_contents: list[str | None] = []
-        for file_path in file_paths:
-            cache_hit, cached_content = get_cached_file_extract(
-                event,
-                provider=config.file_extract_prov,
-                file_path=file_path,
-            )
-            if cache_hit:
-                file_contents.append(cached_content)
-                continue
-            file_content = await extract_file_moonshotai(
-                file_path,
-                config.file_extract_msh_api_key,
-            )
-            set_cached_file_extract(
-                event,
-                provider=config.file_extract_prov,
-                file_path=file_path,
-                result=file_content,
-            )
-            file_contents.append(file_content)
-    else:
-        logger.error("Unsupported file extract provider: %s", config.file_extract_prov)
-        return
-
-    for file_content, file_name in zip(file_contents, file_names):
-        if not file_content:
-            continue
-        req.contexts.append(
-            {
-                "role": "system",
-                "content": (
-                    "File Extract Results of user uploaded files:\n"
-                    f"{file_content}\nFile Name: {file_name or 'Unknown'}"
-                ),
-            },
-        )
-
-
-def _apply_prompt_prefix(req: ProviderRequest, cfg: dict) -> None:
-    prefix = cfg.get("prompt_prefix")
-    if not prefix:
-        return
-    if "{{prompt}}" in prefix:
-        req.prompt = prefix.replace("{{prompt}}", req.prompt)
-    else:
-        req.prompt = f"{prefix}{req.prompt}"
-
-
-async def _get_workspace_path_for_umo(umo: str, plugin_context: Context) -> Path:
-    fallback_root = (
-        Path(get_astrbot_workspaces_path()) / normalize_umo_for_workspace(umo)
-    ).resolve(strict=False)
-    db = getattr(plugin_context, "_db", None)
-    if not isinstance(db, BaseDatabase):
-        return fallback_root
-    try:
-        return await resolve_workspace_root_for_umo(umo, db)
-    except Exception:
-        return fallback_root
-
-
-async def _apply_workspace_extra_prompt(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    plugin_context: Context,
-) -> None:
-    extra_prompt_path = (
-        await _get_workspace_path_for_umo(event.unified_msg_origin, plugin_context)
-    ) / "EXTRA_PROMPT.md"
-    if not extra_prompt_path.is_file():
-        return
-
-    try:
-        extra_prompt = extra_prompt_path.read_text(encoding="utf-8").strip()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to read workspace extra prompt for umo=%s from %s: %s",
-            event.unified_msg_origin,
-            extra_prompt_path,
-            exc,
-        )
-        return
-
-    if not extra_prompt:
-        return
-
-    req.system_prompt = (
-        f"{req.system_prompt or ''}\n"
-        "[Workspace Extra Prompt]\n"
-        "The following instructions are loaded from the current workspace "
-        "`EXTRA_PROMPT.md` file.\n"
-        f"{extra_prompt}\n"
     )
 
 
@@ -850,73 +467,15 @@ def _apply_local_env_tools(req: ProviderRequest, plugin_context: Context) -> Non
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileWriteTool))
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileEditTool))
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(GrepTool))
-    req.system_prompt = f"{req.system_prompt or ''}\n{_build_local_mode_prompt()}\n"
 
 
-def _build_local_mode_prompt() -> str:
-    system_name = platform.system() or "Unknown"
-    shell_hint = (
-        "The runtime shell is Windows Command Prompt (cmd.exe). "
-        "Use cmd-compatible commands and do not assume Unix commands like cat/ls/grep are available."
-        if system_name.lower() == "windows"
-        else "The runtime shell is Unix-like. Use POSIX-compatible shell commands."
-    )
-    return (
-        "You have access to the host local environment and can execute shell commands and Python code. "
-        f"Current operating system: {system_name}. "
-        f"{shell_hint}"
-    )
-
-
-def _filter_skills_for_current_config(
-    skills: list[SkillInfo],
-    cfg: dict,
-) -> list[SkillInfo]:
-    plugin_set = cfg.get("plugin_set", ["*"])
-    allowed_plugins = (
-        None
-        if not isinstance(plugin_set, list) or "*" in plugin_set
-        else {str(name) for name in plugin_set}
-    )
-    plugin_by_root_dir = {
-        metadata.root_dir_name: metadata
-        for metadata in star_registry
-        if metadata.root_dir_name
-    }
-    filtered: list[SkillInfo] = []
-    for skill in skills:
-        if skill.source_type != "plugin":
-            filtered.append(skill)
-            continue
-
-        plugin = plugin_by_root_dir.get(skill.plugin_name)
-        if not plugin or not plugin.activated:
-            continue
-        if plugin.reserved or allowed_plugins is None:
-            filtered.append(skill)
-            continue
-        if plugin.name is not None and plugin.name in allowed_plugins:
-            filtered.append(skill)
-    return filtered
-
-
-def _event_has_group_context(event: AstrMessageEvent) -> bool:
-    get_group_id = getattr(event, "get_group_id", None)
-    if not callable(get_group_id):
-        return False
-    try:
-        return bool(get_group_id())
-    except Exception:
-        return False
-
-
-async def _ensure_persona_and_skills(
+async def _prepare_persona_tools_and_subagents(
     req: ProviderRequest,
     cfg: dict,
     plugin_context: Context,
     event: AstrMessageEvent,
 ) -> None:
-    """Ensure persona and skills are applied to the request's system prompt or user prompt."""
+    """Prepare executable tools without writing model-visible prompt content."""
     if not req.conversation:
         return
 
@@ -924,7 +483,7 @@ async def _ensure_persona_and_skills(
         persona_id,
         persona,
         _,
-        use_webchat_special_default,
+        _,
     ) = await plugin_context.persona_manager.resolve_selected_persona(
         umo=event.unified_msg_origin,
         conversation_persona_id=req.conversation.persona_id,
@@ -936,52 +495,6 @@ async def _ensure_persona_and_skills(
         event, extract_persona_custom_error_message_from_persona(persona)
     )
 
-    if req.system_prompt is None:
-        req.system_prompt = ""
-
-    if persona:
-        # Inject persona system prompt
-        if prompt := persona["prompt"]:
-            req.system_prompt += f"\n# Persona Instructions\n\n{prompt}\n"
-        if begin_dialogs := copy.deepcopy(persona.get("_begin_dialogs_processed")):
-            req.contexts[:0] = begin_dialogs
-    elif use_webchat_special_default:
-        req.system_prompt += CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT
-
-    # Inject skills prompt
-    runtime = cfg.get("computer_use_runtime", "local")
-    skill_manager = SkillManager()
-    skills = skill_manager.list_skills(active_only=True, runtime=runtime)
-    skills = _filter_skills_for_current_config(skills, cfg)
-    workspace_skills: list[SkillInfo] = []
-    if runtime == "local" and not _event_has_group_context(event):
-        workspace_root = await _get_workspace_path_for_umo(
-            event.unified_msg_origin,
-            plugin_context,
-        )
-        workspace_skills = skill_manager.list_workspace_skills(workspace_root)
-
-    if skills or workspace_skills:
-        if persona and persona.get("skills") is not None:
-            if not persona["skills"]:
-                skills = []
-                workspace_skills = []
-            else:
-                allowed = set(persona["skills"])
-                skills = [skill for skill in skills if skill.name in allowed]
-        if workspace_skills:
-            skills_by_name = {skill.name: skill for skill in skills}
-            for skill in workspace_skills:
-                skills_by_name[skill.name] = skill
-            skills = [skills_by_name[name] for name in sorted(skills_by_name)]
-        if skills:
-            req.system_prompt += f"\n{build_skills_prompt(skills)}\n"
-            if runtime == "none":
-                req.system_prompt += (
-                    "User has not enabled the Computer Use feature. "
-                    "You cannot use shell or Python to perform skills. "
-                    "If you need to use these capabilities, ask the user to enable Computer Use in the AstrBot WebUI -> Config."
-                )
     tmgr = plugin_context.get_llm_tool_manager()
 
     # inject toolset in the persona
@@ -1056,13 +569,6 @@ async def _ensure_persona_and_skills(
                     continue
                 req.func_tool.remove_tool(tool_name)
 
-        router_prompt = (
-            plugin_context.get_config()
-            .get("subagent_orchestrator", {})
-            .get("router_system_prompt", "")
-        ).strip()
-        if router_prompt:
-            req.system_prompt += f"\n{router_prompt}\n"
     try:
         event.trace.record(
             "sel_persona",
@@ -1071,466 +577,6 @@ async def _ensure_persona_and_skills(
         )
     except Exception:
         pass
-
-
-async def _request_img_caption(
-    event: AstrMessageEvent,
-    provider_id: str,
-    cfg: dict,
-    image_urls: list[str],
-    plugin_context: Context,
-    *,
-    cache_refs: list[str] | None = None,
-    prompt_override: str | None = None,
-) -> str:
-    prov = plugin_context.get_provider_by_id(provider_id)
-    if prov is None:
-        raise ValueError(
-            f"Cannot get image caption because provider `{provider_id}` is not exist.",
-        )
-    if not isinstance(prov, Provider):
-        raise ValueError(
-            f"Cannot get image caption because provider `{provider_id}` is not a valid Provider, it is {type(prov)}.",
-        )
-
-    img_cap_prompt = prompt_override or cfg.get(
-        "image_caption_prompt",
-        "Please describe the image.",
-    )
-    image_cache_refs = list(cache_refs or image_urls)
-    cache_hit, cached_caption = get_cached_image_caption(
-        event,
-        provider_id=provider_id,
-        prompt=img_cap_prompt,
-        image_refs=image_cache_refs,
-    )
-    if cache_hit:
-        return cached_caption or ""
-    logger.debug("Processing image caption with provider: %s", provider_id)
-    llm_resp = await prov.text_chat(
-        prompt=img_cap_prompt,
-        image_urls=image_urls,
-    )
-    caption = llm_resp.completion_text
-    set_cached_image_caption(
-        event,
-        provider_id=provider_id,
-        prompt=img_cap_prompt,
-        image_refs=image_cache_refs,
-        result=caption,
-    )
-    return caption
-
-
-async def _ensure_img_caption(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    cfg: dict,
-    plugin_context: Context,
-    image_caption_provider: str,
-) -> None:
-    try:
-        original_image_refs: list[str] = []
-        for comp in event.message_obj.message:
-            if isinstance(comp, Image):
-                original_image_refs.append(await _resolve_image_component_ref(comp))
-        if len(original_image_refs) != len(req.image_urls):
-            original_image_refs = list(req.image_urls)
-        compressed_urls = []
-        for url in original_image_refs:
-            compressed_url = await _compress_image_for_provider(url, cfg)
-            compressed_urls.append(compressed_url)
-            if _is_generated_compressed_image_path(url, compressed_url):
-                event.track_temporary_local_file(compressed_url)
-        caption = await _request_img_caption(
-            event,
-            image_caption_provider,
-            cfg,
-            compressed_urls,
-            plugin_context,
-            cache_refs=original_image_refs,
-        )
-        if caption:
-            req.extra_user_content_parts.append(
-                TextPart(text=f"<image_caption>{caption}</image_caption>")
-            )
-            req.image_urls = []
-    except Exception as exc:  # noqa: BLE001
-        logger.error("处理图片描述失败: %s", exc)
-        req.extra_user_content_parts.append(TextPart(text="[Image Captioning Failed]"))
-    finally:
-        req.image_urls = []
-
-
-def _resolve_image_caption_provider(
-    plugin_context: Context,
-    provider_id: str,
-    *,
-    source: str,
-) -> Provider | None:
-    if not provider_id:
-        return None
-
-    prov = plugin_context.get_provider_by_id(provider_id)
-    if prov is None:
-        logger.warning(
-            "Skip %s image captioning because provider `%s` is unavailable.",
-            source,
-            provider_id,
-        )
-        return None
-    if not isinstance(prov, Provider):
-        logger.warning(
-            "Skip %s image captioning because provider `%s` is invalid type: %s.",
-            source,
-            provider_id,
-            type(prov),
-        )
-        return None
-    return prov
-
-
-def _append_quoted_image_attachment(req: ProviderRequest, image_path: str) -> None:
-    req.extra_user_content_parts.append(
-        TextPart(text=f"[Image Attachment in quoted message: path {image_path}]")
-    )
-
-
-async def _resolve_image_component_ref(comp: Image) -> str:
-    image_ref = (getattr(comp, "url", "") or "").strip()
-    if image_ref:
-        return image_ref
-
-    image_ref = (getattr(comp, "file", "") or "").strip()
-    if image_ref:
-        return image_ref
-
-    image_ref = (getattr(comp, "path", "") or "").strip()
-    if image_ref:
-        return image_ref
-
-    return await comp.convert_to_file_path()
-
-
-def _append_audio_attachment(req: ProviderRequest, audio_path: str) -> None:
-    req.extra_user_content_parts.append(
-        TextPart(text=f"[Audio Attachment: path {audio_path}]")
-    )
-
-
-def _append_quoted_audio_attachment(req: ProviderRequest, audio_path: str) -> None:
-    req.extra_user_content_parts.append(
-        TextPart(text=f"[Audio Attachment in quoted message: path {audio_path}]")
-    )
-
-
-async def _append_video_attachment(
-    req: ProviderRequest,
-    video: Video,
-    *,
-    quoted: bool = False,
-) -> None:
-    try:
-        video_path = await video.convert_to_file_path()
-    except Exception as exc:  # noqa: BLE001
-        if quoted:
-            logger.error("Error processing quoted video attachment: %s", exc)
-        else:
-            logger.error("Error processing video attachment: %s", exc)
-        return
-
-    video_name = os.path.basename(video_path)
-    if quoted:
-        text = (
-            f"[Video Attachment in quoted message: "
-            f"name {video_name}, path {video_path}]"
-        )
-    else:
-        text = f"[Video Attachment: name {video_name}, path {video_path}]"
-
-    req.extra_user_content_parts.append(TextPart(text=text))
-
-
-def _get_quoted_message_parser_settings(
-    provider_settings: dict[str, object] | None,
-) -> QuotedMessageParserSettings:
-    if not isinstance(provider_settings, dict):
-        return DEFAULT_QUOTED_MESSAGE_SETTINGS
-    overrides = provider_settings.get("quoted_message_parser")
-    if not isinstance(overrides, dict):
-        return DEFAULT_QUOTED_MESSAGE_SETTINGS
-    return DEFAULT_QUOTED_MESSAGE_SETTINGS.with_overrides(overrides)
-
-
-def _provider_supports_modality(provider: Provider, modality: str) -> bool:
-    modalities = provider.provider_config.get("modalities", None)
-    return isinstance(modalities, list) and modality in modalities
-
-
-def _get_image_compress_args(
-    provider_settings: dict[str, object] | None,
-) -> tuple[bool, int, int]:
-    if not isinstance(provider_settings, dict):
-        return True, IMAGE_COMPRESS_DEFAULT_MAX_SIZE, IMAGE_COMPRESS_DEFAULT_QUALITY
-
-    enabled = provider_settings.get("image_compress_enabled", True)
-    if not isinstance(enabled, bool):
-        enabled = True
-
-    raw_options = provider_settings.get("image_compress_options", {})
-    options = raw_options if isinstance(raw_options, dict) else {}
-
-    max_size = options.get("max_size", IMAGE_COMPRESS_DEFAULT_MAX_SIZE)
-    if not isinstance(max_size, int):
-        max_size = IMAGE_COMPRESS_DEFAULT_MAX_SIZE
-    max_size = max(max_size, 1)
-
-    quality = options.get("quality", IMAGE_COMPRESS_DEFAULT_QUALITY)
-    if not isinstance(quality, int):
-        quality = IMAGE_COMPRESS_DEFAULT_QUALITY
-    quality = min(max(quality, 1), 100)
-
-    return enabled, max_size, quality
-
-
-async def _compress_image_for_provider(
-    url_or_path: str,
-    provider_settings: dict[str, object] | None,
-) -> str:
-    try:
-        enabled, max_size, quality = _get_image_compress_args(provider_settings)
-        if not enabled:
-            return url_or_path
-        return await compress_image(url_or_path, max_size=max_size, quality=quality)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Image compression failed: %s", exc)
-        return url_or_path
-
-
-def _is_generated_compressed_image_path(
-    original_path: str,
-    compressed_path: str | None,
-) -> bool:
-    if not compressed_path or compressed_path == original_path:
-        return False
-    if compressed_path.startswith("http") or compressed_path.startswith("data:image"):
-        return False
-    return os.path.exists(compressed_path)
-
-
-async def _process_quote_message(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    img_cap_prov_id: str,
-    plugin_context: Context,
-    quoted_message_settings: QuotedMessageParserSettings = DEFAULT_QUOTED_MESSAGE_SETTINGS,
-    config: MainAgentBuildConfig | None = None,
-    main_provider_supports_image: bool = False,
-) -> None:
-    quote = None
-    for comp in event.message_obj.message:
-        if isinstance(comp, Reply):
-            quote = comp
-            break
-    if not quote:
-        return
-
-    content_parts = []
-    sender_info = f"({quote.sender_nickname}): " if quote.sender_nickname else ""
-    message_str = (
-        await extract_quoted_message_text(
-            event,
-            quote,
-            settings=quoted_message_settings,
-        )
-        or quote.message_str
-        or "[Empty Text]"
-    )
-    content_parts.append(f"{sender_info}{message_str}")
-
-    image_seg = None
-    if quote.chain:
-        for comp in quote.chain:
-            if isinstance(comp, Image):
-                image_seg = comp
-                break
-
-    if image_seg and main_provider_supports_image:
-        logger.debug(
-            "Skipping quote image captioning because the main provider supports image input."
-        )
-    elif image_seg and not img_cap_prov_id:
-        logger.debug(
-            "No dedicated image caption provider configured. "
-            "Skipping quote image captioning."
-        )
-    elif image_seg:
-        try:
-            prov = None
-            path = None
-            compress_path = None
-            prov = _resolve_image_caption_provider(
-                plugin_context,
-                img_cap_prov_id,
-                source="quoted",
-            )
-
-            if prov:
-                cache_ref = await _resolve_image_component_ref(image_seg)
-                path = await image_seg.convert_to_file_path()
-                compress_path = await _compress_image_for_provider(
-                    path,
-                    config.provider_settings if config else None,
-                )
-                if path and _is_generated_compressed_image_path(path, compress_path):
-                    event.track_temporary_local_file(compress_path)
-                provider_config = getattr(prov, "provider_config", {})
-                resolved_provider_id = (
-                    provider_config.get("id")
-                    if isinstance(provider_config, dict)
-                    else None
-                ) or img_cap_prov_id
-                if resolved_provider_id:
-                    completion_text = await _request_img_caption(
-                        event,
-                        resolved_provider_id,
-                        config.provider_settings if config else {},
-                        [compress_path],
-                        plugin_context,
-                        cache_refs=[cache_ref or path],
-                        prompt_override="Please describe the image content.",
-                    )
-                else:
-                    llm_resp = await prov.text_chat(
-                        prompt="Please describe the image content.",
-                        image_urls=[compress_path],
-                    )
-                    completion_text = llm_resp.completion_text
-                if completion_text:
-                    content_parts.append(
-                        f"[Image Caption in quoted message]: {completion_text}"
-                    )
-        except BaseException as exc:
-            logger.error("处理引用图片失败: %s", exc)
-        finally:
-            if (
-                compress_path
-                and compress_path != path
-                and os.path.exists(compress_path)
-            ):
-                try:
-                    os.remove(compress_path)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Fail to remove temporary compressed image: %s", exc)
-
-    quoted_content = "\n".join(content_parts)
-    quoted_text = f"<Quoted Message>\n{quoted_content}\n</Quoted Message>"
-    req.extra_user_content_parts.append(TextPart(text=quoted_text))
-
-
-def _append_system_reminders(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    cfg: dict,
-    timezone: str | None,
-) -> None:
-    system_parts: list[str] = []
-    if cfg.get("identifier"):
-        user_id = event.message_obj.sender.user_id
-        user_nickname = event.message_obj.sender.nickname
-        system_parts.append(f"User ID: {user_id}, Nickname: {user_nickname}")
-
-    if cfg.get("group_name_display") and event.message_obj.group_id:
-        if not event.message_obj.group:
-            logger.error(
-                "Group name display enabled but group object is None. Group ID: %s",
-                event.message_obj.group_id,
-            )
-        else:
-            group_name = event.message_obj.group.group_name
-            if group_name:
-                system_parts.append(f"Group name: {group_name}")
-
-    if cfg.get("datetime_system_prompt"):
-        now = None
-        if timezone:
-            try:
-                now = datetime.datetime.now(zoneinfo.ZoneInfo(timezone))
-            except Exception as exc:  # noqa: BLE001
-                logger.error("时区设置错误: %s, 使用本地时区", exc)
-        if now is None:
-            now = datetime.datetime.now().astimezone()
-        current_time = now.strftime("%Y-%m-%d %H:%M (%Z)")
-        weekday = WEEKDAY_NAMES[now.weekday()]
-        system_parts.append(f"Current datetime: {current_time}, Weekday: {weekday}")
-
-    if system_parts:
-        system_content = (
-            "<system_reminder>" + "\n".join(system_parts) + "</system_reminder>"
-        )
-        req.extra_user_content_parts.append(TextPart(text=system_content))
-
-
-async def _decorate_llm_request(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-    plugin_context: Context,
-    config: MainAgentBuildConfig,
-    provider: Provider | None = None,
-) -> None:
-    cfg = config.provider_settings or plugin_context.get_config(
-        umo=event.unified_msg_origin
-    ).get("provider_settings", {})
-
-    _apply_prompt_prefix(req, cfg)
-    main_provider_supports_image = provider is not None and _provider_supports_modality(
-        provider,
-        "image",
-    )
-
-    if req.conversation:
-        await _ensure_persona_and_skills(req, cfg, plugin_context, event)
-
-    img_cap_prov_id: str = cfg.get("default_image_caption_provider_id") or ""
-    if req.image_urls and main_provider_supports_image:
-        logger.debug(
-            "Skipping image captioning because the main provider supports image input."
-        )
-    elif req.image_urls and img_cap_prov_id and _resolve_image_caption_provider(
-        plugin_context,
-        img_cap_prov_id,
-        source="current",
-    ):
-        await _ensure_img_caption(
-            event,
-            req,
-            cfg,
-            plugin_context,
-            img_cap_prov_id,
-        )
-    elif req.image_urls:
-        logger.debug(
-            "Skipping current image input because the main provider has no image modality "
-            "and no usable caption provider is configured."
-        )
-        req.image_urls = []
-
-    quoted_message_settings = _get_quoted_message_parser_settings(cfg)
-    await _process_quote_message(
-        event,
-        req,
-        img_cap_prov_id,
-        plugin_context,
-        quoted_message_settings,
-        config,
-        main_provider_supports_image=main_provider_supports_image,
-    )
-
-    tz = config.timezone
-    if tz is None:
-        tz = plugin_context.get_config().get("timezone")
-    _append_system_reminders(event, req, cfg, tz)
-    await _apply_workspace_extra_prompt(event, req, plugin_context)
 
 
 def _get_user_content_part_type(part: object) -> str | None:
@@ -1792,16 +838,6 @@ async def _handle_webchat(
         )
 
 
-def _apply_llm_safety_mode(config: MainAgentBuildConfig, req: ProviderRequest) -> None:
-    if config.safety_mode_strategy == "system_prompt":
-        req.system_prompt = f"{LLM_SAFETY_MODE_SYSTEM_PROMPT}\n\n{req.system_prompt}"
-    else:
-        logger.warning(
-            "Unsupported llm_safety_mode strategy: %s.",
-            config.safety_mode_strategy,
-        )
-
-
 def _apply_sandbox_tools(
     config: MainAgentBuildConfig,
     req: ProviderRequest,
@@ -1809,8 +845,6 @@ def _apply_sandbox_tools(
 ) -> None:
     if req.func_tool is None:
         req.func_tool = ToolSet()
-    if req.system_prompt is None:
-        req.system_prompt = ""
     booter = config.sandbox_cfg.get("booter", "shipyard_neo")
     if booter == "shipyard":
         ep = config.sandbox_cfg.get("shipyard_endpoint", "")
@@ -1831,27 +865,6 @@ def _apply_sandbox_tools(
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileEditTool))
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(GrepTool))
     if booter == "shipyard_neo":
-        # Neo-specific path rule: filesystem tools operate relative to sandbox
-        # workspace root. Do not prepend "/workspace".
-        req.system_prompt += (
-            "\n[Shipyard Neo File Path Rule]\n"
-            "When using sandbox filesystem tools (upload/download/read/write/list/delete), "
-            "always pass paths relative to the sandbox workspace root. "
-            "Example: use `baidu_homepage.png` instead of `/workspace/baidu_homepage.png`.\n"
-        )
-
-        req.system_prompt += (
-            "\n[Neo Skill Lifecycle Workflow]\n"
-            "When user asks to create/update a reusable skill in Neo mode, use lifecycle tools instead of directly writing local skill folders.\n"
-            "Preferred sequence:\n"
-            "1) Use `astrbot_create_skill_payload` to store canonical payload content and get `payload_ref`.\n"
-            "2) Use `astrbot_create_skill_candidate` with `skill_key` + `source_execution_ids` (and optional `payload_ref`) to create a candidate.\n"
-            "3) Use `astrbot_promote_skill_candidate` to release: `stage=canary` for trial; `stage=stable` for production.\n"
-            "For stable release, set `sync_to_local=true` to sync `payload.skill_markdown` into local `SKILL.md`.\n"
-            "Do not treat ad-hoc generated files as reusable Neo skills unless they are captured via payload/candidate/release.\n"
-            "To update an existing skill, create a new payload/candidate and promote a new release version; avoid patching old local folders directly.\n"
-        )
-
         # Determine sandbox capabilities from an already-booted session.
         # If no session exists yet (first request), capabilities is None
         # and we register all tools conservatively.
@@ -1883,23 +896,9 @@ def _apply_sandbox_tools(
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(SyncSkillReleaseTool))
 
     if booter == "cua":
-        req.system_prompt += (
-            "\n[CUA Desktop Control]\n"
-            "Use `astrbot_execute_shell` with `background=true` to launch GUI apps. "
-            'Use Firefox for browser tasks, for example `firefox "https://example.com"`. '
-            "After each visible step, call `astrbot_cua_screenshot` with "
-            "`send_to_user=true` and `return_image_to_llm=true` so the user can "
-            "monitor progress. When typing, inspect the screenshot first and confirm "
-            "the target field is focused and empty or safe to append to. Use "
-            "`astrbot_cua_mouse_click` for coordinates and `astrbot_cua_keyboard_type` "
-            "for text input; use text=`\\n` for Enter.\n"
-        )
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(CuaScreenshotTool))
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(CuaMouseClickTool))
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(CuaKeyboardTypeTool))
-
-    req.system_prompt = f"{req.system_prompt or ''}\n{SANDBOX_MODE_PROMPT}\n"
-
 
 def _proactive_cron_job_tools(req: ProviderRequest, plugin_context: Context) -> None:
     if req.func_tool is None:
@@ -1940,23 +939,6 @@ async def _apply_web_search_tools(
     elif provider == "exa":
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(ExaWebSearchTool))
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(ExaGetContentsTool))
-
-
-def _apply_web_search_citation_prompt(
-    event: AstrMessageEvent,
-    req: ProviderRequest,
-) -> None:
-    if event.get_platform_name() != "webchat" or not req.func_tool:
-        return
-
-    if not any(req.func_tool.get_tool(name) for name in WEB_SEARCH_CITATION_TOOL_NAMES):
-        return
-
-    system_prompt = req.system_prompt or ""
-    if WEB_SEARCH_CITATION_PROMPT in system_prompt:
-        return
-
-    req.system_prompt = f"{system_prompt}\n{WEB_SEARCH_CITATION_PROMPT}\n"
 
 
 def _get_compress_provider(
@@ -2045,19 +1027,6 @@ async def build_main_agent(
             assert isinstance(req, ProviderRequest), (
                 "provider_request 必须是 ProviderRequest 类型。"
             )
-            if req.conversation and not should_use_interaction_core_profile(event):
-                req.contexts = json.loads(req.conversation.history)
-            for comp in event.message_obj.message:
-                if isinstance(comp, Image):
-                    req.image_urls.append(await _resolve_image_component_ref(comp))
-                elif isinstance(comp, File):
-                    file_path = await comp.get_file()
-                    file_name = comp.name or os.path.basename(file_path)
-                    req.extra_user_content_parts.append(
-                        TextPart(
-                            text=f"[File Attachment: name {file_name}, path {file_path}]"
-                        )
-                    )
         else:
             req = ProviderRequest()
             req.prompt = ""
@@ -2072,140 +1041,8 @@ async def build_main_agent(
 
             req.prompt = event.message_str[len(config.provider_wake_prefix) :]
 
-            # media files attachments
-            for comp in event.message_obj.message:
-                if isinstance(comp, Image):
-                    image_ref = await _resolve_image_component_ref(comp)
-                    path = await comp.convert_to_file_path()
-                    resolved_image_ref = await _compress_image_for_provider(
-                        path,
-                        config.provider_settings,
-                    )
-                    uses_compressed_ref = _is_generated_compressed_image_path(
-                        path, resolved_image_ref
-                    )
-                    if uses_compressed_ref:
-                        event.track_temporary_local_file(resolved_image_ref)
-                    image_path = (
-                        resolved_image_ref if uses_compressed_ref else image_ref
-                    )
-                    req.image_urls.append(image_path)
-                    req.extra_user_content_parts.append(
-                        TextPart(text=f"[Image Attachment: url {image_path}]")
-                    )
-                elif isinstance(comp, Record):
-                    audio_path = await comp.convert_to_file_path()
-                    req.audio_urls.append(audio_path)
-                    _append_audio_attachment(req, audio_path)
-                elif isinstance(comp, File):
-                    file_path = await comp.get_file()
-                    file_name = comp.name or os.path.basename(file_path)
-                    req.extra_user_content_parts.append(
-                        TextPart(
-                            text=f"[File Attachment: name {file_name}, path {file_path}]"
-                        )
-                    )
-                elif isinstance(comp, Video):
-                    await _append_video_attachment(req, comp)
-            # quoted message attachments
-            reply_comps = [
-                comp for comp in event.message_obj.message if isinstance(comp, Reply)
-            ]
-            quoted_message_settings = _get_quoted_message_parser_settings(
-                config.provider_settings
-            )
-            fallback_quoted_image_count = 0
-            for comp in reply_comps:
-                has_embedded_image = False
-                if comp.chain:
-                    for reply_comp in comp.chain:
-                        if isinstance(reply_comp, Image):
-                            has_embedded_image = True
-                            image_ref = await _resolve_image_component_ref(reply_comp)
-                            path = await reply_comp.convert_to_file_path()
-                            resolved_image_ref = await _compress_image_for_provider(
-                                path,
-                                config.provider_settings,
-                            )
-                            uses_compressed_ref = _is_generated_compressed_image_path(
-                                path, resolved_image_ref
-                            )
-                            if uses_compressed_ref:
-                                event.track_temporary_local_file(resolved_image_ref)
-                            image_path = (
-                                resolved_image_ref if uses_compressed_ref else image_ref
-                            )
-                            req.image_urls.append(image_path)
-                            _append_quoted_image_attachment(req, image_path)
-                        elif isinstance(reply_comp, Record):
-                            audio_path = await reply_comp.convert_to_file_path()
-                            req.audio_urls.append(audio_path)
-                            _append_quoted_audio_attachment(req, audio_path)
-                        elif isinstance(reply_comp, File):
-                            file_path = await reply_comp.get_file()
-                            file_name = reply_comp.name or os.path.basename(file_path)
-                            req.extra_user_content_parts.append(
-                                TextPart(
-                                    text=(
-                                        f"[File Attachment in quoted message: "
-                                        f"name {file_name}, path {file_path}]"
-                                    )
-                                )
-                            )
-                        elif isinstance(reply_comp, Video):
-                            await _append_video_attachment(req, reply_comp, quoted=True)
-
-                # Fallback quoted image extraction for reply-id-only payloads, or when
-                # embedded reply chain only contains placeholders (e.g. [Forward Message], [Image]).
-                if not has_embedded_image:
-                    try:
-                        fallback_images = normalize_and_dedupe_strings(
-                            await extract_quoted_message_images(
-                                event,
-                                comp,
-                                settings=quoted_message_settings,
-                            )
-                        )
-                        remaining_limit = max(
-                            config.max_quoted_fallback_images
-                            - fallback_quoted_image_count,
-                            0,
-                        )
-                        if remaining_limit <= 0 and fallback_images:
-                            logger.warning(
-                                "Skip quoted fallback images due to limit=%d for umo=%s",
-                                config.max_quoted_fallback_images,
-                                event.unified_msg_origin,
-                            )
-                            continue
-                        if len(fallback_images) > remaining_limit:
-                            logger.warning(
-                                "Truncate quoted fallback images for umo=%s, reply_id=%s from %d to %d",
-                                event.unified_msg_origin,
-                                getattr(comp, "id", None),
-                                len(fallback_images),
-                                remaining_limit,
-                            )
-                            fallback_images = fallback_images[:remaining_limit]
-                        for image_ref in fallback_images:
-                            if image_ref in req.image_urls:
-                                continue
-                            req.image_urls.append(image_ref)
-                            fallback_quoted_image_count += 1
-                            _append_quoted_image_attachment(req, image_ref)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "Failed to resolve fallback quoted images for umo=%s, reply_id=%s: %s",
-                            event.unified_msg_origin,
-                            getattr(comp, "id", None),
-                            exc,
-                            exc_info=True,
-                        )
-
             conversation = await _get_session_conv(event, plugin_context)
             req.conversation = conversation
-            if not should_use_interaction_core_profile(event):
-                req.contexts = json.loads(conversation.history)
             event.set_extra("provider_request", req)
     logger.debug(f"image_urls extracted for build_main_agent: {req.image_urls}")
     logger.debug(f"Constructed provider request: {req}")
@@ -2216,33 +1053,33 @@ async def build_main_agent(
     req.provider = provider
     event.set_extra("provider_request", req)
 
-    if config.file_extract_enabled:
-        try:
-            await _apply_file_extract(event, req, config)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Error occurred while applying file extract: %s", exc)
-
-    has_reply = any(isinstance(comp, Reply) for comp in event.message_obj.message)
+    has_event_attachment = any(
+        isinstance(comp, (Image, File, Record, Video, Reply))
+        for comp in event.message_obj.message
+    )
 
     if not req.prompt and not req.image_urls and not req.audio_urls:
-        if has_reply or req.extra_user_content_parts:
+        if has_event_attachment or req.extra_user_content_parts:
             req.prompt = "<attachment>"
         else:
             return None
 
-    await _decorate_llm_request(event, req, plugin_context, config, provider=provider)
-    apply_interaction_core_task_spec(req, event)
-
-    await _apply_kb(event, req, plugin_context, config)
+    provider_settings = config.provider_settings or plugin_context.get_config(
+        umo=event.unified_msg_origin
+    ).get("provider_settings", {})
+    await _prepare_persona_tools_and_subagents(
+        req,
+        provider_settings,
+        plugin_context,
+        event,
+    )
+    _prepare_knowledge_tools(req, plugin_context, config)
 
     if not req.session_id:
         req.session_id = event.unified_msg_origin
 
     _plugin_tool_fix(event, req)
     await _apply_web_search_tools(event, req, plugin_context)
-
-    if config.llm_safety_mode:
-        _apply_llm_safety_mode(config, req)
 
     if config.computer_use_runtime == "sandbox":
         _apply_sandbox_tools(config, req, req.session_id)
@@ -2282,31 +1119,6 @@ async def build_main_agent(
     if event.get_platform_name() == "webchat":
         asyncio.create_task(_handle_webchat(event, req, provider))
 
-    if req.func_tool and req.func_tool.tools:
-        tool_prompt = (
-            TOOL_CALL_PROMPT
-            if config.tool_schema_mode == "full"
-            else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
-        )
-
-        if config.computer_use_runtime == "local":
-            workspace_path = await _get_workspace_path_for_umo(
-                event.unified_msg_origin,
-                plugin_context,
-            )
-            tool_prompt += (
-                f"\nCurrent workspace you can use: "
-                f"`{workspace_path}`\n"
-                "Unless the user explicitly specifies a different directory, "
-                "perform all file-related operations in this workspace.\n"
-            )
-
-        req.system_prompt += f"\n{tool_prompt}\n"
-
-    action_type = event.get_extra("action_type")
-    if action_type == "live":
-        req.system_prompt += f"\n{LIVE_MODE_SYSTEM_PROMPT}\n"
-
     interaction_core = should_use_interaction_core_profile(event)
     prompt_target = PromptTarget.CORE if interaction_core else None
     turn_state = event.get_extra("_interaction_turn_state")
@@ -2316,90 +1128,35 @@ async def build_main_agent(
         if interaction_core
         else None
     )
-    try:
-        builder = PromptContextBuilder(event, plugin_context, config)
-        prompt_context_pack = await builder.build(
-            collectors=(
-                _build_interaction_core_collectors()
-                if interaction_core and base_context_pack is not None
-                else None
-            ),
-            provider_request=req,
-            include_prompt_extensions=base_context_pack is None,
-            base=base_context_pack,
-            scope="core",
-        )
-        if context_material is not None:
-            context_material.prompt_context_pack = prompt_context_pack
-            context_material.collected_scopes.add("core")
-        event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
-        log_context_pack(prompt_context_pack, event=event)
-    except Exception as exc:  # noqa: BLE001
-        handle_prompt_pipeline_failure(
-            strict=is_prompt_pipeline_strict(config),
-            message=f"Failed to collect prompt context pack: {exc}",
-            exc=exc,
-            log_failure=lambda exc=exc: logger.warning(
-                "Failed to collect prompt context pack: %s",
-                exc,
-                exc_info=True,
-            ),
-        )
-        prompt_context_pack = None
+    builder = PromptContextBuilder(event, plugin_context, config)
+    prompt_context_pack = await builder.build(
+        collectors=(
+            _build_interaction_core_collectors()
+            if interaction_core and base_context_pack is not None
+            else None
+        ),
+        provider_request=req,
+        include_prompt_extensions=base_context_pack is None,
+        base=base_context_pack,
+        scope="core",
+    )
+    if context_material is not None:
+        context_material.prompt_context_pack = prompt_context_pack
+        context_material.collected_scopes.add("core")
+    event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
+    log_context_pack(prompt_context_pack, event=event)
 
-    prompt_pipeline_mode = _resolve_prompt_pipeline_mode(config)
-    selected_prompt_context_pack = prompt_context_pack
-    if prompt_pipeline_mode == "shadow" and selected_prompt_context_pack is not None:
-        try:
-            _run_prompt_pipeline_shadow_mode(
-                event=event,
-                plugin_context=plugin_context,
-                config=config,
-                provider=provider,
-                provider_request=req,
-                prompt_context_pack=selected_prompt_context_pack,
-                target=prompt_target,
-            )
-        except Exception as exc:  # noqa: BLE001
-            handle_prompt_pipeline_failure(
-                strict=is_prompt_pipeline_strict(config),
-                message=f"Failed to run prompt pipeline in shadow mode: {exc}",
-                exc=exc,
-                log_failure=lambda exc=exc: logger.warning(
-                    "Failed to run prompt pipeline in shadow mode: %s",
-                    exc,
-                    exc_info=True,
-                ),
-            )
-    elif (
-        prompt_pipeline_mode == "apply_visible"
-        and selected_prompt_context_pack is not None
-    ):
-        try:
-            _apply_prompt_pipeline_visible_mode(
-                event=event,
-                plugin_context=plugin_context,
-                config=config,
-                provider=provider,
-                provider_request=req,
-                prompt_context_pack=selected_prompt_context_pack,
-                target=prompt_target,
-            )
-            _modalities_fix(provider, req)
-            _sanitize_context_by_modalities(config, provider, req)
-        except Exception as exc:  # noqa: BLE001
-            handle_prompt_pipeline_failure(
-                strict=is_prompt_pipeline_strict(config),
-                message=f"Failed to apply prompt pipeline visible mode: {exc}",
-                exc=exc,
-                log_failure=lambda exc=exc: logger.warning(
-                    "Failed to apply prompt pipeline visible mode: %s",
-                    exc,
-                    exc_info=True,
-                ),
-            )
-
-    _apply_web_search_citation_prompt(event, req)
+    _apply_prompt_pipeline(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
+        provider=provider,
+        provider_request=req,
+        prompt_context_pack=prompt_context_pack,
+        target=prompt_target,
+    )
+    _modalities_fix(provider, req)
+    _sanitize_context_by_modalities(config, provider, req)
 
     fallback_providers = _get_fallback_chat_providers(
         provider,

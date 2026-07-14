@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from astrbot.core import logger
-from astrbot.core.message.components import File, Image, Reply
+from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
@@ -100,6 +100,7 @@ class InputCollector(ContextCollectorInterface):
 
             current_images = await self._collect_current_images(
                 event,
+                provider_request=provider_request,
                 annotations=input_annotations,
             )
             if current_images:
@@ -110,6 +111,19 @@ class InputCollector(ContextCollectorInterface):
                         category="input",
                         source="event_input",
                         meta={"count": len(current_images), "source": "current"},
+                    )
+                )
+
+            media_content_parts = await self._collect_media_content_parts(event)
+            if media_content_parts:
+                slots.append(
+                    ContextSlot(
+                        name="input.media_content_parts",
+                        value=media_content_parts,
+                        category="input",
+                        source="event_input",
+                        render_mode="structured",
+                        meta={"part_count": len(media_content_parts)},
                     )
                 )
 
@@ -294,6 +308,7 @@ class InputCollector(ContextCollectorInterface):
         self,
         event: AstrMessageEvent,
         *,
+        provider_request: ProviderRequest | None = None,
         annotations: dict[str, dict[str, str]] | None = None,
     ) -> list[dict[str, Any]]:
         images: list[dict[str, Any]] = []
@@ -318,7 +333,66 @@ class InputCollector(ContextCollectorInterface):
             seen_refs.add(ref)
             images.append(image_record)
 
+        if provider_request is not None:
+            for image_ref in normalize_and_dedupe_strings(
+                provider_request.image_urls or []
+            ):
+                if image_ref in seen_refs:
+                    continue
+                seen_refs.add(image_ref)
+                images.append(
+                    self._build_image_record_from_ref(
+                        image_ref,
+                        source="provider_request",
+                        resolution="explicit",
+                    )
+                )
+
         return images
+
+    async def _collect_media_content_parts(
+        self,
+        event: AstrMessageEvent,
+    ) -> list[dict[str, Any]]:
+        parts: list[dict[str, Any]] = []
+
+        async def collect_component(component: object, *, quoted: bool) -> None:
+            if isinstance(component, Record):
+                try:
+                    audio_path = await component.convert_to_file_path()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to resolve audio attachment: %s", exc)
+                    return
+                parts.append(
+                    {"type": "audio_url", "audio_url": {"url": audio_path}}
+                )
+            elif isinstance(component, Video):
+                try:
+                    video_path = await component.convert_to_file_path()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to resolve video attachment: %s", exc)
+                    return
+                label = (
+                    "Video Attachment in quoted message"
+                    if quoted
+                    else "Video Attachment"
+                )
+                parts.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"[{label}: name {Path(video_path).name}, "
+                            f"path {video_path}]"
+                        ),
+                    }
+                )
+
+        for component in event.message_obj.message:
+            await collect_component(component, quoted=False)
+            if isinstance(component, Reply) and component.chain:
+                for quoted_component in component.chain:
+                    await collect_component(quoted_component, quoted=True)
+        return parts
 
     def _collect_files_from_components(
         self,

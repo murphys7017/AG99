@@ -15,6 +15,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.context import Context
 
 from .collectors.conversation_history_collector import ConversationHistoryCollector
+from .collectors.core_task_collector import CoreTaskCollector
 from .collectors.explicit_context_collector import ExplicitContextCollector
 from .collectors.input_collector import InputCollector
 from .collectors.knowledge_collector import KnowledgeCollector
@@ -47,6 +48,7 @@ def _default_collectors() -> list[ContextCollectorInterface]:
     """Return the collectors enabled for the current phase."""
     return [
         SystemCollector(),
+        CoreTaskCollector(),
         PersonaCollector(),
         InputCollector(),
         SessionCollector(),

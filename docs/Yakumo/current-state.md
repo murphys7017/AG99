@@ -53,14 +53,14 @@
 - `astr_main_agent.py` 职责过载
 - Agent 层直接感知 plugin context、persona、knowledge base、skills、cron、sandbox
 - Agent 内核和 AstrBot 业务实现没有明确隔离
-- 新的 `prompt` 模块已经完成 collect/build/target projection/prompt tree/provider render/apply 主链路。目标投影是确定性代码策略，不使用 LLM Selector；当前默认 `apply_visible` 会接管模型可见 `ProviderRequest` 字段，shadow/legacy 仍作为显式配置模式存在
-- builtin 群聊上下文已接入 prompt pipeline：`GroupChatContext` 作为动态 prompt extension collector 提供结构化 `conversation.group_recent`，同时保留 legacy `on_llm_request` 兼容出口；滚动记录不会因一次渲染被消费，该层只提供群聊上下文材料，不接管 Yakumo memory。
+- `prompt` 模块已经形成唯一的 collect/build/target projection/prompt tree/provider render/apply 主链路。主 Agent 只准备运行能力和事实，不再另行拼接模型可见 Prompt；目标投影是确定性代码策略，不使用 LLM Selector。
+- builtin 群聊上下文只通过动态 prompt extension collector 提供结构化 `conversation.group_recent`；滚动记录不会因一次渲染被消费，该层只提供群聊上下文材料，不接管 Yakumo memory。
 - `PromptRenderEngine` 已支持按 provider metadata 的 `prompt_renderer_family` 自动选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`），输出对应 API 原生格式
 - prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；当前 interaction fast router 不使用结构化输出契约，只返回固定路由词；persona visible-reply 使用统一的 `persona_expression` 虚拟 tool-call 契约，只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON
 - 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。
-- TODO: 将上下文预算改为显式可配置策略，按 provider/model 支持的 `max_context_tokens` 分配 history/system/tools/memory 的预算，补齐 1M context 模型适配；现阶段 token 统计仍主要依赖估算器，容易保守截断，尚未充分利用大窗口模型
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
 - prompt collector 默认保持 required/fail-fast；只有显式 optional collector 才会局部失败并记录 `collector_failures`。当前 `MemoryCollector` 为 optional，long-term embedding/检索失败只清空长期召回，仍保留本地 Topic、ShortTerm、Experience 与 PersonaState。
+- 当前 Prompt 剩余问题集中在 Provider renderer 与输出契约能力、Prompt tool schema 与实际 `func_tool` 双轨、ContextPack 跨阶段派生、DeepSeek 首轮 Marker 和 Context Catalog 契约。处理顺序见 `prompt-development-plan.md`。
 
 ### 2.5 Interaction Middleware
 

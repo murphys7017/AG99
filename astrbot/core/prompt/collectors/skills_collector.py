@@ -12,6 +12,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo, SkillManager
 from astrbot.core.star.context import Context
+from astrbot.core.star.star import star_registry
 from astrbot.core.workspace import (
     default_workspace_root,
     resolve_workspace_root_for_umo,
@@ -43,7 +44,10 @@ class SkillsCollector(ContextCollectorInterface):
         runtime = self._resolve_runtime(config)
 
         try:
-            skills = self._load_active_skills(runtime)
+            skills = self._filter_skills_for_current_config(
+                self._load_active_skills(runtime),
+                config.provider_settings,
+            )
             workspace_skills = await self._load_workspace_skills(
                 event,
                 plugin_context,
@@ -77,6 +81,38 @@ class SkillsCollector(ContextCollectorInterface):
     def _load_active_skills(self, runtime: str) -> list[SkillInfo]:
         manager = SkillManager()
         return manager.list_skills(active_only=True, runtime=runtime)
+
+    def _filter_skills_for_current_config(
+        self,
+        skills: list[SkillInfo],
+        provider_settings: object,
+    ) -> list[SkillInfo]:
+        settings = provider_settings if isinstance(provider_settings, dict) else {}
+        plugin_set = settings.get("plugin_set", ["*"])
+        allowed_plugins = (
+            None
+            if not isinstance(plugin_set, list) or "*" in plugin_set
+            else {str(name) for name in plugin_set}
+        )
+        plugin_by_root_dir = {
+            metadata.root_dir_name: metadata
+            for metadata in star_registry
+            if metadata.root_dir_name
+        }
+        filtered: list[SkillInfo] = []
+        for skill in skills:
+            if skill.source_type != "plugin":
+                filtered.append(skill)
+                continue
+            plugin = plugin_by_root_dir.get(skill.plugin_name)
+            if not plugin or not plugin.activated:
+                continue
+            if plugin.reserved or allowed_plugins is None:
+                filtered.append(skill)
+                continue
+            if plugin.name is not None and plugin.name in allowed_plugins:
+                filtered.append(skill)
+        return filtered
 
     async def _load_workspace_skills(
         self,

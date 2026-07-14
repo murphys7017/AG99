@@ -43,6 +43,8 @@ _CORE_BLOCKED_SLOT_NAMES = frozenset(
     }
 )
 
+_CORE_ONLY_SLOT_NAMES = frozenset({"system.core_execution_context"})
+
 
 def project_context_pack(
     pack: ContextPack,
@@ -85,7 +87,10 @@ def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
 
     group = slot.name.split(".", 1)[0]
     if target is PromptTarget.PERSONA:
-        if slot.name == "input.router_attachment_summary":
+        if (
+            slot.name == "input.router_attachment_summary"
+            or slot.name in _CORE_ONLY_SLOT_NAMES
+        ):
             return False
         if group == "conversation":
             return slot.name in {

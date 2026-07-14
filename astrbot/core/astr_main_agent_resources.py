@@ -71,6 +71,23 @@ LIVE_MODE_SYSTEM_PROMPT = (
     "Sound like a real conversation, not a Q&A system."
 )
 
+WEB_SEARCH_CITATION_TOOL_NAMES = frozenset(
+    {
+        "web_search_baidu",
+        "web_search_tavily",
+        "web_search_bocha",
+        "web_search_brave",
+        "web_search_exa",
+    }
+)
+
+WEB_SEARCH_CITATION_PROMPT = (
+    "Always cite web search results you rely on. "
+    "Index is a unique identifier for each search result. "
+    "Use the exact citation format <ref>index</ref> (e.g. <ref>abcd.3</ref>) "
+    "after the sentence that uses the information. Do not invent citations."
+)
+
 PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT = (
     "You are an autonomous proactive agent.\n\n"
     "You are awakened by a scheduled cron job, not by a user message.\n"

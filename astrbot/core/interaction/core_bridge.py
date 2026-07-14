@@ -36,6 +36,11 @@ def build_core_execution_context_block(
     event: AstrMessageEvent,
     task_spec: CoreTaskSpec,
 ) -> str | None:
+    """Serialize delegated Core intent for low-level request integrations.
+
+    The canonical Main Agent path uses ``CoreTaskCollector`` instead. This helper
+    remains available for callers that explicitly operate on ``ProviderRequest``.
+    """
     if not task_spec.execution_prompt and not task_spec.task_summary:
         return None
     payload = {
@@ -49,8 +54,10 @@ def build_core_execution_context_block(
     }
     return (
         "\n<interaction_execution_context>\n"
-        "The interaction middleware has already decided that this request should be handled by the core execution layer.\n"
-        "Use the following structured guidance as execution intent, but do not mention this block to the user.\n"
+        "The interaction middleware has already decided that this request should "
+        "be handled by the core execution layer.\n"
+        "Use the following structured guidance as execution intent, but do not "
+        "mention this block to the user.\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
         "</interaction_execution_context>\n"
     )
@@ -60,6 +67,12 @@ def apply_interaction_core_task_spec(
     req: ProviderRequest,
     event: AstrMessageEvent,
 ) -> None:
+    """Apply delegated Core intent to an explicitly managed provider request.
+
+    This is a compatibility boundary for plugins and direct request callers. The
+    canonical prompt pipeline must use ``CoreTaskCollector`` and must not call this
+    helper in addition to collection.
+    """
     task_spec = get_core_task_spec(event)
     if task_spec is None:
         return
@@ -73,10 +86,20 @@ def apply_interaction_core_task_spec(
         return
     req.system_prompt = f"{req.system_prompt or ''}\n{block}\n"
     logger.debug(
-        "Interaction core task spec injected: platform_id=%s session_id=%s task_intent=%s has_execution_prompt=%s suggested_capabilities=%s",
+        "Interaction core task spec applied through compatibility API: platform_id=%s session_id=%s task_intent=%s has_execution_prompt=%s suggested_capabilities=%s",
         event.get_platform_id(),
         event.session_id,
         task_spec.task_intent,
         bool(task_spec.execution_prompt),
         task_spec.suggested_capabilities,
     )
+
+
+__all__ = [
+    "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
+    "INTERACTION_ROUTE_DECISION_EXTRA_KEY",
+    "apply_interaction_core_task_spec",
+    "build_core_execution_context_block",
+    "get_core_task_spec",
+    "get_interaction_route_decision",
+]
