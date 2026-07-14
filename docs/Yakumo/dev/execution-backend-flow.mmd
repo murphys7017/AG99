@@ -1,90 +1,101 @@
-%% 可替换执行器改造流程
-%% 状态：架构讨论稿
-%% 左侧描述当前实现，右侧描述目标设计；目标设计尚未落地。
+flowchart LR
+%% Persona Runtime 与可替换执行器流程
+%% 左侧是当前已落地链路，右侧是后续目标设计。
 %%
-%% 设计约束：
+%% 已确认约束：
 %% 1. 保留官方 EventBus、Pipeline、权限过滤和插件事件机制。
 %% 2. Interaction Middleware 位于官方 Pipeline 之后、Core Agent 之前。
-%% 3. Router 只判断是否进入 Core，不选择执行器。
-%% 4. 唯一拟人层的即时表达与 Router 判断并发；“快速”是阶段，不是独立组件。
-%% 5. Prompt Builder 是唯一上下文构建入口。
-%% 6. 外部执行器通过 execution-scoped Capability Gateway 使用 AstrBot 能力。
-%% 7. 所有用户可见的回复材料先进入唯一拟人层，再交给 Interaction Output Runtime。
-%% 8. Motion 等具体表现能力属于插件实现，不进入 Core 主流程模型。
-%% 当前实现：Core 最终结果由 Output Controller 的捕获入口交回 Middleware，Middleware 调用同一个
-%% Persona Runtime 后再把显式 PersonaExpressionResult 交给输出物化；route 不承载回复或 effect。
+%% 3. 对话 Router 只输出 silent / persona / hybrid，不选择执行器。
+%% 4. 直播音频与协议命令通过内部 protocol Core bypass，不伪装成 Router 结果。
+%% 5. Router 先完成分类，实际 Persona Expression 再按 route purpose 调用。
+%% 6. 快速回复与 Core 最终回复使用同一个 Persona Expression。
+%% 7. Prompt Builder 是唯一上下文构建入口。
+%% 8. 所有普通用户可见回复都经过 Interaction Output Runtime。
+%% 9. Motion、Live2D 和具体 effect 语义属于插件，不进入主流程。
 
-flowchart LR
-    subgraph CURRENT[当前消息流程]
+    subgraph CURRENT[当前已落地流程]
         direction TB
-        C_A[平台适配器<br/>QQ / 微信 / WebChat / 其他平台] --> C_B[Event Queue]
+        C_A[平台适配器<br/>QQ / WebChat / 其他平台] --> C_B[Event Queue]
         C_B --> C_C[EventBus]
         C_C --> C_D[官方 Pipeline]
-        C_D --> C_D1[事件类型识别与过滤]
-        C_D1 --> C_D2[权限 / 白名单 / 唤醒规则]
-        C_D2 --> C_D3[插件事件处理器]
-        C_D3 --> C_E[ProcessStage]
+        C_D --> C_D1[事件类型 / 权限 / 白名单 / 唤醒过滤]
+        C_D1 --> C_D2[插件事件处理器]
+        C_D2 --> C_E[ProcessStage]
 
         C_E --> C_F[Interaction Middleware]
         C_F --> C_F1[建立 Interaction Turn]
         C_F1 --> C_F2[输入物化<br/>文本 / 语音 / 图片]
-        C_F2 --> C_G1[Router 决策]
-        C_F2 -->|即时表达材料| C_G2[唯一拟人层<br/>Persona Runtime]
+        C_F2 --> C_P{内部协议 bypass?}
 
-        C_G1 --> C_H{是否委派给 Core?}
-        C_G2 -->|统一表达结果| C_I2[Output Controller<br/>文本 / 流式 / TTS 输出物化]
-        C_H -- 否 --> C_J[不启动 Core]
-        C_H -- 是 --> C_K[AgentRequestSubStage]
+        C_P -- 是 --> C_P1[Protocol Core Bypass<br/>不创建 Router 决策]
+        C_P -- 否 --> C_G1[Router<br/>只输出 silent / persona / hybrid]
+        C_G1 --> C_H{Route}
+
+        C_H -- silent --> C_S0[Silent Finalized Material<br/>无助手文本 / 无平台发送]
+        C_S0 --> C_S1[Turn Completed]
+
+        C_H -- persona --> C_G2[唯一 Persona Expression<br/>直接回复]
+        C_G2 --> C_I1[Interaction Output Runtime<br/>最终输出]
+        C_I1 --> C_R[平台发送]
+        C_R --> C_S[Finalized Turn Material]
+        C_S --> C_T[Postprocess / Memory]
+
+        C_H -- hybrid --> C_G3[唯一 Persona Expression<br/>当前即时回复]
+        C_G3 --> C_I2[Interaction Output Runtime<br/>即时发送但不完成 Turn]
+        C_I2 --> C_K[AgentRequestSubStage]
+        C_P1 --> C_K
+
         C_K --> C_L{agent_runner_type}
-
         C_L -- local --> C_M[InternalAgentSubStage]
         C_L -- third-party --> C_N[ThirdPartyAgentSubStage]
 
         C_M --> C_O[build_main_agent]
-        C_O --> C_O1[组织 ProviderRequest]
+        C_O --> C_O1[ProviderRequest]
         C_O1 --> C_O2[Prompt / Memory / Knowledge / Tools]
         C_O2 --> C_O3[AstrBot Agent Runner]
         C_O3 --> C_O4[Provider + Tool Loop]
 
-        C_N --> C_P[第三方 Runner 请求]
-        C_P --> C_P1[简化上下文与请求]
-
+        C_N --> C_N1[第三方 Runner 简化请求]
         C_O4 --> C_Q[Core 结果 / 中间输出]
-        C_P1 --> C_Q
-        C_Q --> C_I0[Output Controller<br/>Core 结果捕获入口]
-        C_I0 -->|交回 Middleware 的待表达材料| C_G2
+        C_N1 --> C_Q
 
-        C_I2 --> C_R[平台发送]
-        C_R --> C_S[Finalized Turn Material]
-        C_S --> C_T[Postprocess / Memory]
+        C_Q --> C_I0[Output Controller<br/>Core 输出捕获]
+        C_I0 -->|Core 最终结果| C_G4[同一个 Persona Expression<br/>Core 最终结果拟人化]
+        C_I0 -. 部分中间输出 .-> C_RISK[当前风险<br/>passthrough 可能提前完成 Turn]
+        C_RISK --> C_R
+        C_G4 --> C_I1
     end
 
-    subgraph TARGET[可替换执行器目标流程]
+    subgraph TARGET[Persona Runtime 与可替换执行器目标流程]
         direction TB
-        T_A[平台适配器] --> T_B[Event Queue]
-        T_B --> T_C[EventBus]
-        T_C --> T_D[官方 Pipeline]
-        T_D --> T_D1[官方过滤 / 权限 / 插件事件处理]
-        T_D1 --> T_E[ProcessStage]
+        T_A[平台 / WebUI / 内部事件] --> T_B[官方 EventBus / Pipeline]
+        T_B --> T_B1[官方过滤 / 权限 / 插件事件处理]
+        T_B1 --> T_C[Interaction Boundary]
+        T_C --> T_C1[Observation Projection]
+        T_C1 --> T_C2[PersonaRuntime + TurnContextSnapshot]
+        T_C2 --> T_P{内部协议 bypass?}
 
-        T_E --> T_F[Interaction Middleware]
-        T_F --> T_F1[Interaction Turn + 输入物化]
-        T_F1 --> T_G1[Router<br/>只判断是否进入 Core]
-        T_F1 -->|即时表达材料| T_G2[唯一拟人层<br/>Persona Runtime]
+        T_P -- 否 --> T_G1[Router<br/>silent / persona / hybrid]
+        T_P -- 是 --> T_I[CoreExecutionService<br/>协议任务]
+        T_G1 --> T_H{Route}
 
-        T_G2 -->|统一表达结果| T_O[Interaction Output Runtime]
-        T_G1 --> T_H{是否委派给 Core?}
-        T_H -- 否 --> T_STOP[不启动 Core]
-        T_H -- 是 --> T_I[CoreExecutionService]
+        T_H -- silent --> T_S0[Silent Finalized Material]
+        T_S0 --> T_S1[Turn Completed]
+
+        T_H -- persona --> T_G2[统一 Persona Expression<br/>purpose: direct_reply]
+        T_G2 --> T_A0[Output Arbiter]
+
+        T_H -- hybrid --> T_H1[Hybrid Coordination]
+        T_H1 -->|并发启动| T_G3[统一 Persona Expression<br/>purpose: delegation_ack]
+        T_H1 -->|并发启动| T_I
+        T_G3 --> T_A0
 
         T_I --> T_I1[prepare_core_execution]
         T_I1 --> T_J[Prompt Builder]
         T_I1 --> T_K[Capability Resolver]
-
         T_J --> T_J1[ContextPack / Prompt Tree]
         T_J1 --> T_L[ExecutionPlan]
-
-        T_K --> T_K1[按会话、插件、权限和策略筛选]
+        T_K --> T_K1[按会话 / 插件 / 权限 / 策略筛选]
         T_K1 --> T_K2[CapabilitySnapshot]
         T_K2 --> T_L
 
@@ -93,42 +104,50 @@ flowchart LR
         T_M --> T_N2[CodexBackend]
         T_M --> T_N3[OpenCodeBackend]
 
-        T_N1 --> T_P1[AstrBot Provider + Agent Tool Loop]
-        T_N2 --> T_P2[Codex Prompt Renderer]
-        T_N3 --> T_P3[OpenCode Prompt Renderer]
-        T_P2 --> T_Q[外部执行器]
-        T_P3 --> T_Q
+        T_N1 --> T_R0[AstrBot Provider + Agent Tool Loop]
+        T_N2 --> T_R1[Codex Renderer]
+        T_N3 --> T_R2[OpenCode Renderer]
+        T_R1 --> T_X[外部执行器]
+        T_R2 --> T_X
 
-        T_K2 --> T_R[Capability Gateway]
-        T_R --> T_R1[MCP Tool Projection]
-        T_R1 --> T_Q
-        T_Q --> T_R2[MCP Tool Call]
-        T_R2 --> T_R
-        T_R --> T_R3[现有 FunctionToolExecutor]
-        T_R3 --> T_R4[插件工具 / 知识库 / 搜索 / 其他能力]
-        T_R4 --> T_R
+        T_K2 --> T_CG[Capability Gateway]
+        T_CG --> T_MCP[MCP Tool Projection]
+        T_MCP --> T_X
+        T_X --> T_CALL[MCP Tool Call]
+        T_CALL --> T_CG
+        T_CG --> T_EXEC[现有 FunctionToolExecutor]
+        T_EXEC --> T_CAP[插件工具 / 知识库 / 搜索 / 其他能力]
 
-        T_P1 --> T_S[ExecutionEvent / ExecutionResult]
-        T_Q --> T_S
-        T_S --> T_T[Core 生命周期事件<br/>thinking / tool_running / delegated]
-        T_S --> T_U[Core 输出材料]
-        T_T -. 需要用户可见时 .-> T_G2
-        T_U --> T_G2
+        T_R0 --> T_RESULT[ExecutionEvent / ExecutionResult]
+        T_X --> T_RESULT
+        T_RESULT --> T_PROGRESS[Lifecycle / Progress<br/>thinking / tool_running]
+        T_RESULT --> T_MATERIAL[Core Result / Safe Failure Material]
+        T_MATERIAL --> T_G4[统一 Persona Expression<br/>purpose: final_result / execution_failure]
+        T_G4 --> T_A0
 
-        T_O --> T_O2[文本 / 流式 / TTS 输出物化]
-        T_O2 --> T_V[平台发送]
-        T_V --> T_W[Finalized Turn Material]
-        T_W --> T_X[Postprocess / Memory]
+        T_A0 --> T_A1{输出提交状态}
+        T_A1 -- Core 先完成且即时表达尚未发送 --> T_SUPPRESS[取消或抑制即时表达<br/>仅提交最终表达]
+        T_A1 -- 已开始或已发送 --> T_ORDER[保持即时与最终输出顺序]
+        T_SUPPRESS --> T_O[Interaction Output Runtime]
+        T_ORDER --> T_O
+        T_A1 -- persona 直接回复 --> T_O
+
+        T_O --> T_O1[文本 / 流式 / TTS 输出物化]
+        T_O1 --> T_V[官方平台发送]
+        T_V --> T_W[Finalized Material]
+        T_W --> T_Y[Postprocess / Memory / Persona State]
     end
 
-    C_T ~~~ T_X
+    C_T ~~~ T_Y
 
     classDef current fill:#eef5ff,stroke:#3973ac,color:#172b3a
     classDef target fill:#eef9f0,stroke:#3d7d4a,color:#19351f
     classDef decision fill:#fff4d6,stroke:#a67400,color:#493400
     classDef boundary fill:#f8f0ff,stroke:#76519a,color:#2f1d40
+    classDef silent fill:#f2f2f2,stroke:#666,color:#222
 
-    class C_A,C_B,C_C,C_D,C_D1,C_D2,C_D3,C_E,C_F,C_F1,C_F2,C_G1,C_G2,C_I0,C_J,C_K,C_L,C_M,C_N,C_O,C_O1,C_O2,C_O3,C_O4,C_P,C_P1,C_Q,C_I2,C_R,C_S,C_T current
-    class T_A,T_B,T_C,T_D,T_D1,T_E,T_F,T_F1,T_G1,T_G2,T_STOP,T_J,T_J1,T_K,T_K1,T_K2,T_L,T_M,T_N1,T_N2,T_N3,T_P1,T_P2,T_P3,T_Q,T_R,T_R1,T_R2,T_R3,T_R4,T_S,T_T,T_U,T_O2,T_V,T_W,T_X target
-    class C_H,T_H decision
-    class T_I,T_I1,T_O boundary
+    class C_A,C_B,C_C,C_D,C_D1,C_D2,C_E,C_F,C_F1,C_F2,C_P1,C_G1,C_G2,C_G3,C_G4,C_I0,C_I1,C_I2,C_K,C_L,C_M,C_N,C_N1,C_O,C_O1,C_O2,C_O3,C_O4,C_Q,C_RISK,C_R,C_S,C_T current
+    class T_A,T_B,T_B1,T_C,T_C1,T_C2,T_G1,T_G2,T_G3,T_G4,T_H1,T_I,T_I1,T_J,T_J1,T_K,T_K1,T_K2,T_L,T_M,T_N1,T_N2,T_N3,T_R0,T_R1,T_R2,T_X,T_CG,T_MCP,T_CALL,T_EXEC,T_CAP,T_RESULT,T_PROGRESS,T_MATERIAL,T_A0,T_SUPPRESS,T_ORDER,T_O,T_O1,T_V,T_W,T_Y target
+    class C_P,C_H,T_P,T_H,T_A1 decision
+    class T_C,T_I,T_A0,T_O boundary
+    class C_S0,C_S1,T_S0,T_S1 silent
