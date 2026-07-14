@@ -8,6 +8,8 @@ outline: deep
 
 AstrBot is an open-source, all-in-one Agentic assistant for personal and group chats. It can be deployed across dozens of mainstream instant messaging platforms, such as QQ, Telegram, WeCom, Lark, DingTalk, and Slack. It also includes a lightweight built-in ChatUI (similar to OpenWebUI), providing reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you are building a personal AI companion, an intelligent customer service assistant, an automation bot, or an enterprise knowledge base, AstrBot helps you build AI applications directly inside your IM workflows.
 
+The Yakumo fork in this repository adds Interaction Middleware between the official EventBus/Pipeline and Core Agent. For normal conversations, a Router with no tools or JSON contract selects `silent`, `persona`, or `hybrid`, then invokes the single Persona Runtime and Core as needed. Plugins can add event-scoped presentation capabilities through [Persona Effects](/en/dev/star/guides/persona-effects) without leaking platform-specific semantics into Router or Core.
+
 ## Documentation Overview
 
 This documentation is divided into the following sections:

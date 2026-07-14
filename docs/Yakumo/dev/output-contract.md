@@ -157,7 +157,7 @@ persona visible-reply 是当前主要高约束消费者。
 - 若 renderer/provider 明确把 strict tool-call 编译为 `prompt_only`，parser 可按同一 schema 解析单个 JSON object，作为受控降级。
 - 自由文本不算成功；协议级 tool-call 主路径缺失时会记录 `missing_persona_expression_tool_call`。
 - `effect_calls` 使用固定字段；无 effect 时返回空数组。
-- 具体 effect 的 `arguments` 由注册的 effect schema 决定。
+- 具体 effect 的 `arguments` 由注册的 effect schema 决定；注册表先按当前事件执行 `event_filter`，不适用的 effect 不进入本轮 schema。
 
 ## 观测字段
 

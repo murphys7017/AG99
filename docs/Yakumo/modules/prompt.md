@@ -43,7 +43,7 @@ Collector 默认 required。只有明确声明 optional 的 Collector 才允许�
 
 | 目标 | 当前上下文范围 |
 |---|---|
-| Router | 当前输入、附件摘要、最近几轮历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 |
+| Router | 当前输入、附件摘要、当前时间、当前说话者、最近几轮历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 |
 | Persona | 完整人格、官方对话历史、群聊上下文、memory/persona state、当前输入、待表达材料与 Core 结果 |
 | Core | 官方对话历史、群聊上下文、当前输入与附件、system/policy、tools、skills、knowledge、subagent 与插件执行上下文；排除人格、interaction memory 和 effect 语义 |
 
@@ -93,6 +93,8 @@ OutputContract
 ```
 
 Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明确不支持工具协议时才受控降级为 prompt-only JSON。Router 只返回固定路由词，不使用工具调用或 JSON 契约。
+
+Persona 输出契约中的 effect schema 不是全局常量。Core 在当前事件上调用 `list_persona_effects(event=event)`，只把注册插件判定为可用的 effect 编译进 `persona_expression`；Router 投影不收集 effect spec。
 
 DeepSeek Provider 按有效 `thinking.type` 配置选择思考或非思考请求，不由 Prompt 系统替用户切换模式。两种模式都透传输出契约生成的 `tool_choice`；如果服务端拒绝该组合，应返回明确错误，而不是静默删除约束后产生不符合契约的自由文本。
 

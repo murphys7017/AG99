@@ -12,7 +12,7 @@
 
 | 能力 | 上游 AstrBot | Yakumo Fork |
 |------|:------------:|:-----------:|
-| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **路由与拟人表达并发** → 按需执行 Core → 统一拟人化 → 回复 |
+| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **轻量路由分类** → 按需调用 Persona / Core → 统一拟人化 → 回复 |
 | 快速回复 | 不支持 | 唯一拟人层可先产生即时表达，不必等待 Core |
 | 回复风格控制 | 仅靠 prompt | 拟人层统一管理表达方式 |
 | 记忆系统 | 会话历史 | 会话历史 + **长期记忆沉淀** |
@@ -36,21 +36,19 @@
     ↓
 Interaction Middleware 建立本轮交互并整理输入
     ↓
-    ├── Router：只判断是否需要 Core
-    └── Persona Runtime：基于当前材料生成即时表达
-        （两者并发，彼此不承担对方职责）
+Router：只返回 silent / persona / hybrid
     ↓
-    ├── 无需 Core → 将拟人表达交给 Output Runtime
-    └── 需要 Core → 执行工具、知识库、搜索或复杂任务
-                       ↓
-                  Core 的中间材料与最终结果回到同一个 Persona Runtime
+    ├── silent → 本轮无可见回复
+    ├── persona → Persona Runtime 直接生成最终表达
+    └── hybrid → Persona Runtime 先生成即时表达，再执行 Core
+                 Core 的中间材料与最终结果回到同一个 Persona Runtime
     ↓
 Output Runtime 负责文本、流式与 TTS 等输出物化和平台发送
     ↓
 Finalized Turn Material → Postprocess / Memory
 ```
 
-“快速拟人回复”不是第二套回复生成器，只是 Persona Runtime 在 Core 完成前的一次调用。Core 结果、插件提交的待表达材料和流式插话也复用同一个入口。Motion、Live2D 等具体表现能力由插件通过通用 effect 契约扩展，核心交互流程只传递 effect，不理解具体动作含义。
+“快速拟人回复”不是第二套回复生成器，只是 Persona Runtime 在 Core 完成前的一次调用。Core 结果、插件提交的待表达材料和流式插话也复用同一个入口。Motion、Live2D 等具体表现能力由插件通过通用 effect 契约扩展；插件可以按当前事件决定是否向 Persona 暴露 effect，核心交互流程只校验和传递 effect，不理解具体动作含义。
 
 **上下文分离** — 拟人层和核心 Agent 各自维护独立的上下文：
 
@@ -66,10 +64,10 @@ Finalized Turn Material → Postprocess / Memory
 这是本 fork 的核心架构之一，一个通用的交互中间件：
 
 - **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
-- **输入侧**：完成 turn state、入站媒体 materialization、STT，并并发启动轻量 Router 与即时拟人表达
+- **输入侧**：完成 turn state、入站媒体 materialization、STT，构建共享轻量上下文并先运行 Router；只有 `persona` / `hybrid` 才调用 Persona Runtime
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
-- **扩展侧**：effect 是通用插件协议，Motion 或 Live2D 的解析和执行不属于主流程
+- **扩展侧**：effect 是通用插件协议，按当前事件过滤后才进入 Persona 输出契约；Motion 或 Live2D 的解析和执行不属于主流程
 - **Completion 收口**：middleware 产出 finalized material，postprocess / memory service 消费同一份 material 写记忆
 - **Voice 共享**：core 旧流程和 middleware 新流程共享 `voice/*`，failure policy 由调用方决定
 

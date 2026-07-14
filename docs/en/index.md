@@ -28,4 +28,7 @@ features:
   - icon: 🌟
     title: Large Language Models
     details: Compatible with multiple model providers including OpenAI, Anthropic, Google, Ollama, Deepseek, and more, supporting diverse LLM integrations.
+  - icon: 🎭
+    title: Persona Runtime
+    details: The Yakumo fork adds unified persona expression and event-scoped Persona Effects for plugins.
 ---

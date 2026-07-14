@@ -72,7 +72,7 @@
 职责：
 
 - 在官方 EventBus / Pipeline 完成过滤、权限与插件处理后、核心 Agent 开始前维护 interaction turn state
-- 处理入站媒体与 STT，并并发启动 route decision 和统一 Persona Runtime 的 immediate expression
+- 处理入站媒体与 STT，先用共享轻量上下文完成 route decision；只有 `persona` / `hybrid` 才调用统一 Persona Runtime
 - 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
 - 统一 visible-reply persona layer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
 - 将 turn completion 收口为：middleware 产出 finalized material，postprocess consumers 再消费 material；当前 memory service 与 interaction conversation history 都在 `AFTER_TURN_COMPLETED` 阶段落地
@@ -98,8 +98,9 @@
   Output Runtime 只消费其结果并负责 TTS、文本或流式输出物化
 - Core 只保存和转发通用 `effect_calls`；Motion、Live2D 等具体 effect 的解释与执行由插件负责，
   不属于 interaction 主流程的领域知识
+- Persona effect 注册支持同步 `event_filter`；Persona 只把当前事件适用的 effect 编译进输出契约。无事件参数的注册表查询仅用于管理和诊断，不代表该 effect 对所有平台都可用
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
-- `router_agent` 是轻量固定枚举分类器：只判断 `silent` / `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 先完成分类，`silent` 不调用 Persona 或 Core，`persona` 和 `hybrid` 才调用统一 Persona Expression；当前 `hybrid` 仍在即时表达完成并发送后放行 Core，尚未实现目标态的并发协调与输出仲裁。Turn State 只保存 `InteractionRouteDecision`，即时回复和 effect 只随对应的 `PersonaExpressionResult` 进入输出链路，不并入 route。Router 的原生 system base 读取裁剪后的聊天记录、interaction memory 和可选的本地插件目录；插件目录只保留 `name` / `description`，失败时跳过而不使 Router 降级。Router 不枚举或限制 Core 能力，也不理解具体插件协议；每轮记录 `parsed` / `fallback` 来源、失败原因、可选目录错误、模型原始标签和渲染上下文节点。
+- `router_agent` 是轻量固定枚举分类器：只判断 `silent` / `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 先完成分类，`silent` 不调用 Persona 或 Core，`persona` 和 `hybrid` 才调用统一 Persona Expression；当前 `hybrid` 仍在即时表达完成并发送后放行 Core，尚未实现目标态的并发协调与输出仲裁。Turn State 只保存 `InteractionRouteDecision`，即时回复和 effect 只随对应的 `PersonaExpressionResult` 进入输出链路，不并入 route。Router 的原生 system base 读取当前输入、`session.datetime`、当前说话者、裁剪后的聊天记录、interaction memory 和可选的本地插件目录；插件目录只保留 `name` / `description`，失败时跳过而不使 Router 降级。Router 不枚举或限制 Core 能力，也不理解具体插件协议；每轮记录 `parsed` / `fallback` 来源、失败原因、可选目录错误、模型原始标签和渲染上下文节点。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 说明直接进入原生 `system.base`，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功

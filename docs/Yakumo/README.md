@@ -23,8 +23,8 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 - `persona` 是真正持续存在并被长期互动塑造的主体。
 - `memory` 和 `persona state` 用于塑造本轮 `Effective Persona`，但不直接覆盖 base persona。
 - `interaction middleware` 位于官方 Pipeline 之后、核心 Agent 之前，负责一次交互回合的编排、输出和 finalized material，而不是替代 persona。
-- `router` 只判断是否需要 Core；即时表达与它并发生成，并且和 Core 最终结果共用唯一 Persona Runtime。
-- `effect` 是插件扩展协议；Motion、Live2D 等具体表现能力不进入 AstrBot 主流程语义。
+- `router` 先完成 `silent` / `persona` / `hybrid` 分类，不生成用户回复、不注册工具，也不接收 effect schema；需要表达时才调用唯一 Persona Runtime。
+- `effect` 是插件扩展协议；注册插件按当前事件决定是否暴露 effect，Motion、Live2D 等具体表现能力不进入 AstrBot 主流程语义。
 
 更完整的目标态见 `docs/Yakumo/target-state.md`。
 
@@ -84,10 +84,10 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 
 - 位置：复用官方 EventBus、Pipeline、权限和插件过滤，紧接在核心 Agent 之前。
-- 输入侧：完成 turn state、入站媒体 materialization 和 STT；协议任务走独立 Core bypass，普通对话先由 Router 选择 `silent` / `persona` / `hybrid`，再按结果调用统一 Persona Runtime 或 Core。
+- 输入侧：完成 turn state、入站媒体 materialization 和 STT；协议任务走独立 Core bypass，普通对话先由 Router 选择 `silent` / `persona` / `hybrid`，再按结果调用统一 Persona Runtime 或 Core。Router 使用共享轻量 ContextPack 中的当前时间、当前说话者、近期历史、人格摘要和精简 memory。
 - 输出侧：接管 interaction turn 的 send / streaming 语义，统一 finalizer、result contributor、TTS、t2i、utterance ledger 与 finalized turn material。
 - 表达侧：即时表达、Core 结果、插件待表达材料和流式插话共用唯一 Persona Runtime；Output Runtime 只负责物化和发送。
-- 扩展侧：主流程只传递通用 effect call，不理解或执行 Motion、Live2D 等插件领域行为。
+- 扩展侧：主流程只把当前事件适用的 effect schema 交给 Persona，并传递通过校验的 effect call；不理解或执行 Motion、Live2D 等插件领域行为。
 - Completion：middleware 只产出 finalized material 并调度 `AFTER_TURN_COMPLETED` postprocess；memory 写入由 postprocess / memory service 消费同一份 material。
 - Voice：core 旧流程和 middleware 新流程共享 `astrbot/core/voice/*`，但 failure policy 由调用方决定。middleware 内部主链路开发期 fail-fast，不把 fallback 当正确性证明。
 

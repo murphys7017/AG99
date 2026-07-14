@@ -11,6 +11,9 @@ outline: deep
 
 欢迎加入我们的开发者专用 QQ 群: `975206796`。
 
+> [!NOTE]
+> Yakumo fork 额外提供 [Persona Effect](./guides/persona-effects)，用于让插件按当前事件向统一 Persona Runtime 注册结构化表现能力。它不是 LLM Tool，也不会进入 Router。
+
 ## 环境准备
 
 ### 获取插件模板

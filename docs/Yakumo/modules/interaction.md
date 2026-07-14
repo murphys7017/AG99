@@ -51,7 +51,7 @@ Input Runtime / Observation
 - 入站媒体 materialization
 - interaction STT
 - observation / reflex 前置判断
-- Router：只输出 `silent` / `persona` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取裁剪后的聊天记录、interaction memory，以及 router purpose 的本地插件目录，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
+- Router：只输出 `silent` / `persona` / `hybrid`，不承担用户可见回复或 effect 输出；它使用原生 system base 任务说明，读取当前输入、`session.datetime`、当前说话者、裁剪后的聊天记录、interaction memory，以及 router purpose 的本地插件目录，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - SILENT / PERSONA / HYBRID 编排
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义

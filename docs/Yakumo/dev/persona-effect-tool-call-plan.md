@@ -5,16 +5,17 @@
 > 当前实现已经改为“visible reply material”驱动：用户可见自然语言统一走一个 persona visible-reply 入口，
 > phase 不再作为 first_response / plugin_output / final_response / stream_interjection 的核心语义分叉。
 >
-> 补充状态说明（2026-06-26）：
-> 当前运行时基线也已经从“单个虚拟 `persona_expression` tool call”进一步收口为严格 `json_object`：
+> 补充状态说明（2026-07-14）：
+> 当前运行时基线是严格的单个虚拟 `persona_expression` tool call：
 >
-> - 默认契约是 `mode="json_object"`、`strict=True`、`allow_text_fallback=False`
-> - `tool_call` 仍保留为可选协议路径和测试覆盖，但不代表线上 persona visible-reply 主链路
+> - 默认契约是 `mode="tool_call"`、`strict=True`、`allow_text_fallback=False`
+> - 只有 renderer/provider 明确不支持工具协议时，才受控降级为 prompt-only JSON
 > - `effect_calls` 现在是固定字段；无 effect 时返回空数组，而不是省略字段
 > - effect `arguments` 的约束以注册的 `PersonaEffectSpec.parameters` 为准
-> - 若 `arguments.axes` 存在，运行时会统一把 `axes.*` 归一为 `number` schema，减少后端 repair
+> - 注册插件可提供同步 `event_filter`；只有当前事件适用的 effect 才进入 Persona schema
+> - Router 只返回 `silent` / `persona` / `hybrid`，不注册 tool-call、不要求 JSON，也不接收 effect schema
 >
-> 因此，本文后续凡是把 `tool_call` 写成统一基线、把 `effect_calls` 写成可省略字段、或把 `axes` 视为松散 object 的段落，都应视为历史方案而不是当前实现。
+> 因此，本文后续的 phase 分支、Router/Persona 并行、`plugin_hints` 迁移和分阶段实施内容均为历史记录；凡是把 `effect_calls` 写成可省略字段、把 effect 查询写成全局/phase 查询，或让 Router 接收 effect 的段落，都不代表当前实现。
 
 这份文档记录 Yakumo Persona Runtime 中人格表现插件结构化输出的实施计划。
 
@@ -49,7 +50,7 @@ Output Runtime 负责“把 Persona Runtime 的表达发出去”。
 }
 ```
 
-当前主实现是严格 `json_object`，由本地解析器解析；当 Provider 或测试场景显式启用协议级 Tool Call 时，这份结果也可以通过虚拟 `persona_expression` 工具返回。
+当前主实现是严格的协议级 `persona_expression` 虚拟 Tool Call；只有 renderer/provider 明确不支持工具协议时，才按同一 schema 受控降级为 prompt-only JSON，并由本地解析器解析。
 
 这里存在几个长期问题：
 
@@ -297,13 +298,18 @@ class PersonaExpressionResult:
 在 `Context` 中增加独立注册表：
 
 ```python
-def register_persona_effect(self, effect: PersonaEffectSpec) -> None:
+def register_persona_effect(
+    self,
+    effect: PersonaEffectSpec,
+    *,
+    event_filter: Callable[[AstrMessageEvent], bool] | None = None,
+) -> None:
     ...
 
 def list_persona_effects(
     self,
     *,
-    phase: str | None = None,
+    event: AstrMessageEvent | None = None,
 ) -> list[PersonaEffectSpec]:
     ...
 
@@ -383,15 +389,12 @@ def build_persona_expression_tool_parameters(
     ...
 ```
 
-行为：
+当前行为：
 
-- 始终生成 `spoken_reply`。
-- 迁移期继续生成 `plugin_hints`。
-- `effects` 非空时生成 portable `effect_calls`。
-- `effects` 为空时不生成 `effect_calls`。
-- Effect name 进入稳定排序后的 `enum`。
-- 不把 `PersonaEffectSpec.metadata` 写入 schema。
-- 不原地修改插件提供的 `parameters`。
+- 始终生成 `spoken_reply` 与 `effect_calls`；无可用 effect 时 `effect_calls.items=false`，模型必须返回空数组。
+- 有可用 effect 时，每个 effect 以 `oneOf + name.const + arguments schema` 进入稳定排序后的契约。
+- 不把 `PersonaEffectSpec.metadata` 写入 schema，也不原地修改插件提供的 `parameters`。
+- `effects` 已经是按当前事件过滤后的列表；Router 不调用这个 schema builder。
 
 Persona 系统 Prompt 应明确：
 
@@ -437,7 +440,7 @@ if not result.spoken_reply and not result.effect_calls:
     raise InteractionExpressionError("empty_output")
 ```
 
-## 并行分支约束
+## 并行分支约束（历史设计）
 
 Router 和 Persona 并行运行时：
 
@@ -449,7 +452,7 @@ Router
   -> 不生成 Effect Call
 
 Persona Runtime
-  -> 独立收集当前 phase 可用的 Effect Specs
+  -> 独立收集当前 event 可用的 Effect Specs
   -> 独立构建 Output Contract
   -> 在分支局部结果中保存 Effect Calls
 ```
@@ -603,7 +606,7 @@ Output Contract fallback prompt
 范围：
 
 - `PersonaExpressionResult` 增加 `effect_calls`。
-- Persona 分支按 phase 查询 Effect Specs。
+- Persona 分支按当前 event 查询 Effect Specs。
 - 动态构建 Persona Output Contract。
 - 优先解析协议 Tool Call。
 - 保留 repaired JSON 和纯文本 fallback。
@@ -675,10 +678,10 @@ Phase 1 对 `expression_agent.py` 的修改只限于 schema builder 签名和纯
 
 必须覆盖：
 
-1. 空 Effect 列表不生成 `effect_calls`。
-2. 单个 Effect 生成正确的 `name.enum`。
+1. 空 Effect 列表仍生成固定 `effect_calls` 字段，并禁止数组项。
+2. 单个 Effect 生成正确的 `name.const`。
 3. 多个 Effect 名称按稳定顺序生成。
-4. schema 不使用 `oneOf`、`const` 或 `maxItems`。
+4. schema 使用 `oneOf + const` 固定每个 effect 的名称和 arguments。
 5. schema 构建不原地修改插件传入的 `parameters`。
 6. 重复正式名称注册失败。
 7. 重复 legacy alias 注册失败。
@@ -687,10 +690,10 @@ Phase 1 对 `expression_agent.py` 的修改只限于 schema builder 签名和纯
 10. legacy hint 只按显式 alias 转换。
 11. 不执行下划线和点号自动转换。
 12. `metadata` 不进入 Prompt schema。
-13. 按 phase 查询只返回适用的 Effect。
+13. 按当前 event 查询只返回适用的 Effect；过滤器异常时 fail closed。
 14. disabled Effect 不进入查询和 schema。
 15. 插件注销后正式名称和 alias 一起移除。
-16. 现有 `plugin_hints` schema 保持兼容。
+16. 无事件参数的注册表查询仍返回全部已启用注册项，供管理和诊断使用。
 17. Router Output Contract 不包含 Effect 信息。
 18. Context 注册表返回稳定、不可意外修改的结果。
 

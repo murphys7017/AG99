@@ -9,6 +9,9 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 1. Some experience with Python programming.
 2. Some experience with Git and GitHub.
 
+> [!NOTE]
+> The Yakumo fork also provides [Persona Effects](./guides/persona-effects), which let plugins expose event-scoped presentation capabilities to the single Persona Runtime. They are not LLM tools and are never exposed to Router.
+
 ## Environment Setup
 
 ### Obtain the Plugin Template

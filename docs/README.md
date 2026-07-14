@@ -10,6 +10,13 @@
 - `docs/Yakumo/modules/README.md`
 - `docs/Yakumo/upstream-merge-ledger.md`
 
+面向插件作者的 fork 扩展 API 已同步到普通中英文开发文档，而不只存在于 Yakumo 笔记：
+
+- `docs/zh/dev/star/guides/persona-effects.md`
+- `docs/en/dev/star/guides/persona-effects.md`
+
+Persona Effect 是 Persona 输出协议，不是 Agent Tool。Router 仍只返回固定分类词，不注册工具，也不接收 effect schema。
+
 `docs/Yakumo` 下的 `dev/*`、`target-state.md` 和早期中文详解文档包含历史设计记录，可能落后于当前代码。判断本 fork 与上游差异时，优先看 `README.md`、`docs/Yakumo/current-state.md` 和 `docs/Yakumo/modules/*`。
 
 如果需要查看上游官方文档，请访问：

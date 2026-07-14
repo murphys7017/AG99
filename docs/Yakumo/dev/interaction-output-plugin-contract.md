@@ -119,6 +119,7 @@ Interaction 统一发送文本、语音、通用 client object、平台 extras�
 ## Effect 规则
 
 - effect 名称和参数 schema 由注册插件拥有，Core 不为具体插件增加专用字段。
+- 插件应通过 `event_filter` 声明平台、设备和运行时适用性；Core 只把当前事件适用的 effect 放入 Persona 输出契约。
 - 插件只消费属于自己的 `effect_calls`，未知 effect 应保持隔离而不是猜测执行。
 - effect 的解释、资源选择、设备约束和 fallback 都由插件负责。
 - 延迟执行的 client object 应尽量绑定 `turn_id` 和 visible message id。
