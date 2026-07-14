@@ -1,345 +1,310 @@
 # Persona Runtime Phase Plan
 
-这份文档记录 Yakumo 下一阶段的实施计划。它不是当前代码说明，也不是最终目标态说明。
+这份文档记录 Yakumo 从消息驱动机器人演进为持续人格运行时的实施计划。它是阶段计划，不是当前代码说明，也不代表所有目标都已完成。
 
-当前共识：
+## 当前共识
 
-- 第一阶段先完成输入输出解耦。
-- interaction middleware 后续扩展为 `Persona Runtime Shell`，作为 Adapter 与 Core 之间的人格运行层。
-- runtime 需要重新整理，但第一步不是服务化拆分，而是先把 Input / Persona / Core / Output 的边界接稳。
-- `AstrMessageEvent` 的外部 API 必须保持兼容；重构方式不是删除或改名，而是让它逐步成为兼容外壳，内部委托外部 runtime 模块。
+- Yakumo 的目标不是增强一条“收到消息后回复”的链路，而是让 persona 成为跨消息、跨 conversation、跨平台持续存在的主体。
+- 消息、平台事件、任务进度和定时信号都是 persona 收到的 `Observation`；消息平台只是感知与表达 channel。
+- 官方 AstrBot 不是需要被替换的旧系统，而是 Yakumo 的运行底座。
+- Yakumo 主要增加持续人格所需的主体、状态、任务和表达编排，不重复实现官方已有能力。
+- 第一优先级是把 AstrBot 改造成目标中的持续人格系统；复用和吸收官方上游能力服务于这个目标，而不是约束这个目标。
+- Interaction Middleware 是官方 Pipeline 后、Core Agent 前的一轮交互边界，不是长期 Persona 本体。
+- 第一阶段不引入常驻 LLM 循环，不重写 `AstrMessageEvent`，也不新建一套平行的 Input/Output/Pipeline。
 
-## 计划主线
+## 官方运行底座
 
-目标流程：
-
-```text
-Adapter
-  -> Input Runtime / Observation
-  -> Persona Runtime Shell
-      -> Core Agent / Tools / Capabilities when needed
-  -> Output Runtime / Output Gateway
-  -> Finalized Material
-  -> Postprocess / Memory / Persona State Update
-```
-
-这个流程里，复杂任务进入 Core；普通寒暄、轻量反应、presence、状态表达可以由 Persona Runtime Shell 决定是否直接处理或只产出 output intent。
-
-## AstrMessageEvent 兼容外壳
-
-`AstrMessageEvent` 不能直接推倒重写。插件、平台适配器、pipeline、测试和外部生态都依赖它的既有形状。
-
-必须保持兼容的外部接口包括：
-
-- `event.message_str`
-- `event.message_obj`
-- `event.unified_msg_origin`
-- `event.session_id`
-- `event.get_messages()`
-- `event.get_sender_id()`
-- `event.get_sender_name()`
-- `event.send(...)`
-- `event.send_streaming(...)`
-- `event.complete_visible_turn(...)`
-- `event.set_extra(...)`
-- `event.get_extra(...)`
-
-但 `AstrMessageEvent` 当前混合了承载输入、发送输出、传递上下文、保存运行状态和兼容 extras 等多种职责。
-后续不应继续把更多输入、输出、人格和运行状态字段直接塞进它本体。
-
-### 当前情况
-
-当前 `AstrMessageEvent` 不是单纯的输入消息对象。它同时承担：
-
-- 输入消息载体：`message_str`、`message_obj`、sender、group、session、`unified_msg_origin`
-- 输出发送接口：`send(...)`、`send_streaming(...)`、`complete_visible_turn(...)`
-- 上下文传递：`set_extra(...)` / `get_extra(...)`
-- pipeline 运行状态：result、wake 状态、插件启用状态、LLM 调用标志
-- trace / diagnostics / temporary files
-
-同时，很多平台适配器都有自己的 `AstrMessageEvent` 子类，并重写发送相关函数。
-
-典型形态是：
-
-```python
-class XxxMessageEvent(AstrMessageEvent):
-    async def send(...):
-        ...
-        await super().send(...)
-
-    async def send_streaming(...):
-        ...
-        await super().send_streaming(...)
-```
-
-这些平台发送实现处理了大量平台差异，例如：
-
-- 普通消息发送
-- streaming 追加
-- draft / edit / finish marker
-- 平台 extras
-- 文件、图片、语音、卡片等特殊消息类型
-- 发送完成后的兼容副作用
-
-此外，interaction middleware 当前还会在运行时动态拦截事件实例方法：
-
-```python
-event.send = MethodType(send_wrapper, event)
-event.send_streaming = MethodType(send_streaming_wrapper, event)
-event.complete_visible_turn = MethodType(complete_visible_turn_wrapper, event)
-```
-
-这个拦截是当前 `InteractionOutputController` 接管 interaction turn 输出语义的关键路径。
-
-所以 `AstrMessageEvent` 的输出侧兼容点至少有三层：
+Yakumo 直接依赖并复用官方已经实现和测试的能力：
 
 ```text
-平台 event 子类 send / streaming 实现
-  -> AstrMessageEvent 基类兼容钩子
-  -> interaction middleware 动态拦截
-  -> 后续 OutputGateway / OutputRuntime
+Official AstrBot Runtime Foundation
+├── EventBus / Pipeline / Filter / Permission
+├── Plugin Handler / Hook / LLM Tool
+├── Provider / Model / STT / TTS
+├── Knowledge / Search / Sandbox / SubAgent
+├── Session / Conversation / Database / Config
+└── Platform Adapter / Delivery
+                ↓
+Yakumo Persona Control Layer
+├── Observation
+├── PersonaRuntime
+├── TurnContextSnapshot
+├── ActiveTask
+├── Unified Persona Expression
+└── OutputEnvelope / FinalizedMaterial
 ```
 
-这也是为什么不能直接把 `event.send(...)` 改成全新调用协议，也不能一次性删除 middleware 的 send interception。
+### 复用原则
 
-目标做法是：
+- 官方 EventBus、Pipeline、权限、白名单、唤醒和插件 Handler 先处理事件。
+- Observation 只消费已经通过官方处理的事件，不重复实现平台事件过滤。
+- Native Core 继续使用官方 Agent、Tool Loop、插件工具、知识库、搜索和 sandbox。
+- 外部执行器只能通过 Capability Gateway 使用官方已经筛选和授权的能力。
+- Output Runtime 继续调用官方 platform event / adapter 发送，不复制平台协议。
+- Persona、conversation、provider、config、database 和插件生命周期继续由官方 manager 提供。
+- 新代码优先增加 orchestration、projection 和 protocol，不复制 capability implementation。
+- 能通过 Yakumo 自有模块、组合或稳定扩展点实现的能力，不无谓侵入官方实现；目标语义确实要求改变核心时，应直接改造，并保持职责和边界清楚。
+- 引入官方上游更新时，以 Yakumo 的目标架构和行为为判断基准：吸收适用的能力与修复，调整或拒绝与目标冲突的变化。
+
+旧插件兼容是有价值的次级目标，因为它能继续利用官方生态，但不是架构约束。如果旧插件行为与持续人格语义或正确性冲突，可以提供迁移路径而不强行保留。若官方接口无法表达持续人格所需的主体、任务或生命周期语义，就应有记录地改造；在此之前先确认 projection、adapter 或 delegation 是否能以更低成本实现相同目标。
+
+## 目标流程
 
 ```text
-外部 runtime 模块 / 服务
-  -> 由 lifecycle / gateway 创建和持有
-  -> 通过轻量引用绑定到 AstrMessageEvent
-  -> AstrMessageEvent 保持旧 API
-  -> 旧 API 内部逐步委托给外部模块
+Platform / WebUI / Official Internal Event
+  -> Official EventBus / Pipeline / Plugin Handlers
+  -> Interaction Boundary
+      -> Observation projection
+      -> PersonaRuntime
+          -> TurnContextSnapshot
+          -> Router: silent / persona / hybrid
+              -> silent: complete without visible output
+              -> persona: Unified Persona Expression
+              -> hybrid: Core and delegation acknowledgement start concurrently
+                  -> ActiveTask progress / result
+                  -> Unified Persona Expression
+              -> Output Arbiter
+      -> Existing Interaction Output Runtime
+      -> Official Platform Adapter
+  -> FinalizedMaterial
+  -> Postprocess / Memory / Persona State
 ```
 
-也就是说，`AstrMessageEvent` 继续作为兼容外壳和事件桥，不成为新的全局大对象。
+一次消息 turn 是 PersonaRuntime 消费 Observation 的一种情况，不再是 Persona 的完整生命周期。
 
-推荐形态：
+## 当前链路复核
 
-```python
-@dataclass(slots=True)
-class EventRuntimeRefs:
-    input_runtime: InputRuntime | None = None
-    output_gateway: OutputGateway | None = None
-    context_resolver: EventContextResolver | None = None
-    state_store: EventStateStore | None = None
-```
+当前实现已经形成可继续演进的单轮 Interaction 外壳：
 
-`AstrMessageEvent` 内部只保存引用：
+- 官方 Waking、Whitelist、Session Status、Rate Limit、Content Safety 和 PreProcess 先执行。
+- `ProcessStage` 在插件 Handler 执行前准备输出接管，并在 Core Agent 前调用 Interaction Middleware。
+- 对话 Router 只输出 `silent`、`persona` 或 `hybrid`；直播音频和协议命令使用独立的内部 Core bypass，不伪装成 Router 结果。
+- Router 先完成分类；`silent` 不调用 Persona Expression 或 Core，`persona` 和 `hybrid` 才调用统一 Persona Expression。
+- 即时表达、Core 最终结果和显式 persona 插件输出都复用 `InteractionPersonaRuntime` 的表达入口。
+- `InteractionOutputController` 统一承担 materialization、TTS、平台发送、可见输出记录和 finalized material。
+- Core 只处理通用 persona effect 注册与结构化调用，不理解 Motion、Live2D 等插件领域语义。
 
-```python
-event.bind_runtime_refs(refs)
-```
+但它目前仍然是一条消息回复链路，而不是持续 PersonaRuntime：
 
-旧接口保持原名和原参数，但实现可以逐步委托：
+1. Interaction 只在插件产生 `ProviderRequest`，或官方流程已经准备调用 Core LLM 时处理输入。未触发 Core 的有效平台事件、任务事件和内部事件不能成为 Observation。
+2. `InteractionPersonaRuntime` 只是 Expression Agent 的薄包装，没有 persona runtime identity、Observation 调度、ActiveTask 或跨 turn 生命周期。
+3. 当前 `hybrid` 仍会等待即时 Persona Expression 完成并发送后才放行 Core，尚未实现 Core 与确认型表达并发及抢占仲裁。
+4. Core 工具状态、工具直出和部分中间消息仍通过普通 `event.send()` 进入输出分类，可能被当作 `passthrough` 提前完成 turn。
+5. 普通插件输出默认是 `direct`，语义文本仍可绕过唯一 Persona Expression。
+6. Router 与 Persona 分别收集上下文；Interaction Memory 仍是按 session 保存的独立 JSON，不是跨 conversation、跨平台的人格状态。
+7. Local / Third-party Runner 在 Pipeline 初始化时选择，还不是 PersonaRuntime 按 ActiveTask 解析的 ExecutionBackend。
 
-```python
-await event.send(message)
-# -> refs.output_gateway.send(event, message)
+这些问题的处理顺序应服从目标架构，而不是为了保持当前链路形状只做局部补丁。
 
-await event.prepare_input()
-# -> refs.input_runtime.accept_event(event)
-```
+## 核心对象
 
-短期内，未接入外部模块的接口继续走旧实现。这样可以边接边迁移，不会一次性破坏旧插件。
+### `Observation`
 
-### 共享模块与事件私有状态
+Observation 是只读输入事实，表达“人格观察到了什么”，不代表一定需要回复。
 
-重构时要区分“共享 runtime 模块”和“每个事件自己的状态”。
+最小字段：
 
-共享模块由 lifecycle / gateway 创建，不应该每个 event 重复创建：
+- observation id、kind、timestamp
+- persona id 与 source channel
+- sender、audience、session / conversation reference
+- visibility、privacy、permission
+- text、attachments、quoted material 或结构化事件 payload
+- 可选的、仅本轮有效的原始 `AstrMessageEvent` 只读兼容引用
 
-- `InputRuntime`
-- `OutputGateway`
-- `EventContextResolver`
-- `EventStateStore`
-- `PersonaResolver`
-- `MemorySnapshotReader`
-- `ProviderGateway`
-- `CapabilityRegistry`
+第一阶段建议只支持：
 
-每个 event 自己只持有或引用本轮状态：
+- `user_message`
+- `platform_event`
+- `system_event`
+- `task_event`
 
-- `InputObservation`
-- `TurnState`
-- `OutputLedger`
-- `CompletionState`
-- `Diagnostics`
+普通消息、Notice、戳一戳和任务进度不能互相伪装。是否创建 Observation、是否交给 Persona，仍以官方事件类型和 Pipeline 处理结果为前提。
 
-这能避免 `AstrMessageEvent` 自己创建和拥有所有子系统，也能避免每条消息重复初始化共享服务。
+原始 event 引用只用于本轮委派官方能力，不能进入长期 Persona 状态、ActiveTask 持久化或 Memory。跨 turn 保存时只保留规范化事实与官方稳定标识，避免绑定具体 adapter 和上游内部对象生命周期。
 
-### extras 的定位
+### `PersonaRuntime`
 
-`event.set_extra(...)` / `event.get_extra(...)` 必须保留，但目标定位应从“主状态通道”降级为“兼容 bag”。
+PersonaRuntime 是围绕 persona identity 的长生命周期编排者，负责：
 
-迁移原则：
+- 接收 Observation
+- 解析本轮 Effective Persona 与 audience scope
+- 决定是否表达、保持静默或启动任务
+- 消费任务进度与结果
+- 把待表达材料交给唯一 Persona Expression 入口
 
-- 新代码优先读写结构化 runtime state。
-- 旧代码仍可读写 extras。
-- 关键状态在过渡期可以双写：结构化 state 为主，extra 为兼容镜像。
-- 后续逐步减少 `_interaction_*`、`_input_*` 等临时 key 的直接散落使用。
+PersonaRuntime 不直接拥有官方数据库、Provider、Memory、插件或平台 adapter。它通过现有 manager/service 使用这些能力。
 
-### 迁移注意事项
+“持续存在”也不等于无边界全局单例：
 
-1. 不改变 `AstrMessageEvent` 的外部函数名、参数和常用属性语义。
+- persona identity 跨 turn 保持连续
+- relationship、privacy、conversation 和 audience state 按 scope 隔离
+- active task 有独立 identity 和授权上下文
+- 持久状态由 Memory / PersonaState service 管理，不只保存在 Python 对象内
 
-2. 不要求平台适配器第一阶段统一改写。平台子类的 `send(...)` / `send_streaming(...)` 仍是平台差异的合法承载点。
+### `TurnContextSnapshot`
 
-3. OutputGateway 第一阶段只能包裹、委托和记录 ledger，不能直接替代所有平台发送实现。
+一次 Observation 处理期间共享的只读上下文快照：
 
-4. middleware 的动态 send interception 是当前主路径的一部分。后续可以把它替换成正式 OutputGateway hook，但不能在 Input Runtime 阶段删除。
+- identity / audience
+- persona / persona state
+- history / episode
+- memory snapshot
+- input / attachments
+- filtered capabilities
 
-5. 新增 runtime refs 时，要支持未绑定 refs 的事件继续按旧逻辑运行。
+Router、Persona Expression 和 Core 使用不同 Prompt Profile，但不应分别重复查询同一份身份、历史和记忆。
 
-6. 对 interaction turn，过渡期允许双写状态：`EventStateStore` / structured state 是新主路径，`event.extra` 是兼容镜像。
+### `ActiveTask`
 
-7. 对非 interaction 事件，旧 core pipeline 必须继续可用；InputRuntime 接入不能强制所有平台立即启用 interaction middleware。
+ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执行器的持续任务。
 
-8. 任何迁移都要优先验证 WebChat、Telegram、QQ/aiocqhttp、Lark、WecomAIBot 这类重写 streaming 或 completion 语义的平台。
+统一状态：
 
-## Phase 1: 输入输出解耦
+- `queued`
+- `running`
+- `thinking`
+- `tool_running`
+- `completed`
+- `failed`
+- `cancelled`
 
-第一阶段先接稳输入和输出，不急着实现完整心跳、潜意识或长期后台人格循环。
+执行器通过 task event 返回进度与结果，不直接把普通 `event.send()` 当作任务生命周期协议。
 
-Phase 1 的关键不是新建一套绕开 `AstrMessageEvent` 的入口，而是让 `AstrMessageEvent` 通过 runtime refs 连接到外部 Input / Output 模块。
-
-### Input Runtime
-
-Input Runtime 负责把外部和内部输入整理成统一 observation。
-
-输入来源包括：
-
-- 平台适配器消息
-- WebUI 输入
-- 语音、图片、文件、引用消息
-- 主动事件
-- 后续心跳、idle tick、任务状态、反思触发等内部信号
-
-Observation 至少应表达：
-
-- source / platform / session / conversation
-- sender / audience / visibility
-- privacy / permission / importance
-- raw input 与 materialized input
-- attachments / quoted material
-- 初步 route / gate 线索
-
-### Output Runtime
-
-Output Runtime 负责把内部 output intent 落到具体目标。
-
-输出目标至少应区分：
-
-- chat reply
-- streaming chat reply
-- voice / TTS
-- Desktop Body / Presence Client
-- task status
-- local-only notification
-- silent finalized material
-
-聊天窗口回复只是 output target 之一，不再是唯一输出形态。
-
-### Finalized Material
-
-Output Runtime 完成后必须产出 finalized material。
-
-Memory / postprocess / persona state 更新只消费 finalized material，不从临时 visible output 或平台发送结果反推完整回合语义。
-
-## Phase 1 建议实施顺序
-
-### Phase 1A: 绑定 runtime refs
-
-先给 `AstrMessageEvent` 增加轻量绑定能力：
-
-- `bind_runtime_refs(...)`
-- `get_runtime_refs(...)`
-- 可选的 `prepare_input(...)`
-
-这一阶段不改变任何旧接口行为。
-
-### Phase 1B: 接入 InputRuntime
-
-实现 `InputRuntime.accept_event(event)`，生成 `InputObservation`。
-
-过渡期写入两处：
-
-- 结构化 state / observation 引用
-- `event.extra["_input_observation"]` 兼容镜像
-
-现有 middleware 继续使用 `AstrMessageEvent` 驱动，行为不变。
-
-### Phase 1C: 迁移入站 materialization
-
-把 interaction middleware 中的入站 path mapping、Record 规范化、STT 转写等输入整理逻辑迁入 InputRuntime。
-
-middleware 不再自己做输入整理，而是调用：
-
-```python
-observation = await event.prepare_input()
-```
-
-或：
-
-```python
-observation = await input_runtime.accept_event(event)
-```
-
-### Phase 1D: 引入 EventStateStore
-
-将 `_turn_id`、interaction decision、completion state、failure ledger 等运行时状态逐步迁入 `EventStateStore`。
-
-`event.extra` 保留兼容镜像。
-
-### Phase 1E: 接入 OutputGateway
-
-在不改 `event.send(...)` 外部调用方式的前提下，让 send / streaming 逐步委托给 OutputGateway。
-
-旧平台 event 子类可以继续保留平台发送细节；OutputGateway 第一阶段只做统一调度和 ledger，不强行抹平所有平台差异。
-
-## Phase 2: Persona Runtime Shell
-
-在输入输出边界稳定后，interaction middleware 扩展为 `Persona Runtime Shell`。
-
-它负责一轮人格运行：
-
-- 接收 observation
-- 组合 Effective Persona、memory snapshot、persona state、关系/话题状态和 capability context
-- 判断 self reply / delegate to core / hybrid / local presence / silent
-- 委托 Core 处理复杂任务
-- 向 Output Runtime 提交 output intent
-- 交付 finalized material 给 postprocess
-
-它不应拥有长期数据本体：
-
-- base persona 仍由 persona manager / repository 管理
-- memory 仍由 memory service 管理
-- persona state 后续由 `PersonaStateService` 管理
-- provider / tools / skills / subagent 仍通过 gateway 或 capability registry 接入
-
-## Phase 3: Background Mind
-
-完成 Phase 1 和 Phase 2 后，再接默认小模型、心跳、潜意识和主动 presence。
-
-这些能力不应绕过主链路，而应作为内部 observation / intent source 接入：
-
-```text
-heartbeat / idle tick / task state / reflection trigger
-  -> internal observation
-  -> Persona Runtime Shell
-  -> output intent / silent material / persona state update
-```
-
-这样可以避免后台人格直接发消息、直接写 memory、或绕过隐私/可见性判断。
+### `ExpressionIntent` / `OutputEnvelope`
+
+- `ExpressionIntent` 描述 Persona 想表达什么、面向谁、是否允许静默。
+- `OutputEnvelope` 表示一次逻辑 utterance，包含 semantic text、文本/语音 rendition、目标 channel、delivery identity 与可选的不透明插件扩展数据。
+- 即时表达、Core 结果、任务进度和插件 persona 输出都复用唯一 Persona Expression。
+- 主流程不定义也不解释 Motion、Live2D 或其他具体效果；相关插件只通过扩展点消费自身的数据。
+
+## 改造与上游复用策略
+
+优先级从高到低为：
+
+1. 实现 Yakumo 持续人格系统的目标语义和使用体验。
+2. 最大限度复用官方已经成熟的能力，避免重复开发。
+3. 在不偏离目标的前提下吸收官方上游能力与修复，控制长期维护成本。
+4. 在不妨碍前三项的前提下兼容官方插件生态和既有行为。
+
+### 上游协同
+
+- 不重复实现已经满足需求的官方模块；Yakumo 优先通过组合、投影和委派接入。
+- 核心语义需要改变时允许修改官方代码，但应形成明确的 Yakumo 边界，避免同一职责散落到 EventBus、Pipeline、Core 和 Adapter 内部。
+- Yakumo 自有对象不成为官方对象的替代品；`Observation`、`PersonaRuntime` 和 `ActiveTask` 只负责官方当前没有表达的持续人格语义。
+- 上游更新进入后，先验证 Yakumo 的目标语义和主流程，再验证可复用的官方行为；不能为了保持上游原样而退回消息机器人模型。
+- 对官方模块的改造要记录目的和边界，便于后续判断上游新能力可以直接复用、适配还是替换现有实现。
+
+### 第一阶段沿用的官方入口
+
+- 不给 `AstrMessageEvent` 增加新的必需公开 API。
+- 不要求官方 platform adapter 为 PersonaRuntime 重写协议。
+- 不改变官方 Handler、`MessageEventResult`、`ProviderRequest`、LLM Tool 和 Hook 的基本入口。
+- 未启用 Interaction / Persona Runtime 的平台继续走官方路径。
+
+### 过渡方式
+
+- 在 `ProcessStage` 的插件处理与 Core 执行之间建立明确的 Persona Observation 接缝；它不以当前事件是否准备调用 LLM 为前提。
+- `ObservationFactory.from_event(event)` 在 Interaction 内部做只读投影，不修改 event 类型，也不把所有平台服务通知伪装成用户消息。
+- Observation 优先保存在 `InteractionTurnState`；`event.extra` 只在已有兼容点需要时镜像。
+- 第一阶段继续使用现有 `InteractionOutputController`，不另建一套 Output Gateway。
+- 第一阶段继续使用现有入站 materialization，不另建一套通用 Input Runtime。
+- 第一阶段继续使用现有 Core bridge，不提前重写 Agent、插件、工具和知识库。
+
+### 修改官方边界的判断
+
+1. 改造必须直接服务于持续人格语义、正确性、体验或长期可维护性，而不是无目的重写。
+2. 修改前比较直接复用、投影适配和核心改造三种方式，选择最符合目标且总体成本合理的方案。
+3. 必须记录受影响的上游接缝、API、平台和迁移方式，方便继续评估官方更新。
+4. 不长期维护两套拥有相同语义的主链路。
+5. 不为兼容而接受重复回复、错误 completion 或权限绕过。
+
+## 实施阶段
+
+### Phase 1：Observation 接缝与 PersonaRuntime 入口
+
+目标：把 Persona 从“Core 调用前的回复中间件”提升为官方 Pipeline 后的独立观察与编排主体，同时保持现有用户可见回复语义稳定。
+
+实施内容：
+
+1. 定义只读 `Observation`、kind、source、actor、audience 和 privacy 数据类型。
+2. 调整 `ProcessStage` 内部边界：插件输出接管仍可在 Handler 前准备；Observation 在官方过滤、预处理和插件处理之后、Core 执行之前分发。
+3. Observation eligibility 使用官方事件类型与插件扩展判断，不能仅依赖 `is_at_or_wake_command`、`call_llm` 或 `ProviderRequest`。
+4. 使用官方 persona manager 的解析结果确定 persona identity，不另建 persona repository。
+5. 增加轻量 `PersonaRuntimeManager`，按 persona identity 提供 runtime handle，并按 audience、privacy 和 relationship scope 隔离状态。
+6. 将 Observation 和 runtime identity 保存到 `InteractionTurnState`；原始 event 只在本轮委派官方能力时使用。
+7. `PersonaRuntime.handle_observation(...)` 第一阶段复用现有 Router、Persona Expression、Core bridge 和 OutputController；非回复型 Observation 默认只记录或通知，不主动发言。
+8. 实现 Hybrid 协同：Router 选择 `hybrid` 后，同时启动 Core 与确认型 Persona Expression；Core 不能等待即时表达完成，二者的输出由同一个仲裁器按提交状态处理。
+9. 将 Core thinking、tool call、tool result 和执行状态映射为 lifecycle / task progress；中间进度不得触发 finalized material 或 turn completion。
+
+这一阶段明确不做：
+
+- 不修改 `AstrMessageEvent` 公共接口
+- 不迁移平台 adapter
+- 不新建 EventStateStore、InputRuntime 或 OutputGateway
+- 不增加后台模型调用
+- 不改变插件事件类型
+- 不实现主动回复
+- 不引入可替换执行器
+
+验收条件：
+
+- Observation 只在官方 Pipeline 过滤之后创建。
+- 有效 Observation 的创建不依赖当前事件是否准备调用 Core LLM。
+- Notice、戳一戳、普通消息、任务进度和平台服务状态保持不同 kind；无意义服务通知不会触发回复。
+- QQ、WebChat 等现有消息行为保持一致。
+- 同一 persona 可以得到稳定 runtime identity。
+- 不同 audience、session、privacy scope 不串线。
+- `silent` 不调用 Persona Expression 或 Core，并以无可见输出的合法 material 完成。
+- 直播音频和协议命令不进入对话 Router，也不产生伪造的 Router 决策。
+- `hybrid` 中 Core 委派不等待即时表达完成；Core 提前完成时，尚未发送的即时表达会被取消或抑制。
+- 即时表达和 Core 最终表达调用同一个 Persona Expression，不形成两套拟人层。
+- Core 工具和思考进度不会提前完成 turn，也不会造成重复最终回复。
+- 未启用 Persona Runtime 的路径不受影响。
+- Yakumo 接入点保持集中，后续同步官方 Pipeline、Core 或 Adapter 更新时不需要重写 PersonaRuntime。
+
+### Phase 2：共享 TurnContextSnapshot
+
+- 一次 Observation 只解析一次 identity、history、memory、persona 和 attachments。
+- Router、Persona 和 Core 从同一 snapshot 投影不同 Prompt Profile。
+- required / optional collector、超时和降级诊断在 snapshot 边界统一生效。
+- Router 继续保持极简 Profile，但不再单独重复查询 conversation 和 memory。
+- 区分 conversation history、relationship state 和 persona state；逐步用官方 Memory / Persona 能力替代按 session 保存的 Interaction JSON 主状态。
+
+### Phase 3：ActiveTask 与可替换执行器
+
+- 把 Core 委派改为 ActiveTask。
+- 抽出 `ExecutionPlan`、`ExecutionBackend`、`ExecutionEvent` 和 `ExecutionResult`。
+- 先用 `NativeAstrBotBackend` 包住官方现有执行路径，不改变行为。
+- 外部执行器通过 execution-scoped Capability Gateway 使用官方插件、工具和知识库能力。
+- Codex、OpenCode 和 Native Core 都向 PersonaRuntime 返回统一 task event。
+- ExecutionBackend 由 PersonaRuntime 针对 ActiveTask 解析，不在 Pipeline 初始化时全局固定。
+
+### Phase 4：ExpressionIntent 与 OutputEnvelope
+
+- 即时表达、任务进度、最终结果和插件 persona 输出统一形成 ExpressionIntent。
+- 一次逻辑 utterance 只创建一个 OutputEnvelope。
+- 文本和 TTS 是同一 envelope 的 rendition，不是多条独立回复；插件扩展也不能额外创建重复的逻辑回复。
+- 普通插件最终语义文本默认进入 Persona Expression；`direct` 只用于明确的协议输出、不可改写内容和原始媒体投递。
+- 现有 OutputController 逐步承载 envelope，不另建平行输出链路。
+
+### Phase 5：Background Mind 与主动存在
+
+- heartbeat、idle tick、scheduled reminder、task state 和 reflection trigger 作为内部 Observation 接入。
+- 主动表达必须经过 audience、privacy、importance、cooldown 和 interruption policy。
+- 后台分析使用有界队列，不与前台 Persona/Core 请求无约束争抢 Provider 和数据库连接。
+- Background Mind 不直接发送平台消息，也不直接改写 Memory 或 Persona 底座。
 
 ## 非目标
 
-第一阶段不追求：
+近期不追求：
 
+- 重新实现官方 AstrBot
 - 完整服务化拆分
-- 完整人格反思系统
+- 一次性重写所有平台和插件 API
+- 为兼容任意旧插件而冻结官方能力或 Yakumo 架构
 - 默认小模型常驻循环
-- 直接把所有 middleware 状态升级成长期人格状态
-- 让 AG99live 直接监听所有 session 原文
+- 无限制主动回复
+- 把所有状态塞进 PersonaRuntime Python 对象
+- 让 AG99live 或其他客户端直接监听所有 session 原文
 
-第一阶段只追求把输入、人格运行、核心执行、输出和 finalized material 的边界接稳。
+近期目标只包括：建立 Observation、持续 PersonaRuntime identity、共享 TurnContextSnapshot，以及输入、执行、表达和 finalized material 的稳定边界。
