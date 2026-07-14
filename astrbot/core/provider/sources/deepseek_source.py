@@ -20,8 +20,6 @@ from .openai_source import ProviderOpenAIOfficial
     prompt_renderer_family="openai",
 )
 class ProviderDeepSeek(ProviderOpenAIOfficial):
-    _FORCE_OMIT_TOOL_CHOICE_KEY = "_deepseek_force_omit_tool_choice"
-
     @staticmethod
     def _extract_thinking_type(source: Any) -> str | None:
         if not isinstance(source, dict):
@@ -53,39 +51,6 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
         # DeepSeek documents thinking mode as enabled by default.
         return True
 
-    def _is_thinking_tool_choice_error(self, error: Exception) -> bool:
-        for candidate in self._extract_error_text_candidates(error):
-            lowered = candidate.lower()
-            if "tool_choice" in lowered and (
-                "thinking" in lowered or "reasoning" in lowered
-            ):
-                return True
-        return False
-
-    def _normalize_tool_choice(
-        self,
-        payloads: dict,
-        extra_body: dict[str, Any],
-        *,
-        thinking_enabled: bool,
-        force_omit: bool = False,
-    ) -> None:
-        if not thinking_enabled and not force_omit:
-            return
-
-        payload_tool_choice = payloads.pop("tool_choice", None)
-        extra_tool_choice = extra_body.pop("tool_choice", None)
-        removed_tool_choice = (
-            payload_tool_choice
-            if payload_tool_choice is not None
-            else extra_tool_choice
-        )
-        if removed_tool_choice and removed_tool_choice != "auto":
-            logger.warning(
-                f"{self.get_model()} 思考模式不支持 tool_choice={removed_tool_choice!r}，"
-                "已改为 DeepSeek 默认工具选择策略。"
-            )
-
     def _prepare_request(
         self,
         payloads: dict,
@@ -112,76 +77,22 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
             extra_body.update(custom_extra_body)
         self._apply_provider_specific_extra_body_overrides(extra_body)
 
-        force_omit = bool(payloads.pop(self._FORCE_OMIT_TOOL_CHOICE_KEY, False))
-        thinking_enabled = self._is_thinking_enabled(payloads, extra_body)
-        self._normalize_tool_choice(
-            payloads,
-            extra_body,
-            thinking_enabled=thinking_enabled,
-            force_omit=force_omit,
-        )
+        if "tool_choice" in payloads:
+            extra_body.pop("tool_choice", None)
         self._sanitize_assistant_messages(payloads)
         return payloads, extra_body, tools
 
     def _finally_convert_payload(self, payloads: dict) -> None:
-        assistant_messages_without_reasoning = set()
-        if not self._is_thinking_enabled(payloads):
-            for idx, message in enumerate(payloads.get("messages", [])):
-                if (
-                    isinstance(message, dict)
-                    and message.get("role") == "assistant"
-                    and "reasoning_content" not in message
-                ):
-                    assistant_messages_without_reasoning.add(idx)
+        thinking_enabled = self._is_thinking_enabled(payloads)
 
         super()._finally_convert_payload(payloads)
 
-        if not assistant_messages_without_reasoning:
+        if thinking_enabled:
             return
 
-        for idx in assistant_messages_without_reasoning:
-            message = payloads["messages"][idx]
-            if message.get("reasoning_content") == "":
+        for message in payloads.get("messages", []):
+            if isinstance(message, dict) and message.get("role") == "assistant":
                 message.pop("reasoning_content", None)
-
-    async def _handle_api_error(
-        self,
-        e: Exception,
-        payloads: dict,
-        context_query: list,
-        func_tool: ToolSet | None,
-        chosen_key: str,
-        available_api_keys: list[str],
-        retry_cnt: int,
-        max_retries: int,
-        image_fallback_used: bool = False,
-    ) -> tuple:
-        if self._is_thinking_tool_choice_error(e):
-            logger.warning(
-                f"{self.get_model()} 思考模式不支持当前 tool_choice，已移除该参数并重试。"
-            )
-            payloads.pop("tool_choice", None)
-            payloads[self._FORCE_OMIT_TOOL_CHOICE_KEY] = True
-            return (
-                False,
-                chosen_key,
-                available_api_keys,
-                payloads,
-                context_query,
-                func_tool,
-                image_fallback_used,
-            )
-        return await super()._handle_api_error(
-            e,
-            payloads,
-            context_query,
-            func_tool,
-            chosen_key,
-            available_api_keys,
-            retry_cnt,
-            max_retries,
-            image_fallback_used=image_fallback_used,
-        )
 
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         payloads, extra_body, tools = self._prepare_request(payloads, tools)

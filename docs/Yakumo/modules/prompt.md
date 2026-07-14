@@ -94,6 +94,8 @@ OutputContract
 
 Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明确不支持工具协议时才受控降级为 prompt-only JSON。Router 只返回固定路由词，不使用工具调用或 JSON 契约。
 
+DeepSeek Provider 按有效 `thinking.type` 配置选择思考或非思考请求，不由 Prompt 系统替用户切换模式。两种模式都透传输出契约生成的 `tool_choice`；如果服务端拒绝该组合，应返回明确错误，而不是静默删除约束后产生不符合契约的自由文本。
+
 ## 群聊上下文
 
 `GroupChatContext` 是动态 Prompt Extension Collector。对 Router、Persona、Core 统一管线，它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。对尚未接入统一管线的官方 Agent runner，它提供受 Prompt Apply 标记保护的 `on_llm_request` 兼容桥接。

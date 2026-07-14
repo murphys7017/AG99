@@ -36,6 +36,7 @@ context:
     - Router, Persona, and Core target projections define distinct context boundaries over the single canonical ContextPack pipeline.
     - Static prompt collectors are cached only within one event/config/ProviderRequest identity and must not be treated as cross-turn global cache.
     - Official on_llm_request remains a post-render low-level ProviderRequest hook; preserving it does not restore removed legacy/shadow prompt modes or internal duplicate injectors.
+    - DeepSeek thinking mode is controlled only by the effective Provider `thinking.type`; both thinking and non-thinking requests preserve caller-supplied `tool_choice` instead of silently changing contract semantics.
   unresolved_questions:
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
     - Interaction enrichment can still mutate ContextPack directly and bypass Builder conflict/version semantics.
@@ -96,6 +97,7 @@ architecture:
     - The exported apply_interaction_core_task_spec direct-request interface remains available for plugin compatibility, while the canonical Main Agent path uses CoreTaskCollector exclusively.
 verification:
   checks_run:
+    - DeepSeek thinking/non-thinking tool-choice and reasoning round-trip preservation: provider tests (8 passed), Persona Expression tests (24 passed), output-contract/request-adapter/tool-loop boundary tests (13 passed), and ruff (passed); broader OpenAI provider suite has 6 unrelated pre-existing Windows path/diagnostic failures
     - Official-hook compatibility follow-up: focused group-context/prompt/internal-agent tests (69 passed), broad prompt/interaction/Main Agent tests (455 passed), postprocess/memory/tool-loop tests (138 passed), ruff, and public import smoke test (passed)
     - .venv\Scripts\python.exe -m pytest tests\unit -q -k "prompt or interaction or group_chat_context_wiring or astr_main_agent" --basetemp .tmp\pytest-prompt-review (450 passed, 707 deselected)
     - .venv\Scripts\python.exe -m pytest tests\unit\test_postprocess.py tests\unit\test_memory_runtime.py tests\test_tool_loop_agent_runner.py -q --basetemp .tmp\pytest-prompt-review-post (138 passed)

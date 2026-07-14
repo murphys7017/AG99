@@ -22,7 +22,9 @@ Currently, supported models include but are not limited to:
 
 Mainstream models released after 2025 typically support function calling.
 
-Commonly unsupported models include older models such as DeepSeek-R1 and Gemini 2.0 thinking-type models.
+Some older models or endpoints do not support function calling. Check the provider's current documentation instead of inferring support solely from whether reasoning mode is enabled.
+
+The current DeepSeek API supports tool calls in both thinking and non-thinking modes. AstrBot respects the Provider's `thinking.type` setting: `disabled` uses non-thinking mode, while `enabled` or an omitted setting uses thinking mode. Both paths preserve the caller's `tool_choice`; AstrBot does not switch thinking modes or silently remove the tool-choice constraint.
 
 In AstrBot, web search, todo reminders, and code interpreter tools are provided by default. Many plugins, such as:
 
