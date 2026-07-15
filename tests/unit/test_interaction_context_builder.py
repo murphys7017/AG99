@@ -5,18 +5,20 @@ from unittest.mock import AsyncMock
 import pytest
 
 from astrbot.core.db.po import Conversation
-from astrbot.core.interaction.collectors import InteractionMemoryCollector
+from astrbot.core.interaction.collectors import (
+    InteractionCapabilityCollector,
+    InteractionMemoryCollector,
+)
 from astrbot.core.interaction.context_builder import (
+    InteractionPromptContributorCollector,
     InteractionPromptContributorError,
-    _build_router_attachment_summary,
-    append_interaction_prompt_extensions_to_pack,
-    build_interaction_collectors,
-    build_router_context_pack,
+    _build_attachment_summary,
+    build_interaction_context_pack,
     collect_interaction_prompt_extensions,
     extract_recent_messages,
-    get_or_collect_interaction_prompt_extensions,
+    get_or_build_interaction_context_material,
 )
-from astrbot.core.interaction.contributors import InteractionDecisionView
+from astrbot.core.interaction.contributors import InteractionPromptView
 from astrbot.core.interaction.memory_store import (
     InteractionMemorySnapshot,
     InteractionMemoryStore,
@@ -24,7 +26,12 @@ from astrbot.core.interaction.memory_store import (
     build_interaction_memory_reply_from_visible_outputs,
     update_interaction_memory_from_turn,
 )
-from astrbot.core.interaction.turn_state import InteractionContextMaterial
+from astrbot.core.interaction.turn_state import InteractionTurnState
+from astrbot.core.interaction.types import (
+    InteractionAgentConfig,
+    InteractionPromptBuildConfig,
+)
+from astrbot.core.prompt import PromptContextBuilder
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.targets import PromptTarget, project_context_pack
@@ -123,14 +130,7 @@ def test_extract_recent_messages_uses_only_interaction_memory_turns():
     assert len(messages) == 1
     assert messages[0]["source"] == "interaction_memory"
 
-def test_build_interaction_collectors_uses_only_interaction_collectors():
-    collectors = build_interaction_collectors(InteractionMemoryStore())
-
-    assert len(collectors) == 1
-    assert collectors[0].__class__.__name__ == "InputCollector"
-
-
-def test_router_attachment_summary_keeps_counts_without_media_refs():
+def test_attachment_summary_keeps_counts_without_media_refs():
     pack = ContextPack()
     pack.add_slot(
         ContextSlot(
@@ -152,7 +152,7 @@ def test_router_attachment_summary_keeps_counts_without_media_refs():
         )
     )
 
-    summary = _build_router_attachment_summary(pack)
+    summary = _build_attachment_summary(pack)
     filtered = project_context_pack(pack, PromptTarget.ROUTER)
 
     assert summary == {"images": 1, "files": 2}
@@ -161,7 +161,7 @@ def test_router_attachment_summary_keeps_counts_without_media_refs():
 
 
 @pytest.mark.asyncio
-async def test_build_router_context_pack_collects_trimmed_history_and_memory():
+async def test_build_interaction_context_pack_collects_canonical_facts():
     class Event:
         session_id = "session-1"
         unified_msg_origin = "webchat:friend:session-1"
@@ -225,10 +225,10 @@ async def test_build_router_context_pack_collects_trimmed_history_and_memory():
         },
     )()
 
-    pack = await build_router_context_pack(
+    pack = await build_interaction_context_pack(
         Event(req),
         plugin_context,
-        config=SimpleNamespace(timezone="Asia/Shanghai"),
+        config=InteractionPromptBuildConfig(timezone="Asia/Shanghai"),
         memory_store=store,
     )
 
@@ -264,6 +264,128 @@ async def test_build_router_context_pack_collects_trimmed_history_and_memory():
         "ongoing_threads": ["thread"],
         "last_impression_summary": "summary",
     }
+
+
+@pytest.mark.asyncio
+async def test_interaction_context_collects_plugin_facts_once_before_projection(
+    monkeypatch,
+):
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+
+        def __init__(self):
+            self._extras = {
+                "_turn_id": "turn-1",
+                "_interaction_turn_state": InteractionTurnState(turn_id="turn-1"),
+            }
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+    class Contributor:
+        plugin_id = "plugin.catalog"
+
+        def __init__(self):
+            self.calls = 0
+            self.views = []
+
+        async def collect(self, event, plugin_context, view):
+            self.calls += 1
+            self.views.append(view)
+            return [
+                PromptExtension(
+                    plugin_id=self.plugin_id,
+                    mount="context",
+                    title="Persona Runtime",
+                    value={"state": "ready"},
+                    meta={"targets": ["persona"]},
+                ),
+                PromptExtension(
+                    plugin_id=self.plugin_id,
+                    mount="capability",
+                    value={
+                        "plugins": [
+                            {
+                                "name": "Local Runtime",
+                                "description": "Executes local runtime tasks.",
+                            }
+                        ]
+                    },
+                    meta={"targets": ["router", "core_planner"]},
+                ),
+            ]
+
+    canonical_pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="hello",
+                category="input",
+                source="test",
+            ),
+            "capability.core_summary": ContextSlot(
+                name="capability.core_summary",
+                value={"tools_available": False},
+                category="capability",
+                source="test",
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.context_builder.build_interaction_context_pack",
+        AsyncMock(return_value=canonical_pack),
+    )
+    contributor = Contributor()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "list_interaction_prompt_contributors": lambda self: [contributor],
+        },
+    )()
+    event = Event()
+    kwargs = {
+        "event": event,
+        "plugin_context": plugin_context,
+        "interaction_config": InteractionAgentConfig(),
+        "build_config": InteractionPromptBuildConfig(),
+        "memory_store": SimpleNamespace(),
+    }
+
+    first = await get_or_build_interaction_context_material(**kwargs)
+    second = await get_or_build_interaction_context_material(**kwargs)
+
+    assert first is second
+    assert contributor.calls == 1
+    assert contributor.views[0].purpose == "context_collection"
+    assert contributor.views[0].phase == "collect"
+    assert first.prompt_context_pack.get_slot("extension.context") is not None
+    assert first.prompt_context_pack.get_slot("capability.plugin_directory") is not None
+
+    router = project_context_pack(first.prompt_context_pack, PromptTarget.ROUTER)
+    planner = project_context_pack(
+        first.prompt_context_pack,
+        PromptTarget.CORE_PLANNER,
+    )
+    persona = project_context_pack(first.prompt_context_pack, PromptTarget.PERSONA)
+    assert router.get_slot("extension.context") is None
+    assert planner.get_slot("extension.context") is None
+    assert persona.get_slot("extension.context") is not None
+    assert router.get_slot("capability.plugin_directory").value["plugins"][0][
+        "name"
+    ] == "Local Runtime"
+    assert planner.get_slot("capability.plugin_directory").value["plugins"][0][
+        "name"
+    ] == "Local Runtime"
 
 
 @pytest.mark.asyncio
@@ -441,12 +563,13 @@ class ViewPromptContributor:
         self.view = None
 
     async def collect(self, event, plugin_context, view):
-        assert isinstance(view, InteractionDecisionView)
+        assert isinstance(view, InteractionPromptView)
         assert view.turn_id == "turn-1"
-        assert view.purpose == "persona_reply"
+        assert view.purpose == "context_collection"
+        assert view.phase == "collect"
         assert view["platform_id"] == "test-platform"
         assert view.config["provider_settings"]["name"] == "provider"
-        assert view.decision_context["persona"]["name"] == "Yakumo"
+        assert view.context_snapshot["persona"]["name"] == "Yakumo"
         assert view.persona["name"] == "Yakumo"
         assert view.input["text"] == "hello"
         assert view.interaction_memory["recent_turns"] == ()
@@ -457,7 +580,7 @@ class ViewPromptContributor:
         with pytest.raises(TypeError):
             view.config["provider_settings"]["name"] = "changed"
         with pytest.raises(TypeError):
-            view.decision_context["persona"]["name"] = "changed"
+            view.context_snapshot["persona"]["name"] = "changed"
         with pytest.raises(TypeError):
             view.recent_messages[0]["source"] = "changed"
         with pytest.raises(AttributeError):
@@ -513,7 +636,7 @@ def _prompt_event():
     )()
 
 
-def _decision_context():
+def _context_snapshot():
     return {
         "persona": {"name": "Yakumo"},
         "memory": {"recent_turns": []},
@@ -524,11 +647,11 @@ def _decision_context():
 
 
 @pytest.mark.asyncio
-async def test_prompt_contributor_receives_read_only_decision_view():
+async def test_prompt_contributor_receives_read_only_canonical_view():
     event = _prompt_event()
     contributor = ViewPromptContributor()
     config = {"provider_settings": {"name": "provider"}}
-    decision_context = _decision_context()
+    context_snapshot = _context_snapshot()
     plugin_context = type(
         "PluginContext",
         (),
@@ -539,17 +662,19 @@ async def test_prompt_contributor_receives_read_only_decision_view():
         event,
         plugin_context,
         config=config,
-        decision_context=decision_context,
-        purpose="persona_reply",
+        context_snapshot=context_snapshot,
     )
 
     assert [item.plugin_id for item in extensions] == ["view", "view"]
     assert isinstance(contributor.view.config, MappingProxyType)
     assert config["provider_settings"]["name"] == "provider"
-    assert decision_context["persona"]["name"] == "Yakumo"
-    assert decision_context["recent_messages"][0]["source"] == "unit"
-    pack = ContextPack()
-    append_interaction_prompt_extensions_to_pack(pack, extensions)
+    assert context_snapshot["persona"]["name"] == "Yakumo"
+    assert context_snapshot["recent_messages"][0]["source"] == "unit"
+    pack = await PromptContextBuilder(event, plugin_context, config).build(
+        collectors=[InteractionPromptContributorCollector(context_snapshot)],
+        include_prompt_extensions=False,
+        scope="interaction_contributors",
+    )
     capability_slot = pack.get_slot("extension.capability")
     context_slot = pack.get_slot("extension.context")
     assert capability_slot is not None
@@ -567,64 +692,34 @@ async def test_prompt_contributor_receives_read_only_decision_view():
 
 
 @pytest.mark.asyncio
-async def test_persona_prompt_extension_cache_uses_single_visible_reply_phase():
+async def test_interaction_capability_summary_uses_core_tool_selection_rules():
+    from astrbot.core.agent.tool import FunctionTool, ToolSet
+
+    active = FunctionTool(name="active_tool", description="active", parameters={})
+    inactive = FunctionTool(
+        name="inactive_tool",
+        description="inactive",
+        parameters={},
+        active=False,
+    )
+    request = ProviderRequest(func_tool=ToolSet([active, inactive]))
     event = _prompt_event()
-
-    class PhaseContributor:
-        plugin_id = "phase"
-
-        def __init__(self):
-            self.phases = []
-
-        async def collect(self, event, plugin_context, view):
-            self.phases.append(view.phase)
-            return PromptExtension(
-                plugin_id=self.plugin_id,
-                mount="context",
-                value={"phase": view.phase},
-            )
-
-    contributor = PhaseContributor()
-    plugin_context = type(
-        "PluginContext",
-        (),
-        {"list_interaction_prompt_contributors": lambda self: [contributor]},
-    )()
-    material = InteractionContextMaterial()
-
-    first = await get_or_collect_interaction_prompt_extensions(
-        event,
-        plugin_context,
-        {},
-        _decision_context(),
-        material,
-        purpose="persona_reply",
-        phase="visible_reply",
-    )
-    plugin_output = await get_or_collect_interaction_prompt_extensions(
-        event,
-        plugin_context,
-        {},
-        _decision_context(),
-        material,
-        purpose="persona_reply",
-        phase="visible_reply",
-    )
-    first_again = await get_or_collect_interaction_prompt_extensions(
-        event,
-        plugin_context,
-        {},
-        _decision_context(),
-        material,
-        purpose="persona_reply",
-        phase="visible_reply",
+    plugin_context = SimpleNamespace(
+        kb_manager=None,
+        subagent_orchestrator=None,
+        persona_manager=None,
     )
 
-    assert contributor.phases == ["visible_reply"]
-    assert first[0].value == {"phase": "visible_reply"}
-    assert plugin_output[0].value == {"phase": "visible_reply"}
-    assert first_again is first
-    assert plugin_output is first
+    slots = await InteractionCapabilityCollector().collect(
+        event,
+        plugin_context,
+        InteractionPromptBuildConfig(),
+        request,
+    )
+
+    assert slots[0].value["sample_tools"] == ["active_tool"]
+    assert slots[0].value["tool_count"] == 1
+    assert slots[0].value["tool_selection_mode"] == "provider_request"
 
 
 @pytest.mark.asyncio
@@ -645,7 +740,7 @@ async def test_prompt_contributor_internal_type_error_fails_fast():
             event,
             plugin_context,
             config={},
-            decision_context={},
+            context_snapshot={},
         )
 
     assert event.get_extra("_interaction_prompt_contributor_failures") == [
@@ -680,7 +775,7 @@ async def test_prompt_contributor_failure_is_recorded_and_fails_fast():
             event,
             plugin_context,
             config={},
-            decision_context={},
+            context_snapshot={},
         )
 
     assert event.get_extra("_interaction_prompt_contributor_failures") == [
@@ -709,7 +804,7 @@ async def test_prompt_contributor_invalid_payload_fails_fast():
             event,
             plugin_context,
             config={},
-            decision_context={},
+            context_snapshot={},
         )
 
 
@@ -742,7 +837,7 @@ async def test_prompt_contributor_invalid_extension_mount_fails_fast():
             event,
             plugin_context,
             config={},
-            decision_context={},
+            context_snapshot={},
         )
     assert event.get_extra("_interaction_prompt_contributor_failures") == [
         {

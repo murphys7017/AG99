@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot.core.interaction.context_builder import InteractionPromptContributorError
+from astrbot.core.interaction.memory_store import InteractionMemorySnapshot
 from astrbot.core.interaction.router_agent import (
     InteractionRouterAgent,
     build_interaction_router_system_prompt,
@@ -18,9 +18,20 @@ from astrbot.core.interaction.types import (
     InteractionRouteMode,
 )
 from astrbot.core.prompt.context_types import ContextPack
-from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
+
+
+class _EmptyMemoryStore:
+    async def load_interaction_memory(
+        self,
+        session_id: str,
+        persona_id: str = "",
+    ) -> InteractionMemorySnapshot:
+        return InteractionMemorySnapshot(
+            session_id=session_id,
+            persona_id=persona_id,
+        )
 
 
 def test_route_decision_accepts_persona_mode():
@@ -96,7 +107,7 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
         },
     )()
     event = Event()
-    agent = InteractionRouterAgent(memory_store=None)
+    agent = InteractionRouterAgent(memory_store=_EmptyMemoryStore())
 
     monkeypatch.setattr(
         "astrbot.core.interaction.router_agent.Provider",
@@ -134,50 +145,6 @@ def test_route_decision_contains_only_route_data():
     }
 
 
-class PurposeAwarePromptContributor:
-    plugin_id = "example.local_presence"
-
-    def __init__(self):
-        self.views = []
-
-    async def collect(self, event, plugin_context, view):
-        self.views.append(view)
-        if view.purpose == "persona_reply":
-            return PromptExtension(
-                plugin_id=self.plugin_id,
-                mount="capability",
-                title="Persona-only Local Capability",
-                value={"local_presence": {"enabled": True}},
-                order=10,
-                meta={"scope": "static", "node_type": "local_presence_capability"},
-            )
-        return []
-
-
-class RouterScopedPromptContributor:
-    plugin_id = "example.plugin_catalog"
-
-    def __init__(self):
-        self.views = []
-
-    async def collect(self, event, plugin_context, view):
-        self.views.append(view)
-        if view.purpose == "router":
-            return PromptExtension(
-                plugin_id=self.plugin_id,
-                mount="capability",
-                value={
-                    "plugins": [
-                        {
-                            "name": "Local Presence",
-                            "description": "负责本地角色的待机、注意力和轻量身体表现。",
-                        }
-                    ]
-                },
-            )
-        return []
-
-
 def test_router_system_prompt_uses_generic_local_capability_boundary():
     prompt = build_interaction_router_system_prompt()
 
@@ -186,6 +153,11 @@ def test_router_system_prompt_uses_generic_local_capability_boundary():
     assert "用于理解当前对话" in prompt
     assert "不能单独成为选择 hybrid 的理由" in prompt
     assert "普通寒暄、情绪回应、轻量吐槽、短确认" in prompt
+    assert "当前输入本身包含明确的执行、查询或处理意图" in prompt
+    assert "当前说话者未完成的核心任务" in prompt
+    assert "其他说话者的任务" in prompt
+    assert "无明确执行意图的短消息选择 persona" in prompt
+    assert "在 persona 与 hybrid 之间不确定时也选择 persona" in prompt
     assert "保持沉默比说话更自然" in prompt
     assert "统一拟人层可以直接完成回应" in prompt
     assert "明确需要核心 Agent 参与" in prompt
@@ -230,7 +202,7 @@ async def test_router_system_prompt_renders_as_native_system_base_not_extension(
             "list_interaction_prompt_contributors": lambda self: [],
         },
     )()
-    agent = InteractionRouterAgent(memory_store=None)
+    agent = InteractionRouterAgent(memory_store=_EmptyMemoryStore())
 
     render_result = await agent._prepare_render_result(
         Event(),
@@ -262,9 +234,9 @@ async def test_router_render_uses_scoped_provider_and_restores_event_provider(
                     context_material=InteractionContextMaterial(
                         prompt_context_pack=ContextPack(),
                         persona_payload={"persona_id": "alice"},
+                        input_payload={"text": "hello"},
                         capability_payload={},
-                        decision_context={},
-                        prompt_extensions_collected=True,
+                        context_snapshot={"input": {"text": "hello"}},
                     ),
                 ),
             }
@@ -303,7 +275,7 @@ async def test_router_render_uses_scoped_provider_and_restores_event_provider(
             "list_interaction_prompt_contributors": lambda self: [],
         },
     )()
-    agent = InteractionRouterAgent(memory_store=None)
+    agent = InteractionRouterAgent(memory_store=_EmptyMemoryStore())
 
     monkeypatch.setattr(
         "astrbot.core.interaction.router_agent.Provider",
@@ -323,230 +295,3 @@ async def test_router_render_uses_scoped_provider_and_restores_event_provider(
 
     assert seen_providers == [provider]
     assert event.get_extra("provider") == "outer-provider"
-
-
-@pytest.mark.asyncio
-async def test_router_prompt_excludes_persona_only_prompt_extensions(monkeypatch):
-    class Event:
-        session_id = "session-1"
-        unified_msg_origin = "webchat:friend:session-1"
-        message_str = "hello"
-        message_obj = type("Message", (), {"message": []})()
-
-        def __init__(self):
-            self._extras = {
-                "_interaction_turn_state": InteractionTurnState(
-                    turn_id="turn-1",
-                    context_material=InteractionContextMaterial(
-                        prompt_context_pack=ContextPack(),
-                        persona_payload={"persona_id": "alice"},
-                        capability_payload={},
-                        decision_context={},
-                    ),
-                ),
-            }
-
-        def get_extra(self, key=None, default=None):
-            if key is None:
-                return self._extras
-            return self._extras.get(key, default)
-
-        def set_extra(self, key, value):
-            self._extras[key] = value
-
-        def get_platform_id(self):
-            return "webchat"
-
-        def get_platform_name(self):
-            return "webchat"
-
-    class Provider:
-        pass
-
-    contributor = PurposeAwarePromptContributor()
-
-    class RenderEngine:
-        def render(self, pack, *, event, **kwargs):
-            capability_slot = pack.get_slot("extension.capability")
-            titles = []
-            if capability_slot is not None and isinstance(capability_slot.value, dict):
-                titles = [item["title"] for item in capability_slot.value["items"]]
-            return RenderResult(messages=[], system_prompt="\n".join(titles))
-
-    event = Event()
-    provider = Provider()
-    plugin_context = type(
-        "PluginContext",
-        (),
-        {
-            "get_config": lambda self, umo=None: {},
-            "list_interaction_prompt_contributors": lambda self: [contributor],
-        },
-    )()
-    agent = InteractionRouterAgent(memory_store=None)
-
-    monkeypatch.setattr(
-        "astrbot.core.interaction.router_agent.Provider",
-        Provider,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.interaction.router_agent.PromptRenderEngine",
-        lambda: RenderEngine(),
-    )
-
-    render_result = await agent._prepare_render_result(
-        event,
-        plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(),
-        provider=provider,
-    )
-
-    assert contributor.views[0].purpose == "router"
-    assert contributor.views[0].phase == "route"
-    assert contributor.views[0].persona == {}
-    assert contributor.views[0].interaction_memory == {}
-    assert contributor.views[0].capabilities == {}
-    assert contributor.views[0].input["text"] == "hello"
-    assert "Persona-only Local Capability" not in render_result.system_prompt
-
-
-@pytest.mark.asyncio
-async def test_router_prompt_includes_router_scoped_capability_extensions(monkeypatch):
-    class Event:
-        session_id = "session-1"
-        unified_msg_origin = "webchat:friend:session-1"
-        message_str = "please do the local thing"
-        message_obj = type("Message", (), {"message": []})()
-
-        def __init__(self):
-            self._extras = {}
-
-        def get_extra(self, key=None, default=None):
-            if key is None:
-                return self._extras
-            return self._extras.get(key, default)
-
-        def set_extra(self, key, value):
-            self._extras[key] = value
-
-        def get_platform_id(self):
-            return "webchat"
-
-        def get_platform_name(self):
-            return "webchat"
-
-    class Provider:
-        pass
-
-    contributor = RouterScopedPromptContributor()
-
-    class RenderEngine:
-        def render(self, pack, *, event, **kwargs):
-            assert pack.get_slot("extension.capability") is None
-            directory_slot = pack.get_slot("capability.router_plugin_directory")
-            assert directory_slot is not None
-            assert directory_slot.value == {
-                "plugins": [
-                    {
-                        "name": "Local Presence",
-                        "description": "负责本地角色的待机、注意力和轻量身体表现。",
-                    }
-                ]
-            }
-            plugin = directory_slot.value["plugins"][0]
-            return RenderResult(
-                messages=[],
-                system_prompt=f"{plugin['name']}: {plugin['description']}",
-            )
-
-    event = Event()
-    provider = Provider()
-    plugin_context = type(
-        "PluginContext",
-        (),
-        {
-            "get_config": lambda self, umo=None: {},
-            "list_interaction_prompt_contributors": lambda self: [contributor],
-        },
-    )()
-    agent = InteractionRouterAgent(memory_store=None)
-
-    monkeypatch.setattr(
-        "astrbot.core.interaction.router_agent.Provider",
-        Provider,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.interaction.router_agent.PromptRenderEngine",
-        lambda: RenderEngine(),
-    )
-
-    render_result = await agent._prepare_render_result(
-        event,
-        plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(),
-        provider=provider,
-    )
-
-    assert contributor.views[0].purpose == "router"
-    assert contributor.views[0].phase == "route"
-    assert "Local Presence" in render_result.system_prompt
-    assert "example.plugin_catalog" not in render_result.system_prompt
-
-
-@pytest.mark.asyncio
-async def test_router_ignores_failed_optional_prompt_contributors(monkeypatch):
-    class Event:
-        session_id = "session-1"
-        unified_msg_origin = "webchat:friend:session-1"
-        message_str = "hello"
-        message_obj = type("Message", (), {"message": []})()
-
-        def __init__(self):
-            self._extras = {}
-
-        def get_extra(self, key=None, default=None):
-            if key is None:
-                return self._extras
-            return self._extras.get(key, default)
-
-        def set_extra(self, key, value):
-            self._extras[key] = value
-
-        def get_platform_id(self):
-            return "webchat"
-
-        def get_platform_name(self):
-            return "webchat"
-
-    class Provider:
-        pass
-
-    event = Event()
-    agent = InteractionRouterAgent(memory_store=None)
-    plugin_context = type(
-        "PluginContext",
-        (),
-        {
-            "get_config": lambda self, umo=None: {},
-            "list_interaction_prompt_contributors": lambda self: [],
-        },
-    )()
-
-    monkeypatch.setattr(
-        "astrbot.core.interaction.router_agent.Provider",
-        Provider,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.interaction.router_agent.collect_interaction_prompt_extensions",
-        AsyncMock(side_effect=InteractionPromptContributorError("collector_timeout")),
-    )
-
-    render_result = await agent._prepare_render_result(
-        event,
-        plugin_context=plugin_context,
-        interaction_config=InteractionAgentConfig(),
-        provider=Provider(),
-    )
-
-    assert render_result is not None
-    assert event.get_extra("_interaction_router_extension_error") == "collector_timeout"

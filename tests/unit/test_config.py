@@ -812,9 +812,9 @@ class TestConfigMetadataI18n:
 
         group = result["interaction_middleware_group"]
         assert sorted(group["metadata"]) == [
-            "decision_compat",
             "expression",
             "general",
+            "planner",
             "router",
             "stream",
         ]

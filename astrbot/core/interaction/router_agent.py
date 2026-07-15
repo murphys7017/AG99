@@ -5,25 +5,21 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.context_types import ContextSlot
-from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
 from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
 from .context_builder import (
-    InteractionPromptContributorError,
     build_prompt_render_provider_request,
-    build_router_context_pack,
     clone_interaction_context_pack,
-    collect_interaction_prompt_extensions,
-    extract_input_payload,
-)
-from .decision_agent import (
-    _build_decision_build_config,
-    build_interaction_decision_contexts,
+    get_or_build_interaction_context_material,
 )
 from .memory_store import InteractionMemoryStore
+from .prompt_support import (
+    build_interaction_prompt_build_config,
+    build_model_context_messages,
+)
 from .types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
@@ -45,8 +41,10 @@ def build_interaction_router_system_prompt() -> str:
         "候选标签：\n"
         "- silent：当前观察不适合回应，保持沉默比说话更自然。\n"
         "- persona：统一拟人层可以直接完成回应，不需要核心 Agent。\n"
-        "- hybrid：当前输入明确需要核心 Agent 参与，或聊天记录显示它正在继续一个需要核心 Agent 的任务。\n"
-        "普通寒暄、情绪回应、轻量吐槽、短确认通常选择 persona；明确不需要回应、并且沉默更自然时选择 silent。不要限制或枚举核心 Agent 的能力范围。\n"
+        "- hybrid：当前输入本身包含明确的执行、查询或处理意图，明确需要核心 Agent 参与；或当前输入明确继续当前说话者未完成的核心任务。\n"
+        "聊天记录、memory、插件目录或其他说话者的任务不能单独成为选择 hybrid 的理由。\n"
+        "普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
+        "明确不需要回应、并且沉默更自然时选择 silent。不要限制或枚举核心 Agent 的能力范围。\n"
         "不要推断具体插件协议、动作参数或输出 schema。\n"
         "输出约束：不要生成用户回复，不要输出 JSON，只返回 silent、persona 或 hybrid。"
     )
@@ -104,9 +102,7 @@ class InteractionRouterAgent:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
                     prompt=build_interaction_router_prompt(),
-                    contexts=build_interaction_decision_contexts(
-                        render_result.messages
-                    ),
+                    contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.router_temperature,
                 ),
@@ -142,38 +138,15 @@ class InteractionRouterAgent:
         interaction_config: InteractionAgentConfig,
         provider: Provider,
     ):
-        build_config = _build_decision_build_config(plugin_context, event)
-        # Router starts the shared lightweight turn snapshot.
-        router_pack = await build_router_context_pack(
-            event,
-            plugin_context,
-            build_config,
-            self.memory_store,
+        build_config = build_interaction_prompt_build_config(plugin_context, event)
+        material = await get_or_build_interaction_context_material(
+            event=event,
+            plugin_context=plugin_context,
+            interaction_config=interaction_config,
+            build_config=build_config,
+            memory_store=self.memory_store,
         )
-        # Router prompt extensions（purpose="router"），不缓存
-        input_payload = extract_input_payload(router_pack)
-        decision_context = {"input": input_payload}
-        try:
-            prompt_extensions = await collect_interaction_prompt_extensions(
-                event,
-                plugin_context,
-                build_config,
-                decision_context,
-                purpose="router",
-                phase="route",
-            )
-        except InteractionPromptContributorError as exc:
-            event.set_extra("_interaction_router_extension_error", exc.reason)
-            logger.warning(
-                "Interaction router prompt contributors failed; continuing without plugin directory: platform_id=%s session_id=%s reason=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                exc.reason,
-                exc,
-            )
-            prompt_extensions = []
-        route_pack = clone_interaction_context_pack(router_pack)
-        add_router_plugin_directory_slots_to_pack(route_pack, prompt_extensions)
+        route_pack = clone_interaction_context_pack(material.prompt_context_pack)
         add_interaction_router_slots_to_pack(
             pack=route_pack,
         )
@@ -201,56 +174,6 @@ class InteractionRouterAgent:
 def _truncate_router_diagnostic(value: object, *, limit: int = 160) -> str:
     text = str(value or "").replace("\n", " ").strip()
     return text if len(text) <= limit else f"{text[:limit]}..."
-
-def add_router_plugin_directory_slots_to_pack(
-    pack,
-    prompt_extensions: list[PromptExtension],
-) -> None:
-    plugins = _extract_router_plugin_directory(prompt_extensions)
-    if not plugins:
-        return
-    pack.add_slot(
-        ContextSlot(
-            name="capability.router_plugin_directory",
-            value={"plugins": plugins},
-            category="capability",
-            source="interaction_router",
-            render_mode="structured",
-            meta={"scope": "static"},
-        )
-    )
-    pack.meta["slot_count"] = len(pack.slots)
-
-
-def _extract_router_plugin_directory(
-    prompt_extensions: list[PromptExtension],
-) -> list[dict[str, str]]:
-    plugins: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for extension in prompt_extensions:
-        if not isinstance(extension, PromptExtension):
-            continue
-        if extension.mount != "capability" or not isinstance(extension.value, dict):
-            continue
-        raw_plugins = extension.value.get("plugins")
-        if isinstance(raw_plugins, dict):
-            raw_plugins = [raw_plugins]
-        if not isinstance(raw_plugins, list):
-            continue
-        for item in raw_plugins:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name", "") or "").strip()
-            description = str(item.get("description", "") or "").strip()
-            if not name or not description:
-                continue
-            key = (name, description)
-            if key in seen:
-                continue
-            seen.add(key)
-            plugins.append({"name": name, "description": description})
-    return plugins
-
 
 def add_interaction_router_slots_to_pack(
     *,

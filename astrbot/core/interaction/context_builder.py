@@ -2,37 +2,33 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from contextlib import contextmanager
 from copy import copy, deepcopy
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.message.components import File, Image, Reply
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors import ConversationHistoryCollector
 from astrbot.core.prompt.collectors.input_collector import InputCollector
 from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
 from astrbot.core.prompt.collectors.session_collector import SessionCollector
-from astrbot.core.prompt.context_catalog import get_catalog
 from astrbot.core.prompt.context_collect import (
     build_prompt_extension_slots,
 )
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
-from astrbot.core.prompt.interfaces.context_collector_inferface import (
-    ContextCollectorInterface,
-)
+from astrbot.core.prompt.interfaces import ContextCollectorInterface
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
-from .collectors import InteractionMemoryCollector
+from .collectors import InteractionCapabilityCollector, InteractionMemoryCollector
 from .contributors import (
-    InteractionDecisionView,
+    InteractionPromptPurpose,
+    InteractionPromptView,
     PromptViewPhase,
-    PromptViewPurpose,
 )
 from .memory_store import InteractionMemoryStore
 from .turn_state import InteractionContextMaterial, get_interaction_turn_state
+from .types import InteractionAgentConfig, InteractionPromptBuildConfig
 
 
 class InteractionPromptContributorError(RuntimeError):
@@ -41,18 +37,61 @@ class InteractionPromptContributorError(RuntimeError):
         super().__init__(message or reason)
 
 
-def build_interaction_collectors(
-    memory_store: InteractionMemoryStore,
-) -> list[ContextCollectorInterface]:
-    """Collect provider-aware input to enrich the shared turn context."""
-    return [
-        InputCollector(),
-    ]
+class AttachmentSummaryCollector(ContextCollectorInterface):
+    def __init__(self, source_pack: ContextPack) -> None:
+        self.source_pack = source_pack
+
+    async def collect(
+        self,
+        event,
+        plugin_context,
+        config,
+        provider_request=None,
+    ) -> list[ContextSlot]:
+        del event, plugin_context, config, provider_request
+        summary = _build_attachment_summary(self.source_pack)
+        if not summary:
+            return []
+        return [
+            ContextSlot(
+                name="input.attachment_summary",
+                value=summary,
+                category="input",
+                source="interaction_attachment_summary",
+                render_mode="structured",
+                meta={"scope": "derived"},
+            )
+        ]
 
 
-def build_router_collectors() -> list[ContextCollectorInterface]:
-    """Router 专用 collectors：仅输入内容。"""
-    return [InputCollector()]
+class InteractionPromptContributorCollector(ContextCollectorInterface):
+    def __init__(self, context_snapshot: dict[str, Any]) -> None:
+        self.context_snapshot = context_snapshot
+
+    async def collect(
+        self,
+        event,
+        plugin_context,
+        config,
+        provider_request=None,
+    ) -> list[ContextSlot]:
+        del provider_request
+        extensions = await collect_interaction_prompt_extensions(
+            event,
+            plugin_context,
+            config,
+            self.context_snapshot,
+        )
+        targeted_extensions: list[PromptExtension] = []
+        for extension in extensions:
+            targeted = deepcopy(extension)
+            targeted.meta = dict(targeted.meta)
+            targeted.meta.setdefault("targets", ["persona"])
+            targeted_extensions.append(targeted)
+        return build_prompt_extension_slots(
+            targeted_extensions,
+            source="interaction_prompt_contributors",
+        )
 
 
 async def build_interaction_context_pack(
@@ -61,173 +100,30 @@ async def build_interaction_context_pack(
     config,
     memory_store: InteractionMemoryStore,
 ) -> ContextPack:
-    return await build_persona_context_pack(
-        event,
-        plugin_context,
-        config,
-        memory_store,
-    )
-
-
-async def build_router_context_pack(
-    event,
-    plugin_context: Context,
-    config,
-    memory_store: InteractionMemoryStore | None = None,
-) -> ContextPack:
-    """Build the shared lightweight turn context used first by Router."""
-    input_pack = build_minimal_router_context_pack(
-        event,
+    builder = PromptContextBuilder(event, plugin_context, config)
+    base_pack = await builder.build(
         provider_request=event.get_extra("provider_request"),
-    )
-    provider_request = event.get_extra("provider_request")
-    router_collectors: list[ContextCollectorInterface] = [
-        PersonaCollector(),
-        SessionCollector(),
-        ConversationHistoryCollector(),
-    ]
-    if memory_store is not None:
-        router_collectors.append(InteractionMemoryCollector(memory_store))
-    source_pack = await PromptContextBuilder(event, plugin_context, config).build(
-        collectors=router_collectors,
-        provider_request=provider_request,
+        collectors=[
+            InputCollector(),
+            PersonaCollector(),
+            SessionCollector(),
+            ConversationHistoryCollector(),
+            InteractionMemoryCollector(memory_store),
+            InteractionCapabilityCollector(),
+        ],
         include_prompt_extensions=True,
-        base=input_pack,
-        scope="interaction_base",
+        scope="interaction_full",
     )
-    attachment_summary = _build_router_attachment_summary(source_pack)
-    if attachment_summary:
-        source_pack.add_slot(
-            ContextSlot(
-                name="input.router_attachment_summary",
-                value=attachment_summary,
-                category="input",
-                source="interaction_router",
-                render_mode="structured",
-            )
-        )
-        source_pack.meta["slot_count"] = len(source_pack.slots)
-    turn_state = get_interaction_turn_state(event)
-    if turn_state is not None:
-        material = turn_state.context_material or InteractionContextMaterial()
-        material.prompt_context_pack = source_pack
-        material.persona_payload = extract_persona_payload(source_pack)
-        material.memory_payload = extract_interaction_memory_payload(source_pack)
-        material.recent_messages = extract_recent_messages(source_pack, 0)
-        material.input_payload = extract_input_payload(source_pack)
-        material.capability_payload = build_core_capability_payload(
-            plugin_context,
-            event,
-        )
-        material.decision_context = {
-            "persona": material.persona_payload,
-            "memory": material.memory_payload,
-            "recent_messages": material.recent_messages,
-            "input": material.input_payload,
-            "core_capabilities": material.capability_payload,
-        }
-        material.collected_scopes.add("interaction_base")
-        turn_state.context_material = material
-        event.set_extra("_interaction_prompt_context_pack", source_pack)
-    return source_pack
-
-
-def build_minimal_router_context_pack(
-    event,
-    *,
-    provider_request=None,
-) -> ContextPack:
-    """Build a cheap router input pack without resolving media or quoted payloads."""
-    catalog = get_catalog(strict=True)
-    pack = ContextPack(
-        provider_request_ref=provider_request,
-        meta={
-            "catalog_version": catalog.version,
-            "collectors": ["MinimalRouterInput"],
-            "extension_collectors": [],
-        },
+    return await builder.build(
+        provider_request=event.get_extra("provider_request"),
+        collectors=[AttachmentSummaryCollector(base_pack)],
+        include_prompt_extensions=False,
+        base=base_pack,
+        scope="interaction_derived",
     )
-    text = (getattr(event, "message_str", "") or "").strip()
-    if text:
-        pack.add_slot(
-            ContextSlot(
-                name="input.text",
-                value=text,
-                category="input",
-                source="event_input",
-                meta={"source_field": "message_str", "router_minimal": True},
-            )
-        )
-
-    images: list[dict[str, Any]] = []
-    quoted_images: list[dict[str, Any]] = []
-    files: list[dict[str, Any]] = []
-    quoted_files: list[dict[str, Any]] = []
-    for index, component in enumerate(getattr(event.message_obj, "message", []) or []):
-        if isinstance(component, Image):
-            images.append({"source": "current", "index": index})
-            continue
-        if isinstance(component, File):
-            files.append({"source": "current", "index": index})
-            continue
-        if isinstance(component, Reply):
-            for reply_index, reply_component in enumerate(component.chain or []):
-                if isinstance(reply_component, Image):
-                    quoted_images.append(
-                        {
-                            "source": "quoted",
-                            "index": reply_index,
-                            "reply_id": getattr(component, "id", None),
-                        }
-                    )
-                elif isinstance(reply_component, File):
-                    quoted_files.append(
-                        {
-                            "source": "quoted",
-                            "index": reply_index,
-                            "reply_id": getattr(component, "id", None),
-                        }
-                    )
-
-    if images:
-        pack.add_slot(
-            ContextSlot(
-                name="input.images",
-                value=images,
-                category="input",
-                source="event_input",
-                meta={"count": len(images), "source": "current", "router_minimal": True},
-            )
-        )
-    if quoted_images:
-        pack.add_slot(
-            ContextSlot(
-                name="input.quoted_images",
-                value=quoted_images,
-                category="input",
-                source="quoted_message",
-                meta={"count": len(quoted_images), "router_minimal": True},
-            )
-        )
-    if files or quoted_files:
-        pack.add_slot(
-            ContextSlot(
-                name="input.files",
-                value=[*files, *quoted_files],
-                category="input",
-                source="event_input",
-                meta={
-                    "count": len(files) + len(quoted_files),
-                    "quoted_count": len(quoted_files),
-                    "router_minimal": True,
-                },
-            )
-        )
-    pack.meta["slot_count"] = len(pack.slots)
-    return pack
 
 
-def _build_router_attachment_summary(pack: ContextPack) -> dict[str, int]:
+def _build_attachment_summary(pack: ContextPack) -> dict[str, int]:
     slot_names = {
         "images": "input.images",
         "quoted_images": "input.quoted_images",
@@ -251,49 +147,89 @@ def _build_router_attachment_summary(pack: ContextPack) -> dict[str, int]:
     return summary
 
 
-async def build_persona_context_pack(
+async def get_or_build_interaction_context_material(
+    *,
     event,
     plugin_context: Context,
-    config,
+    interaction_config: InteractionAgentConfig,
+    build_config: InteractionPromptBuildConfig,
     memory_store: InteractionMemoryStore,
-) -> ContextPack:
-    """Enrich the shared turn context with full provider-aware input data."""
+) -> InteractionContextMaterial:
     turn_state = get_interaction_turn_state(event)
-    base = None
-    if turn_state is not None and turn_state.context_material is not None:
-        base = turn_state.context_material.prompt_context_pack
-    collectors: list[ContextCollectorInterface] = build_interaction_collectors(
-        memory_store
+    if turn_state is not None:
+        turn_state.prompt_build_config = build_config
+        material = turn_state.context_material
+        if material is not None:
+            _refresh_context_material_view(material, interaction_config)
+            _publish_context_material(event, material)
+            return material
+
+    prompt_context_pack = await build_interaction_context_pack(
+        event,
+        plugin_context,
+        build_config,
+        memory_store,
     )
-    include_prompt_extensions = False
-    scope = "persona_input"
-    if base is None:
-        collectors = [
-            PersonaCollector(),
-            SessionCollector(),
-            ConversationHistoryCollector(),
-            InteractionMemoryCollector(memory_store),
-            *collectors,
-        ]
-        include_prompt_extensions = True
-        scope = "interaction_full"
-    return await PromptContextBuilder(event, plugin_context, config).build(
+    capability_payload = extract_core_capability_payload(prompt_context_pack)
+    material = InteractionContextMaterial(
+        prompt_context_pack=prompt_context_pack,
+        persona_payload=extract_persona_payload(prompt_context_pack),
+        memory_payload=extract_interaction_memory_payload(prompt_context_pack),
+        recent_messages=extract_recent_messages(
+            prompt_context_pack,
+            interaction_config.memory_window_size,
+        ),
+        input_payload=extract_input_payload(prompt_context_pack),
+        capability_payload=capability_payload,
+        collected_scopes=set(
+            prompt_context_pack.meta.get("collection_scopes", ["interaction_full"])
+        ),
+    )
+    _refresh_context_material_view(material, interaction_config)
+    prompt_context_pack = await PromptContextBuilder(
+        event,
+        plugin_context,
+        build_config,
+    ).build(
         provider_request=event.get_extra("provider_request"),
-        collectors=collectors,
-        include_prompt_extensions=include_prompt_extensions,
-        base=base,
-        replace_slots={
-            "input.text",
-            "input.quoted_text",
-            "input.images",
-            "input.quoted_images",
-            "input.image_captions",
-            "input.quoted_image_captions",
-            "input.files",
-            "input.file_extracts",
-        },
-        scope=scope,
+        collectors=[
+            InteractionPromptContributorCollector(material.context_snapshot),
+        ],
+        include_prompt_extensions=False,
+        base=prompt_context_pack,
+        scope="interaction_contributors",
     )
+    material.prompt_context_pack = prompt_context_pack
+    material.collected_scopes.add("interaction_contributors")
+    _publish_context_material(event, material)
+    if turn_state is not None:
+        turn_state.context_material = material
+    return material
+
+
+def _refresh_context_material_view(
+    material: InteractionContextMaterial,
+    interaction_config: InteractionAgentConfig,
+) -> None:
+    recent_messages = material.recent_messages
+    if interaction_config.memory_window_size > 0:
+        recent_messages = recent_messages[-interaction_config.memory_window_size :]
+    material.recent_messages = recent_messages
+    material.context_snapshot = {
+        "persona": material.persona_payload,
+        "memory": material.memory_payload,
+        "recent_messages": recent_messages,
+        "input": material.input_payload,
+        "core_capabilities": material.capability_payload,
+    }
+
+
+def _publish_context_material(
+    event,
+    material: InteractionContextMaterial,
+) -> None:
+    event.set_extra("_interaction_prompt_context_pack", material.prompt_context_pack)
+    event.set_extra("_interaction_context_snapshot", material.context_snapshot)
 
 
 def build_prompt_render_provider_request(event, provider) -> ProviderRequest:
@@ -369,26 +305,11 @@ def extract_interaction_memory_payload(pack: ContextPack) -> dict[str, Any]:
     return slot.value
 
 
-def build_core_capability_payload(plugin_context: Context, event) -> dict[str, Any]:
-    get_tool_manager = getattr(plugin_context, "get_llm_tool_manager", None)
-    tool_manager = get_tool_manager() if callable(get_tool_manager) else None
-    provider_tools = getattr(tool_manager, "func_list", []) or []
-    active_tool_names = sorted(
-        {
-            str(tool.name).strip()
-            for tool in provider_tools
-            if getattr(tool, "enabled", True) and str(getattr(tool, "name", "")).strip()
-        }
-    )
-    return {
-        "tools_available": bool(active_tool_names),
-        "tool_count": len(active_tool_names),
-        "sample_tools": active_tool_names[:12],
-        "knowledge_base_available": bool(getattr(plugin_context, "kb_manager", None)),
-        "subagent_available": getattr(plugin_context, "subagent_orchestrator", None)
-        is not None,
-        "platform_id": event.get_platform_id(),
-    }
+def extract_core_capability_payload(pack: ContextPack) -> dict[str, Any]:
+    slot = pack.get_slot("capability.core_summary")
+    if slot is None or not isinstance(slot.value, dict):
+        return {}
+    return slot.value
 
 
 def clone_interaction_context_pack(pack: ContextPack) -> ContextPack:
@@ -399,45 +320,19 @@ def clone_interaction_context_pack(pack: ContextPack) -> ContextPack:
     )
 
 
-@contextmanager
-def temporary_event_extra(event, key: str, value: Any):
-    extras = getattr(event, "_extras", None)
-    if not isinstance(extras, dict):
-        event.set_extra(key, value)
-        try:
-            yield
-        finally:
-            event.set_extra(key, None)
-        return
-
-    sentinel = object()
-    previous = extras.get(key, sentinel)
-    event.set_extra(key, value)
-    try:
-        yield
-    finally:
-        if previous is sentinel:
-            extras.pop(key, None)
-        else:
-            event.set_extra(key, previous)
-
-
 async def collect_interaction_prompt_extensions(
     event,
     plugin_context: Context,
     config,
-    decision_context: dict[str, Any],
-    *,
-    purpose: PromptViewPurpose = "unknown",
-    phase: PromptViewPhase = "unknown",
+    context_snapshot: dict[str, Any],
 ) -> list[PromptExtension]:
     extensions: list[PromptExtension] = []
-    view = _build_decision_view(
+    view = _build_prompt_view(
         event=event,
         config=config,
-        decision_context=decision_context,
-        purpose=purpose,
-        phase=phase,
+        context_snapshot=context_snapshot,
+        purpose="context_collection",
+        phase="collect",
     ).copy_read_only()
     contributors = list(plugin_context.list_interaction_prompt_contributors())
     raw_timeout = (
@@ -506,86 +401,6 @@ async def collect_interaction_prompt_extensions(
     return extensions
 
 
-async def get_or_collect_interaction_prompt_extensions(
-    event,
-    plugin_context: Context,
-    config,
-    decision_context: dict[str, Any],
-    material: InteractionContextMaterial,
-    *,
-    purpose: PromptViewPurpose,
-    phase: PromptViewPhase = "unknown",
-) -> list[PromptExtension]:
-    cache_key = f"{purpose}:{phase}"
-    cached_extensions = material.prompt_extensions_by_purpose.get(cache_key)
-    if cached_extensions is not None:
-        return cached_extensions
-    extensions = await collect_interaction_prompt_extensions(
-        event,
-        plugin_context,
-        config,
-        decision_context,
-        purpose=purpose,
-        phase=phase,
-    )
-    material.prompt_extensions_by_purpose[cache_key] = extensions
-    material.prompt_extensions_collected = True
-    return extensions
-
-
-def append_interaction_prompt_extensions_to_pack(
-    pack: ContextPack,
-    extensions: list[PromptExtension],
-) -> None:
-    if not extensions:
-        return
-    targeted_extensions = []
-    for extension in extensions:
-        targeted = deepcopy(extension)
-        targeted.meta = dict(targeted.meta)
-        targeted.meta.setdefault("targets", ["persona"])
-        targeted_extensions.append(targeted)
-    slots = build_prompt_extension_slots(
-        targeted_extensions,
-        source="interaction_prompt_contributors",
-    )
-    for slot in slots:
-        _merge_or_add_extension_slot(pack, slot)
-    pack.meta["interaction_prompt_extension_count"] = len(extensions)
-    pack.meta["slot_count"] = len(pack.slots)
-
-
-def _merge_or_add_extension_slot(pack: ContextPack, slot) -> None:
-    existing = pack.get_slot(slot.name)
-    if (
-        existing is None
-        or not isinstance(existing.value, dict)
-        or not isinstance(slot.value, dict)
-    ):
-        pack.add_slot(slot)
-        return
-    existing_items = existing.value.get("items")
-    incoming_items = slot.value.get("items")
-    if not isinstance(existing_items, list) or not isinstance(incoming_items, list):
-        pack.add_slot(slot)
-        return
-    existing_items.extend(incoming_items)
-    existing_items.sort(
-        key=lambda item: (
-            int(item.get("order", 100) or 100) if isinstance(item, dict) else 100,
-            str(item.get("plugin_id", "")) if isinstance(item, dict) else "",
-        )
-    )
-    existing.meta["item_count"] = len(existing_items)
-    existing.meta["plugin_count"] = len(
-        {
-            item.get("plugin_id")
-            for item in existing_items
-            if isinstance(item, dict) and isinstance(item.get("plugin_id"), str)
-        }
-    )
-
-
 def _normalize_interaction_prompt_extensions(payload: object) -> list[PromptExtension]:
     if payload is None:
         return []
@@ -619,16 +434,14 @@ def _record_interaction_prompt_contributor_failure(
     )
 
 
-def _build_decision_view(
+def _build_prompt_view(
     *,
     event,
     config,
-    decision_context: dict[str, Any],
-    purpose: PromptViewPurpose,
+    context_snapshot: dict[str, Any],
+    purpose: InteractionPromptPurpose,
     phase: PromptViewPhase,
-) -> InteractionDecisionView:
-    turn_state = get_interaction_turn_state(event)
-    material = turn_state.context_material if turn_state is not None else None
+) -> InteractionPromptView:
     platform_id = (
         event.get_platform_id()
         if callable(getattr(event, "get_platform_id", None))
@@ -639,40 +452,19 @@ def _build_decision_view(
         or getattr(event, "session_id", "")
         or ""
     )
-    context = decision_context if isinstance(decision_context, dict) else {}
-    use_material = material is not None and purpose != "router"
-    return InteractionDecisionView(
+    context = context_snapshot if isinstance(context_snapshot, dict) else {}
+    return InteractionPromptView(
         turn_id=str(event.get_extra("_turn_id", "") or ""),
         platform_id=platform_id,
         session_id=session_id,
         purpose=purpose,
         phase=phase,
         config=config,
-        decision_context=context,
-        persona=(
-            material.persona_payload
-            if use_material
-            else dict(context.get("persona", {}) or {})
-        ),
-        input=(
-            material.input_payload
-            if use_material
-            else dict(context.get("input", {}) or {})
-        ),
-        interaction_memory=(
-            material.memory_payload
-            if use_material
-            else dict(context.get("memory", {}) or {})
-        ),
-        recent_messages=(
-            material.recent_messages
-            if use_material
-            else list(context.get("recent_messages", []) or [])
-        ),
-        capabilities=(
-            material.capability_payload
-            if use_material
-            else dict(context.get("core_capabilities", {}) or {})
-        ),
-        metadata={"prompt_context_cached": use_material},
+        context_snapshot=context,
+        persona=dict(context.get("persona", {}) or {}),
+        input=dict(context.get("input", {}) or {}),
+        interaction_memory=dict(context.get("memory", {}) or {}),
+        recent_messages=list(context.get("recent_messages", []) or []),
+        capabilities=dict(context.get("core_capabilities", {}) or {}),
+        metadata={"canonical_context": True},
     )

@@ -22,15 +22,9 @@ from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
 from .context_builder import (
-    InteractionPromptContributorError,
-    append_interaction_prompt_extensions_to_pack,
     build_prompt_render_provider_request,
     clone_interaction_context_pack,
-    get_or_collect_interaction_prompt_extensions,
-)
-from .decision_agent import (
-    _build_decision_build_config,
-    build_interaction_decision_contexts,
+    get_or_build_interaction_context_material,
 )
 from .effects import (
     PersonaEffectCall,
@@ -39,6 +33,10 @@ from .effects import (
     parse_persona_effect_calls_with_issues,
 )
 from .memory_store import InteractionMemoryStore
+from .prompt_support import (
+    build_interaction_prompt_build_config,
+    build_model_context_messages,
+)
 from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
 from .types import InteractionAgentConfig
 
@@ -47,6 +45,7 @@ from .types import InteractionAgentConfig
 class PersonaExpressionRequest:
     source_text: str = ""
     immediate_reply: str = ""
+    delegated_task_summary: str = ""
     observed_text: str = ""
     total_text: str = ""
     pending_text: str = ""
@@ -97,6 +96,7 @@ def build_persona_runtime_system_prompt() -> str:
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
         "immediate_reply 是本轮之前已经说过的短回复，可参考但不要矛盾或重复。\n"
+        "delegated_task_summary 表示执行层已经接受的任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
         "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
         "short_reply 为 true 时只说一句简短口语短句，尽量控制在 20 字以内。\n"
@@ -467,7 +467,7 @@ class InteractionExpressionAgent:
                         req,
                         render_result.compiled_output_contract,
                     ),
-                    contexts=build_interaction_decision_contexts(render_result.messages),
+                    contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.expression_temperature,
                     tool_choice="required"
@@ -551,7 +551,7 @@ class InteractionExpressionAgent:
         *,
         req: PersonaExpressionRequest,
     ):
-        build_config = _build_decision_build_config(plugin_context, event)
+        build_config = build_interaction_prompt_build_config(plugin_context, event)
         material = await self._build_or_reuse_context_material(
             event=event,
             plugin_context=plugin_context,
@@ -562,23 +562,7 @@ class InteractionExpressionAgent:
             event,
             material.persona_payload.get("persona_id", ""),
         )
-        try:
-            prompt_extensions = await get_or_collect_interaction_prompt_extensions(
-                event,
-                plugin_context,
-                build_config,
-                material.decision_context,
-                material,
-                purpose="persona_reply",
-                phase="visible_reply",
-            )
-        except InteractionPromptContributorError as exc:
-            raise InteractionExpressionError(exc.reason, str(exc)) from exc
         expression_pack = clone_interaction_context_pack(material.prompt_context_pack)
-        append_interaction_prompt_extensions_to_pack(
-            expression_pack,
-            prompt_extensions,
-        )
         remove_redundant_media_slots_for_visible_reply_material(expression_pack, req)
         add_visible_reply_material_slots_to_pack(expression_pack, req)
         injected_reasoning_marker = maybe_inject_deepseek_first_turn_reasoning_marker(
@@ -634,14 +618,12 @@ class InteractionExpressionAgent:
         interaction_config: InteractionAgentConfig,
         build_config,
     ):
-        from .decision_agent import InteractionDecisionAgent
-
-        helper = InteractionDecisionAgent(self.memory_store)
-        return await helper._build_or_reuse_context_material(
+        return await get_or_build_interaction_context_material(
             event=event,
             plugin_context=plugin_context,
             interaction_config=interaction_config,
             build_config=build_config,
+            memory_store=self.memory_store,
         )
 
 
@@ -715,9 +697,11 @@ def add_visible_reply_material_slots_to_pack(
     total_text = req.total_text.strip()
     pending_text = req.pending_text.strip()
     immediate_reply = req.immediate_reply.strip()
+    delegated_task_summary = req.delegated_task_summary.strip()
     scene_payload = {
         "source_text": source_text,
         "immediate_reply": immediate_reply,
+        "delegated_task_summary": delegated_task_summary,
         "observed_text": observed_text,
         "total_text": total_text,
         "pending_text": pending_text,
@@ -768,6 +752,7 @@ def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:
         value.strip()
         for value in (
             req.source_text,
+            req.delegated_task_summary,
             req.observed_text,
             req.total_text,
             req.pending_text,

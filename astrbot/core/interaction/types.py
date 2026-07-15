@@ -4,14 +4,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from .effects import PersonaEffectCall
-
-
-class RouteMode(str, Enum):
-    SELF_REPLY = "self_reply"
-    DELEGATE_TO_CORE = "delegate_to_core"
-    HYBRID = "hybrid"
-
 
 class InteractionRouteMode(str, Enum):
     SILENT = "silent"
@@ -58,54 +50,45 @@ class CoreTaskSpec:
         }
 
 
-@dataclass(slots=True)
-class InteractionDecision:
-    """Legacy combined decision used only by the retired heavy decision agent."""
+class CorePlanningAction(str, Enum):
+    EXECUTE = "execute"
+    NOT_REQUIRED = "not_required"
 
-    route_mode: RouteMode = RouteMode.DELEGATE_TO_CORE
-    should_emit_immediate_reply: bool = False
-    immediate_spoken_reply: str | None = None
-    core_task_spec: CoreTaskSpec | None = None
-    effect_calls: list[PersonaEffectCall] = field(default_factory=list)
-    reason: str = ""
+
+@dataclass(slots=True)
+class CorePlanningDecision:
+    action: CorePlanningAction
+    task_spec: CoreTaskSpec | None = None
 
     @classmethod
-    def from_mapping(cls, payload: object) -> InteractionDecision | None:
+    def from_mapping(cls, payload: object) -> CorePlanningDecision | None:
         if not isinstance(payload, dict):
             return None
-        route_mode_raw = str(
-            payload.get("route_mode", RouteMode.DELEGATE_TO_CORE.value)
-        )
+        raw_action = str(payload.get("decision", "") or "").strip().lower()
         try:
-            route_mode = RouteMode(route_mode_raw)
+            action = CorePlanningAction(raw_action)
         except ValueError:
-            route_mode = RouteMode.DELEGATE_TO_CORE
-        immediate_spoken_reply = payload.get("immediate_spoken_reply")
-        if immediate_spoken_reply is not None:
-            immediate_spoken_reply = str(immediate_spoken_reply)
-        core_task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
-        effect_calls = _coerce_effect_calls(payload.get("effect_calls", []))
-        return cls(
-            route_mode=route_mode,
-            should_emit_immediate_reply=bool(
-                payload.get("should_emit_immediate_reply", False)
-            ),
-            immediate_spoken_reply=immediate_spoken_reply,
-            core_task_spec=core_task_spec,
-            effect_calls=effect_calls,
-            reason=str(payload.get("reason", "") or ""),
-        )
+            return None
+        task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
+        if action is CorePlanningAction.EXECUTE:
+            if task_spec is None:
+                return None
+            if not all(
+                (
+                    task_spec.task_intent.strip(),
+                    task_spec.task_summary.strip(),
+                    task_spec.execution_prompt.strip(),
+                )
+            ):
+                return None
+        else:
+            task_spec = None
+        return cls(action=action, task_spec=task_spec)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "route_mode": self.route_mode.value,
-            "should_emit_immediate_reply": self.should_emit_immediate_reply,
-            "immediate_spoken_reply": self.immediate_spoken_reply,
-            "core_task_spec": (
-                self.core_task_spec.to_dict() if self.core_task_spec else None
-            ),
-            "effect_calls": [call.to_dict() for call in self.effect_calls],
-            "reason": self.reason,
+            "decision": self.action.value,
+            "core_task_spec": self.task_spec.to_dict() if self.task_spec else None,
         }
 
 
@@ -138,29 +121,18 @@ class InteractionRouteDecision:
         }
 
 
-def _coerce_effect_calls(value: object) -> list[PersonaEffectCall]:
-    if not isinstance(value, list):
-        return []
-    calls: list[PersonaEffectCall] = []
-    for item in value:
-        call = PersonaEffectCall.from_mapping(item)
-        if call is not None:
-            calls.append(call)
-    return calls
-
-
 @dataclass(slots=True)
 class InteractionAgentConfig:
     enabled: bool = False
-    decision_provider_id: str = ""
-    decision_temperature: float = 0.5
-    decision_timeout: float = 15.0
     expression_provider_id: str = ""
     expression_temperature: float = 0.6
     expression_timeout: float = 8.0
     router_provider_id: str = ""
     router_temperature: float = 0.0
     router_timeout: float = 3.0
+    planner_provider_id: str = ""
+    planner_temperature: float = 0.1
+    planner_timeout: float = 8.0
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200

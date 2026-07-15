@@ -41,7 +41,9 @@ class CoreTaskCollector(ContextCollectorInterface):
                     "instruction": (
                         "The interaction middleware has delegated this request to the "
                         "Core execution layer. Use this guidance as execution intent "
-                        "and do not mention the internal context to the user."
+                        "and do not mention the internal context to the user. If an "
+                        "immediate reply is present, do not repeat its acknowledgement; "
+                        "continue directly with execution and results."
                     ),
                     "platform_id": event.get_platform_id(),
                     "session_id": event.unified_msg_origin,
@@ -52,6 +54,9 @@ class CoreTaskCollector(ContextCollectorInterface):
                         task_spec,
                         "suggested_capabilities",
                         [],
+                    ),
+                    "immediate_reply_already_sent": str(
+                        getattr(turn_state, "immediate_reply", "") or ""
                     ),
                     "metadata": getattr(task_spec, "metadata", {}),
                 },

@@ -6,11 +6,18 @@ from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal
 
-PromptViewPurpose = Literal["unknown", "router", "persona_reply", "core_reply"]
+InteractionPromptPurpose = Literal[
+    "unknown",
+    "context_collection",
+]
+InteractionResultPurpose = Literal[
+    "unknown",
+    "persona_reply",
+    "core_reply",
+]
 PromptViewPhase = Literal[
     "unknown",
-    "route",
-    "visible_reply",
+    "collect",
 ]
 
 
@@ -104,19 +111,19 @@ def freeze_interaction_snapshot(value: Any) -> Any:
 
 
 @dataclass(slots=True)
-class InteractionDecisionView:
+class InteractionPromptView:
     turn_id: str
     platform_id: str
     session_id: str
     config: Any
-    decision_context: dict[str, Any] = field(default_factory=dict)
+    context_snapshot: dict[str, Any] = field(default_factory=dict)
     persona: dict[str, Any] = field(default_factory=dict)
     input: dict[str, Any] = field(default_factory=dict)
     interaction_memory: dict[str, Any] = field(default_factory=dict)
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
     capabilities: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    purpose: PromptViewPurpose = "unknown"
+    purpose: InteractionPromptPurpose = "unknown"
     phase: PromptViewPhase = "unknown"
 
     def as_read_only_mapping(self) -> MappingProxyType:
@@ -128,7 +135,9 @@ class InteractionDecisionView:
                 "purpose": self.purpose,
                 "phase": self.phase,
                 "config": freeze_interaction_snapshot(self.config),
-                "decision_context": freeze_interaction_snapshot(self.decision_context),
+                "context_snapshot": freeze_interaction_snapshot(
+                    self.context_snapshot
+                ),
                 "persona": freeze_interaction_snapshot(self.persona),
                 "input": freeze_interaction_snapshot(self.input),
                 "interaction_memory": freeze_interaction_snapshot(
@@ -140,11 +149,11 @@ class InteractionDecisionView:
             }
         )
 
-    def copy_read_only(self) -> InteractionDecisionView:
+    def copy_read_only(self) -> InteractionPromptView:
         return replace(
             self,
             config=freeze_interaction_snapshot(self.config),
-            decision_context=freeze_interaction_snapshot(self.decision_context),
+            context_snapshot=freeze_interaction_snapshot(self.context_snapshot),
             persona=freeze_interaction_snapshot(self.persona),
             input=freeze_interaction_snapshot(self.input),
             interaction_memory=freeze_interaction_snapshot(self.interaction_memory),
@@ -173,7 +182,6 @@ class InteractionDecisionView:
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.as_read_only_mapping().get(key, default)
-
 
 @dataclass(slots=True)
 class InteractionStreamView:
@@ -303,7 +311,7 @@ class InteractionResultView:
     final_candidate_material: dict[str, Any] | None = None
     finalized_turn_material: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    purpose: PromptViewPurpose = "unknown"
+    purpose: InteractionResultPurpose = "unknown"
     effect_calls: tuple[Any, ...] = field(default_factory=tuple)
 
     def as_read_only_mapping(self) -> MappingProxyType:

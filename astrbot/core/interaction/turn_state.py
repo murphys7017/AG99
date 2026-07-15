@@ -7,9 +7,8 @@ from enum import Enum
 from typing import Any
 
 from astrbot.core.prompt.context_types import ContextPack
-from astrbot.core.prompt.extensions import PromptExtension
 
-from .types import CoreTaskSpec, InteractionDecision, InteractionRouteDecision
+from .types import CorePlanningDecision, CoreTaskSpec, InteractionRouteDecision
 
 INTERACTION_TURN_STATE_EXTRA_KEY = "_interaction_turn_state"
 
@@ -73,11 +72,7 @@ class InteractionContextMaterial:
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
     input_payload: dict[str, Any] = field(default_factory=dict)
     capability_payload: dict[str, Any] = field(default_factory=dict)
-    decision_context: dict[str, Any] = field(default_factory=dict)
-    prompt_extensions_collected: bool = False
-    prompt_extensions_by_purpose: dict[str, list[PromptExtension]] = field(
-        default_factory=dict
-    )
+    context_snapshot: dict[str, Any] = field(default_factory=dict)
     collected_scopes: set[str] = field(default_factory=set)
 
 
@@ -137,8 +132,8 @@ class InteractionTurnState:
     prompt_build_config: Any | None = None
     context_material: InteractionContextMaterial | None = None
     route_decision: InteractionRouteDecision | None = None
+    core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
-    legacy_decision: InteractionDecision | None = None
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
     utterances: list[InteractionUtterance] = field(default_factory=list)
@@ -249,6 +244,14 @@ def set_interaction_turn_route_decision(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.route_decision = decision
+
+
+def set_interaction_turn_core_planning_decision(
+    event,
+    decision: CorePlanningDecision | None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.core_planning_decision = decision
 
 
 def set_interaction_turn_core_task_spec(

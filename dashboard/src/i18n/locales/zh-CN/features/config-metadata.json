@@ -1029,7 +1029,7 @@
     "name": "交互中间件",
     "general": {
       "description": "基础开关",
-      "hint": "控制新的交互中间件主链路。Fast Expression 失败会使用本地 first_response，Router 失败会保守进入 hybrid。",
+      "hint": "控制交互中间件主链路。Prompt 系统统一采集事实，Router、Core Planner、Persona 和 Core 按目标独立渲染。",
       "interaction_middleware": {
         "enabled": {
           "description": "启用交互中间件"
@@ -1046,7 +1046,7 @@
       "interaction_middleware": {
         "expression_provider_id": {
           "description": "表达模型提供商",
-          "hint": "留空时沿用兼容字段 decision_provider_id。"
+          "hint": "用于所有用户可见 Persona 表达。"
         },
         "expression_temperature": {
           "description": "表达温度"
@@ -1062,7 +1062,7 @@
       "interaction_middleware": {
         "router_provider_id": {
           "description": "路由模型提供商",
-          "hint": "留空时沿用兼容字段 decision_provider_id。"
+          "hint": "建议使用响应快、分类稳定的模型。"
         },
         "router_temperature": {
           "description": "路由温度"
@@ -1072,46 +1072,19 @@
         }
       }
     },
-    "decision_compat": {
-      "description": "兼容字段",
-      "hint": "旧 Fast Response 决策字段，保留用于旧配置迁移和新字段 fallback。",
+    "planner": {
+      "description": "Core Planner",
+      "hint": "独立判断执行层是否必要，并为 Core 整理 CoreTaskSpec；不读取 Router 的决策结果。",
       "interaction_middleware": {
-        "decision_provider_id": {
-          "description": "旧决策模型提供商",
-          "hint": "兼容旧配置。expression_provider_id 或 router_provider_id 留空时会使用该字段。"
+        "planner_provider_id": {
+          "description": "规划模型提供商",
+          "hint": "留空时使用 Persona 表达模型。"
         },
-        "decision_temperature": {
-          "description": "旧决策温度"
+        "planner_temperature": {
+          "description": "规划温度"
         },
-        "decision_timeout": {
-          "description": "旧决策超时秒数"
-        }
-      }
-    },
-    "finalizer": {
-      "description": "Output Expression",
-      "hint": "整理核心输出后再发送。整理失败时降级发送核心原始结果。",
-      "interaction_middleware": {
-        "finalizer_mode": {
-          "description": "整理模式",
-          "labels": [
-            "自动",
-            "强制",
-            "关闭"
-          ]
-        },
-        "finalizer_provider_id": {
-          "description": "整理模型提供商"
-        },
-        "finalizer_temperature": {
-          "description": "整理温度"
-        },
-        "finalizer_max_tokens": {
-          "description": "整理最大 token"
-        },
-        "finalizer_timeout": {
-          "description": "整理超时秒数",
-          "hint": "留空或无效时沿用兼容字段 decision_timeout。"
+        "planner_timeout": {
+          "description": "规划超时秒数"
         }
       }
     },
@@ -1128,17 +1101,6 @@
         },
         "stream_interjection_enabled": {
           "description": "允许过程提示"
-        },
-        "stream_interjection_provider_id": {
-          "description": "过程提示模型提供商",
-          "hint": "留空时沿用兼容字段 decision_provider_id。"
-        },
-        "stream_interjection_temperature": {
-          "description": "过程提示温度"
-        },
-        "stream_interjection_timeout": {
-          "description": "过程提示超时秒数",
-          "hint": "留空或无效时沿用兼容字段 decision_timeout。"
         },
         "stream_interjection_max_per_turn": {
           "description": "每轮最多提示次数"

@@ -24,36 +24,25 @@ def is_middleware_enabled(config: Any) -> bool:
 
 def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     interaction_config = config.get("interaction_middleware", {})
-    decision_provider_id = str(
-        interaction_config.get("decision_provider_id", "") or ""
-    )
-    decision_temperature = _float_or_default(
-        interaction_config.get("decision_temperature", 0.5),
-        0.5,
-    )
-    decision_timeout = _float_or_default(
-        interaction_config.get("decision_timeout", 15.0),
-        15.0,
-    )
     expression_provider_id = str(
         interaction_config.get("expression_provider_id", "") or ""
-    ) or decision_provider_id
+    )
     router_provider_id = str(
         interaction_config.get("router_provider_id", "") or ""
-    ) or decision_provider_id
+    )
+    planner_provider_id = str(
+        interaction_config.get("planner_provider_id", "") or ""
+    ) or expression_provider_id
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", False)),
-        decision_provider_id=decision_provider_id,
-        decision_temperature=decision_temperature,
-        decision_timeout=decision_timeout,
         expression_provider_id=expression_provider_id,
         expression_temperature=_float_or_default(
-            interaction_config.get("expression_temperature", decision_temperature),
-            decision_temperature,
+            interaction_config.get("expression_temperature", 0.6),
+            0.6,
         ),
         expression_timeout=_float_or_default(
-            interaction_config.get("expression_timeout", decision_timeout),
-            decision_timeout,
+            interaction_config.get("expression_timeout", 8.0),
+            8.0,
         ),
         router_provider_id=router_provider_id,
         router_temperature=_float_or_default(
@@ -63,6 +52,15 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         router_timeout=_float_or_default(
             interaction_config.get("router_timeout", 3.0),
             3.0,
+        ),
+        planner_provider_id=planner_provider_id,
+        planner_temperature=_float_or_default(
+            interaction_config.get("planner_temperature", 0.1),
+            0.1,
+        ),
+        planner_timeout=_float_or_default(
+            interaction_config.get("planner_timeout", 8.0),
+            8.0,
         ),
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
         stream_observation_enabled=bool(

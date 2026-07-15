@@ -1,9 +1,9 @@
 from .config import is_middleware_enabled, load_interaction_agent_config
 from .contributors import (
-    InteractionDecisionView,
     InteractionLifecycleView,
     InteractionOutputContribution,
     InteractionOutputDraft,
+    InteractionPromptView,
     InteractionResultContribution,
     InteractionResultView,
     InteractionStreamView,
@@ -21,6 +21,7 @@ from .core_bridge import (
     get_core_task_spec,
     get_interaction_route_decision,
 )
+from .core_planner import CorePlannerAgent, CorePlannerError
 from .effects import (
     PersonaEffectCall,
     PersonaEffectParseIssue,
@@ -61,14 +62,19 @@ from .turn_state import (
     get_interaction_turn_state,
 )
 from .types import (
+    CorePlanningAction,
+    CorePlanningDecision,
     CoreTaskSpec,
     InteractionAgentConfig,
     InteractionRouteDecision,
     InteractionRouteMode,
-    RouteMode,
 )
 
 __all__ = [
+    "CorePlannerAgent",
+    "CorePlannerError",
+    "CorePlanningAction",
+    "CorePlanningDecision",
     "CoreTaskSpec",
     "OUTPUT_ORIGIN_EXTRA_KEY",
     "OutputOrigin",
@@ -89,7 +95,6 @@ __all__ = [
     "InteractionAgentConfig",
     "InteractionConversationPostProcessor",
     "InteractionContextMaterial",
-    "InteractionDecisionView",
     "InteractionLifecycleStage",
     "InteractionLifecycleView",
     "InteractionExpressionAgent",
@@ -100,6 +105,7 @@ __all__ = [
     "InteractionOutputContribution",
     "InteractionOutputController",
     "InteractionOutputDraft",
+    "InteractionPromptView",
     "InteractionStreamState",
     "InteractionTurnCompletionState",
     "InteractionTurnOutcome",
@@ -113,7 +119,6 @@ __all__ = [
     "InteractionRouteMode",
     "InteractionRouterAgent",
     "InteractionRouterError",
-    "RouteMode",
     "apply_interaction_core_task_spec",
     "ensure_interaction_turn_state",
     "get_interaction_turn_state",

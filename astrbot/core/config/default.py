@@ -212,15 +212,15 @@ DEFAULT_CONFIG = {
     "interaction_middleware": {
         "enabled": False,
         "memory_window_size": 8,
-        "decision_provider_id": "",
-        "decision_temperature": 0.5,
-        "decision_timeout": 15.0,
         "expression_provider_id": "",
         "expression_temperature": 0.6,
         "expression_timeout": 8.0,
         "router_provider_id": "",
         "router_temperature": 0.0,
         "router_timeout": 3.0,
+        "planner_provider_id": "",
+        "planner_temperature": 0.1,
+        "planner_timeout": 8.0,
         "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
@@ -4312,7 +4312,7 @@ CONFIG_METADATA_3 = {
                         "description": "表达模型提供商",
                         "type": "string",
                         "_special": "select_provider",
-                        "hint": "留空时沿用兼容字段 decision_provider_id。",
+                        "hint": "用于所有用户可见 Persona 表达。",
                     },
                     "interaction_middleware.expression_temperature": {
                         "description": "表达温度",
@@ -4334,7 +4334,7 @@ CONFIG_METADATA_3 = {
                         "description": "路由模型提供商",
                         "type": "string",
                         "_special": "select_provider",
-                        "hint": "留空时沿用兼容字段 decision_provider_id。",
+                        "hint": "建议使用响应快、分类稳定的模型。",
                     },
                     "interaction_middleware.router_temperature": {
                         "description": "路由温度",
@@ -4347,24 +4347,24 @@ CONFIG_METADATA_3 = {
                     },
                 },
             },
-            "decision_compat": {
-                "description": "兼容字段",
+            "planner": {
+                "description": "Core Planner",
                 "type": "object",
-                "hint": "旧 Fast Response 决策字段，保留用于旧配置迁移和新字段 fallback。",
+                "hint": "仅在 Router 选择 hybrid 后判断是否真的需要执行层，并整理 CoreTaskSpec。",
                 "items": {
-                    "interaction_middleware.decision_provider_id": {
-                        "description": "旧决策模型提供商",
+                    "interaction_middleware.planner_provider_id": {
+                        "description": "规划模型提供商",
                         "type": "string",
                         "_special": "select_provider",
-                        "hint": "兼容旧配置。expression_provider_id 或 router_provider_id 留空时会使用该字段。",
+                        "hint": "留空时使用 Persona 表达模型。",
                     },
-                    "interaction_middleware.decision_temperature": {
-                        "description": "旧决策温度",
+                    "interaction_middleware.planner_temperature": {
+                        "description": "规划温度",
                         "type": "float",
                         "slider": {"min": 0, "max": 2, "step": 0.05},
                     },
-                    "interaction_middleware.decision_timeout": {
-                        "description": "旧决策超时秒数",
+                    "interaction_middleware.planner_timeout": {
+                        "description": "规划超时秒数",
                         "type": "float",
                     },
                 },

@@ -23,7 +23,7 @@ from .core_bridge import (
     INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
     INTERACTION_ROUTE_DECISION_EXTRA_KEY,
 )
-from .decision_agent import _maybe_bypass_protocol_command
+from .core_planner import CorePlannerAgent, CorePlannerError
 from .expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
@@ -39,6 +39,7 @@ from .memory_store import (
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
+from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     InteractionLifecycleStage,
@@ -54,11 +55,14 @@ from .turn_state import (
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
+    set_interaction_turn_core_planning_decision,
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
     set_interaction_turn_route_decision,
 )
 from .types import (
+    CorePlanningAction,
+    CorePlanningDecision,
     InteractionRouteDecision,
     InteractionRouteMode,
 )
@@ -112,6 +116,7 @@ class InteractionMiddleware:
         self.expression_agent = InteractionExpressionAgent(self.memory_store)
         self.persona_runtime = InteractionPersonaRuntime(self.expression_agent)
         self.router_agent = InteractionRouterAgent(self.memory_store)
+        self.core_planner = CorePlannerAgent(self.memory_store)
         self.output_controller.interaction_config = self.interaction_config
         self.output_controller.interaction_memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
@@ -528,16 +533,10 @@ class InteractionMiddleware:
     ) -> str | None:
         if self.plugin_context is None:
             return None
-        legacy_decision = _maybe_bypass_protocol_command(event, self.plugin_context)
-        if legacy_decision is None:
+        reason = match_protocol_command_bypass(event, self.plugin_context)
+        if reason is None:
             return None
-        if legacy_decision.core_task_spec is not None:
-            set_interaction_turn_core_task_spec(event, legacy_decision.core_task_spec)
-            event.set_extra(
-                INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-                legacy_decision.core_task_spec,
-            )
-        return legacy_decision.reason or "protocol_command_bypass"
+        return reason
 
     async def _handle_async_fast_response_and_route(
         self,
@@ -547,6 +546,12 @@ class InteractionMiddleware:
         enqueue_core: bool,
     ) -> None:
         route = await self._route_interaction(event, interaction_config)
+        planning_decision = None
+        if route.route_mode == InteractionRouteMode.HYBRID:
+            planning_decision = await self._plan_core_execution(
+                event,
+                interaction_config,
+            )
         self._record_route_diagnostics(event, route)
         self.attach_event_context(
             event,
@@ -555,17 +560,72 @@ class InteractionMiddleware:
         )
         expression = None
         if route.route_mode != InteractionRouteMode.SILENT:
-            expression = await self._generate_expression(event, interaction_config)
+            expression_request = self._build_immediate_expression_request(
+                planning_decision
+            )
+            expression = await self._generate_expression(
+                event,
+                interaction_config,
+                request=expression_request,
+            )
             expression = self._apply_immediate_expression_policy(
                 event,
                 route,
                 expression,
+                planning_decision=planning_decision,
             )
         await self._apply_route(
             event,
             route,
             expression=expression,
+            planning_decision=planning_decision,
             enqueue_core=enqueue_core,
+        )
+
+    async def _plan_core_execution(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> CorePlanningDecision:
+        try:
+            if self.plugin_context is None:
+                raise CorePlannerError("plugin_context_unavailable")
+            decision = await self.core_planner.plan(
+                event,
+                self.plugin_context,
+                interaction_config,
+            )
+        except CorePlannerError as exc:
+            record_interaction_turn_failure(
+                event,
+                stage="core_planner",
+                reason=exc.reason,
+                exception=exc,
+                user_visible_action="none",
+            )
+            event.set_extra("_interaction_core_planner_failed", True)
+            event.set_extra("_interaction_core_planner_failure_reason", str(exc))
+            raise
+        set_interaction_turn_core_planning_decision(event, decision)
+        event.set_extra("_interaction_core_planning_decision", decision.to_dict())
+        if decision.action is CorePlanningAction.EXECUTE:
+            set_interaction_turn_core_task_spec(event, decision.task_spec)
+            event.set_extra(INTERACTION_CORE_TASK_SPEC_EXTRA_KEY, decision.task_spec)
+        return decision
+
+    @staticmethod
+    def _build_immediate_expression_request(
+        planning_decision: CorePlanningDecision | None,
+    ) -> PersonaExpressionRequest:
+        if (
+            planning_decision is None
+            or planning_decision.action is CorePlanningAction.NOT_REQUIRED
+            or planning_decision.task_spec is None
+        ):
+            return PersonaExpressionRequest()
+        return PersonaExpressionRequest(
+            delegated_task_summary=planning_decision.task_spec.task_summary,
+            short_reply=True,
         )
 
     def _record_route_diagnostics(
@@ -585,17 +645,13 @@ class InteractionMiddleware:
         router_context_nodes = event.get_extra("_interaction_router_context_nodes", [])
         if not isinstance(router_context_nodes, list):
             router_context_nodes = []
-        router_extension_error = str(
-            event.get_extra("_interaction_router_extension_error", "") or ""
-        )
         logger.info(
-            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s extension_error=%s raw_output=%s context_nodes=%s",
+            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s raw_output=%s context_nodes=%s",
             event.get_platform_id(),
             event.session_id,
             route.route_mode.value,
             router_source,
             router_failure_reason,
-            router_extension_error,
             router_raw_output,
             router_context_nodes,
         )
@@ -606,6 +662,7 @@ class InteractionMiddleware:
         route: InteractionRouteDecision,
         *,
         expression: PersonaExpressionResult | None,
+        planning_decision: CorePlanningDecision | None = None,
         enqueue_core: bool,
     ) -> None:
         has_immediate_reply = bool(
@@ -631,11 +688,11 @@ class InteractionMiddleware:
                 )
                 record_interaction_turn_failure(
                     event,
-                    stage="decision",
+                    stage="persona_expression",
                     reason="missing_persona_reply",
                     user_visible_action="none",
                 )
-                raise RuntimeError("Interaction persona reply decision missing reply")
+                raise RuntimeError("Interaction persona expression missing reply")
             await self._emit_immediate_reply_or_record_failure(event, expression)
             completed = await self._complete_visible_turn_or_record_failure(
                 event,
@@ -649,6 +706,24 @@ class InteractionMiddleware:
             event.stop_event()
             return
         if route.route_mode == InteractionRouteMode.HYBRID:
+            if (
+                planning_decision is None
+                or planning_decision.action is CorePlanningAction.NOT_REQUIRED
+            ):
+                if not has_immediate_reply:
+                    raise RuntimeError(
+                        "Core Planner skipped execution but Persona reply is missing"
+                    )
+                await self._emit_immediate_reply_or_record_failure(event, expression)
+                completed = await self._complete_visible_turn_or_record_failure(event)
+                if completed:
+                    self._materialize_persona_reply_turn(
+                        event,
+                        reply=expression.spoken_reply,
+                    )
+                    await self._finalize_turn(event)
+                event.stop_event()
+                return
             if has_immediate_reply:
                 await self._emit_immediate_reply_or_record_failure(event, expression)
             await self._emit_delegated(event, route)
@@ -673,8 +748,15 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         route: InteractionRouteDecision,
         expression: PersonaExpressionResult,
+        *,
+        planning_decision: CorePlanningDecision | None = None,
     ) -> PersonaExpressionResult | None:
         if route.route_mode != InteractionRouteMode.HYBRID:
+            return expression
+        if (
+            planning_decision is None
+            or planning_decision.action is CorePlanningAction.NOT_REQUIRED
+        ):
             return expression
         if not expression.spoken_reply.strip() or not self._has_core_media_input(event):
             return expression
@@ -698,6 +780,8 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
         interaction_config,
+        *,
+        request: PersonaExpressionRequest | None = None,
     ) -> PersonaExpressionResult:
         if self.plugin_context is None:
             event.set_extra("_interaction_expression_failed", True)
@@ -711,7 +795,7 @@ class InteractionMiddleware:
                 event,
                 plugin_context=self.plugin_context,
                 interaction_config=interaction_config,
-                request=PersonaExpressionRequest(),
+                request=request or PersonaExpressionRequest(),
             )
         except InteractionExpressionError as exc:
             reason = exc.reason

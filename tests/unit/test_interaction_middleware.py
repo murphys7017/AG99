@@ -18,6 +18,9 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_state,
 )
 from astrbot.core.interaction.types import (
+    CorePlanningAction,
+    CorePlanningDecision,
+    CoreTaskSpec,
     InteractionAgentConfig,
     InteractionRouteDecision,
     InteractionRouteMode,
@@ -93,6 +96,28 @@ def _stub_fast_response_route(
     middleware.router_agent = MagicMock()
     middleware.router_agent.route = AsyncMock(
         return_value=InteractionRouteDecision(route_mode=mode)
+    )
+    _stub_core_planner(middleware)
+
+
+def _stub_core_planner(
+    middleware: InteractionMiddleware,
+    *,
+    action: CorePlanningAction = CorePlanningAction.EXECUTE,
+) -> None:
+    task_spec = None
+    if action is CorePlanningAction.EXECUTE:
+        task_spec = CoreTaskSpec(
+            task_intent="general",
+            task_summary="处理当前请求",
+            execution_prompt="完成当前用户请求。",
+        )
+    middleware.core_planner = MagicMock()
+    middleware.core_planner.plan = AsyncMock(
+        return_value=CorePlanningDecision(
+            action=action,
+            task_spec=task_spec,
+        )
     )
 
 
@@ -264,21 +289,20 @@ class TestInteractionMiddlewareConfig:
         assert loaded.stream_observation_min_chars == 1
         assert loaded.stream_interjection_max_per_turn == 0
 
-    def test_role_specific_model_config_falls_back_to_decision_fields(self):
+    def test_role_specific_model_config_is_independent(self):
         config = {
             "interaction_middleware": {
-                "decision_provider_id": "legacy_decision",
-                "decision_temperature": 0.25,
-                "decision_timeout": 6.0,
+                "expression_provider_id": "persona",
+                "router_provider_id": "router",
+                "planner_provider_id": "planner",
             }
         }
 
         loaded = load_interaction_agent_config(config)
 
-        assert loaded.expression_provider_id == "legacy_decision"
-        assert loaded.expression_temperature == 0.25
-        assert loaded.expression_timeout == 6.0
-        assert loaded.router_provider_id == "legacy_decision"
+        assert loaded.expression_provider_id == "persona"
+        assert loaded.router_provider_id == "router"
+        assert loaded.planner_provider_id == "planner"
 
 
 class TestInteractionMiddleware:
@@ -1108,6 +1132,47 @@ class TestInteractionMiddleware:
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_planner_not_required_finishes_with_single_persona_reply(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="这不是很明显嘛。",
+            mode=InteractionRouteMode.HYBRID,
+        )
+        _stub_core_planner(
+            middleware,
+            action=CorePlanningAction.NOT_REQUIRED,
+        )
+        middleware.memory_store.update_interaction_memory = AsyncMock()
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+
+        assert queue.empty()
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
+        assert webchat_event.is_stopped()
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.core_planning_decision is not None
+        assert (
+            turn_state.core_planning_decision.action
+            is CorePlanningAction.NOT_REQUIRED
+        )
+        assert turn_state.core_task_spec is None
+
+    @pytest.mark.asyncio
     async def test_hybrid_media_input_suppresses_immediate_reply(
         self,
         image_event,
@@ -1229,13 +1294,13 @@ class TestInteractionMiddleware:
         default_config = {
             "interaction_middleware": {
                 "enabled": True,
-                "decision_provider_id": "",
+                "router_provider_id": "",
             }
         }
         runtime_config = {
             "interaction_middleware": {
                 "enabled": True,
-                "decision_provider_id": "runtime_provider",
+                "router_provider_id": "runtime_provider",
                 "memory_window_size": 3,
             }
         }
@@ -1253,10 +1318,10 @@ class TestInteractionMiddleware:
 
         middleware.router_agent.route.assert_awaited_once()
         decision_config = middleware.router_agent.route.await_args.args[2]
-        assert decision_config.decision_provider_id == "runtime_provider"
+        assert decision_config.router_provider_id == "runtime_provider"
         assert decision_config.memory_window_size == 3
-        assert middleware.interaction_config.decision_provider_id == ""
-        assert controller.interaction_config.decision_provider_id == ""
+        assert middleware.interaction_config.router_provider_id == ""
+        assert controller.interaction_config.router_provider_id == ""
 
     @pytest.mark.asyncio
     async def test_protocol_command_bypass_does_not_emit_immediate_reply(
@@ -1289,11 +1354,11 @@ class TestInteractionMiddleware:
         assert webchat_event.get_extra("_interaction_protocol_core_bypass") is True
         assert (
             webchat_event.get_extra("_interaction_protocol_core_bypass_reason")
-            == "protocol command bypass"
+            == "protocol_command_bypass"
         )
 
     @pytest.mark.asyncio
-    async def test_missing_plugin_context_uses_local_reply_and_hybrid(
+    async def test_missing_plugin_context_fails_before_core_execution(
         self,
         webchat_event,
     ):
@@ -1313,16 +1378,14 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await _drain_inbound_tasks(middleware)
 
-        assert queue.get_nowait() is webchat_event
-        assert webchat_event.get_extra("_interaction_expression_failed") is True
+        assert queue.empty()
         assert webchat_event.get_extra("_interaction_router_failed") is True
+        assert webchat_event.get_extra("_interaction_core_planner_failed") is True
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.failures == []
-        assert turn_state.route_decision is not None
-        assert turn_state.route_decision.route_mode == InteractionRouteMode.HYBRID
-        expression = controller.emit_immediate_spoken_reply.await_args.args[0]
-        assert expression.spoken_reply == "我先看一下。"
+        assert turn_state.failures[-1].stage == "core_planner"
+        assert turn_state.route_decision is None
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
 
     def test_fallback_policy_is_rejected_during_development(
         self,
@@ -1408,6 +1471,7 @@ class TestInteractionMiddleware:
         middleware.router_agent.route = AsyncMock(
             side_effect=RuntimeError("router broken")
         )
+        _stub_core_planner(middleware)
 
         middleware.handle_inbound(webchat_event)
         await _drain_inbound_tasks(middleware)
@@ -1567,7 +1631,7 @@ class TestInteractionMiddleware:
         )
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
-        assert turn_state.failures[-1].stage == "decision"
+        assert turn_state.failures[-1].stage == "persona_expression"
         assert turn_state.failures[-1].reason == "missing_persona_reply"
 
     @pytest.mark.asyncio

@@ -1028,7 +1028,7 @@
         "name": "Interaction Middleware",
         "general": {
             "description": "Основные настройки",
-            "hint": "Управляет новым основным путем interaction middleware. Ошибки Fast Expression используют локальный first_response, а ошибки Router консервативно переходят в hybrid.",
+            "hint": "Управляет путем interaction middleware. Prompt собирает единый набор фактов, а Router, Core Planner, Persona и Core независимо визуализируют свои представления.",
             "interaction_middleware": {
                 "enabled": {
                     "description": "Включить Interaction Middleware"
@@ -1045,7 +1045,7 @@
             "interaction_middleware": {
                 "expression_provider_id": {
                     "description": "Провайдер модели выражения",
-                    "hint": "Если пусто, используется совместимое поле decision_provider_id."
+                    "hint": "Используется для всех видимых пользователю ответов Persona."
                 },
                 "expression_temperature": {
                     "description": "Температура выражения"
@@ -1061,7 +1061,7 @@
             "interaction_middleware": {
                 "router_provider_id": {
                     "description": "Провайдер модели маршрутизации",
-                    "hint": "Если пусто, используется совместимое поле decision_provider_id."
+                    "hint": "Рекомендуется быстрая модель со стабильной классификацией."
                 },
                 "router_temperature": {
                     "description": "Температура маршрутизации"
@@ -1071,46 +1071,19 @@
                 }
             }
         },
-        "decision_compat": {
-            "description": "Поля совместимости",
-            "hint": "Старые поля решения Fast Response сохранены для миграции старых конфигураций и fallback новых полей.",
+        "planner": {
+            "description": "Core Planner",
+            "hint": "Независимо проверяет необходимость выполнения и формирует CoreTaskSpec, не читая решение Router.",
             "interaction_middleware": {
-                "decision_provider_id": {
-                    "description": "Старый провайдер модели решения",
-                    "hint": "Для совместимости. Используется, если expression_provider_id или router_provider_id пусты."
+                "planner_provider_id": {
+                    "description": "Провайдер модели планирования",
+                    "hint": "Если пусто, используется модель выражения Persona."
                 },
-                "decision_temperature": {
-                    "description": "Старая температура решения"
+                "planner_temperature": {
+                    "description": "Температура планирования"
                 },
-                "decision_timeout": {
-                    "description": "Старый таймаут решения (сек)"
-                }
-            }
-        },
-        "finalizer": {
-            "description": "Output Expression",
-            "hint": "Обрабатывает вывод core перед отправкой. При ошибке обработки отправляется исходный результат core.",
-            "interaction_middleware": {
-                "finalizer_mode": {
-                    "description": "Режим обработки",
-                    "labels": [
-                        "Авто",
-                        "Принудительно",
-                        "Выкл"
-                    ]
-                },
-                "finalizer_provider_id": {
-                    "description": "Провайдер модели обработки"
-                },
-                "finalizer_temperature": {
-                    "description": "Температура обработки"
-                },
-                "finalizer_max_tokens": {
-                    "description": "Максимум токенов обработки"
-                },
-                "finalizer_timeout": {
-                    "description": "Таймаут обработки (сек)",
-                    "hint": "Пустые или некорректные значения используют совместимое поле decision_timeout."
+                "planner_timeout": {
+                    "description": "Таймаут планирования (сек)"
                 }
             }
         },
@@ -1127,17 +1100,6 @@
                 },
                 "stream_interjection_enabled": {
                     "description": "Разрешить подсказки во время выполнения"
-                },
-                "stream_interjection_provider_id": {
-                    "description": "Провайдер модели подсказок во время выполнения",
-                    "hint": "Если пусто, используется совместимое поле decision_provider_id."
-                },
-                "stream_interjection_temperature": {
-                    "description": "Температура подсказок во время выполнения"
-                },
-                "stream_interjection_timeout": {
-                    "description": "Таймаут подсказок во время выполнения (сек)",
-                    "hint": "Пустые или некорректные значения используют совместимое поле decision_timeout."
                 },
                 "stream_interjection_max_per_turn": {
                     "description": "Максимум подсказок за turn"

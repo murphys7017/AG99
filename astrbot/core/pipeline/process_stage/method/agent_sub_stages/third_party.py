@@ -17,6 +17,7 @@ from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
 )
 from astrbot.core.agent.runners.dify.dify_agent_runner import DifyAgentRunner
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
+from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
 from astrbot.core.message.components import Image, Record
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -326,6 +327,8 @@ class ThirdPartyAgentSubStage(Stage):
 
         custom_error_message = await self._resolve_persona_custom_error_message(event)
         set_persona_custom_error_message_on_event(event, custom_error_message)
+
+        apply_interaction_core_task_spec(req, event)
 
         # call event hook
         if await call_event_hook(event, EventType.OnLLMRequestEvent, req):

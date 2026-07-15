@@ -1027,7 +1027,7 @@
     "name": "Interaction Middleware",
     "general": {
       "description": "General",
-      "hint": "Controls the new interaction middleware main path. Fast Expression failures use a local first_response, and Router failures conservatively enter hybrid.",
+      "hint": "Controls the interaction middleware path. Prompt collection builds one fact pack, then Router, Core Planner, Persona, and Core render independent target views.",
       "interaction_middleware": {
         "enabled": {
           "description": "Enable Interaction Middleware"
@@ -1044,7 +1044,7 @@
       "interaction_middleware": {
         "expression_provider_id": {
           "description": "Expression Model Provider",
-          "hint": "Empty uses the compatibility decision_provider_id field."
+          "hint": "Used for all user-visible Persona expression."
         },
         "expression_temperature": {
           "description": "Expression Temperature"
@@ -1060,7 +1060,7 @@
       "interaction_middleware": {
         "router_provider_id": {
           "description": "Router Model Provider",
-          "hint": "Empty uses the compatibility decision_provider_id field."
+          "hint": "A fast model with stable classification is recommended."
         },
         "router_temperature": {
           "description": "Router Temperature"
@@ -1070,46 +1070,19 @@
         }
       }
     },
-    "decision_compat": {
-      "description": "Compatibility Fields",
-      "hint": "Legacy Fast Response decision fields kept for old configuration migration and new-field fallback.",
+    "planner": {
+      "description": "Core Planner",
+      "hint": "Independently validates whether execution is needed and builds CoreTaskSpec without reading Router decisions.",
       "interaction_middleware": {
-        "decision_provider_id": {
-          "description": "Legacy Decision Model Provider",
-          "hint": "For compatibility. Used when expression_provider_id or router_provider_id is empty."
+        "planner_provider_id": {
+          "description": "Planner Model Provider",
+          "hint": "Empty uses the Persona expression model."
         },
-        "decision_temperature": {
-          "description": "Legacy Decision Temperature"
+        "planner_temperature": {
+          "description": "Planner Temperature"
         },
-        "decision_timeout": {
-          "description": "Legacy Decision Timeout Seconds"
-        }
-      }
-    },
-    "finalizer": {
-      "description": "Output Expression",
-      "hint": "Cleans up core output before delivery. Cleanup failure falls back to sending the raw core result.",
-      "interaction_middleware": {
-        "finalizer_mode": {
-          "description": "Cleanup Mode",
-          "labels": [
-            "Auto",
-            "Force",
-            "Off"
-          ]
-        },
-        "finalizer_provider_id": {
-          "description": "Cleanup Model Provider"
-        },
-        "finalizer_temperature": {
-          "description": "Cleanup Temperature"
-        },
-        "finalizer_max_tokens": {
-          "description": "Cleanup Max Tokens"
-        },
-        "finalizer_timeout": {
-          "description": "Cleanup Timeout Seconds",
-          "hint": "Empty or invalid values use the compatibility decision_timeout field."
+        "planner_timeout": {
+          "description": "Planner Timeout Seconds"
         }
       }
     },
@@ -1126,17 +1099,6 @@
         },
         "stream_interjection_enabled": {
           "description": "Allow In-Progress Prompts"
-        },
-        "stream_interjection_provider_id": {
-          "description": "In-Progress Prompt Model Provider",
-          "hint": "Empty uses the compatibility decision_provider_id field."
-        },
-        "stream_interjection_temperature": {
-          "description": "In-Progress Prompt Temperature"
-        },
-        "stream_interjection_timeout": {
-          "description": "In-Progress Prompt Timeout Seconds",
-          "hint": "Empty or invalid values use the compatibility decision_timeout field."
         },
         "stream_interjection_max_per_turn": {
           "description": "Max Prompts Per Turn"
