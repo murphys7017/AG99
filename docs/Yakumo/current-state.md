@@ -60,7 +60,7 @@
 - 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
 - prompt collector 默认保持 required/fail-fast；只有显式 optional collector 才会局部失败并记录 `collector_failures`。当前 `MemoryCollector` 为 optional，long-term embedding/检索失败只清空长期召回，仍保留本地 Topic、ShortTerm、Experience 与 PersonaState。
-- 当前 Prompt 剩余问题集中在 Provider renderer 与输出契约能力、Prompt tool schema 与实际 `func_tool` 双轨、ContextPack 跨阶段派生、DeepSeek 首轮 Marker 和 Context Catalog 契约。处理顺序见 `prompt-development-plan.md`。
+- 当前 Prompt 剩余问题集中在 Provider renderer 与输出契约能力、Prompt tool schema 与实际 `func_tool` 双轨、DeepSeek 首轮 Marker 和 Context Catalog 契约。ContextPack 跨阶段 enrichment 已统一经 `PromptContextBuilder(base=...)` 生成版本化派生快照。处理顺序见 `prompt-development-plan.md`。
 
 ### 2.5 Interaction Middleware
 
@@ -72,7 +72,7 @@
 职责：
 
 - 在官方 EventBus / Pipeline 完成过滤、权限与插件处理后、核心 Agent 开始前维护 interaction turn state
-- 处理入站媒体与 STT，先用共享轻量上下文完成 route decision；只有 `persona` / `hybrid` 才调用统一 Persona Runtime
+- 处理入站媒体与 STT，由 Prompt 层统一采集完整事实并形成规范 `ContextPack`；Router、Core Planner、Persona 和 Core 只读取各自投影
 - 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
 - 统一 visible-reply persona layer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
 - 将 turn completion 收口为：middleware 产出 finalized material，postprocess consumers 再消费 material；当前 memory service 与 interaction conversation history 都在 `AFTER_TURN_COMPLETED` 阶段落地
@@ -86,7 +86,7 @@
   状态，`thinking` / `tool_running` 已作为后续执行器可上报的通用协议状态预留
 - turn completion 已具有 `active` / `completed` / `failed` / `cancelled` 显式状态；
   visible output snapshot 复用 utterance 的 `message_id` / `delivered_message_ids`
-- SELF_REPLY / HYBRID / DELEGATE_TO_CORE 主链路已由 middleware 持有 turn owner 语义
+- SILENT / PERSONA / HYBRID 主链路已由 middleware 持有 turn owner 语义
 - interaction outbound phase 已迁入 `InteractionOutputController`
 - core 旧流程与 middleware 新流程共享 voice service
 - interaction 内部主链路开发期 fail-fast，不依赖 fallback 证明正确性
@@ -100,7 +100,9 @@
   不属于 interaction 主流程的领域知识
 - Persona effect 注册支持同步 `event_filter`；Persona 只把当前事件适用的 effect 编译进输出契约。无事件参数的注册表查询仅用于管理和诊断，不代表该 effect 对所有平台都可用
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
-- `router_agent` 是轻量固定枚举分类器：只判断 `silent` / `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 先完成分类，`silent` 不调用 Persona 或 Core，`persona` 和 `hybrid` 才调用统一 Persona Expression；当前 `hybrid` 仍在即时表达完成并发送后放行 Core，尚未实现目标态的并发协调与输出仲裁。Turn State 只保存 `InteractionRouteDecision`，即时回复和 effect 只随对应的 `PersonaExpressionResult` 进入输出链路，不并入 route。Router 的原生 system base 读取当前输入、`session.datetime`、当前说话者、裁剪后的聊天记录、interaction memory 和可选的本地插件目录；插件目录只保留 `name` / `description`，失败时跳过而不使 Router 降级。Router 不枚举或限制 Core 能力，也不理解具体插件协议；每轮记录 `parsed` / `fallback` 来源、失败原因、可选目录错误、模型原始标签和渲染上下文节点。
+- `router_agent` 是轻量固定枚举分类器：只判断 `silent` / `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 只消费规范 `ContextPack` 的极简投影，不参与事实采集。
+- `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 终止 Core 路径并只保留 Persona 的唯一最终回复。Planner 与 Persona 使用独立配置和输出契约，失败按主链路 fail-fast 处理。
+- Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，贡献项通过 `meta.targets` 进入目标投影；Router、Planner、Persona 不再按 purpose 分别触发采集。Core 在同一 Pack 上用 Collector 增量加入 system、policy、tools、knowledge 和 `CoreTaskSpec`，再投影为 Core 视图。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 说明直接进入原生 `system.base`，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功

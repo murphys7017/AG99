@@ -1,11 +1,19 @@
 task:
   class: refactor
   risk: high
-  phase: prompt_context_pipeline_review_followup
-  scope: Remove remaining dual prompt sources, restore message ownership and chronology, and unify provider/context capability contracts before further prompt optimization
+  phase: core_planner_replacement
+  scope: Remove the retired combined interaction decision pipeline and add a dedicated Core Planner gate between hybrid routing and executor delegation
 context:
   confidence: high
   assumptions:
+    - Router remains a minimal silent/persona/hybrid classifier and never plans tasks or receives tool schemas.
+    - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
+    - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
+    - Router and Core Planner model decisions are never inserted into the canonical ContextPack or supplied to each other.
+    - Planner output is internal execution material; every user-visible acknowledgement, result, and failure remains owned by the unified Persona Expression layer.
+    - Protocol commands and live audio continue to bypass conversational Router and Core Planner.
+    - Planner failures are fail-fast and must not be silently interpreted as permission to execute Core.
+    - The retired decision_provider_id, decision_temperature, and decision_timeout compatibility fields are removed rather than repurposed for Planner.
     - Upstream sync should continue by topic rewrite, not broad merge.
     - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
@@ -40,7 +48,6 @@ context:
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.
   unresolved_questions:
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
-    - Interaction enrichment can still mutate ContextPack directly and bypass Builder conflict/version semantics.
     - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
     - Context Catalog declares lifecycle and redaction rules that are not consistently enforced at runtime.
 architecture:
@@ -99,6 +106,7 @@ architecture:
     - Persona effect registrations may provide an event filter; Persona output contracts include only effects applicable to the current event, while unscoped registry listing remains available for management and diagnostics.
 verification:
   checks_run:
+    - Canonical ContextPack enrichment follow-up: focused Prompt/Interaction tests (118 passed), broad Prompt/Interaction/Main Agent tests (452 passed), tool-loop/postprocess/memory boundary tests (138 passed), Ruff, and py_compile passed.
     - Event-scoped Persona effects and Router session context: all interaction unit tests (199 passed), focused prompt/context tests (111 passed), AG99live plugin unit tests (288 passed), Ruff, YAML parse, and git diff checks passed.
     - DeepSeek thinking/non-thinking tool-choice and reasoning round-trip preservation: provider tests (8 passed), Persona Expression tests (24 passed), output-contract/request-adapter/tool-loop boundary tests (13 passed), and ruff (passed); broader OpenAI provider suite has 6 unrelated pre-existing Windows path/diagnostic failures
     - Official-hook compatibility follow-up: focused group-context/prompt/internal-agent tests (69 passed), broad prompt/interaction/Main Agent tests (455 passed), postprocess/memory/tool-loop tests (138 passed), ruff, and public import smoke test (passed)

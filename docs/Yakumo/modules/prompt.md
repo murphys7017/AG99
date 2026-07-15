@@ -18,9 +18,9 @@ Collectors
 
 ### Collectors
 
-Collector 只读取事实，并输出命名明确的 `ContextSlot`。默认来源包括 system、persona、input、session、policy、memory、official conversation history、skills、tools、subagent、knowledge，以及插件显式写入 `ProviderRequest` 的上下文。
+Collector 只读取事实，并输出命名明确的 `ContextSlot`。默认来源包括 system、persona、input、session、policy、memory、official conversation history、skills、tools、subagent、knowledge，以及插件显式写入 `ProviderRequest` 的上下文。Interaction turn 还会收集 interaction memory、执行层能力摘要和插件 Prompt 事实；这些内容在目标选择前进入同一份规范 Pack，Router、Planner 或 Persona 不自行调用 Collector。
 
-同一次收集中，同名 slot 不能用不同值静默覆盖。两个生产者对同一事实有分歧时直接失败。当前跨阶段 enrichment 仍存在直接修改 Pack 的路径，尚未全部收口到 `replace_slots` 或派生快照 API。
+同一次收集中，同名 slot 不能用不同值静默覆盖。两个生产者对同一事实有分歧时直接失败。附件摘要、Interaction Prompt Contributor 和 Core enrichment 都通过 `PromptContextBuilder(base=...)` 生成新版本；共享规范 Pack 不接受业务链路直接修改。
 
 Collector 默认 required。只有明确声明 optional 的 Collector 才允许局部失败并把诊断写入 `ContextPack.meta["collector_failures"]`。当前 `MemoryCollector` 是 optional。
 
@@ -37,6 +37,8 @@ Collector 默认 required。只有明确声明 optional 的 Collector 才允许�
 
 插件 extension 也先规范化成 slot，再进入同一条构建链路。插件原有 `ProviderRequest.contexts`、`extra_user_content_parts` 和显式媒体由 Collector 收集，不在渲染后补丁式追加。消息顺序固定为 persona begin dialogs、官方历史、插件显式 contexts、当前输入。
 
+Router、Core Planner、Persona 和 Core 可以在规范 Pack 的克隆视图上加入本目标的 system 指令、输出契约或本次待表达材料；这些是目标渲染输入，不是新的共享事实，不能写回 canonical `ContextPack`。
+
 ### Target Projection
 
 `project_context_pack(...)` 从同一份规范 Pack 生成目标视图。投影是白名单和裁剪规则，不是一次额外模型调用。
@@ -44,10 +46,11 @@ Collector 默认 required。只有明确声明 optional 的 Collector 才允许�
 | 目标 | 当前上下文范围 |
 |---|---|
 | Router | 当前输入、附件摘要、当前时间、当前说话者、最近几轮历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 |
+| Core Planner | 当前输入、附件摘要、当前说话者、清理后的近期历史、精简 interaction memory、执行层能力摘要和插件目录；不读取人格、Router 决策或 effect |
 | Persona | 完整人格、官方对话历史、群聊上下文、memory/persona state、当前输入、待表达材料与 Core 结果 |
 | Core | 官方对话历史、群聊上下文、当前输入与附件、system/policy、tools、skills、knowledge、subagent 与插件执行上下文；排除人格、interaction memory 和 effect 语义 |
 
-Prompt extension 的 `meta.targets` 对 Router、Persona 和 Core 一致生效。未声明 targets 的普通 extension 默认属于 Core；interaction contributor 会明确标记 Persona 或 Router。
+Prompt extension 的 `meta.targets` 对四个目标一致生效。未声明 targets 的普通 extension 默认属于 Core；插件目录只提取明确标记给 `router` 或 `core_planner` 的 `name` / `description`。目标投影只读取这些声明，不会重新调用插件 Collector。
 
 ### PromptTreeBuilder
 
@@ -92,7 +95,7 @@ OutputContract
   -> parser
 ```
 
-Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明确不支持工具协议时才受控降级为 prompt-only JSON。Router 只返回固定路由词，不使用工具调用或 JSON 契约。
+Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明确不支持工具协议时才受控降级为 prompt-only JSON。Core Planner 使用独立的严格 `core_execution_plan` 契约，只返回 `execute` / `not_required` 和可选 `CoreTaskSpec`。Router 只返回固定路由词，不使用工具调用或 JSON 契约。
 
 Persona 输出契约中的 effect schema 不是全局常量。Core 在当前事件上调用 `list_persona_effects(event=event)`，只把注册插件判定为可用的 effect 编译进 `persona_expression`；Router 投影不收集 effect spec。
 
@@ -100,12 +103,11 @@ DeepSeek Provider 按有效 `thinking.type` 配置选择思考或非思考请求
 
 ## 群聊上下文
 
-`GroupChatContext` 是动态 Prompt Extension Collector。对 Router、Persona、Core 统一管线，它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。对尚未接入统一管线的官方 Agent runner，它提供受 Prompt Apply 标记保护的 `on_llm_request` 兼容桥接。
+`GroupChatContext` 是动态 Prompt Extension Collector。对 Router、Core Planner、Persona、Core 统一管线，它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。Router 与 Planner 投影会分别执行长度限制和运行时诊断清理。对尚未接入统一管线的官方 Agent runner，它提供受 Prompt Apply 标记保护的 `on_llm_request` 兼容桥接。
 
 ## 仍需继续收口
 
 - Provider renderer、输出契约和工具能力需要统一能力声明。
-- ContextPack enrichment 需要统一派生 API，禁止静默覆盖或删除 slot。
 - Context Catalog 需要从描述文件收口为真实契约，或删除未执行的声明。
 
 具体问题与处理顺序以 `docs/Yakumo/prompt-development-plan.md` 为准。

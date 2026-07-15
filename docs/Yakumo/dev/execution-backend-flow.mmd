@@ -7,7 +7,7 @@ flowchart LR
 %% 2. Interaction Middleware 位于官方 Pipeline 之后、Core Agent 之前。
 %% 3. 对话 Router 只输出 silent / persona / hybrid，不选择执行器。
 %% 4. 直播音频与协议命令通过内部 protocol Core bypass，不伪装成 Router 结果。
-%% 5. Router 先完成分类，实际 Persona Expression 再按 route purpose 调用。
+%% 5. Prompt 先统一收集事实；Router 与 Core Planner 独立判断，二者不共享模型决策。
 %% 6. 快速回复与 Core 最终回复使用同一个 Persona Expression。
 %% 7. Prompt 链路统一为 Collectors -> ContextBuilder -> Target Projection -> PromptTreeBuilder -> Provider Renderer。
 %% 8. 所有普通用户可见回复都经过 Interaction Output Runtime。
@@ -25,7 +25,8 @@ flowchart LR
         C_E --> C_F[Interaction Middleware]
         C_F --> C_F1[建立 Interaction Turn]
         C_F1 --> C_F2[输入物化<br/>文本 / 语音 / 图片]
-        C_F2 --> C_P{内部协议 bypass?}
+        C_F2 --> C_CTX[Prompt Collectors<br/>Canonical ContextPack]
+        C_CTX --> C_P{内部协议 bypass?}
 
         C_P -- 是 --> C_P1[Protocol Core Bypass<br/>不创建 Router 决策]
         C_P -- 否 --> C_G1[Router<br/>只输出 silent / persona / hybrid]
@@ -40,7 +41,9 @@ flowchart LR
         C_R --> C_S[Finalized Turn Material]
         C_S --> C_T[Postprocess / Memory]
 
-        C_H -- hybrid --> C_G3[唯一 Persona Expression<br/>当前即时回复]
+        C_H -- hybrid --> C_PLAN[独立 Core Planner<br/>execute / not_required]
+        C_PLAN -- not_required --> C_G2
+        C_PLAN -- execute --> C_G3[唯一 Persona Expression<br/>委派确认]
         C_G3 --> C_I2[Interaction Output Runtime<br/>即时发送但不完成 Turn]
         C_I2 --> C_K[AgentRequestSubStage]
         C_P1 --> C_K
@@ -85,7 +88,9 @@ flowchart LR
         T_H -- persona --> T_G2[统一 Persona Expression<br/>purpose: direct_reply]
         T_G2 --> T_A0[Output Arbiter]
 
-        T_H -- hybrid --> T_H1[Hybrid Coordination]
+        T_H -- hybrid --> T_PLAN[独立 Core Planner]
+        T_PLAN -- not_required --> T_G2
+        T_PLAN -- execute --> T_H1[Hybrid Coordination]
         T_H1 -->|并发启动| T_G3[统一 Persona Expression<br/>purpose: delegation_ack]
         T_H1 -->|并发启动| T_I
         T_G3 --> T_A0
@@ -146,8 +151,8 @@ flowchart LR
     classDef boundary fill:#f8f0ff,stroke:#76519a,color:#2f1d40
     classDef silent fill:#f2f2f2,stroke:#666,color:#222
 
-    class C_A,C_B,C_C,C_D,C_D1,C_D2,C_E,C_F,C_F1,C_F2,C_P1,C_G1,C_G2,C_G3,C_G4,C_I0,C_I1,C_I2,C_K,C_L,C_M,C_N,C_N1,C_O,C_O1,C_O2,C_O3,C_O4,C_Q,C_RISK,C_R,C_S,C_T current
-    class T_A,T_B,T_B1,T_C,T_C1,T_C2,T_G1,T_G2,T_G3,T_G4,T_H1,T_I,T_I1,T_J,T_J1,T_K,T_K1,T_K2,T_L,T_M,T_N1,T_N2,T_N3,T_R0,T_R1,T_R2,T_X,T_CG,T_MCP,T_CALL,T_EXEC,T_CAP,T_RESULT,T_PROGRESS,T_MATERIAL,T_A0,T_SUPPRESS,T_ORDER,T_O,T_O1,T_V,T_W,T_Y target
-    class C_P,C_H,T_P,T_H,T_A1 decision
+    class C_A,C_B,C_C,C_D,C_D1,C_D2,C_E,C_F,C_F1,C_F2,C_CTX,C_P1,C_G1,C_G2,C_G3,C_G4,C_I0,C_I1,C_I2,C_K,C_L,C_M,C_N,C_N1,C_O,C_O1,C_O2,C_O3,C_O4,C_Q,C_RISK,C_R,C_S,C_T,C_PLAN current
+    class T_A,T_B,T_B1,T_C,T_C1,T_C2,T_G1,T_G2,T_G3,T_G4,T_H1,T_I,T_I1,T_J,T_J1,T_K,T_K1,T_K2,T_L,T_M,T_N1,T_N2,T_N3,T_R0,T_R1,T_R2,T_X,T_CG,T_MCP,T_CALL,T_EXEC,T_CAP,T_RESULT,T_PROGRESS,T_MATERIAL,T_A0,T_SUPPRESS,T_ORDER,T_O,T_O1,T_V,T_W,T_Y,T_PLAN target
+    class C_P,C_H,C_PLAN,T_P,T_H,T_PLAN,T_A1 decision
     class T_C,T_I,T_A0,T_O boundary
     class C_S0,C_S1,T_S0,T_S1 silent

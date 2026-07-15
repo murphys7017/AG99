@@ -60,9 +60,11 @@ Platform / WebUI / Official Internal Event
           -> Router: silent / persona / hybrid
               -> silent: complete without visible output
               -> persona: Unified Persona Expression
-              -> hybrid: Core and delegation acknowledgement start concurrently
-                  -> ActiveTask progress / result
-                  -> Unified Persona Expression
+              -> hybrid: independent Core Planner
+                  -> not_required: Unified Persona Expression
+                  -> execute: Core and delegation acknowledgement start concurrently
+                      -> ActiveTask progress / result
+                      -> Unified Persona Expression
               -> Output Arbiter
       -> Existing Interaction Output Runtime
       -> Official Platform Adapter
@@ -79,7 +81,9 @@ Platform / WebUI / Official Internal Event
 - 官方 Waking、Whitelist、Session Status、Rate Limit、Content Safety 和 PreProcess 先执行。
 - `ProcessStage` 在插件 Handler 执行前准备输出接管，并在 Core Agent 前调用 Interaction Middleware。
 - 对话 Router 只输出 `silent`、`persona` 或 `hybrid`；直播音频和协议命令使用独立的内部 Core bypass，不伪装成 Router 结果。
-- Router 先完成分类；`silent` 不调用 Persona Expression 或 Core，`persona` 和 `hybrid` 才调用统一 Persona Expression。
+- Prompt 层统一采集本轮事实并形成规范 `ContextPack`；Router、Core Planner、Persona 和 Core 从同一 Pack 投影不同视图，不重复查询同一份身份、历史和记忆。
+- Router 先完成分类；`silent` 不调用 Persona Expression 或 Core，`persona` 直接进入统一 Persona Expression，`hybrid` 先由独立 Core Planner 复核执行必要性。
+- Core Planner 不读取 Router 决策内容，只根据 Planner 事实投影返回 `execute` / `not_required`；只有 `execute` 才生成 `CoreTaskSpec` 并委派 Core。
 - 即时表达、Core 最终结果和显式 persona 插件输出都复用 `InteractionPersonaRuntime` 的表达入口。
 - `InteractionOutputController` 统一承担 materialization、TTS、平台发送、可见输出记录和 finalized material。
 - Core 只处理通用 persona effect 注册与结构化调用，不理解 Motion、Live2D 等插件领域语义。
@@ -91,7 +95,7 @@ Platform / WebUI / Official Internal Event
 3. 当前 `hybrid` 仍会等待即时 Persona Expression 完成并发送后才放行 Core，尚未实现 Core 与确认型表达并发及抢占仲裁。
 4. Core 工具状态、工具直出和部分中间消息仍通过普通 `event.send()` 进入输出分类，可能被当作 `passthrough` 提前完成 turn。
 5. 普通插件输出默认是 `direct`，语义文本仍可绕过唯一 Persona Expression。
-6. Router 与 Persona 分别收集上下文；Interaction Memory 仍是按 session 保存的独立 JSON，不是跨 conversation、跨平台的人格状态。
+6. 当前共享 `ContextPack` 已消除 Router、Planner、Persona、Core 的重复基础采集，但 Interaction Memory 仍是按 session 保存的独立 JSON，不是跨 conversation、跨平台的人格状态。
 7. Local / Third-party Runner 在 Pipeline 初始化时选择，还不是 PersonaRuntime 按 ActiveTask 解析的 ExecutionBackend。
 
 这些问题的处理顺序应服从目标架构，而不是为了保持当前链路形状只做局部补丁。
@@ -152,7 +156,7 @@ PersonaRuntime 不直接拥有官方数据库、Provider、Memory、插件或平
 - input / attachments
 - filtered capabilities
 
-Router、Persona Expression 和 Core 使用不同 Prompt Profile，但不应分别重复查询同一份身份、历史和记忆。
+Router、Core Planner、Persona Expression 和 Core 使用不同 Prompt Profile，但不应分别重复查询同一份身份、历史和记忆。Router 与 Planner 的模型决策不属于快照事实，不能相互注入。
 
 ### `ActiveTask`
 
@@ -233,7 +237,7 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 5. 增加轻量 `PersonaRuntimeManager`，按 persona identity 提供 runtime handle，并按 audience、privacy 和 relationship scope 隔离状态。
 6. 将 Observation 和 runtime identity 保存到 `InteractionTurnState`；原始 event 只在本轮委派官方能力时使用。
 7. `PersonaRuntime.handle_observation(...)` 第一阶段复用现有 Router、Persona Expression、Core bridge 和 OutputController；非回复型 Observation 默认只记录或通知，不主动发言。
-8. 实现 Hybrid 协同：Router 选择 `hybrid` 后，同时启动 Core 与确认型 Persona Expression；Core 不能等待即时表达完成，二者的输出由同一个仲裁器按提交状态处理。
+8. 实现 Hybrid 协同：Router 选择 `hybrid` 且独立 Core Planner 返回 `execute` 后，同时启动 Core 与确认型 Persona Expression；Core 不能等待即时表达完成，二者的输出由同一个仲裁器按提交状态处理。
 9. 将 Core thinking、tool call、tool result 和执行状态映射为 lifecycle / task progress；中间进度不得触发 finalized material 或 turn completion。
 
 这一阶段明确不做：
@@ -265,7 +269,7 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 ### Phase 2：共享 TurnContextSnapshot
 
 - 一次 Observation 只解析一次 identity、history、memory、persona 和 attachments。
-- Router、Persona 和 Core 从同一 snapshot 投影不同 Prompt Profile。
+- Router、Core Planner、Persona 和 Core 从同一 snapshot 投影不同 Prompt Profile。
 - required / optional collector、超时和降级诊断在 snapshot 边界统一生效。
 - Router 继续保持极简 Profile，但不再单独重复查询 conversation 和 memory。
 - 区分 conversation history、relationship state 和 persona state；逐步用官方 Memory / Persona 能力替代按 session 保存的 Interaction JSON 主状态。
