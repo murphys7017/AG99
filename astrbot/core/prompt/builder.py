@@ -74,7 +74,7 @@ def merge_context_packs(
         provider_request_ref=fragment.provider_request_ref or base.provider_request_ref,
         meta=deepcopy(base.meta),
     )
-    merged.meta.update(deepcopy(fragment.meta))
+    _merge_pack_meta(merged.meta, fragment.meta)
     for slot in fragment.slots.values():
         existing = merged.get_slot(slot.name)
         if existing is None:
@@ -82,6 +82,11 @@ def merge_context_packs(
             continue
         if slot.name in replace_slots:
             merged.add_slot(deepcopy(slot))
+            continue
+        if slot.name == "capability.plugin_directory" and _merge_plugin_directory_slot(
+            existing,
+            slot,
+        ):
             continue
         if _slots_equal(existing, slot):
             continue
@@ -135,7 +140,81 @@ def _merge_extension_slot(existing: ContextSlot, incoming: ContextSlot) -> bool:
     )
     existing.value["items"] = merged_items
     existing.meta["item_count"] = len(merged_items)
+    existing.meta["plugin_count"] = len(
+        {
+            str(item.get("plugin_id", ""))
+            for item in merged_items
+            if str(item.get("plugin_id", ""))
+        }
+    )
     return True
+
+
+def _merge_plugin_directory_slot(
+    existing: ContextSlot,
+    incoming: ContextSlot,
+) -> bool:
+    if not isinstance(existing.value, dict) or not isinstance(incoming.value, dict):
+        return False
+    existing_plugins = existing.value.get("plugins")
+    incoming_plugins = incoming.value.get("plugins")
+    if not isinstance(existing_plugins, list) or not isinstance(incoming_plugins, list):
+        return False
+
+    merged_plugins: list[dict] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    entries = [
+        *((item, existing.meta) for item in existing_plugins),
+        *((item, incoming.meta) for item in incoming_plugins),
+    ]
+    for plugin, slot_meta in entries:
+        if not isinstance(plugin, dict):
+            continue
+        normalized = deepcopy(plugin)
+        raw_targets = normalized.get("targets", slot_meta.get("targets", []))
+        targets = (
+            sorted({str(target) for target in raw_targets})
+            if isinstance(raw_targets, list | tuple | set)
+            else []
+        )
+        if targets:
+            normalized["targets"] = targets
+        key = (
+            str(normalized.get("name", "")),
+            str(normalized.get("description", "")),
+            tuple(targets),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged_plugins.append(normalized)
+
+    existing.value["plugins"] = merged_plugins
+    existing.meta.pop("targets", None)
+    existing.meta["plugin_count"] = len(merged_plugins)
+    return True
+
+
+def _merge_pack_meta(target: dict, incoming: dict) -> None:
+    list_keys = {
+        "cached_collectors",
+        "collector_failures",
+        "collectors",
+        "extension_collectors",
+    }
+    managed_keys = {"collection_scopes", "context_version", "slot_count"}
+    for key, value in deepcopy(incoming).items():
+        if key in managed_keys:
+            continue
+        if key not in list_keys or not isinstance(value, list):
+            target[key] = value
+            continue
+        existing = target.get(key, [])
+        merged = list(existing) if isinstance(existing, list) else []
+        for item in value:
+            if item not in merged:
+                merged.append(item)
+        target[key] = merged
 
 
 __all__ = [

@@ -313,6 +313,22 @@ contexts:
     lifecycle: dynamic
     notes: "子代理路由说明 prompt"
 
+  - id: capability.core_summary
+    category: capability
+    slots: [tools]
+    required: false
+    multiple: false
+    lifecycle: dynamic
+    notes: "执行层能力的精简事实摘要，仅供目标投影按需使用"
+
+  - id: capability.plugin_directory
+    category: capability
+    slots: [tools]
+    required: false
+    multiple: false
+    lifecycle: dynamic
+    notes: "插件提供的精简能力目录，由目标投影过滤"
+
   # ========== Extension 类 (dynamic) ==========
   - id: extension.system
     category: extension

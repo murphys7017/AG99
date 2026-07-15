@@ -35,15 +35,10 @@ class ToolsCollector(ContextCollectorInterface):
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
         try:
-            persona_id, persona = await self._resolve_persona(
+            persona_id, toolset, selection_mode = await self.resolve_toolset(
                 event,
                 plugin_context,
                 config,
-                provider_request,
-            )
-            toolset, selection_mode = self._build_persona_toolset(
-                plugin_context,
-                persona,
                 provider_request,
             )
         except Exception as exc:  # noqa: BLE001
@@ -59,6 +54,27 @@ class ToolsCollector(ContextCollectorInterface):
             return []
 
         return [self._build_tools_slot(toolset, persona_id, selection_mode)]
+
+    async def resolve_toolset(
+        self,
+        event: AstrMessageEvent,
+        plugin_context: Context,
+        config: MainAgentBuildConfig,
+        provider_request: ProviderRequest | None = None,
+    ) -> tuple[str | None, ToolSet, str]:
+        """Resolve the same active tool set used by the Core prompt."""
+        persona_id, persona = await self._resolve_persona(
+            event,
+            plugin_context,
+            config,
+            provider_request,
+        )
+        toolset, selection_mode = self._build_persona_toolset(
+            plugin_context,
+            persona,
+            provider_request,
+        )
+        return persona_id, toolset, selection_mode
 
     async def _resolve_persona(
         self,

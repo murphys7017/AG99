@@ -1942,11 +1942,11 @@ def test_custom_renderer_can_override_render_text_escape():
     assert "You are [lt]Alice[gt] [amp] Bob" in result.system_prompt
 
 
-def test_render_engine_renders_router_plugin_directory_without_extension_metadata():
+def test_render_engine_renders_plugin_directory_without_extension_metadata():
     pack = ContextPack(
         slots={
-            "capability.router_plugin_directory": ContextSlot(
-                name="capability.router_plugin_directory",
+            "capability.plugin_directory": ContextSlot(
+                name="capability.plugin_directory",
                 value={
                     "plugins": [
                         {
@@ -1959,7 +1959,7 @@ def test_render_engine_renders_router_plugin_directory_without_extension_metadat
                 source="test",
                 meta={
                     "scope": "static",
-                    "node_type": "router_plugin_directory",
+                    "node_type": "plugin_directory",
                 },
             )
         }
@@ -1975,7 +1975,7 @@ def test_render_engine_renders_router_plugin_directory_without_extension_metadat
     assert "plugin_id" not in result.system_prompt
     assert "Local Plugin Directory" not in result.system_prompt
     assert "value_kind" not in result.system_prompt
-    assert "router_plugin_directory" not in result.system_prompt
+    assert "plugin_directory" not in result.system_prompt
     assert result.messages == []
 
 

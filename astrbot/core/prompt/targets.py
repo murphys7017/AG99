@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from enum import Enum
+from typing import Any
 
 from .context_types import ContextPack, ContextSlot
 
@@ -12,6 +13,7 @@ class PromptTarget(str, Enum):
     """A model-facing role that consumes prompt context."""
 
     ROUTER = "router"
+    CORE_PLANNER = "core_planner"
     PERSONA = "persona"
     CORE = "core"
 
@@ -22,13 +24,13 @@ _ROUTER_SLOT_NAMES = frozenset(
         "persona.summary",
         "input.text",
         "input.quoted_text",
-        "input.router_attachment_summary",
+        "input.attachment_summary",
         "session.datetime",
         "session.user_info",
         "conversation.history",
         "conversation.group_recent",
         "memory.interaction",
-        "capability.router_plugin_directory",
+        "capability.plugin_directory",
         "extension.context",
     }
 )
@@ -38,8 +40,26 @@ _CORE_BLOCKED_SLOT_NAMES = frozenset(
         "memory.interaction",
         "memory.persona_state",
         "input.visible_reply_material",
-        "input.router_attachment_summary",
-        "capability.router_plugin_directory",
+        "input.attachment_summary",
+        "capability.plugin_directory",
+        "capability.core_summary",
+    }
+)
+
+_CORE_PLANNER_SLOT_NAMES = frozenset(
+    {
+        "system.base",
+        "input.text",
+        "input.quoted_text",
+        "input.attachment_summary",
+        "session.datetime",
+        "session.user_info",
+        "conversation.history",
+        "conversation.group_recent",
+        "memory.interaction",
+        "capability.plugin_directory",
+        "capability.core_summary",
+        "extension.context",
     }
 )
 
@@ -85,10 +105,13 @@ def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
     if target is PromptTarget.ROUTER:
         return slot.name in _ROUTER_SLOT_NAMES
 
+    if target is PromptTarget.CORE_PLANNER:
+        return slot.name in _CORE_PLANNER_SLOT_NAMES
+
     group = slot.name.split(".", 1)[0]
     if target is PromptTarget.PERSONA:
         if (
-            slot.name == "input.router_attachment_summary"
+            slot.name == "input.attachment_summary"
             or slot.name in _CORE_ONLY_SLOT_NAMES
         ):
             return False
@@ -111,19 +134,87 @@ def _project_slot(
     router_history_turns: int,
 ) -> ContextSlot | None:
     projected = deepcopy(slot)
+    if projected.name == "capability.plugin_directory":
+        projected = _project_plugin_directory(projected, target)
+        if projected is None:
+            return None
     if projected.name.startswith("extension."):
         projected = _project_extension_slot(projected, target)
         if projected is None:
             return None
 
-    if target is not PromptTarget.ROUTER:
+    if target not in {PromptTarget.ROUTER, PromptTarget.CORE_PLANNER}:
         return projected
 
     if projected.name == "conversation.history":
-        _truncate_history(projected, router_history_turns)
+        history_turns = (
+            router_history_turns
+            if target is PromptTarget.ROUTER
+            else max(router_history_turns, 8)
+        )
+        _project_history(
+            projected,
+            history_turns,
+            max_message_chars=1000
+            if target is PromptTarget.ROUTER
+            else 1800,
+        )
+    elif projected.name == "conversation.group_recent":
+        _project_group_recent(
+            projected,
+            max_records=8 if target is PromptTarget.ROUTER else 12,
+            max_record_chars=800
+            if target is PromptTarget.ROUTER
+            else 1200,
+        )
     elif projected.name == "memory.interaction":
-        _summarize_interaction_memory(projected, router_history_turns)
+        memory_turns = (
+            router_history_turns
+            if target is PromptTarget.ROUTER
+            else max(router_history_turns, 8)
+        )
+        _summarize_interaction_memory(projected, memory_turns)
     return projected
+
+
+def _project_plugin_directory(
+    slot: ContextSlot,
+    target: PromptTarget,
+) -> ContextSlot | None:
+    if not isinstance(slot.value, dict):
+        return None
+    plugins = slot.value.get("plugins")
+    if not isinstance(plugins, list):
+        return None
+    slot_targets = slot.meta.get("targets")
+    inherited_targets = (
+        {str(value) for value in slot_targets}
+        if isinstance(slot_targets, list | tuple | set)
+        else set()
+    )
+    selected = []
+    for plugin in plugins:
+        if not isinstance(plugin, dict):
+            continue
+        raw_targets = plugin.get("targets")
+        targets = (
+            {str(value) for value in raw_targets}
+            if isinstance(raw_targets, list | tuple | set)
+            else inherited_targets
+        )
+        if target.value not in targets:
+            continue
+        selected.append(
+            {
+                "name": plugin.get("name"),
+                "description": plugin.get("description"),
+            }
+        )
+    if not selected:
+        return None
+    slot.value["plugins"] = selected
+    slot.meta["plugin_count"] = len(selected)
+    return slot
 
 
 def _project_extension_slot(
@@ -155,18 +246,62 @@ def _project_extension_slot(
     return slot
 
 
-def _truncate_history(slot: ContextSlot, limit: int) -> None:
+def _project_history(
+    slot: ContextSlot,
+    limit: int,
+    *,
+    max_message_chars: int,
+) -> None:
     if not isinstance(slot.value, dict):
         return
     turns = slot.value.get("turns")
     if not isinstance(turns, list):
         return
     safe_limit = max(0, limit)
-    selected_turns = turns[-safe_limit:] if safe_limit else []
+    selected_turns = deepcopy(turns[-safe_limit:] if safe_limit else [])
+    for turn in selected_turns:
+        if not isinstance(turn, dict):
+            continue
+        for key in ("user_message", "assistant_message"):
+            message = turn.get(key)
+            if not isinstance(message, dict):
+                continue
+            message["content"] = _sanitize_context_content(
+                message.get("content"),
+                max_chars=max_message_chars,
+            )
+            message.pop("tool_calls", None)
+            message.pop("reasoning_content", None)
+            message.pop("thinking", None)
     slot.value["turns"] = selected_turns
     slot.value["turn_count"] = len(selected_turns)
     slot.meta["target_truncated"] = len(selected_turns) != len(turns)
     slot.meta["turn_count"] = len(selected_turns)
+
+
+def _project_group_recent(
+    slot: ContextSlot,
+    *,
+    max_records: int,
+    max_record_chars: int,
+) -> None:
+    if not isinstance(slot.value, dict):
+        return
+    records = slot.value.get("records")
+    if not isinstance(records, list):
+        return
+    selected = records[-max(0, max_records) :]
+    safe_records = [
+        _sanitize_context_text(str(record), max_chars=max_record_chars)
+        for record in selected
+    ]
+    slot.value["records"] = safe_records
+    slot.value["text"] = (
+        "Recent group messages; sender identities remain distinct:\n"
+        + "\n".join(safe_records)
+    )
+    slot.meta["target_truncated"] = len(selected) != len(records)
+    slot.meta["record_count"] = len(safe_records)
 
 
 def _summarize_interaction_memory(slot: ContextSlot, limit: int) -> None:
@@ -175,7 +310,16 @@ def _summarize_interaction_memory(slot: ContextSlot, limit: int) -> None:
     safe_limit = max(0, limit)
     recent_turns = slot.value.get("recent_turns")
     if isinstance(recent_turns, list):
-        recent_turns = recent_turns[:safe_limit] if safe_limit else []
+        recent_turns = deepcopy(recent_turns[:safe_limit] if safe_limit else [])
+        for turn in recent_turns:
+            if not isinstance(turn, dict):
+                continue
+            for key in ("user", "assistant"):
+                if key in turn:
+                    turn[key] = _sanitize_context_text(
+                        str(turn.get(key, "") or ""),
+                        max_chars=800,
+                    )
     else:
         recent_turns = []
     slot.value = {
@@ -188,7 +332,41 @@ def _summarize_interaction_memory(slot: ContextSlot, limit: int) -> None:
         }.items()
         if value not in (None, "", [])
     }
-    slot.meta["target_summary"] = "router"
+    slot.meta["target_summary"] = "compact"
+
+
+def _sanitize_context_content(value: Any, *, max_chars: int) -> str:
+    if isinstance(value, str):
+        return _sanitize_context_text(value, max_chars=max_chars)
+    if not isinstance(value, list):
+        return _sanitize_context_text(str(value or ""), max_chars=max_chars)
+    text_parts: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text_parts.append(item)
+        elif isinstance(item, dict):
+            text = item.get("text")
+            if isinstance(text, str):
+                text_parts.append(text)
+    return _sanitize_context_text("\n".join(text_parts), max_chars=max_chars)
+
+
+def _sanitize_context_text(value: str, *, max_chars: int) -> str:
+    text = value.strip()
+    lowered = text.lower()
+    diagnostic_markers = (
+        "traceback (most recent call last)",
+        "[erro]",
+        "error code:",
+        "no such file or directory",
+        "invalid image input",
+        "获取图片描述失败",
+    )
+    if any(marker in lowered for marker in diagnostic_markers):
+        return "[runtime diagnostic omitted]"
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars].rstrip()}..."
 
 
 __all__ = ["PromptTarget", "project_context_pack"]

@@ -360,7 +360,7 @@ class BasePromptRenderer:
 
         router_attachment_slot = self._find_slot(
             slots,
-            "input.router_attachment_summary",
+            "input.attachment_summary",
         )
         if self._render_mapping_slot(
             resolve_node("user_input/attachment_summary"),
@@ -368,7 +368,7 @@ class BasePromptRenderer:
             router_attachment_slot,
             body_keys=("images", "quoted_images", "files", "quoted_files"),
         ):
-            rendered_slot_names.append("input.router_attachment_summary")
+            rendered_slot_names.append("input.attachment_summary")
 
         content_parts: list[Any] = []
         for slot_name in (
@@ -675,7 +675,7 @@ class BasePromptRenderer:
 
         plugin_directory_slot = self._find_slot(
             slots,
-            "capability.router_plugin_directory",
+            "capability.plugin_directory",
         )
         if plugin_directory_slot is not None and isinstance(
             plugin_directory_slot.value, dict

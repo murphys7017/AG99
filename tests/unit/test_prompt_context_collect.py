@@ -46,6 +46,7 @@ from astrbot.core.prompt.collectors import (
 )
 from astrbot.core.prompt.context_collect import (
     PROMPT_CONTEXT_PACK_EXTRA_KEY,
+    build_prompt_extension_slots,
     collect_context_pack,
     log_context_pack,
 )
@@ -3008,6 +3009,19 @@ class _ExtensionCollectorBeta(PromptExtensionCollectorInterface):
                 mount="conversation",
                 value={"topic": "route notes"},
             ),
+            PromptExtension(
+                plugin_id="beta.plugin",
+                mount="capability",
+                value={
+                    "plugins": [
+                        {
+                            "name": "Beta Runtime",
+                            "description": "Provides a local execution capability.",
+                        }
+                    ]
+                },
+                meta={"targets": ["router", "core_planner"]},
+            ),
         ]
 
 
@@ -3191,7 +3205,72 @@ async def test_collect_context_pack_collects_prompt_extensions_into_extension_sl
     assert conversation_slot is not None
     assert conversation_slot.value["items"][0]["plugin_id"] == "beta.plugin"
 
+    plugin_directory = pack.get_slot("capability.plugin_directory")
+    assert plugin_directory is not None
+    assert plugin_directory.value == {
+        "plugins": [
+            {
+                "name": "Beta Runtime",
+                "description": "Provides a local execution capability.",
+                "targets": ["core_planner", "router"],
+            }
+        ]
+    }
+
     assert pack.get_slot("extension.memory") is None
+
+
+def test_build_prompt_extension_slots_combines_direct_and_declared_plugin_directory():
+    slots = build_prompt_extension_slots(
+        [
+            PromptExtension(
+                plugin_id="direct.plugin",
+                mount="capability",
+                value={
+                    "plugins": [
+                        {
+                            "name": "Direct Runtime",
+                            "description": "Runs direct tasks.",
+                        }
+                    ]
+                },
+                meta={
+                    "context_slot": "capability.plugin_directory",
+                    "context_category": "capability",
+                    "targets": ["router"],
+                },
+            ),
+            PromptExtension(
+                plugin_id="declared.plugin",
+                mount="capability",
+                value={
+                    "plugins": [
+                        {
+                            "name": "Declared Runtime",
+                            "description": "Runs planned tasks.",
+                        }
+                    ]
+                },
+                meta={"targets": ["core_planner"]},
+            ),
+        ]
+    )
+
+    directory = next(
+        slot for slot in slots if slot.name == "capability.plugin_directory"
+    )
+    assert directory.value["plugins"] == [
+        {
+            "name": "Direct Runtime",
+            "description": "Runs direct tasks.",
+            "targets": ["router"],
+        },
+        {
+            "name": "Declared Runtime",
+            "description": "Runs planned tasks.",
+            "targets": ["core_planner"],
+        },
+    ]
 
 
 @pytest.mark.asyncio

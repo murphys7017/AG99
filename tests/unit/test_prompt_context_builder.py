@@ -65,6 +65,57 @@ def test_merge_context_packs_allows_declared_replacement():
     assert base.get_slot("input.text").value == "before"
 
 
+def test_merge_context_packs_merges_plugin_directories_and_inherits_targets():
+    base = ContextPack(
+        slots={
+            "capability.plugin_directory": ContextSlot(
+                name="capability.plugin_directory",
+                value={
+                    "plugins": [
+                        {"name": "Base", "description": "Base capability"}
+                    ]
+                },
+                category="capability",
+                source="base",
+                meta={"targets": ["router"]},
+            )
+        },
+        meta={"collectors": ["BaseCollector"]},
+    )
+    fragment = ContextPack(
+        slots={
+            "capability.plugin_directory": ContextSlot(
+                name="capability.plugin_directory",
+                value={
+                    "plugins": [
+                        {"name": "Plugin", "description": "Plugin capability"}
+                    ]
+                },
+                category="capability",
+                source="plugin",
+                meta={"targets": ["core_planner"]},
+            )
+        },
+        meta={"collectors": ["PluginCollector"]},
+    )
+
+    merged = merge_context_packs(base, fragment, scope="plugin")
+
+    assert merged.get_slot("capability.plugin_directory").value["plugins"] == [
+        {
+            "name": "Base",
+            "description": "Base capability",
+            "targets": ["router"],
+        },
+        {
+            "name": "Plugin",
+            "description": "Plugin capability",
+            "targets": ["core_planner"],
+        },
+    ]
+    assert merged.meta["collectors"] == ["BaseCollector", "PluginCollector"]
+
+
 @pytest.mark.asyncio
 async def test_prompt_context_builder_delegates_collection_then_merges():
     fragment = ContextPack(slots={"input.text": _slot("input.text", "hello")})

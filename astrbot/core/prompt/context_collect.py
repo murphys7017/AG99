@@ -226,11 +226,12 @@ def build_prompt_extension_slots(
     *,
     source: str = "prompt_extension_collectors",
 ) -> list[ContextSlot]:
+    extension_list = list(extensions)
     grouped_items: dict[str, list[dict[str, object]]] = {
         mount: [] for mount in PROMPT_EXTENSION_MOUNTS
     }
     direct_slots: list[ContextSlot] = []
-    for extension in extensions:
+    for extension in extension_list:
         if not isinstance(extension.plugin_id, str) or not extension.plugin_id.strip():
             raise ValueError("Prompt extension must define a non-empty plugin_id")
         if extension.mount not in PROMPT_EXTENSION_MOUNTS:
@@ -258,7 +259,31 @@ def build_prompt_extension_slots(
             continue
         grouped_items[extension.mount].append(_build_prompt_extension_record(extension))
 
-    slots: list[ContextSlot] = direct_slots
+    direct_plugin_directories = [
+        slot for slot in direct_slots if slot.name == "capability.plugin_directory"
+    ]
+    slots: list[ContextSlot] = [
+        slot for slot in direct_slots if slot.name != "capability.plugin_directory"
+    ]
+    plugin_directory = _build_plugin_directory(extension_list)
+    merged_plugin_directory = _combine_plugin_directories(
+        direct_plugin_directories,
+        plugin_directory,
+    )
+    if merged_plugin_directory:
+        slots.append(
+            ContextSlot(
+                name="capability.plugin_directory",
+                value={"plugins": merged_plugin_directory},
+                category="capability",
+                source=source,
+                render_mode="structured",
+                meta={
+                    "scope": "static",
+                    "plugin_count": len(merged_plugin_directory),
+                },
+            )
+        )
     for mount, items in grouped_items.items():
         if not items:
             continue
@@ -288,6 +313,94 @@ def build_prompt_extension_slots(
             )
         )
     return slots
+
+
+def _combine_plugin_directories(
+    direct_slots: list[ContextSlot],
+    generated_plugins: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    plugins: list[dict[str, object]] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+
+    candidates: list[tuple[object, object]] = [
+        (plugin, None) for plugin in generated_plugins
+    ]
+    for slot in direct_slots:
+        raw_plugins = slot.value.get("plugins") if isinstance(slot.value, dict) else None
+        if isinstance(raw_plugins, dict):
+            raw_plugins = [raw_plugins]
+        if not isinstance(raw_plugins, list):
+            continue
+        candidates.extend((plugin, slot.meta.get("targets")) for plugin in raw_plugins)
+
+    for candidate, inherited_targets in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        name = str(candidate.get("name", "") or "").strip()
+        description = str(candidate.get("description", "") or "").strip()
+        raw_targets = candidate.get("targets", inherited_targets)
+        targets = (
+            sorted({str(target) for target in raw_targets})
+            if isinstance(raw_targets, list | tuple | set)
+            else []
+        )
+        key = (name, description, tuple(targets))
+        if not name or not description or not targets or key in seen:
+            continue
+        seen.add(key)
+        plugins.append(
+            {
+                "name": name,
+                "description": description,
+                "targets": targets,
+            }
+        )
+    return plugins
+
+
+def _build_plugin_directory(
+    extensions: list[PromptExtension],
+) -> list[dict[str, object]]:
+    plugins: list[dict[str, object]] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    prompt_targets = {"router", "core_planner"}
+    for extension in extensions:
+        if extension.mount != "capability" or not isinstance(extension.value, dict):
+            continue
+        raw_targets = extension.meta.get("targets")
+        targets = (
+            sorted(
+                prompt_targets.intersection(
+                    str(target) for target in raw_targets
+                )
+            )
+            if isinstance(raw_targets, list | tuple | set)
+            else []
+        )
+        if not targets:
+            continue
+        raw_plugins = extension.value.get("plugins")
+        if isinstance(raw_plugins, dict):
+            raw_plugins = [raw_plugins]
+        if not isinstance(raw_plugins, list):
+            continue
+        for raw_plugin in raw_plugins:
+            if not isinstance(raw_plugin, dict):
+                continue
+            name = str(raw_plugin.get("name", "") or "").strip()
+            description = str(raw_plugin.get("description", "") or "").strip()
+            key = (name, description, tuple(targets))
+            if not name or not description or key in seen:
+                continue
+            seen.add(key)
+            plugins.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "targets": targets,
+                }
+            )
+    return plugins
 
 
 async def _collect_prompt_extension_slots(
