@@ -2889,6 +2889,19 @@ class _ConflictingCollector(ContextCollectorInterface):
         ]
 
 
+class _SameValueRestrictedCollector(ContextCollectorInterface):
+    async def collect(self, event, plugin_context, config, provider_request=None):
+        return [
+            ContextSlot(
+                name="input.text",
+                value="hello",
+                category="input",
+                source="test",
+                llm_exposure="never",
+            )
+        ]
+
+
 @pytest.mark.asyncio
 async def test_collect_context_pack_raises_when_a_collector_raises():
     event, _ = _make_event()
@@ -2937,6 +2950,20 @@ async def test_collect_context_pack_rejects_conflicting_duplicate_slots():
             plugin_context=context,
             config=ama.MainAgentBuildConfig(tool_call_timeout=60),
             collectors=[_StaticCollector(), _ConflictingCollector()],
+        )
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_rejects_same_value_with_different_metadata():
+    event, _ = _make_event()
+    context = _make_context()
+
+    with pytest.raises(PromptContextConflictError, match="input.text"):
+        await collect_context_pack(
+            event=event,
+            plugin_context=context,
+            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+            collectors=[_StaticCollector(), _SameValueRestrictedCollector()],
         )
 
 

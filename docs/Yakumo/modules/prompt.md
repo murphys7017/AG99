@@ -63,7 +63,7 @@ Collector 只返回事实：
 
 ## 目标投影
 
-`project_context_pack(...)` 从 Pack 深拷贝出隔离视图。在显式目标投影中，`llm_exposure="never"` 会被排除；其他可见范围由固定代码规则决定。当前无 target 的普通 Main Agent 路径不会经过这一步，因此 exposure 还不是全链路强制安全机制，敏感事实不能只依赖该字段保护。
+`project_context_pack(...)` 从 Pack 深拷贝出隔离视图。所有模型渲染都会先排除 `llm_exposure="never"`；显式目标还会同时执行固定代码规则和 slot 级 `meta.targets`。无 target 的普通 Main Agent 不套用 Core 白名单，但仍执行 exposure 过滤。敏感事实仍应在 Collector 产生前最小化，不能把渲染过滤当作日志或进程内保密机制。
 
 | 目标 | 当前可见范围 | 明确排除 |
 |---|---|---|
@@ -92,7 +92,7 @@ Profile 是“如何使用事实”的局部策略，不是 Collector。Router�
 
 `PromptTreeBuilder` 只接收目标视图和 `PromptLayoutInterface`。Layout 决定逻辑 group 的启用范围、节点路径和 slot 到树节点的落位；PromptTree 是 provider-neutral 中间表示。
 
-当前逻辑边界已经从 Provider Renderer 中拆出，但默认实现仍处于过渡态：`DefaultPromptLayout` 委托 `BasePromptRenderer` 中既有的 `render_*_context` 方法。选中的 OpenAI/Anthropic/MiniMax Renderer 不参与目标数据选择，但默认 Layout 的方法实现尚未物理迁入独立类。文档和新代码不能把这个过渡实现描述成已经完全拆分。
+`PromptLayoutInterface` 通过单一 `render_group(...)` 明确 Builder 的完整依赖，不再要求调用方隐式实现一组动态方法。默认实现仍处于过渡态：`DefaultPromptLayout.render_group(...)` 内部委托 `BasePromptRenderer` 中既有的 provider-neutral 落位方法；选中的 OpenAI/Anthropic/MiniMax Renderer 不参与目标数据选择。后续只需迁移默认实现，不再改变 Layout 公共契约。
 
 Provider Renderer 只编译已经形成的树：
 
@@ -106,6 +106,8 @@ Provider Renderer 只编译已经形成的树：
 ## RenderResult 与 Apply
 
 `RenderResult` 承载 `prompt_tree`、`system_prompt`、`messages`、`tool_schema`、输出契约、metadata 和可选 `request_prompt`。
+
+完整 PromptTree 只保留在进程内 `prompt_tree` 字段供 Apply 使用，不复制到常规 metadata，也不写入 DEBUG 结构日志；日志只记录截断预览、slot 名和计数。
 
 `ProviderRequestAdapter` 的规则是：
 
@@ -148,9 +150,8 @@ Router 只返回固定分类词，不使用工具或 JSON。Core Planner 使用�
 
 - Provider renderer family、输出契约能力和工具能力还没有统一成一个 capability 声明。
 - `ContextCatalog` 的 required/lifecycle/redaction 等字段多数仍是描述和告警，不是完整运行时强约束。
-- `llm_exposure` 只在显式 Target Projection 中执行；无 target 的 Main Agent 路径尚未统一过滤。
 - `ContextPack` 仍是可变数据类型，跨阶段不可变性依赖 Builder 使用约定和测试。
-- `PromptLayoutInterface` 尚未显式声明全部 `render_*_context` 方法，默认 Layout 仍复用 Base Renderer 实现。
+- `DefaultPromptLayout` 内部仍复用 Base Renderer 的 provider-neutral 落位实现，但 Builder 依赖的 `render_group(...)` 契约已经稳定。
 - `tool_schema` 与实际 `func_tool` 尚未统一事实源。
 - 上下文预算、Collector 并发和更细的敏感字段脱敏需要在上述边界稳定后继续处理。
 

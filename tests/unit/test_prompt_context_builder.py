@@ -51,6 +51,18 @@ def test_merge_context_packs_rejects_implicit_replacement():
         merge_context_packs(base, fragment)
 
 
+def test_merge_context_packs_rejects_same_value_with_different_metadata():
+    base_slot = _slot("input.text", "same", "base")
+    fragment_slot = _slot("input.text", "same", "base")
+    fragment_slot.llm_exposure = "never"
+
+    with pytest.raises(PromptContextConflictError, match="input.text"):
+        merge_context_packs(
+            ContextPack(slots={"input.text": base_slot}),
+            ContextPack(slots={"input.text": fragment_slot}),
+        )
+
+
 def test_merge_context_packs_allows_declared_replacement():
     base = ContextPack(slots={"input.text": _slot("input.text", "before")})
     fragment = ContextPack(slots={"input.text": _slot("input.text", "after")})

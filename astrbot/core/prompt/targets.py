@@ -98,9 +98,33 @@ def project_context_pack(
     return projected
 
 
+def filter_llm_exposed_context_pack(pack: ContextPack) -> ContextPack:
+    """Return an isolated pack containing only slots eligible for LLM rendering."""
+
+    filtered = ContextPack(
+        provider_request_ref=pack.provider_request_ref,
+        meta=deepcopy(pack.meta),
+    )
+    for slot in pack.slots.values():
+        if slot.llm_exposure != "never":
+            filtered.add_slot(deepcopy(slot))
+    filtered.meta["source_slot_names"] = sorted(pack.slots)
+    filtered.meta["selected_slot_names"] = sorted(filtered.slots)
+    filtered.meta["slot_count"] = len(filtered.slots)
+    return filtered
+
+
 def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
     if slot.llm_exposure == "never":
         return False
+
+    raw_targets = slot.meta.get("targets")
+    if raw_targets is not None:
+        if not isinstance(raw_targets, list | tuple | set):
+            return False
+        targets = {str(value) for value in raw_targets}
+        if target.value not in targets:
+            return False
 
     if target is PromptTarget.ROUTER:
         return slot.name in _ROUTER_SLOT_NAMES

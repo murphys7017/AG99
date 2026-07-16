@@ -23,21 +23,40 @@ class CoreTaskSpec:
     def from_mapping(cls, payload: object) -> CoreTaskSpec | None:
         if not isinstance(payload, dict):
             return None
-        suggested_capabilities = payload.get("suggested_capabilities", [])
-        if not isinstance(suggested_capabilities, list):
-            suggested_capabilities = []
+        if set(payload) != {
+            "task_intent",
+            "task_summary",
+            "execution_prompt",
+            "suggested_capabilities",
+        }:
+            return None
+        task_intent = payload["task_intent"]
+        task_summary = payload["task_summary"]
+        execution_prompt = payload["execution_prompt"]
+        suggested_capabilities = payload["suggested_capabilities"]
+        if not all(
+            isinstance(value, str)
+            for value in (task_intent, task_summary, execution_prompt)
+        ):
+            return None
+        if not all(
+            value.strip()
+            for value in (task_intent, task_summary, execution_prompt)
+        ):
+            return None
+        if not isinstance(suggested_capabilities, list) or not all(
+            isinstance(item, str) for item in suggested_capabilities
+        ):
+            return None
         return cls(
-            task_intent=str(payload.get("task_intent", "general") or "general"),
-            task_summary=str(payload.get("task_summary", "") or ""),
-            execution_prompt=str(payload.get("execution_prompt", "") or ""),
+            task_intent=task_intent.strip(),
+            task_summary=task_summary.strip(),
+            execution_prompt=execution_prompt.strip(),
             suggested_capabilities=[
-                str(item).strip()
+                item.strip()
                 for item in suggested_capabilities
-                if str(item).strip()
+                if item.strip()
             ],
-            metadata=payload.get("metadata", {})
-            if isinstance(payload.get("metadata", {}), dict)
-            else {},
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,24 +83,23 @@ class CorePlanningDecision:
     def from_mapping(cls, payload: object) -> CorePlanningDecision | None:
         if not isinstance(payload, dict):
             return None
-        raw_action = str(payload.get("decision", "") or "").strip().lower()
+        if set(payload) != {"decision", "core_task_spec"}:
+            return None
+        raw_action = payload["decision"]
+        if not isinstance(raw_action, str):
+            return None
         try:
-            action = CorePlanningAction(raw_action)
+            action = CorePlanningAction(raw_action.strip().lower())
         except ValueError:
             return None
-        task_spec = CoreTaskSpec.from_mapping(payload.get("core_task_spec"))
+        raw_task_spec = payload["core_task_spec"]
         if action is CorePlanningAction.EXECUTE:
+            task_spec = CoreTaskSpec.from_mapping(raw_task_spec)
             if task_spec is None:
                 return None
-            if not all(
-                (
-                    task_spec.task_intent.strip(),
-                    task_spec.task_summary.strip(),
-                    task_spec.execution_prompt.strip(),
-                )
-            ):
-                return None
         else:
+            if raw_task_spec is not None:
+                return None
             task_spec = None
         return cls(action=action, task_spec=task_spec)
 

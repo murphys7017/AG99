@@ -48,6 +48,7 @@ from .turn_state import (
     get_interaction_turn_finalized_material,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
+    has_interaction_turn_core_final_result_consumed,
     is_interaction_turn_completed,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
@@ -563,11 +564,51 @@ class InteractionMiddleware:
             expression_request = self._build_immediate_expression_request(
                 planning_decision
             )
-            expression = await self._generate_expression(
-                event,
-                interaction_config,
-                request=expression_request,
-            )
+            if (
+                route.route_mode == InteractionRouteMode.HYBRID
+                and planning_decision is not None
+                and planning_decision.action is CorePlanningAction.EXECUTE
+            ):
+                await self._emit_delegated(event, route)
+                expression_coro = self._generate_and_emit_delegated_expression(
+                    event,
+                    interaction_config,
+                    route=route,
+                    planning_decision=planning_decision,
+                    request=expression_request,
+                )
+                if enqueue_core:
+                    expression_task = asyncio.create_task(
+                        expression_coro,
+                        name=(
+                            f"interaction_immediate_expression_"
+                            f"{event.get_platform_id()}_{event.get_extra('_turn_id')}"
+                        ),
+                    )
+                    self._forward_to_core(event, enqueue_core=True)
+                    try:
+                        await expression_task
+                    except BaseException:
+                        if not expression_task.done():
+                            expression_task.cancel()
+                        await asyncio.gather(expression_task, return_exceptions=True)
+                        raise
+                else:
+                    self._spawn_background_task(
+                        expression_coro,
+                        name=(
+                            f"interaction_immediate_expression_"
+                            f"{event.get_platform_id()}_{event.get_extra('_turn_id')}"
+                        ),
+                    )
+                    self._forward_to_core(event, enqueue_core=False)
+                return
+            else:
+                expression = await self._generate_expression(
+                    event,
+                    interaction_config,
+                    request=expression_request,
+                )
             expression = self._apply_immediate_expression_policy(
                 event,
                 route,
@@ -581,6 +622,29 @@ class InteractionMiddleware:
             planning_decision=planning_decision,
             enqueue_core=enqueue_core,
         )
+
+    async def _generate_and_emit_delegated_expression(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+        *,
+        route: InteractionRouteDecision,
+        planning_decision: CorePlanningDecision,
+        request: PersonaExpressionRequest,
+    ) -> None:
+        expression = await self._generate_expression(
+            event,
+            interaction_config,
+            request=request,
+        )
+        expression = self._apply_immediate_expression_policy(
+            event,
+            route,
+            expression,
+            planning_decision=planning_decision,
+        )
+        if expression is not None and expression.spoken_reply.strip():
+            await self._emit_immediate_reply_or_record_failure(event, expression)
 
     async def _plan_core_execution(
         self,
@@ -758,6 +822,12 @@ class InteractionMiddleware:
             or planning_decision.action is CorePlanningAction.NOT_REQUIRED
         ):
             return expression
+        if has_interaction_turn_core_final_result_consumed(event):
+            event.set_extra(
+                "_interaction_immediate_reply_suppressed_reason",
+                "core_completed_first",
+            )
+            return None
         if not expression.spoken_reply.strip() or not self._has_core_media_input(event):
             return expression
         event.set_extra(

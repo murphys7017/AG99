@@ -2733,7 +2733,6 @@ class BasePromptRenderer:
                 if compiled_output_contract is not None
                 else None
             ),
-            "debug_prompt_tree": prompt_tree.build(),
         }
 
     def _compile_output_contract(

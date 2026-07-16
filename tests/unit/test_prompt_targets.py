@@ -176,6 +176,50 @@ def test_plugin_directory_entries_inherit_slot_targets():
     assert planner.get_slot("capability.plugin_directory") is None
 
 
+def test_direct_slot_targets_are_enforced_before_target_rules():
+    pack = ContextPack(
+        slots={
+            "conversation.group_recent": ContextSlot(
+                name="conversation.group_recent",
+                value={"records": ["ambient"]},
+                category="conversation",
+                source="plugin",
+                meta={"targets": ["core"]},
+            )
+        }
+    )
+
+    assert (
+        project_context_pack(pack, PromptTarget.CORE_PLANNER).get_slot(
+            "conversation.group_recent"
+        )
+        is None
+    )
+    assert (
+        project_context_pack(pack, PromptTarget.CORE).get_slot(
+            "conversation.group_recent"
+        )
+        is not None
+    )
+
+
+def test_direct_slot_with_malformed_targets_is_hidden():
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="private",
+                category="input",
+                source="plugin",
+                meta={"targets": "router"},
+            )
+        }
+    )
+
+    for target in PromptTarget:
+        assert project_context_pack(pack, target).get_slot("input.text") is None
+
+
 def test_router_and_planner_views_remove_runtime_diagnostics_without_mutating_source():
     source = _canonical_pack()
     history = source.get_slot("conversation.history")

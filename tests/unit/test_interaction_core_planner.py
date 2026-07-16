@@ -107,6 +107,52 @@ def test_core_planner_rejects_execute_without_task_spec():
         )
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"decision": "not_required"},
+        {"decision": "not_required", "core_task_spec": {}},
+        {
+            "decision": "execute",
+            "core_task_spec": {
+                "task_summary": "查询当前时间",
+                "execution_prompt": "查询当前时间。",
+                "suggested_capabilities": [],
+            },
+        },
+        {
+            "decision": "execute",
+            "core_task_spec": {
+                "task_intent": "lookup",
+                "task_summary": "查询当前时间",
+                "execution_prompt": "查询当前时间。",
+                "suggested_capabilities": "time",
+            },
+        },
+        {
+            "decision": "execute",
+            "core_task_spec": {
+                "task_intent": "lookup",
+                "task_summary": "查询当前时间",
+                "execution_prompt": "查询当前时间。",
+                "suggested_capabilities": [1],
+            },
+        },
+    ],
+)
+def test_core_planner_rejects_payloads_that_violate_declared_schema(payload):
+    contract, compiled = _compiled("prompt_only")
+    response = SimpleNamespace(tools_call_name=[], tools_call_args=[])
+
+    with pytest.raises(CorePlannerError, match="invalid structured result"):
+        extract_core_planning_decision(
+            str(payload).replace("'", '"'),
+            llm_response=response,
+            output_contract=contract,
+            compiled_output_contract=compiled,
+        )
+
+
 @pytest.mark.parametrize("empty_field", ["task_intent", "task_summary", "execution_prompt"])
 def test_core_planner_rejects_execute_with_empty_required_task_field(empty_field):
     contract, compiled = _compiled("prompt_only")

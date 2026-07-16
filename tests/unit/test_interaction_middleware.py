@@ -504,10 +504,12 @@ class TestInteractionMiddleware:
         middleware.prepare_pipeline_event(webchat_event)
         await middleware.handle_pipeline_event(webchat_event)
 
-        middleware.persona_runtime.express_visible_reply.assert_awaited_once()
         middleware.router_agent.route.assert_awaited_once()
         assert webchat_event.get_extra("_interaction_route_handled") is True
         assert queue.empty()
+
+        await _drain_inbound_tasks(middleware)
+        middleware.persona_runtime.express_visible_reply.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_pipeline_event_skips_empty_notice_event(
@@ -1052,20 +1054,13 @@ class TestInteractionMiddleware:
         assert webchat_event.get_extra("_output_controller") is None
 
     @pytest.mark.asyncio
-    async def test_hybrid_emits_reply_before_forwarding(self, webchat_event):
+    async def test_hybrid_forwards_core_while_persona_is_still_generating(
+        self,
+        webchat_event,
+    ):
         queue = asyncio.Queue()
         controller = MagicMock()
-        release_persist = asyncio.Event()
-
-        async def _emit_immediate_spoken_reply(*_args):
-            webchat_event._has_send_oper = True
-
-        async def _wait_for_persist_release(*_args):
-            await release_persist.wait()
-
-        controller.emit_immediate_spoken_reply = AsyncMock(
-            side_effect=_emit_immediate_spoken_reply
-        )
+        controller.emit_immediate_spoken_reply = AsyncMock()
         middleware = InteractionMiddleware(
             {
                 "interaction_middleware": {
@@ -1081,20 +1076,76 @@ class TestInteractionMiddleware:
             first_response="嗯，我来处理。",
             mode=InteractionRouteMode.HYBRID,
         )
-        middleware.memory_store.update_interaction_memory = AsyncMock(
-            side_effect=_wait_for_persist_release
+        expression_started = asyncio.Event()
+        release_expression = asyncio.Event()
+
+        async def _generate_expression(*_args, **_kwargs):
+            expression_started.set()
+            await release_expression.wait()
+            return PersonaExpressionResult(spoken_reply="嗯，我来处理。")
+
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
+            side_effect=_generate_expression
         )
 
         middleware.handle_inbound(webchat_event)
-        await _drain_inbound_tasks(middleware)
-        await _drain_inbound_tasks(middleware)
+        await expression_started.wait()
+        await asyncio.sleep(0)
 
-        controller.emit_immediate_spoken_reply.assert_awaited_once()
         forwarded_event = queue.get_nowait()
         assert forwarded_event is webchat_event
         assert forwarded_event._has_send_oper is False
-        release_persist.set()
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
+
+        release_expression.set()
         await _drain_inbound_tasks(middleware)
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_hybrid_returns_before_persona_finishes(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="嗯，我来处理。",
+            mode=InteractionRouteMode.HYBRID,
+        )
+        expression_started = asyncio.Event()
+        release_expression = asyncio.Event()
+
+        async def _generate_expression(*_args, **_kwargs):
+            expression_started.set()
+            await release_expression.wait()
+            return PersonaExpressionResult(spoken_reply="嗯，我来处理。")
+
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
+            side_effect=_generate_expression
+        )
+
+        pipeline_task = asyncio.create_task(
+            middleware.handle_pipeline_event(webchat_event)
+        )
+        await expression_started.wait()
+        await asyncio.wait_for(pipeline_task, timeout=0.5)
+
+        assert queue.empty()
+        assert webchat_event.get_extra("_interaction_delegate_to_core") is True
+        assert webchat_event.get_extra("_interaction_route_handled") is True
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
+
+        release_expression.set()
+        await _drain_inbound_tasks(middleware)
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_immediate_reply_waits_for_core_before_turn_completion(
@@ -1130,6 +1181,52 @@ class TestInteractionMiddleware:
         assert queue.get_nowait() is webchat_event
         controller.emit_immediate_spoken_reply.assert_awaited_once()
         middleware.memory_store.update_interaction_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_suppresses_immediate_reply_when_core_finishes_first(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="我先看看。",
+            mode=InteractionRouteMode.HYBRID,
+        )
+        expression_started = asyncio.Event()
+        release_expression = asyncio.Event()
+
+        async def _generate_expression(*_args, **_kwargs):
+            expression_started.set()
+            await release_expression.wait()
+            return PersonaExpressionResult(spoken_reply="我先看看。")
+
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
+            side_effect=_generate_expression
+        )
+
+        middleware.handle_inbound(webchat_event)
+        await expression_started.wait()
+        assert queue.get_nowait() is webchat_event
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        turn_state.core_final_result_consumed = True
+        release_expression.set()
+        await _drain_inbound_tasks(middleware)
+
+        controller.emit_immediate_spoken_reply.assert_not_awaited()
+        assert (
+            webchat_event.get_extra("_interaction_immediate_reply_suppressed_reason")
+            == "core_completed_first"
+        )
 
     @pytest.mark.asyncio
     async def test_planner_not_required_finishes_with_single_persona_reply(
@@ -1484,7 +1581,7 @@ class TestInteractionMiddleware:
         assert turn_state.failures[-1].reason == "router_pipeline_error"
 
     @pytest.mark.asyncio
-    async def test_hybrid_immediate_reply_failure_fail_fast_records_failure(
+    async def test_hybrid_immediate_reply_failure_does_not_cancel_started_core(
         self,
         webchat_event,
     ):
@@ -1512,7 +1609,7 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(webchat_event)
         await _drain_inbound_tasks(middleware)
 
-        assert queue.empty()
+        assert queue.get_nowait() is webchat_event
         assert webchat_event.get_extra("_interaction_immediate_reply_failed") is True
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None

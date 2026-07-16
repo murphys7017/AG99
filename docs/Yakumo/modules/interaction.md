@@ -55,6 +55,7 @@ Input Runtime / Observation
 - Prompt Collectors：一次收集本轮输入、人格、session、历史、interaction memory、执行能力和插件贡献，生成规范 `ContextPack`
 - Router：只输出 `silent` / `persona` / `hybrid`，不承担用户可见回复、task planning 或 effect 输出；它读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
+- Hybrid 协同：Planner 返回 `execute` 后立即并发启动确认型 Persona Expression 并放行 Core；Core 不等待即时表达生成或发送。若 Core 最终结果先提交，尚未发送的即时回复会被抑制
 - SILENT / PERSONA / HYBRID 编排
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义

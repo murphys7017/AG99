@@ -99,8 +99,8 @@ class PromptTreeBuilder:
         config,
         provider_request: ProviderRequest | None,
     ) -> list[str]:
-        build_method = getattr(layout, f"render_{group}_context")
-        return build_method(
+        return layout.render_group(
+            group,
             target,
             slots,
             pack=pack,

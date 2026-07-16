@@ -55,7 +55,7 @@ Layout 决定：
 - session 是否并入 system
 - 各 group 的 slot 如何落入 PromptTree
 
-当前实现限制：Protocol 只显式声明了前四类查询方法，Builder 还会动态调用 `render_<group>_context`；`DefaultPromptLayout` 通过委托 `BasePromptRenderer` 复用这些旧方法。因此 Layout 与 Provider Renderer 的调用实例已分离，但默认布局实现尚未完全迁出 Renderer 类。
+Protocol 显式声明查询方法与统一的 `render_group(...)` 落位入口，Builder 不再动态调用 `render_<group>_context`。`DefaultPromptLayout` 当前仍通过这个入口委托 `BasePromptRenderer` 复用旧的 provider-neutral 落位方法；公共契约已经稳定，默认布局实现尚未完全迁出 Renderer 类。
 
 ### `PromptTreeBuilder`
 
@@ -97,6 +97,8 @@ Renderer 编译完成的树，产出 system prompt、messages、媒体 content b
 - `request_prompt`
 
 `request_prompt` 追加在数据类字段末尾，以保持旧位置参数构造顺序。
+
+完整树不会复制到 metadata 或 DEBUG 结构日志；诊断只输出截断后的 Prompt/messages 预览、slot 名称和计数。
 
 ## Request Adapter 边界
 

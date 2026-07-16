@@ -13,7 +13,11 @@ from astrbot.core.provider.register import provider_cls_map
 from astrbot.core.star.context import Context
 
 from ..context_types import ContextPack, ContextSlot
-from ..targets import PromptTarget, project_context_pack
+from ..targets import (
+    PromptTarget,
+    filter_llm_exposed_context_pack,
+    project_context_pack,
+)
 from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
 from .interfaces import PromptRenderProfile, RenderResult
@@ -50,7 +54,11 @@ class PromptRenderEngine:
         provider_request: ProviderRequest | None = None,
         profile: PromptRenderProfile | None = None,
     ) -> RenderResult:
-        target_pack = project_context_pack(pack, target) if target is not None else pack
+        target_pack = (
+            project_context_pack(pack, target)
+            if target is not None
+            else filter_llm_exposed_context_pack(pack)
+        )
         selected_pack = self._apply_render_profile(target_pack, profile)
         renderer = self._resolve_renderer(
             selected_pack,

@@ -147,7 +147,7 @@ def _add_collected_slot(
     if existing is None:
         pack.add_slot(slot)
         return
-    if existing.value == slot.value:
+    if existing == slot:
         return
     raise PromptContextConflictError(
         f"conflicting prompt context slot in one collection: {slot.name} "

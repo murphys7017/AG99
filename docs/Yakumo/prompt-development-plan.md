@@ -28,14 +28,13 @@ collect facts
 
 ## 当前问题与处理顺序
 
-### 1. 完成 Layout 的物理拆分
+### 1. 完成 Layout 实现的物理迁移
 
-当前 `DefaultPromptLayout` 仍委托 `BasePromptRenderer.render_*_context`，且 `PromptLayoutInterface` 没有显式声明动态调用的全部 group 方法。
+`PromptLayoutInterface` 已收口为稳定的 `render_group(...)` 接口，Builder 不再动态查找 `render_<group>_context`。当前剩余工作是把 `DefaultPromptLayout` 内部委托的 provider-neutral 落位规则从 `BasePromptRenderer` 迁出。
 
 处理：
 
 - 把 provider-neutral 的 slot 落位和树构建规则迁入独立 Layout 实现。
-- 让 Protocol 明确声明 Builder 实际依赖的方法，或改为稳定的单一 `render_group(...)` 接口。
 - 保留 Base Renderer 的序列化职责，删除 Layout 对 Renderer 实例的实现依赖。
 
 ### 2. 统一 Provider Prompt Capability
@@ -70,9 +69,9 @@ Interaction 已不再直接修改 Pack，但 `ContextPack` 公开类型仍可静
 
 Catalog 当前主要用于声明和未知 slot 告警，required、multiple、lifecycle、redaction 并未全部执行。
 
-`llm_exposure="never"` 当前只在显式 Target Projection 中过滤，无 target 的普通 Main Agent 路径不会自动执行。
+`llm_exposure="never"` 已在显式 Target Projection 和无 target 的普通 Main Agent 渲染入口统一过滤。Catalog 的其他声明仍未全部成为运行时约束。
 
-处理：要么让 Catalog/exposure 成为收集、投影和无 target 渲染阶段的可执行契约，要么删除没有运行时意义的字段；敏感信息默认应在 Collector 产生前完成最小化。
+处理：继续判断 Catalog 的 required、multiple、lifecycle、redaction 应成为可执行契约还是删除；敏感信息默认仍应在 Collector 产生前完成最小化。
 
 ### 7. 最后优化性能与预算
 

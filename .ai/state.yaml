@@ -1,8 +1,8 @@
 task:
-  class: documentation
+  class: bugfix
   risk: high
-  phase: prompt_boundary_documentation
-  scope: Review the current Prompt dependency structure and synchronize architecture, flow, implementation, and public plugin documentation with explicit functional boundaries
+  phase: prompt_planner_boundary_fixes_validated
+  scope: Fix reviewed Prompt projection, Planner contract, Layout interface, diagnostics, and Hybrid startup ordering defects without changing Router/Planner/Persona/Core ownership
 context:
   confidence: high
   assumptions:
@@ -46,12 +46,11 @@ context:
     - Official on_llm_request remains a post-render low-level ProviderRequest hook; preserving it does not restore removed legacy/shadow prompt modes or internal duplicate injectors.
     - DeepSeek thinking mode is controlled only by the effective Provider `thinking.type`; both thinking and non-thinking requests preserve caller-supplied `tool_choice` instead of silently changing contract semantics.
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.
+    - Slot-level meta.targets is a fail-closed model-visibility contract; malformed declarations are not treated as unrestricted access.
   unresolved_questions:
-    - DefaultPromptLayout still delegates provider-neutral group placement to BasePromptRenderer, and PromptLayoutInterface does not explicitly declare every group-render method used by PromptTreeBuilder.
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
     - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
     - Context Catalog declares lifecycle and redaction rules that are not consistently enforced at runtime.
-    - llm_exposure filtering is enforced by explicit target projection but not by the target=None Main Agent render path.
 architecture:
   stability: review_required
   boundary_changes:
@@ -106,8 +105,13 @@ architecture:
     - Persona begin dialogs, official conversation history, plugin explicit contexts, and current input have a stable ownership-based message order.
     - The exported apply_interaction_core_task_spec direct-request interface remains available for plugin compatibility, while the canonical Main Agent path uses CoreTaskCollector exclusively.
     - Persona effect registrations may provide an event filter; Persona output contracts include only effects applicable to the current event, while unscoped registry listing remains available for management and diagnostics.
+    - All Prompt render paths filter llm_exposure=never; explicit target projections additionally enforce slot-level targets before target-specific allowlists.
+    - PromptLayoutInterface exposes one explicit render_group contract; PromptTreeBuilder no longer depends on dynamically named layout methods.
+    - Hybrid execute starts Core and delegated Persona Expression concurrently on both queue and official Pipeline entry paths; a Core final result committed first suppresses the pending immediate reply.
+    - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Prompt/Planner boundary fixes: focused Prompt/Planner/Middleware suite (223 passed), broad Prompt/Interaction/Main Agent suite (417 passed), Middleware concurrency suite (52 passed), Ruff, py_compile, YAML parse, and git diff checks passed.
     - Prompt boundary documentation sync: VitePress production build passed, docs tests passed (27), public Prompt Extension import smoke test passed, Node config syntax passed, YAML parse passed, and git diff checks passed.
     - Prompt render dependency cleanup: focused Prompt/Interaction tests (104 passed), broad Prompt/Interaction/Main Agent tests (454 passed), tool-loop/postprocess/memory boundary tests (138 passed), and Ruff passed.
     - Canonical ContextPack enrichment follow-up: focused Prompt/Interaction tests (118 passed), broad Prompt/Interaction/Main Agent tests (452 passed), tool-loop/postprocess/memory boundary tests (138 passed), Ruff, and py_compile passed.

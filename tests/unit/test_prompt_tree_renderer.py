@@ -11,6 +11,7 @@ from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import (
     AnthropicPromptRenderer,
     BasePromptRenderer,
+    DefaultPromptLayout,
     MiniMaxPromptRenderer,
     OpenAIPromptRenderer,
     PromptBuilder,
@@ -1800,7 +1801,34 @@ def test_render_engine_returns_prompt_tree_and_system_prompt():
     assert result.metadata["rendered_slots"] == ["persona.prompt"]
     assert result.metadata["compiled_message_count"] == 0
     assert result.metadata["compiled_tool_count"] == 0
+    assert "debug_prompt_tree" not in result.metadata
     assert "<prompt>" not in result.system_prompt
+
+
+def test_render_engine_without_target_filters_never_exposed_slots():
+    pack = ContextPack(
+        slots={
+            "system.base": ContextSlot(
+                name="system.base",
+                value="visible",
+                category="system",
+                source="test",
+            ),
+            "system.secret": ContextSlot(
+                name="system.secret",
+                value="SECRET",
+                category="system",
+                source="test",
+                llm_exposure="never",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine().render(pack)
+
+    assert "visible" in result.system_prompt
+    assert "SECRET" not in result.system_prompt
+    assert "system.secret" not in result.metadata["selected_slot_names"]
 
 
 def test_render_engine_renders_visible_reply_material_as_native_input_context():
@@ -1882,10 +1910,12 @@ def test_render_engine_emits_debug_log_for_render_result():
 
 
 def test_render_engine_respects_layout_disabled_groups():
-    class NoKnowledgeRenderer(BasePromptRenderer):
+    class NoKnowledgeLayout(DefaultPromptLayout):
         def get_enabled_slot_groups(self) -> tuple[str, ...]:
             return tuple(
-                group for group in self.ALL_SLOT_GROUPS if group != "knowledge"
+                group
+                for group in super().get_enabled_slot_groups()
+                if group != "knowledge"
             )
 
     pack = ContextPack(
@@ -1903,7 +1933,7 @@ def test_render_engine_respects_layout_disabled_groups():
         }
     )
 
-    layout = NoKnowledgeRenderer()
+    layout = NoKnowledgeLayout()
     engine = PromptRenderEngine(default_layout=layout)
     result = engine.render(pack)
 
@@ -1913,12 +1943,13 @@ def test_render_engine_respects_layout_disabled_groups():
 
 
 def test_custom_layout_can_override_group_renderer():
-    class CompactSessionRenderer(BasePromptRenderer):
+    class CompactSessionLayout(DefaultPromptLayout):
         def include_session_in_system_prompt(self) -> bool:
             return True
 
-        def render_session_context(
+        def render_group(
             self,
+            group,
             target,
             slots,
             *,
@@ -1929,6 +1960,18 @@ def test_custom_layout_can_override_group_renderer():
             config=None,
             provider_request=None,
         ) -> list[str]:
+            if group != "session":
+                return super().render_group(
+                    group,
+                    target,
+                    slots,
+                    pack=pack,
+                    resolve_node=resolve_node,
+                    event=event,
+                    plugin_context=plugin_context,
+                    config=config,
+                    provider_request=provider_request,
+                )
             del (
                 slots,
                 pack,
@@ -1938,7 +1981,7 @@ def test_custom_layout_can_override_group_renderer():
                 config,
                 provider_request,
             )
-            self._add_text_tag(target, "compact", "user=Alice")
+            target.tag("compact").add("user=Alice")
             return ["session.user_info"]
 
     pack = ContextPack(
@@ -1952,7 +1995,7 @@ def test_custom_layout_can_override_group_renderer():
         }
     )
 
-    layout = CompactSessionRenderer()
+    layout = CompactSessionLayout()
     engine = PromptRenderEngine(
         default_renderer=BasePromptRenderer(),
         default_layout=layout,

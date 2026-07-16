@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.star.context import Context
+
+from ..context_types import ContextPack, ContextSlot
 from .interfaces import BasePromptRenderer
+from .prompt_tree import NodeRef
 
 
 class PromptLayoutInterface(Protocol):
@@ -19,6 +26,20 @@ class PromptLayoutInterface(Protocol):
     def get_node_structure(self) -> dict[str, str]: ...
 
     def include_session_in_system_prompt(self) -> bool: ...
+
+    def render_group(
+        self,
+        group: str,
+        target: NodeRef,
+        slots: list[ContextSlot],
+        *,
+        pack: ContextPack,
+        resolve_node: Callable[[str], NodeRef],
+        event: AstrMessageEvent | None,
+        plugin_context: Context | None,
+        config: Any,
+        provider_request: ProviderRequest | None,
+    ) -> list[str]: ...
 
 
 class DefaultPromptLayout:
@@ -42,10 +63,30 @@ class DefaultPromptLayout:
     def include_session_in_system_prompt(self) -> bool:
         return self._rules.include_session_in_system_prompt()
 
-    def __getattr__(self, name: str):
-        if name.startswith("render_") and name.endswith("_context"):
-            return getattr(self._rules, name)
-        raise AttributeError(name)
+    def render_group(
+        self,
+        group: str,
+        target: NodeRef,
+        slots: list[ContextSlot],
+        *,
+        pack: ContextPack,
+        resolve_node: Callable[[str], NodeRef],
+        event: AstrMessageEvent | None,
+        plugin_context: Context | None,
+        config: Any,
+        provider_request: ProviderRequest | None,
+    ) -> list[str]:
+        render_method = getattr(self._rules, f"render_{group}_context")
+        return render_method(
+            target,
+            slots,
+            pack=pack,
+            resolve_node=resolve_node,
+            event=event,
+            plugin_context=plugin_context,
+            config=config,
+            provider_request=provider_request,
+        )
 
 
 __all__ = ["DefaultPromptLayout", "PromptLayoutInterface"]

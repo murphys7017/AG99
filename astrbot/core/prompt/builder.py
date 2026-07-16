@@ -107,7 +107,7 @@ def merge_context_packs(
 
 
 def _slots_equal(left: ContextSlot, right: ContextSlot) -> bool:
-    return left.name == right.name and left.value == right.value
+    return left == right
 
 
 def _merge_extension_slot(existing: ContextSlot, incoming: ContextSlot) -> bool:
