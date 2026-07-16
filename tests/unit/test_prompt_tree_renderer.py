@@ -15,6 +15,7 @@ from astrbot.core.prompt.render import (
     OpenAIPromptRenderer,
     PromptBuilder,
     PromptRenderEngine,
+    PromptRenderProfile,
     SerializedRenderValue,
 )
 from astrbot.core.prompt.render.engine import logger as render_logger
@@ -39,6 +40,45 @@ def test_prompt_builder_builds_nested_tag_tree():
     assert "<safety>" in rendered
     assert "Be safe." in rendered
     assert "</prompt>" in rendered
+
+
+def test_render_profile_applies_to_target_view_without_mutating_canonical_pack():
+    pack = ContextPack(
+        slots={
+            "input.text": ContextSlot(
+                name="input.text",
+                value="hello",
+                category="input",
+                source="test",
+            ),
+            "input.images": ContextSlot(
+                name="input.images",
+                value=[{"ref": "https://example.com/image.png"}],
+                category="input",
+                source="test",
+            ),
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        profile=PromptRenderProfile(
+            name="unit_target",
+            system_prompt="Target instruction",
+            request_prompt="Target command",
+            input_text_suffix=" suffix",
+            hidden_slot_names=frozenset({"input.images"}),
+        ),
+    )
+
+    assert pack.get_slot("system.base") is None
+    assert pack.get_slot("input.text").value == "hello"
+    assert pack.get_slot("input.images") is not None
+    assert "Target instruction" in result.system_prompt
+    assert result.request_prompt == "Target command"
+    assert "hello suffix" in result.messages[-1]["content"]
+    assert "input.images" not in result.metadata["selected_slot_names"]
+    assert result.metadata["render_profile"] == "unit_target"
 
 
 def test_prompt_builder_include_and_extend_work():
@@ -1841,7 +1881,7 @@ def test_render_engine_emits_debug_log_for_render_result():
     assert '"content_preview": "Hello there"' in payload
 
 
-def test_render_engine_respects_renderer_disabled_groups():
+def test_render_engine_respects_layout_disabled_groups():
     class NoKnowledgeRenderer(BasePromptRenderer):
         def get_enabled_slot_groups(self) -> tuple[str, ...]:
             return tuple(
@@ -1863,7 +1903,8 @@ def test_render_engine_respects_renderer_disabled_groups():
         }
     )
 
-    engine = PromptRenderEngine(default_renderer=NoKnowledgeRenderer())
+    layout = NoKnowledgeRenderer()
+    engine = PromptRenderEngine(default_layout=layout)
     result = engine.render(pack)
 
     assert result.system_prompt is None
@@ -1871,7 +1912,7 @@ def test_render_engine_respects_renderer_disabled_groups():
     assert result.tool_schema is None
 
 
-def test_custom_renderer_can_override_group_renderer():
+def test_custom_layout_can_override_group_renderer():
     class CompactSessionRenderer(BasePromptRenderer):
         def include_session_in_system_prompt(self) -> bool:
             return True
@@ -1911,7 +1952,11 @@ def test_custom_renderer_can_override_group_renderer():
         }
     )
 
-    engine = PromptRenderEngine(default_renderer=CompactSessionRenderer())
+    layout = CompactSessionRenderer()
+    engine = PromptRenderEngine(
+        default_renderer=BasePromptRenderer(),
+        default_layout=layout,
+    )
     result = engine.render(pack)
 
     assert "user=Alice" in result.system_prompt

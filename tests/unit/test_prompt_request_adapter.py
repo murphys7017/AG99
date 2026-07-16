@@ -18,6 +18,18 @@ from astrbot.core.prompt.render import (
 from astrbot.core.provider.entities import ProviderRequest
 
 
+def test_render_result_preserves_legacy_positional_field_order():
+    messages = [{"role": "user", "content": "hello"}]
+    metadata = {"legacy": True}
+
+    result = RenderResult(None, "system", messages, None, None, None, metadata)
+
+    assert result.system_prompt == "system"
+    assert result.messages is messages
+    assert result.metadata is metadata
+    assert result.request_prompt is None
+
+
 def test_request_adapter_applies_system_prompt_history_and_text_user_message():
     adapter = ProviderRequestAdapter()
     tool_set = ToolSet()
@@ -94,6 +106,25 @@ def test_request_adapter_preserves_internal_context_messages():
         }
     ]
     assert request.prompt == "final user input"
+    assert apply_result.history_message_count == 1
+    assert apply_result.used_user_message is True
+
+
+def test_request_adapter_keeps_rendered_messages_as_context_for_profile_prompt():
+    request = ProviderRequest(prompt="old prompt")
+    result = RenderResult(
+        request_prompt="Classify this context.",
+        messages=[
+            {"role": "user", "content": "current observation"},
+        ],
+    )
+
+    apply_result = apply_render_result_to_request(result, request)
+
+    assert request.contexts == [
+        {"role": "user", "content": "current observation"},
+    ]
+    assert request.prompt == "Classify this context."
     assert apply_result.history_message_count == 1
     assert apply_result.used_user_message is True
 

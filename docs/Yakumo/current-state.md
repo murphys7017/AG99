@@ -55,7 +55,7 @@
 - Agent 内核和 AstrBot 业务实现没有明确隔离
 - `prompt` 模块已经形成唯一的 collect/build/target projection/prompt tree/provider render/apply 主链路。主 Agent 只准备运行能力和事实，不再另行拼接模型可见 Prompt；目标投影是确定性代码策略，不使用 LLM Selector。
 - builtin 群聊上下文只通过动态 prompt extension collector 提供结构化 `conversation.group_recent`；滚动记录不会因一次渲染被消费，该层只提供群聊上下文材料，不接管 Yakumo memory。
-- `PromptRenderEngine` 已支持按 provider metadata 的 `prompt_renderer_family` 自动选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`），输出对应 API 原生格式
+- `PromptRenderEngine` 在目标投影后统一应用 `PromptRenderProfile`，再通过独立 `PromptLayoutInterface` 建树，并按 provider metadata 的 `prompt_renderer_family` 选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`）输出对应 API 原生格式
 - prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；当前 interaction fast router 不使用结构化输出契约，只返回固定路由词；persona visible-reply 使用统一的 `persona_expression` 虚拟 tool-call 契约，只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON
 - 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
@@ -104,7 +104,7 @@
 - `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 终止 Core 路径并只保留 Persona 的唯一最终回复。Planner 与 Persona 使用独立配置和输出契约，失败按主链路 fail-fast 处理。
 - Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，贡献项通过 `meta.targets` 进入目标投影；Router、Planner、Persona 不再按 purpose 分别触发采集。Core 在同一 Pack 上用 Collector 增量加入 system、policy、tools、knowledge 和 `CoreTaskSpec`，再投影为 Core 视图。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
-  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 说明直接进入原生 `system.base`，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料进入 `input.visible_reply_material`
+  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 指令与输出契约由 Render Profile 提供，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料由 Collector 进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功
 - 旧 `finalizer.py` 已删除；core final reply 不再走独立 finalizer provider
 - stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成

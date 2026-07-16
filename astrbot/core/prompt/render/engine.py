@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 
 from astrbot.core import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -11,11 +12,12 @@ from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.provider.register import provider_cls_map
 from astrbot.core.star.context import Context
 
-from ..context_types import ContextPack
+from ..context_types import ContextPack, ContextSlot
 from ..targets import PromptTarget, project_context_pack
 from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
-from .interfaces import RenderResult
+from .interfaces import PromptRenderProfile, RenderResult
+from .layout import DefaultPromptLayout, PromptLayoutInterface
 from .minimax_renderer import MiniMaxPromptRenderer
 from .openai_renderer import OpenAIPromptRenderer
 from .tree_builder import PromptTreeBuilder
@@ -30,9 +32,11 @@ class PromptRenderEngine:
         self,
         *,
         default_renderer: BasePromptRenderer | None = None,
+        default_layout: PromptLayoutInterface | None = None,
         tree_builder: PromptTreeBuilder | None = None,
     ) -> None:
         self.default_renderer = default_renderer or BasePromptRenderer()
+        self.default_layout = default_layout or DefaultPromptLayout()
         self.tree_builder = tree_builder or PromptTreeBuilder()
 
     def render(
@@ -44,9 +48,10 @@ class PromptRenderEngine:
         plugin_context: Context | None = None,
         config=None,
         provider_request: ProviderRequest | None = None,
+        profile: PromptRenderProfile | None = None,
     ) -> RenderResult:
         target_pack = project_context_pack(pack, target) if target is not None else pack
-        selected_pack = target_pack
+        selected_pack = self._apply_render_profile(target_pack, profile)
         renderer = self._resolve_renderer(
             selected_pack,
             event=event,
@@ -56,7 +61,7 @@ class PromptRenderEngine:
         )
         prompt_tree = self.tree_builder.build(
             selected_pack,
-            layout=renderer,
+            layout=self.default_layout,
             event=event,
             plugin_context=plugin_context,
             config=config,
@@ -69,10 +74,13 @@ class PromptRenderEngine:
             config=config,
             provider_request=provider_request,
         )
+        if profile is not None:
+            result.request_prompt = profile.request_prompt
         result = self._attach_engine_metadata(
             result,
             selected_pack=selected_pack,
             renderer=renderer,
+            layout=self.default_layout,
         )
         if target is not None:
             result.metadata["prompt_target"] = PromptTarget(target).value
@@ -84,6 +92,49 @@ class PromptRenderEngine:
             provider_request=provider_request,
         )
         return result
+
+    @staticmethod
+    def _apply_render_profile(
+        pack: ContextPack,
+        profile: PromptRenderProfile | None,
+    ) -> ContextPack:
+        if profile is None:
+            return pack
+
+        selected = ContextPack(
+            slots=deepcopy(pack.slots),
+            provider_request_ref=pack.provider_request_ref,
+            meta=deepcopy(pack.meta),
+        )
+        for slot_name in profile.hidden_slot_names:
+            selected.slots.pop(slot_name, None)
+
+        if profile.system_prompt is not None:
+            selected.add_slot(
+                ContextSlot(
+                    name="system.base",
+                    value=profile.system_prompt,
+                    category="system",
+                    source=f"prompt_render_profile:{profile.name}",
+                    render_mode="text",
+                    meta={
+                        "scope": "render_profile",
+                        "node_type": f"{profile.name}_system_prompt",
+                    },
+                )
+            )
+
+        suffix = profile.input_text_suffix
+        if suffix:
+            input_slot = selected.get_slot("input.text")
+            if input_slot is not None and isinstance(input_slot.value, str):
+                input_slot.value = f"{input_slot.value.rstrip()}{suffix}"
+
+        if profile.output_contract is not None:
+            selected.meta["output_contract"] = profile.output_contract.to_dict()
+        selected.meta["render_profile"] = profile.name
+        selected.meta["slot_count"] = len(selected.slots)
+        return selected
 
     def _resolve_renderer(
         self,
@@ -211,16 +262,21 @@ class PromptRenderEngine:
         *,
         selected_pack: ContextPack,
         renderer: BasePromptRenderer,
+        layout: PromptLayoutInterface,
     ) -> RenderResult:
         result.metadata.update(
             {
                 "engine": "PromptRenderEngine",
                 "renderer_name": renderer.get_name(),
+                "layout_name": layout.get_name(),
                 "slot_count": len(selected_pack.slots),
                 "selected_slot_names": sorted(selected_pack.slots),
-                "enabled_slot_groups": list(renderer.get_enabled_slot_groups()),
+                "enabled_slot_groups": list(layout.get_enabled_slot_groups()),
             }
         )
+        render_profile = selected_pack.meta.get("render_profile")
+        if isinstance(render_profile, str) and render_profile:
+            result.metadata["render_profile"] = render_profile
         return result
 
     def _log_render_result(
@@ -246,6 +302,7 @@ class PromptRenderEngine:
             "slot_count": len(selected_pack.slots),
             "selected_slot_names": sorted(selected_pack.slots),
             "system_prompt_preview": self._preview_text(result.system_prompt),
+            "request_prompt_preview": self._preview_text(result.request_prompt),
             "message_count": len(result.messages),
             "message_previews": self._preview_messages(result.messages),
             "tool_schema_count": len(result.tool_schema or []),

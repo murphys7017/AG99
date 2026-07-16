@@ -116,7 +116,13 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
     monkeypatch.setattr(
         agent,
         "_prepare_render_result",
-        AsyncMock(return_value=RenderResult(system_prompt="router", messages=[])),
+        AsyncMock(
+            return_value=RenderResult(
+                system_prompt="router",
+                request_prompt="请只输出 silent、persona 或 hybrid。",
+                messages=[],
+            )
+        ),
     )
 
     route = await agent.route(

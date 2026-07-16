@@ -4,15 +4,17 @@ import asyncio
 
 from astrbot import logger
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
-from astrbot.core.prompt.context_types import ContextSlot
-from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
+from astrbot.core.prompt.render import (
+    PromptRenderEngine,
+    PromptRenderProfile,
+    PromptTarget,
+)
 from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
 from .context_builder import (
     build_prompt_render_provider_request,
-    clone_interaction_context_pack,
     get_or_build_interaction_context_material,
 )
 from .memory_store import InteractionMemoryStore
@@ -125,24 +127,6 @@ def extract_core_planning_decision(
     return decision
 
 
-def add_core_planner_slots_to_pack(pack) -> None:
-    pack.add_slot(
-        ContextSlot(
-            name="system.base",
-            value=build_core_planner_system_prompt(),
-            category="system",
-            source="interaction_core_planner",
-            render_mode="text",
-            meta={
-                "scope": "static",
-                "node_type": "interaction_core_planner_system_prompt",
-            },
-        )
-    )
-    pack.meta["slot_count"] = len(pack.slots)
-    pack.meta["output_contract"] = build_core_planner_output_contract().to_dict()
-
-
 class CorePlannerAgent:
     def __init__(self, memory_store: InteractionMemoryStore) -> None:
         self.memory_store = memory_store
@@ -177,7 +161,7 @@ class CorePlannerAgent:
         try:
             response = await asyncio.wait_for(
                 provider.text_chat(
-                    prompt=build_core_planner_prompt(),
+                    prompt=render_result.request_prompt or "",
                     contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.planner_temperature,
@@ -232,15 +216,19 @@ class CorePlannerAgent:
                 build_config=build_config,
                 memory_store=self.memory_store,
             )
-        planner_pack = clone_interaction_context_pack(material.prompt_context_pack)
-        add_core_planner_slots_to_pack(planner_pack)
         render_result = PromptRenderEngine().render(
-            planner_pack,
+            material.prompt_context_pack,
             target=PromptTarget.CORE_PLANNER,
             event=event,
             plugin_context=plugin_context,
             config=build_config,
             provider_request=build_prompt_render_provider_request(event, provider),
+            profile=PromptRenderProfile(
+                name="interaction_core_planner",
+                system_prompt=build_core_planner_system_prompt(),
+                request_prompt=build_core_planner_prompt(),
+                output_contract=build_core_planner_output_contract(),
+            ),
         )
         event.set_extra("_interaction_core_planner_prompt_render_result", render_result)
         return render_result
@@ -249,7 +237,6 @@ class CorePlannerAgent:
 __all__ = [
     "CorePlannerAgent",
     "CorePlannerError",
-    "add_core_planner_slots_to_pack",
     "build_core_planner_output_contract",
     "build_core_planner_system_prompt",
     "extract_core_planning_decision",

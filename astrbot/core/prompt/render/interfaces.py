@@ -43,6 +43,19 @@ class RenderResult:
     output_contract: OutputContract | None = None
     compiled_output_contract: CompiledOutputContract | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    request_prompt: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptRenderProfile:
+    """Target-local render policy applied after canonical context projection."""
+
+    name: str
+    system_prompt: str | None = None
+    request_prompt: str | None = None
+    output_contract: OutputContract | None = None
+    input_text_suffix: str = ""
+    hidden_slot_names: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -1489,7 +1502,9 @@ class BasePromptRenderer:
         lines: list[str] = []
         base_depth = system_node.depth
         indent = " " * (0 * prompt_tree.indent_size)
-        include_session = self.include_session_in_system_prompt()
+        include_session = bool(
+            prompt_tree._root_node.meta.get("include_session_in_system_prompt", False)
+        )
 
         lines.append(f"{indent}<{system_node.meta.get('tag', 'system')}>")
         for child in self._iter_structured_children(prompt_tree, system_node):
@@ -1520,7 +1535,9 @@ class BasePromptRenderer:
         prompt_tree: PromptBuilder,
         system_node,
     ) -> bool:
-        include_session = self.include_session_in_system_prompt()
+        include_session = bool(
+            prompt_tree._root_node.meta.get("include_session_in_system_prompt", False)
+        )
         for child in self._iter_structured_children(prompt_tree, system_node):
             if (
                 not include_session

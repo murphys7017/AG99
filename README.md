@@ -88,13 +88,14 @@ Router 与 Core Planner 只共享事实源，不共享模型决策、Prompt 指�
 上游的 prompt 是直接在 `astr_main_agent.py` 里组织模型可见上下文。这个 fork 推进了一套新的 prompt 子系统：
 
 ```
-collect → build → target projection → prompt tree → provider render → apply
+collect → build → target projection → render profile → prompt layout/tree → provider render → apply
 ```
 
 - **collect**：把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge 等信息结构化收集成 `ContextPack`
 - **build**：合并为带版本的规范 `ContextPack`，冲突不再静默覆盖
 - **target projection**：为 Router、Core Planner、Persona、Core 生成范围明确的确定性视图
-- **prompt tree**：构建与 provider 无关的语义树
+- **render profile**：应用目标专属 system、request prompt、输出契约和隐藏规则，不修改规范 `ContextPack`
+- **prompt layout/tree**：通过独立 layout contract 构建与 provider 无关的语义树
 - **provider render**：序列化为对应 provider 的消息、媒体和工具协议
 - **apply**：把 render 结果投影回 `ProviderRequest`
 

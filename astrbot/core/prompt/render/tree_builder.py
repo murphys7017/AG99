@@ -9,7 +9,7 @@ from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
 from ..context_types import ContextPack, ContextSlot
-from .interfaces import BasePromptRenderer
+from .layout import PromptLayoutInterface
 from .prompt_tree import NodeRef, PromptBuilder
 
 
@@ -20,7 +20,7 @@ class PromptTreeBuilder:
         self,
         pack: ContextPack,
         *,
-        layout: BasePromptRenderer,
+        layout: PromptLayoutInterface,
         event: AstrMessageEvent | None = None,
         plugin_context: Context | None = None,
         config=None,
@@ -74,6 +74,9 @@ class PromptTreeBuilder:
                 "rendered_groups": rendered_groups,
                 "layout": layout.get_name(),
                 "enabled_slot_groups": list(enabled_groups),
+                "include_session_in_system_prompt": (
+                    layout.include_session_in_system_prompt()
+                ),
             }
         )
         if "output_contract" in pack.meta:
@@ -84,7 +87,7 @@ class PromptTreeBuilder:
 
     @staticmethod
     def _build_group(
-        layout: BasePromptRenderer,
+        layout: PromptLayoutInterface,
         *,
         group: str,
         target: NodeRef,

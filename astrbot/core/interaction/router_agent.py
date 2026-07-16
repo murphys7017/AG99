@@ -4,15 +4,17 @@ import asyncio
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.prompt.context_types import ContextSlot
-from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
+from astrbot.core.prompt.render import (
+    PromptRenderEngine,
+    PromptRenderProfile,
+    PromptTarget,
+)
 from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
 from .context_builder import (
     build_prompt_render_provider_request,
-    clone_interaction_context_pack,
     get_or_build_interaction_context_material,
 )
 from .memory_store import InteractionMemoryStore
@@ -101,7 +103,7 @@ class InteractionRouterAgent:
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
-                    prompt=build_interaction_router_prompt(),
+                    prompt=render_result.request_prompt or "",
                     contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.router_temperature,
@@ -146,17 +148,18 @@ class InteractionRouterAgent:
             build_config=build_config,
             memory_store=self.memory_store,
         )
-        route_pack = clone_interaction_context_pack(material.prompt_context_pack)
-        add_interaction_router_slots_to_pack(
-            pack=route_pack,
-        )
         render_result = PromptRenderEngine().render(
-            route_pack,
+            material.prompt_context_pack,
             target=PromptTarget.ROUTER,
             event=event,
             plugin_context=plugin_context,
             config=build_config,
             provider_request=build_prompt_render_provider_request(event, provider),
+            profile=PromptRenderProfile(
+                name="interaction_router",
+                system_prompt=build_interaction_router_system_prompt(),
+                request_prompt=build_interaction_router_prompt(),
+            ),
         )
         metadata = (
             render_result.metadata
@@ -174,22 +177,3 @@ class InteractionRouterAgent:
 def _truncate_router_diagnostic(value: object, *, limit: int = 160) -> str:
     text = str(value or "").replace("\n", " ").strip()
     return text if len(text) <= limit else f"{text[:limit]}..."
-
-def add_interaction_router_slots_to_pack(
-    *,
-    pack,
-) -> None:
-    pack.add_slot(
-        ContextSlot(
-            name="system.base",
-            value=build_interaction_router_system_prompt(),
-            category="system",
-            source="interaction_router",
-            render_mode="text",
-            meta={
-                "scope": "static",
-                "node_type": "interaction_router_system_prompt",
-            },
-        )
-    )
-    pack.meta["slot_count"] = len(pack.slots)

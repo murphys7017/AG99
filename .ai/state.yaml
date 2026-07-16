@@ -91,21 +91,22 @@ architecture:
     - LLM context compression now uses round-based token-ratio recent preservation and compression-provider modality sanitization; it remains a runner-level request/messages optimization and does not own Yakumo memory storage or retrieval.
     - Memory snapshot reads accept an explicit current-event identity override; legacy callers without an identity retain latest-turn fallback behavior.
     - Session prompt metadata marks the current speaker and distinguishes group multi-user scope from private single-user scope.
-    - One canonical ContextPack is projected into explicit Router, Persona, and Core target views; extension targets are filtered consistently for all three views.
+    - One canonical ContextPack is projected into explicit Router, Core Planner, Persona, and Core target views; extension targets are filtered consistently for all four views.
     - Persona expression uses a structured output contract so spoken replies and plugin hints can be returned together.
     - Delegated Core receives official conversation history, group context, explicit plugin contexts, and execution capabilities, while persona and interaction-specific effect state remain excluded.
     - Router contributor views ignore shared Persona context material, Persona contributor caches are isolated by expression phase, and delegated Core retains plugin-supplied contexts while stripping conversation-history prefixes.
     - Router prompts receive attachment counts instead of image/file payloads, while Anthropic Persona contexts convert local image URLs to base64 image blocks.
     - Shared structured-output parsing uses json-repair only after standard JSON parsing fails, and still accepts repaired mappings only.
-    - PromptTreeBuilder now owns semantic tree assembly; PromptRenderEngine orchestrates target projection, tree construction, provider renderer selection, and diagnostics.
+    - PromptRenderEngine applies target-local PromptRenderProfile policy after projection; PromptTreeBuilder depends on PromptLayoutInterface, while provider renderers only compile the completed semantic tree.
     - Builder-based prompt collection rejects conflicting duplicate slots and supports explicit cross-phase replacement; direct interaction enrichment still needs to move onto the same derivation contract.
     - Conversation persistence consumes the prompt pipeline's scaffold-free user message instead of saving internal request_context/user_input markup.
-    - Main Agent model-visible input now comes only from ContextPack collection and rendering; operational setup may register tools or runtime resources but cannot append Prompt text.
+    - Model-visible facts come from ContextPack collection; target system/request prompts, output contracts, input suffixes, and hidden-slot rules come from PromptRenderProfile rather than business-module request assembly.
     - Persona begin dialogs, official conversation history, plugin explicit contexts, and current input have a stable ownership-based message order.
     - The exported apply_interaction_core_task_spec direct-request interface remains available for plugin compatibility, while the canonical Main Agent path uses CoreTaskCollector exclusively.
     - Persona effect registrations may provide an event filter; Persona output contracts include only effects applicable to the current event, while unscoped registry listing remains available for management and diagnostics.
 verification:
   checks_run:
+    - Prompt render dependency cleanup: focused Prompt/Interaction tests (104 passed), broad Prompt/Interaction/Main Agent tests (454 passed), tool-loop/postprocess/memory boundary tests (138 passed), and Ruff passed.
     - Canonical ContextPack enrichment follow-up: focused Prompt/Interaction tests (118 passed), broad Prompt/Interaction/Main Agent tests (452 passed), tool-loop/postprocess/memory boundary tests (138 passed), Ruff, and py_compile passed.
     - Event-scoped Persona effects and Router session context: all interaction unit tests (199 passed), focused prompt/context tests (111 passed), AG99live plugin unit tests (288 passed), Ruff, YAML parse, and git diff checks passed.
     - DeepSeek thinking/non-thinking tool-choice and reasoning round-trip preservation: provider tests (8 passed), Persona Expression tests (24 passed), output-contract/request-adapter/tool-loop boundary tests (13 passed), and ruff (passed); broader OpenAI provider suite has 6 unrelated pre-existing Windows path/diagnostic failures

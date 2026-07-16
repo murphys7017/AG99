@@ -45,16 +45,24 @@ class ProviderRequestAdapter:
         request.compiled_output_contract = result.compiled_output_contract
         apply_result.applied_system_prompt = bool(result.system_prompt)
 
-        history_messages, user_message = self._split_rendered_messages(result.messages)
+        if result.request_prompt is None:
+            history_messages, user_message = self._split_rendered_messages(
+                result.messages
+            )
+        else:
+            history_messages = self._clone_messages(result.messages)
+            user_message = None
         request.contexts = self._clone_messages(history_messages)
-        request.prompt = None
+        request.prompt = result.request_prompt
         request.extra_user_content_parts = []
         request.image_urls = []
         request.audio_urls = []
 
         apply_result.history_message_count = len(request.contexts)
 
-        if user_message is not None:
+        if result.request_prompt is not None:
+            apply_result.used_user_message = True
+        elif user_message is not None:
             self._apply_user_message(user_message, request, apply_result)
 
         return apply_result

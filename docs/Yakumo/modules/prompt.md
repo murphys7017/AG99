@@ -6,7 +6,9 @@
 Collectors
   -> PromptContextBuilder / ContextPack
   -> project_context_pack(target)
+  -> PromptRenderProfile(target-local policy)
   -> PromptTreeBuilder
+  -> PromptLayoutInterface
   -> Provider Renderer
   -> RenderResult
   -> ProviderRequestAdapter
@@ -37,7 +39,7 @@ Collector 默认 required。只有明确声明 optional 的 Collector 才允许�
 
 插件 extension 也先规范化成 slot，再进入同一条构建链路。插件原有 `ProviderRequest.contexts`、`extra_user_content_parts` 和显式媒体由 Collector 收集，不在渲染后补丁式追加。消息顺序固定为 persona begin dialogs、官方历史、插件显式 contexts、当前输入。
 
-Router、Core Planner、Persona 和 Core 可以在规范 Pack 的克隆视图上加入本目标的 system 指令、输出契约或本次待表达材料；这些是目标渲染输入，不是新的共享事实，不能写回 canonical `ContextPack`。
+本轮待表达材料等运行时事实继续通过 Collector 和 `PromptContextBuilder(base=...)` 形成阶段派生 Pack。Router、Core Planner、Persona 的 system 指令、最终 request prompt、输出契约、输入后缀和隐藏 slot 由 `PromptRenderProfile` 在目标投影后应用；业务模块不再克隆或直接修改 Pack。
 
 ### Target Projection
 
@@ -54,9 +56,9 @@ Prompt extension 的 `meta.targets` 对四个目标一致生效。未声明 targ
 
 ### PromptTreeBuilder
 
-`PromptTreeBuilder` 把目标视图转换成 provider-neutral 的语义树。它负责 slot 分组、节点布局和 rendered-slot trace。`PromptRenderEngine` 只编排目标投影、建树、renderer 选择和日志，不再自己遍历业务 slot。
+`PromptTreeBuilder` 把目标视图转换成 provider-neutral 的语义树。它负责 slot 分组、节点布局和 rendered-slot trace。`PromptRenderEngine` 编排目标投影、Render Profile、建树、renderer 选择和日志，不遍历业务 slot。
 
-`BasePromptRenderer.render_*_context` 是语义布局接口。后续如要继续收紧，可以把这些方法迁到独立 layout policy；provider serializer 不负责选择业务上下文。
+`PromptTreeBuilder` 只依赖 `PromptLayoutInterface`。默认 layout policy 与 Provider Renderer 是两个独立实例：layout 决定语义节点放置，Renderer 只编译已经形成的树。自定义布局通过 `default_layout` 注入，不再借用 `default_renderer` 同时改变建树行为。
 
 ### Provider Renderer
 
@@ -73,7 +75,7 @@ Renderer 处理 system/messages、content blocks、图片来源、tool schema �
 
 `ProviderRequestAdapter` 把 `RenderResult` 应用到现有 `ProviderRequest`。结构化文本块和插件显式 content parts 保持各自边界，不为了兼容单字符串字段而全局合并。
 
-应用范围包括 system prompt、history、当前 user message、媒体 content parts，以及 output contract。工具运行时对象和 conversation 等非模型可见状态保持不变，因此 RenderResult tool schema 与实际 `func_tool` 目前仍不是同一事实来源。
+应用范围包括 system prompt、history、当前 user message、目标 `request_prompt`、媒体 content parts，以及 output contract。存在 `request_prompt` 时，已渲染 messages 全部作为上下文，目标命令成为最终请求 prompt。工具运行时对象和 conversation 等非模型可见状态保持不变，因此 RenderResult tool schema 与实际 `func_tool` 目前仍不是同一事实来源。
 
 ## 插件扩展边界
 

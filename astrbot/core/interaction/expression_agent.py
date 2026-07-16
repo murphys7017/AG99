@@ -15,15 +15,19 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 from astrbot import logger
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
-from astrbot.core.prompt.context_types import ContextSlot
-from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
+from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.render import (
+    PromptRenderEngine,
+    PromptRenderProfile,
+    PromptTarget,
+)
 from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider
 from astrbot.core.star.context import Context
 
+from .collectors import PersonaVisibleReplyCollector
 from .context_builder import (
     build_prompt_render_provider_request,
-    clone_interaction_context_pack,
     get_or_build_interaction_context_material,
 )
 from .effects import (
@@ -137,32 +141,24 @@ def _pack_has_interaction_history(pack) -> bool:
     return isinstance(recent_turns, list) and len(recent_turns) > 0
 
 
-def _inject_deepseek_reasoning_marker_into_input(pack) -> bool:
-    slot = pack.get_slot("input.text")
-    if slot is None or not isinstance(slot.value, str):
-        return False
-    text = slot.value.strip()
-    if not text or _DEEPSEEK_INNER_OS_MARKER.strip() in slot.value:
-        return False
-    slot.value = f"{text}{_DEEPSEEK_INNER_OS_MARKER}"
-    return True
-
-
-def maybe_inject_deepseek_first_turn_reasoning_marker(
+def resolve_deepseek_first_turn_reasoning_marker(
     event,
     pack,
     provider: Provider,
-) -> bool:
+) -> str:
     if not _is_deepseek_reasoning_provider(provider):
-        return False
+        return ""
     if event.get_extra(_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY):
-        return False
+        return ""
     if _pack_has_interaction_history(pack):
-        return False
-    injected = _inject_deepseek_reasoning_marker_into_input(pack)
-    if injected:
-        event.set_extra(_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY, True)
-    return injected
+        return ""
+    input_slot = pack.get_slot("input.text")
+    if input_slot is None or not isinstance(input_slot.value, str):
+        return ""
+    if not input_slot.value.strip():
+        return ""
+    event.set_extra(_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY, True)
+    return _DEEPSEEK_INNER_OS_MARKER
 
 
 def build_persona_expression_tool_parameters(
@@ -373,14 +369,6 @@ def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
     return "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
 
 
-def _build_expression_prompt_for_contract(
-    req: PersonaExpressionRequest,
-    compiled_output_contract: CompiledOutputContract | None,
-) -> str:
-    del compiled_output_contract
-    return _build_expression_prompt(req)
-
-
 def _should_require_tool_choice(output_contract: OutputContract | None) -> bool:
     return (
         isinstance(output_contract, OutputContract)
@@ -463,10 +451,7 @@ class InteractionExpressionAgent:
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
-                    prompt=_build_expression_prompt_for_contract(
-                        req,
-                        render_result.compiled_output_contract,
-                    ),
+                    prompt=render_result.request_prompt or "",
                     contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.expression_temperature,
@@ -562,18 +547,45 @@ class InteractionExpressionAgent:
             event,
             material.persona_payload.get("persona_id", ""),
         )
-        expression_pack = clone_interaction_context_pack(material.prompt_context_pack)
-        remove_redundant_media_slots_for_visible_reply_material(expression_pack, req)
-        add_visible_reply_material_slots_to_pack(expression_pack, req)
-        injected_reasoning_marker = maybe_inject_deepseek_first_turn_reasoning_marker(
+        provider_request = build_prompt_render_provider_request(event, provider)
+        expression_pack = await PromptContextBuilder(
+            event,
+            plugin_context,
+            build_config,
+        ).build(
+            provider_request=provider_request,
+            collectors=[PersonaVisibleReplyCollector(req)],
+            include_prompt_extensions=False,
+            base=material.prompt_context_pack,
+            scope="persona_expression",
+        )
+        reasoning_marker = resolve_deepseek_first_turn_reasoning_marker(
             event,
             expression_pack,
             provider,
         )
         persona_effect_specs = self._list_persona_effects(plugin_context, event)
-        add_persona_runtime_slots_to_pack(
-            expression_pack,
-            effects=persona_effect_specs,
+        hidden_slot_names = (
+            frozenset(
+                {
+                    "input.images",
+                    "input.quoted_images",
+                    "input.image_captions",
+                    "input.quoted_image_captions",
+                }
+            )
+            if _has_visible_reply_material(req)
+            else frozenset()
+        )
+        profile = PromptRenderProfile(
+            name="interaction_persona_runtime",
+            system_prompt=build_persona_runtime_system_prompt(),
+            request_prompt=_build_expression_prompt(req),
+            output_contract=build_persona_expression_output_contract_for_effects(
+                persona_effect_specs
+            ),
+            input_text_suffix=reasoning_marker,
+            hidden_slot_names=hidden_slot_names,
         )
         prompt_slot_sizes = {
             str(name): _serialized_size(slot.value)
@@ -585,9 +597,10 @@ class InteractionExpressionAgent:
             event=event,
             plugin_context=plugin_context,
             config=build_config,
-            provider_request=build_prompt_render_provider_request(event, provider),
+            provider_request=provider_request,
+            profile=profile,
         )
-        if injected_reasoning_marker:
+        if reasoning_marker:
             logger.info(
                 "DIAG expression.deepseek_reasoning_marker: platform_id=%s session_id=%s phase=%s mode=inner_os applied=True model=%s",
                 event.get_platform_id(),
@@ -662,89 +675,6 @@ def _serialized_size(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False, default=str))
     except (TypeError, ValueError):
         return len(str(value or ""))
-
-
-def add_persona_runtime_slots_to_pack(
-    pack,
-    *,
-    effects: Sequence[PersonaEffectSpec] = (),
-) -> None:
-    pack.add_slot(
-        ContextSlot(
-            name="system.base",
-            value=build_persona_runtime_system_prompt(),
-            category="system",
-            source="interaction_persona_runtime",
-            render_mode="text",
-            meta={
-                "scope": "static",
-                "node_type": "interaction_persona_runtime_system_prompt",
-            },
-        )
-    )
-    pack.meta["slot_count"] = len(pack.slots)
-    pack.meta["output_contract"] = build_persona_expression_output_contract_for_effects(
-        effects
-    ).to_dict()
-
-
-def add_visible_reply_material_slots_to_pack(
-    pack,
-    req: PersonaExpressionRequest,
-) -> None:
-    source_text = req.source_text.strip()
-    observed_text = req.observed_text.strip()
-    total_text = req.total_text.strip()
-    pending_text = req.pending_text.strip()
-    immediate_reply = req.immediate_reply.strip()
-    delegated_task_summary = req.delegated_task_summary.strip()
-    scene_payload = {
-        "source_text": source_text,
-        "immediate_reply": immediate_reply,
-        "delegated_task_summary": delegated_task_summary,
-        "observed_text": observed_text,
-        "total_text": total_text,
-        "pending_text": pending_text,
-        "preserve_facts": req.preserve_facts,
-        "short_reply": req.short_reply,
-        "allow_empty": req.allow_empty,
-    }
-    scene_payload = {
-        key: value
-        for key, value in scene_payload.items()
-        if value not in {"", False}
-    }
-    if not scene_payload:
-        return
-    pack.add_slot(
-        ContextSlot(
-            name="input.visible_reply_material",
-            value=scene_payload,
-            category="input",
-            source="interaction_visible_reply_material",
-            render_mode="structured",
-            meta={
-                "scope": "dynamic",
-                "node_type": "interaction_visible_reply_material",
-            },
-        )
-    )
-
-
-def remove_redundant_media_slots_for_visible_reply_material(
-    pack,
-    req: PersonaExpressionRequest,
-) -> None:
-    if not _has_visible_reply_material(req):
-        return
-    for slot_name in (
-        "input.images",
-        "input.quoted_images",
-        "input.image_captions",
-        "input.quoted_image_captions",
-    ):
-        pack.slots.pop(slot_name, None)
-    pack.meta["slot_count"] = len(pack.slots)
 
 
 def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:

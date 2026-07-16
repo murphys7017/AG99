@@ -312,14 +312,6 @@ def extract_core_capability_payload(pack: ContextPack) -> dict[str, Any]:
     return slot.value
 
 
-def clone_interaction_context_pack(pack: ContextPack) -> ContextPack:
-    return ContextPack(
-        slots=deepcopy(pack.slots),
-        provider_request_ref=pack.provider_request_ref,
-        meta=deepcopy(pack.meta),
-    )
-
-
 async def collect_interaction_prompt_extensions(
     event,
     plugin_context: Context,

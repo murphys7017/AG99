@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from astrbot.core.interaction.collectors import PersonaVisibleReplyCollector
 from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.expression_agent import (
     InteractionExpressionAgent,
@@ -9,14 +10,11 @@ from astrbot.core.interaction.expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
     _log_persona_prompt_size_diagnostics,
-    add_persona_runtime_slots_to_pack,
-    add_visible_reply_material_slots_to_pack,
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     build_persona_runtime_system_prompt,
     extract_persona_expression_result,
-    maybe_inject_deepseek_first_turn_reasoning_marker,
-    remove_redundant_media_slots_for_visible_reply_material,
+    resolve_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
@@ -26,7 +24,7 @@ from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
-from astrbot.core.prompt.render import PromptRenderEngine
+from astrbot.core.prompt.render import PromptRenderEngine, PromptRenderProfile
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
 
@@ -401,30 +399,33 @@ def test_persona_runtime_prompt_describes_generic_effect_schema_contract():
 
 def test_persona_runtime_slots_are_native_system_base_not_extensions():
     pack = ContextPack()
+    result = PromptRenderEngine().render(
+        pack,
+        profile=PromptRenderProfile(
+            name="interaction_persona_runtime",
+            system_prompt=build_persona_runtime_system_prompt(),
+            output_contract=build_persona_expression_output_contract_for_effects(),
+        ),
+    )
 
-    add_persona_runtime_slots_to_pack(pack, effects=[])
-
-    assert pack.get_slot("system.base") is not None
-    assert pack.get_slot("extension.system") is None
-    result = PromptRenderEngine().render(pack)
+    assert pack.get_slot("system.base") is None
     assert "system.base" in result.metadata["selected_slot_names"]
     assert "extension.system" not in result.metadata["selected_slot_names"]
     assert "<base" in result.system_prompt
     assert "<extensions>" not in result.system_prompt
 
 
-def test_visible_reply_material_renders_as_native_input_message_with_stream_text():
-    pack = ContextPack()
-
-    add_visible_reply_material_slots_to_pack(
-        pack,
+@pytest.mark.asyncio
+async def test_visible_reply_material_renders_as_native_input_message_with_stream_text():
+    slots = await PersonaVisibleReplyCollector(
         PersonaExpressionRequest(
             observed_text="核心已经流出",
             total_text="核心累计内容",
             pending_text="待完成内容",
             short_reply=True,
-        ),
-    )
+        )
+    ).collect(None, None, None)
+    pack = ContextPack(slots={slot.name: slot for slot in slots})
 
     assert pack.get_slot("input.visible_reply_material") is not None
     assert pack.get_slot("extension.context") is None
@@ -440,7 +441,7 @@ def test_visible_reply_material_renders_as_native_input_message_with_stream_text
     assert "extensions" not in material_text
 
 
-def test_visible_reply_material_removes_redundant_media_slots():
+def test_visible_reply_material_profile_hides_redundant_media_slots():
     pack = ContextPack(
         slots={
             "input.images": ContextSlot(
@@ -458,14 +459,20 @@ def test_visible_reply_material_removes_redundant_media_slots():
         }
     )
 
-    remove_redundant_media_slots_for_visible_reply_material(
+    result = PromptRenderEngine().render(
         pack,
-        PersonaExpressionRequest(source_text="核心已经描述图片"),
+        profile=PromptRenderProfile(
+            name="interaction_persona_runtime",
+            hidden_slot_names=frozenset(
+                {"input.images", "input.image_captions"}
+            ),
+        ),
     )
 
-    assert pack.get_slot("input.images") is None
-    assert pack.get_slot("input.image_captions") is None
-    assert pack.meta["slot_count"] == 0
+    assert pack.get_slot("input.images") is not None
+    assert pack.get_slot("input.image_captions") is not None
+    assert "input.images" not in result.metadata["selected_slot_names"]
+    assert "input.image_captions" not in result.metadata["selected_slot_names"]
 
 
 def test_direct_reply_keeps_media_slots():
@@ -480,12 +487,10 @@ def test_direct_reply_keeps_media_slots():
         }
     )
 
-    remove_redundant_media_slots_for_visible_reply_material(
-        pack,
-        PersonaExpressionRequest(),
-    )
+    result = PromptRenderEngine().render(pack)
 
     assert pack.get_slot("input.images") is not None
+    assert "input.images" in result.metadata["selected_slot_names"]
 
 
 def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
@@ -524,13 +529,22 @@ def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
     )
     event = Event()
 
-    assert maybe_inject_deepseek_first_turn_reasoning_marker(
+    marker = resolve_deepseek_first_turn_reasoning_marker(
         event,
         pack,
         Provider(),
     )
-    assert "【角色沉浸要求】" in pack.get_slot("input.text").value
-    assert not maybe_inject_deepseek_first_turn_reasoning_marker(
+    assert "【角色沉浸要求】" in marker
+    assert pack.get_slot("input.text").value == "你好"
+    result = PromptRenderEngine().render(
+        pack,
+        profile=PromptRenderProfile(
+            name="persona",
+            input_text_suffix=marker,
+        ),
+    )
+    assert "【角色沉浸要求】" in result.messages[-1]["content"]
+    assert not resolve_deepseek_first_turn_reasoning_marker(
         event,
         pack,
         Provider(),
@@ -572,7 +586,7 @@ def test_deepseek_first_turn_reasoning_marker_skips_nonfirst_turn_history():
         }
     )
 
-    assert not maybe_inject_deepseek_first_turn_reasoning_marker(
+    assert not resolve_deepseek_first_turn_reasoning_marker(
         Event(),
         pack,
         Provider(),
@@ -658,6 +672,7 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     agent._prepare_render_result = AsyncMock(
         return_value=RenderResult(
             system_prompt="persona",
+            request_prompt="请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。",
             messages=[{"role": "user", "content": "hello"}],
             output_contract=contract,
             compiled_output_contract=compiled,
@@ -740,6 +755,7 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
     agent._prepare_render_result = AsyncMock(
         return_value=RenderResult(
             system_prompt="persona",
+            request_prompt="请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。",
             messages=[{"role": "user", "content": "hello"}],
             output_contract=contract,
             compiled_output_contract=compiled,

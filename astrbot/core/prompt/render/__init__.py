@@ -6,7 +6,8 @@ from astrbot.core.prompt.targets import PromptTarget
 from .anthropic_renderer import AnthropicPromptRenderer
 from .base_renderer import BasePromptRenderer
 from .engine import PromptRenderEngine
-from .interfaces import RenderResult, SerializedRenderValue
+from .interfaces import PromptRenderProfile, RenderResult, SerializedRenderValue
+from .layout import DefaultPromptLayout, PromptLayoutInterface
 from .minimax_renderer import MiniMaxPromptRenderer
 from .openai_renderer import OpenAIPromptRenderer
 from .prompt_tree import NodeRef, PromptBuilder, PromptNode
@@ -21,6 +22,7 @@ from .tree_builder import PromptTreeBuilder
 
 __all__ = [
     "BasePromptRenderer",
+    "DefaultPromptLayout",
     "AnthropicPromptRenderer",
     "MiniMaxPromptRenderer",
     "OpenAIPromptRenderer",
@@ -32,6 +34,8 @@ __all__ = [
     "PromptBuilder",
     "PromptNode",
     "PromptRenderEngine",
+    "PromptRenderProfile",
+    "PromptLayoutInterface",
     "PromptTreeBuilder",
     "PromptTarget",
     "ProviderRequestAdapter",
