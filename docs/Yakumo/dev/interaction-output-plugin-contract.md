@@ -83,7 +83,7 @@ input
 
 Interaction route decision 只选择本轮对话的处理路径；用户可见表达与 effect 不属于 route：
 
-- `silent`: 不调用 Persona Expression 或 Core，以无可见输出的合法 material 完成本轮。
+- `silent`: 不调用 Core，并抑制尚未提交的推测式 Persona；已经 committed/emitted 的回复不撤回。
 - `persona`: 统一 Persona Expression 直接生成最终回复。
 - `hybrid`: Persona Expression 生成委派确认，Core 生成主结果；目标态由二者并发执行并通过同一 Output Arbiter 仲裁。
 

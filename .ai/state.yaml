@@ -1,8 +1,8 @@
 task:
   class: bugfix
   risk: high
-  phase: prompt_planner_boundary_fixes_validated
-  scope: Fix reviewed Prompt projection, Planner contract, Layout interface, diagnostics, and Hybrid startup ordering defects without changing Router/Planner/Persona/Core ownership
+  phase: router_persona_speculative_concurrency_reviewed
+  scope: Run Router and Persona Expression concurrently with atomic silent arbitration while keeping Planner independent and Core-only
 context:
   confidence: high
   assumptions:
@@ -12,7 +12,7 @@ context:
     - Router and Core Planner model decisions are never inserted into the canonical ContextPack or supplied to each other.
     - Planner output is internal execution material; every user-visible acknowledgement, result, and failure remains owned by the unified Persona Expression layer.
     - Protocol commands and live audio continue to bypass conversational Router and Core Planner.
-    - Planner failures are fail-fast and must not be silently interpreted as permission to execute Core.
+    - Planner failures never grant Core execution; an already emitted Persona reply may finalize the turn with the Planner failure retained, while turns without visible Persona output remain fail-fast.
     - The retired decision_provider_id, decision_temperature, and decision_timeout compatibility fields are removed rather than repurposed for Planner.
     - Upstream sync should continue by topic rewrite, not broad merge.
     - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
@@ -55,8 +55,10 @@ architecture:
   stability: review_required
   boundary_changes:
     - Conversational Router decisions are limited to silent/persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
-    - Actual Persona Expression starts only after Router selection so silent turns cannot emit or record speculative expression failures.
-    - Silent turns finalize with an explicit silent outcome, no assistant text, no platform output, and no conversation-pair postprocess.
+    - Router and Persona Expression start concurrently after input materialization; silent is a best-effort suppression decision, not a prerequisite for Persona generation.
+    - A Persona reply atomically committed before a late silent decision is retained; silent cancels only pending Persona work.
+    - Router, Persona, and Planner share one turn-local Context Material single-flight; cancelling one waiter does not cancel collection needed by another branch.
+    - A silent decision finalizes with a silent outcome only when speculative Persona remains uncommitted; late-silent after Persona commit finalizes as replied.
     - Current interaction Turn State stores a pure InteractionRouteDecision; immediate replies and effect calls travel only with the PersonaExpressionResult that produced them.
     - Core final output is returned to Middleware through core_reply_handler, rendered by the single Persona Runtime, then delivered as an explicit prepared result by Output Controller.
     - InteractionResultView exposes route_decision and phase-local effect_calls; final contributors cannot observe stale immediate effects through route state.
@@ -107,10 +109,12 @@ architecture:
     - Persona effect registrations may provide an event filter; Persona output contracts include only effects applicable to the current event, while unscoped registry listing remains available for management and diagnostics.
     - All Prompt render paths filter llm_exposure=never; explicit target projections additionally enforce slot-level targets before target-specific allowlists.
     - PromptLayoutInterface exposes one explicit render_group contract; PromptTreeBuilder no longer depends on dynamically named layout methods.
-    - Hybrid execute starts Core and delegated Persona Expression concurrently on both queue and official Pipeline entry paths; a Core final result committed first suppresses the pending immediate reply.
+    - Persona Expression is already running before hybrid planning; execute starts Core immediately on both queue and official Pipeline paths without injecting Planner task material into Persona. A Core final result committed first suppresses pending Persona output.
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Router/Persona review cleanup: context single-flight/cancellation, Core handoff, and Planner recovery tests (73 passed); broad Interaction/Prompt/Main Agent suite (421 passed).
+    - Router/Persona speculative concurrency: all interaction unit tests (195 passed), broad Interaction/Prompt/Main Agent suite (419 passed), Middleware race tests (53 passed), Ruff, py_compile, YAML parse, and git diff checks passed.
     - Prompt/Planner boundary fixes: focused Prompt/Planner/Middleware suite (223 passed), broad Prompt/Interaction/Main Agent suite (417 passed), Middleware concurrency suite (52 passed), Ruff, py_compile, YAML parse, and git diff checks passed.
     - Prompt boundary documentation sync: VitePress production build passed, docs tests passed (27), public Prompt Extension import smoke test passed, Node config syntax passed, YAML parse passed, and git diff checks passed.
     - Prompt render dependency cleanup: focused Prompt/Interaction tests (104 passed), broad Prompt/Interaction/Main Agent tests (454 passed), tool-loop/postprocess/memory boundary tests (138 passed), and Ruff passed.

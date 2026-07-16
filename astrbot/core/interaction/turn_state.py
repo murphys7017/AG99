@@ -25,6 +25,14 @@ class InteractionTurnOutcome(str, Enum):
     SILENT = "silent"
 
 
+class InteractionSpeculativePersonaStatus(str, Enum):
+    PENDING = "pending"
+    COMMITTED = "committed"
+    EMITTED = "emitted"
+    SUPPRESSED = "suppressed"
+    FAILED = "failed"
+
+
 class InteractionLifecycleStage(str, Enum):
     RECEIVED = "received"
     ROUTING = "routing"
@@ -131,11 +139,15 @@ class InteractionTurnState:
     persona_id: str = ""
     prompt_build_config: Any | None = None
     context_material: InteractionContextMaterial | None = None
+    context_material_task: asyncio.Task[InteractionContextMaterial] | None = None
     route_decision: InteractionRouteDecision | None = None
     core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
+    speculative_persona_status: InteractionSpeculativePersonaStatus = (
+        InteractionSpeculativePersonaStatus.PENDING
+    )
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)

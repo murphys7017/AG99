@@ -7,7 +7,7 @@
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
 - 对启用平台，输入先经过官方 EventBus、Pipeline、权限和插件处理，再在核心 Agent 开始前进入 middleware。
-- Prompt 层先收集一份规范 `ContextPack`；middleware 运行轻量 Router，再在 `hybrid` 路径调用独立 Core Planner。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
+- Prompt 层先收集一份规范 `ContextPack`；middleware 并发启动轻量 Router 与 Persona Expression，再在 `hybrid` 路径调用独立 Core Planner。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
 - 对 interaction turn，用户可见输出由 `InteractionOutputController` 统一 materialize、发送、记录。
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
@@ -31,8 +31,8 @@ middleware 的职责是组合这些服务，并在一个 interaction turn 内形
 Input Runtime / Observation
   -> Interaction Middleware / Persona Runtime Shell
       -> Effective Persona Resolver
-      -> Fast Route Classifier
-      -> Core Planner
+      -> Fast Route Classifier || Speculative Persona Expression
+      -> silent arbitration / Core Planner
       -> Core Agent / Tools / Capabilities
       -> Output Gateway
           -> Text / Streaming
@@ -55,7 +55,9 @@ Input Runtime / Observation
 - Prompt Collectors：一次收集本轮输入、人格、session、历史、interaction memory、执行能力和插件贡献，生成规范 `ContextPack`
 - Router：只输出 `silent` / `persona` / `hybrid`，不承担用户可见回复、task planning 或 effect 输出；它读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
-- Hybrid 协同：Planner 返回 `execute` 后立即并发启动确认型 Persona Expression 并放行 Core；Core 不等待即时表达生成或发送。若 Core 最终结果先提交，尚未发送的即时回复会被抑制
+- Router/Persona 协同：二者并发启动。Persona 在输出前从 `pending` 原子进入 `committed`；Router 的 `silent` 只把仍为 `pending` 的 Persona 标记为 `suppressed` 并取消任务，已经 committed/emitted 的表达不撤回
+- Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不等待 Persona。Planner 只生成 CoreTaskSpec，不向即时 Persona 注入 task summary；若 Core 最终结果先提交，尚未 committed 的即时回复会被抑制
+- Context/失败协同：Router、Persona 和 Planner 通过 turn-local single-flight 共享一次 Context Material 构建；单个分支取消不会取消其他分支仍需要的构建。Planner 失败禁止 Core，但已经 emitted 的 Persona 回合仍会正常 finalized
 - SILENT / PERSONA / HYBRID 编排
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义

@@ -44,6 +44,8 @@ def build_core_execution_context_block(
     if not task_spec.execution_prompt and not task_spec.task_summary:
         return None
     turn_state = get_interaction_turn_state(event)
+    persona_status = getattr(turn_state, "speculative_persona_status", "")
+    persona_status = getattr(persona_status, "value", persona_status)
     payload = {
         "platform_id": event.get_platform_id(),
         "session_id": event.unified_msg_origin,
@@ -54,6 +56,7 @@ def build_core_execution_context_block(
         "immediate_reply_already_sent": str(
             getattr(turn_state, "immediate_reply", "") or ""
         ),
+        "speculative_persona_status": str(persona_status or ""),
         "metadata": task_spec.metadata,
     }
     return (
@@ -61,8 +64,9 @@ def build_core_execution_context_block(
         "The interaction middleware has already decided that this request should "
         "be handled by the core execution layer.\n"
         "Use the following structured guidance as execution intent, but do not "
-        "mention this block to the user. If an immediate reply is present, do not "
-        "repeat its acknowledgement.\n"
+        "mention this block to the user. The Persona output branch may be running "
+        "concurrently; do not produce another acknowledgement, and continue directly "
+        "with execution and substantive results.\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
         "</interaction_execution_context>\n"
     )

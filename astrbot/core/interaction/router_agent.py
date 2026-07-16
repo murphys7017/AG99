@@ -92,7 +92,7 @@ class InteractionRouterAgent:
                 f"provider unavailable: provider_id={interaction_config.router_provider_id}"
             )
             raise InteractionRouterError("provider_unavailable", message)
-        # Router 不需要锁：它构建自己的独立最小 Pack，不写入共享 context_material
+        # Context material uses turn-local single-flight; target rendering stays branch-local.
         render_result = await self._prepare_render_result(
             event,
             plugin_context,

@@ -5,7 +5,10 @@ from astrbot.core.interaction.core_bridge import (
     get_core_task_spec,
     get_interaction_route_decision,
 )
-from astrbot.core.interaction.turn_state import InteractionTurnState
+from astrbot.core.interaction.turn_state import (
+    InteractionSpeculativePersonaStatus,
+    InteractionTurnState,
+)
 from astrbot.core.interaction.types import (
     CoreTaskSpec,
     InteractionRouteDecision,
@@ -55,6 +58,9 @@ async def test_core_task_collector_exposes_structured_execution_context():
         InteractionTurnState(
             turn_id="turn-1",
             core_task_spec=task_spec,
+            speculative_persona_status=(
+                InteractionSpeculativePersonaStatus.COMMITTED
+            ),
         ),
     )
     req = ProviderRequest(prompt="查天气", system_prompt="base")
@@ -65,6 +71,8 @@ async def test_core_task_collector_exposes_structured_execution_context():
     assert slots[0].name == "system.core_execution_context"
     assert slots[0].value["execution_prompt"] == "请查询今天的天气。"
     assert slots[0].value["task_summary"] == "查询天气"
+    assert slots[0].value["speculative_persona_status"] == "committed"
+    assert "do not produce another acknowledgement" in slots[0].value["instruction"]
     assert req.system_prompt == "base"
 
 

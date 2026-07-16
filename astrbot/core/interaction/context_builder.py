@@ -27,7 +27,11 @@ from .contributors import (
     PromptViewPhase,
 )
 from .memory_store import InteractionMemoryStore
-from .turn_state import InteractionContextMaterial, get_interaction_turn_state
+from .turn_state import (
+    InteractionContextMaterial,
+    InteractionTurnState,
+    get_interaction_turn_state,
+)
 from .types import InteractionAgentConfig, InteractionPromptBuildConfig
 
 
@@ -163,6 +167,60 @@ async def get_or_build_interaction_context_material(
             _refresh_context_material_view(material, interaction_config)
             _publish_context_material(event, material)
             return material
+
+        build_task = turn_state.context_material_task
+        if build_task is None:
+            build_task = asyncio.create_task(
+                _build_interaction_context_material(
+                    event=event,
+                    plugin_context=plugin_context,
+                    interaction_config=interaction_config,
+                    build_config=build_config,
+                    memory_store=memory_store,
+                ),
+                name=(
+                    f"interaction_context_material_"
+                    f"{event.get_platform_id()}_{turn_state.turn_id}"
+                ),
+            )
+            turn_state.context_material_task = build_task
+            build_task.add_done_callback(
+                lambda done_task: _finish_context_material_task(
+                    turn_state,
+                    done_task,
+                )
+            )
+        return await asyncio.shield(build_task)
+
+    return await _build_interaction_context_material(
+        event=event,
+        plugin_context=plugin_context,
+        interaction_config=interaction_config,
+        build_config=build_config,
+        memory_store=memory_store,
+    )
+
+
+def _finish_context_material_task(
+    turn_state: InteractionTurnState,
+    task: asyncio.Task[InteractionContextMaterial],
+) -> None:
+    if turn_state.context_material_task is task:
+        turn_state.context_material_task = None
+    if task.cancelled():
+        return
+    task.exception()
+
+
+async def _build_interaction_context_material(
+    *,
+    event,
+    plugin_context: Context,
+    interaction_config: InteractionAgentConfig,
+    build_config: InteractionPromptBuildConfig,
+    memory_store: InteractionMemoryStore,
+) -> InteractionContextMaterial:
+    turn_state = get_interaction_turn_state(event)
 
     prompt_context_pack = await build_interaction_context_pack(
         event,

@@ -7,11 +7,13 @@ from astrbot.core.interaction.config import (
     is_middleware_enabled,
     load_interaction_agent_config,
 )
+from astrbot.core.interaction.core_planner import CorePlannerError
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
 from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
+    InteractionSpeculativePersonaStatus,
     InteractionTurnOutcome,
     InteractionTurnState,
     get_interaction_turn_finalized_material,
@@ -1100,6 +1102,11 @@ class TestInteractionMiddleware:
         release_expression.set()
         await _drain_inbound_tasks(middleware)
         controller.emit_immediate_spoken_reply.assert_awaited_once()
+        request = middleware.persona_runtime.express_visible_reply.await_args.kwargs[
+            "request"
+        ]
+        assert request.delegated_task_summary == ""
+        assert request.short_reply is False
 
     @pytest.mark.asyncio
     async def test_pipeline_hybrid_returns_before_persona_finishes(
@@ -1270,7 +1277,7 @@ class TestInteractionMiddleware:
         assert turn_state.core_task_spec is None
 
     @pytest.mark.asyncio
-    async def test_hybrid_media_input_suppresses_immediate_reply(
+    async def test_hybrid_media_keeps_persona_reply_committed_before_planner(
         self,
         image_event,
     ):
@@ -1296,17 +1303,17 @@ class TestInteractionMiddleware:
         middleware.handle_inbound(image_event)
         await _drain_inbound_tasks(middleware)
 
-        controller.emit_immediate_spoken_reply.assert_not_awaited()
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
         assert queue.get_nowait() is image_event
-        assert (
-            image_event.get_extra("_interaction_immediate_reply_suppressed_reason")
-            == "core_media_input"
-        )
+        assert image_event.get_extra("_interaction_immediate_reply_suppressed_reason") is None
         turn_state = get_interaction_turn_state(image_event)
         assert turn_state is not None
         assert turn_state.route_decision is not None
         assert turn_state.route_decision.route_mode == InteractionRouteMode.HYBRID
-        assert turn_state.immediate_reply is None
+        assert (
+            turn_state.speculative_persona_status
+            is InteractionSpeculativePersonaStatus.EMITTED
+        )
 
     @pytest.mark.asyncio
     async def test_persona_media_input_keeps_immediate_reply(
@@ -1361,12 +1368,22 @@ class TestInteractionMiddleware:
             first_response="这条回复不应该发出。",
             mode=InteractionRouteMode.SILENT,
         )
+        persona_started = asyncio.Event()
+
+        async def _slow_persona(*_args, **_kwargs):
+            persona_started.set()
+            await asyncio.Event().wait()
+
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
+            side_effect=_slow_persona
+        )
 
         middleware.handle_inbound(webchat_event)
+        await persona_started.wait()
         await _drain_inbound_tasks(middleware)
 
         controller.emit_immediate_spoken_reply.assert_not_awaited()
-        middleware.persona_runtime.express_visible_reply.assert_not_awaited()
+        middleware.persona_runtime.express_visible_reply.assert_awaited_once()
         assert queue.empty()
         assert webchat_event.is_stopped()
         turn_state = get_interaction_turn_state(webchat_event)
@@ -1375,11 +1392,68 @@ class TestInteractionMiddleware:
         assert turn_state.route_decision.route_mode == InteractionRouteMode.SILENT
         assert turn_state.completion_state.completed is True
         assert turn_state.completion_state.outcome == InteractionTurnOutcome.SILENT
+        assert (
+            turn_state.speculative_persona_status
+            is InteractionSpeculativePersonaStatus.SUPPRESSED
+        )
         material = get_interaction_turn_finalized_material(webchat_event)
         assert material is not None
         assert material["outcome"] == "silent"
         assert material["assistant_text"] == ""
         assert material["visible_outputs"] == []
+
+    @pytest.mark.asyncio
+    async def test_late_silent_keeps_already_emitted_persona_reply(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        persona_emitted = asyncio.Event()
+        release_router = asyncio.Event()
+
+        async def _emit_reply(*_args):
+            persona_emitted.set()
+
+        async def _slow_silent_router(*_args, **_kwargs):
+            await release_router.wait()
+            return InteractionRouteDecision(
+                route_mode=InteractionRouteMode.SILENT
+            )
+
+        controller.emit_immediate_spoken_reply = AsyncMock(side_effect=_emit_reply)
+        middleware.persona_runtime = MagicMock()
+        middleware.persona_runtime.express_visible_reply = AsyncMock(
+            return_value=PersonaExpressionResult(spoken_reply="已经发出的回复。")
+        )
+        middleware.router_agent = MagicMock()
+        middleware.router_agent.route = AsyncMock(side_effect=_slow_silent_router)
+
+        middleware.handle_inbound(webchat_event)
+        await persona_emitted.wait()
+        release_router.set()
+        await _drain_inbound_tasks(middleware)
+
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
+        assert queue.empty()
+        assert webchat_event.is_stopped()
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode is InteractionRouteMode.SILENT
+        assert (
+            turn_state.speculative_persona_status
+            is InteractionSpeculativePersonaStatus.EMITTED
+        )
+        assert turn_state.completion_state.outcome is InteractionTurnOutcome.REPLIED
 
     @pytest.mark.asyncio
     async def test_handle_inbound_refreshes_runtime_interaction_config(
@@ -1481,8 +1555,52 @@ class TestInteractionMiddleware:
         turn_state = get_interaction_turn_state(webchat_event)
         assert turn_state is not None
         assert turn_state.failures[-1].stage == "core_planner"
-        assert turn_state.route_decision is None
+        assert turn_state.route_decision is not None
+        assert turn_state.route_decision.route_mode is InteractionRouteMode.HYBRID
         controller.emit_immediate_spoken_reply.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_planner_failure_completes_already_emitted_persona_turn(
+        self,
+        webchat_event,
+    ):
+        queue = asyncio.Queue()
+        controller = MagicMock()
+        controller.emit_immediate_spoken_reply = AsyncMock()
+        controller.capture_visible_completion = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            queue,
+            controller,
+        )
+        middleware.plugin_context = MagicMock(spec=Context)
+        _stub_fast_response_route(
+            middleware,
+            first_response="我先陪你看看。",
+            mode=InteractionRouteMode.HYBRID,
+        )
+        middleware.core_planner.plan = AsyncMock(
+            side_effect=CorePlannerError("timeout")
+        )
+
+        middleware.handle_inbound(webchat_event)
+        await _drain_inbound_tasks(middleware)
+
+        assert queue.empty()
+        controller.emit_immediate_spoken_reply.assert_awaited_once()
+        assert webchat_event.is_stopped()
+        assert (
+            webchat_event.get_extra(
+                "_interaction_core_planner_recovered_via_persona"
+            )
+            is True
+        )
+        turn_state = get_interaction_turn_state(webchat_event)
+        assert turn_state is not None
+        assert turn_state.completion_state.completed is True
+        assert turn_state.completion_state.outcome is InteractionTurnOutcome.REPLIED
+        assert turn_state.failures[-1].stage == "core_planner"
+        assert turn_state.failures[-1].user_visible_action == "persona_only"
 
     def test_fallback_policy_is_rejected_during_development(
         self,

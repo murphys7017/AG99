@@ -34,6 +34,8 @@ class CoreTaskCollector(ContextCollectorInterface):
         task_summary = getattr(task_spec, "task_summary", "")
         if not execution_prompt and not task_summary:
             return []
+        persona_status = getattr(turn_state, "speculative_persona_status", "")
+        persona_status = getattr(persona_status, "value", persona_status)
         return [
             ContextSlot(
                 name="system.core_execution_context",
@@ -42,8 +44,9 @@ class CoreTaskCollector(ContextCollectorInterface):
                         "The interaction middleware has delegated this request to the "
                         "Core execution layer. Use this guidance as execution intent "
                         "and do not mention the internal context to the user. If an "
-                        "immediate reply is present, do not repeat its acknowledgement; "
-                        "continue directly with execution and results."
+                        "immediate Persona reply is present or still running, do not "
+                        "produce another acknowledgement; continue directly with "
+                        "execution and substantive results."
                     ),
                     "platform_id": event.get_platform_id(),
                     "session_id": event.unified_msg_origin,
@@ -58,6 +61,7 @@ class CoreTaskCollector(ContextCollectorInterface):
                     "immediate_reply_already_sent": str(
                         getattr(turn_state, "immediate_reply", "") or ""
                     ),
+                    "speculative_persona_status": str(persona_status or ""),
                     "metadata": getattr(task_spec, "metadata", {}),
                 },
                 category="system",

@@ -43,9 +43,11 @@ from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     InteractionLifecycleStage,
+    InteractionSpeculativePersonaStatus,
     InteractionTurnOutcome,
     ensure_interaction_turn_state,
     get_interaction_turn_finalized_material,
+    get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     has_interaction_turn_core_final_result_consumed,
@@ -404,6 +406,14 @@ class InteractionMiddleware:
         done_callback: Callable[[asyncio.Task], None] | None = None,
     ) -> None:
         task = asyncio.create_task(coro, name=name)
+        self._track_inflight_task(task, done_callback=done_callback)
+
+    def _track_inflight_task(
+        self,
+        task: asyncio.Task,
+        *,
+        done_callback: Callable[[asyncio.Task], None] | None = None,
+    ) -> None:
         self._inflight_tasks.add(task)
         if done_callback is not None:
             task.add_done_callback(
@@ -546,105 +556,262 @@ class InteractionMiddleware:
         *,
         enqueue_core: bool,
     ) -> None:
-        route = await self._route_interaction(event, interaction_config)
-        planning_decision = None
-        if route.route_mode == InteractionRouteMode.HYBRID:
-            planning_decision = await self._plan_core_execution(
+        self.attach_event_context(
+            event,
+            turn_id=str(event.get_extra("_turn_id", "") or ""),
+        )
+        self._set_speculative_persona_status(
+            event,
+            InteractionSpeculativePersonaStatus.PENDING,
+        )
+        router_task = asyncio.create_task(
+            self._route_interaction(event, interaction_config),
+            name=(
+                f"interaction_router_{event.get_platform_id()}_"
+                f"{event.get_extra('_turn_id')}"
+            ),
+        )
+        persona_task = asyncio.create_task(
+            self._generate_and_emit_speculative_persona(
                 event,
                 interaction_config,
-            )
+            ),
+            name=(
+                f"interaction_speculative_persona_{event.get_platform_id()}_"
+                f"{event.get_extra('_turn_id')}"
+            ),
+        )
+        try:
+            route = await router_task
+        except asyncio.CancelledError:
+            if not persona_task.done():
+                persona_task.cancel()
+            await asyncio.gather(persona_task, return_exceptions=True)
+            raise
         self._record_route_diagnostics(event, route)
         self.attach_event_context(
             event,
             turn_id=str(event.get_extra("_turn_id", "") or ""),
             route_decision=route,
         )
-        expression = None
-        if route.route_mode != InteractionRouteMode.SILENT:
-            expression_request = self._build_immediate_expression_request(
-                planning_decision
+        if route.route_mode == InteractionRouteMode.SILENT:
+            expression = await self._suppress_or_await_speculative_persona(
+                event,
+                persona_task,
             )
-            if (
-                route.route_mode == InteractionRouteMode.HYBRID
-                and planning_decision is not None
-                and planning_decision.action is CorePlanningAction.EXECUTE
-            ):
-                await self._emit_delegated(event, route)
-                expression_coro = self._generate_and_emit_delegated_expression(
+            await self._complete_silent_or_committed_persona_turn(event, expression)
+            return
+
+        planning_decision = None
+        if route.route_mode == InteractionRouteMode.HYBRID:
+            try:
+                planning_decision = await self._plan_core_execution(
                     event,
                     interaction_config,
-                    route=route,
-                    planning_decision=planning_decision,
-                    request=expression_request,
                 )
-                if enqueue_core:
-                    expression_task = asyncio.create_task(
-                        expression_coro,
-                        name=(
-                            f"interaction_immediate_expression_"
-                            f"{event.get_platform_id()}_{event.get_extra('_turn_id')}"
-                        ),
+            except asyncio.CancelledError:
+                if not persona_task.done():
+                    persona_task.cancel()
+                await asyncio.gather(persona_task, return_exceptions=True)
+                raise
+            except Exception:
+                result = await asyncio.gather(
+                    persona_task,
+                    return_exceptions=True,
+                )
+                expression = result[0]
+                turn_state = ensure_interaction_turn_state(event)
+                if (
+                    isinstance(expression, PersonaExpressionResult)
+                    and turn_state.speculative_persona_status
+                    is InteractionSpeculativePersonaStatus.EMITTED
+                ):
+                    if (
+                        turn_state.failures
+                        and turn_state.failures[-1].stage == "core_planner"
+                    ):
+                        turn_state.failures[-1].user_visible_action = "persona_only"
+                    event.set_extra(
+                        "_interaction_core_planner_recovered_via_persona",
+                        True,
                     )
-                    self._forward_to_core(event, enqueue_core=True)
-                    try:
-                        await expression_task
-                    except BaseException:
-                        if not expression_task.done():
-                            expression_task.cancel()
-                        await asyncio.gather(expression_task, return_exceptions=True)
-                        raise
-                else:
-                    self._spawn_background_task(
-                        expression_coro,
-                        name=(
-                            f"interaction_immediate_expression_"
-                            f"{event.get_platform_id()}_{event.get_extra('_turn_id')}"
-                        ),
-                    )
-                    self._forward_to_core(event, enqueue_core=False)
-                return
+                    await self._complete_persona_only_turn(event, expression)
+                    return
+                raise
+
+        if (
+            planning_decision is not None
+            and planning_decision.action is CorePlanningAction.EXECUTE
+        ):
+            await self._emit_delegated(event, route)
+            self._forward_to_core(event, enqueue_core=enqueue_core)
+            if enqueue_core:
+                await persona_task
             else:
-                expression = await self._generate_expression(
-                    event,
-                    interaction_config,
-                    request=expression_request,
-                )
+                self._track_inflight_task(persona_task)
+            return
+
+        expression = await persona_task
+        await self._complete_persona_only_turn(event, expression)
+
+    async def _generate_and_emit_speculative_persona(
+        self,
+        event: AstrMessageEvent,
+        interaction_config,
+    ) -> PersonaExpressionResult | None:
+        if self.plugin_context is None:
+            event.set_extra("_interaction_expression_failed", True)
+            event.set_extra(
+                "_interaction_expression_failure_reason",
+                "plugin_context_unavailable",
+            )
+            self._set_speculative_persona_status(
+                event,
+                InteractionSpeculativePersonaStatus.SUPPRESSED,
+            )
+            return None
+        expression = await self._generate_expression(
+            event,
+            interaction_config,
+            request=PersonaExpressionRequest(),
+        )
+        turn_state = ensure_interaction_turn_state(event)
+        route = turn_state.route_decision
+        planning_decision = turn_state.core_planning_decision
+        if route is not None:
             expression = self._apply_immediate_expression_policy(
                 event,
                 route,
                 expression,
                 planning_decision=planning_decision,
             )
-        await self._apply_route(
-            event,
-            route,
-            expression=expression,
-            planning_decision=planning_decision,
-            enqueue_core=enqueue_core,
-        )
+        if expression is None or not expression.spoken_reply.strip():
+            async with turn_state.lock:
+                if (
+                    turn_state.speculative_persona_status
+                    is InteractionSpeculativePersonaStatus.PENDING
+                ):
+                    self._set_speculative_persona_status(
+                        event,
+                        InteractionSpeculativePersonaStatus.SUPPRESSED,
+                    )
+            return None
 
-    async def _generate_and_emit_delegated_expression(
+        async with turn_state.lock:
+            status = turn_state.speculative_persona_status
+            route = turn_state.route_decision
+            if (
+                status is InteractionSpeculativePersonaStatus.SUPPRESSED
+                or (
+                    route is not None
+                    and route.route_mode is InteractionRouteMode.SILENT
+                )
+                or has_interaction_turn_core_final_result_consumed(event)
+            ):
+                self._set_speculative_persona_status(
+                    event,
+                    InteractionSpeculativePersonaStatus.SUPPRESSED,
+                )
+                return None
+            self._set_speculative_persona_status(
+                event,
+                InteractionSpeculativePersonaStatus.COMMITTED,
+            )
+        try:
+            await self._emit_immediate_reply_or_record_failure(event, expression)
+        except Exception:
+            async with turn_state.lock:
+                self._set_speculative_persona_status(
+                    event,
+                    InteractionSpeculativePersonaStatus.FAILED,
+                )
+            raise
+        async with turn_state.lock:
+            self._set_speculative_persona_status(
+                event,
+                InteractionSpeculativePersonaStatus.EMITTED,
+            )
+        return expression
+
+    async def _suppress_or_await_speculative_persona(
         self,
         event: AstrMessageEvent,
-        interaction_config,
-        *,
-        route: InteractionRouteDecision,
-        planning_decision: CorePlanningDecision,
-        request: PersonaExpressionRequest,
+        persona_task: asyncio.Task,
+    ) -> PersonaExpressionResult | None:
+        turn_state = ensure_interaction_turn_state(event)
+        should_cancel = False
+        async with turn_state.lock:
+            if (
+                turn_state.speculative_persona_status
+                is InteractionSpeculativePersonaStatus.PENDING
+            ):
+                self._set_speculative_persona_status(
+                    event,
+                    InteractionSpeculativePersonaStatus.SUPPRESSED,
+                )
+                should_cancel = not persona_task.done()
+        if should_cancel:
+            persona_task.cancel()
+        result = await asyncio.gather(persona_task, return_exceptions=True)
+        value = result[0]
+        if isinstance(value, BaseException):
+            if isinstance(value, asyncio.CancelledError):
+                return None
+            raise value
+        return value if isinstance(value, PersonaExpressionResult) else None
+
+    async def _complete_silent_or_committed_persona_turn(
+        self,
+        event: AstrMessageEvent,
+        expression: PersonaExpressionResult | None,
     ) -> None:
-        expression = await self._generate_expression(
-            event,
-            interaction_config,
-            request=request,
-        )
-        expression = self._apply_immediate_expression_policy(
-            event,
-            route,
-            expression,
-            planning_decision=planning_decision,
-        )
-        if expression is not None and expression.spoken_reply.strip():
-            await self._emit_immediate_reply_or_record_failure(event, expression)
+        turn_state = ensure_interaction_turn_state(event)
+        if (
+            turn_state.speculative_persona_status
+            is InteractionSpeculativePersonaStatus.EMITTED
+        ):
+            await self._complete_persona_only_turn(event, expression)
+            return
+        self._materialize_silent_turn(event)
+        await self._finalize_turn(event)
+        event.stop_event()
+
+    async def _complete_persona_only_turn(
+        self,
+        event: AstrMessageEvent,
+        expression: PersonaExpressionResult | None,
+    ) -> None:
+        if expression is None or not expression.spoken_reply.strip():
+            event.set_extra("_interaction_persona_reply_invalid", True)
+            event.set_extra(
+                "_interaction_persona_reply_invalid_reason",
+                "missing_immediate_reply",
+            )
+            record_interaction_turn_failure(
+                event,
+                stage="persona_expression",
+                reason="missing_persona_reply",
+                user_visible_action="none",
+            )
+            raise RuntimeError("Interaction persona expression missing reply")
+        completed = await self._complete_visible_turn_or_record_failure(event)
+        if completed:
+            reply = get_interaction_turn_immediate_reply(event)
+            self._materialize_persona_reply_turn(
+                event,
+                reply=reply or expression.spoken_reply,
+            )
+            await self._finalize_turn(event)
+        event.stop_event()
+
+    @staticmethod
+    def _set_speculative_persona_status(
+        event: AstrMessageEvent,
+        status: InteractionSpeculativePersonaStatus,
+    ) -> None:
+        turn_state = ensure_interaction_turn_state(event)
+        turn_state.speculative_persona_status = status
+        event.set_extra("_interaction_speculative_persona_status", status.value)
 
     async def _plan_core_execution(
         self,
@@ -677,21 +844,6 @@ class InteractionMiddleware:
             event.set_extra(INTERACTION_CORE_TASK_SPEC_EXTRA_KEY, decision.task_spec)
         return decision
 
-    @staticmethod
-    def _build_immediate_expression_request(
-        planning_decision: CorePlanningDecision | None,
-    ) -> PersonaExpressionRequest:
-        if (
-            planning_decision is None
-            or planning_decision.action is CorePlanningAction.NOT_REQUIRED
-            or planning_decision.task_spec is None
-        ):
-            return PersonaExpressionRequest()
-        return PersonaExpressionRequest(
-            delegated_task_summary=planning_decision.task_spec.task_summary,
-            short_reply=True,
-        )
-
     def _record_route_diagnostics(
         self,
         event: AstrMessageEvent,
@@ -719,81 +871,6 @@ class InteractionMiddleware:
             router_raw_output,
             router_context_nodes,
         )
-
-    async def _apply_route(
-        self,
-        event: AstrMessageEvent,
-        route: InteractionRouteDecision,
-        *,
-        expression: PersonaExpressionResult | None,
-        planning_decision: CorePlanningDecision | None = None,
-        enqueue_core: bool,
-    ) -> None:
-        has_immediate_reply = bool(
-            expression is not None and expression.spoken_reply.strip()
-        )
-        if route.route_mode == InteractionRouteMode.SILENT:
-            self._materialize_silent_turn(event)
-            await self._finalize_turn(event)
-            event.stop_event()
-            return
-        if route.route_mode == InteractionRouteMode.PERSONA:
-            if not has_immediate_reply:
-                event.set_extra("_interaction_persona_reply_invalid", True)
-                event.set_extra(
-                    "_interaction_persona_reply_invalid_reason",
-                    "missing_immediate_reply",
-                )
-                logger.error(
-                    "Interaction persona reply invalid; aborting turn: platform_id=%s session_id=%s turn_id=%s reason=missing_immediate_reply",
-                    event.get_platform_id(),
-                    event.session_id,
-                    event.get_extra("_turn_id"),
-                )
-                record_interaction_turn_failure(
-                    event,
-                    stage="persona_expression",
-                    reason="missing_persona_reply",
-                    user_visible_action="none",
-                )
-                raise RuntimeError("Interaction persona expression missing reply")
-            await self._emit_immediate_reply_or_record_failure(event, expression)
-            completed = await self._complete_visible_turn_or_record_failure(
-                event,
-            )
-            if completed:
-                self._materialize_persona_reply_turn(
-                    event,
-                    reply=expression.spoken_reply,
-                )
-                await self._finalize_turn(event)
-            event.stop_event()
-            return
-        if route.route_mode == InteractionRouteMode.HYBRID:
-            if (
-                planning_decision is None
-                or planning_decision.action is CorePlanningAction.NOT_REQUIRED
-            ):
-                if not has_immediate_reply:
-                    raise RuntimeError(
-                        "Core Planner skipped execution but Persona reply is missing"
-                    )
-                await self._emit_immediate_reply_or_record_failure(event, expression)
-                completed = await self._complete_visible_turn_or_record_failure(event)
-                if completed:
-                    self._materialize_persona_reply_turn(
-                        event,
-                        reply=expression.spoken_reply,
-                    )
-                    await self._finalize_turn(event)
-                event.stop_event()
-                return
-            if has_immediate_reply:
-                await self._emit_immediate_reply_or_record_failure(event, expression)
-            await self._emit_delegated(event, route)
-            self._forward_to_core(event, enqueue_core=enqueue_core)
-            return
-        raise RuntimeError(f"Unsupported interaction route: {route.route_mode!r}")
 
     async def _emit_delegated(
         self,

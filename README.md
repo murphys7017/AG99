@@ -38,14 +38,15 @@ Interaction Middleware 建立本轮交互并整理输入
     ↓
 Prompt Collectors 构建本轮唯一的 ContextPack
     ↓
-Router：只返回 silent / persona / hybrid
-    ↓
-    ├── silent → 本轮无可见回复
-    ├── persona → Persona Runtime 直接生成最终表达
-    └── hybrid → 独立 Core Planner 再判断执行层是否必要
-                 ├── not_required → Persona Runtime 生成唯一最终表达
-                 └── execute → Persona Runtime 生成委派确认，再执行 Core
-                              Core 的中间材料与最终结果回到同一个 Persona Runtime
+Router 与 Persona Runtime 并发启动
+    ├── Persona Runtime → 尽快生成并提交拟人表达
+    └── Router → 只返回 silent / persona / hybrid
+         ├── silent → Persona 尚未提交则抑制；已经提交则保留
+         ├── persona → 不启动 Core，保留 Persona 表达
+         └── hybrid → 独立 Core Planner 再判断执行层是否必要
+                      ├── not_required → 不启动 Core，保留 Persona 表达
+                      └── execute → 立即执行 Core，不等待 Persona
+                                   Core 的中间材料与最终结果回到同一个 Persona Runtime
     ↓
 Output Runtime 负责文本、流式与 TTS 等输出物化和平台发送
     ↓
@@ -72,7 +73,7 @@ Router 与 Core Planner 只共享事实源，不共享模型决策、Prompt 指�
 这是本 fork 的核心架构之一，一个通用的交互中间件：
 
 - **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
-- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；Router 只读取极简投影，hybrid 再由独立 Core Planner 复核是否执行
+- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；Router 与 Persona 并发消费各自投影，hybrid 再由独立 Core Planner 复核是否执行
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
 - **扩展侧**：effect 是通用插件协议，按当前事件过滤后才进入 Persona 输出契约；Motion 或 Live2D 的解析和执行不属于主流程

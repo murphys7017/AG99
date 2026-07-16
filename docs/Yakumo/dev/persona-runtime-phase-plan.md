@@ -82,7 +82,7 @@ Platform / WebUI / Official Internal Event
 - `ProcessStage` 在插件 Handler 执行前准备输出接管，并在 Core Agent 前调用 Interaction Middleware。
 - 对话 Router 只输出 `silent`、`persona` 或 `hybrid`；直播音频和协议命令使用独立的内部 Core bypass，不伪装成 Router 结果。
 - Prompt 层统一采集本轮事实并形成规范 `ContextPack`；Router、Core Planner、Persona 和 Core 从同一 Pack 投影不同视图，不重复查询同一份身份、历史和记忆。
-- Router 先完成分类；`silent` 不调用 Persona Expression 或 Core，`persona` 直接进入统一 Persona Expression，`hybrid` 先由独立 Core Planner 复核执行必要性。
+- Router 与 Persona Expression 并发启动；`silent` 抑制尚未提交的 Persona，`persona` 不启动 Core，`hybrid` 再由独立 Core Planner 复核执行必要性。Persona 已经 committed/emitted 时不因 late-silent 撤回。
 - Core Planner 不读取 Router 决策内容，只根据 Planner 事实投影返回 `execute` / `not_required`；只有 `execute` 才生成 `CoreTaskSpec` 并委派 Core。
 - 即时表达、Core 最终结果和显式 persona 插件输出都复用 `InteractionPersonaRuntime` 的表达入口。
 - `InteractionOutputController` 统一承担 materialization、TTS、平台发送、可见输出记录和 finalized material。
@@ -92,7 +92,7 @@ Platform / WebUI / Official Internal Event
 
 1. Interaction 只在插件产生 `ProviderRequest`，或官方流程已经准备调用 Core LLM 时处理输入。未触发 Core 的有效平台事件、任务事件和内部事件不能成为 Observation。
 2. `InteractionPersonaRuntime` 只是 Expression Agent 的薄包装，没有 persona runtime identity、Observation 调度、ActiveTask 或跨 turn 生命周期。
-3. 当前 `hybrid` 仍会等待即时 Persona Expression 完成并发送后才放行 Core，尚未实现 Core 与确认型表达并发及抢占仲裁。
+3. 推测式 Persona 当前使用 turn-local 提交状态完成 silent/Core 竞态仲裁；它还不是跨 Observation、跨任务的通用 Output Arbiter。
 4. Core 工具状态、工具直出和部分中间消息仍通过普通 `event.send()` 进入输出分类，可能被当作 `passthrough` 提前完成 turn。
 5. 普通插件输出默认是 `direct`，语义文本仍可绕过唯一 Persona Expression。
 6. 当前共享 `ContextPack` 已消除 Router、Planner、Persona、Core 的重复基础采集，但 Interaction Memory 仍是按 session 保存的独立 JSON，不是跨 conversation、跨平台的人格状态。
@@ -237,7 +237,7 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 5. 增加轻量 `PersonaRuntimeManager`，按 persona identity 提供 runtime handle，并按 audience、privacy 和 relationship scope 隔离状态。
 6. 将 Observation 和 runtime identity 保存到 `InteractionTurnState`；原始 event 只在本轮委派官方能力时使用。
 7. `PersonaRuntime.handle_observation(...)` 第一阶段复用现有 Router、Persona Expression、Core bridge 和 OutputController；非回复型 Observation 默认只记录或通知，不主动发言。
-8. 实现 Hybrid 协同：Router 选择 `hybrid` 且独立 Core Planner 返回 `execute` 后，同时启动 Core 与确认型 Persona Expression；Core 不能等待即时表达完成，二者的输出由同一个仲裁器按提交状态处理。
+8. 保持 Router 与 Persona Expression 从回合开始并发；Router 选择 `hybrid` 且独立 Core Planner 返回 `execute` 后立即启动 Core。Core 不等待即时表达，silent/Core 与 Persona 通过同一个提交状态仲裁。
 9. 将 Core thinking、tool call、tool result 和执行状态映射为 lifecycle / task progress；中间进度不得触发 finalized material 或 turn completion。
 
 这一阶段明确不做：
@@ -258,7 +258,7 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 - QQ、WebChat 等现有消息行为保持一致。
 - 同一 persona 可以得到稳定 runtime identity。
 - 不同 audience、session、privacy scope 不串线。
-- `silent` 不调用 Persona Expression 或 Core，并以无可见输出的合法 material 完成。
+- `silent` 不调用 Core，并抑制仍为 pending 的 Persona；若 Persona 已 committed/emitted，则保留回复并以 replied material 完成，否则以无可见输出的 silent material 完成。
 - 直播音频和协议命令不进入对话 Router，也不产生伪造的 Router 决策。
 - `hybrid` 中 Core 委派不等待即时表达完成；Core 提前完成时，尚未发送的即时表达会被取消或抑制。
 - 即时表达和 Core 最终表达调用同一个 Persona Expression，不形成两套拟人层。

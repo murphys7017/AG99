@@ -340,9 +340,18 @@ async def test_interaction_context_collects_plugin_facts_once_before_projection(
             ),
         }
     )
+    build_started = asyncio.Event()
+    release_build = asyncio.Event()
+
+    async def _build_pack(*_args, **_kwargs):
+        build_started.set()
+        await release_build.wait()
+        return canonical_pack
+
+    build_pack = AsyncMock(side_effect=_build_pack)
     monkeypatch.setattr(
         "astrbot.core.interaction.context_builder.build_interaction_context_pack",
-        AsyncMock(return_value=canonical_pack),
+        build_pack,
     )
     contributor = Contributor()
     plugin_context = type(
@@ -361,10 +370,21 @@ async def test_interaction_context_collects_plugin_facts_once_before_projection(
         "memory_store": SimpleNamespace(),
     }
 
-    first = await get_or_build_interaction_context_material(**kwargs)
-    second = await get_or_build_interaction_context_material(**kwargs)
+    first_task = asyncio.create_task(
+        get_or_build_interaction_context_material(**kwargs)
+    )
+    await build_started.wait()
+    second_task = asyncio.create_task(
+        get_or_build_interaction_context_material(**kwargs)
+    )
+    await asyncio.sleep(0)
+    release_build.set()
+    first, second = await asyncio.gather(first_task, second_task)
+    cached = await get_or_build_interaction_context_material(**kwargs)
 
     assert first is second
+    assert second is cached
+    build_pack.assert_awaited_once()
     assert contributor.calls == 1
     assert contributor.views[0].purpose == "context_collection"
     assert contributor.views[0].phase == "collect"
@@ -386,6 +406,75 @@ async def test_interaction_context_collects_plugin_facts_once_before_projection(
     assert planner.get_slot("capability.plugin_directory").value["plugins"][0][
         "name"
     ] == "Local Runtime"
+
+
+@pytest.mark.asyncio
+async def test_context_single_flight_survives_one_cancelled_waiter(monkeypatch):
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+
+        def __init__(self):
+            self._extras = {
+                "_turn_id": "turn-1",
+                "_interaction_turn_state": InteractionTurnState(turn_id="turn-1"),
+            }
+
+        def get_extra(self, key=None, default=None):
+            if key is None:
+                return self._extras
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    pack = ContextPack()
+
+    async def _build_pack(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return pack
+
+    build_pack = AsyncMock(side_effect=_build_pack)
+    monkeypatch.setattr(
+        "astrbot.core.interaction.context_builder.build_interaction_context_pack",
+        build_pack,
+    )
+    event = Event()
+    plugin_context = SimpleNamespace(list_interaction_prompt_contributors=lambda: [])
+    kwargs = {
+        "event": event,
+        "plugin_context": plugin_context,
+        "interaction_config": InteractionAgentConfig(),
+        "build_config": InteractionPromptBuildConfig(),
+        "memory_store": SimpleNamespace(),
+    }
+
+    cancelled_waiter = asyncio.create_task(
+        get_or_build_interaction_context_material(**kwargs)
+    )
+    await started.wait()
+    surviving_waiter = asyncio.create_task(
+        get_or_build_interaction_context_material(**kwargs)
+    )
+    cancelled_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_waiter
+    release.set()
+
+    material = await surviving_waiter
+    await asyncio.sleep(0)
+
+    assert material.prompt_context_pack is not None
+    build_pack.assert_awaited_once()
+    turn_state = event.get_extra("_interaction_turn_state")
+    assert turn_state.context_material is material
+    assert turn_state.context_material_task is None
 
 
 @pytest.mark.asyncio
