@@ -1,8 +1,8 @@
 task:
-  class: refactor
+  class: documentation
   risk: high
-  phase: core_planner_replacement
-  scope: Remove the retired combined interaction decision pipeline and add a dedicated Core Planner gate between hybrid routing and executor delegation
+  phase: prompt_boundary_documentation
+  scope: Review the current Prompt dependency structure and synchronize architecture, flow, implementation, and public plugin documentation with explicit functional boundaries
 context:
   confidence: high
   assumptions:
@@ -41,15 +41,17 @@ context:
     - Prompt memory injection must resolve identity from the current event; a shared group conversation's latest stored turn is not a valid proxy for the current speaker.
     - Group-chat prompt records use stable sender IDs when available, while nicknames remain display labels only.
     - Prompt target selection is deterministic code projection over one canonical ContextPack; the removed LLM/rule Prompt Selector is not part of the current architecture.
-    - Router, Persona, and Core target projections define distinct context boundaries over the single canonical ContextPack pipeline.
+    - Router, Core Planner, Persona, and Core target projections define distinct context boundaries over the single canonical ContextPack pipeline.
     - Static prompt collectors are cached only within one event/config/ProviderRequest identity and must not be treated as cross-turn global cache.
     - Official on_llm_request remains a post-render low-level ProviderRequest hook; preserving it does not restore removed legacy/shadow prompt modes or internal duplicate injectors.
     - DeepSeek thinking mode is controlled only by the effective Provider `thinking.type`; both thinking and non-thinking requests preserve caller-supplied `tool_choice` instead of silently changing contract semantics.
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.
   unresolved_questions:
+    - DefaultPromptLayout still delegates provider-neutral group placement to BasePromptRenderer, and PromptLayoutInterface does not explicitly declare every group-render method used by PromptTreeBuilder.
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
     - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
     - Context Catalog declares lifecycle and redaction rules that are not consistently enforced at runtime.
+    - llm_exposure filtering is enforced by explicit target projection but not by the target=None Main Agent render path.
 architecture:
   stability: review_required
   boundary_changes:
@@ -98,7 +100,7 @@ architecture:
     - Router prompts receive attachment counts instead of image/file payloads, while Anthropic Persona contexts convert local image URLs to base64 image blocks.
     - Shared structured-output parsing uses json-repair only after standard JSON parsing fails, and still accepts repaired mappings only.
     - PromptRenderEngine applies target-local PromptRenderProfile policy after projection; PromptTreeBuilder depends on PromptLayoutInterface, while provider renderers only compile the completed semantic tree.
-    - Builder-based prompt collection rejects conflicting duplicate slots and supports explicit cross-phase replacement; direct interaction enrichment still needs to move onto the same derivation contract.
+    - Builder-based prompt collection rejects conflicting duplicate slots and supports explicit cross-phase replacement; Interaction cross-phase enrichment now uses PromptContextBuilder(base=...) instead of direct shared-pack mutation.
     - Conversation persistence consumes the prompt pipeline's scaffold-free user message instead of saving internal request_context/user_input markup.
     - Model-visible facts come from ContextPack collection; target system/request prompts, output contracts, input suffixes, and hidden-slot rules come from PromptRenderProfile rather than business-module request assembly.
     - Persona begin dialogs, official conversation history, plugin explicit contexts, and current input have a stable ownership-based message order.
@@ -106,6 +108,7 @@ architecture:
     - Persona effect registrations may provide an event filter; Persona output contracts include only effects applicable to the current event, while unscoped registry listing remains available for management and diagnostics.
 verification:
   checks_run:
+    - Prompt boundary documentation sync: VitePress production build passed, docs tests passed (27), public Prompt Extension import smoke test passed, Node config syntax passed, YAML parse passed, and git diff checks passed.
     - Prompt render dependency cleanup: focused Prompt/Interaction tests (104 passed), broad Prompt/Interaction/Main Agent tests (454 passed), tool-loop/postprocess/memory boundary tests (138 passed), and Ruff passed.
     - Canonical ContextPack enrichment follow-up: focused Prompt/Interaction tests (118 passed), broad Prompt/Interaction/Main Agent tests (452 passed), tool-loop/postprocess/memory boundary tests (138 passed), Ruff, and py_compile passed.
     - Event-scoped Persona effects and Router session context: all interaction unit tests (199 passed), focused prompt/context tests (111 passed), AG99live plugin unit tests (288 passed), Ruff, YAML parse, and git diff checks passed.

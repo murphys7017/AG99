@@ -12,7 +12,7 @@
 
 - `runtime.md`: 启动入口、生命周期、事件总线、流水线
 - `agent.md`: 主 Agent、Agent 内核、Tool Loop、SubAgent
-- `prompt.md`: Prompt/Context 构建机制、问题和目标结构
+- `prompt.md`: Prompt/Context 收集、目标投影、Profile、Layout、Renderer、Apply 与插件扩展边界
 - `interaction.md`: Interaction middleware、turn state、outbound materialization、voice/postprocess 边界
 - `foundation.md`: Provider、Persona、Conversation、Platform、Database
 - `capability.md`: Plugin、Tool、Skill、Knowledge Base、Cron、Computer Use

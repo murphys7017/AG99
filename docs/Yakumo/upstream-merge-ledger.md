@@ -21,6 +21,7 @@ Important interpretation:
 - This fork often rewrites upstream changes instead of cherry-picking them.
 - A commit still shown as upstream-only may already be functionally absorbed if the local patch differs.
 - Before merging anything, compare by topic and behavior, not only by commit hash.
+- Historical entries preserve the Prompt terminology used at review time. References to `ContentPack`, Prompt Selector, shadow mode, or three targets are not current architecture; the current protected chain is `ContextPack -> target projection -> Render Profile -> Layout/PromptTree -> Provider Renderer -> Apply` for Router, Core Planner, Persona, and Core.
 
 Current local upstream-sync commits:
 

@@ -46,6 +46,8 @@ Base Persona
 Interaction middleware 在这个目标里应定位为 `Persona Runtime Shell`：它不是 persona
 数据本体，也不是 memory / provider / capability 的所有者，而是一次交互中人格接收、判断、委派和表达的运行外壳。
 
+Prompt Pipeline 是 Persona Runtime、Core Planner 和可替换执行器共享的模型输入边界：Collector 汇总事实，Builder 生成规范快照，Projection 生成目标视图，Profile 提供目标局部指令，Layout/Renderer 生成具体模型请求。它不应拥有 persona state、memory 写入、路由模型决策、工具执行或输出发送。未来替换执行器时，应复用同一事实与投影协议，再由执行器适配器消费，而不是为每个执行器重新查询和拼接上下文。
+
 ## 边界原则
 
 ### 1. Session 是隔离边界，不是人格主体

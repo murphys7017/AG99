@@ -12,7 +12,7 @@ outline: deep
 欢迎加入我们的开发者专用 QQ 群: `975206796`。
 
 > [!NOTE]
-> Yakumo fork 额外提供 [Persona Effect](./guides/persona-effects)，用于让插件按当前事件向统一 Persona Runtime 注册结构化表现能力。它不是 LLM Tool，也不会进入 Router。
+> Yakumo fork 额外提供 [Persona Effect](./guides/persona-effects) 和 [Prompt Extension](./guides/prompt-extensions)。前者扩展 Persona 的结构化表现输出，后者向统一 Prompt 管线贡献模型可见事实；两者都不是 LLM Tool。
 
 ## 环境准备
 

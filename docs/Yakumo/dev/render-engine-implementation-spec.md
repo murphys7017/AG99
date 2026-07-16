@@ -1,168 +1,91 @@
 # Render Engine Implementation Spec
 
-记录当前 render 子系统已经落地的实现骨架，以及每个核心类的职责边界。
+## 文档状态
 
-## 实现目标
+本文描述当前 Render 子系统的真实实现。早期 `Selector -> Renderer -> Engine` 方案已废止；历史背景可查看 `render-engine-plan.md`，但不能作为当前 API 依据。
 
-本轮实现的目标不是完成最终 prompt 样式，而是先把 render 层的稳定协议搭起来。
+## 调用关系
 
-本轮已经确认的关系：
+```text
+ContextPack
+  -> optional PromptTarget projection
+  -> optional PromptRenderProfile
+  -> PromptTreeBuilder(DefaultPromptLayout)
+  -> selected Provider Renderer
+  -> RenderResult
+```
 
-- `renderer` 定义规则
-- `engine` 执行规则
-- `builder` 是 engine 的内部能力
-- `selector` 先保留最小占位接口
+`PromptRenderEngine` 是编排器，不收集业务事实，也不执行模型调用。
 
-## 已落地组件
-
-### `BasePromptRenderer`
-
-文件：
-
-- `astrbot/core/prompt/render/interfaces.py`
-- `astrbot/core/prompt/render/base_renderer.py`
-
-定位：
-
-- 当前默认可直接使用的基础 renderer
-- 不是纯接口，而是一个可工作的基础实现
-
-当前主要能力：
-
-1. `get_name()`
-   - 返回稳定 renderer 名称，当前为 `base`
-2. `get_root_tag()`
-   - 返回 prompt tree 根节点 tag，当前为 `prompt`
-3. `get_enabled_slot_groups()`
-   - 返回当前 renderer 启用的逻辑分组
-   - 默认启用全部 group
-4. `get_node_structure()`
-   - 返回逻辑分组到 tree 节点路径的映射
-5. `render_prompt_tree(...)`
-   - 将已经构建好的 prompt tree 转成 `RenderResult`
-6. `render_system_context()` / `render_persona_context()` / ...
-   - 提供各逻辑分组的默认渲染入口
-7. `serialize_group_slots()`
-   - 统一序列化一个 group 下的全部 slot
-8. `serialize_slot_value()`
-   - 序列化单个 slot，生成 `SerializedRenderValue`
-9. `render_serialized_value()`
-   - 将结构化中间值转成节点文本
-10. `_compile_output_contract(...)`
-   - 从 prompt tree root meta 读取 `output_contract`
-   - 编译为 `CompiledOutputContract`
-   - base renderer 对非 text strict 契约默认产出 `prompt_only + degraded`
-11. `resolve_output_contract_strategy(...)`
-   - 派生 renderer 用它声明协议级支持能力
-
-### `SerializedRenderValue`
-
-文件：
-
-- `astrbot/core/prompt/render/interfaces.py`
-
-作用：
-
-- 表示 renderer 序列化后的中间值
-- 让 slot value 先进入结构化 render object，而不是直接退化成字符串
-
-当前字段：
-
-- `slot_name`
-- `group`
-- `tag`
-- `kind`
-- `value`
-- `meta`
-
-当前 `kind` 主要包括：
-
-- `text`
-- `mapping`
-- `sequence`
-- `scalar`
+## 核心类型
 
 ### `PromptRenderEngine`
 
-文件：
+职责：
 
-- `astrbot/core/prompt/render/engine.py`
+1. 对规范 Pack 做目标投影。
+2. 在投影副本上应用 Render Profile。
+3. 解析 provider 的 `prompt_renderer_family`。
+4. 用独立 Layout 和 `PromptTreeBuilder` 构建语义树。
+5. 让选中的 Renderer 编译树。
+6. 附加 target、layout、renderer、slot、output contract 等诊断 metadata。
 
-定位：
+不负责：Collector 调度、Router/Planner 决策、Provider 私有请求执行、工具注册和响应解析。
 
-- render 阶段的统一执行器
+### `PromptRenderProfile`
 
-当前执行流程：
+目标局部策略，字段包括：
 
-1. `_select_context_pack(...)`
-   - 调用 selector，当前默认 passthrough
-2. `_resolve_renderer(...)`
-   - 根据 provider metadata / proxy / request provider 选择 renderer，当前默认 `BasePromptRenderer`
-3. `_group_slots(...)`
-   - 按 slot name 前缀分组
-4. `_build_prompt_tree(...)`
-   - 根据 renderer 定义的 group 和 node structure 构树
-5. `_render_group_context(...)`
-   - 调用 `render_xxx_context()` 渲染各个 group
-6. `_attach_engine_metadata(...)`
-   - 将 engine 层调试信息写入 `RenderResult.metadata`
+- `name`
+- `system_prompt`
+- `request_prompt`
+- `output_contract`
+- `input_text_suffix`
+- `hidden_slot_names`
 
-engine 当前明确不负责：
+Engine 会先深拷贝目标 Pack，再应用 Profile。`system_prompt` 替换 `system.base`；suffix 只作用于字符串 `input.text`；hidden slot 是精确名称过滤。Profile 不修改输入 Pack。
 
-- 不定义 section 样式
-- 不决定 slot 的文本格式
-- 不处理 provider-specific payload 细节
-- 不把输出契约直接翻译成 provider 私有请求参数
+### `PromptLayoutInterface` / `DefaultPromptLayout`
 
-renderer 选择当前通过 provider 注册元数据 `prompt_renderer_family` 完成：
+Layout 决定：
 
-- `openai` -> `OpenAIPromptRenderer`
-- `anthropic` -> `AnthropicPromptRenderer`
-- `minimax` -> `MiniMaxPromptRenderer`
-- `base` / unknown -> `BasePromptRenderer`
+- root tag
+- 启用的逻辑 groups
+- group 到节点路径的映射
+- session 是否并入 system
+- 各 group 的 slot 如何落入 PromptTree
 
-provider 实例上的 `provider_config["prompt_renderer_family"]` 可作为显式 override；未知 family 会回落到 `base`。
+当前实现限制：Protocol 只显式声明了前四类查询方法，Builder 还会动态调用 `render_<group>_context`；`DefaultPromptLayout` 通过委托 `BasePromptRenderer` 复用这些旧方法。因此 Layout 与 Provider Renderer 的调用实例已分离，但默认布局实现尚未完全迁出 Renderer 类。
+
+### `PromptTreeBuilder`
+
+Builder 只负责：
+
+- 按 slot 名前缀分组。
+- 按 Layout 建立节点路径。
+- 调用 Layout 落位。
+- 写入 rendered slots/groups、layout 和 output contract metadata。
+
+Builder 不选择目标、不解析 provider family、不编译最终 messages。
 
 ### `PromptBuilder` / `PromptNode` / `NodeRef`
 
-文件：
+这是 provider-neutral 的树形中间表示，支持 tag、container、text、include、extend、build 和 debug tree。树节点可同时携带正文与结构化 metadata。
 
-- `astrbot/core/prompt/render/prompt_tree.py`
+### Provider Renderer
 
-作用：
+当前 family：
 
-- 作为 engine 内部的 prompt tree 构建工具
+- `base`
+- `openai`
+- `anthropic`
+- `minimax`
 
-当前支持的能力：
-
-- 创建 tag 节点
-- 创建 container 节点
-- 添加文本节点
-- `include()`
-- `extend()`
-- `build()` 输出文本
-- `debug_tree()` 输出调试树结构
-
-`PromptNode` 当前保留：
-
-- `text`
-- `priority`
-- `children`
-- `parent`
-- `enabled`
-- `meta`
+Renderer 编译完成的树，产出 system prompt、messages、媒体 content blocks、tool schema 和 compiled output contract。它不读取未进入树的业务 slot，也不改变目标投影。
 
 ### `RenderResult`
 
-文件：
-
-- `astrbot/core/prompt/render/interfaces.py`
-
-作用：
-
-- 承载 render 阶段最终输出
-
-当前字段：
+字段：
 
 - `prompt_tree`
 - `system_prompt`
@@ -171,200 +94,39 @@ provider 实例上的 `provider_config["prompt_renderer_family"]` 可作为显�
 - `output_contract`
 - `compiled_output_contract`
 - `metadata`
+- `request_prompt`
 
-当前阶段里，最主要的输出仍然是：
+`request_prompt` 追加在数据类字段末尾，以保持旧位置参数构造顺序。
 
-- `prompt_tree`
-- `system_prompt`
-- `messages`
-- `output_contract`
-- `compiled_output_contract`
-- `metadata`
+## Request Adapter 边界
 
-### `PassthroughPromptSelector`
+`ProviderRequestAdapter` 不属于 Engine，但承接 Render 输出：
 
-文件：
+- 无 `request_prompt` 时，最后一条 user message 成为请求 prompt。
+- 有 `request_prompt` 时，全部 messages 成为 contexts，Profile 命令成为请求 prompt。
+- Adapter 重建模型可见字段，但保留 `func_tool`、provider、conversation 和其他运行时对象。
 
-- `astrbot/core/prompt/render/selector.py`
+`RenderResult.tool_schema` 不会自动写入 `func_tool`。实际可执行工具仍由 Main Agent 装配。
 
-作用：
+## 扩展边界
 
-- 作为 selector 占位实现
-- 当前直接返回原始 `ContextPack`
+- 新事实：实现 Collector 或插件 Prompt Extension Collector。
+- 新目标视图：修改确定性的 `PromptTarget` 投影规则。
+- 新目标指令：使用 `PromptRenderProfile`。
+- 新语义布局：实现 `PromptLayoutInterface`，不要修改 Provider Renderer 来选择业务数据。
+- 新 Provider 格式：实现 Provider Renderer 并声明 `prompt_renderer_family`。
+- 新执行工具：走能力注册/`func_tool`，不要只写 Prompt tool schema。
 
-这样做的意义是：
+## 诊断要求
 
-- render 流程已经完整
-- 但不会因为 selector 逻辑未定而阻塞后续开发
+Render metadata 至少应可看到：
 
-## 当前分组规则
+- `prompt_target`
+- `render_profile`
+- `layout_name`
+- `renderer_name`
+- `source_slot_names` / `selected_slot_names`
+- `rendered_slots` / `rendered_groups`
+- output contract strategy/degradation
 
-engine 当前按 slot name 前缀分组：
-
-- `system.* -> system`
-- `persona.* -> persona`
-- `policy.* -> policy`
-- `input.* -> input`
-- `session.* -> session`
-- `conversation.* -> conversation`
-- `knowledge.* -> knowledge`
-- `capability.* -> capability`
-- `memory.* -> memory`
-- `extension.* -> extension`
-
-`BasePromptRenderer` 默认启用全部这些 group。
-
-## 插件 Prompt Extension V1
-
-本轮新增了一条插件向 prompt 主流程贡献结构化上下文的通路，用来替代直接树补丁或任意 `on_llm_request` 拼接文案的方式。
-
-### 目标
-
-- 插件只负责“提供什么内容”
-- collect 层负责“收集并结构化聚合”
-- renderer 负责“挂到哪一类节点、怎么渲染”
-- 不允许插件指定任意 prompt tree 内部 path
-
-### 插件接口
-
-插件通过 `Context.register_prompt_extension_collector(...)` 显式注册 collector。
-
-collector 需要实现：
-
-- `PromptExtensionCollectorInterface`
-- `plugin_id`
-- `priority`
-- `collect(...) -> list[PromptExtension]`
-
-`PromptExtension` 当前固定字段：
-
-- `plugin_id`
-- `mount`
-- `title`
-- `value`
-- `value_kind`
-- `order`
-- `meta`
-
-### Collect 聚合规则
-
-collect 阶段不会为每条扩展生成动态 slot，而是固定聚合为 6 个 slot：
-
-- `extension.system`
-- `extension.context`
-- `extension.input`
-- `extension.conversation`
-- `extension.memory`
-- `extension.capability`
-
-每个 slot 的 `value` 结构固定为：
-
-- `format: "prompt_extensions_v1"`
-- `mount`
-- `items`
-
-### Render 挂载规则
-
-`BasePromptRenderer.render_extension_context()` 当前固定把各 mount 挂到这些节点：
-
-- `system -> system/extensions`
-- `context -> context/extensions`
-- `input -> user_input/extensions`
-- `conversation -> system/conversation_extensions`
-- `memory -> context/memory/extensions`
-- `capability -> system/capability/extensions`
-
-其中：
-
-- `conversation` 在 V1 先走 system 侧说明，不生成 synthetic 历史消息
-- `context` 用于当前请求动态事实，随 `context/extensions` 编译为 history 后、memory/knowledge 前的 `_no_save` user context message
-- `memory` 随 `context/memory` 编译为 history 后、current input 前的 `_no_save` user context message，不进入 `system_prompt`
-- `input` 会在 `_compile_user_input_message()` 中被单独编译成一个 text content part
-- 同一 mount 下按 `plugin_id` 聚合成“一个插件一个节点”
-- 原始 `plugin_id` 会作为可见子节点保留，便于插件认领自身输出
-
-## 当前默认序列化规则
-
-`serialize_slot_value()` 当前默认策略：
-
-- `knowledge` group 下如果 value 是 `dict` 且存在 `text`，优先直接取 `text`
-- 普通非空字符串 -> `kind="text"`
-- `dict` -> `kind="mapping"`
-- `list` -> `kind="sequence"`
-- `bool/int/float` -> `kind="scalar"`
-- `None` -> 不产出序列化结果
-- 其他对象 -> `kind="scalar"`，值为 `str(value)`
-
-`render_serialized_value()` 当前默认策略：
-
-- `text` 直接输出文本
-- 其余类型用 `json.dumps(..., ensure_ascii=False, sort_keys=True, default=str)` 输出
-
-这样做已经避免了把结构化对象直接渲染成 Python `repr`。
-
-## 当前测试覆盖
-
-当前 render 层已有测试覆盖：
-
-- `tests/unit/test_prompt_selector.py`
-- `tests/unit/test_prompt_tree_renderer.py`
-
-重点验证内容包括：
-
-- `PromptBuilder` 能正确构建嵌套 tag tree
-- `include()` / `extend()` 行为正常
-- `BasePromptRenderer` 默认启用全部 groups
-- `BasePromptRenderer` 返回基础 node structure
-- `dict` / `list` slot 先进入结构化序列化路径
-- `PromptRenderEngine` 能按 renderer 定义构建 prompt tree
-- 派生 renderer 可以覆写 serializer，而不需要修改 engine
-- `PromptRenderEngine` 能按 provider family 选择 OpenAI / Anthropic / MiniMax renderer
-- output contract 能在 render 层编译为 `CompiledOutputContract`
-- OpenAI / Anthropic / MiniMax renderer 对 `tool_call` contract 产出 `protocol_tool_call`
-
-## 当前限制
-
-当前实现仍然是 render 骨架，不代表最终渲染策略已经完成。
-
-目前仍未完成的部分：
-
-- `llm_exposure` 的真正过滤策略
-- 各 section 的精细化渲染格式
-- 针对 multimodal / tools / subagent 的专门输出形态优化
-- Gemini / VolcEngine Ark 等 provider-specific renderer 仍未实现，strict contract 到达这些 provider 时只能显式失败或受控降级，不能静默吞掉
-
-## 后续扩展点
-
-下一阶段最自然的扩展方式是继承 `BasePromptRenderer`。
-
-典型扩展点包括：
-
-- 覆盖 `get_enabled_slot_groups()`
-- 覆盖 `get_node_structure()`
-- 覆盖 `serialize_slot_value()`
-- 覆盖 `render_xxx_context()`
-- 覆盖 `render_prompt_tree()` 生成 provider 更合适的结果
-
-已落地的 provider-specific renderer：
-
-- `OpenAIPromptRenderer`：继承 `BasePromptRenderer`，保持 OpenAI-compatible message、`image_url` 和 function tool schema 形态；对 `tool_call` output contract 产出 `protocol_tool_call`
-- `AnthropicPromptRenderer`：覆盖 `_compile_image_content_parts()` 输出 Anthropic 原生 image source，覆盖 `_compile_tool_nodes()` 输出 Anthropic tool schema（`input_schema` 而非 OpenAI `parameters`），覆盖 `_compile_context_message()` / `_compile_turn_messages()` 将字符串 content 转为 content blocks
-- `MiniMaxPromptRenderer`：继承 `BasePromptRenderer`，输出 MiniMax Token Plan 友好的 JSON sections，并输出 Anthropic 兼容 tool schema；通过 provider metadata 的 `prompt_renderer_family="minimax"` 自动匹配
-
-## Output Contract V2
-
-输出契约已经从业务 prompt 文本提升为 render/request/provider 链路中的一等数据。跨层 source of truth 见 `docs/Yakumo/dev/output-contract.md`。
-
-本文件只记录 render 层当前事实：
-
-- `OutputContract` 声明模式：`text` / `json_object` / `tool_call`
-- `CompiledOutputContract` 承载 renderer 编译结果：`strategy`、`degraded`、`degrade_reason`、`tool_name`、`tool_schema`、`fallback_prompt_text`
-- `RenderResult.metadata` 会记录 `output_contract_requested`、`output_contract_strategy`、`output_contract_degraded`、`output_contract_degrade_reason`
-- renderer 只负责编译契约，不直接构造 provider 私有 payload
-
-当前 renderer 策略：
-
-- `BasePromptRenderer`: 非 text 输出契约默认 `prompt_only + degraded`
-- `OpenAIPromptRenderer`: `tool_call -> protocol_tool_call`
-- `AnthropicPromptRenderer`: `tool_call -> protocol_tool_call`
-- `MiniMaxPromptRenderer`: `tool_call -> protocol_tool_call`
+日志预览不得被当作事实来源，也不能重新注入 Router 或历史。

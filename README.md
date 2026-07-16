@@ -99,6 +99,10 @@ collect → build → target projection → render profile → prompt layout/tre
 - **provider render**：序列化为对应 provider 的消息、媒体和工具协议
 - **apply**：把 render 结果投影回 `ProviderRequest`
 
+边界上，Collector 只提供事实，Render Profile 只提供目标局部指令，Layout 只负责语义落位，Renderer 只负责 provider 格式。Prompt 系统不做路由判断、不写 memory、不执行工具、不发送消息，也不理解 Motion、Live2D 等插件语义。实际可执行工具仍由 Main Agent 装配到 `func_tool`，不能仅靠 Prompt 中的 tool schema 注册。
+
+插件需要贡献模型可见事实时使用 Prompt Extension Collector；`on_llm_request` 只保留为统一渲染之后的 Core 低层请求钩子。完整边界见 [Prompt Module](./docs/Yakumo/modules/prompt.md)。
+
 ---
 
 ## 当前状态
@@ -109,7 +113,7 @@ collect → build → target projection → render profile → prompt layout/tre
 | 即时表达 | 🟡 开发中 | 已复用统一 Persona Runtime，流式体验继续优化 |
 | 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
 | Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
-| 结构化 Prompt | 🟡 开发中 | collect/build/project/tree/render/apply 已跑通，继续收口 layout policy 与上下文预算 |
+| 结构化 Prompt | 🟡 开发中 | collect/build/project/profile/layout/tree/render/apply 已跑通，继续物理拆分默认 Layout 并统一工具与 Provider capability |
 | 上游兼容 | 🟢 稳定 | 安全修复、provider 稳定修复持续同步 |
 
 > [!NOTE]

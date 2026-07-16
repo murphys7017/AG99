@@ -1,110 +1,55 @@
 # Agent Modules
 
-## 主 Agent 文件
+## 主 Agent
 
-### `astrbot/core/astr_main_agent.py`
+`astrbot/core/astr_main_agent.py` 是 Core 执行编排入口。它当前负责：
 
-职责：
+- 选择 Provider 和 Conversation。
+- 装配 `func_tool`、知识库查询工具、Web Search、Cron、Sandbox/Local 工具和 SubAgent handoff。
+- 建立 Runner 配置和 fallback provider。
+- 调用统一 Prompt 管线收集、渲染并应用模型输入。
+- 启动 Agent Runner。
 
-- 为当前消息选择 Provider
-- 获取当前 Conversation
-- 处理 Persona 注入
-- 处理 Skills Prompt 注入
-- 处理 Knowledge Base 注入
-- 处理 ToolSet 组装
-- 处理 SubAgent handoff 工具注入
-- 处理 sandbox/local runtime 工具注入
-- 构建并启动 Agent Runner
+它不再直接拼 Persona、历史、policy、knowledge、附件或 CoreTaskSpec 文本。这些模型可见事实由 Collector 提供，目标范围由 Projection 决定，最终格式由 Layout/Renderer/Adapter 生成。
 
-说明：
+## Prompt 与能力边界
 
-- 当前主 Agent 的核心入口
-- 同时承担了编排层、能力装配层、部分运行时策略层的职责
+Main Agent 仍拥有运行时能力装配，Prompt 系统只描述模型输入：
 
-问题：
+| 对象 | Owner |
+|---|---|
+| `ProviderRequest.system_prompt/contexts/prompt/media/output_contract` | Prompt Render + Adapter |
+| `ProviderRequest.func_tool` | Main Agent / Capability 装配 |
+| provider、conversation、runner、sandbox 环境 | Main Agent |
+| target 可见范围 | Prompt Target Projection |
+| Router/Planner/Persona 决策 | Interaction 对应 Agent |
 
-- 文件职责过大
-- 和 `star.Context`、Persona、Skill、KB、Tool、Sandbox 高耦合
+`RenderResult.tool_schema` 不会自动注册到 `func_tool`。工具 schema 与可执行工具尚待统一 capability snapshot；新代码不能把两者当作同一个对象。
+
+官方 `on_llm_request` 在 Core 的统一 Prompt Apply 后运行，用于低层请求兼容。它不是 Router、Planner 或 Persona 的事实扩展入口。
 
 ## Agent 上下文
 
-### `astrbot/core/astr_agent_context.py`
-
-职责：
-
-- 定义 `AstrAgentContext`
-- 当前字段主要是 `context: Context` 和 `event: AstrMessageEvent`
-
-说明：
-
-- 这里的 `Context` 实际是插件系统上下文
-- 这是当前 Agent 与插件运行时耦合最明显的地方之一
-
-重构关注点：
-
-- 后续应该替换为更窄的 `AgentServices` 或 `AgentRuntimeFacade`
+`astrbot/core/astr_agent_context.py` 定义 `AstrAgentContext`，当前主要封装插件 `Context` 和 `AstrMessageEvent`。这仍是 Agent 与 AstrBot 业务运行时的主要耦合点，后续可收窄为 `AgentServices` 或 `AgentRuntimeFacade`。
 
 ## Tool 执行
 
-### `astrbot/core/astr_agent_tool_exec.py`
-
-职责：
-
-- 执行 function tools
-- 执行 handoff tools
-- 执行 MCP tools
-- 处理 send_message_to_user 等主 Agent 相关工具
-- 将工具调用和 Agent Runner 串起来
-
-说明：
-
-- 这是主 Agent 与工具体系的执行桥梁
+`astrbot/core/astr_agent_tool_exec.py` 负责 function tool、handoff、MCP 和主 Agent 专用工具的执行桥接。Prompt 系统只描述模型能看到的能力，不执行这些调用。
 
 ## Agent 内核
 
-### `astrbot/core/agent/*`
-
-重要子模块：
-
-- `agent.py`: Agent 定义
-- `run_context.py`: 运行时上下文包装
-- `tool.py`: ToolSet、FunctionTool 等基础类型
-- `tool_executor.py`: 工具执行抽象
-- `message.py`: Agent 消息结构
-- `response.py`: Agent 响应结构
-- `hooks.py`: Agent Hooks 基类
-- `runners/tool_loop_agent_runner.py`: Tool Loop 主执行器
-
-说明：
-
-- 这一层相对接近“可抽离的内核”
-- 但仍然引用了部分 AstrBot 业务模型
+`astrbot/core/agent/*` 包含 Agent、run context、tool 类型、tool executor、message、response、hooks 和 Tool Loop Runner。这一层最接近可替换内核，但仍引用少量 AstrBot 业务模型。
 
 ## SubAgent
 
-### `astrbot/core/subagent_orchestrator.py`
-
-职责：
-
-- 从配置中读取子 Agent 定义
-- 构造 `HandoffTool`
-- 将子 Agent 暴露给主 Agent 使用
-
-说明：
-
-- 当前它并不自己执行 Agent
-- 它更像 handoff tool 的装配器
-
-重构关注点：
-
-- 未来可以演进成跨服务的 SubAgent Registry / Router
+`astrbot/core/subagent_orchestrator.py` 从配置构造 HandoffTool 并交给 Main Agent 装配，本身不是独立执行器。
 
 ## 当前判断
 
-如果要推进 Yakumo，Agent 层建议拆成三层：
+Agent 层后续仍建议收口为：
 
 1. Agent Kernel
 2. Main Agent Orchestrator
 3. Capability Injection Layer
 
-当前这些职责几乎都堆在 `astr_main_agent.py`
+Prompt Pipeline 是三层共享的模型输入边界，不应重新并入 Main Agent 的字符串拼接逻辑。

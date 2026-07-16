@@ -1,5 +1,7 @@
 # Interaction Middleware Architecture Review And Refactor Plan
 
+> **Prompt 边界说明：** 本文保留多阶段 Interaction 修复记录，早期章节里的独立 Prompt 拼接、finalizer 和旧 route 名称不代表当前实现。当前模型输入统一经过 `ContextPack -> target projection -> PromptRenderProfile -> Layout/PromptTree -> Provider Renderer`；现行定义见 `docs/Yakumo/modules/prompt.md`。
+
 本文件用于说明 AstrBot `interaction middleware` 的架构诊断、已执行修复、当前状态，以及后续修复计划。
 
 它不是 bug 清单，也不是一次性重构提案，而是一份面向实现的收口文档。重点回答三件事：

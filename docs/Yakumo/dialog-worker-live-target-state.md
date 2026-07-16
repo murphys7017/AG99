@@ -1,5 +1,7 @@
 # AstrBot Interaction Middleware Target State
 
+> **文档状态：历史目标稿。** 本文中的 `self_reply / delegate_to_core`、独立 finalizer 和部分输出阶段已经被当前 `silent / persona / hybrid + Core Planner + single Persona Runtime` 取代。当前事实见 `current-state.md`、`modules/interaction.md` 和 `modules/prompt.md`。
+
 本文档描述 AstrBot 交互中间件的目标状态。
 
 需要先明确两层目标：

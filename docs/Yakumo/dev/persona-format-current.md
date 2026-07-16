@@ -12,13 +12,16 @@
 
 - 保留原始 `persona.prompt`
 - 在 collect 阶段把 `persona.prompt` 解析为 `persona.segments`
-- 将解析结果作为旁路数据放入 `ContextPack`
+- 同时生成给 Router 使用的 `persona.summary`
+- 将三者作为事实放入 `ContextPack`
+- Persona/Core 的目标投影决定是否可见；默认 Layout 在存在 `persona.segments` 时优先渲染 segments，只有没有 segments 时才回退到原始 `persona.prompt`
 
 当前系统没有做：
 
 - 原生以 YAML segments 存储 persona
 - 原生以 XML 存储 persona
-- 使用 `persona.segments` 直接替换 system prompt 注入
+- 让 Collector 直接写最终 system prompt
+- 让 Router 读取完整 persona segments
 
 ## 当前 persona 来源
 
@@ -302,16 +305,16 @@ Teaching：用户认真提问 → 更耐心解释
 - 状态机每行一个状态
 - 关系值写成 `当前关系值：数字`
 
-## 当前不建议做的事
+## 当前边界
 
 - 不建议现在把 persona 改成只有 XML
 - 不建议现在直接删除 legacy `prompt`
-- 不建议现在依赖 `persona.segments` 做最终渲染
+- 不应由业务模块把 `persona.segments` 手工拼进 system prompt
 
 原因：
 
-- 当前系统仍处于 collect / parse / log 阶段
-- 目标是先稳定准备数据
+- segments 已进入统一 Layout/Renderer，但原始存储仍是 legacy prompt
+- 目标局部 system 指令属于 `PromptRenderProfile`，人格事实仍属于 Collector
 
 ## 当前链路位置
 
@@ -321,8 +324,10 @@ Teaching：用户认真提问 → 更耐心解释
 2. 收集 `persona.prompt`
 3. 调用 legacy parser
 4. 生成 `persona.segments`
-5. 将结果放入 `ContextPack`
-6. 写日志用于调试
+5. 生成精简 `persona.summary`
+6. 将结果放入 `ContextPack`
+7. 按 Router、Core Planner、Persona、Core 做目标投影
+8. Layout 优先渲染 segments，缺失时回退原始 prompt
 
 ## 当前结论
 
@@ -330,4 +335,5 @@ Teaching：用户认真提问 → 更耐心解释
 
 - 原始输入仍然是分块式 legacy prompt 文本
 - 系统会在 collect 阶段把它解析成结构化 `persona.segments`
-- 当前重点是“准备好结构化数据”，不是“立刻改成新的渲染格式”
+- Persona 已消费结构化 segments；Router 只消费精简 summary，Core 默认排除人格
+- 原始 persona 存储格式仍未迁移，Collector/parser 是兼容边界

@@ -30,7 +30,7 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 
 ## 和官方主线的区别
 
-当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”。其中 `current-state.md`、`modules/*` 和本 README 优先维护为当前事实；`target-state.md` 记录 Yakumo 最终目标；`dev/*`、`prompt-development-plan.md` 以及早期中文详解文档只作为设计记录或历史参考。
+当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”。其中 `current-state.md`、`modules/*`、`prompt-development-plan.md` 和本 README 优先维护为当前事实与当前计划；`target-state.md` 记录 Yakumo 最终目标；其他 `dev/*` 和早期中文详解文档主要作为设计记录或历史参考。
 
 因此和官方主线有几个关键差异：
 
@@ -42,10 +42,13 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 
 - 先 collect：把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge、extension 等信息结构化收集成 `ContextPack`
 - 再 build：合并为带版本的规范 `ContextPack`，重复事实冲突失败
-- 再 project：按 Router、Persona、Core 生成确定性目标视图
-- 再 build tree：构建 provider-neutral 的语义树
+- 再 project：按 Router、Core Planner、Persona、Core 生成确定性目标视图
+- 再 profile：应用目标局部的 system/request prompt、输出契约和隐藏规则
+- 再 layout/build tree：构建 provider-neutral 的语义树
 - 再 render：由 provider renderer 序列化消息、媒体与工具协议
 - 再 apply：把 render 结果投影回 `ProviderRequest`
+
+这里的功能边界是：Collector 提供事实，Builder 产生规范快照，Projection 决定目标可见范围，Profile 提供目标指令，Layout 决定语义落位，Renderer 只处理 provider 格式。Prompt 系统不拥有路由决策、memory 写入、工具执行或消息发送。
 
 也就是说，这里的 prompt 文档描述的是“新 prompt pipeline 的设计和落地情况”，不是官方旧链路的逐字复述。
 
@@ -75,7 +78,8 @@ Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是�
 - `current-state.md` / `modules/*`：当前事实入口
 - `dev/memory/*`：memory 子系统的实现记录，其中 `progress.md` 更接近当前进度
 - `dev/*`：设计与阶段性实现记录，可能落后于代码
-- `target-state.md` / `prompt-development-plan.md`：目标态和早期计划，不代表已完成实现
+- `prompt-development-plan.md`：基于当前实现维护的 Prompt 后续收口计划
+- `target-state.md`：长期目标态，不代表已完成实现
 - `dev/history/*`、`astr_main_agent.py文件详解.md`、`消息处理流程详解.md`：历史讨论或旧链路详解，不代表当前实现
 
 ### 4. Interaction middleware 已进入当前架构线
@@ -95,12 +99,12 @@ WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 
 尤其在 prompt 方向，这个分支的策略不是一次性把官方链路全部替掉，而是分阶段推进：
 
-- 先把 collect / build / project / tree / render / apply 跑通
+- 先把 collect / build / project / profile / layout / tree / render / apply 跑通
 - 先接管模型可见上下文
 - 工具执行、subagent、旧 hook 等链路先尽量复用已有实现
 - 再逐步把旧的 prompt 组织逻辑收口
 
-所以你会在代码和文档里同时看到“新 prompt 系统”和“旧 Agent 主链路”并存，这属于当前阶段的刻意设计，不是文档写错。
+当前 Main Agent 仍负责 `func_tool`、provider、conversation、runner 和 sandbox 等运行时对象，但模型可见输入已经只有统一 Prompt 主链路。旧 `on_llm_request` 仍作为 Apply 后低层插件钩子存在，不是第二条 Prompt 事实来源。
 
 ## 阅读建议
 
@@ -109,18 +113,18 @@ WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
 1. `docs/Yakumo/current-state.md`
 2. `docs/Yakumo/modules/README.md`
 3. `docs/Yakumo/modules/prompt.md`
-4. `docs/Yakumo/modules/interaction.md`
-5. `docs/Yakumo/dev/output-contract.md`
-6. `docs/Yakumo/dev/interaction-output-plugin-contract.md`
-7. `docs/Yakumo/dev/memory/index.md`
-8. `docs/Yakumo/dev/memory/progress.md`
-9. `docs/Yakumo/upstream-merge-ledger.md`
+4. `docs/Yakumo/prompt-development-plan.md`
+5. `docs/Yakumo/modules/interaction.md`
+6. `docs/Yakumo/dev/output-contract.md`
+7. `docs/Yakumo/dev/interaction-output-plugin-contract.md`
+8. `docs/Yakumo/dev/memory/index.md`
+9. `docs/Yakumo/dev/memory/progress.md`
+10. `docs/Yakumo/upstream-merge-ledger.md`
 
 以下文档只建议在追溯设计背景时阅读，不应直接当作当前实现说明：
 
 - `docs/Yakumo/dialog-worker-live-target-state.md`
 - `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
-- `docs/Yakumo/prompt-development-plan.md`
 - `docs/Yakumo/target-state.md`
 - `docs/Yakumo/dev/history/*`
 - `docs/Yakumo/astr_main_agent.py文件详解.md`

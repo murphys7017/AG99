@@ -1,5 +1,7 @@
 # Base Renderer Module Design
 
+> **文档状态：历史布局基线。** 树结构和多数 slot 落位规则仍有参考价值，但当前 `PromptTreeBuilder` 面向 `PromptLayoutInterface`，目标指令由 `PromptRenderProfile` 提供，Provider Renderer 只编译完成的树。`DefaultPromptLayout` 暂时委托 `BasePromptRenderer` 的旧 group 方法，属于待迁移实现，不代表 Renderer 仍拥有业务上下文选择权。当前规范见 `docs/Yakumo/modules/prompt.md`。
+
 记录当前 `BasePromptRenderer` 的模块化渲染结论，作为后续实现和 provider-specific renderer 的共同基线。
 
 ## 1. Scope
@@ -10,11 +12,11 @@
 - collect 输出到 render IR 的落位规则
 - 面向 OpenAI 风格请求的通用中间层
 
-本设计当前不覆盖：
+本历史设计不覆盖：
 
 - provider-specific 的最终编译优化
 - 不同模型家的最佳 prompt 文案微调
-- 替换现有主链路请求拼装
+- 当前统一主链路的 Profile、Apply 与插件扩展边界
 
 ## 2. Base IR Tree
 
@@ -288,7 +290,7 @@ tools
 当前可作为实现基线的结论：
 
 - collect 协议先不改
-- selector 继续保持 passthrough
+- 目标取舍由确定性的 `project_context_pack(target)` 完成，不存在 Selector
 - render 先完成树构建与模块渲染规则
 - provider-specific compile 后续单独细化
 - 空节点默认裁剪，不进入最终输出

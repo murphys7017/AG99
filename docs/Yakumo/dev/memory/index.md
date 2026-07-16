@@ -287,9 +287,9 @@ interaction turn 的额外约束：
 
 本目录暂不负责：
 
-- prompt selector 设计
+- prompt target projection / context budget 设计
 - intent router 设计
-- chat state / context selector 设计
+- chat state / context projection 设计
 - postprocess 自身设计
 
 ## 7. 当前结论

@@ -1,5 +1,7 @@
 # Input Context Collect
 
+> **文档状态：阶段实现快照。** 本文的“不改变 ProviderRequest”“不接入 render”等边界只描述 InputCollector 首次落地时的提交范围，不是当前状态。当前 input 已进入 collect/build/project/profile/layout/render/apply 主链路；现行边界见 `docs/Yakumo/modules/prompt.md`。
+
 本文件记录本次 `InputCollector` 链路开发的实际改动、接入位置、数据结构、约束和验证结果。
 
 ## 本次目标

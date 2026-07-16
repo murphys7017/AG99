@@ -1,5 +1,7 @@
 # Render Engine Plan
 
+> **文档状态：归档设计稿。** 本文记录早期 Selector/Renderer 方案，其中 Selector、三层职责和部分文件名已经过时。当前不存在 Prompt Selector；现行链路和功能边界以 `docs/Yakumo/modules/prompt.md` 与 `render-engine-implementation-spec.md` 为准。本文只用于追溯设计演变。
+
 记录当前 prompt render 子系统的目标关系、职责边界和下一阶段演进方向。
 
 ## 当前结论

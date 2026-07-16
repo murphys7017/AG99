@@ -51,7 +51,7 @@
 
 ## 数据流
 
-1. prompt/context pack 通过 `meta["output_contract"]` 声明 `OutputContract`。
+1. 目标调用通过 `PromptRenderProfile.output_contract` 声明契约；Engine 在目标副本的 meta 中承载它。无 Profile 的底层调用仍可从 ContextPack meta 读取兼容声明。
 2. `BasePromptRenderer._compile_output_contract(...)` 读取声明并生成 `CompiledOutputContract`。
 3. 派生 renderer 通过 `resolve_output_contract_strategy(...)` 声明协议级能力。
 4. `RenderResult` 同时携带 `output_contract` 和 `compiled_output_contract`。
@@ -168,7 +168,7 @@ persona visible-reply 是当前主要高约束消费者。
 - `output_contract_degraded`
 - `output_contract_degrade_reason`
 
-主请求日志和 prompt shadow/apply 摘要应能看到 `output_contract` 与 `compiled_output_contract`，用于判断当前场景到底是协议级支持、受控降级，还是未声明输出契约。
+主请求日志和 render/apply 摘要应能看到 `output_contract` 与 `compiled_output_contract`，用于判断当前场景到底是协议级支持、受控降级，还是未声明输出契约。
 
 ## 后续收口
 

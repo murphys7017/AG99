@@ -137,7 +137,7 @@
 后续这些模块都会依赖同一个基础能力：
 
 - `Prompt Collector`
-- `Context Selector`
+- Prompt target projection / retrieval policy
 - 长期记忆召回
 - 人格推理支撑材料加载
 

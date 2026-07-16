@@ -53,14 +53,14 @@
 - `astr_main_agent.py` 职责过载
 - Agent 层直接感知 plugin context、persona、knowledge base、skills、cron、sandbox
 - Agent 内核和 AstrBot 业务实现没有明确隔离
-- `prompt` 模块已经形成唯一的 collect/build/target projection/prompt tree/provider render/apply 主链路。主 Agent 只准备运行能力和事实，不再另行拼接模型可见 Prompt；目标投影是确定性代码策略，不使用 LLM Selector。
+- `prompt` 模块已经形成唯一的 collect/build/target projection/render profile/layout/prompt tree/provider render/apply 主链路。主 Agent 只准备运行能力和事实，不再另行拼接模型可见 Prompt；目标投影是确定性代码策略，不使用 LLM Selector。
 - builtin 群聊上下文只通过动态 prompt extension collector 提供结构化 `conversation.group_recent`；滚动记录不会因一次渲染被消费，该层只提供群聊上下文材料，不接管 Yakumo memory。
-- `PromptRenderEngine` 在目标投影后统一应用 `PromptRenderProfile`，再通过独立 `PromptLayoutInterface` 建树，并按 provider metadata 的 `prompt_renderer_family` 选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`）输出对应 API 原生格式
+- `PromptRenderEngine` 在目标投影后统一应用 `PromptRenderProfile`，再通过 `PromptLayoutInterface` 建树，并按 provider metadata 的 `prompt_renderer_family` 选择 renderer（`OpenAIPromptRenderer`、`AnthropicPromptRenderer`、`MiniMaxPromptRenderer`、`BasePromptRenderer`）输出对应 API 原生格式。逻辑边界已经拆开，但 `DefaultPromptLayout` 当前仍委托 `BasePromptRenderer` 的既有 group 方法，尚未完成物理迁移。
 - prompt 输出约束已收口为 `OutputContract -> CompiledOutputContract -> ProviderRequest -> provider` 链路；当前 interaction fast router 不使用结构化输出契约，只返回固定路由词；persona visible-reply 使用统一的 `persona_expression` 虚拟 tool-call 契约，只有 renderer/provider 明确不支持协议工具时才受控降级为 prompt-only JSON
 - 当前图片输入遵循固定策略：主对话 provider 声明支持 image 时直接传图；不支持时仅使用已配置且可用的图片转述 provider；未配置或不可用时跳过图片输入，不自动切换到图像能力 fallback provider。
 - runner 层 LLM 压缩已改为按对话轮次与 token 比例保留最近上下文，压缩请求会按压缩模型的 modalities 清洗多模态/工具内容；这是最终 request/messages 层优化，不参与 `astrbot/core/memory/*` 的记忆生成或召回。
 - prompt collector 默认保持 required/fail-fast；只有显式 optional collector 才会局部失败并记录 `collector_failures`。当前 `MemoryCollector` 为 optional，long-term embedding/检索失败只清空长期召回，仍保留本地 Topic、ShortTerm、Experience 与 PersonaState。
-- 当前 Prompt 剩余问题集中在 Provider renderer 与输出契约能力、Prompt tool schema 与实际 `func_tool` 双轨、DeepSeek 首轮 Marker 和 Context Catalog 契约。ContextPack 跨阶段 enrichment 已统一经 `PromptContextBuilder(base=...)` 生成版本化派生快照。处理顺序见 `prompt-development-plan.md`。
+- 当前 Prompt 剩余问题集中在默认 Layout 的物理拆分、Provider renderer 与输出契约能力、Prompt tool schema 与实际 `func_tool` 双轨、DeepSeek 首轮 Marker、ContextPack 可变表面和 Context Catalog 契约。Interaction 的跨阶段 enrichment 已统一经 `PromptContextBuilder(base=...)` 生成版本化派生快照。处理顺序见 `prompt-development-plan.md`。
 
 ### 2.5 Interaction Middleware
 

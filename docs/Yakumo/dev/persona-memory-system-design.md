@@ -1,5 +1,7 @@
 # Persona Memory System Design
 
+> **术语说明：** 本文中的 Prompt Selector 表述属于早期设计。当前 Prompt 取舍由确定性的目标投影完成，目标局部指令由 `PromptRenderProfile` 提供；memory 只提供读取快照，不决定 Prompt 目标或布局。
+
 说明：
 
 - 本文件主要记录 persona/memory 结合方向的设计思考
@@ -41,7 +43,7 @@ AstrBot 后续的 memory 系统，目标不是“让 AI 记住更多历史消息
 
 当前 prompt 系统总框架仍然成立：
 
-- `Collect -> Select -> Render -> Execute`
+- `Collect -> Build -> Target Projection -> Profile -> Layout/Render -> Execute`
 
 但 memory 相关部分需要额外补充一条长期演化链路：
 
@@ -59,7 +61,7 @@ AstrBot 后续的 memory 系统，目标不是“让 AI 记住更多历史消息
 - `Execution System` 负责完成本轮请求执行
 - `Post Process System` 负责在回合完成后调度后处理任务
 - `Memory System` 负责更新、存储、检索、生成 snapshot
-- `Prompt System` 负责 collect、select、render、build
+- `Prompt System` 负责 collect、build、target projection、profile、layout、render、apply
 - `Prompt System` 从 `Memory System` 读取数据
 
 也就是说：
@@ -113,7 +115,7 @@ AstrBot 后续的 memory 系统，目标不是“让 AI 记住更多历史消息
 - `memory`: 经过筛选和固化后的长期或中期信息
 - `persona_state`: 由 memory 沉淀出的长期行为偏置
 
-这几类内容如果都混在一个 collector 或一个 summary 里，后续 selector 和 renderer 都会失去边界。
+这几类内容如果都混在一个 collector 或一个 summary 里，后续目标投影和 layout/renderer 都会失去边界。
 
 ### 3. 记忆更新不应发生在 prompt collect 阶段
 

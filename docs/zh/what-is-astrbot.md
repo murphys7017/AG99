@@ -8,7 +8,7 @@ outline: deep
 
 AstrBot 是一个开源的一站式 Agentic 个人和群聊助手，可在 QQ、Telegram、企业微信、飞书、钉钉、Slack 等数十款主流即时通讯软件上部署，此外还内置类似 OpenWebUI 的轻量化 ChatUI，为个人、开发者和团队打造可靠、可扩展的对话式智能基础设施。无论是个人 AI 伙伴、智能客服、自动化助手，还是企业知识库，AstrBot 都能在你的即时通讯软件平台的工作流中快速构建 AI 应用。
 
-当前仓库的 Yakumo fork 在官方 EventBus / Pipeline 与核心 Agent 之间增加 Interaction Middleware。普通对话先由无工具、无 JSON 契约的 Router 选择 `silent` / `persona` / `hybrid`，再按需调用唯一 Persona Runtime 与 Core。插件可以通过[Persona Effect](/dev/star/guides/persona-effects)为当前事件扩展结构化表现能力，而不把平台私有语义写入 Router 或 Core。
+当前仓库的 Yakumo fork 在官方 EventBus / Pipeline 与核心 Agent 之间增加 Interaction Middleware。普通对话先由无工具、无 JSON 契约的 Router 选择 `silent` / `persona` / `hybrid`，再按需调用唯一 Persona Runtime 与 Core。插件可以通过 [Persona Effect](/dev/star/guides/persona-effects) 扩展结构化表现输出，通过 [Prompt Extension](/dev/star/guides/prompt-extensions) 向统一 Prompt 管线贡献目标明确的模型事实，而不把平台私有语义写入 Router 或 Core。
 
 ## 文档概览
 

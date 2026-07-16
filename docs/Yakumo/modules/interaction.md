@@ -265,6 +265,8 @@ interaction middleware 对插件主要暴露两个阶段接口：
 
 这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Router 或 Planner 的模型决策重新注入 Prompt。
 
+跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 只覆盖统一 Prompt Apply 后的 Core 请求，不保证参与 Router、Planner 或 Persona 的轻量调用。Prompt 各层完整边界见 `modules/prompt.md`。
+
 ### Prompt Contributor
 
 注册方式：

@@ -29,7 +29,7 @@
 
 - 为 `post process -> memory update` 建立骨架
 - 为 `memory snapshot` 建立读取接口
-- 为 `collect -> select -> render` 后续阶段准备稳定输入
+- 为 `collect -> build -> target projection -> render` 提供稳定读取输入
 - 为 `persona continuity` 预留状态沉淀位置
 
 ## Prompt、Memory 与 Post Process 的系统关系
@@ -42,7 +42,7 @@
 - `Execution System` 负责本轮请求执行
 - `Post Process System` 负责回合后任务调度
 - `Memory System` 负责 update、store、retrieve、snapshot
-- `Prompt System` 负责 collect、select、render、build
+- `Prompt System` 负责 collect、build、target projection、profile、layout、render、apply
 - `Prompt System` 从 `Memory System` 读取 `MemorySnapshot`、`TopicState`、`PersonaState`
 
 这意味着：
@@ -360,7 +360,7 @@ Yakumo 上层应稳定围绕以下对象组织：
 - 暂不在本阶段直接调用 memory update
 - 暂不在 collect 阶段写 memory
 
-后续如果引入 selector / renderer：
+在当前 target projection / layout / renderer 链路中：
 
 - 只消费 snapshot
 - 不直接改写 memory backend
@@ -650,7 +650,7 @@ memory 系统必须从一开始就考虑 scope，不然后续很容易混淆“�
 
 memory 的读取应是“按用途读取”，不是“全量取回”。
 
-这里的“用途”主要由 prompt system 的 selector / renderer 决定，但读取动作本身仍由 memory system 提供接口完成。
+这里的“用途”由 Prompt 系统的目标投影和 layout/renderer 决定，但读取动作本身仍由 memory system 提供接口完成。
 
 第一版建议先做简单策略：
 
@@ -850,4 +850,4 @@ AstrBot 的 memory 模块第一版应被定义为：
 
 后续真正的完整链路应是：
 
-`Conversation -> Execution -> Post Process -> MemoryUpdateRequest -> Consolidator -> Store -> Snapshot -> Collect -> Select -> Render -> Effective Persona -> Response`
+`Conversation -> Execution -> Post Process -> MemoryUpdateRequest -> Consolidator -> Store -> Snapshot -> Collect -> Build -> Target Projection -> Profile -> Layout/Render -> Effective Persona -> Response`

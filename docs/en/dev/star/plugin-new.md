@@ -10,7 +10,7 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 2. Some experience with Git and GitHub.
 
 > [!NOTE]
-> The Yakumo fork also provides [Persona Effects](./guides/persona-effects), which let plugins expose event-scoped presentation capabilities to the single Persona Runtime. They are not LLM tools and are never exposed to Router.
+> The Yakumo fork also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
 
 ## Environment Setup
 

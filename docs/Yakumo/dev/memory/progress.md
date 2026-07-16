@@ -269,7 +269,7 @@ interaction turn 约束：
 - memory 已负责短期写入、中期 consolidation、长期文档与索引第一版
 - prompt system 当前通过 `MemoryCollector` 消费 snapshot
 - memory 还不负责 prompt render
-- memory 还不负责 selector / router / chat state
+- memory 还不负责 Prompt target projection / router / chat state
 - snapshot 的 query-aware `experiences` 当前仍基于命中 story 的 links 回查，不是独立 experience 向量检索
 - memory 还不负责人格演进更新
 

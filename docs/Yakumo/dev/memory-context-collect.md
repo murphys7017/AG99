@@ -1,5 +1,7 @@
 # Memory Context Collect
 
+> **文档状态：阶段实现快照。** 本文的“只供日志、不改 render”只描述 MemoryCollector v1 的提交范围。当前 memory slot 已由目标投影和统一 Render 链路消费；memory 仍只提供读取快照，写入属于 postprocess/memory service。现行边界见 `docs/Yakumo/modules/prompt.md` 与 `dev/memory/index.md`。
+
 记录本次 `MemoryCollector` v1 的实现范围、代码改动、数据结构和验证结果。
 
 ## 范围

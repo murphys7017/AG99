@@ -1,115 +1,157 @@
 # Prompt Module
 
-`astrbot/core/prompt/*` 负责把运行时事实转换成不同模型角色可消费的 Prompt。当前主链路是：
+`astrbot/core/prompt/*` 负责把运行时事实确定性地转换成模型请求。它是模型可见输入的唯一主链路，但不负责决定是否回复、执行工具、写入记忆或发送消息。
+
+## 当前主链路
 
 ```text
-Collectors
-  -> PromptContextBuilder / ContextPack
+Fact Sources
+  -> Context Collectors
+  -> PromptContextBuilder
+  -> canonical / derived ContextPack
   -> project_context_pack(target)
-  -> PromptRenderProfile(target-local policy)
-  -> PromptTreeBuilder
+  -> PromptRenderProfile
   -> PromptLayoutInterface
+  -> PromptTreeBuilder / PromptTree
   -> Provider Renderer
   -> RenderResult
   -> ProviderRequestAdapter
+  -> Provider / Agent Runner
 ```
 
-这是一条确定性数据管线。它不使用 LLM Selector，也不让 provider renderer 决定应该读取哪些业务数据。
+这是一条确定性数据管线。目标投影、布局和序列化都不调用 LLM，也不存在 LLM Selector。
 
-## 边界
+## 功能边界
 
-### Collectors
+| 层 | 负责 | 不负责 |
+|---|---|---|
+| Collector | 从官方运行时、Interaction 和插件读取事实，输出命名明确的 `ContextSlot` | 拼最终 Prompt、做路由决策、写 memory、调用模型 |
+| `PromptContextBuilder` | 合并事实、检测冲突、生成带版本的新 `ContextPack` 快照 | 按目标裁剪、决定物理消息布局 |
+| Target Projection | 按 Router、Core Planner、Persona、Core 做白名单、裁剪和诊断清理 | 生成指令、调用模型、修改规范 Pack |
+| `PromptRenderProfile` | 提供目标局部的 system/request prompt、输出契约、输入后缀和精确隐藏项 | 声明共享事实、判断 Provider 能力、修改原始 Pack |
+| Layout / Tree | 把逻辑 slot 放入 provider-neutral 语义树 | 选择业务事实、生成 Provider 私有 payload |
+| Provider Renderer | 编译 system/messages/media/tool schema/output contract | 选择目标上下文、执行工具、决定业务路由 |
+| Request Adapter | 把 `RenderResult` 写入现有 `ProviderRequest` 的模型可见字段 | 替换 `func_tool`、provider、conversation 或 runner 配置 |
+| Provider / Runner | 落地协议并执行模型或工具循环 | 回头收集、投影或修补 Prompt 事实 |
 
-Collector 只读取事实，并输出命名明确的 `ContextSlot`。默认来源包括 system、persona、input、session、policy、memory、official conversation history、skills、tools、subagent、knowledge，以及插件显式写入 `ProviderRequest` 的上下文。Interaction turn 还会收集 interaction memory、执行层能力摘要和插件 Prompt 事实；这些内容在目标选择前进入同一份规范 Pack，Router、Planner 或 Persona 不自行调用 Collector。
+## 收集与构建
 
-同一次收集中，同名 slot 不能用不同值静默覆盖。两个生产者对同一事实有分歧时直接失败。附件摘要、Interaction Prompt Contributor 和 Core enrichment 都通过 `PromptContextBuilder(base=...)` 生成新版本；共享规范 Pack 不接受业务链路直接修改。
+### Collector
 
-Collector 默认 required。只有明确声明 optional 的 Collector 才允许局部失败并把诊断写入 `ContextPack.meta["collector_failures"]`。当前 `MemoryCollector` 是 optional。
+默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent 和 knowledge。Interaction 还会加入 interaction memory、执行能力摘要、附件摘要和本轮待表达材料。
 
-所谓 static Collector 只表示同一个 event、同一个 config 和同一个 `ProviderRequest` 对象内可复用，即 turn-static；它不是跨回合或全局缓存。
+Collector 只返回事实：
+
+- 同一次收集中，同名 slot 的不同值会触发 `PromptContextConflictError`。
+- Core Collector 默认 `required`，异常会终止构建；只有显式 `failure_policy="optional"` 的 Collector 才记录诊断后继续。当前 `MemoryCollector` 是 optional。
+- 插件 Prompt Extension Collector 采用插件隔离策略：异常或无效项会记录告警并跳过，不中断核心 Collector。
+- `lifecycle="static"` 只表示同一 event、同一 config 和同一 `ProviderRequest` 对象内可复用，是 turn-static，不是跨回合或全局缓存。
+- Collector 不应执行 memory 写入、路由判断或有副作用的工具调用。
 
 ### PromptContextBuilder
 
-`PromptContextBuilder` 是构建和增量丰富 `ContextPack` 的统一入口。每次合并返回新快照，不修改输入 Pack，并维护：
+`PromptContextBuilder` 是规范构建和阶段派生的统一入口。`build(base=...)` 每次返回新快照，不修改输入 Pack，并维护：
 
 - `context_version`
 - `collection_scopes`
 - `slot_count`
-- 各收集片段提供的诊断 metadata
+- Collector 与缓存诊断
 
-插件 extension 也先规范化成 slot，再进入同一条构建链路。插件原有 `ProviderRequest.contexts`、`extra_user_content_parts` 和显式媒体由 Collector 收集，不在渲染后补丁式追加。消息顺序固定为 persona begin dialogs、官方历史、插件显式 contexts、当前输入。
+跨阶段新增或替换事实必须经过 Builder。`ContextPack` 数据类型本身仍然可变，供收集和渲染内部使用；业务模块不得把直接 `add_slot()`、`slots.pop()` 或原地改值当作跨阶段 API。
 
-本轮待表达材料等运行时事实继续通过 Collector 和 `PromptContextBuilder(base=...)` 形成阶段派生 Pack。Router、Core Planner、Persona 的 system 指令、最终 request prompt、输出契约、输入后缀和隐藏 slot 由 `PromptRenderProfile` 在目标投影后应用；业务模块不再克隆或直接修改 Pack。
+“统一收集”不等于无条件执行所有昂贵操作。Interaction 先构建本轮共享事实，Core 在真正委派后再以共享 Pack 为 base 收集 policy/tools/knowledge 等执行事实，形成派生 Pack。
 
-### Target Projection
+## 目标投影
 
-`project_context_pack(...)` 从同一份规范 Pack 生成目标视图。投影是白名单和裁剪规则，不是一次额外模型调用。
+`project_context_pack(...)` 从 Pack 深拷贝出隔离视图。在显式目标投影中，`llm_exposure="never"` 会被排除；其他可见范围由固定代码规则决定。当前无 target 的普通 Main Agent 路径不会经过这一步，因此 exposure 还不是全链路强制安全机制，敏感事实不能只依赖该字段保护。
 
-| 目标 | 当前上下文范围 |
-|---|---|
-| Router | 当前输入、附件摘要、当前时间、当前说话者、最近几轮历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 |
-| Core Planner | 当前输入、附件摘要、当前说话者、清理后的近期历史、精简 interaction memory、执行层能力摘要和插件目录；不读取人格、Router 决策或 effect |
-| Persona | 完整人格、官方对话历史、群聊上下文、memory/persona state、当前输入、待表达材料与 Core 结果 |
-| Core | 官方对话历史、群聊上下文、当前输入与附件、system/policy、tools、skills、knowledge、subagent 与插件执行上下文；排除人格、interaction memory 和 effect 语义 |
+| 目标 | 当前可见范围 | 明确排除 |
+|---|---|---|
+| Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 | 完整人格、媒体正文、工具 schema、effect、Core/Planner 决策 |
+| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、精简 interaction memory、Core 能力摘要、插件目录 | 完整人格、Router 决策、effect、实际工具 schema |
+| Persona | 完整人格、官方历史、群聊上下文、memory/persona state、当前输入、待表达材料和 Core 结果 | policy、knowledge、执行能力、Core 私有执行上下文 |
+| Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec` | 完整人格、interaction memory、待表达材料、effect 语义 |
 
-Prompt extension 的 `meta.targets` 对四个目标一致生效。未声明 targets 的普通 extension 默认属于 Core；插件目录只提取明确标记给 `router` 或 `core_planner` 的 `name` / `description`。目标投影只读取这些声明，不会重新调用插件 Collector。
+Router 和 Core Planner 只共享事实来源，不共享模型 Prompt、决策或输出。投影中的历史长度、字段清理和诊断移除属于确定性安全边界，不是“让模型自己忽略”。
 
-### PromptTreeBuilder
+Prompt Extension 的 `meta.targets` 可声明 `router`、`core_planner`、`persona`、`core`。普通 extension 未声明目标时只属于 Core。Router/Planner 的插件目录只保留明确授权的插件 `name` 和 `description`。
 
-`PromptTreeBuilder` 把目标视图转换成 provider-neutral 的语义树。它负责 slot 分组、节点布局和 rendered-slot trace。`PromptRenderEngine` 编排目标投影、Render Profile、建树、renderer 选择和日志，不遍历业务 slot。
+## Render Profile
 
-`PromptTreeBuilder` 只依赖 `PromptLayoutInterface`。默认 layout policy 与 Provider Renderer 是两个独立实例：layout 决定语义节点放置，Renderer 只编译已经形成的树。自定义布局通过 `default_layout` 注入，不再借用 `default_renderer` 同时改变建树行为。
+`PromptRenderProfile` 在目标投影后应用到一个新的目标视图，当前支持：
 
-### Provider Renderer
+- `system_prompt`：替换目标视图中的 `system.base`。
+- `request_prompt`：成为最终模型请求命令，不写入共享事实。
+- `output_contract`：写入目标树的输出契约元数据。
+- `input_text_suffix`：只追加到字符串类型的 `input.text`。
+- `hidden_slot_names`：按完整 slot 名精确隐藏，不支持通配符，也不能替代目标投影的安全规则。
 
-Renderer 将语义树序列化为 provider 可用格式：
+Profile 是“如何使用事实”的局部策略，不是 Collector。Router、Core Planner 和 Persona 的指令与输出协议属于 Profile；当前消息、历史、待表达材料和插件信息仍必须由 Collector 提供。
+
+## Layout、Tree 与 Renderer
+
+`PromptTreeBuilder` 只接收目标视图和 `PromptLayoutInterface`。Layout 决定逻辑 group 的启用范围、节点路径和 slot 到树节点的落位；PromptTree 是 provider-neutral 中间表示。
+
+当前逻辑边界已经从 Provider Renderer 中拆出，但默认实现仍处于过渡态：`DefaultPromptLayout` 委托 `BasePromptRenderer` 中既有的 `render_*_context` 方法。选中的 OpenAI/Anthropic/MiniMax Renderer 不参与目标数据选择，但默认 Layout 的方法实现尚未物理迁入独立类。文档和新代码不能把这个过渡实现描述成已经完全拆分。
+
+Provider Renderer 只编译已经形成的树：
 
 - `OpenAIPromptRenderer`
 - `AnthropicPromptRenderer`
 - `MiniMaxPromptRenderer`
 - `BasePromptRenderer`
 
-Renderer 处理 system/messages、content blocks、图片来源、tool schema 和 `OutputContract` 的协议落地。它不重新选择 Router、Persona 或 Core 的业务上下文。当前 renderer family 与 Provider 输出契约能力仍分别声明，尚缺统一能力校验。
+它负责 system/messages、content blocks、媒体、工具 schema 和 `OutputContract` 的协议策略。Provider metadata 的 `prompt_renderer_family` 只选择序列化家族，不改变目标投影或 Layout。
 
-### Apply
+## RenderResult 与 Apply
 
-`ProviderRequestAdapter` 把 `RenderResult` 应用到现有 `ProviderRequest`。结构化文本块和插件显式 content parts 保持各自边界，不为了兼容单字符串字段而全局合并。
+`RenderResult` 承载 `prompt_tree`、`system_prompt`、`messages`、`tool_schema`、输出契约、metadata 和可选 `request_prompt`。
 
-应用范围包括 system prompt、history、当前 user message、目标 `request_prompt`、媒体 content parts，以及 output contract。存在 `request_prompt` 时，已渲染 messages 全部作为上下文，目标命令成为最终请求 prompt。工具运行时对象和 conversation 等非模型可见状态保持不变，因此 RenderResult tool schema 与实际 `func_tool` 目前仍不是同一事实来源。
+`ProviderRequestAdapter` 的规则是：
 
-## 插件扩展边界
+- 没有 `request_prompt`：最后一条 user message 拆成 `ProviderRequest.prompt`，此前消息进入 `contexts`，媒体转为 content parts。
+- 存在 `request_prompt`：所有渲染消息保留为 `contexts`，Profile 命令成为 `ProviderRequest.prompt`。
+- Adapter 会替换模型可见的 system、contexts、prompt、媒体和输出契约。
+- Adapter 不修改 `func_tool`、provider、conversation、session 或 runner 配置。
 
-官方 `filter.on_llm_request` 钩子继续保留。Core 主链路会先完成统一 Prompt 渲染，再把最终 `ProviderRequest` 交给该钩子；插件已有的底层请求修改不会被后续 Prompt 渲染覆盖。需要贡献模型上下文的新插件应优先注册 `PromptExtensionCollectorInterface`，只有确实需要修改最终请求、工具或 provider 参数时才使用 `on_llm_request`。
+`RenderResult.tool_schema` 与 `ProviderRequest.func_tool` 当前不是同一执行事实源。前者是渲染/诊断产物，后者仍由 Main Agent 的能力装配负责；在统一工具能力模型完成前，不得假定修改 `tool_schema` 就会注册可执行工具。
 
-Core 主管线中的群聊上下文只通过 `conversation.group_recent` 进入统一管线，不再由 `on_llm_request` 重复注入。Dify、Coze 等尚未接入 ContextPack 的官方 Agent runner 仍通过同一个官方钩子获得等价上下文；桥接会检查 Prompt Apply 标记并跳过已完成统一渲染的请求。这是非主管线的能力兼容，不是恢复旧的双重 Prompt 来源。`apply_interaction_core_task_spec` 作为显式管理 `ProviderRequest` 的兼容接口继续导出；主链路使用 `CoreTaskCollector`，不会同时调用两者。
+## 主链路接入
 
-会话持久化使用单独生成的、去除 request context 和 Prompt 标签的用户消息，避免把内部脚手架写入官方历史。
+### Interaction
 
-## 输出契约
+Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从该 Pack 的独立投影渲染；Persona 的待表达材料通过专用 Collector 派生。只有 Planner 选择执行后，Main Agent 才在共享 Pack 上增量收集 Core 能力并渲染 Core 目标。
 
-结构化输出链路为：
+### 非 Interaction Core
+
+普通 Main Agent 直接运行默认 Collector，渲染完整 Pack，不使用 Router/Planner/Persona Profile。`astr_main_agent` 只装配运行时工具和 Runner，不再手写另一套模型可见 Prompt。
+
+### 官方钩子
+
+官方 `on_llm_request` 保留为 Core/Main Agent 的低层请求钩子，执行顺序在统一 Prompt Apply 之后。它适合修改最终请求参数或兼容旧插件，不是给 Router、Planner 或 Persona 贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
+
+需要贡献模型可见事实的插件应使用 `PromptExtensionCollectorInterface`。插件开发接口见中英文 Prompt Extension 指南。
+
+## 输出契约边界
 
 ```text
 OutputContract
   -> CompiledOutputContract
-  -> ProviderRequest
-  -> provider protocol or prompt-only fallback
-  -> parser
+  -> RenderResult / ProviderRequest
+  -> provider protocol or controlled prompt-only fallback
+  -> response parser
 ```
 
-Persona Expression 优先使用虚拟 tool call；只有 renderer/provider 明确不支持工具协议时才受控降级为 prompt-only JSON。Core Planner 使用独立的严格 `core_execution_plan` 契约，只返回 `execute` / `not_required` 和可选 `CoreTaskSpec`。Router 只返回固定路由词，不使用工具调用或 JSON 契约。
+Router 只返回固定分类词，不使用工具或 JSON。Core Planner 使用独立的 `core_execution_plan` 契约。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
 
-Persona 输出契约中的 effect schema 不是全局常量。Core 在当前事件上调用 `list_persona_effects(event=event)`，只把注册插件判定为可用的 effect 编译进 `persona_expression`；Router 投影不收集 effect spec。
+## 当前限制
 
-DeepSeek Provider 按有效 `thinking.type` 配置选择思考或非思考请求，不由 Prompt 系统替用户切换模式。两种模式都透传输出契约生成的 `tool_choice`；如果服务端拒绝该组合，应返回明确错误，而不是静默删除约束后产生不符合契约的自由文本。
+- Provider renderer family、输出契约能力和工具能力还没有统一成一个 capability 声明。
+- `ContextCatalog` 的 required/lifecycle/redaction 等字段多数仍是描述和告警，不是完整运行时强约束。
+- `llm_exposure` 只在显式 Target Projection 中执行；无 target 的 Main Agent 路径尚未统一过滤。
+- `ContextPack` 仍是可变数据类型，跨阶段不可变性依赖 Builder 使用约定和测试。
+- `PromptLayoutInterface` 尚未显式声明全部 `render_*_context` 方法，默认 Layout 仍复用 Base Renderer 实现。
+- `tool_schema` 与实际 `func_tool` 尚未统一事实源。
+- 上下文预算、Collector 并发和更细的敏感字段脱敏需要在上述边界稳定后继续处理。
 
-## 群聊上下文
-
-`GroupChatContext` 是动态 Prompt Extension Collector。对 Router、Core Planner、Persona、Core 统一管线，它只提供结构化 `conversation.group_recent`，不消费滚动记录；当前唤醒消息没有自己的 ambient record 时，会读取此前全部环境消息。Router 与 Planner 投影会分别执行长度限制和运行时诊断清理。对尚未接入统一管线的官方 Agent runner，它提供受 Prompt Apply 标记保护的 `on_llm_request` 兼容桥接。
-
-## 仍需继续收口
-
-- Provider renderer、输出契约和工具能力需要统一能力声明。
-- Context Catalog 需要从描述文件收口为真实契约，或删除未执行的声明。
-
-具体问题与处理顺序以 `docs/Yakumo/prompt-development-plan.md` 为准。
+后续处理顺序见 `docs/Yakumo/prompt-development-plan.md`。

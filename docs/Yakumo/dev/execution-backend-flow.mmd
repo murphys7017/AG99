@@ -9,7 +9,7 @@ flowchart LR
 %% 4. 直播音频与协议命令通过内部 protocol Core bypass，不伪装成 Router 结果。
 %% 5. Prompt 先统一收集事实；Router 与 Core Planner 独立判断，二者不共享模型决策。
 %% 6. 快速回复与 Core 最终回复使用同一个 Persona Expression。
-%% 7. Prompt 链路统一为 Collectors -> ContextBuilder -> Target Projection -> PromptTreeBuilder -> Provider Renderer。
+%% 7. Prompt 链路统一为 Collectors -> ContextBuilder -> Target Projection -> Render Profile -> Layout/PromptTreeBuilder -> Provider Renderer -> Apply。
 %% 8. 所有普通用户可见回复都经过 Interaction Output Runtime。
 %% 9. Motion、Live2D 和具体 effect 语义属于插件，不进入主流程。
 
@@ -54,7 +54,7 @@ flowchart LR
 
         C_M --> C_O[build_main_agent]
         C_O --> C_O1[ProviderRequest]
-        C_O1 --> C_O2[Prompt / Memory / Knowledge / Tools]
+        C_O1 --> C_O2[Prompt Pipeline<br/>Core Projection / Layout / Render / Apply]
         C_O2 --> C_O3[AstrBot Agent Runner]
         C_O3 --> C_O4[Provider + Tool Loop]
 
@@ -98,7 +98,7 @@ flowchart LR
         T_I --> T_I1[prepare_core_execution]
         T_I1 --> T_J[Prompt Pipeline]
         T_I1 --> T_K[Capability Resolver]
-        T_J --> T_J1[ContextPack<br/>Target Projection<br/>Prompt Tree]
+        T_J --> T_J1[ContextPack<br/>Target Projection<br/>Render Profile / Layout / Prompt Tree]
         T_J1 --> T_L[ExecutionPlan]
         T_K --> T_K1[按会话 / 插件 / 权限 / 策略筛选]
         T_K1 --> T_K2[CapabilitySnapshot]
