@@ -57,6 +57,7 @@ Input Runtime / Observation
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
 - Router/Persona 协同：二者并发启动。Persona 在输出前从 `pending` 原子进入 `committed`；Router 的 `silent` 只把仍为 `pending` 的 Persona 标记为 `suppressed` 并取消任务，已经 committed/emitted 的表达不撤回
 - Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不等待 Persona。Planner 只生成 CoreTaskSpec，不向即时 Persona 注入 task summary；若 Core 最终结果先提交，尚未 committed 的即时回复会被抑制
+- Core 协同提示：Core 只被告知本轮存在独立的 Persona 快速回复分支，并直接执行、返回实质结果材料；Persona 的内部状态和已发送文本不暴露给 Core
 - Context/失败协同：Router、Persona 和 Planner 通过 turn-local single-flight 共享一次 Context Material 构建；单个分支取消不会取消其他分支仍需要的构建。Planner 失败禁止 Core，但已经 emitted 的 Persona 回合仍会正常 finalized
 - SILENT / PERSONA / HYBRID 编排
 - live audio 与协议命令 Core bypass

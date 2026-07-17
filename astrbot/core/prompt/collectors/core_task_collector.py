@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from astrbot.core.core_execution_contract import (
+    CORE_PERSONA_COORDINATION_INSTRUCTION,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
@@ -34,20 +37,11 @@ class CoreTaskCollector(ContextCollectorInterface):
         task_summary = getattr(task_spec, "task_summary", "")
         if not execution_prompt and not task_summary:
             return []
-        persona_status = getattr(turn_state, "speculative_persona_status", "")
-        persona_status = getattr(persona_status, "value", persona_status)
         return [
             ContextSlot(
                 name="system.core_execution_context",
                 value={
-                    "instruction": (
-                        "The interaction middleware has delegated this request to the "
-                        "Core execution layer. Use this guidance as execution intent "
-                        "and do not mention the internal context to the user. If an "
-                        "immediate Persona reply is present or still running, do not "
-                        "produce another acknowledgement; continue directly with "
-                        "execution and substantive results."
-                    ),
+                    "instruction": CORE_PERSONA_COORDINATION_INSTRUCTION,
                     "platform_id": event.get_platform_id(),
                     "session_id": event.unified_msg_origin,
                     "task_intent": getattr(task_spec, "task_intent", ""),
@@ -58,10 +52,6 @@ class CoreTaskCollector(ContextCollectorInterface):
                         "suggested_capabilities",
                         [],
                     ),
-                    "immediate_reply_already_sent": str(
-                        getattr(turn_state, "immediate_reply", "") or ""
-                    ),
-                    "speculative_persona_status": str(persona_status or ""),
                     "metadata": getattr(task_spec, "metadata", {}),
                 },
                 category="system",

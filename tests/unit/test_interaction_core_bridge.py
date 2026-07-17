@@ -1,14 +1,16 @@
+from html import unescape
+
 import pytest
 
+from astrbot.core.core_execution_contract import (
+    CORE_PERSONA_COORDINATION_INSTRUCTION,
+)
 from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
     get_interaction_route_decision,
 )
-from astrbot.core.interaction.turn_state import (
-    InteractionSpeculativePersonaStatus,
-    InteractionTurnState,
-)
+from astrbot.core.interaction.turn_state import InteractionTurnState
 from astrbot.core.interaction.types import (
     CoreTaskSpec,
     InteractionRouteDecision,
@@ -19,6 +21,8 @@ from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.prompt.collectors.core_task_collector import CoreTaskCollector
+from astrbot.core.prompt.context_types import ContextPack
+from astrbot.core.prompt.render import PromptRenderEngine, PromptTarget
 from astrbot.core.provider.entities import ProviderRequest
 
 
@@ -58,9 +62,6 @@ async def test_core_task_collector_exposes_structured_execution_context():
         InteractionTurnState(
             turn_id="turn-1",
             core_task_spec=task_spec,
-            speculative_persona_status=(
-                InteractionSpeculativePersonaStatus.COMMITTED
-            ),
         ),
     )
     req = ProviderRequest(prompt="查天气", system_prompt="base")
@@ -71,9 +72,19 @@ async def test_core_task_collector_exposes_structured_execution_context():
     assert slots[0].name == "system.core_execution_context"
     assert slots[0].value["execution_prompt"] == "请查询今天的天气。"
     assert slots[0].value["task_summary"] == "查询天气"
-    assert slots[0].value["speculative_persona_status"] == "committed"
-    assert "do not produce another acknowledgement" in slots[0].value["instruction"]
+    assert slots[0].value["instruction"] == CORE_PERSONA_COORDINATION_INSTRUCTION
+    assert "immediate_reply_already_sent" not in slots[0].value
+    assert "speculative_persona_status" not in slots[0].value
     assert req.system_prompt == "base"
+
+    render_result = PromptRenderEngine().render(
+        ContextPack(slots={slots[0].name: slots[0]}),
+        target=PromptTarget.CORE,
+    )
+    rendered_system_prompt = unescape(render_result.system_prompt)
+    assert CORE_PERSONA_COORDINATION_INSTRUCTION in rendered_system_prompt
+    assert "immediate_reply_already_sent" not in render_result.system_prompt
+    assert "speculative_persona_status" not in render_result.system_prompt
 
 
 def test_direct_request_compatibility_api_applies_execution_context():
@@ -114,6 +125,9 @@ def test_direct_request_compatibility_api_applies_execution_context():
     assert req.system_prompt.startswith("base")
     assert "<interaction_execution_context>" in req.system_prompt
     assert "请查询今天的天气。" in req.system_prompt
+    assert CORE_PERSONA_COORDINATION_INSTRUCTION in req.system_prompt
+    assert "immediate_reply_already_sent" not in req.system_prompt
+    assert "speculative_persona_status" not in req.system_prompt
 
 
 def test_core_bridge_reads_decision_and_task_spec_from_turn_state_first():

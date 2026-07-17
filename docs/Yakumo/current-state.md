@@ -103,6 +103,7 @@
 - `router_agent` 是轻量固定枚举分类器：只判断 `silent` / `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 只消费规范 `ContextPack` 的极简投影，不参与事实采集。
 - Router 与 Persona Expression 在输入完成 materialization 后并发启动。Turn State 用 `pending / committed / emitted / suppressed / failed` 仲裁推测式 Persona 输出：Router 选择 `silent` 时取消尚未提交的 Persona；若 Persona 已经提交或发送，则保留该回复并把本轮记为 replied。
 - `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 终止 Core 路径并保留并发 Persona 表达。Planner 不向即时 Persona 注入 task summary 或短回复指令。Planner 失败仍禁止 Core；若 Persona 已成功 emitted，则保留失败记录并按 Persona-only 完成本轮，否则 fail-fast。
+- Core 执行上下文只声明本轮存在独立的 Persona 快速回复分支，并要求 Core 跳过寒暄、确认和进度填充，直接返回实质结果材料；Persona 的运行状态和已发送文本不进入 Core Prompt。
 - Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，贡献项通过 `meta.targets` 进入目标投影；Router、Planner、Persona 不再按 purpose 分别触发采集。Core 在同一 Pack 上用 Collector 增量加入 system、policy、tools、knowledge 和 `CoreTaskSpec`，再投影为 Core 视图。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 指令与输出契约由 Render Profile 提供，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料由 Collector 进入 `input.visible_reply_material`

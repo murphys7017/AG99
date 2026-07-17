@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 
 from astrbot import logger
+from astrbot.core.core_execution_contract import (
+    CORE_PERSONA_COORDINATION_INSTRUCTION,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -43,9 +46,6 @@ def build_core_execution_context_block(
     """
     if not task_spec.execution_prompt and not task_spec.task_summary:
         return None
-    turn_state = get_interaction_turn_state(event)
-    persona_status = getattr(turn_state, "speculative_persona_status", "")
-    persona_status = getattr(persona_status, "value", persona_status)
     payload = {
         "platform_id": event.get_platform_id(),
         "session_id": event.unified_msg_origin,
@@ -53,10 +53,6 @@ def build_core_execution_context_block(
         "task_summary": task_spec.task_summary,
         "execution_prompt": task_spec.execution_prompt,
         "suggested_capabilities": task_spec.suggested_capabilities,
-        "immediate_reply_already_sent": str(
-            getattr(turn_state, "immediate_reply", "") or ""
-        ),
-        "speculative_persona_status": str(persona_status or ""),
         "metadata": task_spec.metadata,
     }
     return (
@@ -64,9 +60,8 @@ def build_core_execution_context_block(
         "The interaction middleware has already decided that this request should "
         "be handled by the core execution layer.\n"
         "Use the following structured guidance as execution intent, but do not "
-        "mention this block to the user. The Persona output branch may be running "
-        "concurrently; do not produce another acknowledgement, and continue directly "
-        "with execution and substantive results.\n"
+        "mention this block to the user.\n"
+        f"{CORE_PERSONA_COORDINATION_INSTRUCTION}\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
         "</interaction_execution_context>\n"
     )
