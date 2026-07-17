@@ -7,7 +7,8 @@ Runtime 主链。只有这些边界完成后，Native、Claude Code、OpenCode �
 
 本文是目标和实施顺序，不代表所述能力已经完成。当前运行事实仍以
 `execution-backend-flow.mmd` 和源码为准，第一轮依赖事实见
-`execution-backend-dependency-review.md`。
+`execution-backend-dependency-review.md`，过渡结构、数据边界和建议删除顺序见
+`personal-runtime-transition-inventory.md`。
 
 ## 优先级调整
 
@@ -88,7 +89,8 @@ Platform / Internal Event
 
 ## Phase 0：过渡结构清单与行为基线
 
-状态：进行中，第一轮源码审阅和输出兼容基线已完成。
+状态：进行中。第一轮过渡结构源码调查已完成；session 并发策略、Third-party Runner、
+Subagent、主动消息和旧 Interaction Memory 数据边界仍待确认。前期调查暂不新增测试。
 
 需要完成：
 
@@ -232,8 +234,9 @@ Adapter，并先让 Native 成为第一个实现。Claude Code、OpenCode 等随
 - 恢复 Interaction 非流式输出的内容安全与 `OnDecoratingResult` 兼容。
 - 修正 RespondStage 驱动输出的发送后 Hook、visible completion 和 Turn 最终化顺序。
 
-下一步不是抽取 Backend，而是完成 Phase 0 清单，并从 Phase 1 的 Personal Runtime
-所有权开始迁移。
+下一步不是抽取 Backend，而是先完成 Phase 0 的 session 并发策略、Third-party Runner、
+Subagent、主动消息和旧 Interaction Memory 数据调查，再删除无生产调用者的
+pre-Pipeline 入站路径。之后才从 Phase 1 的 Personal Runtime 所有权开始迁移。
 
 ## 非目标
 

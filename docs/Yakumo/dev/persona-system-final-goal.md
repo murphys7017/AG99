@@ -1,5 +1,13 @@
 # Persona Runtime Final Goal Consensus
 
+> 状态说明（2026-07-17）：
+> 本文的人格持续运行、统一表达和插件扩展目标继续有效；独立 Input Bus/Input Gateway
+> 及其实施顺序已经被当前源码事实取代。现行入口是官方 EventBus/Pipeline 完成过滤和
+> Plugin Handler 后，通过 Personal Runtime Adapter 接入，Core Agent 位于其后。
+> 当前实施顺序以 `execution-backend-preparation-plan.md` 和
+> `personal-runtime-transition-inventory.md` 为准，不再实现平行 Input Bus，也不调用
+> `InteractionMiddleware.handle_inbound()`。
+
 这份文档记录 Yakumo / AstrBot 二期目前确认的最终目标和主运行时边界。
 
 它不是当前实现说明，也不是具体的插件接口规范。本文确认主链路如何从任务型对话走向人格型运行，并记录已经确认的插件总体模型；具体 hook、数据结构和调用协议会在下一步单独设计。

@@ -1,5 +1,12 @@
 # Legacy Plugin Hook Migration and Input Bus Plan
 
+> 状态说明（2026-07-17）：
+> 本文保留为旧插件 Hook 盘点和历史迁移方案，不再作为当前实施命令。
+> 独立 Input Bus/Input Gateway 与 `InteractionMiddleware.handle_inbound()` 路径已经废弃；
+> 当前复用官方 EventBus/Pipeline，并在 Plugin Handler 后、Core Agent 前接入 Personal
+> Runtime Adapter。现行范围和迁移顺序见 `execution-backend-preparation-plan.md` 与
+> `personal-runtime-transition-inventory.md`。
+
 这份文档记录 Yakumo 一期的插件兼容与 Input Bus 实施计划。
 
 它不是最终插件协议，也不要求现在设计一套全新的插件生态。一期工作的首要目标是保留 AstrBot 现有插件能力，将旧插件依赖的钩子逐步迁移到新的 Input Gateway、Persona Runtime、Executor Runtime 和 Output Runtime。

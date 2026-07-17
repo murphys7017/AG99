@@ -1,11 +1,16 @@
 task:
-  class: refactor
+  class: review
   risk: high
-  phase: personal_runtime_transition_cleanup_plan
-  scope: Retire transitional Personal Runtime input, state, prompt, capability, output, memory, and plugin boundaries before designing replaceable execution backends
+  phase: personal_runtime_transition_inventory
+  scope: Establish the source-backed transition inventory, ownership risks, data boundaries, and deletion order before changing Personal Runtime implementation
 context:
   confidence: high
   assumptions:
+    - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound and its event-queue reinsertion path have no production caller.
+    - Preliminary work prioritizes source ownership and data-flow investigation; new tests are deferred until migration owners and batches are fixed.
+    - InteractionMemoryStore has production readers but no production writer; code removal must be separated from any migration decision for existing data/interaction_memory files.
+    - Local data/interaction_memory currently contains three JSON files totaling 5243 bytes; content was not inspected and deletion is not authorized without a migration or archival decision.
+    - Independent Input Bus/Input Gateway plans are superseded by the official EventBus/Pipeline plus Personal Runtime Adapter boundary.
     - Execution Backend decoupling is deliberately last; current work first replaces transitional structures before execution preparation.
     - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
     - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
@@ -57,6 +62,9 @@ context:
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.
     - Slot-level meta.targets is a fail-closed model-visibility contract; malformed declarations are not treated as unrestricted access.
   unresolved_questions:
+    - The target policy for overlapping turns in one persona/session/audience scope is not yet fixed: queue, cancel-and-replace, or allow explicit concurrency.
+    - Proactive Context.send_message output still needs an explicit persona/progress/protocol/raw policy before it can enter Personal Runtime by default.
+    - Existing data/interaction_memory files need an inspectable migration or archival policy before InteractionMemoryStore readers are removed.
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
     - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
     - Context Catalog declares lifecycle and redaction rules that are not consistently enforced at runtime.
