@@ -1,11 +1,14 @@
 task:
   class: refactor
   risk: high
-  phase: execution_backend_preparation_output_compatibility
-  scope: Establish executor-decoupling dependency baselines and repair existing Interaction output-hook and turn-completion ordering without introducing backend abstractions
+  phase: personal_runtime_transition_cleanup_plan
+  scope: Retire transitional Personal Runtime input, state, prompt, capability, output, memory, and plugin boundaries before designing replaceable execution backends
 context:
   confidence: high
   assumptions:
+    - Execution Backend decoupling is deliberately last; current work first replaces transitional structures before execution preparation.
+    - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
+    - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
     - Personal Runtime is the control layer; current InteractionPersonaRuntime is the Personal Expression facade, not the future plugin action runtime.
     - Official and new plugins are future Personal Runtime defaults, but current Prompt Extension, Tool, LLM Hook, Agent Hook, and Subagent behavior remains Native-Core-owned until a reviewed mapping exists.
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
@@ -230,6 +233,9 @@ verification:
     - .venv\Scripts\python.exe -m ruff check Router attachment-summary and Anthropic local-context-image changes
     - .venv\Scripts\python.exe -m pytest prompt selector and interaction structured-output parser suites -q
     - uv lock --check
+    - pnpm --dir docs docs:build
+    - YAML parse check for .ai/state.yaml after Personal Runtime transition-cleanup plan update
+    - git diff --check after Personal Runtime transition-cleanup plan update
   checks_failed:
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
     - Expanded interaction plus core-lifecycle run passed 222 tests but retained 2 existing core-lifecycle fixture failures because direct lifecycle construction does not initialize interaction_middleware; no affected lifecycle source was changed.

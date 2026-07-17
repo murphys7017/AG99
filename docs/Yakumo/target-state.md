@@ -335,11 +335,17 @@ Desktop Body Output 是普通聊天输出之外的表现通道，用于本地可
 
 等代码边界稳定后，再决定哪些模块独立进程化、哪些模块继续保留在同一部署单元。
 
-## 执行器解耦前置准备
+## Personal Runtime 前置主链清理
 
-完整执行器解耦暂不进入实现阶段。下一步先以 Native AstrBot Agent 为行为基线，
-完成依赖盘点、插件兼容审阅、Prompt/Tool/Subagent 生命周期审阅、必要修复和基线测试。
+可替换执行后台暂不进入实现阶段。当前优先清理执行之前仍然存在的过渡结构：建立
+Personal Runtime 的 session/turn/task 所有权，收口类型化状态和唯一 Output
+Dispatcher，确定 Prompt Snapshot、Capability Snapshot、Conversation/Memory 和插件
+生命周期边界。
 
-准备阶段不创建空置的 Backend/Gateway 抽象，不移动官方插件 Handler，也不改写现有
-Handoff 执行。详细范围、阶段和进入正式实现前的验收条件见
-[执行器解耦前置准备计划](./dev/execution-backend-preparation-plan.md)。
+兼容目标是官方公开插件、Pipeline、平台、配置和数据边界，不包括当前内部的 event
+方法替换、extra 镜像、平行 Agent SubStage、私有反向回调或旧 Interaction Memory。
+每个阶段切换 owner 后应删除旧内部路径，不长期维护双轨实现。
+
+只有前置主链稳定后，才从统一 Execution Preparation 接入 Native、Claude Code、
+OpenCode 等 Backend。详细阶段和验收条件见
+[Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)。

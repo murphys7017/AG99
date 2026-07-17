@@ -1,10 +1,29 @@
-# 执行器解耦依赖审阅
+# Personal Runtime 前置依赖审阅
 
-本文记录执行器解耦准备阶段第一轮源码盘点。它描述当前依赖和已经确认的修复范围，
-不代表完整执行器接口已经确定。
+本文记录 Personal Runtime 前置主链第一轮源码盘点。它描述当前依赖和已经确认的修复
+范围，不代表完整执行器接口已经确定。
 
 当前消息时序以 `execution-backend-flow.mmd` 为准；总体准备步骤和进入正式实现的条件
 见 `execution-backend-preparation-plan.md`。
+
+## 审阅定位更新
+
+本审阅最初围绕执行器解耦准备展开。后续整体审阅确认，Backend 是主链最后且相对简单
+的替换点；当前优先级已经调整为清理它之前的过渡结构。
+
+以下事实继续有效，但不再用于证明应尽快创建 Backend 接口，而用于确定哪些前置 owner
+需要先迁移：
+
+- Personal Runtime 当前仍是 event/turn 级协调器，不是稳定 Session Runtime。
+- Output 接管依赖 event 方法替换和跨 Pipeline 回调。
+- TurnState 与大量 extra 形成可写状态镜像。
+- Planner 能力摘要与 Native Core 实际工具注入不是同一能力快照。
+- ContextPack 单次合并不可变，但共享 context material 会被后续 Core enrichment 换版。
+- Conversation、MemoryService 和 InteractionMemoryStore 仍有重叠。
+- Local 与 Third-party Agent SubStage 使用不同准备链，不能作为未来 Backend 架构基础。
+
+这些过渡结构不属于官方兼容面。迁移时保护公开插件、Pipeline、平台、配置和数据边界，
+但新 owner 接管后应删除旧内部主路径。
 
 ## 当前边界结论
 
@@ -42,7 +61,7 @@ Platform / EventBus / Pipeline
 | Prompt Extension Collector | Canonical ContextPack collection | 部分 | 未声明 targets 的 extension 当前默认只投影 Core | 记录当前默认值；正式映射前不改变默认 |
 | `OnLLMRequest/Response` | Native/third-party Agent path | 有 | Router/Planner/Expression 不触发 | 不映射到内部分类或表达调用；等待 Runtime Action 边界确定 |
 | Agent begin/done、Tool Hook | Native/third-party Agent hooks | 有 | 依赖 AgentRunner 生命周期 | 纳入未来统一执行事件要求 |
-| Plugin Tool | `build_main_agent()` + FunctionToolExecutor | 有 | 当前只由 Core Tool Loop 调用 | 正式解耦前确定能力桥接，不在准备阶段迁移 |
+| Plugin Tool | `build_main_agent()` + FunctionToolExecutor | 有 | 当前只由 Core Tool Loop 调用 | 在 Capability Snapshot 阶段确定唯一能力来源，当前不迁移调用实现 |
 | `OnDecoratingResult` | ResultDecorateStage | 无 | Interaction 非流式已恢复；Core 流式仍无法在首块发送前得到完整最终文本 | 保留流式限制并继续审阅统一流事件 |
 | `OnAfterMessageSent` | RespondStage | 无 | Interaction Core 可能已经提前完成 Turn | 本轮调整完成顺序 |
 | postprocess/lifecycle observer | RespondStage / Interaction Middleware | 部分 | 两条路径 owner 不同 | 保持触发职责，补调用顺序测试 |
@@ -75,8 +94,8 @@ targets 才会进入分类视图。
 - Core ContextPack 构建、Projection、Render 和 Apply；
 - AgentRunner、FunctionToolExecutor 和 Agent Hook 组装。
 
-这些职责不能一次性被视为一个可替换接口。正式解耦前必须区分 Prompt 准备、能力
-清单、能力调用、执行事件和会话持久化五类依赖。
+这些职责不能一次性被视为一个可替换接口。前置主链必须先分别确定 Prompt 准备、能力
+清单、能力调用、执行事件和会话持久化的 owner，再讨论 Backend 接口。
 
 ## Subagent 依赖
 
@@ -96,8 +115,8 @@ config / @agent
 执行完成后创建后续事件重新唤醒主 Agent。
 
 因此 Subagent 当前依赖 Native Tool Loop、Provider 解析、AstrAgentContext、父事件和后台
-唤醒。准备阶段只补充生命周期基线；正式解耦时再决定 Subagent Service 和 Backend
-选择，不在本轮改写 Handoff。
+唤醒。前置清理先确定任务身份、父子关系、完成与唤醒的长期 owner；当前不改写
+Handoff，也不提前决定 Subagent Service 或 Backend 选择。
 
 ## 已确认的现有问题
 
@@ -133,9 +152,9 @@ Turn 持久化。RespondStage 随后才运行 `OnAfterMessageSent` 和 visible c
 当前只有消息 Handler 可以自然视为 Personal Runtime 控制范围。Prompt Extension、
 Plugin Tool、LLM Hook、Agent Hook 和 Subagent 仍主要落在 Native Core。
 
-这是正式执行器解耦前必须解决的设计差距，但不是本轮输出兼容修复的一部分。不能把
-旧 Hook 直接挂到 Router 或 Personal Expression，因为会破坏分类 Prompt 和结构化表达
-契约。
+这是 Personal Runtime、Capability 和插件边界收口时必须解决的设计差距，但不是本轮
+输出兼容修复的一部分。不能把旧 Hook 直接挂到 Router 或 Personal Expression，因为会
+破坏分类 Prompt 和结构化表达契约。
 
 ### 4. 术语仍有重叠
 
@@ -162,5 +181,6 @@ Plugin Tool、LLM Hook、Agent Hook 和 Subagent 仍主要落在 Native Core。
 - 直接依赖特定 AgentRunner 的第三方插件迁移。
 - Core 流式完整文本的发送前 `OnDecoratingResult` 兼容。
 
-完成本轮修复后仍需重新审阅 Native 非流式、流式、错误、Tool 和 Subagent 基线，再
-决定是否具备正式执行器接口设计条件。
+完成本轮修复后，下一步是形成过渡结构清单，并依次收口 Personal Runtime、类型化状态、
+Output、Prompt、Capability、Memory、插件与任务 owner。只有前置主链通过就绪复核后，
+才判断是否进入 Backend 接口设计。

@@ -53,7 +53,7 @@ Yakumo Persona Control Layer
 ```text
 Platform / WebUI / Official Internal Event
   -> Official EventBus / Pipeline / Plugin Handlers
-  -> Interaction Boundary
+  -> Personal Runtime Adapter
       -> Observation projection
       -> PersonaRuntime
           -> TurnContextSnapshot
@@ -66,7 +66,7 @@ Platform / WebUI / Official Internal Event
                       -> ActiveTask progress / result
                       -> Unified Persona Expression
               -> Output Arbiter
-      -> Existing Interaction Output Runtime
+      -> Output Dispatcher
       -> Official Platform Adapter
   -> FinalizedMaterial
   -> Postprocess / Memory / Persona State
@@ -205,14 +205,19 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 - 不改变官方 Handler、`MessageEventResult`、`ProviderRequest`、LLM Tool 和 Hook 的基本入口。
 - 未启用 Interaction / Persona Runtime 的平台继续走官方路径。
 
-### 过渡方式
+### 过渡方式与退出条件
 
 - 在 `ProcessStage` 的插件处理与 Core 执行之间建立明确的 Persona Observation 接缝；它不以当前事件是否准备调用 LLM 为前提。
 - `ObservationFactory.from_event(event)` 在 Interaction 内部做只读投影，不修改 event 类型，也不把所有平台服务通知伪装成用户消息。
 - Observation 优先保存在 `InteractionTurnState`；`event.extra` 只在已有兼容点需要时镜像。
-- 第一阶段继续使用现有 `InteractionOutputController`，不另建一套 Output Gateway。
+- 第一阶段继续使用现有 `InteractionOutputController` 维持行为，但它是待迁移实现，
+  不是长期 Output 架构；正式 Output Dispatcher 接管后删除 event 方法替换和反向回调。
 - 第一阶段继续使用现有入站 materialization，不另建一套通用 Input Runtime。
-- 第一阶段继续使用现有 Core bridge，不提前重写 Agent、插件、工具和知识库。
+- 第一阶段继续使用现有 Core bridge，不提前重写 Agent、插件、工具和知识库；后续先统一
+  Prompt/Capability owner，Backend 解耦放在前置清理完成之后。
+
+过渡适配只允许短期存在。每个阶段必须写明旧 owner 的删除条件，不能因为当前代码已经
+可用就把内部过渡结构升级为兼容要求。
 
 ### 修改官方边界的判断
 
@@ -266,32 +271,52 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 - 未启用 Persona Runtime 的路径不受影响。
 - Yakumo 接入点保持集中，后续同步官方 Pipeline、Core 或 Adapter 更新时不需要重写 PersonaRuntime。
 
-### Phase 2：共享 TurnContextSnapshot
+### Phase 2：共享 TurnContextSnapshot 与类型化状态
 
 - 一次 Observation 只解析一次 identity、history、memory、persona 和 attachments。
 - Router、Core Planner、Persona 和 Core 从同一 snapshot 投影不同 Prompt Profile。
 - required / optional collector、超时和降级诊断在 snapshot 边界统一生效。
 - Router 继续保持极简 Profile，但不再单独重复查询 conversation 和 memory。
 - 区分 conversation history、relationship state 和 persona state；逐步用官方 Memory / Persona 能力替代按 session 保存的 Interaction JSON 主状态。
+- 将 `_interaction_*` 内部主状态迁入类型化 Runtime/Session/Turn Context；extra 只保留
+  公开诊断或官方插件兼容投影。
 
-### Phase 3：ActiveTask 与可替换执行器
-
-- 把 Core 委派改为 ActiveTask。
-- 抽出 `ExecutionPlan`、`ExecutionBackend`、`ExecutionEvent` 和 `ExecutionResult`。
-- 先用 `NativeAstrBotBackend` 包住官方现有执行路径，不改变行为。
-- 外部执行器通过 execution-scoped Capability Gateway 使用官方插件、工具和知识库能力。
-- Codex、OpenCode 和 Native Core 都向 PersonaRuntime 返回统一 task event。
-- ExecutionBackend 由 PersonaRuntime 针对 ActiveTask 解析，不在 Pipeline 初始化时全局固定。
-
-### Phase 4：ExpressionIntent 与 OutputEnvelope
+### Phase 3：ExpressionIntent 与 Output Dispatcher
 
 - 即时表达、任务进度、最终结果和插件 persona 输出统一形成 ExpressionIntent。
 - 一次逻辑 utterance 只创建一个 OutputEnvelope。
 - 文本和 TTS 是同一 envelope 的 rendition，不是多条独立回复；插件扩展也不能额外创建重复的逻辑回复。
 - 普通插件最终语义文本默认进入 Persona Expression；`direct` 只用于明确的协议输出、不可改写内容和原始媒体投递。
-- 现有 OutputController 逐步承载 envelope，不另建平行输出链路。
+- 建立唯一 Output Dispatcher，并在切换后删除 event 方法替换、原始 send 回退和
+  OutputController 反向私有回调。
 
-### Phase 5：Background Mind 与主动存在
+### Phase 4：Prompt、Capability 与 Memory 收口
+
+- Base ContextSnapshot 保持不可变；Router、Planner、Persona 和 Execution 使用显式
+  Projection/Overlay，不替换共享材料的当前版本。
+- Knowledge、Tools、Skills、Plugins 和 Subagent 由唯一 Capability Resolver 形成快照。
+- Router、Planner 和后续执行使用同一 Capability Snapshot 的不同投影。
+- Conversation 保存精确历史，MemoryService 保存派生记忆与人格状态；迁移并删除无主
+  写入链路的 Interaction Memory。
+- 插件扩展点标明 owner、phase、scope、priority、side effect 和 timeout。
+
+### Phase 5：ActiveTask 与执行准备
+
+- 把 Core 委派改为由 PersonalSessionRuntime 持有的 ActiveTask。
+- 形成稳定的 CoreTaskSpec、ContextSnapshot、CapabilitySnapshot 和执行准备输入。
+- Local/Third-party 平行准备链停止扩展，并具备删除条件。
+- 本阶段只验证 Native 所需材料能够从统一前置边界获得，不实现新 Backend。
+
+### Phase 6：可替换执行后台
+
+- 前置主链验收通过后，再定义 `ExecutionRequest`、`ExecutionEvent` 和 Backend Adapter。
+- 先让 Native AstrBot 执行成为第一个 Backend，并删除旧的平行选择路径。
+- Claude Code、OpenCode 等只实现执行差异，不重新准备 Prompt、能力、会话和输出。
+
+### 后续演进：Background Mind 与主动存在
+
+这一方向不属于当前前置清理或 Backend 接入顺序。它复用稳定后的 Personal Runtime、
+Observation、Memory 和 Output 边界，不作为延迟清理过渡结构的理由。
 
 - heartbeat、idle tick、scheduled reminder、task state 和 reflection trigger 作为内部 Observation 接入。
 - 主动表达必须经过 audience、privacy、importance、cooldown 和 interruption policy。
@@ -311,4 +336,7 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 - 把所有状态塞进 PersonaRuntime Python 对象
 - 让 AG99live 或其他客户端直接监听所有 session 原文
 
-近期目标只包括：建立 Observation、持续 PersonaRuntime identity、共享 TurnContextSnapshot，以及输入、执行、表达和 finalized material 的稳定边界。
+近期目标是先清理 Personal Runtime 主链中的过渡 owner：建立稳定的 Observation 与
+PersonaRuntime identity，收口类型化 Runtime Context、Output Dispatcher、Prompt 与
+Capability Snapshot、Conversation/Memory，以及插件、ActiveTask 和 Subagent 边界。
+完成前置主链就绪复核后，再单独设计和接入可替换执行后台。
