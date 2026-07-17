@@ -4,7 +4,11 @@ from copy import copy
 
 from astrbot.core import logger
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
-from astrbot.core.interaction.turn_state import get_interaction_turn_state
+from astrbot.core.interaction.turn_state import (
+    begin_interaction_turn_finalization_deferral,
+    cancel_interaction_turn_finalization_deferral,
+    get_interaction_turn_state,
+)
 from astrbot.core.message.components import ComponentType
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
@@ -27,15 +31,40 @@ class RespondStage(Stage):
 
     async def _dispatch_after_message_sent(self, event: AstrMessageEvent) -> bool:
         if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
+            await self._cancel_interaction_turn_finalization(
+                event,
+                reason="after_message_sent_hook_stopped",
+            )
             return False
 
         await self._complete_visible_turn(event)
         self._schedule_after_message_sent_postprocess(event)
+        await self._flush_interaction_turn_finalization(event)
         return True
 
     @staticmethod
     async def _complete_visible_turn(event: AstrMessageEvent) -> None:
         await event.complete_visible_turn()
+
+    @staticmethod
+    async def _flush_interaction_turn_finalization(
+        event: AstrMessageEvent,
+    ) -> None:
+        controller = event.get_extra("_interaction_output_controller")
+        flush = getattr(type(controller), "flush_deferred_turn_finalization", None)
+        if callable(flush):
+            await flush(controller, event)
+
+    @staticmethod
+    async def _cancel_interaction_turn_finalization(
+        event: AstrMessageEvent,
+        *,
+        reason: str,
+    ) -> None:
+        controller = event.get_extra("_interaction_output_controller")
+        cancel = getattr(type(controller), "cancel_deferred_turn_finalization", None)
+        if callable(cancel):
+            await cancel(controller, event, reason=reason)
 
     @staticmethod
     async def _send_with_origin(
@@ -235,34 +264,60 @@ class RespondStage(Stage):
                 == "realtime_segmenting"
             )
             logger.debug(f"应用流式输出({event.get_platform_id()})")
-            await self._send_stream_with_origin(
-                event,
-                result.async_stream,
-                realtime_segmenting,
-                self._result_output_origin(result),
-            )
-            sent_any = True
-            await self._dispatch_after_message_sent(event)
+            deferred = self._begin_interaction_finalization_deferral(event)
+            try:
+                await self._send_stream_with_origin(
+                    event,
+                    result.async_stream,
+                    realtime_segmenting,
+                    self._result_output_origin(result),
+                )
+                sent_any = True
+                await self._dispatch_after_message_sent(event)
+            finally:
+                if deferred:
+                    cancel_interaction_turn_finalization_deferral(event)
             return
         if len(result.chain) > 0:
             output_origin = self._result_output_origin(result)
-            sent_any = await deliver_message_chain(
-                event,
-                result.derive(result.chain),
-                send_message=lambda chain: self._send_with_origin(
+            deferred = self._begin_interaction_finalization_deferral(event)
+            try:
+                sent_any = await deliver_message_chain(
                     event,
-                    chain,
-                    output_origin,
-                ),
-                platform_settings=self.platform_settings,
-                result_is_model_result=result.is_model_result(),
-            )
+                    result.derive(result.chain),
+                    send_message=lambda chain: self._send_with_origin(
+                        event,
+                        chain,
+                        output_origin,
+                    ),
+                    platform_settings=self.platform_settings,
+                    result_is_model_result=result.is_model_result(),
+                )
+
+                if event.get_extra("_interaction_pipeline_output_suppressed", False):
+                    event.set_extra("_interaction_pipeline_output_suppressed", False)
+                    sent_any = False
+
+                if not sent_any:
+                    event.clear_result()
+                    return
+
+                if not await self._dispatch_after_message_sent(event):
+                    return
+            finally:
+                if deferred:
+                    cancel_interaction_turn_finalization_deferral(event)
 
         if not sent_any:
             event.clear_result()
             return
 
-        if not await self._dispatch_after_message_sent(event):
-            return
-
         event.clear_result()
+
+    def _begin_interaction_finalization_deferral(
+        self,
+        event: AstrMessageEvent,
+    ) -> bool:
+        if not self._is_interaction_turn(event):
+            return False
+        return begin_interaction_turn_finalization_deferral(event)

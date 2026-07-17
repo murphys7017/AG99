@@ -1,11 +1,17 @@
 task:
-  class: bugfix
+  class: refactor
   risk: high
-  phase: router_persona_speculative_concurrency_reviewed
-  scope: Run Router and Persona Expression concurrently with atomic silent arbitration while keeping Planner independent and Core-only
+  phase: execution_backend_preparation_output_compatibility
+  scope: Establish executor-decoupling dependency baselines and repair existing Interaction output-hook and turn-completion ordering without introducing backend abstractions
 context:
   confidence: high
   assumptions:
+    - Personal Runtime is the control layer; current InteractionPersonaRuntime is the Personal Expression facade, not the future plugin action runtime.
+    - Official and new plugins are future Personal Runtime defaults, but current Prompt Extension, Tool, LLM Hook, Agent Hook, and Subagent behavior remains Native-Core-owned until a reviewed mapping exists.
+    - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
+    - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and direct-send behavior remain unchanged.
+    - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
+    - RespondStage-driven Interaction results finalize only after OnAfterMessageSent and visible completion; direct event.send paths retain their existing semantics.
     - Router remains a minimal silent/persona/hybrid classifier and never plans tasks or receives tool schemas.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
@@ -113,6 +119,8 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Executor preparation/output compatibility: Prompt/Main Agent/Tool Loop/Interaction suite passed 321 tests; event/message/memory suite passed 178 tests; suppressed Interaction output preserves the prior send-operation state; Ruff, py_compile, Mermaid render, VitePress build, YAML parse, and git diff checks passed.
+    - All explicit tests/unit/test_interaction_*.py files passed 200 tests after the broader unit collection command was blocked by local data/cmd_config.json permissions; postprocess and pipeline scheduler coverage passed 34 tests.
     - Router/Persona review cleanup: context single-flight/cancellation, Core handoff, and Planner recovery tests (73 passed); broad Interaction/Prompt/Main Agent suite (421 passed).
     - Router/Persona speculative concurrency: all interaction unit tests (195 passed), broad Interaction/Prompt/Main Agent suite (419 passed), Middleware race tests (53 passed), Ruff, py_compile, YAML parse, and git diff checks passed.
     - Prompt/Planner boundary fixes: focused Prompt/Planner/Middleware suite (223 passed), broad Prompt/Interaction/Main Agent suite (417 passed), Middleware concurrency suite (52 passed), Ruff, py_compile, YAML parse, and git diff checks passed.
@@ -223,6 +231,7 @@ verification:
     - .venv\Scripts\python.exe -m pytest prompt selector and interaction structured-output parser suites -q
     - uv lock --check
   checks_failed:
+    - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
     - Expanded interaction plus core-lifecycle run passed 222 tests but retained 2 existing core-lifecycle fixture failures because direct lifecycle construction does not initialize interaction_middleware; no affected lifecycle source was changed.
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.

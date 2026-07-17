@@ -41,6 +41,7 @@ from .output_modes import (
 from .turn_state import (
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_visible_output,
+    consume_interaction_turn_finalization_pending,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
@@ -54,8 +55,11 @@ from .turn_state import (
     has_interaction_turn_core_streaming_result_consumed,
     is_interaction_turn_completed,
     is_interaction_turn_core_streaming_active,
+    is_interaction_turn_finalization_deferred,
+    mark_interaction_turn_cancelled,
     mark_interaction_turn_core_final_result_consumed,
     mark_interaction_turn_core_streaming_result_consumed,
+    mark_interaction_turn_finalization_pending,
     mark_interaction_turn_stream_interjection_emitted,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
@@ -571,8 +575,29 @@ class InteractionOutputController:
         )
         if callable(complete_visible_turn):
             await complete_visible_turn()
-            return
-        await event.complete_visible_turn()
+        else:
+            await event.complete_visible_turn()
+
+    async def flush_deferred_turn_finalization(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        if consume_interaction_turn_finalization_pending(event):
+            await self._persist_interaction_turn(event)
+
+    async def cancel_deferred_turn_finalization(
+        self,
+        event: AstrMessageEvent,
+        *,
+        reason: str,
+    ) -> None:
+        consume_interaction_turn_finalization_pending(event)
+        mark_interaction_turn_cancelled(event)
+        await self._notify_lifecycle(
+            event,
+            "cancelled",
+            {"reason": reason},
+        )
 
     @staticmethod
     def _get_full_core_final_message(
@@ -1222,6 +1247,20 @@ class InteractionOutputController:
         if merged.final_text_override is not None:
             final_message = source_message.derive([Plain(merged.final_text_override)])
 
+        final_message = await self._apply_pipeline_pre_output_compatibility(
+            event,
+            final_message,
+        )
+        if final_message is None:
+            event.set_extra("_interaction_pipeline_output_suppressed", True)
+            mark_interaction_turn_cancelled(event)
+            await self._notify_lifecycle(
+                event,
+                "cancelled",
+                {"reason": "pipeline_pre_output_suppressed"},
+            )
+            return
+
         platform_extras = self.build_platform_output_base_extras(
             event,
             result_contribution=merged,
@@ -1254,6 +1293,23 @@ class InteractionOutputController:
         )
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
+
+    @staticmethod
+    async def _apply_pipeline_pre_output_compatibility(
+        event: AstrMessageEvent,
+        message: MessageChain,
+    ) -> MessageChain | None:
+        callback = event.get_extra("_interaction_pipeline_pre_output_callback")
+        if not callable(callback):
+            return message
+        event.set_extra("_interaction_pipeline_pre_output_callback", None)
+        result = event.get_result()
+        result_content_type = (
+            result.result_content_type
+            if result is not None and result.result_content_type is not None
+            else ResultContentType.LLM_RESULT
+        )
+        return await callback(event, message, result_content_type)
 
     @staticmethod
     def _is_core_final_model_result(event: AstrMessageEvent) -> bool:
@@ -1981,6 +2037,9 @@ class InteractionOutputController:
         event: AstrMessageEvent,
     ) -> None:
         if is_interaction_turn_completed(event):
+            return
+        if is_interaction_turn_finalization_deferred(event):
+            mark_interaction_turn_finalization_pending(event)
             return
         if self._persist_callback is not None:
             await self._persist_callback(event)

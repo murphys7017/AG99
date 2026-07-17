@@ -425,6 +425,55 @@ async def test_capture_message_chain_collects_result_contributors(webchat_event)
 
 
 @pytest.mark.asyncio
+async def test_pipeline_pre_output_callback_sees_final_contributed_text(webchat_event):
+    queue = asyncio.Queue()
+    plugin_context = MagicMock()
+    plugin_context.list_interaction_result_contributors.return_value = [
+        ResultContributor()
+    ]
+    controller = InteractionOutputController(
+        plugin_context=plugin_context,
+        interaction_config=InteractionAgentConfig(),
+        persist_callback=_mark_completed_callback,
+        visible_reply_renderer=_identity_visible_reply_renderer,
+    )
+    seen: list[str] = []
+
+    async def _pre_output(event, message, result_content_type):
+        del event
+        assert result_content_type == ResultContentType.LLM_RESULT
+        seen.append(message.get_plain_text())
+        return message.derive([Plain("hooked result")])
+
+    webchat_event.set_extra(
+        "_interaction_pipeline_pre_output_callback",
+        _pre_output,
+    )
+
+    with patch(
+        "astrbot.core.platform.sources.webchat.webchat_event.webchat_queue_mgr.get_or_create_back_queue",
+        return_value=queue,
+    ):
+        webchat_event.set_result(
+            MessageEventResult(
+                chain=[Plain("dry result")],
+                result_content_type=ResultContentType.LLM_RESULT,
+            )
+        )
+        await controller.capture_message_chain(
+            MessageChain([Plain("dry result")]),
+            webchat_event,
+        )
+
+    payload = queue.get_nowait()
+    assert seen == ["wrapped result"]
+    assert payload["data"] == "hooked result"
+    turn_state = get_interaction_turn_state(webchat_event)
+    assert turn_state is not None
+    assert turn_state.visible_outputs[-1]["text"] == "hooked result"
+
+
+@pytest.mark.asyncio
 async def test_immediate_reply_collects_result_contributors(webchat_event):
     queue = asyncio.Queue()
     contributor = ImmediateResultContributor()

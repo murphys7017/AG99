@@ -1,158 +1,277 @@
 flowchart LR
-%% Persona Runtime 与可替换执行器流程
-%% 左侧是当前已落地链路，右侧是后续目标设计。
+%% AstrBot 当前消息流程。只描述现有源码，不包含目标态或计划态。
 %%
-%% 已确认约束：
-%% 1. 保留官方 EventBus、Pipeline、权限过滤和插件事件机制。
-%% 2. Interaction Middleware 位于官方 Pipeline 之后、Core Agent 之前。
-%% 3. 对话 Router 只输出 silent / persona / hybrid，不选择执行器。
-%% 4. 直播音频与协议命令通过内部 protocol Core bypass，不伪装成 Router 结果。
-%% 5. Prompt 先统一收集事实；Router 与 Core Planner 独立判断，二者不共享模型决策。
-%% 6. 快速回复与 Core 最终回复使用同一个 Persona Expression。
-%% 7. Prompt 链路统一为 Collectors -> ContextBuilder -> Target Projection -> Render Profile -> Layout/PromptTreeBuilder -> Provider Renderer -> Apply。
-%% 8. 所有普通用户可见回复都经过 Interaction Output Runtime。
-%% 9. Motion、Live2D 和具体 effect 语义属于插件，不进入主流程。
+%% 主要源码锚点：
+%% - astrbot/core/platform/platform.py: Platform.commit_event / send_by_session
+%% - astrbot/core/event_bus.py: EventBus.dispatch
+%% - astrbot/core/pipeline/scheduler.py: PipelineScheduler.execute / _process_stages
+%% - astrbot/core/pipeline/stage_order.py: STAGES_ORDER
+%% - astrbot/core/pipeline/process_stage/stage.py: ProcessStage.process
+%% - astrbot/core/pipeline/process_stage/method/star_request.py: StarRequestSubStage.process
+%% - astrbot/core/pipeline/process_stage/method/agent_request.py: AgentRequestSubStage.process
+%% - astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py
+%% - astrbot/core/pipeline/process_stage/method/agent_sub_stages/third_party.py
+%% - astrbot/core/interaction/middleware.py: InteractionMiddleware
+%% - astrbot/core/interaction/output_controller.py: InteractionOutputController
+%% - astrbot/core/astr_main_agent.py: build_main_agent
+%% - astrbot/core/prompt/*: ContextPack / Projection / Render / Apply
+%% - astrbot/core/pipeline/result_decorate/stage.py / respond/stage.py
+%% - astrbot/core/postprocess/* / memory/postprocessor.py
 
-    subgraph CURRENT[当前已落地流程]
+    subgraph INBOUND["一、平台入站与官方事件调度"]
         direction TB
-        C_A[平台适配器<br/>QQ / WebChat / 其他平台] --> C_B[Event Queue]
-        C_B --> C_C[EventBus]
-        C_C --> C_D[官方 Pipeline]
-        C_D --> C_D1[事件类型 / 权限 / 白名单 / 唤醒过滤]
-        C_D1 --> C_D2[插件事件处理器]
-        C_D2 --> C_E[ProcessStage]
+        P0["平台 SDK / Webhook / WebSocket"]
+        P1["平台 Adapter 构造 AstrMessageEvent"]
+        P2["Platform.commit_event"]
+        Q["共享 Event Queue"]
+        EB["EventBus.dispatch<br/>按 unified_msg_origin 选择配置"]
+        PS["PipelineScheduler.execute<br/>每个事件独立 asyncio Task"]
 
-        C_E --> C_F[Interaction Middleware]
-        C_F --> C_F1[建立 Interaction Turn]
-        C_F1 --> C_F2[输入物化<br/>文本 / 语音 / 图片]
-        C_F2 --> C_CTX[Prompt Collectors<br/>Canonical ContextPack]
-        C_CTX --> C_P{内部协议 bypass?}
-
-        C_P -- 是 --> C_P1[Protocol Core Bypass<br/>不创建 Router 决策]
-        C_P -- 否 --> C_G1[Router<br/>只输出 silent / persona / hybrid]
-        C_G1 --> C_H{Route}
-
-        C_H -- silent --> C_S0[Silent Finalized Material<br/>无助手文本 / 无平台发送]
-        C_S0 --> C_S1[Turn Completed]
-
-        C_H -- persona --> C_G2[唯一 Persona Expression<br/>直接回复]
-        C_G2 --> C_I1[Interaction Output Runtime<br/>最终输出]
-        C_I1 --> C_R[平台发送]
-        C_R --> C_S[Finalized Turn Material]
-        C_S --> C_T[Postprocess / Memory]
-
-        C_H -- hybrid --> C_PLAN[独立 Core Planner<br/>execute / not_required]
-        C_PLAN -- not_required --> C_G2
-        C_PLAN -- execute --> C_G3[唯一 Persona Expression<br/>委派确认]
-        C_G3 --> C_I2[Interaction Output Runtime<br/>即时发送但不完成 Turn]
-        C_I2 --> C_K[AgentRequestSubStage]
-        C_P1 --> C_K
-
-        C_K --> C_L{agent_runner_type}
-        C_L -- local --> C_M[InternalAgentSubStage]
-        C_L -- third-party --> C_N[ThirdPartyAgentSubStage]
-
-        C_M --> C_O[build_main_agent]
-        C_O --> C_O1[ProviderRequest]
-        C_O1 --> C_O2[Prompt Pipeline<br/>Core Projection / Layout / Render / Apply]
-        C_O2 --> C_O3[AstrBot Agent Runner]
-        C_O3 --> C_O4[Provider + Tool Loop]
-
-        C_N --> C_N1[第三方 Runner 简化请求]
-        C_O4 --> C_Q[Core 结果 / 中间输出]
-        C_N1 --> C_Q
-
-        C_Q --> C_I0[Output Controller<br/>Core 输出捕获]
-        C_I0 -->|Core 最终结果| C_G4[同一个 Persona Expression<br/>Core 最终结果拟人化]
-        C_I0 -. 部分中间输出 .-> C_RISK[当前风险<br/>passthrough 可能提前完成 Turn]
-        C_RISK --> C_R
-        C_G4 --> C_I1
+        P0 --> P1 --> P2 --> Q --> EB --> PS
     end
 
-    subgraph TARGET[Persona Runtime 与可替换执行器目标流程]
+    subgraph OFFICIAL["二、官方 Pipeline 前置阶段"]
         direction TB
-        T_A[平台 / WebUI / 内部事件] --> T_B[官方 EventBus / Pipeline]
-        T_B --> T_B1[官方过滤 / 权限 / 插件事件处理]
-        T_B1 --> T_C[Interaction Boundary]
-        T_C --> T_C1[Observation Projection]
-        T_C1 --> T_C2[PersonaRuntime + TurnContextSnapshot]
-        T_C2 --> T_P{内部协议 bypass?}
+        W["WakingCheckStage<br/>自消息过滤 / 唤醒判断 / 插件 Handler 过滤"]
+        WL["WhitelistCheckStage"]
+        SS["SessionStatusCheckStage"]
+        RL["RateLimitStage"]
+        CS["ContentSafetyCheckStage"]
+        PP["PreProcessStage<br/>路径映射 / Record 转换 / STT"]
+        STOP0["event.stop_event<br/>本轮不再进入后续 Stage"]
 
-        T_P -- 否 --> T_G1[Router<br/>silent / persona / hybrid]
-        T_P -- 是 --> T_I[CoreExecutionService<br/>协议任务]
-        T_G1 --> T_H{Route}
-
-        T_H -- silent --> T_S0[Silent Finalized Material]
-        T_S0 --> T_S1[Turn Completed]
-
-        T_H -- persona --> T_G2[统一 Persona Expression<br/>purpose: direct_reply]
-        T_G2 --> T_A0[Output Arbiter]
-
-        T_H -- hybrid --> T_PLAN[独立 Core Planner]
-        T_PLAN -- not_required --> T_G2
-        T_PLAN -- execute --> T_H1[Hybrid Coordination]
-        T_H1 -->|并发启动| T_G3[统一 Persona Expression<br/>purpose: delegation_ack]
-        T_H1 -->|并发启动| T_I
-        T_G3 --> T_A0
-
-        T_I --> T_I1[prepare_core_execution]
-        T_I1 --> T_J[Prompt Pipeline]
-        T_I1 --> T_K[Capability Resolver]
-        T_J --> T_J1[ContextPack<br/>Target Projection<br/>Render Profile / Layout / Prompt Tree]
-        T_J1 --> T_L[ExecutionPlan]
-        T_K --> T_K1[按会话 / 插件 / 权限 / 策略筛选]
-        T_K1 --> T_K2[CapabilitySnapshot]
-        T_K2 --> T_L
-
-        T_L --> T_M[ExecutionBackendResolver]
-        T_M --> T_N1[NativeAstrBotBackend]
-        T_M --> T_N2[CodexBackend]
-        T_M --> T_N3[OpenCodeBackend]
-
-        T_N1 --> T_R0[AstrBot Provider + Agent Tool Loop]
-        T_N2 --> T_R1[Codex Renderer]
-        T_N3 --> T_R2[OpenCode Renderer]
-        T_R1 --> T_X[外部执行器]
-        T_R2 --> T_X
-
-        T_K2 --> T_CG[Capability Gateway]
-        T_CG --> T_MCP[MCP Tool Projection]
-        T_MCP --> T_X
-        T_X --> T_CALL[MCP Tool Call]
-        T_CALL --> T_CG
-        T_CG --> T_EXEC[现有 FunctionToolExecutor]
-        T_EXEC --> T_CAP[插件工具 / 知识库 / 搜索 / 其他能力]
-
-        T_R0 --> T_RESULT[ExecutionEvent / ExecutionResult]
-        T_X --> T_RESULT
-        T_RESULT --> T_PROGRESS[Lifecycle / Progress<br/>thinking / tool_running]
-        T_RESULT --> T_MATERIAL[Core Result / Safe Failure Material]
-        T_MATERIAL --> T_G4[统一 Persona Expression<br/>purpose: final_result / execution_failure]
-        T_G4 --> T_A0
-
-        T_A0 --> T_A1{输出提交状态}
-        T_A1 -- Core 先完成且即时表达尚未发送 --> T_SUPPRESS[取消或抑制即时表达<br/>仅提交最终表达]
-        T_A1 -- 已开始或已发送 --> T_ORDER[保持即时与最终输出顺序]
-        T_SUPPRESS --> T_O[Interaction Output Runtime]
-        T_ORDER --> T_O
-        T_A1 -- persona 直接回复 --> T_O
-
-        T_O --> T_O1[文本 / 流式 / TTS 输出物化]
-        T_O1 --> T_V[官方平台发送]
-        T_V --> T_W[Finalized Material]
-        T_W --> T_Y[Postprocess / Memory / Persona State]
+        PS --> W
+        W -->|"未唤醒 / 自消息 / 权限失败"| STOP0
+        W -->|"继续"| WL
+        WL -->|"不在白名单"| STOP0
+        WL -->|"继续"| SS
+        SS -->|"会话关闭"| STOP0
+        SS -->|"继续"| RL
+        RL -->|"拒绝或停止"| STOP0
+        RL -->|"继续"| CS
+        CS -->|"内容拒绝"| STOP0
+        CS -->|"继续"| PP
     end
 
-    C_T ~~~ T_Y
+    subgraph PROCESS["三、ProcessStage：插件与 Core 的分流点"]
+        direction TB
+        PROC["ProcessStage.process"]
+        PREP["InteractionMiddleware.prepare_pipeline_event<br/>启用时建立 TurnState 并替换 send / send_streaming"]
+        HAS_HANDLER{"存在 activated_handlers?"}
+        STAR["StarRequestSubStage<br/>按顺序执行插件 Handler"]
+        STAR_OUT{"Handler 产出什么?"}
+        PLUGIN_RESULT["MessageEventResult / 普通 yield<br/>递归进入后续 Pipeline Stage"]
+        PROVIDER_REQ["ProviderRequest"]
+        PLUGIN_TX["插件输出事务<br/>此前可见输出改记为 progress"]
+        DEFAULT_GATE{"未发送消息 + 已唤醒 + 未 call_llm?"}
+        NO_CORE["ProcessStage 结束<br/>没有自动 Core 请求"]
+        BEFORE_CORE["InteractionMiddleware.handle_pipeline_event<br/>仅在即将调用 Core 前执行"]
 
-    classDef current fill:#eef5ff,stroke:#3973ac,color:#172b3a
-    classDef target fill:#eef9f0,stroke:#3d7d4a,color:#19351f
-    classDef decision fill:#fff4d6,stroke:#a67400,color:#493400
-    classDef boundary fill:#f8f0ff,stroke:#76519a,color:#2f1d40
-    classDef silent fill:#f2f2f2,stroke:#666,color:#222
+        PP --> PROC --> PREP --> HAS_HANDLER
+        HAS_HANDLER -->|"是"| STAR --> STAR_OUT
+        STAR_OUT -->|"普通结果"| PLUGIN_RESULT
+        PLUGIN_RESULT -. "后续 Stage 返回后继续下一个 Handler" .-> STAR
+        STAR_OUT -->|"ProviderRequest"| PROVIDER_REQ --> PLUGIN_TX --> BEFORE_CORE
+        STAR -->|"Handler 全部结束"| DEFAULT_GATE
+        HAS_HANDLER -->|"否"| DEFAULT_GATE
+        DEFAULT_GATE -->|"否"| NO_CORE
+        DEFAULT_GATE -->|"是"| BEFORE_CORE
+    end
 
-    class C_A,C_B,C_C,C_D,C_D1,C_D2,C_E,C_F,C_F1,C_F2,C_CTX,C_P1,C_G1,C_G2,C_G3,C_G4,C_I0,C_I1,C_I2,C_K,C_L,C_M,C_N,C_N1,C_O,C_O1,C_O2,C_O3,C_O4,C_Q,C_RISK,C_R,C_S,C_T,C_PLAN current
-    class T_A,T_B,T_B1,T_C,T_C1,T_C2,T_G1,T_G2,T_G3,T_G4,T_H1,T_I,T_I1,T_J,T_J1,T_K,T_K1,T_K2,T_L,T_M,T_N1,T_N2,T_N3,T_R0,T_R1,T_R2,T_X,T_CG,T_MCP,T_CALL,T_EXEC,T_CAP,T_RESULT,T_PROGRESS,T_MATERIAL,T_A0,T_SUPPRESS,T_ORDER,T_O,T_O1,T_V,T_W,T_Y,T_PLAN target
-    class C_P,C_H,C_PLAN,T_P,T_H,T_PLAN,T_A1 decision
-    class T_C,T_I,T_A0,T_O boundary
-    class C_S0,C_S1,T_S0,T_S1 silent
+    subgraph INTERACTION["四、Interaction 控制层（只在 Core 前运行）"]
+        direction TB
+        I_ENABLED{"Interaction 对当前事件启用?"}
+        ROUTEABLE{"存在文本、附件或 ProviderRequest?"}
+        IMAT["Interaction 入站物化<br/>媒体路径 / Record / STT / 生命周期 received"]
+        BYPASS{"Live Mode 或已注册协议命令?"}
+        PROTOCOL["Protocol Core Bypass<br/>标记 delegate_to_core，不创建 Router 决策"]
+        CTX["Turn-local Context Material single-flight<br/>PromptContextBuilder 构建规范 ContextPack"]
+        ROUTER["Router Task<br/>Router Projection → 只输出 silent / persona / hybrid"]
+        PERSONA["Persona Task<br/>Persona Projection → 结构化 persona_expression<br/>tool call 优先，能力不支持时受控 prompt-only 降级"]
+        ROUTE{"Router 结果<br/>异常时当前代码 fallback hybrid"}
+        SIL_ARB{"silent 仲裁<br/>Persona 仍 pending?"}
+        SILENT["Silent Finalized Material<br/>停止事件"]
+        LATE_PERSONA["Persona 已 committed / emitted<br/>保留已发送回复"]
+        PERSONA_ONLY["等待 Persona<br/>完成 visible turn + Finalized Material<br/>停止事件"]
+        PLANNER["Core Planner<br/>Core Planner Projection + 结构化输出"]
+        PLAN{"execute / not_required"}
+        TASK["保存 CoreTaskSpec<br/>生命周期 delegated"]
+        PSTATE{"Persona 提交仲裁<br/>silent / Core-final 是否已先提交?"}
+        PSUP["抑制 Persona"]
+        PIMM["OutputController 发送 immediate_reply<br/>Hybrid execute 时不完成 Turn"]
+        IFAIL["标记 failed / cancelled<br/>按异常语义终止"]
+
+        BEFORE_CORE --> I_ENABLED
+        I_ENABLED -->|"否"| AGENT_ENTRY
+        I_ENABLED -->|"是"| ROUTEABLE
+        ROUTEABLE -->|"否：跳过 Interaction 路由"| AGENT_ENTRY
+        ROUTEABLE -->|"是"| IMAT --> BYPASS
+        BYPASS -->|"是"| PROTOCOL --> AGENT_ENTRY
+        BYPASS -->|"否"| CTX
+        CTX --> ROUTER
+        CTX --> PERSONA
+        ROUTER --> ROUTE
+        PERSONA --> PSTATE
+        PSTATE -->|"允许提交"| PIMM
+        PSTATE -->|"被 silent 或 Core-final 抢先"| PSUP
+
+        ROUTE -->|"silent"| SIL_ARB
+        SIL_ARB -->|"是：取消 Persona"| SILENT
+        SIL_ARB -->|"否：Persona 已发出"| LATE_PERSONA --> PERSONA_ONLY
+        ROUTE -->|"persona"| PERSONA_ONLY
+        ROUTE -->|"hybrid"| PLANNER --> PLAN
+        PLAN -->|"not_required"| PERSONA_ONLY
+        PLAN -->|"execute"| TASK --> AGENT_ENTRY
+        PLANNER -->|"失败且 Persona 未成功发出"| IFAIL
+        PLANNER -->|"失败但 Persona 已发出"| PERSONA_ONLY
+        PIMM -. "persona / not_required 分支" .-> PERSONA_ONLY
+    end
+
+    subgraph AGENT["五、Core Agent 执行"]
+        direction TB
+        AGENT_ENTRY["AgentRequestSubStage<br/>检查会话 AI 开关"]
+        RUNNER_TYPE{"agent_runner_type"}
+
+        LOCAL0["InternalAgentSubStage<br/>typing / OnWaitingLLMRequest / 会话锁"]
+        BUILD["build_main_agent"]
+        PROVIDER["选择 Provider<br/>构造或复用 ProviderRequest"]
+        CAP["注入现有能力<br/>插件工具 / Skills / Knowledge / SubAgent / Web Search / Sandbox / Cron"]
+        CORE_PACK["PromptContextBuilder<br/>Interaction Core 复用共享 Pack 并增量加入 CoreTaskSpec 与执行能力"]
+        PROMPT["Interaction Core：Core Projection<br/>普通 Core：LLM exposure filter<br/>→ Layout / PromptTree → Provider Renderer → Apply"]
+        CORE_NOTE["Core system context<br/>告知存在独立 Persona 快速回复分支<br/>不注入 Persona 状态或已发送文本"]
+        LLM_HOOK["OnLLMRequest hook"]
+        ARUN["AstrBot AgentRunner<br/>Provider + FunctionToolExecutor 工具循环"]
+
+        THIRD0["ThirdPartyAgentSubStage<br/>Dify / Coze / DashScope / DeerFlow"]
+        THIRD_REQ["从当前消息构造 ProviderRequest<br/>图片转 base64 / 音频转本地路径"]
+        BRIDGE["apply_interaction_core_task_spec<br/>兼容方式注入 CoreTaskSpec 与同一 Persona 协同提示"]
+        THIRD_HOOK["OnLLMRequest hook"]
+        THIRD_RUN["第三方 Agent Runner"]
+
+        RESULT["设置 MessageEventResult<br/>普通结果 / STREAMING_RESULT / STREAMING_FINISH"]
+        YIELD["yield 给 PipelineScheduler<br/>进入 ResultDecorateStage / RespondStage"]
+        LLM_POST["Agent Hooks<br/>ON_LLM_RESPONSE Postprocess"]
+
+        AGENT_ENTRY --> RUNNER_TYPE
+        RUNNER_TYPE -->|"local"| LOCAL0 --> BUILD --> PROVIDER --> CAP --> CORE_PACK --> PROMPT
+        TASK -. "CoreTaskSpec" .-> CORE_PACK
+        TASK -. "启用固定 Persona 协同提示" .-> CORE_NOTE
+        CORE_NOTE --> PROMPT
+        PROMPT --> LLM_HOOK --> ARUN --> RESULT
+        ARUN -. "Agent 完成后的最终 LLMResponse" .-> LLM_POST
+
+        RUNNER_TYPE -->|"third-party"| THIRD0 --> THIRD_REQ --> BRIDGE --> THIRD_HOOK --> THIRD_RUN --> RESULT
+        TASK -. "CoreTaskSpec" .-> BRIDGE
+        THIRD_RUN -. "Agent Hooks" .-> LLM_POST
+        RESULT --> YIELD
+    end
+
+    subgraph OUTPUT["六、Pipeline 输出与 Interaction Output Runtime"]
+        direction TB
+        RD{"Interaction Turn?"}
+        NORMAL_DECORATE["ResultDecorateStage<br/>内容安全 / 插件装饰 Hook / 前缀 / 分段 / TTS / t2i / @ / 引用"]
+        INTERACTION_DECORATE["Interaction ResultDecorate 兼容阶段<br/>插件普通结果：立即运行安全/Hook<br/>Core 非流式：登记回调，最终 Persona 文本形成后运行<br/>Core 流式：保持现有直接流路径"]
+        NORMAL_RESP["RespondStage（普通路径）<br/>流式去重 / send_message_to_user 去重 / deliver_message_chain"]
+        INTERACTION_RESP["RespondStage（Interaction 路径）<br/>标记 CORE origin 或保留 PLUGIN origin"]
+        ORIGIN{"输出来源"}
+
+        NORMAL_SEND["原始 event.send / send_streaming"]
+        SEND_BOUNDARY{"Interaction wrapper 已安装?"}
+        HELPER_BOUNDARY{"Interaction controller 已附加?"}
+        INTERCEPT["Interaction send wrapper"]
+        PLUGIN_MODE{"插件输出模式"}
+        PLUGIN_DIRECT["plugin_direct<br/>保持插件消息语义"]
+        PLUGIN_PERSONA["plugin_persona<br/>统一 Persona Expression 改写"]
+        PLUGIN_TRANSACTION["Handler 输出事务<br/>委派 Core 时作为 progress<br/>否则最后一条提交为 final"]
+
+        CORE_KIND{"Core 普通结果还是流式?"}
+        CORE_FINAL["capture_message_chain<br/>只消费一次 Core final"]
+        FINAL_PERSONA["统一 Persona Expression<br/>source_text=Core 结果<br/>preserve_facts=true"]
+        CORE_STREAM["capture_streaming<br/>Core chunk 直接流向平台"]
+        STREAM_OBSERVE["可选窗口观察<br/>插件 Decider 或 Persona interjection"]
+
+        CONTRIB["Result Contributors<br/>effect_calls / platform_extras / client_objects / final override"]
+        MATERIAL["Interaction 输出物化<br/>前缀 / reasoning / TTS / t2i / 分段"]
+        PHYSICAL["send_interaction_message / send_interaction_streaming"]
+        NORMAL_PLATFORM_SEND["平台 Adapter 普通发送"]
+        INTERACTION_PLATFORM_SEND["平台 Adapter Interaction 发送"]
+
+        YIELD --> RD
+        PLUGIN_RESULT --> RD
+        RD -->|"否"| NORMAL_DECORATE --> NORMAL_RESP --> NORMAL_SEND --> NORMAL_PLATFORM_SEND
+        RD -->|"是"| INTERACTION_DECORATE --> INTERACTION_RESP
+        INTERACTION_RESP -->|"model result / streaming = CORE"| INTERCEPT
+        INTERACTION_RESP -->|"普通插件结果"| INTERCEPT
+        PREP -. "安装 wrapper" .-> INTERCEPT
+        STAR -. "event.send / send_streaming" .-> SEND_BOUNDARY
+        SEND_BOUNDARY -->|"是"| INTERCEPT
+        SEND_BOUNDARY -->|"否"| NORMAL_PLATFORM_SEND
+        STAR -. "emit_output / emit_progress / send_direct / send_persona / send_progress" .-> HELPER_BOUNDARY
+        HELPER_BOUNDARY -->|"是"| PLUGIN_MODE
+        HELPER_BOUNDARY -->|"否：兼容旧插件发送"| NORMAL_PLATFORM_SEND
+
+        ORIGIN -->|"CORE"| CORE_KIND
+        ORIGIN -->|"PLUGIN"| PLUGIN_MODE
+        INTERCEPT --> ORIGIN
+
+        PLUGIN_MODE -->|"direct，默认"| PLUGIN_DIRECT --> PLUGIN_TRANSACTION --> MATERIAL
+        PLUGIN_MODE -->|"persona"| PLUGIN_PERSONA --> PLUGIN_TRANSACTION
+
+        CORE_KIND -->|"非流式"| CORE_FINAL --> FINAL_PERSONA --> CONTRIB
+        CORE_KIND -->|"流式"| CORE_STREAM --> STREAM_OBSERVE --> PHYSICAL
+        PIMM --> CONTRIB
+        CONTRIB --> MATERIAL --> PHYSICAL --> INTERACTION_PLATFORM_SEND
+    end
+
+    subgraph COMPLETE["七、回合完成、历史与记忆"]
+        direction TB
+        VISIBLE["记录 InteractionUtterance / visible_outputs"]
+        OUTPUT_FINAL{"当前输出是否拥有 Turn 完成权?"}
+        TURN_ACTIVE["Turn 保持 active<br/>等待 Persona / Core / 插件后续输出"]
+        FINAL_MATERIAL["Finalized Turn Material<br/>user_text / assistant_text / visible_outputs"]
+        TURN_FINAL["InteractionMiddleware._finalize_turn<br/>completed / failed / silent"]
+        AFTER_TURN["调度后台 AFTER_TURN_COMPLETED"]
+        POST_MANAGER["PostProcessManager<br/>按注册顺序串行分发"]
+        MEMORY["MemoryPostProcessor<br/>MemoryService.update_from_postprocess"]
+        CONVERSATION["InteractionConversationPostProcessor<br/>ConversationManager.add_message_pair"]
+
+        AFTER_SENT{"OnAfterMessageSent hook 终止后续?"}
+        VISIBLE_COMPLETE["complete_visible_turn"]
+        NORMAL_POST["非 Interaction：后台调度 AFTER_MESSAGE_SENT<br/>+ AFTER_TURN_COMPLETED"]
+        INTERACTION_AFTER["Interaction：RespondStage 只调度 AFTER_MESSAGE_SENT<br/>Turn 完成由 Middleware 持有"]
+        CLEANUP["PipelineScheduler 收尾<br/>必要时补 visible completion<br/>finally 清理临时文件 + 注销 active event"]
+
+        INTERACTION_PLATFORM_SEND --> VISIBLE --> OUTPUT_FINAL
+        OUTPUT_FINAL -->|"否：Hybrid immediate / plugin progress"| TURN_ACTIVE
+        OUTPUT_FINAL -->|"是：Core final / stream final / plugin final"| FINAL_MATERIAL
+        PERSONA_ONLY --> FINAL_MATERIAL
+        FINAL_MATERIAL --> TURN_FINAL --> AFTER_TURN
+        AFTER_TURN -. "后台任务" .-> POST_MANAGER
+        POST_MANAGER --> MEMORY
+        POST_MANAGER --> CONVERSATION
+
+        NORMAL_RESP -. "发送返回后" .-> AFTER_SENT
+        INTERACTION_RESP -. "发送返回后；最终提交保持 deferred" .-> AFTER_SENT
+        AFTER_SENT -->|"是"| CLEANUP
+        AFTER_SENT -->|"否"| VISIBLE_COMPLETE
+        VISIBLE_COMPLETE -->|"非 Interaction"| NORMAL_POST
+        VISIBLE_COMPLETE -->|"Interaction"| INTERACTION_AFTER
+        INTERACTION_AFTER -. "先调度 AFTER_MESSAGE_SENT，再释放 pending finalization" .-> TURN_FINAL
+        NORMAL_POST -. "AFTER_TURN_COMPLETED" .-> POST_MANAGER
+        NO_CORE --> CLEANUP
+        STOP0 --> CLEANUP
+        SILENT --> CLEANUP
+        NORMAL_POST --> CLEANUP
+        INTERACTION_AFTER --> CLEANUP
+        TURN_FINAL --> CLEANUP
+    end
+
+    subgraph ACTIVE["八、当前主动消息旁路"]
+        direction LR
+        ACTIVE_PLUGIN["插件调用 Context.send_message"]
+        SESSION_SEND["Platform.send_by_session"]
+        ACTIVE_PLATFORM["平台 Adapter 直接发送"]
+        ACTIVE_BYPASS["不创建 AstrMessageEvent Turn<br/>不经过 EventBus / Pipeline / Interaction Output Runtime"]
+
+        ACTIVE_PLUGIN --> SESSION_SEND --> ACTIVE_PLATFORM --> ACTIVE_BYPASS
+    end

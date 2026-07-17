@@ -277,6 +277,7 @@ class InteractionMiddleware:
             wrapped_event: AstrMessageEvent,
             message: MessageChain | None,
         ) -> None:
+            previous_has_send_oper = wrapped_event._has_send_oper
             origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
             if origin == OutputOrigin.CORE.value:
                 await output_controller.capture_message_chain(message, wrapped_event)
@@ -289,7 +290,13 @@ class InteractionMiddleware:
                         "direct",
                     ),
                 )
-            wrapped_event._has_send_oper = True
+            if wrapped_event.get_extra(
+                "_interaction_pipeline_output_suppressed",
+                False,
+            ):
+                wrapped_event._has_send_oper = previous_has_send_oper
+            else:
+                wrapped_event._has_send_oper = True
 
         async def send_streaming_wrapper(
             wrapped_event: AstrMessageEvent,

@@ -105,6 +105,8 @@ class InteractionTurnCompletionState:
     postprocess_dispatched: bool = False
     completed: bool = False
     failure_reason: str | None = None
+    finalization_deferred: bool = False
+    finalization_pending: bool = False
 
 
 @dataclass(slots=True)
@@ -321,6 +323,54 @@ def mark_interaction_turn_postprocess_dispatched(
     state = ensure_interaction_turn_state(event)
     state.completion_state.postprocess_dispatched = dispatched
     event.set_extra("_interaction_turn_postprocess_dispatched", dispatched)
+
+
+def begin_interaction_turn_finalization_deferral(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return False
+    completion = state.completion_state
+    if completion.finalization_deferred:
+        return True
+    completion.finalization_deferred = True
+    completion.finalization_pending = False
+    event.set_extra("_interaction_turn_finalization_deferred", True)
+    event.set_extra("_interaction_turn_finalization_pending", False)
+    return True
+
+
+def is_interaction_turn_finalization_deferred(event) -> bool:
+    state = get_interaction_turn_state(event)
+    return bool(state and state.completion_state.finalization_deferred)
+
+
+def mark_interaction_turn_finalization_pending(event) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.finalization_pending = True
+    event.set_extra("_interaction_turn_finalization_pending", True)
+
+
+def consume_interaction_turn_finalization_pending(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return False
+    completion = state.completion_state
+    pending = completion.finalization_pending
+    completion.finalization_deferred = False
+    completion.finalization_pending = False
+    event.set_extra("_interaction_turn_finalization_deferred", False)
+    event.set_extra("_interaction_turn_finalization_pending", False)
+    return pending
+
+
+def cancel_interaction_turn_finalization_deferral(event) -> None:
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return
+    state.completion_state.finalization_deferred = False
+    state.completion_state.finalization_pending = False
+    event.set_extra("_interaction_turn_finalization_deferred", False)
+    event.set_extra("_interaction_turn_finalization_pending", False)
 
 
 def mark_interaction_turn_completed(

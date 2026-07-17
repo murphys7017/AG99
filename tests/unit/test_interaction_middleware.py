@@ -725,6 +725,35 @@ class TestInteractionMiddleware:
         assert forwarded_event._has_send_oper is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("previous_has_send_oper", [False, True])
+    async def test_suppressed_core_send_preserves_previous_send_state(
+        self,
+        webchat_event,
+        previous_has_send_oper,
+    ):
+        controller = MagicMock()
+
+        async def _suppress_output(_message, event):
+            event.set_extra("_interaction_pipeline_output_suppressed", True)
+
+        controller.capture_message_chain = AsyncMock(side_effect=_suppress_output)
+        controller.capture_plugin_output = AsyncMock()
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            asyncio.Queue(),
+            controller,
+        )
+        middleware.prepare_pipeline_event(webchat_event)
+        webchat_event._has_send_oper = previous_has_send_oper
+
+        with temporary_output_origin(webchat_event, OutputOrigin.CORE.value):
+            await webchat_event.send(MessageChain([Plain("blocked")]))
+
+        controller.capture_message_chain.assert_awaited_once()
+        controller.capture_plugin_output.assert_not_awaited()
+        assert webchat_event._has_send_oper is previous_has_send_oper
+
+    @pytest.mark.asyncio
     async def test_respond_stage_routes_official_plugin_result_as_plugin_output(
         self,
         webchat_event,

@@ -7,7 +7,11 @@ from collections.abc import AsyncGenerator
 from astrbot.core import file_token_service, html_renderer, logger
 from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.message.components import At, Image, Json, Node, Plain, Record, Reply
-from astrbot.core.message.message_event_result import ResultContentType
+from astrbot.core.message.message_event_result import (
+    MessageChain,
+    MessageEventResult,
+    ResultContentType,
+)
 from astrbot.core.pipeline.content_safety_check.stage import ContentSafetyCheckStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
@@ -138,8 +142,14 @@ class ResultDecorateStage(Stage):
 
         is_stream = result.result_content_type == ResultContentType.STREAMING_FINISH
 
-        if self._is_interaction_turn(event):
-            logger.debug("Interaction turn skips ordinary result decoration.")
+        if self._is_interaction_turn(event) and result.is_model_result():
+            event.set_extra(
+                "_interaction_pipeline_pre_output_callback",
+                self._run_interaction_pre_output,
+            )
+            logger.debug(
+                "Interaction model result defers response safety and decorating hooks until final Persona expression."
+            )
             return
 
         # 回复时检查内容安全
@@ -189,6 +199,12 @@ class ResultDecorateStage(Stage):
                     f"{star_map[handler.handler_module_path].name} - {handler.handler_name} 终止了事件传播。",
                 )
                 return
+
+        if self._is_interaction_turn(event):
+            logger.debug(
+                "Interaction turn preserves response safety and decorating hooks, then skips ordinary result decoration."
+            )
+            return
 
         # 流式输出不执行下面的逻辑
         if is_stream:
@@ -434,3 +450,57 @@ class ResultDecorateStage(Stage):
         return bool(event.get_extra("_interaction_enabled")) and (
             get_interaction_turn_state(event) is not None
         )
+
+    async def _run_interaction_pre_output(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        result_content_type: ResultContentType,
+    ) -> MessageChain | None:
+        result = MessageEventResult(
+            chain=list(message.chain),
+            result_content_type=result_content_type,
+        )
+        result.use_t2i_ = message.use_t2i_
+        result.use_markdown_ = message.use_markdown_
+        result.type = message.type
+        event.set_result(result)
+
+        if (
+            self.content_safe_check_reply
+            and isinstance(self.content_safe_check_stage, ContentSafetyCheckStage)
+            and result.is_llm_result()
+        ):
+            text = "".join(
+                comp.text for comp in result.chain if isinstance(comp, Plain)
+            )
+            async for _ in self.content_safe_check_stage.process(
+                event,
+                check_text=text,
+            ):
+                pass
+        if event.is_stopped():
+            return None
+
+        handlers = star_handlers_registry.get_handlers_by_event_type(
+            EventType.OnDecoratingResultEvent,
+            plugins_name=event.plugins_name,
+        )
+        for handler in handlers:
+            try:
+                logger.debug(
+                    f"hook(on_decorating_result) -> {star_map[handler.handler_module_path].name} - {handler.handler_name}",
+                )
+                await handler.handler(event)
+            except BaseException:
+                logger.error(traceback.format_exc())
+            if event.is_stopped():
+                logger.info(
+                    f"{star_map[handler.handler_module_path].name} - {handler.handler_name} 终止了事件传播。",
+                )
+                return None
+
+        decorated = event.get_result()
+        if decorated is None or not decorated.chain:
+            return None
+        return decorated.derive(list(decorated.chain))

@@ -11,11 +11,17 @@ from astrbot.core.astr_agent_hooks import MainAgentHooks
 from astrbot.core.interaction.conversation_postprocessor import (
     InteractionConversationPostProcessor,
 )
-from astrbot.core.interaction.turn_state import ensure_interaction_turn_state
+from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.turn_state import (
+    ensure_interaction_turn_state,
+    get_interaction_turn_state,
+    set_interaction_turn_finalized_material,
+)
 from astrbot.core.message.message_event_result import (
     MessageEventResult,
     ResultContentType,
 )
+from astrbot.core.pipeline.content_safety_check.stage import ContentSafetyCheckStage
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.pipeline.result_decorate.stage import ResultDecorateStage
 from astrbot.core.postprocess import (
@@ -30,6 +36,7 @@ from astrbot.core.postprocess.types import (
     PostProcessTrigger,
 )
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
+from astrbot.core.star.star_handler import EventType
 
 
 def _make_event():
@@ -512,6 +519,270 @@ async def test_result_decorate_stage_skips_interaction_turn_reply_prefix():
             pass
 
     assert result.chain[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_result_decorate_stage_runs_interaction_decorating_hook_before_skip():
+    event, extras = _make_event()
+    result = _make_result(
+        [Comp.Plain("hello")],
+        result_content_type=ResultContentType.GENERAL_RESULT,
+    )
+    event.get_result.return_value = result
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+
+    async def _decorate(_event):
+        result.chain[0].text = "hooked"
+
+    handler = MagicMock()
+    handler.handler_module_path = "tests.decorating_plugin.main"
+    handler.handler_name = "decorate"
+    handler.handler = AsyncMock(side_effect=_decorate)
+    plugin = MagicMock()
+    plugin.name = "decorating_plugin"
+
+    stage = ResultDecorateStage()
+    stage.content_safe_check_reply = False
+    stage.content_safe_check_stage = None
+    stage.reply_prefix = "[bot] "
+
+    with (
+        patch(
+            "astrbot.core.pipeline.result_decorate.stage.star_handlers_registry.get_handlers_by_event_type",
+            return_value=[handler],
+        ) as get_handlers,
+        patch.dict(
+            "astrbot.core.pipeline.result_decorate.stage.star_map",
+            {handler.handler_module_path: plugin},
+        ),
+    ):
+        async for _ in stage.process(event):
+            pass
+
+    get_handlers.assert_called_once_with(
+        EventType.OnDecoratingResultEvent,
+        plugins_name=event.plugins_name,
+    )
+    handler.handler.assert_awaited_once_with(event)
+    assert result.chain[0].text == "hooked"
+
+
+@pytest.mark.asyncio
+async def test_result_decorate_stage_defers_model_safety_until_final_expression():
+    event, extras = _make_event()
+    result = _make_result([Comp.Plain("hello")])
+    event.get_result.return_value = result
+    event.set_result.side_effect = lambda value: setattr(
+        event.get_result,
+        "return_value",
+        value,
+    )
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+    checked: list[str] = []
+
+    safety_stage = ContentSafetyCheckStage()
+
+    async def _check(_event, check_text=None):
+        checked.append(check_text)
+        if False:
+            yield
+
+    safety_stage.process = _check
+
+    stage = ResultDecorateStage()
+    stage.content_safe_check_reply = True
+    stage.content_safe_check_stage = safety_stage
+    stage.reply_prefix = "[bot] "
+
+    with patch(
+        "astrbot.core.pipeline.result_decorate.stage.star_handlers_registry.get_handlers_by_event_type",
+        return_value=[],
+    ):
+        async for _ in stage.process(event):
+            pass
+
+    callback = extras["_interaction_pipeline_pre_output_callback"]
+    final_message = await callback(
+        event,
+        MessageEventResult().message("final persona text"),
+        ResultContentType.LLM_RESULT,
+    )
+
+    assert checked == ["final persona text"]
+    assert final_message is not None
+    assert final_message.get_plain_text() == "final persona text"
+    assert result.chain[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_interaction_response_safety_rejection_suppresses_delivery():
+    event, extras = _make_event()
+    result = _make_result([Comp.Plain("unsafe core text")])
+    event.get_result.return_value = result
+    event.set_result.side_effect = lambda value: setattr(
+        event.get_result,
+        "return_value",
+        value,
+    )
+    event.is_stopped.side_effect = lambda: event.get_result().is_stopped()
+    event.stop_event.side_effect = lambda: event.get_result().stop_event()
+    event.continue_event.side_effect = lambda: event.get_result().continue_event()
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+
+    safety_stage = ContentSafetyCheckStage()
+
+    async def _reject(_event, check_text=None):
+        assert check_text == "unsafe final text"
+        _event.set_result(MessageEventResult().message("safe replacement"))
+        _event.stop_event()
+        yield
+
+    safety_stage.process = _reject
+
+    stage = ResultDecorateStage()
+    stage.content_safe_check_reply = True
+    stage.content_safe_check_stage = safety_stage
+
+    async for _ in stage.process(event):
+        pass
+
+    callback = extras["_interaction_pipeline_pre_output_callback"]
+    safe_message = await callback(
+        event,
+        MessageEventResult().message("unsafe final text"),
+        ResultContentType.LLM_RESULT,
+    )
+
+    assert safe_message is None
+    assert event.is_stopped() is True
+
+
+@pytest.mark.asyncio
+async def test_interaction_respond_finalizes_after_after_send_and_visible_completion():
+    event, extras = _make_event()
+    result = _make_result([Comp.Plain("hello")])
+    event.get_result.return_value = result
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+    order: list[str] = []
+
+    async def _persist(_event):
+        order.append("persist")
+
+    controller = InteractionOutputController(persist_callback=_persist)
+    extras["_interaction_output_controller"] = controller
+
+    async def _platform_complete():
+        order.append("complete")
+
+    extras["_interaction_original_complete_visible_turn"] = _platform_complete
+
+    async def _complete_visible_turn():
+        await controller.capture_visible_completion(event)
+
+    async def _send(_message):
+        order.append("send")
+        set_interaction_turn_finalized_material(
+            event,
+            {
+                "turn_id": "turn-1",
+                "user_text": "question",
+                "assistant_text": "hello",
+                "visible_outputs": [],
+            },
+        )
+        await controller._persist_interaction_turn(event)
+
+    async def _after_send(*_args, **_kwargs):
+        order.append("after_send")
+        return False
+
+    event.send = AsyncMock(side_effect=_send)
+    event.complete_visible_turn = AsyncMock(side_effect=_complete_visible_turn)
+
+    stage = RespondStage()
+    stage.platform_settings = {}
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(side_effect=_after_send),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(),
+        ),
+    ):
+        await stage.process(event)
+
+    assert order == ["send", "after_send", "complete", "persist"]
+    turn_state = get_interaction_turn_state(event)
+    assert turn_state is not None
+    assert turn_state.completion_state.finalization_deferred is False
+    assert turn_state.completion_state.finalization_pending is False
+
+
+@pytest.mark.asyncio
+async def test_interaction_respond_cancels_pending_finalization_when_after_send_stops():
+    event, extras = _make_event()
+    result = _make_result([Comp.Plain("hello")])
+    event.get_result.return_value = result
+    extras["_interaction_enabled"] = True
+    extras["_turn_id"] = "turn-1"
+    ensure_interaction_turn_state(event, turn_id="turn-1")
+
+    persist = AsyncMock()
+    controller = InteractionOutputController(persist_callback=persist)
+    extras["_interaction_output_controller"] = controller
+
+    async def _send(_message):
+        set_interaction_turn_finalized_material(
+            event,
+            {
+                "turn_id": "turn-1",
+                "user_text": "question",
+                "assistant_text": "hello",
+                "visible_outputs": [],
+            },
+        )
+        await controller._persist_interaction_turn(event)
+
+    event.send = AsyncMock(side_effect=_send)
+    event.complete_visible_turn = AsyncMock()
+
+    stage = RespondStage()
+    stage.platform_settings = {}
+    stage.ctx = MagicMock()
+    stage.ctx.plugin_manager.context = MagicMock()
+
+    with (
+        patch(
+            "astrbot.core.pipeline.respond.stage.call_event_hook",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "astrbot.core.pipeline.respond.stage.dispatch_postprocess",
+            new=AsyncMock(),
+        ),
+    ):
+        await stage.process(event)
+
+    persist.assert_not_awaited()
+    event.complete_visible_turn.assert_not_awaited()
+    turn_state = get_interaction_turn_state(event)
+    assert turn_state is not None
+    assert turn_state.completion_state.finalization_deferred is False
+    assert turn_state.completion_state.finalization_pending is False
+    assert turn_state.completion_state.status.value == "cancelled"
 
 
 @pytest.mark.asyncio

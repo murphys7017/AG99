@@ -329,8 +329,17 @@ Desktop Body Output 是普通聊天输出之外的表现通道，用于本地可
 - 抽出 Effective Persona 的解析边界，避免主链路继续散落解析 persona / memory / state
 - 将 interaction middleware 明确收口为 Persona Runtime Shell，而不是新的全局大对象
 - 定义 Desktop Body Output / Body Expression Intent 的输出边界
-- 把 Agent 基础接口抽出来
-- 把主 Agent 平台和能力平台的代码边界拆出来
-- 让插件、skills、tools、subagent 可以通过统一边界接入
+- 盘点 Agent 基础接口需要表达的现有能力，不提前创建空置抽象
+- 明确主 Agent 平台和能力平台的代码依赖边界
+- 确认插件、skills、tools、subagent 接入统一边界所需的兼容条件
 
 等代码边界稳定后，再决定哪些模块独立进程化、哪些模块继续保留在同一部署单元。
+
+## 执行器解耦前置准备
+
+完整执行器解耦暂不进入实现阶段。下一步先以 Native AstrBot Agent 为行为基线，
+完成依赖盘点、插件兼容审阅、Prompt/Tool/Subagent 生命周期审阅、必要修复和基线测试。
+
+准备阶段不创建空置的 Backend/Gateway 抽象，不移动官方插件 Handler，也不改写现有
+Handoff 执行。详细范围、阶段和进入正式实现前的验收条件见
+[执行器解耦前置准备计划](./dev/execution-backend-preparation-plan.md)。
