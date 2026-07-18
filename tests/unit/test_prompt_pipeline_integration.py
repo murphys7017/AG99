@@ -729,10 +729,6 @@ async def test_internal_agent_preserves_post_render_on_llm_request_hook():
             "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.call_event_hook",
             new=_call_hook,
         ),
-        patch(
-            "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.try_capture_follow_up",
-            return_value=None,
-        ),
     ):
         yielded = [item async for item in stage.process(event, "")]
 

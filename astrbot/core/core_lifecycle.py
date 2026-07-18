@@ -26,6 +26,7 @@ from astrbot.core.db import BaseDatabase
 from astrbot.core.interaction import (
     InteractionMiddleware,
     InteractionOutputController,
+    PersonalRuntimeManager,
     register_interaction_conversation_postprocessor,
     reset_interaction_conversation_postprocessor,
 )
@@ -75,6 +76,8 @@ class AstrBotCoreLifecycle:
         self.memory_service = None
         self.memory_postprocessor = None
         self.interaction_conversation_postprocessor = None
+        self.interaction_middleware: InteractionMiddleware | None = None
+        self.personal_runtime_manager = PersonalRuntimeManager()
         self._default_chat_provider_warning_emitted = False
 
         # 设置代理
@@ -474,6 +477,7 @@ class AstrBotCoreLifecycle:
                     self.plugin_manager,
                     conf_id,
                     self.interaction_middleware,
+                    self.personal_runtime_manager,
                 ),
             )
             await scheduler.initialize()
@@ -496,6 +500,7 @@ class AstrBotCoreLifecycle:
                 self.plugin_manager,
                 conf_id,
                 self.interaction_middleware,
+                self.personal_runtime_manager,
             ),
         )
         await scheduler.initialize()

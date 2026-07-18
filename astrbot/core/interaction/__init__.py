@@ -47,6 +47,7 @@ from .output_modes import (
     temporary_output_origin,
 )
 from .persona_runtime import InteractionPersonaRuntime
+from .personal_runtime import PersonalRuntimeManager
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
@@ -90,6 +91,7 @@ __all__ = [
     "PersonaEffectSpec",
     "PersonaEffectValidationError",
     "InteractionPersonaRuntime",
+    "PersonalRuntimeManager",
     "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
     "INTERACTION_ROUTE_DECISION_EXTRA_KEY",
     "INTERACTION_TURN_STATE_EXTRA_KEY",

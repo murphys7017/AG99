@@ -1,10 +1,10 @@
 # Personal Runtime 过渡结构调查
 
-本文记录 Personal Runtime 前置主链 Phase 0 的第一轮源码调查。调查基于当前代码，
-不把旧文档或目标设计当作运行事实。本轮不修改运行时行为，也不提前设计 Backend。
+本文记录 Personal Runtime 前置主链 Phase 0 的第一轮源码调查，并持续标记后续实现结果。
+调查基于源码，不把旧文档或目标设计当作运行事实。
 
-调查基线为提交 `2c91ebd59`。相关总体顺序见
-`execution-backend-preparation-plan.md`。
+初始调查基线为提交 `2c91ebd59`；实现状态已更新至 2026-07-18 的当前源码。相关总体
+顺序见 `execution-backend-preparation-plan.md`。
 
 ## 调查结论
 
@@ -22,8 +22,9 @@
 - Capability 只有分类阶段摘要；Native Core 仍独立解析并注入真正的工具、知识库、
   Skills 和 Subagent。
 - `InteractionMemoryStore` 在生产代码中只有读取者，没有主写入调用。
-- 当前代码没有 session 级 runtime，因此多 Turn、多轮任务、Third-party Runner、
-  Subagent 和主动消息也没有统一 owner。
+- 当前已经有按 config、persona、audience 和 privacy scope 建立的 session runtime，负责
+  conversational Turn admission、follow-up 和 Native/Third-party 串行；多轮插件、
+  Subagent、主动消息和完整 task lifecycle 仍没有统一 owner。
 
 因此，下一步不应先创建 Backend，也不应直接重写 Output。应先删除已经确认的死入口，
 再让 Personal Session Runtime 实际接管 Turn 和任务生命周期。
@@ -40,8 +41,10 @@ Platform Adapter
             -> prepare_pipeline_event()
                  -> TurnState
                  -> event.send* interceptor
+            -> reserve PendingTurn
             -> official Plugin Handler
-            -> handle_pipeline_event(enqueue_core=False)
+            -> bind PersonalRuntimeKey / admit follow-up or Turn lease
+            -> handle_pipeline_event()
                  -> Router || speculative Persona
                  -> Planner when route=hybrid
                  -> local continuation into AgentRequestSubStage
@@ -54,9 +57,8 @@ Platform Adapter
 ```
 
 `InteractionMiddleware.handle_inbound()` 所代表的“在 Pipeline 之前接管并重新投递
-event_queue”路径在生产源码中没有调用者。当前 Pipeline 路径固定使用
-`handle_pipeline_event(..., enqueue_core=False)`，Core 由 `ProcessStage` 在当前 Pipeline
-调用栈中继续执行。
+event_queue”路径已经从生产源码删除。当前 Pipeline 路径固定使用
+`handle_pipeline_event()`，Core 由 `ProcessStage` 在当前 Pipeline 调用栈中继续执行。
 
 这条无调用者路径不应再被视为兼容入口。仓库内没有动态注册、反射调用或公开 API 约定
 要求保留它。
@@ -75,15 +77,17 @@ event_queue”路径在生产源码中没有调用者。当前 Pipeline 路径�
 
 问题：
 
-- 没有 persona/session/audience 级长期 runtime。
-- 同一 session 的两个 Turn 没有统一 mailbox、取消、替换或顺序策略。
-- Pipeline task、Middleware task 和 Core session lock 分别管理不同生命周期。
-- `_forward_to_core()` 同时支持当前调用栈继续执行和重新进入 event queue，但后者已经
-  没有生产调用方。
-- EventBus 为每个事件创建独立 Pipeline task；Router、Persona 和 Planner 都发生在
-  Core session lock 之前。
-- Native Core 只在 Agent 执行阶段按 `unified_msg_origin` 加锁；Third-party Runner 没有
-  使用同一 session lock。因此当前既没有完整串行，也没有显式并发策略。
+- Session Runtime 已按 persona/audience 建立，但当前只持有 Turn lease 和 Native
+  follow-up coordinator，还不是完整长期人格状态容器。
+- 同一 Runtime 的 Turn 已统一串行和 follow-up 顺序；取消、替换、超时和跨任务恢复策略
+  仍未统一。
+- Pipeline task、Middleware task 和 Personal Runtime lease 仍分别管理不同层级生命周期。
+- `_forward_to_core()` 只标记当前 Turn 继续 Core，不再重新进入 event queue。
+- EventBus 为每个事件创建独立 Pipeline task；`ProcessStage` 在 Router、Persona 和
+  Planner 前取得 Runtime Turn lease，同一 Runtime Key 的 conversational Turn 因此串行。
+- Native active runner follow-up 在 Router/Persona 前尝试吸收；不能吸收以及 Third-party
+  请求都进入同一 Runtime 队列。Router/Persona/Planner task 本身仍由 Middleware 持有，
+  尚未迁入 Session Runtime task registry。
 
 目标 owner：
 
@@ -212,10 +216,11 @@ Native Core 随后仍在 `build_main_agent()` 中独立完成：
 - Subagent Handoff 与后台唤醒仍绑定 Native Tool Loop 和父 event。
 - 多轮插件任务没有 Personal Session Runtime owner。
 
-Third-party Runner 不是 Native Core 的等价执行壳。它会从 event 重新构造
-`ProviderRequest`，应用 `CoreTaskSpec` 和 `OnLLMRequest` Hook 后直接初始化第三方 runner；
-它不经过 Native `build_main_agent()` 的统一 Prompt/Capability 准备，也没有 Native 的
-session lock 和 follow-up capture。
+Third-party Runner 不是 Native Core 的等价执行壳。插件显式提供 `ProviderRequest` 时会
+保留该对象；普通事件才从 event 构造 request。随后应用 `CoreTaskSpec` 和
+`OnLLMRequest` Hook 并直接初始化第三方 runner。它仍不经过 Native
+`build_main_agent()` 的统一 Prompt/Capability 准备，但已经与 Native 共用 Personal
+Runtime Turn admission 和串行策略。
 
 ### 8. Native / Third-party 执行准备审计
 
@@ -238,30 +243,28 @@ event / plugin ProviderRequest
 Third-party 路径：
 
 ```text
-event
-  -> create a new ProviderRequest from text/Image/Record
+event / plugin ProviderRequest
+  -> preserve plugin request, otherwise create from text/Image/Record
   -> append CoreTaskSpec compatibility block
   -> OnLLMRequest
   -> choose Dify/Coze/DashScope/DeerFlow runner
   -> runner-specific remote session/run/result handling
 ```
 
-这里存在一个确定的兼容缺口：Plugin Handler 产出的 `ProviderRequest` 虽然由
-`ProcessStage` 写入 event extra，但 Third-party Stage 不读取它，而是重新创建 request。
-因此插件给出的 prompt、contexts、media、tools、model 和 output contract 都可能在进入
-第三方 runner 前丢失。这个问题不能靠给每个 runner 补字段解决，必须在执行准备边界保留
-官方 `ProviderRequest` 输入语义。
+此前 Plugin Handler 产出的 `ProviderRequest` 会被 Third-party Stage 重建覆盖。该兼容
+缺口已经在公共 Stage 边界修复：显式请求保留 prompt、contexts、media、tools、model 和
+output contract，并继续经过 `CoreTaskSpec` 兼容投影及官方 `OnLLMRequest` Hook。
 
 | 维度 | Native 当前行为 | Third-party 当前行为 | 目标 owner |
 | --- | --- | --- | --- |
-| 请求来源 | 复用插件 request，否则从 event 建立并关联 conversation | 总是从 event 重建，只读取文本、图片和录音 | Execution Preparation 接收 event facts 与官方 `ProviderRequest` 兼容输入 |
+| 请求来源 | 复用插件 request，否则从 event 建立并关联 conversation | 复用插件 request，否则从 event 文本、图片和录音构建 | Execution Preparation 接收 event facts 与官方 `ProviderRequest` 兼容输入 |
 | Prompt 与历史 | 收集 ContextPack，按 Core target 渲染 system/history/current input | 不经过 Prompt Pipeline；部分 runner 自己使用 contexts 或远端历史 | ContextSnapshot/Prompt Projection；远端 thread 仅是 Adapter 私有状态 |
 | Persona 与错误文案 | persona 同时影响工具集和错误文案 | 只额外解析 persona 错误文案 | Personal Runtime 提供 persona identity；Output 层形成可见失败表达 |
 | Tools/Knowledge/Skills | 注入插件工具、知识库、Skills、MCP、搜索、sandbox、cron 和 Subagent | 不接收 AstrBot 可执行能力；远端平台自行持有能力 | CapabilitySnapshot；Adapter 只投影后台实际支持的能力 |
 | Provider 能力 | 处理 model、fallback、modality、上下文限制与 tool schema | runner 类型来自当前 Pipeline 配置，provider 详情从全局配置查找，未做统一 capability 验证 | Backend capability validation 与 Adapter projection |
 | 执行策略 | max step、tool timeout、压缩、fallback 等来自当前配置 | max step 固定为 30，wrapper tool timeout 固定为 120，另有独立 stream close timeout | Execution Preparation 固化本轮策略；Adapter 只消费适用项 |
 | 插件 Hook | 有 Waiting、LLM Request、Agent、LLM Response 和 host tool hooks | 有 LLM Request、Agent/LLM Response；没有 Waiting 和 host tool 生命周期 | 官方兼容 adapter 按明确阶段保留；后台内部工具仅在可观测时映射 |
-| Session 并发 | Native Agent 阶段加 UMO lock，并有独立 follow-up registry | 没有同等 lock/follow-up，远端 thread 各自管理 | PersonalSessionRuntime 仲裁；Adapter 只声明 follow-up/cancel 能力 |
+| Session 并发 | Personal Runtime 在 Router/Persona 前仲裁；Native runner 支持 follow-up | Personal Runtime 使用同一 Turn lease；远端 thread 仍由 runner 管理 | PersonalSessionRuntime 仲裁；Adapter 只声明 follow-up/cancel 能力 |
 | Streaming 与结果 | `run_agent` 产生官方 result/streaming finish | 自建 aggregator、watchdog 和 fallback result | Adapter 归一化执行事件；Runtime/Dispatcher 决定可见输出和完成 |
 | 错误、取消与清理 | Stage 捕获错误并直接发送，Runner 有 abort 语义 | Runner/Stage 共同转成 error chain，并显式 close 部分 client | Runtime 持有失败/取消策略；Adapter 负责协议取消、关闭和错误翻译 |
 | 持久化与观测 | 保存官方 conversation，写 provider stats 和 trace | 主要依赖远端 conversation ID，只上传基础 metric | finalized turn 提交 Conversation/Memory；统一 telemetry 接收 Adapter 数据 |
@@ -276,8 +279,8 @@ event
 - 官方兼容边界必须保留：Handler `yield ProviderRequest`、`OnLLMRequest` 和现有
   Agent/LLM/Tool Hook。`OnLLMRequest` 仍作用于最终的低层 request projection，不重新成为
   Prompt 事实源。
-- 后续应删除的过渡结构：Third-party Stage 手工重建 request、Local/Third-party 在准备前
-  分叉、Native 私有 session/follow-up owner，以及各 Stage 各自决定可见错误和最终完成。
+- 已删除 Native 私有 session/follow-up owner，并修复 Third-party 覆盖显式 request。
+  后续仍应删除 Local/Third-party 在准备前分叉，以及各 Stage 各自决定可见错误和最终完成。
 
 现有 Third-party runners 只能作为需要适配的官方能力，不能作为未来 Backend 接口模板。
 `ProviderRequest` 也不能直接成为统一 Execution Preparation 契约：它既是官方插件公开兼容
@@ -291,9 +294,9 @@ Subagent/后台任务当前还有两条独立生命周期：
   `build_main_agent()`；完成通知依赖 `send_message_to_user -> Context.send_message() ->
   platform.send_by_session()` 直达平台。
 
-Native follow-up 另由全局 active-runner registry 和按 UMO 的 order state 管理。它能够把
-新消息注入正在执行的 ToolLoopAgentRunner，但不属于 Interaction TurnState，也不归
-Middleware `_inflight_tasks` 管理。
+Native follow-up registry 和顺序状态已经迁入 `PersonalSessionRuntime`。新消息先尝试注入
+同一 Runtime 的 active `ToolLoopAgentRunner`；已消费消息不会启动 Middleware/Core，未
+消费消息按捕获顺序取得下一 Turn lease。Runner 的实际任务生命周期仍未迁入 Runtime。
 
 主动消息的目标边界已经确定：所有面向用户的输出都进入 Output Dispatcher；
 `persona / progress / protocol / raw` 是显式 OutputIntent 模式。`protocol` 和 `raw` 不进行
@@ -318,7 +321,7 @@ ACK 等非用户可见控制留在 Platform Sink 内部。
 | `InteractionMemoryStore` | 迁移后删除 | Conversation + MemoryService | 旧 JSON 数据策略确定且读取者清零 |
 | Local/Third-party 平行准备链 | 后续替换 | 统一 Execution Preparation | 前置主链就绪复核通过 |
 | `Context.send_message()` 当前旁路 | 替换 | 主动 OutputIntent | 保留公开 API，所有面向用户的 persona/progress/protocol/raw 输出进入 Dispatcher |
-| Native follow-up 全局 registry | 迁移 | Session Runtime mailbox/ActiveTask | 多轮消息不再依赖 Runner 全局表 |
+| Native follow-up 全局 registry | 已删除 | Session Runtime follow-up coordinator | 2026-07-18 已迁移并覆盖消费、排队、取消和清理测试 |
 | 后台 Handoff 直接 build/send | 迁移 | ActiveTask completion Observation | 后台结果能恢复 persona/task/audience 并进入统一输出 |
 
 ## 文档冲突
@@ -344,9 +347,9 @@ Middleware 仍为当前 Turn owner 的描述是当前事实，不是目标状态
 当前单 Turn 主链能够运行，但多 Turn、多轮插件和后台任务没有统一生命周期。直接继续
 增加功能会把取消、完成和错误恢复继续写进 Middleware 与 extra。
 
-同一 session 当前是混合并发语义：前置 Router/Persona/Planner 可重叠，Native Core 在
-执行阶段串行，Third-party Core 可继续并发，follow-up 又可能注入已有 Native Runner。
-这不是一种可稳定扩展的会话策略。
+同一 Runtime Key 的 conversational Turn 已在 Router/Persona 前串行，Native follow-up
+可以被 active runner 吸收，Third-party 也使用同一 lease。剩余风险是 Session Runtime
+尚未持有 Router/Persona/Planner、插件、Subagent 和后台任务的完整 task lifecycle。
 
 ### 高：Output 与 Turn completion 循环依赖
 

@@ -276,6 +276,15 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 
 目标：把 Persona 从“Core 调用前的回复中间件”提升为官方 Pipeline 后的独立观察与编排主体，同时保持现有用户可见回复语义稳定。
 
+实现状态（2026-07-18）：已完成 Phase 1 的首个 owner 切片。PendingTurn 在 Handler 前
+reserve，并在 Router/Persona 前按 effective persona 绑定 Runtime；同一 Runtime 的
+conversational Turn 使用统一 lease，Native active runner 的 follow-up 会在 Middleware
+启动前接纳，无法吸收的消息按到达顺序等待下一 Turn。Native 与 Third-party Core 已共用
+该 admission，插件显式 `ProviderRequest` 不再被 Third-party 重建覆盖。
+
+尚未实现 Observation 数据类型、非 Core 事件 eligibility、Runtime task registry，以及
+Router/Persona/Planner 和插件/后台任务的完整生命周期迁移，因此 Phase 1 仍为进行中。
+
 实施内容：
 
 1. 定义只读 `Observation`、kind、source、actor、audience 和 privacy 数据类型。

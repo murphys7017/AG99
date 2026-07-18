@@ -4,11 +4,14 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot.core.prompt.context_types import ContextPack
 
 from .types import CorePlanningDecision, CoreTaskSpec, InteractionRouteDecision
+
+if TYPE_CHECKING:
+    from .personal_runtime import PersonalRuntimeKey
 
 INTERACTION_TURN_STATE_EXTRA_KEY = "_interaction_turn_state"
 
@@ -43,6 +46,7 @@ class InteractionLifecycleStage(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
 
 _VALID_UTTERANCE_KINDS = frozenset(
     {
@@ -139,6 +143,11 @@ class InteractionTurnFailure:
 class InteractionTurnState:
     turn_id: str
     persona_id: str = ""
+    personal_runtime_key: PersonalRuntimeKey | None = None
+    runtime_config_id: str = ""
+    runtime_audience_key: str = ""
+    runtime_privacy_scope: str = ""
+    runtime_reservation_state: str = ""
     prompt_build_config: Any | None = None
     context_material: InteractionContextMaterial | None = None
     context_material_task: asyncio.Task[InteractionContextMaterial] | None = None

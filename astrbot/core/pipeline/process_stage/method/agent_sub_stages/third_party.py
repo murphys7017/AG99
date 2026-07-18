@@ -290,10 +290,14 @@ class ThirdPartyAgentSubStage(Stage):
     async def process(
         self, event: AstrMessageEvent, provider_wake_prefix: str
     ) -> AsyncGenerator[None, None]:
-        req: ProviderRequest | None = None
+        plugin_request = event.get_extra("provider_request")
+        explicit_request = isinstance(plugin_request, ProviderRequest)
+        req = plugin_request if explicit_request else None
 
-        if provider_wake_prefix and not event.message_str.startswith(
-            provider_wake_prefix
+        if (
+            req is None
+            and provider_wake_prefix
+            and not event.message_str.startswith(provider_wake_prefix)
         ):
             return
 
@@ -310,19 +314,26 @@ class ThirdPartyAgentSubStage(Stage):
             )
             return
 
-        # make provider request
-        req = ProviderRequest()
-        req.session_id = event.unified_msg_origin
-        req.prompt = event.message_str[len(provider_wake_prefix) :]
-        for comp in event.message_obj.message:
-            if isinstance(comp, Image):
-                image_path = await comp.convert_to_base64()
-                req.image_urls.append(image_path)
-            elif isinstance(comp, Record):
-                audio_path = await comp.convert_to_file_path()
-                req.audio_urls.append(audio_path)
+        if req is None:
+            req = ProviderRequest()
+            req.prompt = event.message_str[len(provider_wake_prefix) :]
+            for comp in event.message_obj.message:
+                if isinstance(comp, Image):
+                    image_path = await comp.convert_to_base64()
+                    req.image_urls.append(image_path)
+                elif isinstance(comp, Record):
+                    audio_path = await comp.convert_to_file_path()
+                    req.audio_urls.append(audio_path)
 
-        if not req.prompt and not req.image_urls and not req.audio_urls:
+        if not req.session_id:
+            req.session_id = event.unified_msg_origin
+
+        if (
+            not explicit_request
+            and not req.prompt
+            and not req.image_urls
+            and not req.audio_urls
+        ):
             return
 
         custom_error_message = await self._resolve_persona_custom_error_message(event)

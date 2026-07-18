@@ -115,6 +115,16 @@ Interaction Memory 数据策略仍待完成。前期调查暂不新增测试。
 
 目标是让 Personal Runtime 成为长期控制层，而不是每条消息上的协调函数集合。
 
+当前状态（2026-07-18）：第一批所有权迁移已经落地。Lifecycle 持有共享
+`PersonalRuntimeManager`；`ProcessStage` 在 Handler 前 reserve，在 Router/Persona 前完成
+persona bind、follow-up admission 和 Turn lease；Native 与 Third-party Core 共用同一
+Runtime 串行策略。Native 原有的 UMO session lock 和全局 follow-up registry 已退出生产
+主链。插件显式 `ProviderRequest` 在 Third-party 路径中会保留原对象和已有字段，再进入
+现有兼容投影与 Hook。
+
+本阶段尚未完成：Observation 类型与 eligibility、Runtime task registry、
+Router/Persona/Planner task owner、插件和后台任务 identity、Output completion owner 迁移。
+
 实施内容：
 
 - 定义稳定 `PersonalRuntimeKey`：
@@ -273,8 +283,9 @@ Phase 0 已确认的准备边界：
   翻译，不重新收集 Prompt、人格、知识库或插件事实。
 - 官方 `OnLLMRequest` 保留在最终低层 request projection 之后、实际执行之前；其他
   Agent/LLM/Tool Hook 按后台可观测能力映射，不伪造后台未暴露的工具生命周期。
-- 当前 Third-party Stage 丢弃插件 `ProviderRequest` 并手工重建输入，是明确的待替换过渡
-  行为；现有 Dify/Coze/DashScope/DeerFlow runners 是兼容对象，不是新接口模板。
+- Third-party Stage 丢弃插件 `ProviderRequest` 的兼容缺口已经修复：显式请求直接进入
+  `CoreTaskSpec` 兼容投影和 `OnLLMRequest` Hook；只有普通事件输入才从文本、图片和录音
+  构建请求。现有 Dify/Coze/DashScope/DeerFlow runners 仍是兼容对象，不是新接口模板。
 
 ## 当前进度
 
@@ -283,6 +294,9 @@ Phase 0 已确认的准备边界：
 - 根据源码重画当前消息流程。
 - 建立 Personal Runtime、Personal Expression 和 Native Core 的术语映射。
 - 完成插件、Prompt/Tool、Native Core 和 Subagent 的第一轮依赖盘点。
+- 建立 `PersonalRuntimeKey`、PendingTurn 状态和每 Runtime 单 Turn lease。
+- 将 follow-up admission 移到 Router/Persona 之前，并删除 Native 私有 follow-up owner。
+- 让 Native/Third-party 共用 Runtime 串行策略，保留插件显式 `ProviderRequest`。
 - 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化
   差异审计，并确定其长期 owner。
 - 删除无生产调用者的 `handle_inbound()`、`core_queue` 和 `enqueue_core` 重投递双轨，

@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: remove_dead_pre_pipeline_interaction_path
-  scope: Remove the unused Interaction pre-Pipeline queue reinsertion path so ProcessStage and handle_pipeline_event are the only production inbound boundary
+  phase: establish_personal_runtime_turn_ownership
+  scope: Establish one Personal Runtime owner for turn admission, follow-up capture, and Native/Third-party serialization before Router and Persona execution
 context:
   confidence: high
   assumptions:
@@ -18,8 +18,8 @@ context:
     - One runtime key has one conversational turn with user-visible completion ownership by default; new messages are offered as follow-up first and otherwise queued.
     - Phase 1 reuses InteractionTurnState as the only writable turn state and records plugin/Subagent/background task handles without migrating their lifecycle ownership before the later plugin-task phase.
     - All user-visible output, including direct/raw/protocol and Context.send_message output, goes through Output Dispatcher; raw is a non-rewriting output intent, not a dispatcher bypass.
-    - Native and Third-party execution currently diverge before execution: Third-party rebuilds ProviderRequest from the event and bypasses canonical Prompt, Capability, conversation, session-lock, and follow-up preparation.
-    - A plugin-yielded ProviderRequest is stored on the event but ignored by ThirdPartyAgentSubStage, so its prompt, contexts, media, tools, model, and output contract may be lost on that path.
+    - Native and Third-party execution still diverge before execution, but both now run under Personal Runtime turn admission and serialization.
+    - ThirdPartyAgentSubStage preserves a plugin-yielded ProviderRequest and only builds one from the event when no explicit request exists; it still bypasses canonical Prompt and Capability preparation.
     - ProviderRequest remains an official plugin compatibility input and low-level hook projection; it is not the future immutable Execution Preparation contract.
     - Existing Dify, Coze, DashScope, and DeerFlow runners are compatibility targets rather than templates for the future Backend interface.
     - Execution Preparation owns TaskSpec, Context/Prompt projection, normalized current input, CapabilitySnapshot, and runtime identity before backend selection; adapters own protocol projection, remote thread state, streaming, cancellation/close, and error translation.
@@ -257,9 +257,13 @@ verification:
     - pnpm --dir docs docs:build
     - YAML parse check for .ai/state.yaml after Personal Runtime transition-cleanup plan update
     - git diff --check after Personal Runtime transition-cleanup plan update
+    - .venv\Scripts\python.exe -m pytest Personal Runtime, Prompt integration, Interaction Middleware, Core Lifecycle, and smoke suites -q (103 passed)
+    - .venv\Scripts\ruff.exe check affected Interaction, Pipeline, Lifecycle, and test files (passed)
+    - py_compile for all affected runtime modules (passed)
+    - npm --dir docs run docs:build (passed)
+    - YAML parse check for .ai/state.yaml and git diff --check after Personal Runtime owner implementation (passed)
   checks_failed:
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
-    - Expanded interaction plus core-lifecycle run passed 222 tests but retained 2 existing core-lifecycle fixture failures because direct lifecycle construction does not initialize interaction_middleware; no affected lifecycle source was changed.
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
     - One runtime/media targeted pytest command referenced a plugin cleanup test name that is not present in the current test file; reran the valid runtime/media/updater targeted set successfully.

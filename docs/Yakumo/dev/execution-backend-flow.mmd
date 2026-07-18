@@ -7,6 +7,7 @@ flowchart LR
 %% - astrbot/core/pipeline/scheduler.py: PipelineScheduler.execute / _process_stages
 %% - astrbot/core/pipeline/stage_order.py: STAGES_ORDER
 %% - astrbot/core/pipeline/process_stage/stage.py: ProcessStage.process
+%% - astrbot/core/interaction/personal_runtime.py: PersonalRuntimeManager / PersonalSessionRuntime
 %% - astrbot/core/pipeline/process_stage/method/star_request.py: StarRequestSubStage.process
 %% - astrbot/core/pipeline/process_stage/method/agent_request.py: AgentRequestSubStage.process
 %% - astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py
@@ -57,6 +58,7 @@ flowchart LR
         direction TB
         PROC["ProcessStage.process"]
         PREP["InteractionMiddleware.prepare_pipeline_event<br/>启用时建立 TurnState 并替换 send / send_streaming"]
+        RESERVE["PersonalRuntimeManager.reserve<br/>记录 config / audience / privacy / turn"]
         HAS_HANDLER{"存在 activated_handlers?"}
         STAR["StarRequestSubStage<br/>按顺序执行插件 Handler"]
         STAR_OUT{"Handler 产出什么?"}
@@ -64,18 +66,26 @@ flowchart LR
         PROVIDER_REQ["ProviderRequest"]
         PLUGIN_TX["插件输出事务<br/>此前可见输出改记为 progress"]
         DEFAULT_GATE{"未发送消息 + 已唤醒 + 未 call_llm?"}
-        NO_CORE["ProcessStage 结束<br/>没有自动 Core 请求"]
+        NO_CORE["ProcessStage 结束<br/>没有自动 Core 请求，settle reservation"]
+        BIND["按 effective persona 绑定 PersonalRuntimeKey"]
+        ADMIT["PersonalSessionRuntime.admit<br/>先尝试 active runner follow-up"]
+        FOLLOW_UP{"follow-up 已被 active runner 消费?"}
+        TURN_LEASE["取得同 Runtime 唯一 conversational Turn lease"]
+        FOLLOW_DONE["不启动 Router / Persona / Core<br/>settle PendingTurn"]
         BEFORE_CORE["InteractionMiddleware.handle_pipeline_event<br/>仅在即将调用 Core 前执行"]
 
-        PP --> PROC --> PREP --> HAS_HANDLER
+        PP --> PROC --> PREP --> RESERVE --> HAS_HANDLER
         HAS_HANDLER -->|"是"| STAR --> STAR_OUT
         STAR_OUT -->|"普通结果"| PLUGIN_RESULT
         PLUGIN_RESULT -. "后续 Stage 返回后继续下一个 Handler" .-> STAR
-        STAR_OUT -->|"ProviderRequest"| PROVIDER_REQ --> PLUGIN_TX --> BEFORE_CORE
+        STAR_OUT -->|"ProviderRequest"| PROVIDER_REQ --> PLUGIN_TX --> BIND
         STAR -->|"Handler 全部结束"| DEFAULT_GATE
         HAS_HANDLER -->|"否"| DEFAULT_GATE
         DEFAULT_GATE -->|"否"| NO_CORE
-        DEFAULT_GATE -->|"是"| BEFORE_CORE
+        DEFAULT_GATE -->|"是"| BIND
+        BIND --> ADMIT --> FOLLOW_UP
+        FOLLOW_UP -->|"是"| FOLLOW_DONE
+        FOLLOW_UP -->|"否"| TURN_LEASE --> BEFORE_CORE
     end
 
     subgraph INTERACTION["四、Interaction 控制层（只在 Core 前运行）"]
@@ -132,7 +142,7 @@ flowchart LR
         AGENT_ENTRY["AgentRequestSubStage<br/>检查会话 AI 开关"]
         RUNNER_TYPE{"agent_runner_type"}
 
-        LOCAL0["InternalAgentSubStage<br/>typing / OnWaitingLLMRequest / 会话锁"]
+        LOCAL0["InternalAgentSubStage<br/>typing / OnWaitingLLMRequest<br/>注册 active runner 供 Runtime follow-up"]
         BUILD["build_main_agent"]
         PROVIDER["选择 Provider<br/>构造或复用 ProviderRequest"]
         CAP["注入现有能力<br/>插件工具 / Skills / Knowledge / SubAgent / Web Search / Sandbox / Cron"]
@@ -143,7 +153,7 @@ flowchart LR
         ARUN["AstrBot AgentRunner<br/>Provider + FunctionToolExecutor 工具循环"]
 
         THIRD0["ThirdPartyAgentSubStage<br/>Dify / Coze / DashScope / DeerFlow"]
-        THIRD_REQ["从当前消息构造 ProviderRequest<br/>图片转 base64 / 音频转本地路径"]
+        THIRD_REQ["保留插件 ProviderRequest<br/>否则从消息构造并转换图片 / 音频"]
         BRIDGE["apply_interaction_core_task_spec<br/>兼容方式注入 CoreTaskSpec 与同一 Persona 协同提示"]
         THIRD_HOOK["OnLLMRequest hook"]
         THIRD_RUN["第三方 Agent Runner"]
@@ -164,6 +174,7 @@ flowchart LR
         TASK -. "CoreTaskSpec" .-> BRIDGE
         THIRD_RUN -. "Agent Hooks" .-> LLM_POST
         RESULT --> YIELD
+        YIELD -. "后续 Pipeline 返回、Agent 完成" .-> TURN_RELEASE["释放 Turn lease<br/>settle PendingTurn"]
     end
 
     subgraph OUTPUT["六、Pipeline 输出与 Interaction Output Runtime"]

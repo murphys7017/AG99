@@ -9,6 +9,7 @@ from .context_utils import call_event_hook, call_handler
 
 if TYPE_CHECKING:
     from astrbot.core.interaction.middleware import InteractionMiddleware
+    from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
     from astrbot.core.star import PluginManager
 
 
@@ -20,5 +21,6 @@ class PipelineContext:
     plugin_manager: PluginManager  # 插件管理器对象
     astrbot_config_id: str
     interaction_middleware: InteractionMiddleware | None = None
+    personal_runtime_manager: PersonalRuntimeManager | None = None
     call_handler = call_handler
     call_event_hook = call_event_hook

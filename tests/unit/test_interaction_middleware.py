@@ -667,12 +667,15 @@ class TestInteractionMiddleware:
         stage._run_interaction_before_core_agent = AsyncMock()
         message = MessageChain([Plain("working")])
         request = ProviderRequest(prompt="complete this")
+        agent_calls = 0
 
         async def _plugin_process(event):
             await event.send(message)
             yield request
 
         async def _agent_process(event):
+            nonlocal agent_calls
+            agent_calls += 1
             assert event.get_extra("provider_request") is request
             yield None
 
@@ -688,6 +691,7 @@ class TestInteractionMiddleware:
             delegated_to_core=True,
         )
         stage._run_interaction_before_core_agent.assert_awaited_once_with(webchat_event)
+        assert agent_calls == 1
 
     @pytest.mark.asyncio
     async def test_plugin_send_defaults_to_plugin_output_after_forwarding(

@@ -3,4 +3,5 @@ venv/
 .DS_Store
 node_modules/
 .vitepress/cache
+.vitepress/.temp
 *dist
