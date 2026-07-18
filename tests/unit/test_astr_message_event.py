@@ -659,7 +659,7 @@ class TestInteractionDelivery:
     """Tests for middleware platform delivery hooks."""
 
     @pytest.mark.asyncio
-    async def test_send_interaction_message_uses_original_send(
+    async def test_send_message_with_extras_uses_original_send(
         self, astr_message_event
     ):
         original_send = AsyncMock()
@@ -668,7 +668,7 @@ class TestInteractionDelivery:
         astr_message_event.set_extra("_interaction_original_send", original_send)
         astr_message_event.send = wrapped_send
 
-        await astr_message_event.send_interaction_message(message)
+        await astr_message_event.send_message_with_extras(message)
 
         original_send.assert_awaited_once_with(message)
         wrapped_send.assert_not_awaited()

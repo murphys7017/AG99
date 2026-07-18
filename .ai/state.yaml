@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: establish_personal_runtime_turn_ownership
-  scope: Establish one Personal Runtime owner for turn admission, follow-up capture, and Native/Third-party serialization before Router and Persona execution
+  phase: unify_tts_output_segment_lifecycle
+  scope: Make Voice Service the sole TTS lifecycle owner and carry logical output-segment identity through the existing Pipeline and Interaction delivery path
 context:
   confidence: high
   assumptions:
@@ -74,6 +74,9 @@ context:
     - DeepSeek thinking mode is controlled only by the effective Provider `thinking.type`; both thinking and non-thinking requests preserve caller-supplied `tool_choice` instead of silently changing contract semantics.
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.
     - Slot-level meta.targets is a fail-closed model-visibility contract; malformed declarations are not treated as unrestricted access.
+    - TTS state is read-only and text-free; plugins observe requested/generating/succeeded/failed but cannot rewrite synthesis input through the lifecycle hook.
+    - Logical output segment IDs and physical visible-message IDs are separate identities; physical splitting never infers logical ownership from send order.
+    - The rich non-streaming platform boundary is send_message_with_extras; the replaced send_interaction_message name and dual delivery callbacks are removed rather than retained as compatibility wrappers.
   unresolved_questions:
     - Existing data/interaction_memory files need an inspectable migration or archival policy before InteractionMemoryStore readers are removed.
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
@@ -82,6 +85,9 @@ context:
 architecture:
   stability: review_required
   boundary_changes:
+    - Voice Service is the sole owner of TTS request IDs and generation terminal states; ordinary Pipeline and Interaction only project the returned state onto output components.
+    - Message components carry non-serialized delivery metadata through the existing message-chain splitter, and every physical send receives one metadata mapping through send_message_with_extras.
+    - Interaction Turn State allocates logical output-segment IDs independently from physical visible-message IDs; TTS dual output and segmented delivery preserve the logical ID without a positional ID queue.
     - ProcessStage -> InteractionMiddleware.handle_pipeline_event is now the only production Interaction inbound boundary; Middleware marks Core delegation but never reinserts events into the official queue.
     - Conversational Router decisions are limited to silent/persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
     - Router and Persona Expression start concurrently after input materialization; silent is a best-effort suppression decision, not a prerequisite for Persona generation.
@@ -142,6 +148,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - TTS lifecycle/output segment direct-path refactor: affected Voice Service, event delivery, message-chain delivery, Respond/Postprocess, Interaction Middleware, and Interaction Output Controller suite passed 236 tests; Ruff, py_compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained known aiosqlite event-loop-close warnings.
     - Dead pre-Pipeline path removal: project-venv Interaction Middleware suite passed 57 tests; production reference scan, Ruff, Python compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained an existing aiosqlite event-loop-close warning.
     - Executor preparation/output compatibility: Prompt/Main Agent/Tool Loop/Interaction suite passed 321 tests; event/message/memory suite passed 178 tests; suppressed Interaction output preserves the prior send-operation state; Ruff, py_compile, Mermaid render, VitePress build, YAML parse, and git diff checks passed.
     - All explicit tests/unit/test_interaction_*.py files passed 200 tests after the broader unit collection command was blocked by local data/cmd_config.json permissions; postprocess and pipeline scheduler coverage passed 34 tests.

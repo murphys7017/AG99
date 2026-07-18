@@ -30,11 +30,12 @@ import urllib.parse
 import uuid
 from enum import Enum
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 if sys.version_info >= (3, 14):
-    from pydantic import BaseModel
+    from pydantic import BaseModel, Field
 else:
-    from pydantic.v1 import BaseModel
+    from pydantic.v1 import BaseModel, Field
 
 from astrbot.core import astrbot_config, file_token_service, logger
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
@@ -70,6 +71,7 @@ class ComponentType(str, Enum):
 
 class BaseMessageComponent(BaseModel):
     type: ComponentType
+    delivery_metadata: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -77,7 +79,7 @@ class BaseMessageComponent(BaseModel):
     def toDict(self):
         data = {}
         for k, v in self.__dict__.items():
-            if k == "type" or v is None:
+            if k in {"type", "delivery_metadata"} or v is None:
                 continue
             if k == "_type":
                 k = "type"

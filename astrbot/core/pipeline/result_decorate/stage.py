@@ -18,7 +18,11 @@ from astrbot.core.platform.message_type import MessageType
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
-from astrbot.core.voice import VoiceServiceError, resolve_tts_provider, synthesize_text
+from astrbot.core.voice import (
+    VoiceServiceError,
+    build_tts_delivery_metadata,
+    synthesize_text,
+)
 
 from ..context import PipelineContext
 from ..stage import Stage, register_stage, registered_stages
@@ -276,26 +280,12 @@ class ResultDecorateStage(Stage):
                     result.chain = new_chain
 
             # TTS
-            try:
-                tts_provider = resolve_tts_provider(
-                    self.ctx.plugin_manager.context,
-                    event,
-                    stage="pipeline.result_decorate_tts",
-                )
-            except VoiceServiceError:
-                tts_provider = None
-
             should_attempt_tts = (
                 bool(self.ctx.astrbot_config["provider_tts_settings"]["enable"])
                 and result.is_llm_result()
                 and await SessionServiceManager.should_process_tts_request(event)
                 and random.random() <= self.tts_trigger_probability
             )
-            if should_attempt_tts and not tts_provider:
-                logger.warning(
-                    f"会话 {event.unified_msg_origin} 未配置文本转语音模型。",
-                )
-
             if (
                 not should_attempt_tts
                 and self.show_reasoning
@@ -320,18 +310,24 @@ class ResultDecorateStage(Stage):
                         0, Plain(f"🤔 思考: {reasoning_content}\n\n────\n")
                     )
 
-            if should_attempt_tts and tts_provider:
+            if should_attempt_tts:
                 new_chain = []
-                for comp in result.chain:
+                turn_id = str(
+                    event.get_extra("_turn_id")
+                    or event.message_obj.message_id
+                    or event.unified_msg_origin
+                )
+                for index, comp in enumerate(result.chain, start=1):
                     if isinstance(comp, Plain) and len(comp.text) > 1:
                         try:
                             logger.info(f"TTS 请求: {comp.text}")
                             use_file_service = self.ctx.astrbot_config[
                                 "provider_tts_settings"
                             ]["use_file_service"]
-                            callback_api_base = self.ctx.astrbot_config[
-                                "callback_api_base"
-                            ]
+                            callback_api_base = self.ctx.astrbot_config.get(
+                                "callback_api_base",
+                                "",
+                            )
                             dual_output = self.ctx.astrbot_config[
                                 "provider_tts_settings"
                             ]["dual_output"]
@@ -339,10 +335,13 @@ class ResultDecorateStage(Stage):
                                 self.ctx.plugin_manager.context,
                                 event,
                                 comp.text,
-                                provider=tts_provider,
                                 stage="pipeline.result_decorate_tts",
                                 use_file_service=bool(use_file_service),
                                 callback_api_base=callback_api_base,
+                                turn_id=turn_id,
+                                message_id=(
+                                    f"{turn_id}::pipeline_tts::{index:04d}"
+                                ),
                             )
                             logger.info(f"TTS 结果: {tts_result.audio_path}")
                             if tts_result.audio_url:
@@ -353,17 +352,46 @@ class ResultDecorateStage(Stage):
                                     file=tts_result.delivered_file,
                                     url=tts_result.delivered_file,
                                     text=tts_result.text,
+                                    delivery_metadata=build_tts_delivery_metadata(
+                                        tts_result.state,
+                                        audio_attachment="present",
+                                    ),
                                 ),
                             )
                             if dual_output:
-                                new_chain.append(comp)
-                        except VoiceServiceError:
-                            logger.error(traceback.format_exc())
-                            logger.error("TTS 失败，使用文本发送。")
-                            new_chain.append(comp)
+                                new_chain.append(
+                                    Plain(
+                                        comp.text,
+                                        delivery_metadata=build_tts_delivery_metadata(
+                                            tts_result.state,
+                                            audio_attachment="absent",
+                                        ),
+                                    )
+                                )
+                        except VoiceServiceError as exc:
+                            if exc.reason == "provider_unavailable":
+                                logger.warning(
+                                    f"会话 {event.unified_msg_origin} 未配置文本转语音模型。",
+                                )
+                            else:
+                                logger.error(traceback.format_exc())
+                                logger.error("TTS 失败，发送 audio.state=failed。")
+                            new_chain.append(
+                                Plain(
+                                    comp.text,
+                                    delivery_metadata=(
+                                        build_tts_delivery_metadata(
+                                            exc.state,
+                                            audio_attachment="absent",
+                                        )
+                                        if exc.state is not None
+                                        else {}
+                                    ),
+                                )
+                            )
                         except Exception:
                             logger.error(traceback.format_exc())
-                            logger.error("TTS 失败，使用文本发送。")
+                            logger.error("TTS 输出物化失败，保留文本输出。")
                             new_chain.append(comp)
                     else:
                         new_chain.append(comp)

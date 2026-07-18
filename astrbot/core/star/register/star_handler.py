@@ -735,6 +735,20 @@ def register_on_decorating_result(**kwargs):
     return decorator
 
 
+def register_on_tts_state_changed(**kwargs):
+    """监听只读的文本转语音生成状态。"""
+
+    def decorator(awaitable):
+        _ = get_handler_or_create(
+            awaitable,
+            EventType.OnTTSStateChangedEvent,
+            **kwargs,
+        )
+        return awaitable
+
+    return decorator
+
+
 def register_after_message_sent(**kwargs):
     """在消息发送后的事件"""
 

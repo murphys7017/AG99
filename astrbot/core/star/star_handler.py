@@ -239,6 +239,7 @@ class EventType(enum.Enum):
     OnPluginErrorEvent = enum.auto()  # 插件处理消息异常时
     OnPluginLoadedEvent = enum.auto()  # 插件加载完成
     OnPluginUnloadedEvent = enum.auto()  # 插件卸载完成
+    OnTTSStateChangedEvent = enum.auto()  # 文本转语音生成状态变化
 
 
 H = TypeVar("H", bound=Callable[..., Any])

@@ -503,7 +503,7 @@ async def test_immediate_reply_collects_result_contributors(webchat_event):
     assert payload["platform_extras"]["metadata"] == {"source": "immediate-unit"}
     assert (
         payload["platform_extras"]["visible_message_id"]
-        == "turn-1::immediate_reply::0001"
+        == "turn-1::delivery::immediate_reply::0001"
     )
     assert queue.empty()
     plugin_context.list_interaction_result_contributors.assert_called_once_with()
@@ -767,6 +767,14 @@ async def test_immediate_reply_dual_output_keeps_single_semantic_text(
     plain_payload = queue.get_nowait()
     assert record_payload["type"] == "record"
     assert plain_payload["type"] == "plain"
+    assert record_payload["platform_extras"]["tts_status"] == "succeeded"
+    assert plain_payload["platform_extras"]["tts_status"] == "succeeded"
+    assert record_payload["platform_extras"]["audio_attachment"] == "present"
+    assert plain_payload["platform_extras"]["audio_attachment"] == "absent"
+    assert (
+        record_payload["platform_extras"]["output_segment"]["message_id"]
+        == plain_payload["platform_extras"]["output_segment"]["message_id"]
+    )
     assert (
         record_payload["platform_extras"]["semantic_text"]
         == plain_payload["platform_extras"]["semantic_text"]
@@ -825,11 +833,11 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
     assert core_payload["platform_extras"]["message_kind"] == "core_reply"
     assert (
         immediate_payload["platform_extras"]["visible_message_id"]
-        == "turn-1::immediate_reply::0001"
+        == "turn-1::delivery::immediate_reply::0001"
     )
     assert (
         core_payload["platform_extras"]["visible_message_id"]
-        == "turn-1::core_reply::0002"
+        == "turn-1::delivery::core_reply::0002"
     )
     assert (
         immediate_payload["platform_extras"]["visible_message_id"]
@@ -838,16 +846,18 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::immediate_reply::0001",
-            "delivered_message_ids": ["turn-1::immediate_reply::0001"],
+            "message_id": "turn-1::segment::immediate_reply::0001",
+            "delivered_message_ids": [
+                "turn-1::delivery::immediate_reply::0001"
+            ],
             "kind": "immediate_reply",
             "text": "行，等我查一下。",
             "memory_relevant": True,
         },
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::core_reply::0002",
-            "delivered_message_ids": ["turn-1::core_reply::0002"],
+            "message_id": "turn-1::segment::core_reply::0002",
+            "delivered_message_ids": ["turn-1::delivery::core_reply::0002"],
             "kind": "core_reply",
             "text": "设计问题，我改不了。",
             "memory_relevant": True,
@@ -856,12 +866,12 @@ async def test_hybrid_visible_outputs_share_turn_id_but_get_distinct_message_ids
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
     assert [utterance.message_id for utterance in turn_state.utterances] == [
-        "turn-1::immediate_reply::0001",
-        "turn-1::core_reply::0002",
+        "turn-1::segment::immediate_reply::0001",
+        "turn-1::segment::core_reply::0002",
     ]
     assert [utterance.delivered_message_ids for utterance in turn_state.utterances] == [
-        ["turn-1::immediate_reply::0001"],
-        ["turn-1::core_reply::0002"],
+        ["turn-1::delivery::immediate_reply::0001"],
+        ["turn-1::delivery::core_reply::0002"],
     ]
     assert queue.empty()
 
@@ -932,8 +942,8 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::passthrough::0001",
-            "delivered_message_ids": ["turn-1::passthrough::0001"],
+            "message_id": "turn-1::segment::passthrough::0001",
+            "delivered_message_ids": ["turn-1::delivery::passthrough::0001"],
             "kind": "passthrough",
             "text": "command result",
             "memory_relevant": True,
@@ -948,8 +958,10 @@ async def test_general_result_is_passthrough_without_final_contributors(webchat_
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
-                "message_id": "turn-1::passthrough::0001",
-                "delivered_message_ids": ["turn-1::passthrough::0001"],
+                "message_id": "turn-1::segment::passthrough::0001",
+                "delivered_message_ids": [
+                    "turn-1::delivery::passthrough::0001"
+                ],
                 "kind": "passthrough",
                 "text": "command result",
                 "memory_relevant": True,
@@ -1017,16 +1029,16 @@ async def test_core_stream_followup_send_is_not_classified_as_passthrough(
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::core_stream::0001",
-            "delivered_message_ids": ["turn-1::core_stream::0001"],
+            "message_id": "turn-1::segment::core_stream::0001",
+            "delivered_message_ids": ["turn-1::delivery::core_stream::0001"],
             "kind": "core_stream",
             "text": "stream final",
             "memory_relevant": True,
         },
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::core_reply::0002",
-            "delivered_message_ids": ["turn-1::core_reply::0002"],
+            "message_id": "turn-1::segment::core_reply::0002",
+            "delivered_message_ids": ["turn-1::delivery::core_reply::0002"],
             "kind": "core_reply",
             "text": "可以执行cmd，限制当前工作目录。没联网权限。",
             "memory_relevant": True,
@@ -1254,7 +1266,7 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
-                "message_id": "turn-1::immediate_reply::0001",
+                "message_id": "turn-1::segment::immediate_reply::0001",
                 "delivered_message_ids": [],
                 "kind": "immediate_reply",
                 "text": "等我看看。",
@@ -1262,7 +1274,7 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
             },
             {
                 "turn_id": "turn-1",
-                "message_id": "turn-1::stream_interjection::0002",
+                "message_id": "turn-1::segment::stream_interjection::0002",
                 "delivered_message_ids": [],
                 "kind": "stream_interjection",
                 "text": "还在查。",
@@ -1270,8 +1282,8 @@ async def test_outbound_final_material_uses_visible_outputs_as_canonical_reply(
             },
             {
                 "turn_id": "turn-1",
-                "message_id": "turn-1::core_reply::0003",
-                "delivered_message_ids": ["turn-1::core_reply::0003"],
+                "message_id": "turn-1::segment::core_reply::0003",
+                "delivered_message_ids": ["turn-1::delivery::core_reply::0001"],
                 "kind": "core_reply",
                 "text": "你可以执行工作区命令。",
                 "memory_relevant": True,
@@ -1398,14 +1410,17 @@ async def test_core_final_result_reuses_segmented_delivery_rules(webchat_event):
     assert first_payload["platform_extras"]["turn_id"] == "turn-1"
     assert (
         first_payload["platform_extras"]["visible_message_id"]
-        == "turn-1::core_reply::0001"
+        == "turn-1::delivery::core_reply::0001"
     )
     turn_state = get_interaction_turn_state(webchat_event)
     assert turn_state is not None
     assert len(turn_state.utterances) == 1
-    assert turn_state.utterances[0].message_id == "turn-1::core_reply::0001"
+    assert (
+        turn_state.utterances[0].message_id
+        == "turn-1::segment::core_reply::0001"
+    )
     assert turn_state.utterances[0].delivered_message_ids == [
-        "turn-1::core_reply::0001",
+        "turn-1::delivery::core_reply::0001",
     ]
     assert queue.empty()
 
@@ -1484,8 +1499,8 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::core_stream::0001",
-            "delivered_message_ids": ["turn-1::core_stream::0001"],
+            "message_id": "turn-1::segment::core_stream::0001",
+            "delivered_message_ids": ["turn-1::delivery::core_stream::0001"],
             "kind": "core_stream",
             "text": "hello world",
             "memory_relevant": True,
@@ -1498,8 +1513,10 @@ async def test_capture_streaming_tracks_text_when_observation_disabled(webchat_e
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
-                "message_id": "turn-1::core_stream::0001",
-                "delivered_message_ids": ["turn-1::core_stream::0001"],
+                "message_id": "turn-1::segment::core_stream::0001",
+                "delivered_message_ids": [
+                    "turn-1::delivery::core_stream::0001"
+                ],
                 "kind": "core_stream",
                 "text": "hello world",
                 "memory_relevant": True,
@@ -1553,8 +1570,10 @@ async def test_capture_streaming_uses_audio_chunk_text_for_live_material(
         "visible_outputs": [
             {
                 "turn_id": "turn-1",
-                "message_id": "turn-1::core_stream::0001",
-                "delivered_message_ids": ["turn-1::core_stream::0001"],
+                "message_id": "turn-1::segment::core_stream::0001",
+                "delivered_message_ids": [
+                    "turn-1::delivery::core_stream::0001"
+                ],
                 "kind": "core_stream",
                 "text": "spoken",
                 "memory_relevant": True,
@@ -1658,16 +1677,18 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     assert webchat_event.get_extra("_visible_turn_outputs") == [
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::stream_interjection::0002",
-            "delivered_message_ids": ["turn-1::stream_interjection::0002"],
+            "message_id": "turn-1::segment::stream_interjection::0002",
+            "delivered_message_ids": [
+                "turn-1::delivery::stream_interjection::0002"
+            ],
             "kind": "stream_interjection",
             "text": "嗯，我听着。",
             "memory_relevant": False,
         },
         {
             "turn_id": "turn-1",
-            "message_id": "turn-1::core_stream::0001",
-            "delivered_message_ids": ["turn-1::core_stream::0001"],
+            "message_id": "turn-1::segment::core_stream::0001",
+            "delivered_message_ids": ["turn-1::delivery::core_stream::0001"],
             "kind": "core_stream",
             "text": "hello core",
             "memory_relevant": True,
@@ -1681,7 +1702,7 @@ async def test_capture_streaming_interjection_is_separate_from_core_stream(
     ]
     assert turn_state.utterances[0].memory_relevant is False
     assert turn_state.utterances[0].delivered_message_ids == [
-        "turn-1::stream_interjection::0002"
+        "turn-1::delivery::stream_interjection::0002"
     ]
     assert turn_state.utterances[1].text == "hello core"
 

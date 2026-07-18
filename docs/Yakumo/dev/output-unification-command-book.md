@@ -163,14 +163,14 @@ plugin output 的独立 message kind 和记录语义
 4. 替换后，`event.send(...)` 会按 origin 进入 core 或 plugin output path；未标记 origin 的插件发送进入 `capture_plugin_output(...)`。
 5. `event.send_streaming(...)` 同样按 origin 分流；core 流式进入 `capture_streaming(...)`，插件主动流式进入 `capture_plugin_streaming(...)`。
 6. 真正发给平台时，Output Controller 会调用：
-   - `event.send_interaction_message(...)`
+   - `event.send_message_with_extras(...)`
    - `event.send_interaction_streaming(...)`
 7. 插件通过 `return/yield MessageEventResult` 交给 `RespondStage` 的非流式官方结果路径已按非模型结果进入 plugin output path；core model result 和 core streaming result 仍显式标记为 core output。
 
 因此，本轮实现的最佳切入点不是新造一个发送系统，而是：
 
 ```text
-围绕 send_interaction_message / send_interaction_streaming 建立标准化的 plugin output path
+围绕 send_message_with_extras / send_interaction_streaming 建立标准化的 plugin output path
 ```
 
 ## 本轮完成后的理想行为
@@ -183,7 +183,7 @@ plugin -> event.send(message)
   -> detect origin=plugin
   -> capture_plugin_output(mode=direct)
   -> materialize as plugin_direct
-  -> event.send_interaction_message(...)
+  -> event.send_message_with_extras(...)
   -> visible_outputs / finalized material
 
 plugin -> event.send_streaming(generator)
@@ -209,7 +209,7 @@ plugin -> event.send_persona(message)
   -> capture_plugin_output(mode=persona)
   -> rewrite text through persona expression path
   -> materialize as plugin_persona
-  -> event.send_interaction_message(...)
+  -> event.send_message_with_extras(...)
 ```
 
 ## 输出身份模型
@@ -598,7 +598,7 @@ async def capture_plugin_output(
 ```text
 plugin MessageChain
   -> materialize as plugin_direct
-  -> deliver through event.send_interaction_message(...)
+  -> deliver through event.send_message_with_extras(...)
   -> record visible output
   -> persist finalized material
 ```
@@ -626,7 +626,7 @@ plugin MessageChain
 plugin MessageChain
   -> extract semantic text
   -> persona rewrite / expression path
-  -> deliver through event.send_interaction_message(...)
+  -> deliver through event.send_message_with_extras(...)
   -> record visible output
   -> persist finalized material
 ```

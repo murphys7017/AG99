@@ -7,6 +7,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
+from astrbot.core.star.star_handler import star_handlers_registry
 from astrbot.core.voice import (
     VoiceServiceError,
     resolve_stt_provider,
@@ -127,6 +128,49 @@ async def test_synthesize_text_registers_file_when_requested(voice_event):
 
 
 @pytest.mark.asyncio
+async def test_synthesize_text_emits_read_only_lifecycle(voice_event):
+    states = []
+    voice_event.set_extra("output_correlation_id", "external-turn-1")
+
+    async def observe(_event, state):
+        states.append(state)
+        return "ignored"
+
+    handler = MagicMock()
+    handler.handler = observe
+    handler.handler_full_name = "test.tts_state"
+    with patch.object(
+        star_handlers_registry,
+        "get_handlers_by_event_type",
+        return_value=[handler],
+    ):
+        result = await synthesize_text(
+            MagicMock(),
+            voice_event,
+            "spoken",
+            provider=FakeTTSProvider(),
+            stage="unit",
+            turn_id="turn-1",
+            message_id="message-1",
+            tts_request_id="tts-1",
+        )
+
+    assert result.text == "spoken"
+    assert [state.status for state in states] == [
+        "requested",
+        "generating",
+        "succeeded",
+    ]
+    assert all(state.turn_id == "turn-1" for state in states)
+    assert all(state.message_id == "message-1" for state in states)
+    assert all(state.tts_request_id == "tts-1" for state in states)
+    assert all(
+        state.external_correlation_id == "external-turn-1" for state in states
+    )
+    assert not hasattr(states[0], "text")
+
+
+@pytest.mark.asyncio
 async def test_synthesize_text_wraps_file_registration_failure(voice_event):
     with patch(
         "astrbot.core.voice.service.file_token_service.register_file",
@@ -147,6 +191,8 @@ async def test_synthesize_text_wraps_file_registration_failure(voice_event):
     assert exc_info.value.stage == "unit"
     assert exc_info.value.provider_id == "voice-provider"
     assert exc_info.value.metadata["audio_path"] == "spoken.wav"
+    assert exc_info.value.state is not None
+    assert exc_info.value.state.failure_code == "file_registration_failed"
 
 
 @pytest.mark.asyncio

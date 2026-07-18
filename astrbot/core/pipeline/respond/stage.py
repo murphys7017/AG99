@@ -67,16 +67,26 @@ class RespondStage(Stage):
             await cancel(controller, event, reason=reason)
 
     @staticmethod
-    async def _send_with_origin(
+    async def _send_with_origin_and_extras(
         event: AstrMessageEvent,
         message,
         origin: str | None,
+        platform_extras: dict,
     ) -> None:
+        async def _send() -> None:
+            if not platform_extras or event.get_extra("_interaction_enabled", False):
+                await event.send(message)
+                return
+            await event.send_message_with_extras(
+                message,
+                platform_extras=platform_extras,
+            )
+
         if origin is None:
-            await event.send(message)
+            await _send()
             return
         with temporary_output_origin(event, origin):
-            await event.send(message)
+            await _send()
 
     @staticmethod
     async def _send_stream_with_origin(
@@ -285,10 +295,13 @@ class RespondStage(Stage):
                 sent_any = await deliver_message_chain(
                     event,
                     result.derive(result.chain),
-                    send_message=lambda chain: self._send_with_origin(
-                        event,
-                        chain,
-                        output_origin,
+                    send_message=lambda chain, extras: (
+                        self._send_with_origin_and_extras(
+                            event,
+                            chain,
+                            output_origin,
+                            extras,
+                        )
                     ),
                     platform_settings=self.platform_settings,
                     result_is_model_result=result.is_model_result(),

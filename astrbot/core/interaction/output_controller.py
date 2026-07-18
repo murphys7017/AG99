@@ -15,7 +15,12 @@ from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.session_llm_manager import SessionServiceManager
-from astrbot.core.voice import VoiceServiceError, resolve_tts_provider, synthesize_text
+from astrbot.core.voice import (
+    TTSState,
+    VoiceServiceError,
+    build_tts_delivery_metadata,
+    synthesize_text,
+)
 
 from .config import load_interaction_agent_config
 from .contributors import (
@@ -61,6 +66,7 @@ from .turn_state import (
     mark_interaction_turn_core_streaming_result_consumed,
     mark_interaction_turn_finalization_pending,
     mark_interaction_turn_stream_interjection_emitted,
+    next_interaction_turn_output_segment_id,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
@@ -275,12 +281,14 @@ class InteractionOutputController:
         outbound_kind = self._classify_outbound_message(event, message, is_immediate)
         if is_immediate:
             semantic_text = message.get_plain_text()
+            message_id = self._next_output_segment_id(event, "immediate_reply")
             contributions = await self._collect_result_contributions(
                 event,
                 core_result=None,
                 final_result=semantic_text,
                 phase="immediate",
                 candidate_message_kind="immediate_reply",
+                candidate_message_id=message_id,
                 effect_calls=(
                     prepared_expression.effect_calls
                     if prepared_expression is not None
@@ -298,6 +306,7 @@ class InteractionOutputController:
             ) = await self.materialize_immediate_interaction_outbound_message(
                 event,
                 message,
+                message_id=message_id,
             )
             delivered_message_ids = await self._deliver_visible_message(
                 event,
@@ -307,6 +316,7 @@ class InteractionOutputController:
                     event,
                     result_contribution=merged,
                 ),
+                output_segment_id=message_id,
                 record_send_operation=False,
                 allow_segmented_reply=False,
                 semantic_text=semantic_text,
@@ -315,6 +325,7 @@ class InteractionOutputController:
                 event,
                 message_kind="immediate_reply",
                 text=semantic_text,
+                message_id=message_id,
                 delivered_message_ids=delivered_message_ids,
                 metadata=materialization,
             )
@@ -335,6 +346,7 @@ class InteractionOutputController:
 
         if outbound_kind == "passthrough":
             semantic_text = message.get_plain_text()
+            message_id = self._next_output_segment_id(event, "passthrough")
             (
                 message,
                 materialization,
@@ -343,11 +355,13 @@ class InteractionOutputController:
                 message,
                 message_kind="passthrough",
                 result_is_model_result=False,
+                message_id=message_id,
             )
             delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
                 message_kind="passthrough",
+                output_segment_id=message_id,
                 allow_segmented_reply=True,
                 semantic_text=semantic_text,
             )
@@ -355,6 +369,7 @@ class InteractionOutputController:
                 event,
                 message_kind="passthrough",
                 text=semantic_text,
+                message_id=message_id,
                 delivered_message_ids=delivered_message_ids,
                 metadata=materialization,
             )
@@ -420,6 +435,7 @@ class InteractionOutputController:
 
         event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
         semantic_text = message.get_plain_text()
+        message_id = self._next_output_segment_id(event, resolved_kind)
         deferred_by_transaction = finalize and self._begin_plugin_output_transaction(
             event
         )
@@ -432,11 +448,13 @@ class InteractionOutputController:
             message,
             message_kind=resolved_kind,
             result_is_model_result=False,
+            message_id=message_id,
         )
         delivered_message_ids = await self._deliver_visible_message(
             event,
             message,
             message_kind=resolved_kind,
+            output_segment_id=message_id,
             allow_segmented_reply=True,
             semantic_text=semantic_text,
         )
@@ -444,6 +462,7 @@ class InteractionOutputController:
             event,
             message_kind=resolved_kind,
             text=semantic_text,
+            message_id=message_id,
             delivered_message_ids=delivered_message_ids,
             metadata=materialization,
             memory_relevant=finalize and not deferred_by_transaction,
@@ -468,6 +487,7 @@ class InteractionOutputController:
         event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
         deferred_by_transaction = self._begin_plugin_output_transaction(event)
         stream_text_parts: list[str] = []
+        message_id = self._next_output_segment_id(event, resolved_kind)
 
         async def _observe_plugin_stream() -> AsyncGenerator[MessageChain, None]:
             async for chain in generator:
@@ -480,6 +500,7 @@ class InteractionOutputController:
             **self.build_platform_output_extras(
                 event,
                 message_kind=resolved_kind,
+                output_segment_id=message_id,
             ),
             "interaction_plugin_streaming": True,
             "plugin_output_mode": resolved_mode.value,
@@ -516,6 +537,7 @@ class InteractionOutputController:
             event,
             message_kind=resolved_kind,
             text=text,
+            message_id=message_id,
             delivered_message_ids=_visible_message_ids_from_extras(platform_extras),
             memory_relevant=not deferred_by_transaction,
         )
@@ -617,9 +639,11 @@ class InteractionOutputController:
     ) -> None:
         set_interaction_turn_core_streaming_active(event, True)
         observed_generator = self._wrap_core_stream(generator, event)
+        message_id = self._next_output_segment_id(event, "core_stream")
         platform_extras = self.build_platform_output_extras(
             event,
             message_kind="core_stream",
+            output_segment_id=message_id,
         )
         await self._notify_lifecycle(
             event,
@@ -647,6 +671,7 @@ class InteractionOutputController:
         else:
             self._finalize_interaction_stream_output(
                 event,
+                message_id=message_id,
                 delivered_message_ids=_visible_message_ids_from_extras(
                     platform_extras
                 ),
@@ -754,6 +779,7 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
         *,
+        message_id: str,
         delivered_message_ids: list[str] | None = None,
     ) -> None:
         mark_interaction_turn_core_streaming_result_consumed(event)
@@ -761,6 +787,7 @@ class InteractionOutputController:
             event,
             message_kind="core_stream",
             text=get_interaction_turn_stream_text(event),
+            message_id=message_id,
             delivered_message_ids=delivered_message_ids,
         )
         self._materialize_finalized_turn(event)
@@ -1157,39 +1184,33 @@ class InteractionOutputController:
             return
         message = MessageChain([Plain(text)])
         message.type = "interaction_stream_reply"
+        message_id = self._next_output_segment_id(event, "stream_interjection")
         (
             materialized_message,
             materialization,
         ) = await self.materialize_immediate_interaction_outbound_message(
-            event, message
+            event, message, message_id=message_id
         )
         platform_extras = {
-            **self.build_platform_output_extras(
-                event,
-                message_kind="stream_interjection",
-            ),
             "interaction_stream_reply": True,
             "stream_window_index": window_index,
         }
-        await self._notify_lifecycle(
+        delivered_message_ids = await self._deliver_visible_message(
             event,
-            "speaking",
-            {"message_kind": "stream_interjection"},
-        )
-        await self._send_platform_message(
             materialized_message,
-            event,
+            message_kind="stream_interjection",
             platform_extras=platform_extras,
+            output_segment_id=message_id,
             record_send_operation=False,
+            allow_segmented_reply=False,
+            semantic_text=text,
         )
-        visible_message_id = str(platform_extras.get("visible_message_id", "") or "")
         self._record_visible_output(
             event,
             message_kind="stream_interjection",
             text=text,
-            delivered_message_ids=(
-                [visible_message_id] if visible_message_id else None
-            ),
+            message_id=message_id,
+            delivered_message_ids=delivered_message_ids,
             metadata=materialization,
             memory_relevant=False,
         )
@@ -1241,6 +1262,9 @@ class InteractionOutputController:
             final_result=final_message.get_plain_text(),
             phase="final",
             candidate_message_kind="core_reply",
+            candidate_message_id=(
+                message_id := self._next_output_segment_id(event, "core_reply")
+            ),
             effect_calls=result.effect_calls,
         )
         merged = merge_result_contributions(contributions)
@@ -1262,8 +1286,7 @@ class InteractionOutputController:
             return
 
         platform_extras = self.build_platform_output_base_extras(
-            event,
-            result_contribution=merged,
+            event, result_contribution=merged
         )
         semantic_text = final_message.get_plain_text()
         (
@@ -1274,12 +1297,14 @@ class InteractionOutputController:
             final_message,
             message_kind="core_reply",
             result_is_model_result=True,
+            message_id=message_id,
         )
         delivered_message_ids = await self._deliver_visible_message(
             event,
             materialized_message,
             message_kind="core_reply",
             platform_extras=platform_extras,
+            output_segment_id=message_id,
             result_is_model_result=True,
             allow_segmented_reply=True,
             semantic_text=semantic_text,
@@ -1288,6 +1313,7 @@ class InteractionOutputController:
             event,
             message_kind="core_reply",
             text=semantic_text,
+            message_id=message_id,
             delivered_message_ids=delivered_message_ids,
             metadata=materialization,
         )
@@ -1365,6 +1391,7 @@ class InteractionOutputController:
         final_result: str | None,
         phase: str,
         candidate_message_kind: str,
+        candidate_message_id: str,
         effect_calls: Sequence[Any] = (),
     ) -> list[InteractionResultContribution]:
         if self.plugin_context is None:
@@ -1395,6 +1422,7 @@ class InteractionOutputController:
         output_text = (final_result or core_result or "").strip()
         output_draft = InteractionOutputDraft(
             turn_id=str(event.get_extra("_turn_id", "") or ""),
+            message_id=candidate_message_id,
             source="core" if phase == "final" and core_result else "interaction",
             route_mode=route_mode,
             phase=phase,
@@ -1567,6 +1595,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         *,
         message_kind: str,
+        output_segment_id: str | None = None,
         result_contribution: InteractionResultContribution | None = None,
     ) -> dict[str, Any]:
         extras = self.build_platform_output_base_extras(
@@ -1579,7 +1608,7 @@ class InteractionOutputController:
                 "turn_id": event.get_extra("_turn_id"),
                 "visible_message_id": visible_message_id,
                 "message_kind": message_kind,
-                "composite_message_id": visible_message_id,
+                "composite_message_id": output_segment_id or visible_message_id,
             }
         )
         return {key: value for key, value in extras.items() if value is not None}
@@ -1606,12 +1635,14 @@ class InteractionOutputController:
         *,
         message_kind: str,
         result_is_model_result: bool = False,
+        message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
         self._refresh_outbound_materialization_config(event)
         materialization: dict[str, Any] = {
             "message_kind": message_kind,
             "semantic_text": message.get_plain_text(),
             "delivered_as": "text",
+            "tts_status": "not_attempted",
         }
         materialized = self._apply_interaction_reply_prefix(event, message)
         materialized, reasoning_metadata = self._apply_interaction_reasoning_display(
@@ -1624,17 +1655,25 @@ class InteractionOutputController:
                 event,
                 materialized,
                 result_is_model_result=result_is_model_result,
+                message_id=message_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except VoiceServiceError as exc:
             logger.error(
-                "Interaction TTS failed; sending text fallback.",
+                "Interaction TTS failed; emitting an audio-failed materialization.",
                 exc_info=True,
             )
             tts_metadata = {
                 "tts_failed": True,
-                "tts_fallback": "text",
-                "tts_failure_reason": str(exc),
+                "failure_code": (
+                    exc.state.failure_code if exc.state is not None else exc.reason
+                ),
+                "tts_status": "failed",
             }
+            if exc.state is not None:
+                materialized = self._attach_tts_failure_segment(
+                    materialized,
+                    exc.state,
+                )
         materialization.update(tts_metadata)
         if tts_metadata.get("delivered_as") == "record":
             return materialized, materialization
@@ -1660,19 +1699,41 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
         message: MessageChain,
+        *,
+        message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
         self._refresh_outbound_materialization_config(event)
         materialization: dict[str, Any] = {
             "message_kind": "immediate_reply",
             "semantic_text": message.get_plain_text(),
             "delivered_as": "text",
+            "tts_status": "not_attempted",
         }
         materialized = self._apply_interaction_reply_prefix(event, message)
-        materialized, tts_metadata = await self._apply_interaction_tts(
-            event,
-            materialized,
-            result_is_model_result=True,
-        )
+        try:
+            materialized, tts_metadata = await self._apply_interaction_tts(
+                event,
+                materialized,
+                result_is_model_result=True,
+                message_id=message_id,
+            )
+        except VoiceServiceError as exc:
+            logger.error(
+                "Immediate interaction TTS failed; emitting an audio-failed segment.",
+                exc_info=True,
+            )
+            tts_metadata = {
+                "tts_failed": True,
+                "failure_code": (
+                    exc.state.failure_code if exc.state is not None else exc.reason
+                ),
+                "tts_status": "failed",
+            }
+            if exc.state is not None:
+                materialized = self._attach_tts_failure_segment(
+                    materialized,
+                    exc.state,
+                )
         materialization.update(tts_metadata)
         return materialized, materialization
 
@@ -1722,6 +1783,7 @@ class InteractionOutputController:
         message: MessageChain,
         *,
         result_is_model_result: bool,
+        message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
         tts_settings = self._get_tts_settings(event)
         should_try_tts = (
@@ -1732,20 +1794,6 @@ class InteractionOutputController:
         )
         if not should_try_tts:
             return message, {}
-        try:
-            tts_provider = resolve_tts_provider(
-                self.plugin_context,
-                event,
-                stage="interaction.outbound_tts",
-            )
-        except VoiceServiceError as exc:
-            self._record_outbound_materialization_failure(
-                event,
-                "tts",
-                exc.reason,
-            )
-            raise
-
         new_chain = []
         converted: list[dict[str, Any]] = []
         for comp in message.chain:
@@ -1753,18 +1801,23 @@ class InteractionOutputController:
                 new_chain.append(comp)
                 continue
             try:
+                current_message_id = message_id or self._next_output_segment_id(
+                    event, "tts"
+                )
+                message_id = None
                 logger.info("Interaction TTS request: %s", comp.text)
                 result = await synthesize_text(
                     self.plugin_context,
                     event,
                     comp.text,
-                    provider=tts_provider,
                     stage="interaction.outbound_tts",
                     use_file_service=bool(tts_settings.get("use_file_service")),
                     callback_api_base=str(
                         self._get_config_value("callback_api_base", "", event=event)
                     ),
                     require_file_registration_config=True,
+                    turn_id=str(event.get_extra("_turn_id", "") or ""),
+                    message_id=current_message_id,
                 )
                 logger.info("Interaction TTS result: %s", result.audio_path)
                 new_chain.append(
@@ -1772,6 +1825,10 @@ class InteractionOutputController:
                         file=result.delivered_file,
                         url=result.delivered_file,
                         text=result.text,
+                        delivery_metadata=build_tts_delivery_metadata(
+                            result.state,
+                            audio_attachment="present",
+                        ),
                     )
                 )
                 converted.append(
@@ -1780,10 +1837,20 @@ class InteractionOutputController:
                         "tts_audio_path": result.audio_path,
                         "tts_audio_url": result.audio_url,
                         "tts_provider_id": result.provider_id,
+                        "tts_request_id": result.state.tts_request_id,
+                        "message_id": result.state.message_id,
                     }
                 )
                 if bool(tts_settings.get("dual_output")):
-                    new_chain.append(comp)
+                    new_chain.append(
+                        Plain(
+                            comp.text,
+                            delivery_metadata=build_tts_delivery_metadata(
+                                result.state,
+                                audio_attachment="absent",
+                            ),
+                        )
+                    )
             except VoiceServiceError as exc:
                 self._record_outbound_materialization_failure(
                     event,
@@ -1799,8 +1866,27 @@ class InteractionOutputController:
             {
                 "delivered_as": "record",
                 "tts": converted,
+                "tts_status": "succeeded",
             },
         )
+
+    @staticmethod
+    def _attach_tts_failure_segment(
+        message: MessageChain,
+        state: TTSState,
+    ) -> MessageChain:
+        chain = list(message.chain)
+        for index, component in enumerate(chain):
+            if isinstance(component, Plain) and len(component.text) > 1:
+                chain[index] = Plain(
+                    component.text,
+                    delivery_metadata=build_tts_delivery_metadata(
+                        state,
+                        audio_attachment="absent",
+                    ),
+                )
+                break
+        return message.derive(chain)
 
     async def _apply_interaction_t2i(
         self,
@@ -1905,6 +1991,13 @@ class InteractionOutputController:
         return registered_url
 
     @staticmethod
+    def _next_output_segment_id(
+        event: AstrMessageEvent,
+        message_kind: str,
+    ) -> str:
+        return next_interaction_turn_output_segment_id(event, message_kind)
+
+    @staticmethod
     def _next_visible_message_id(event: AstrMessageEvent, message_kind: str) -> str:
         return next_interaction_turn_visible_message_id(event, message_kind)
 
@@ -1916,7 +2009,7 @@ class InteractionOutputController:
         platform_extras: dict[str, Any],
         record_send_operation: bool = True,
     ) -> None:
-        await event.send_interaction_message(
+        await event.send_message_with_extras(
             message=message,
             platform_extras=platform_extras,
             record_send_operation=record_send_operation,
@@ -1929,6 +2022,7 @@ class InteractionOutputController:
         *,
         message_kind: str,
         platform_extras: dict[str, Any] | None = None,
+        output_segment_id: str | None = None,
         record_send_operation: bool = True,
         result_is_model_result: bool = False,
         allow_segmented_reply: bool = False,
@@ -1958,15 +2052,44 @@ class InteractionOutputController:
             {"message_kind": message_kind},
         )
 
-        async def _send(chain: MessageChain) -> None:
+        async def _send(
+            chain: MessageChain,
+            delivery_extras: Mapping[str, Any] | None = None,
+        ) -> None:
             output_extras = {
                 **base_extras,
                 **self.build_platform_output_extras(
                     event,
                     message_kind=message_kind,
+                    output_segment_id=output_segment_id,
                 ),
                 "semantic_text": semantic_text,
             }
+            if isinstance(delivery_extras, Mapping):
+                output_extras.update(delivery_extras)
+            output_segment = output_extras.get("output_segment")
+            segment_tts = (
+                output_segment.get("tts")
+                if isinstance(output_segment, Mapping)
+                else None
+            )
+            if isinstance(segment_tts, Mapping):
+                tts_status = str(segment_tts.get("status") or "").strip()
+                logical_message_id = str(
+                    output_segment.get("message_id") or ""
+                ).strip()
+                if logical_message_id:
+                    output_extras["composite_message_id"] = logical_message_id
+                failure_code = str(
+                    segment_tts.get("failure_code") or ""
+                ).strip()
+            else:
+                tts_status = ""
+                failure_code = ""
+            if tts_status:
+                output_extras["tts_status"] = tts_status
+            if failure_code:
+                output_extras["failure_code"] = failure_code
             await self._send_platform_message(
                 chain,
                 event,
@@ -2018,6 +2141,7 @@ class InteractionOutputController:
         *,
         message_kind: str,
         text: str | None,
+        message_id: str | None = None,
         delivered_message_ids: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         memory_relevant: bool = True,
@@ -2026,7 +2150,7 @@ class InteractionOutputController:
             event,
             message_kind=message_kind,
             text=text,
-            message_id=(delivered_message_ids[0] if delivered_message_ids else None),
+            message_id=message_id,
             delivered_message_ids=delivered_message_ids,
             metadata=metadata,
             memory_relevant=memory_relevant,

@@ -659,6 +659,21 @@ async def on_decorating_result(self, event: AstrMessageEvent):
 
 > 这里不能使用 yield 来发送消息。这个钩子只是用来装饰 event.get_result().chain 的。如需发送，请直接使用 `event.send()` 方法。
 
+##### TTS 生成状态变化时
+
+`on_tts_state_changed` 提供只读的音频生成状态。状态依次为 `requested`、`generating`，最后以 `succeeded` 或 `failed` 结束。它不包含朗读文本，监听器的返回值不会修改 TTS 请求；监听器应只登记状态或启动后台任务并尽快返回。
+
+```python
+from astrbot.api.event import AstrMessageEvent, TTSState, filter
+
+@filter.on_tts_state_changed()
+async def on_tts_state_changed(self, event: AstrMessageEvent, state: TTSState):
+    print(state.status, state.turn_id, state.message_id)
+```
+
+> 这些状态只表示服务端音频合成生命周期，不表示客户端已经开始播放或播放结束。
+> 平台 Adapter 如需关联自己的轮次，可以在入站 event 上设置 `output_correlation_id`；状态中会以 `external_correlation_id` 只读透传。
+
 ##### 发送消息后
 
 在发送消息给消息平台后，会触发 `after_message_sent` 钩子。

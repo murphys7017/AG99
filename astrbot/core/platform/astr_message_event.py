@@ -307,18 +307,18 @@ class AstrMessageEvent(abc.ABC):
         """Return whether the platform needs an explicit visible-turn completion."""
         return False
 
-    async def send_interaction_message(
+    async def send_message_with_extras(
         self,
         message: MessageChain,
         *,
         platform_extras: dict[str, Any] | None = None,
         record_send_operation: bool = True,
     ) -> None:
-        """Send a middleware-controlled message through the platform.
+        """Send a message with optional framework delivery metadata.
 
         The default implementation delegates to the platform's regular send
         method. Platforms with richer client payloads can override this and use
-        platform_extras without leaking adapter details into middleware.
+        ``platform_extras`` without leaking adapter details into callers.
         """
         send = self.get_extra("_interaction_original_send")
         previous_has_send_oper = self._has_send_oper

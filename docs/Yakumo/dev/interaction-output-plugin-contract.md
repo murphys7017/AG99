@@ -43,7 +43,7 @@ input
 字段：
 
 - `turn_id`: 当前 interaction turn。
-- `message_id`: 可选；发送阶段分配 visible message id 后再绑定。
+- `message_id`: 逻辑输出段 ID；在 contributor、TTS 和物理发送之前分配。
 - `source`: `interaction | core | plugin | system`。
 - `route_mode`: `silent | persona | hybrid`；协议 Core bypass 不伪造 route。
 - `phase`: `immediate | final | background`。
@@ -115,6 +115,21 @@ Interaction Output Runtime 构造 `InteractionOutputDraft`，绑定 turn、phase
 ### 6. Delivery
 
 Interaction 统一发送文本、语音、通用 client object、平台 extras，并记录 visible output、utterance ledger、finalized material 和完成状态。插件私有 effect 的执行结果可以通过这些通用载荷交付，但不进入 Core 固定字段。
+
+TTS 输出使用 `output_segment` 穿过普通 Pipeline 和 Interaction 的共同消息交付边界：
+
+```text
+output_segment.turn_id                 AstrBot 内部 turn
+output_segment.message_id              逻辑输出段
+output_segment.external_correlation_id 可选的外部关联 ID
+output_segment.tts.tts_request_id      单次 TTS 生命周期
+output_segment.tts.status              succeeded | failed
+output_segment.tts.failure_code        稳定失败码
+```
+
+`visible_message_id` 只标识一次物理平台发送。一个逻辑段因 Record 分离、双输出或平台分段产生多次物理发送时，这些发送共享同一个 `output_segment.message_id`，但拥有不同的 `visible_message_id`。
+
+`audio_attachment=present | absent` 描述当前物理发送是否携带音频，不得用它覆盖逻辑段的 TTS 终态。AstrBot 不定义任何前端专属 turn ID；Adapter 可以在入站 event 上设置通用 `output_correlation_id`，AstrBot 会将其只读透传为 `external_correlation_id`。
 
 ## Effect 规则
 

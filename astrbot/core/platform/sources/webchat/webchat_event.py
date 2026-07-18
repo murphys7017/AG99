@@ -174,7 +174,7 @@ class WebChatMessageEvent(AstrMessageEvent):
         await WebChatMessageEvent._send(message_id, message, session_id=self.session_id)
         await super().send(MessageChain([]))
 
-    async def send_interaction_message(
+    async def send_message_with_extras(
         self,
         message: MessageChain,
         *,

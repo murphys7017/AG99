@@ -1025,10 +1025,10 @@ class TestInteractionMiddleware:
             {
                 "turn_id": forwarded_event.get_extra("_turn_id"),
                 "message_id": (
-                    f"{forwarded_event.get_extra('_turn_id')}::plugin_direct::0001"
+                    f"{forwarded_event.get_extra('_turn_id')}::segment::plugin_direct::0001"
                 ),
                 "delivered_message_ids": [
-                    f"{forwarded_event.get_extra('_turn_id')}::plugin_direct::0001"
+                    f"{forwarded_event.get_extra('_turn_id')}::delivery::plugin_direct::0001"
                 ],
                 "kind": "plugin_direct",
                 "text": "plugin stream",
@@ -1096,10 +1096,10 @@ class TestInteractionMiddleware:
                 {
                     "turn_id": forwarded_event.get_extra("_turn_id"),
                     "message_id": (
-                        f"{forwarded_event.get_extra('_turn_id')}::core_stream::0001"
+                        f"{forwarded_event.get_extra('_turn_id')}::segment::core_stream::0001"
                     ),
                     "delivered_message_ids": [
-                        f"{forwarded_event.get_extra('_turn_id')}::core_stream::0001"
+                        f"{forwarded_event.get_extra('_turn_id')}::delivery::core_stream::0001"
                     ],
                     "kind": "core_stream",
                     "text": "stream final",

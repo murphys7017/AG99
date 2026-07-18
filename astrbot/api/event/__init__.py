@@ -6,6 +6,7 @@ from astrbot.core.message.message_event_result import (
     ResultContentType,
 )
 from astrbot.core.platform import AstrMessageEvent
+from astrbot.core.voice import TTSState
 
 __all__ = [
     "AstrMessageEvent",
@@ -14,4 +15,5 @@ __all__ = [
     "MessageChain",
     "MessageEventResult",
     "ResultContentType",
+    "TTSState",
 ]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import astrbot.core.message.components as Comp
@@ -53,7 +53,7 @@ async def deliver_message_chain(
     event: AstrMessageEvent,
     message: MessageChain,
     *,
-    send_message: Callable[[MessageChain], Awaitable[None]],
+    send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
     platform_settings: dict[str, Any] | None = None,
     result_is_model_result: bool = False,
     allow_segmented_reply: bool = True,
@@ -118,7 +118,7 @@ async def _deliver_segmented_message_chain(
     event: AstrMessageEvent,
     message: MessageChain,
     working_chain: list[BaseMessageComponent],
-    send_message: Callable[[MessageChain], Awaitable[None]],
+    send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
     platform_settings: dict[str, Any],
 ) -> bool:
     header_comps = _extract_comp(
@@ -137,9 +137,12 @@ async def _deliver_segmented_message_chain(
         await _sleep_before_segment(comp, platform_settings)
         try:
             if comp.type in _RECORD_COMPONENT_TYPES:
-                await send_message(message.derive([comp]))
+                await _send_with_delivery_metadata(message.derive([comp]), send_message)
             else:
-                await send_message(message.derive([*header_comps, comp]))
+                await _send_with_delivery_metadata(
+                    message.derive([*header_comps, comp]),
+                    send_message,
+                )
                 header_comps.clear()
             sent_any = True
         except Exception as exc:  # noqa: BLE001
@@ -155,7 +158,7 @@ async def _deliver_segmented_message_chain(
 async def _deliver_regular_message_chain(
     message: MessageChain,
     working_chain: list[BaseMessageComponent],
-    send_message: Callable[[MessageChain], Awaitable[None]],
+    send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
 ) -> bool:
     if all(comp.type in _HEADER_COMPONENT_TYPES for comp in working_chain):
         logger.warning(
@@ -172,7 +175,7 @@ async def _deliver_regular_message_chain(
     for comp in sep_comps:
         chain = message.derive([comp])
         try:
-            await send_message(chain)
+            await _send_with_delivery_metadata(chain, send_message)
             sent_any = True
         except Exception as exc:  # noqa: BLE001
             logger.error(
@@ -185,18 +188,68 @@ async def _deliver_regular_message_chain(
     if not working_chain:
         return sent_any
 
-    chain = message.derive(working_chain)
-    try:
-        await send_message(chain)
-        sent_any = True
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Failed to send message chain: chain=%s error=%s",
-            chain,
-            exc,
-            exc_info=True,
-        )
+    groups = _partition_delivery_groups(working_chain)
+    for group in groups:
+        chain = message.derive(group)
+        try:
+            await _send_with_delivery_metadata(chain, send_message)
+            sent_any = True
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to send message chain: chain=%s error=%s",
+                chain,
+                exc,
+                exc_info=True,
+            )
     return sent_any
+
+
+async def _send_with_delivery_metadata(
+    chain: MessageChain,
+    send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
+) -> None:
+    extras: dict[str, Any] = {}
+    for component in chain.chain:
+        metadata = getattr(component, "delivery_metadata", None)
+        if isinstance(metadata, Mapping):
+            extras.update(metadata)
+    await send_message(chain, extras)
+
+
+def _partition_delivery_groups(
+    components: list[BaseMessageComponent],
+) -> list[list[BaseMessageComponent]]:
+    if not any(_delivery_group_key(component) for component in components):
+        return [components]
+
+    header_comps = _extract_comp(
+        components,
+        _HEADER_COMPONENT_TYPES,
+        modify_raw_chain=True,
+    )
+    groups: list[list[BaseMessageComponent]] = []
+    group_keys: list[str | None] = []
+    for component in components:
+        key = _delivery_group_key(component)
+        if groups and group_keys[-1] == key:
+            groups[-1].append(component)
+            continue
+        groups.append([component])
+        group_keys.append(key)
+    if groups and header_comps:
+        groups[0][0:0] = header_comps
+    return groups
+
+
+def _delivery_group_key(component: BaseMessageComponent) -> str | None:
+    metadata = getattr(component, "delivery_metadata", None)
+    if not isinstance(metadata, Mapping):
+        return None
+    segment = metadata.get("output_segment")
+    if not isinstance(segment, Mapping):
+        return None
+    message_id = str(segment.get("message_id") or "").strip()
+    return message_id or None
 
 
 def _is_segmented_reply_required(

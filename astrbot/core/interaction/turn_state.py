@@ -170,6 +170,7 @@ class InteractionTurnState:
     core_streaming_active: bool = False
     core_streaming_result_consumed: bool = False
     core_final_result_consumed: bool = False
+    output_segment_counter: int = 0
     visible_message_counter: int = 0
     lifecycle_stage: InteractionLifecycleStage | None = None
     lifecycle_transitions: list[dict[str, Any]] = field(default_factory=list)
@@ -202,14 +203,10 @@ def materialize_utterance(
         str(item).strip() for item in (delivered_message_ids or []) if str(item).strip()
     ]
     if message_id is None:
-        if not delivered_ids:
-            turn_state.visible_message_counter += 1
+        turn_state.output_segment_counter += 1
         message_id = (
-            delivered_ids[0]
-            if delivered_ids
-            else (
-                f"{turn_state.turn_id}::{safe_kind}::{turn_state.visible_message_counter:04d}"
-            )
+            f"{turn_state.turn_id}::segment::{safe_kind}::"
+            f"{turn_state.output_segment_counter:04d}"
         )
     utterance = InteractionUtterance(
         turn_id=turn_state.turn_id,
@@ -728,6 +725,18 @@ def get_interaction_turn_stream_interjections_emitted(event) -> int:
     return 0
 
 
+def next_interaction_turn_output_segment_id(event, message_kind: str) -> str:
+    state = ensure_interaction_turn_state(event)
+    turn_id = state.turn_id.strip() or "turn"
+    state.output_segment_counter += 1
+    safe_kind = "".join(
+        char if char.isalnum() or char in {"_", "-"} else "_" for char in message_kind
+    ).strip("_")
+    if not safe_kind:
+        safe_kind = "message"
+    return f"{turn_id}::segment::{safe_kind}::{state.output_segment_counter:04d}"
+
+
 def next_interaction_turn_visible_message_id(event, message_kind: str) -> str:
     state = ensure_interaction_turn_state(event)
     turn_id = state.turn_id.strip() or "turn"
@@ -741,4 +750,4 @@ def next_interaction_turn_visible_message_id(event, message_kind: str) -> str:
     ).strip("_")
     if not safe_kind:
         safe_kind = "message"
-    return f"{turn_id}::{safe_kind}::{state.visible_message_counter:04d}"
+    return f"{turn_id}::delivery::{safe_kind}::{state.visible_message_counter:04d}"

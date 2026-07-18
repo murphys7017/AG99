@@ -563,6 +563,21 @@ async def on_decorating_result(self, event: AstrMessageEvent):
 
 > You cannot use yield to send messages here. This hook is only for decorating event.get_result().chain. If you need to send, please use the `event.send()` method directly.
 
+#### When TTS Generation State Changes
+
+`on_tts_state_changed` exposes the read-only audio generation states `requested`, `generating`, `succeeded`, and `failed`. The state does not contain the spoken text, and a listener return value cannot modify the TTS request.
+
+```python
+from astrbot.api.event import AstrMessageEvent, TTSState, filter
+
+@filter.on_tts_state_changed()
+async def on_tts_state_changed(self, event: AstrMessageEvent, state: TTSState):
+    print(state.status, state.turn_id, state.message_id)
+```
+
+> Listeners should return promptly. These states describe server-side synthesis, not client playback.
+> A platform adapter may set `output_correlation_id` on the inbound event. The state exposes it as the read-only `external_correlation_id`.
+
 #### After Message Sent
 
 After a message is sent to the messaging platform, the `after_message_sent` hook is triggered.
