@@ -1,16 +1,29 @@
 task:
-  class: review
+  class: refactor
   risk: high
-  phase: personal_runtime_transition_inventory
-  scope: Establish the source-backed transition inventory, ownership risks, data boundaries, and deletion order before changing Personal Runtime implementation
+  phase: remove_dead_pre_pipeline_interaction_path
+  scope: Remove the unused Interaction pre-Pipeline queue reinsertion path so ProcessStage and handle_pipeline_event are the only production inbound boundary
 context:
   confidence: high
   assumptions:
-    - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound and its event-queue reinsertion path have no production caller.
-    - Preliminary work prioritizes source ownership and data-flow investigation; new tests are deferred until migration owners and batches are fixed.
+    - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
+    - Phase 0 investigation deferred speculative tests; implementation batches validate their affected production boundary.
     - InteractionMemoryStore has production readers but no production writer; code removal must be separated from any migration decision for existing data/interaction_memory files.
     - Local data/interaction_memory currently contains three JSON files totaling 5243 bytes; content was not inspected and deletion is not authorized without a migration or archival decision.
     - Independent Input Bus/Input Gateway plans are superseded by the official EventBus/Pipeline plus Personal Runtime Adapter boundary.
+    - PersonalRuntimeKey is config_id + persona_id + audience_key + privacy_scope; actor and conversation_id remain turn facts rather than runtime identity.
+    - After official filters and preprocess, the adapter reserves a PendingTurn keyed by config_id + audience_key + privacy_scope + turn_id before Plugin Handler execution; it does not resolve final persona or invoke Router, Persona, or Planner yet.
+    - After Plugin Handler settles, effective persona is resolved from official conversation, ProviderRequest, session rule, and config facts; the reservation is then bound to the full PersonalRuntimeKey.
+    - PendingTurn transitions are reserved -> bound -> queued|active -> settled; reserved turns do not own conversational completion.
+    - One runtime key has one conversational turn with user-visible completion ownership by default; new messages are offered as follow-up first and otherwise queued.
+    - Phase 1 reuses InteractionTurnState as the only writable turn state and records plugin/Subagent/background task handles without migrating their lifecycle ownership before the later plugin-task phase.
+    - All user-visible output, including direct/raw/protocol and Context.send_message output, goes through Output Dispatcher; raw is a non-rewriting output intent, not a dispatcher bypass.
+    - Native and Third-party execution currently diverge before execution: Third-party rebuilds ProviderRequest from the event and bypasses canonical Prompt, Capability, conversation, session-lock, and follow-up preparation.
+    - A plugin-yielded ProviderRequest is stored on the event but ignored by ThirdPartyAgentSubStage, so its prompt, contexts, media, tools, model, and output contract may be lost on that path.
+    - ProviderRequest remains an official plugin compatibility input and low-level hook projection; it is not the future immutable Execution Preparation contract.
+    - Existing Dify, Coze, DashScope, and DeerFlow runners are compatibility targets rather than templates for the future Backend interface.
+    - Execution Preparation owns TaskSpec, Context/Prompt projection, normalized current input, CapabilitySnapshot, and runtime identity before backend selection; adapters own protocol projection, remote thread state, streaming, cancellation/close, and error translation.
+    - Official OnLLMRequest remains after final low-level request projection and before execution; Agent/LLM/Tool hooks are preserved only where the backend exposes the corresponding lifecycle.
     - Execution Backend decoupling is deliberately last; current work first replaces transitional structures before execution preparation.
     - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
     - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
@@ -62,8 +75,6 @@ context:
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.
     - Slot-level meta.targets is a fail-closed model-visibility contract; malformed declarations are not treated as unrestricted access.
   unresolved_questions:
-    - The target policy for overlapping turns in one persona/session/audience scope is not yet fixed: queue, cancel-and-replace, or allow explicit concurrency.
-    - Proactive Context.send_message output still needs an explicit persona/progress/protocol/raw policy before it can enter Personal Runtime by default.
     - Existing data/interaction_memory files need an inspectable migration or archival policy before InteractionMemoryStore readers are removed.
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
     - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
@@ -71,6 +82,7 @@ context:
 architecture:
   stability: review_required
   boundary_changes:
+    - ProcessStage -> InteractionMiddleware.handle_pipeline_event is now the only production Interaction inbound boundary; Middleware marks Core delegation but never reinserts events into the official queue.
     - Conversational Router decisions are limited to silent/persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
     - Router and Persona Expression start concurrently after input materialization; silent is a best-effort suppression decision, not a prerequisite for Persona generation.
     - A Persona reply atomically committed before a late silent decision is retained; silent cancels only pending Persona work.
@@ -130,6 +142,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Dead pre-Pipeline path removal: project-venv Interaction Middleware suite passed 57 tests; production reference scan, Ruff, Python compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained an existing aiosqlite event-loop-close warning.
     - Executor preparation/output compatibility: Prompt/Main Agent/Tool Loop/Interaction suite passed 321 tests; event/message/memory suite passed 178 tests; suppressed Interaction output preserves the prior send-operation state; Ruff, py_compile, Mermaid render, VitePress build, YAML parse, and git diff checks passed.
     - All explicit tests/unit/test_interaction_*.py files passed 200 tests after the broader unit collection command was blocked by local data/cmd_config.json permissions; postprocess and pipeline scheduler coverage passed 34 tests.
     - Router/Persona review cleanup: context single-flight/cancellation, Core handoff, and Planner recovery tests (73 passed); broad Interaction/Prompt/Main Agent suite (421 passed).

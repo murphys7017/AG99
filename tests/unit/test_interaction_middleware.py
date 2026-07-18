@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +10,9 @@ from astrbot.core.interaction.config import (
 )
 from astrbot.core.interaction.core_planner import CorePlannerError
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
-from astrbot.core.interaction.middleware import InteractionMiddleware
+from astrbot.core.interaction.middleware import (
+    InteractionMiddleware as RuntimeInteractionMiddleware,
+)
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
@@ -65,6 +68,35 @@ class FakeSTTProvider:
     async def get_text(self, audio_url: str) -> str:
         self.calls.append(audio_url)
         return self.text
+
+
+class InteractionMiddleware(RuntimeInteractionMiddleware):
+    """Exercise the Pipeline entry while retaining queue-oriented test assertions."""
+
+    def __init__(
+        self,
+        config,
+        continuation_queue,
+        output_controller,
+        plugin_context=None,
+    ) -> None:
+        super().__init__(config, output_controller, plugin_context)
+        self._test_continuation_queue = continuation_queue
+
+    def continue_pipeline(self, event: AstrMessageEvent) -> None:
+        async def _run_pipeline_and_continue() -> None:
+            runtime_config = self._get_runtime_config(event)
+            if not is_middleware_enabled(runtime_config):
+                self._test_continuation_queue.put_nowait(event)
+                return
+            await self.handle_pipeline_event(event)
+            if event.get_extra("_interaction_delegate_to_core"):
+                self._test_continuation_queue.put_nowait(event)
+
+        self._spawn_background_task(
+            _run_pipeline_and_continue(),
+            name=f"test_interaction_pipeline_{event.get_platform_id()}",
+        )
 
 
 async def _call_original_visible_completion(event):
@@ -308,6 +340,14 @@ class TestInteractionMiddlewareConfig:
 
 
 class TestInteractionMiddleware:
+    def test_runtime_exposes_only_pipeline_inbound_entry(self):
+        assert "handle_inbound" not in RuntimeInteractionMiddleware.__dict__
+        assert "_spawn_inbound_task" not in RuntimeInteractionMiddleware.__dict__
+        assert (
+            "core_queue"
+            not in inspect.signature(RuntimeInteractionMiddleware.__init__).parameters
+        )
+
     @pytest.mark.asyncio
     async def test_core_reply_handler_persona_renders_before_output_materialization(
         self,
@@ -335,7 +375,7 @@ class TestInteractionMiddleware:
         assert prepared.spoken_reply == "整理后的回复"
 
     @pytest.mark.asyncio
-    async def test_handle_inbound_schedules_async_for_enabled_platform(
+    async def test_pipeline_harness_schedules_enabled_event(
         self, webchat_event
     ):
         queue = asyncio.Queue()
@@ -356,7 +396,7 @@ class TestInteractionMiddleware:
         controller.emit_immediate_spoken_reply = AsyncMock()
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
@@ -390,7 +430,7 @@ class TestInteractionMiddleware:
         )
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(voice_event)
+        middleware.continue_pipeline(voice_event)
         await _drain_inbound_tasks(middleware)
 
         forwarded_event = queue.get_nowait()
@@ -429,7 +469,7 @@ class TestInteractionMiddleware:
         )
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(voice_event)
+        middleware.continue_pipeline(voice_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -672,7 +712,7 @@ class TestInteractionMiddleware:
         controller.emit_immediate_spoken_reply = AsyncMock()
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
         message = MessageChain([Plain("core reply")])
@@ -709,7 +749,7 @@ class TestInteractionMiddleware:
         controller.emit_immediate_spoken_reply = AsyncMock()
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
         message = MessageChain([Plain("core reply")])
@@ -778,7 +818,7 @@ class TestInteractionMiddleware:
         controller.emit_immediate_spoken_reply = AsyncMock()
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
         forwarded_event.set_result(MessageEventResult().message("respond stage reply"))
@@ -826,7 +866,7 @@ class TestInteractionMiddleware:
         controller.emit_immediate_spoken_reply = AsyncMock()
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
         forwarded_event.set_result(
@@ -876,7 +916,7 @@ class TestInteractionMiddleware:
         async def generator():
             yield MessageChain([Plain("plugin chunk")])
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
 
@@ -913,7 +953,7 @@ class TestInteractionMiddleware:
         async def generator():
             yield MessageChain([Plain("chunk")])
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
         forwarded_event = queue.get_nowait()
 
@@ -958,7 +998,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ) as dispatch:
-            middleware.handle_inbound(streaming_event)
+            middleware.continue_pipeline(streaming_event)
             await _drain_inbound_tasks(middleware)
             forwarded_event = queue.get_nowait()
             await forwarded_event.send_streaming(generator())
@@ -1029,7 +1069,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ) as dispatch:
-            middleware.handle_inbound(streaming_event)
+            middleware.continue_pipeline(streaming_event)
             await _drain_inbound_tasks(middleware)
             forwarded_event = queue.get_nowait()
             with temporary_output_origin(forwarded_event, OutputOrigin.CORE.value):
@@ -1065,7 +1105,11 @@ class TestInteractionMiddleware:
             "history_source": "interaction.turn.material",
         }
 
-    def test_handle_inbound_skips_context_when_globally_disabled(self, webchat_event):
+    @pytest.mark.asyncio
+    async def test_pipeline_skips_context_when_globally_disabled(
+        self,
+        webchat_event,
+    ):
         queue = asyncio.Queue()
         middleware = InteractionMiddleware(
             {
@@ -1077,7 +1121,8 @@ class TestInteractionMiddleware:
             MagicMock(),
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
+        await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
         assert webchat_event.get_extra("_interaction_enabled") is None
@@ -1119,7 +1164,7 @@ class TestInteractionMiddleware:
             side_effect=_generate_expression
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await expression_started.wait()
         await asyncio.sleep(0)
 
@@ -1211,7 +1256,7 @@ class TestInteractionMiddleware:
             side_effect=lambda *a, **kw: persisted.set()
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
@@ -1249,7 +1294,7 @@ class TestInteractionMiddleware:
             side_effect=_generate_expression
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await expression_started.wait()
         assert queue.get_nowait() is webchat_event
         turn_state = get_interaction_turn_state(webchat_event)
@@ -1290,7 +1335,7 @@ class TestInteractionMiddleware:
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -1329,7 +1374,7 @@ class TestInteractionMiddleware:
             mode=InteractionRouteMode.HYBRID,
         )
 
-        middleware.handle_inbound(image_event)
+        middleware.continue_pipeline(image_event)
         await _drain_inbound_tasks(middleware)
 
         controller.emit_immediate_spoken_reply.assert_awaited_once()
@@ -1368,7 +1413,7 @@ class TestInteractionMiddleware:
             mode=InteractionRouteMode.PERSONA,
         )
 
-        middleware.handle_inbound(image_event)
+        middleware.continue_pipeline(image_event)
         await _drain_inbound_tasks(middleware)
 
         controller.emit_immediate_spoken_reply.assert_awaited_once()
@@ -1407,7 +1452,7 @@ class TestInteractionMiddleware:
             side_effect=_slow_persona
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await persona_started.wait()
         await _drain_inbound_tasks(middleware)
 
@@ -1466,7 +1511,7 @@ class TestInteractionMiddleware:
         middleware.router_agent = MagicMock()
         middleware.router_agent.route = AsyncMock(side_effect=_slow_silent_router)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await persona_emitted.wait()
         release_router.set()
         await _drain_inbound_tasks(middleware)
@@ -1485,7 +1530,7 @@ class TestInteractionMiddleware:
         assert turn_state.completion_state.outcome is InteractionTurnOutcome.REPLIED
 
     @pytest.mark.asyncio
-    async def test_handle_inbound_refreshes_runtime_interaction_config(
+    async def test_pipeline_harness_refreshes_runtime_interaction_config(
         self,
         webchat_event,
     ):
@@ -1513,7 +1558,7 @@ class TestInteractionMiddleware:
         )
         _stub_fast_response_route(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         middleware.router_agent.route.assert_awaited_once()
@@ -1545,7 +1590,7 @@ class TestInteractionMiddleware:
         middleware.plugin_context = MagicMock(spec=Context)
         middleware.plugin_context.get_config.return_value = {"wake_prefix": ["/"]}
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
@@ -1575,7 +1620,7 @@ class TestInteractionMiddleware:
             controller,
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -1612,7 +1657,7 @@ class TestInteractionMiddleware:
             side_effect=CorePlannerError("timeout")
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -1717,7 +1762,7 @@ class TestInteractionMiddleware:
         )
         _stub_core_planner(middleware)
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
@@ -1753,7 +1798,7 @@ class TestInteractionMiddleware:
             mode=InteractionRouteMode.HYBRID,
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is webchat_event
@@ -1783,7 +1828,7 @@ class TestInteractionMiddleware:
         middleware.router_agent = MagicMock()
         middleware.router_agent.route = AsyncMock()
 
-        middleware.handle_inbound(live_event)
+        middleware.continue_pipeline(live_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.get_nowait() is live_event
@@ -1831,7 +1876,7 @@ class TestInteractionMiddleware:
             mode=InteractionRouteMode.PERSONA,
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -1864,7 +1909,7 @@ class TestInteractionMiddleware:
             mode=InteractionRouteMode.PERSONA,
         )
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -1912,7 +1957,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ) as dispatch:
-            middleware.handle_inbound(webchat_event)
+            middleware.continue_pipeline(webchat_event)
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 
@@ -1958,7 +2003,7 @@ class TestInteractionMiddleware:
         )
         middleware.memory_store.update_interaction_memory = AsyncMock()
 
-        middleware.handle_inbound(webchat_event)
+        middleware.continue_pipeline(webchat_event)
         await _drain_inbound_tasks(middleware)
 
         assert queue.empty()
@@ -2048,7 +2093,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ) as dispatch:
-            middleware.handle_inbound(webchat_event)
+            middleware.continue_pipeline(webchat_event)
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 
@@ -2113,7 +2158,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(side_effect=lambda **_kwargs: order.append("postprocess")),
         ):
-            middleware.handle_inbound(webchat_event)
+            middleware.continue_pipeline(webchat_event)
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 
@@ -2167,7 +2212,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ) as dispatch:
-            middleware.handle_inbound(webchat_event)
+            middleware.continue_pipeline(webchat_event)
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 
@@ -2215,7 +2260,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ):
-            middleware.handle_inbound(webchat_event)
+            middleware.continue_pipeline(webchat_event)
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 
@@ -2262,7 +2307,7 @@ class TestInteractionMiddleware:
             "astrbot.core.interaction.middleware.dispatch_postprocess",
             new=AsyncMock(),
         ):
-            middleware.handle_inbound(webchat_event)
+            middleware.continue_pipeline(webchat_event)
             await _drain_inbound_tasks(middleware)
             await _drain_inbound_tasks(middleware)
 

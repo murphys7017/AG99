@@ -211,7 +211,6 @@ class AstrBotCoreLifecycle:
         )
         self.interaction_middleware = InteractionMiddleware(
             self.astrbot_config,
-            self.event_queue,
             self.interaction_output_controller,
         )
 

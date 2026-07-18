@@ -217,6 +217,73 @@ Third-party Runner 不是 Native Core 的等价执行壳。它会从 event 重�
 它不经过 Native `build_main_agent()` 的统一 Prompt/Capability 准备，也没有 Native 的
 session lock 和 follow-up capture。
 
+### 8. Native / Third-party 执行准备审计
+
+当前两条路径在 `AgentRequestSubStage` 初始化时二选一，分叉发生在执行准备之前，而不是
+只在最后的调用协议处发生。
+
+Native 路径：
+
+```text
+event / plugin ProviderRequest
+  -> conversation and provider resolution
+  -> persona/tool/subagent/knowledge/search/sandbox preparation
+  -> canonical ContextPack collection and Core projection
+  -> ProviderRequest render/apply and modality normalization
+  -> OnLLMRequest
+  -> ToolLoopAgentRunner reset/run
+  -> history, stats and result handling
+```
+
+Third-party 路径：
+
+```text
+event
+  -> create a new ProviderRequest from text/Image/Record
+  -> append CoreTaskSpec compatibility block
+  -> OnLLMRequest
+  -> choose Dify/Coze/DashScope/DeerFlow runner
+  -> runner-specific remote session/run/result handling
+```
+
+这里存在一个确定的兼容缺口：Plugin Handler 产出的 `ProviderRequest` 虽然由
+`ProcessStage` 写入 event extra，但 Third-party Stage 不读取它，而是重新创建 request。
+因此插件给出的 prompt、contexts、media、tools、model 和 output contract 都可能在进入
+第三方 runner 前丢失。这个问题不能靠给每个 runner 补字段解决，必须在执行准备边界保留
+官方 `ProviderRequest` 输入语义。
+
+| 维度 | Native 当前行为 | Third-party 当前行为 | 目标 owner |
+| --- | --- | --- | --- |
+| 请求来源 | 复用插件 request，否则从 event 建立并关联 conversation | 总是从 event 重建，只读取文本、图片和录音 | Execution Preparation 接收 event facts 与官方 `ProviderRequest` 兼容输入 |
+| Prompt 与历史 | 收集 ContextPack，按 Core target 渲染 system/history/current input | 不经过 Prompt Pipeline；部分 runner 自己使用 contexts 或远端历史 | ContextSnapshot/Prompt Projection；远端 thread 仅是 Adapter 私有状态 |
+| Persona 与错误文案 | persona 同时影响工具集和错误文案 | 只额外解析 persona 错误文案 | Personal Runtime 提供 persona identity；Output 层形成可见失败表达 |
+| Tools/Knowledge/Skills | 注入插件工具、知识库、Skills、MCP、搜索、sandbox、cron 和 Subagent | 不接收 AstrBot 可执行能力；远端平台自行持有能力 | CapabilitySnapshot；Adapter 只投影后台实际支持的能力 |
+| Provider 能力 | 处理 model、fallback、modality、上下文限制与 tool schema | runner 类型来自当前 Pipeline 配置，provider 详情从全局配置查找，未做统一 capability 验证 | Backend capability validation 与 Adapter projection |
+| 执行策略 | max step、tool timeout、压缩、fallback 等来自当前配置 | max step 固定为 30，wrapper tool timeout 固定为 120，另有独立 stream close timeout | Execution Preparation 固化本轮策略；Adapter 只消费适用项 |
+| 插件 Hook | 有 Waiting、LLM Request、Agent、LLM Response 和 host tool hooks | 有 LLM Request、Agent/LLM Response；没有 Waiting 和 host tool 生命周期 | 官方兼容 adapter 按明确阶段保留；后台内部工具仅在可观测时映射 |
+| Session 并发 | Native Agent 阶段加 UMO lock，并有独立 follow-up registry | 没有同等 lock/follow-up，远端 thread 各自管理 | PersonalSessionRuntime 仲裁；Adapter 只声明 follow-up/cancel 能力 |
+| Streaming 与结果 | `run_agent` 产生官方 result/streaming finish | 自建 aggregator、watchdog 和 fallback result | Adapter 归一化执行事件；Runtime/Dispatcher 决定可见输出和完成 |
+| 错误、取消与清理 | Stage 捕获错误并直接发送，Runner 有 abort 语义 | Runner/Stage 共同转成 error chain，并显式 close 部分 client | Runtime 持有失败/取消策略；Adapter 负责协议取消、关闭和错误翻译 |
+| 持久化与观测 | 保存官方 conversation，写 provider stats 和 trace | 主要依赖远端 conversation ID，只上传基础 metric | finalized turn 提交 Conversation/Memory；统一 telemetry 接收 Adapter 数据 |
+
+责任分类如下：
+
+- Execution Preparation 必须统一：TaskSpec、不可变 ContextSnapshot、Prompt Projection、
+  规范化当前输入和附件、CapabilitySnapshot、persona/turn/audience identity，以及插件
+  `ProviderRequest` 兼容输入的合并结果。
+- Backend Adapter 必须保留差异：远端认证与配置、字段和媒体投影、远端 thread ID、流协议
+  解析、协议级取消/关闭，以及后台内部能力是否可映射为执行事件。
+- 官方兼容边界必须保留：Handler `yield ProviderRequest`、`OnLLMRequest` 和现有
+  Agent/LLM/Tool Hook。`OnLLMRequest` 仍作用于最终的低层 request projection，不重新成为
+  Prompt 事实源。
+- 后续应删除的过渡结构：Third-party Stage 手工重建 request、Local/Third-party 在准备前
+  分叉、Native 私有 session/follow-up owner，以及各 Stage 各自决定可见错误和最终完成。
+
+现有 Third-party runners 只能作为需要适配的官方能力，不能作为未来 Backend 接口模板。
+`ProviderRequest` 也不能直接成为统一 Execution Preparation 契约：它既是官方插件公开兼容
+对象，又混合了模型可见字段和 Native Runner 输入。长期结构应先形成统一、不可变的准备
+结果，再由兼容 adapter 投影为 Native `ProviderRequest` 或第三方协议输入。
+
 Subagent/后台任务当前还有两条独立生命周期：
 
 - 前台 Handoff 在 Native Tool Loop 内执行，结果作为 Tool Result 返回父 Agent。
@@ -228,8 +295,10 @@ Native follow-up 另由全局 active-runner registry 和按 UMO 的 order state 
 新消息注入正在执行的 ToolLoopAgentRunner，但不属于 Interaction TurnState，也不归
 Middleware `_inflight_tasks` 管理。
 
-主动消息不能直接改成全部进入 Persona Runtime，因为协议通知和原始媒体也需要直接发送。
-后续必须先建立显式 `persona / progress / protocol / raw` 输出意图，再决定默认策略。
+主动消息的目标边界已经确定：所有面向用户的输出都进入 Output Dispatcher；
+`persona / progress / protocol / raw` 是显式 OutputIntent 模式。`protocol` 和 `raw` 不进行
+Persona 改写，但仍然拥有 Envelope、delivery identity 和完成语义。只有平台内部握手或
+ACK 等非用户可见控制留在 Platform Sink 内部。
 
 ## 过渡结构分类
 
@@ -237,7 +306,7 @@ Middleware `_inflight_tasks` 管理。
 | --- | --- | --- | --- |
 | EventBus/Pipeline/Plugin Handler | 保留 | 官方输入与插件兼容边界 | 不迁移 |
 | `ProcessStage -> handle_pipeline_event` 接缝 | 公开边界适配 | 收缩为 Personal Runtime Adapter | 不再直接操作输出事务或 Runtime 内部状态 |
-| `handle_inbound()` + `core_queue` 重投递 | 删除 | 只保留官方 Pipeline 主链 | 生产调用、动态注册和公开 API 约定均确认不存在 |
+| `handle_inbound()` + `core_queue` 重投递 | 已删除 | 只保留官方 Pipeline 主链 | 2026-07-18 已移除生产入口、队列依赖和 `enqueue_core` 分支 |
 | Middleware `_inflight_tasks` | 迁移 | Session Runtime task registry | Router/Persona/Planner/ActiveTask 均由 session owner 持有 |
 | event send 方法替换 | 替换 | Output Port/Dispatcher | 所有官方与插件输出都能显式进入唯一出口 |
 | `emit_output()` 等插件 API | 保留并适配 | 稳定插件输出 API | 内部不再查找具体 Controller extra |
@@ -248,7 +317,7 @@ Middleware `_inflight_tasks` 管理。
 | Interaction Capability 摘要 | 迁移 | Capability Snapshot 投影 | Planner 与执行能力来自同一 resolver |
 | `InteractionMemoryStore` | 迁移后删除 | Conversation + MemoryService | 旧 JSON 数据策略确定且读取者清零 |
 | Local/Third-party 平行准备链 | 后续替换 | 统一 Execution Preparation | 前置主链就绪复核通过 |
-| `Context.send_message()` 旁路 | 显式化 | 主动输出边界 | persona/protocol/raw 语义和兼容策略确定 |
+| `Context.send_message()` 当前旁路 | 替换 | 主动 OutputIntent | 保留公开 API，所有面向用户的 persona/progress/protocol/raw 输出进入 Dispatcher |
 | Native follow-up 全局 registry | 迁移 | Session Runtime mailbox/ActiveTask | 多轮消息不再依赖 Runner 全局表 |
 | 后台 Handoff 直接 build/send | 迁移 | ActiveTask completion Observation | 后台结果能恢复 persona/task/audience 并进入统一输出 |
 
@@ -293,32 +362,45 @@ OutputController、Middleware、ProcessStage 和 RespondStage 都能推动输出
 
 Interaction Memory 没有主写者，主动消息没有 Turn。二者会阻碍持续人格形成一致历史。
 
-### 低但应立即清理：无调用者的 pre-Pipeline 入站路径
+### 已清理：无调用者的 pre-Pipeline 入站路径
 
-这条路径当前不影响生产行为，但会误导后续设计，并保留 event queue 重入语义。
+这条路径没有生产调用者。2026-07-18 已删除同步入口、后台 spawn、`core_queue` 注入和
+`enqueue_core` 分支；Core 委派只设置 Turn 状态，由官方 `ProcessStage` 在当前 Pipeline
+内继续执行。
 
 ## 建议实施顺序
 
 ### Step 1：补全源码与数据边界
 
-1. 确认 `handle_inbound()`、`core_queue` 与重投递分支没有反射、动态注册或外部调用约定。
-2. 确定同一 session 重叠 Turn 的目标策略：排队、取消替换或显式并发。
-3. 画清 Internal/Third-party Core 的准备差异，但不设计 Backend。
-4. 画清 Subagent 前台、后台、父任务恢复和主动消息的 owner 与回流位置。
-5. 为已确认存在的 3 个 `data/interaction_memory` 文件确定迁移、归档或删除策略。
+1. 已确认 `handle_inbound()`、`core_queue` 与重投递分支没有反射、动态注册或外部调用约定，
+   并在第一批代码清理中删除。
+2. 已确定 Runtime Key 为
+   `config_id + persona_id + audience_key + privacy_scope`；actor 和 conversation 是 Turn
+   事实，不参与 Runtime 隔离。
+3. 已确定同一 Runtime Key 默认只有一个拥有用户可见输出完成权的 conversational Turn；
+   新消息优先作为 follow-up，无法吸收时排队。
+4. 已确定 Plugin Handler 前只 reserve 不含 persona 的 PendingTurn/Output Port；Handler
+   后解析 effective persona，绑定完整 Runtime Key，再 activate Observation 和模型调用。
+5. 已完成 Internal/Third-party Core 准备差异审计，并明确 Execution Preparation、Backend
+   Adapter、官方兼容边界和待删除过渡结构的归属；本阶段不设计 Backend 接口。
+6. 继续画清 Subagent 前台、后台、父任务恢复和主动消息的 owner 与回流位置。
+7. 为已确认存在的 3 个 `data/interaction_memory` 文件确定迁移、归档或删除策略。
 
 前期调查暂不补测试。测试策略在 owner 和迁移批次确定后再按实际风险制定，避免为即将
 删除的过渡路径继续增加保护。
 
-建议的 session 策略是：Observation 可以持续进入 mailbox，但同一
-persona/session/audience 默认只有一个拥有可见输出完成权的 ActiveTurn。新用户消息优先
+已采用的 session 策略是：Observation 可以持续进入 mailbox，但同一四元 Runtime Key
+默认只有一个拥有可见输出完成权的 ActiveTurn。新用户消息优先
 作为当前 ActiveTask 的 follow-up；无法吸收时排队形成下一 Turn。协议事件、原始媒体和
-显式声明可并发的后台任务不强制占用对话 Turn。该策略需要单独确认后才能进入实现。
+显式声明可并发的后台任务不强制占用对话 Turn。
 
 ### Step 2：删除死的入站双轨
 
-删除 `handle_inbound()`、`_spawn_inbound_task()` 和 `core_queue` 重投递分支。保留
-`ProcessStage -> handle_pipeline_event(enqueue_core=False)` 唯一入口。
+状态：已完成。
+
+已删除 `handle_inbound()`、`_spawn_inbound_task()`、构造期 `core_queue` 依赖和全部
+`enqueue_core` 分支。当前唯一生产入口为 `ProcessStage -> handle_pipeline_event()`；
+Middleware 只标记 Core 委派，不再把 event 重新放回官方队列。
 
 这一步只删除无生产调用者的路径，不创建新抽象。
 
@@ -326,11 +408,21 @@ persona/session/audience 默认只有一个拥有可见输出完成权的 Active
 
 引入实际持有状态和 task 的 `PersonalRuntimeManager` / `PersonalSessionRuntime`：
 
-- manager 按 persona/session/audience 解析 session runtime；
+- manager 按 `config_id + persona_id + audience_key + privacy_scope` 解析 session runtime；
+- 官方过滤/preprocess 后、Plugin Handler 前 reserve PendingTurn 和 Output Port，但不
+  解析最终 persona，也不调用模型；
+- Handler 后根据 conversation、`ProviderRequest` 和官方配置解析 effective persona，绑定
+  完整 Runtime Key，再根据 stopped、final result 和 Core candidate activate、queue 或
+  settle Turn；
+- PendingTurn 使用 `reserved -> bound -> queued|active -> settled`，reserved 状态没有
+  conversational completion 权；
 - session runtime 持有 active turns、Router/Persona/Planner task、取消和超时；
 - 把 `_handle_async_fast_response_and_route()` 的并发与仲裁迁入 session runtime；
 - Middleware 只完成配置解析、Observation 投影和 Runtime 调用；
 - 本步暂时沿用现有 OutputController 和 Prompt 实现，避免一次迁移多个 owner。
+- 本步继续复用现有 `InteractionTurnState`，不创建平行 Turn 状态。
+- 插件、follow-up、Subagent 和后台任务只登记 identity/task handle，实际生命周期迁移留给
+  后续插件任务阶段。
 
 只有当上述对象真正接管 task 与 Turn 仲裁时才创建；不建立空壳 facade。
 
@@ -354,7 +446,8 @@ Memory 和插件任务边界。Backend 仍保持最后。
 迁移：
 
 - 生产主链唯一入口及其全部调用方已经确认。
-- 同 session 重叠 Turn 的当前行为和目标策略都已确认。
-- Internal/Third-party、Subagent 和主动消息的保留风险有明确记录。
+- Runtime Key、PendingTurn 绑定时机、同 session 重叠 Turn 策略和 reservation 状态机已经
+  确认。
+- Internal/Third-party 准备差异已经分类；Subagent 和主动消息的保留风险有明确记录。
 - 所有主要过渡结构都有 owner、分类和删除条件。
 - 第一批代码迁移只改变一个 owner，并有清晰的回滚边界。

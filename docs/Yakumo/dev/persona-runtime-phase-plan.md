@@ -52,22 +52,28 @@ Yakumo Persona Control Layer
 
 ```text
 Platform / WebUI / Official Internal Event
-  -> Official EventBus / Pipeline / Plugin Handlers
-  -> Personal Runtime Adapter
-      -> Observation projection
-      -> PersonaRuntime
-          -> TurnContextSnapshot
-          -> Router: silent / persona / hybrid
-              -> silent: complete without visible output
-              -> persona: Unified Persona Expression
-              -> hybrid: independent Core Planner
-                  -> not_required: Unified Persona Expression
-                  -> execute: Core and delegation acknowledgement start concurrently
-                      -> ActiveTask progress / result
-                      -> Unified Persona Expression
-              -> Output Arbiter
-      -> Output Dispatcher
-      -> Official Platform Adapter
+  -> Official EventBus / Pipeline filters and preprocess
+  -> ProcessStage
+      -> Personal Runtime Adapter reserves PendingTurn / Output Port
+         (no model call)
+      -> Official Plugin Handlers run inside the reserved turn
+      -> resolve effective persona and bind reservation to PersonalRuntimeKey
+      -> Personal Runtime Adapter activates or settles the bound turn
+          -> Observation projection
+          -> PersonalSessionRuntime mailbox
+          -> PersonaRuntime
+              -> TurnContextSnapshot
+              -> Router: silent / persona / hybrid
+                  -> silent: complete without visible output
+                  -> persona: Unified Persona Expression
+                  -> hybrid: independent Core Planner
+                      -> not_required: Unified Persona Expression
+                      -> execute: Core and delegation acknowledgement start concurrently
+                          -> ActiveTask progress / result
+                          -> Unified Persona Expression
+                  -> Output Arbiter
+          -> Output Dispatcher
+          -> Official Platform Adapter
   -> FinalizedMaterial
   -> Postprocess / Memory / Persona State
 ```
@@ -145,6 +151,38 @@ PersonaRuntime 不直接拥有官方数据库、Provider、Memory、插件或平
 - active task 有独立 identity 和授权上下文
 - 持久状态由 Memory / PersonaState service 管理，不只保存在 Python 对象内
 
+### `PersonalRuntimeKey` / `PersonalSessionRuntime`
+
+`PersonalRuntimeKey` 是长期 Runtime 隔离键：
+
+```text
+config_id + persona_id + audience_key + privacy_scope
+```
+
+- `config_id` 区分会话路由到的配置作用域。
+- `persona_id` 使用官方 PersonaManager 的稳定解析结果；默认人格使用配置范围内的显式
+  default identity。
+- `audience_key` 使用规范 MessageSession/UMO 表达投递对象；群聊是群 audience，私聊是
+  对端 audience。
+- `privacy_scope` 防止群聊、私聊和内部任务共享不应共享的 Runtime 状态。
+- actor、relationship、conversation_id 和当前 channel 是 Observation/Turn 事实，不进入
+  Runtime Key；否则同一人格和 audience 会被无意义拆成多个 Runtime。
+
+`PersonalSessionRuntime` 是该 Key 对应的内存态协调器，持有 mailbox、active turns、
+task handles、取消和超时。它不是持久化数据库；空闲回收、配置重载和进程关闭必须有
+明确生命周期规则。
+
+Handler 前不能可靠得到最终 persona：persona 解析是异步的，并可能依赖 conversation 或
+插件产生的 `ProviderRequest`。因此先创建不含 persona 的 `PendingTurnReservation`：
+
+```text
+config_id + audience_key + privacy_scope + turn_id
+```
+
+Handler 结束后再通过官方 PersonaManager 解析 effective persona，并把 reservation 绑定到
+完整 `PersonalRuntimeKey`。固定状态为 `reserved -> bound -> queued|active -> settled`；
+reserved Turn 没有 conversational completion 权。
+
 ### `TurnContextSnapshot`
 
 一次 Observation 处理期间共享的只读上下文快照：
@@ -207,9 +245,14 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 
 ### 过渡方式与退出条件
 
-- 在 `ProcessStage` 的插件处理与 Core 执行之间建立明确的 Persona Observation 接缝；它不以当前事件是否准备调用 LLM 为前提。
+- 官方过滤和 preprocess 后、Plugin Handler 前先 reserve PendingTurn；reservation 只
+  建立 transport/turn identity 和输出归属，不解析最终 persona，也不调用 Router、
+  Persona 或 Planner。
+- 在 `ProcessStage` 的插件处理与 Core 执行之间 activate Persona Observation；它不以
+  当前事件是否准备调用 LLM 为前提。
 - `ObservationFactory.from_event(event)` 在 Interaction 内部做只读投影，不修改 event 类型，也不把所有平台服务通知伪装成用户消息。
-- Observation 优先保存在 `InteractionTurnState`；`event.extra` 只在已有兼容点需要时镜像。
+- Phase 1 继续复用现有 `InteractionTurnState` 作为唯一可写 Turn 状态；Phase 2 再原位
+  迁移为 `PersonalTurnState`。`event.extra` 只在已有兼容点需要时镜像。
 - 第一阶段继续使用现有 `InteractionOutputController` 维持行为，但它是待迁移实现，
   不是长期 Output 架构；正式 Output Dispatcher 接管后删除 event 方法替换和反向回调。
 - 第一阶段继续使用现有入站 materialization，不另建一套通用 Input Runtime。
@@ -236,14 +279,24 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 实施内容：
 
 1. 定义只读 `Observation`、kind、source、actor、audience 和 privacy 数据类型。
-2. 调整 `ProcessStage` 内部边界：插件输出接管仍可在 Handler 前准备；Observation 在官方过滤、预处理和插件处理之后、Core 执行之前分发。
+2. 调整 `ProcessStage` 内部边界：官方过滤和预处理后、Handler 前 reserve PendingTurn
+   和 Output Port；Observation 仍在插件处理之后、Core 执行之前分发。
 3. Observation eligibility 使用官方事件类型与插件扩展判断，不能仅依赖 `is_at_or_wake_command`、`call_llm` 或 `ProviderRequest`。
 4. 使用官方 persona manager 的解析结果确定 persona identity，不另建 persona repository。
-5. 增加轻量 `PersonaRuntimeManager`，按 persona identity 提供 runtime handle，并按 audience、privacy 和 relationship scope 隔离状态。
-6. 将 Observation 和 runtime identity 保存到 `InteractionTurnState`；原始 event 只在本轮委派官方能力时使用。
-7. `PersonaRuntime.handle_observation(...)` 第一阶段复用现有 Router、Persona Expression、Core bridge 和 OutputController；非回复型 Observation 默认只记录或通知，不主动发言。
-8. 保持 Router 与 Persona Expression 从回合开始并发；Router 选择 `hybrid` 且独立 Core Planner 返回 `execute` 后立即启动 Core。Core 不等待即时表达，silent/Core 与 Persona 通过同一个提交状态仲裁。
-9. 将 Core thinking、tool call、tool result 和执行状态映射为 lifecycle / task progress；中间进度不得触发 finalized material 或 turn completion。
+5. Handler 结束后根据 conversation、`ProviderRequest` 和官方配置解析 effective persona，
+   把 PendingTurn 绑定到 `config_id + persona_id + audience_key + privacy_scope` 对应的
+   `PersonalSessionRuntime`。
+6. PendingTurn 使用 `reserved -> bound -> queued|active -> settled`；Handler 期间普通语义
+   输出是 provisional/progress，显式 raw/protocol 输出可以投递但不隐式完成 Turn。
+7. 同一 Runtime Key 默认只有一个拥有用户可见输出完成权的 conversational Turn；新消息
+   优先作为当前 ActiveTask follow-up，无法吸收时进入 mailbox 排队。
+8. 将 Observation 和 runtime identity 保存到现有 `InteractionTurnState`；本阶段不创建
+   平行 `PersonalTurnState`，原始 event 只在本轮委派官方能力时使用。
+9. `PersonaRuntime.handle_observation(...)` 第一阶段复用现有 Router、Persona Expression、Core bridge 和 OutputController；非回复型 Observation 默认只记录或通知，不主动发言。
+10. 保持 Router 与 Persona Expression 从回合开始并发；Router 选择 `hybrid` 且独立 Core Planner 返回 `execute` 后立即启动 Core。Core 不等待即时表达，silent/Core 与 Persona 通过同一个提交状态仲裁。
+11. Phase 1 只让插件、Native follow-up、Subagent 和后台任务关联稳定 runtime/task
+    identity；它们的实际生命周期 owner 到 Phase 5/插件任务阶段再迁移。
+12. 将 Core thinking、tool call、tool result 和执行状态映射为 lifecycle / task progress；中间进度不得触发 finalized material 或 turn completion。
 
 这一阶段明确不做：
 
@@ -262,7 +315,11 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 - Notice、戳一戳、普通消息、任务进度和平台服务状态保持不同 kind；无意义服务通知不会触发回复。
 - QQ、WebChat 等现有消息行为保持一致。
 - 同一 persona 可以得到稳定 runtime identity。
-- 不同 audience、session、privacy scope 不串线。
+- Runtime Key 可由官方稳定标识确定重建；不同 config、persona、audience、privacy scope
+  不串线，actor/conversation 切换不会无意义创建新 Runtime。
+- Plugin Handler 前的输出、停止和 `ProviderRequest` 都先关联同一个 PendingTurn，Handler
+  后绑定到最终 effective persona 对应的 Runtime。
+- Phase 1 只有现有 `InteractionTurnState` 一个可写 Turn 状态。
 - `silent` 不调用 Core，并抑制仍为 pending 的 Persona；若 Persona 已 committed/emitted，则保留回复并以 replied material 完成，否则以无可见输出的 silent material 完成。
 - 直播音频和协议命令不进入对话 Router，也不产生伪造的 Router 决策。
 - `hybrid` 中 Core 委派不等待即时表达完成；Core 提前完成时，尚未发送的即时表达会被取消或抑制。
@@ -280,13 +337,18 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
 - 区分 conversation history、relationship state 和 persona state；逐步用官方 Memory / Persona 能力替代按 session 保存的 Interaction JSON 主状态。
 - 将 `_interaction_*` 内部主状态迁入类型化 Runtime/Session/Turn Context；extra 只保留
   公开诊断或官方插件兼容投影。
+- `InteractionTurnState -> PersonalTurnState` 是原位 owner 迁移，不允许新旧对象同时
+  成为主写者。
 
 ### Phase 3：ExpressionIntent 与 Output Dispatcher
 
 - 即时表达、任务进度、最终结果和插件 persona 输出统一形成 ExpressionIntent。
 - 一次逻辑 utterance 只创建一个 OutputEnvelope。
 - 文本和 TTS 是同一 envelope 的 rendition，不是多条独立回复；插件扩展也不能额外创建重复的逻辑回复。
-- 普通插件最终语义文本默认进入 Persona Expression；`direct` 只用于明确的协议输出、不可改写内容和原始媒体投递。
+- 普通插件最终语义文本默认进入 Persona Expression；`direct`、`protocol` 和 `raw` 只表示
+  不改写语义或保持原始媒体，仍然必须形成 OutputEnvelope 并经过 Dispatcher。
+- `Context.send_message()` 保留公开 API，但所有面向用户的主动输出都转换为 OutputIntent；
+  只有平台内部握手/ACK 等非用户可见控制不进入 Dispatcher。
 - 建立唯一 Output Dispatcher，并在切换后删除 event 方法替换、原始 send 回退和
   OutputController 反向私有回调。
 
@@ -300,14 +362,24 @@ ActiveTask 表示 Persona 委派给 Native Core、Codex、OpenCode 或其他执�
   写入链路的 Interaction Memory。
 - 插件扩展点标明 owner、phase、scope、priority、side effect 和 timeout。
 
-### Phase 5：ActiveTask 与执行准备
+### Phase 5：插件、ActiveTask 与 Subagent 边界
 
+- 把 Phase 1 只登记 identity/task handle 的插件、follow-up、后台任务和 Subagent 生命周期
+  迁入 PersonalSessionRuntime。
 - 把 Core 委派改为由 PersonalSessionRuntime 持有的 ActiveTask。
+- 保留官方 Handler 和 Hook，通过稳定 adapter 映射到 Runtime 阶段。
+- ProcessStage 不再直接操作 OutputController 私有事务。
+- 后台结果恢复正确的 persona、task、audience 和 privacy scope，并作为 task Observation
+  回到 Runtime。
+
+### Phase 6：Execution Preparation 就绪复核
+
 - 形成稳定的 CoreTaskSpec、ContextSnapshot、CapabilitySnapshot 和执行准备输入。
 - Local/Third-party 平行准备链停止扩展，并具备删除条件。
-- 本阶段只验证 Native 所需材料能够从统一前置边界获得，不实现新 Backend。
+- 验证 Native 所需 Prompt、能力、会话、错误、进度和取消语义均能从统一前置边界获得。
+- 本阶段不实现新 Backend，只判断旧平行准备链是否已经可以删除。
 
-### Phase 6：可替换执行后台
+### Phase 7：可替换执行后台
 
 - 前置主链验收通过后，再定义 `ExecutionRequest`、`ExecutionEvent` 和 Backend Adapter。
 - 先让 Native AstrBot 执行成为第一个 Backend，并删除旧的平行选择路径。

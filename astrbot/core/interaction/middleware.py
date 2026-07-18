@@ -1,6 +1,5 @@
 import asyncio
 import uuid
-from asyncio import Queue
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from types import MethodType
 from typing import Any
@@ -105,12 +104,10 @@ class InteractionMiddleware:
     def __init__(
         self,
         config: Any,
-        core_queue: Queue,
         output_controller: InteractionOutputController,
         plugin_context: Any | None = None,
     ) -> None:
         self.config = config
-        self.core_queue = core_queue
         self.output_controller = output_controller
         self.plugin_context = plugin_context
         self._reject_development_fallback_policy(config)
@@ -338,13 +335,6 @@ class InteractionMiddleware:
         event.complete_visible_turn = MethodType(complete_visible_turn_wrapper, event)
         event.set_extra("_interaction_output_interceptor_installed", True)
 
-    def handle_inbound(self, event: AstrMessageEvent) -> None:
-        runtime_config = self._get_runtime_config(event)
-        if not is_middleware_enabled(runtime_config):
-            self.core_queue.put_nowait(event)
-            return
-        self._spawn_inbound_task(event)
-
     async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
         if event.is_stopped() or event.get_extra("_interaction_route_handled", False):
             return
@@ -365,7 +355,7 @@ class InteractionMiddleware:
                 self._get_raw_event_field(event, "post_type"),
             )
             return
-        await self._handle_inbound_async(event, enqueue_core=False)
+        await self._handle_pipeline_turn(event)
         event.set_extra("_interaction_route_handled", True)
 
     @staticmethod
@@ -396,14 +386,6 @@ class InteractionMiddleware:
         if isinstance(raw_message, Mapping):
             return raw_message.get(field)
         return None
-
-    def _spawn_inbound_task(self, event: AstrMessageEvent) -> None:
-        task = asyncio.create_task(
-            self._handle_inbound_async(event),
-            name=f"interaction_inbound_{event.get_platform_id()}_{uuid.uuid4().hex[:8]}",
-        )
-        self._inflight_tasks.add(task)
-        task.add_done_callback(self._on_inflight_task_done)
 
     def _spawn_background_task(
         self,
@@ -457,11 +439,9 @@ class InteractionMiddleware:
                 exc_info=True,
             )
 
-    async def _handle_inbound_async(
+    async def _handle_pipeline_turn(
         self,
         event: AstrMessageEvent,
-        *,
-        enqueue_core: bool = True,
     ) -> None:
         try:
             runtime_config = self._get_runtime_config(event)
@@ -498,7 +478,7 @@ class InteractionMiddleware:
                         "reason": protocol_reason,
                     },
                 )
-                self._forward_to_core(event, enqueue_core=enqueue_core)
+                self._forward_to_core(event)
                 return
             await dispatch_interaction_lifecycle(
                 event,
@@ -508,7 +488,6 @@ class InteractionMiddleware:
             await self._handle_async_fast_response_and_route(
                 event,
                 interaction_config,
-                enqueue_core=enqueue_core,
             )
         except asyncio.CancelledError:
             mark_interaction_turn_cancelled(event)
@@ -560,8 +539,6 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
         interaction_config,
-        *,
-        enqueue_core: bool,
     ) -> None:
         self.attach_event_context(
             event,
@@ -651,11 +628,8 @@ class InteractionMiddleware:
             and planning_decision.action is CorePlanningAction.EXECUTE
         ):
             await self._emit_delegated(event, route)
-            self._forward_to_core(event, enqueue_core=enqueue_core)
-            if enqueue_core:
-                await persona_task
-            else:
-                self._track_inflight_task(persona_task)
+            self._forward_to_core(event)
+            self._track_inflight_task(persona_task)
             return
 
         expression = await persona_task
@@ -1298,8 +1272,6 @@ class InteractionMiddleware:
     def _forward_to_core(
         self,
         event: AstrMessageEvent,
-        *,
-        enqueue_core: bool = True,
     ) -> None:
         event.set_extra("_interaction_delegate_to_core", True)
         event.is_wake = True
@@ -1314,8 +1286,6 @@ class InteractionMiddleware:
             and event._has_send_oper
         ):
             event._has_send_oper = False
-        if enqueue_core:
-            self.core_queue.put_nowait(event)
 
     def _build_finalized_turn_material(
         self,

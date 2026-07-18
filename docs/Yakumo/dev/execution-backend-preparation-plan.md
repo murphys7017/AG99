@@ -51,10 +51,15 @@ Runtime 主链。只有这些边界完成后，Native、Claude Code、OpenCode �
 
 ```text
 Platform / Internal Event
-  -> Official EventBus / Pipeline / Plugin Handler
-  -> Personal Runtime Adapter
-       -> PersonalSessionRuntime
-            -> Observation / PersonalTurn
+  -> Official EventBus / Pipeline filters and preprocess
+  -> ProcessStage
+       -> Personal Runtime Adapter reserves PendingTurn and Output Port
+          (no Router / Persona / Planner call)
+       -> Official Plugin Handler runs inside the reserved turn
+       -> resolve effective persona and bind reservation to PersonalRuntimeKey
+       -> Personal Runtime Adapter activates or settles the bound turn
+            -> PersonalSessionRuntime mailbox
+            -> Observation / active conversational turn
             -> Router || speculative Personal Expression
             -> Core Planner when execution is a candidate
             -> ContextSnapshot + CapabilitySnapshot
@@ -71,6 +76,8 @@ Platform / Internal Event
 关键所有权：
 
 - `Personal Runtime` 持有 session、turn、任务、插件协作、路由和完成权。
+- Plugin Handler 前的 reservation 只建立 transport/config/audience 范围内的 Turn identity 和
+  输出归属，不提前解析最终 persona，也不运行分类或表达。
 - `Personal Expression` 只形成统一人格表达，不执行业务能力。
 - Prompt 系统收集事实并按目标投影；Planner 不构建执行上下文。
 - Capability 系统是 Knowledge、Tools、Skills、Plugins 和 Subagent 的唯一能力来源。
@@ -87,16 +94,17 @@ Platform / Internal Event
   选择直接调用、MCP、RPC、CLI 或其他桥接。
 - 不为了文件变小而拆类；只有所有权、生命周期或测试边界发生变化时才拆模块。
 
-## Phase 0：过渡结构清单与行为基线
+## Phase 0：过渡结构清单与运行事实
 
-状态：进行中。第一轮过渡结构源码调查已完成；session 并发策略、Third-party Runner、
-Subagent、主动消息和旧 Interaction Memory 数据边界仍待确认。前期调查暂不新增测试。
+状态：进行中。第一轮过渡结构源码调查、Native/Third-party 执行准备对照已经完成；
+Runtime Key、session 默认并发策略和用户可见输出边界已经确定。Subagent 回流和旧
+Interaction Memory 数据策略仍待完成。前期调查暂不新增测试。
 
 需要完成：
 
 - 将现有结构标记为 `保留`、`迁移`、`替换`、`删除` 或 `公开边界适配`。
-- 为消息、插件直接回复、插件 `ProviderRequest`、Persona-only、Core 非流式、Core
-  流式、Core 错误、主动消息、Subagent 前台和后台建立行为基线。
+- 记录消息、插件直接回复、插件 `ProviderRequest`、Persona-only、Core 非流式、Core
+  流式、Core 错误、主动消息、Subagent 前台和后台的运行事实。
 - 记录每条路径的状态 owner、输出 owner、完成 owner、Prompt 版本和能力来源。
 - 盘点所有 `_interaction_*` extra，区分公开诊断、兼容镜像和内部状态。
 - 盘点 Local/Third-party 路径差异，但不在本阶段设计 Backend。
@@ -109,22 +117,51 @@ Subagent、主动消息和旧 Interaction Memory 数据边界仍待确认。前�
 
 实施内容：
 
-- 建立 `PersonalRuntimeManager` 和按 persona/session/audience 隔离的
-  `PersonalSessionRuntime`。
-- Session Runtime 持有 mailbox、active turns、running tasks、取消和超时。
+- 定义稳定 `PersonalRuntimeKey`：
+  `config_id + persona_id + audience_key + privacy_scope`。
+- `persona_id` 使用官方 PersonaManager 的稳定解析结果；未选择 persona 时使用配置范围内
+  的显式 default identity。
+- `audience_key` 使用规范 MessageSession/UMO 表达投递对象；群聊按群 audience 共享
+  Runtime，私聊按对端 audience 隔离。actor 和 conversation_id 是 Turn 事实，不进入
+  Runtime Key。
+- Handler 前先建立 `PendingTurnReservation`，键只包含
+  `config_id + audience_key + privacy_scope + turn_id`。Handler 结束并获得 conversation、
+  `ProviderRequest` 等最终事实后，通过官方 PersonaManager 解析 effective persona，再绑定
+  到完整 `PersonalRuntimeKey`。
+- Manager 按 Runtime Key 解析 `PersonalSessionRuntime`，并定义空闲回收、配置重载和关闭
+  时的 task 取消规则。
+- 官方过滤和 preprocess 完成后、Plugin Handler 前先 reserve PendingTurn。Reservation
+  只绑定 turn/transport identity 和 Output Port，不启动 Router、Persona 或 Planner。
+- Plugin Handler 在 reserved Turn 内运行。Handler 结束后解析 effective persona，把
+  reservation 绑定到 Session Runtime，再根据 stopped、final result、`ProviderRequest`
+  和 Core candidate 状态 activate、queue 或 settle Turn。
+- PendingTurn 状态固定为 `reserved -> bound -> queued|active -> settled`。`reserved` 没有
+  conversational completion 权；Handler 期间的普通语义输出先记为 provisional/progress，
+  显式 raw/protocol 输出可以投递，但不会隐式完成对话 Turn。
+- Session Runtime 持有 mailbox、active turns、Router/Persona/Planner task handle、取消和
+  超时。同一 Runtime Key 默认只有一个拥有用户可见输出完成权的 conversational Turn。
+- 新用户消息优先作为当前 ActiveTask 的 follow-up；无法吸收时进入 mailbox 排队。协议
+  事件、原始媒体和显式可并发后台任务不占用 conversational Turn。
 - 将 Router/Persona 并发、Planner 调度、turn 仲裁和最终完成迁入 Session Runtime。
 - `InteractionMiddleware` 收缩为官方 Pipeline 的薄适配器，不再拥有业务编排。
 - 保持 Router 与 Persona 从 turn 开始并发；silent 只抑制尚未提交的 Persona。
 - Core 或最终结果先完成时，统一由 Session Runtime 仲裁尚未发送的推测表达。
+- Phase 1 继续以现有 `InteractionTurnState` 作为唯一可写 Turn 状态，不创建平行
+  `PersonalTurnState`。类型化改名和 extra 迁移留给 Phase 2。
+- Phase 1 只登记插件、Native follow-up、Subagent 和后台任务的稳定 identity/task handle；
+  不提前迁移它们的执行与完成生命周期，实际 owner 迁移留给 Phase 7。
 
 退出条件：一轮任务的 owner 不再是 `AstrMessageEvent` 或 Middleware 全局 task 集合；
-多轮插件和后台任务能够关联稳定的 runtime/task identity。
+Plugin Handler 前产生的输出能够关联 PendingTurn，并在 persona 解析后绑定正确 Runtime；
+多轮插件和后台任务能够关联稳定的 runtime/task identity，但仍可由 Phase 7 的兼容
+adapter 执行。
 
 ## Phase 2：类型化 Runtime Context
 
 实施内容：
 
-- 建立 `PersonalRuntimeContext`、`PersonalSessionState` 和 `PersonalTurnState`。
+- 建立 `PersonalRuntimeContext` 和 `PersonalSessionState`，将 Phase 1 继续使用的
+  `InteractionTurnState` 原位迁移为 `PersonalTurnState`，不建立第二套并行状态。
 - event 只挂一个 Runtime Context 引用，内部模块通过类型化对象交换状态。
 - 将 route、planner、prompt、stream、output、completion 和 failure 状态从散落 extra
   迁入 TurnState。
@@ -139,15 +176,18 @@ Subagent、主动消息和旧 Interaction Memory 数据边界仍待确认。前�
 实施内容：
 
 - 定义 `OutputIntent`、`ExpressionIntent`、`OutputEnvelope` 和 Platform Sink 边界。
-- 即时 Persona、Core 结果、插件 persona 输出、任务进度和主动表达进入同一 Dispatcher。
+- 即时 Persona、Core 结果、插件输出、任务进度、主动表达和面向用户的原始媒体都进入
+  同一 Dispatcher。
 - Personal Expression 在 Dispatcher 物化和平台发送之前运行。
 - 文本、TTS、媒体和客户端对象是同一逻辑 utterance 的 rendition，不是独立回复。
 - 官方 `OnDecoratingResult`、`OnAfterMessageSent`、内容安全和 postprocess 在明确阶段运行。
 - 逐步删除 event 方法替换和 `_interaction_original_send*` 回退。
-- 明确 `Context.send_message()`：创建主动 Observation/OutputEnvelope，或作为显式原始平台
-  旁路；不能继续成为无声明的漏口。
+- `Context.send_message()` 保留公开调用方式，但内部必须形成主动 OutputIntent。
+- `raw` / `protocol` / `direct` 表示不做 Persona 改写或保持协议内容，不表示绕过
+  Dispatcher。只有平台握手、ACK 等非用户可见协议控制允许在 Platform Sink 内部处理。
 
-退出条件：所有可见输出只有一个内部 owner；重复回复防护不再依赖文本比对和来源猜测。
+退出条件：所有用户可见输出只有一个内部 owner；重复回复防护不再依赖文本比对和来源
+猜测；raw 输出仍有 Envelope、delivery identity 和完成语义。
 
 ## Phase 4：Prompt 快照生命周期
 
@@ -224,6 +264,18 @@ AgentRunner 才能被发现。
 只有这些条件满足后，才单独设计 `ExecutionRequest`、`ExecutionEvent` 和 Backend
 Adapter，并先让 Native 成为第一个实现。Claude Code、OpenCode 等随后接入同一边界。
 
+Phase 0 已确认的准备边界：
+
+- 官方 `ProviderRequest` 是必须保留的插件兼容输入，不是未来统一执行契约。
+- TaskSpec、Context/Prompt Projection、规范化附件和 CapabilitySnapshot 必须在选择
+  Backend Adapter 之前形成。
+- Adapter 只负责后台能力校验、协议字段投影、远端 thread、stream、cancel/close 和错误
+  翻译，不重新收集 Prompt、人格、知识库或插件事实。
+- 官方 `OnLLMRequest` 保留在最终低层 request projection 之后、实际执行之前；其他
+  Agent/LLM/Tool Hook 按后台可观测能力映射，不伪造后台未暴露的工具生命周期。
+- 当前 Third-party Stage 丢弃插件 `ProviderRequest` 并手工重建输入，是明确的待替换过渡
+  行为；现有 Dify/Coze/DashScope/DeerFlow runners 是兼容对象，不是新接口模板。
+
 ## 当前进度
 
 已经完成：
@@ -231,12 +283,15 @@ Adapter，并先让 Native 成为第一个实现。Claude Code、OpenCode 等随
 - 根据源码重画当前消息流程。
 - 建立 Personal Runtime、Personal Expression 和 Native Core 的术语映射。
 - 完成插件、Prompt/Tool、Native Core 和 Subagent 的第一轮依赖盘点。
+- 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化
+  差异审计，并确定其长期 owner。
+- 删除无生产调用者的 `handle_inbound()`、`core_queue` 和 `enqueue_core` 重投递双轨，
+  `ProcessStage -> handle_pipeline_event()` 成为唯一生产入口。
 - 恢复 Interaction 非流式输出的内容安全与 `OnDecoratingResult` 兼容。
 - 修正 RespondStage 驱动输出的发送后 Hook、visible completion 和 Turn 最终化顺序。
 
-下一步不是抽取 Backend，而是先完成 Phase 0 的 session 并发策略、Third-party Runner、
-Subagent、主动消息和旧 Interaction Memory 数据调查，再删除无生产调用者的
-pre-Pipeline 入站路径。之后才从 Phase 1 的 Personal Runtime 所有权开始迁移。
+下一步不是抽取 Backend。先完成 Phase 0 的 Subagent 回流和旧 Interaction Memory 数据
+策略，之后按“Handler 前 reserve、Handler 后 activate”的顺序进入 Phase 1。
 
 ## 非目标
 
