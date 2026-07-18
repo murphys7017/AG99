@@ -35,6 +35,14 @@ Escalate when uncertain.
 7. Review for regressions, scope drift, and missing tests.
 8. Report validation status and residual risk.
 
+## Validation Efficiency
+
+- Inspect and reuse existing coverage before adding tests.
+- Add only the smallest focused test needed for a new behavior or a distinct regression risk; do not duplicate coverage to inflate test volume.
+- Do not rerun an unchanged test suite repeatedly. Rerun it only after relevant code changes or a failed result that required correction.
+- Prefer one targeted validation pass. Use broader suites only for high-risk shared boundaries, public-interface changes, or when explicitly requested.
+- Report intentionally skipped validation instead of creating low-value tests solely for completeness.
+
 ## Checklists
 
 - implementation: scoped, style preserved, assumptions visible, unrelated files untouched
