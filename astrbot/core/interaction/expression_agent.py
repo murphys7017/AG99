@@ -14,8 +14,10 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     repair_json = None
 
 from astrbot import logger
+from astrbot.core.agent.tool import TOOL_TARGET_PERSONAL_EXPRESSION, ToolSet
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.context_collect import resolve_toolset_for_target
 from astrbot.core.prompt.render import (
     PromptRenderEngine,
     PromptRenderProfile,
@@ -55,6 +57,7 @@ class PersonaExpressionRequest:
     preserve_facts: bool = False
     short_reply: bool = False
     allow_empty: bool = False
+    allow_plugin_tools: bool = False
 
 
 @dataclass(slots=True)
@@ -65,8 +68,15 @@ class PersonaExpressionResult:
 
 
 class InteractionExpressionError(RuntimeError):
-    def __init__(self, reason: str, message: str | None = None) -> None:
+    def __init__(
+        self,
+        reason: str,
+        message: str | None = None,
+        *,
+        tool_material: str | None = None,
+    ) -> None:
         self.reason = reason
+        self.tool_material = tool_material
         super().__init__(message or reason)
 
 
@@ -107,6 +117,16 @@ def build_persona_runtime_system_prompt() -> str:
         "allow_empty 为 true 且当前没有必要说话时，可以让 spoken_reply 为空字符串。\n"
         "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
+    )
+
+
+def build_persona_tool_loop_instruction() -> str:
+    return (
+        "你现在处于 Personal Expression 的工具处理阶段。\n"
+        "只在当前请求确实需要时调用提供的插件工具；工具返回后继续整理事实。\n"
+        "这一阶段的输出是交给后续人格表达阶段的内部材料，不是直接发送给用户的最终回复。\n"
+        "完成工具调用后，用简洁文本总结已经获得的结果；不需要工具时直接给出简洁的内部判断。\n"
+        "不要调用 Core 工具、Skill、知识库或未提供的工具。"
     )
 
 
@@ -410,12 +430,22 @@ class InteractionExpressionAgent:
             raise primary_error or InteractionExpressionError("provider_unavailable")
 
         last_error: InteractionExpressionError | None = primary_error
+        tool_material_for_fallback: str | None = None
         for index, candidate in enumerate(candidates):
-            fallback_request = (
-                _build_failure_expression_request(req, primary_error)
-                if primary_error is not None
-                else req
-            )
+            if tool_material_for_fallback:
+                fallback_request = replace(
+                    req,
+                    source_text=tool_material_for_fallback,
+                    preserve_facts=True,
+                    allow_plugin_tools=False,
+                )
+            elif primary_error is not None:
+                fallback_request = _build_failure_expression_request(
+                    req,
+                    primary_error,
+                )
+            else:
+                fallback_request = req
             if primary_error is not None:
                 fallback_provider_id = str(
                     candidate.provider_config.get("id", "<unknown>")
@@ -446,6 +476,8 @@ class InteractionExpressionAgent:
                 )
             except InteractionExpressionError as exc:
                 last_error = exc
+                if exc.tool_material:
+                    tool_material_for_fallback = exc.tool_material
                 if primary_error is None:
                     primary_error = exc
                 if index + 1 < len(candidates):
@@ -486,6 +518,54 @@ class InteractionExpressionAgent:
                 provider,
                 req=req,
             )
+
+        tool_material: str | None = None
+        if req.allow_plugin_tools and self._provider_supports_tool_calls(provider):
+            toolset = await self._resolve_personal_expression_tools(
+                event,
+                plugin_context,
+                interaction_config,
+            )
+            if toolset:
+                try:
+                    tool_result = await self._run_persona_tool_loop(
+                        event,
+                        plugin_context,
+                        interaction_config,
+                        provider,
+                        render_result,
+                        toolset,
+                    )
+                except InteractionExpressionError as exc:
+                    raise InteractionExpressionError(
+                        exc.reason,
+                        str(exc),
+                        tool_material=_build_tool_loop_failure_material(exc),
+                    ) from exc
+                tool_material = (tool_result.completion_text or "").strip()
+                if tool_result.role == "err":
+                    raise InteractionExpressionError(
+                        "tool_loop_error",
+                        tool_material or "persona plugin tool loop failed",
+                        tool_material=_build_tool_loop_failure_material(
+                            tool_material or "provider returned an error response"
+                        ),
+                    )
+                if tool_material:
+                    req = replace(
+                        req,
+                        source_text=tool_material,
+                        preserve_facts=True,
+                        allow_plugin_tools=False,
+                    )
+                    render_result = await self._prepare_render_result(
+                        event,
+                        plugin_context,
+                        interaction_config,
+                        provider,
+                        req=req,
+                    )
+
         event.set_extra("_interaction_expression_prompt_render_result", render_result)
         output_contract = render_result.output_contract
         persona_effect_specs = render_result.metadata.get(
@@ -535,14 +615,22 @@ class InteractionExpressionAgent:
                 timeout=interaction_config.expression_timeout,
             )
         except asyncio.TimeoutError:
-            raise InteractionExpressionError("timeout") from None
+            raise InteractionExpressionError(
+                "timeout",
+                tool_material=tool_material,
+            ) from None
         except Exception as exc:  # noqa: BLE001
-            raise InteractionExpressionError("model_error", str(exc)) from exc
+            raise InteractionExpressionError(
+                "model_error",
+                str(exc),
+                tool_material=tool_material,
+            ) from exc
 
         if llm_resp.role == "err":
             raise InteractionExpressionError(
                 "model_error",
                 llm_resp.completion_text or "provider returned an error response",
+                tool_material=tool_material,
             )
         logger.info(
             "DIAG expression.response_shape: platform_id=%s session_id=%s phase=%s has_tool_calls=%s tool_names=%s text_length=%s",
@@ -553,13 +641,18 @@ class InteractionExpressionAgent:
             list(getattr(llm_resp, "tools_call_name", []) or []),
             len((llm_resp.completion_text or "").strip()),
         )
-        result = extract_persona_expression_result(
-            llm_resp.completion_text,
-            llm_response=llm_resp,
-            output_contract=output_contract,
-            compiled_output_contract=render_result.compiled_output_contract,
-            effects=persona_effect_specs,
-        )
+        try:
+            result = extract_persona_expression_result(
+                llm_resp.completion_text,
+                llm_response=llm_resp,
+                output_contract=output_contract,
+                compiled_output_contract=render_result.compiled_output_contract,
+                effects=persona_effect_specs,
+            )
+        except InteractionExpressionError as exc:
+            if tool_material and not exc.tool_material:
+                exc.tool_material = tool_material
+            raise
         logger.info(
             "DIAG expression.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
             event.get_platform_id(),
@@ -576,7 +669,12 @@ class InteractionExpressionAgent:
                 if isinstance(issue, dict)
             ],
         )
-        validate_persona_expression_result(req, result)
+        try:
+            validate_persona_expression_result(req, result)
+        except InteractionExpressionError as exc:
+            if tool_material and not exc.tool_material:
+                exc.tool_material = tool_material
+            raise
         if req.short_reply and result.spoken_reply and len(result.spoken_reply) > 40:
             result.spoken_reply = result.spoken_reply[:40].rstrip("，,。.!！?？")
         logger.info(
@@ -588,6 +686,92 @@ class InteractionExpressionAgent:
             [call.name for call in result.effect_calls],
         )
         return result
+
+    async def _resolve_personal_expression_tools(
+        self,
+        event,
+        plugin_context: Context,
+        interaction_config: InteractionAgentConfig,
+    ) -> ToolSet:
+        build_config = build_interaction_prompt_build_config(plugin_context, event)
+        _, toolset, _ = await resolve_toolset_for_target(
+            event=event,
+            plugin_context=plugin_context,
+            config=build_config,
+            target=TOOL_TARGET_PERSONAL_EXPRESSION,
+            provider_request=None,
+        )
+        return toolset
+
+    async def _run_persona_tool_loop(
+        self,
+        event,
+        plugin_context: Context,
+        interaction_config: InteractionAgentConfig,
+        provider: Provider,
+        render_result,
+        toolset: ToolSet,
+    ):
+        provider_config = getattr(provider, "provider_config", {})
+        provider_id = (
+            str(provider_config.get("id", "")).strip()
+            if isinstance(provider_config, dict)
+            else ""
+        )
+        if not provider_id:
+            meta = provider.meta()
+            provider_id = str(getattr(meta, "id", "")).strip()
+        if not provider_id:
+            raise InteractionExpressionError(
+                "tool_loop_provider_unavailable",
+                "persona tool loop provider id unavailable",
+            )
+
+        logger.info(
+            "DIAG expression.tool_loop: platform_id=%s session_id=%s tool_names=%s",
+            event.get_platform_id(),
+            event.session_id,
+            toolset.names(),
+        )
+        try:
+            return await asyncio.wait_for(
+                plugin_context.tool_loop_agent(
+                    event=event,
+                    chat_provider_id=provider_id,
+                    prompt=(
+                        render_result.request_prompt or ""
+                    ).strip(),
+                    contexts=build_model_context_messages(render_result.messages),
+                    system_prompt=(
+                        f"{render_result.system_prompt or ''}\n\n"
+                        f"{build_persona_tool_loop_instruction()}"
+                    ).strip(),
+                    tools=toolset,
+                    max_steps=8,
+                    tool_call_timeout=max(
+                        1,
+                        int(interaction_config.expression_timeout),
+                    ),
+                ),
+                timeout=interaction_config.expression_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise InteractionExpressionError("tool_loop_timeout") from None
+        except InteractionExpressionError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise InteractionExpressionError(
+                "tool_loop_error",
+                str(exc),
+            ) from exc
+
+    @staticmethod
+    def _provider_supports_tool_calls(provider: Provider) -> bool:
+        provider_config = getattr(provider, "provider_config", {})
+        if not isinstance(provider_config, dict):
+            return True
+        modalities = provider_config.get("modalities")
+        return not isinstance(modalities, list) or "tool_use" in modalities
 
     async def express_visible_reply_result(
         self,
@@ -780,4 +964,13 @@ def _build_failure_expression_request(
         ),
         preserve_facts=True,
         allow_empty=False,
+    )
+
+
+def _build_tool_loop_failure_material(error: object) -> str:
+    message = " ".join(str(error or "").split())
+    if len(message) > 1000:
+        message = f"{message[:997]}..."
+    return "Personal Expression 插件工具处理失败。可确认的错误原因：" + (
+        message or "未知错误"
     )

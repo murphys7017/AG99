@@ -10,7 +10,7 @@ from astrbot.core import logger
 from astrbot.core.agent.agent import Agent
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.hooks import BaseAgentRunHooks
-from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.agent.tool import FunctionTool, normalize_tool_targets
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.provider.func_tool_manager import PY_TO_JSON_TYPE, SUPPORTED_TYPES
 from astrbot.core.provider.register import llm_tools
@@ -577,7 +577,12 @@ def register_on_llm_tool_respond(**kwargs):
     return decorator
 
 
-def register_llm_tool(name: str | None = None, **kwargs):
+def register_llm_tool(
+    name: str | None = None,
+    *,
+    tool_targets: tuple[str, ...] | list[str] | set[str] | None = None,
+    **kwargs,
+):
     """为函数调用（function-calling / tools-use）添加工具。
 
     请务必按照以下格式编写一个工具（包括函数注释，AstrBot 会尝试解析该函数注释）
@@ -595,6 +600,10 @@ def register_llm_tool(name: str | None = None, **kwargs):
 
     可接受的参数类型有：string, number, object, array, boolean。
 
+    ``tool_targets`` 控制工具可用的执行面，默认仅 ``("core",)``。
+    可选值为 ``"core"`` 和 ``"personal_expression"``；两者同时声明时，
+    两个执行面都可以调用该工具。
+
     返回值：
         - 返回 str：结果会被加入下一次 LLM 请求的 prompt 中，用于让 LLM 总结工具返回的结果
         - 返回 None：结果不会被加入下一次 LLM 请求的 prompt 中。
@@ -611,6 +620,7 @@ def register_llm_tool(name: str | None = None, **kwargs):
 
     """
     name_ = name
+    resolved_tool_targets = normalize_tool_targets(tool_targets)
     registering_agent = None
     if kwargs.get("registering_agent"):
         registering_agent = kwargs["registering_agent"]
@@ -661,7 +671,13 @@ def register_llm_tool(name: str | None = None, **kwargs):
         if not registering_agent:
             doc_desc = docstring.description.strip() if docstring.description else ""
             md = get_handler_or_create(awaitable, EventType.OnCallingFuncToolEvent)
-            llm_tools.add_func(llm_tool_name, args, doc_desc, md.handler)
+            llm_tools.add_func(
+                llm_tool_name,
+                args,
+                doc_desc,
+                md.handler,
+                execution_targets=resolved_tool_targets,
+            )
         else:
             assert isinstance(registering_agent, RegisteringAgent)
             # print(f"Registering tool {llm_tool_name} for agent", registering_agent._agent.name)
@@ -669,7 +685,13 @@ def register_llm_tool(name: str | None = None, **kwargs):
                 registering_agent._agent.tools = []
 
             desc = docstring.description.strip() if docstring.description else ""
-            tool = llm_tools.spec_to_func(llm_tool_name, args, desc, awaitable)
+            tool = llm_tools.spec_to_func(
+                llm_tool_name,
+                args,
+                desc,
+                awaitable,
+                execution_targets=resolved_tool_targets,
+            )
             registering_agent._agent.tools.append(tool)
 
         return awaitable

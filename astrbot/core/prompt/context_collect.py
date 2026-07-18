@@ -44,6 +44,23 @@ PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
 }
 
 
+async def resolve_toolset_for_target(
+    *,
+    event: AstrMessageEvent,
+    plugin_context: Context,
+    config,
+    target: str,
+    provider_request=None,
+):
+    """Resolve executable tools through the Prompt-owned capability collector."""
+    return await ToolsCollector(target=target).resolve_toolset(
+        event,
+        plugin_context,
+        config,
+        provider_request=provider_request,
+    )
+
+
 def _default_collectors() -> list[ContextCollectorInterface]:
     """Return the collectors enabled for the current phase."""
     return [
@@ -121,6 +138,9 @@ def _collector_lifecycle(collector: object) -> str:
 
 
 def _collector_cache_key(collector: object) -> str:
+    explicit_key = getattr(collector, "cache_key", None)
+    if isinstance(explicit_key, str) and explicit_key.strip():
+        return explicit_key.strip()
     cls = collector.__class__
     return f"{cls.__module__}.{cls.__qualname__}"
 

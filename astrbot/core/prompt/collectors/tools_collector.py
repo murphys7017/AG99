@@ -8,7 +8,13 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
-from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.agent.tool import (
+    TOOL_TARGET_CORE,
+    FunctionTool,
+    ToolSet,
+    normalize_tool_targets,
+    tool_supports_target,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
@@ -22,6 +28,14 @@ if TYPE_CHECKING:
 
 class ToolsCollector(ContextCollectorInterface):
     """Collect the persona-resolved tool inventory without mutating runtime tools."""
+
+    def __init__(self, *, target: str = TOOL_TARGET_CORE) -> None:
+        normalize_tool_targets((target,))
+        self.target = target
+
+    @property
+    def cache_key(self) -> str:
+        return f"{self.__class__.__module__}.{self.__class__.__qualname__}:{self.target}"
 
     @property
     def lifecycle(self) -> str:
@@ -62,7 +76,7 @@ class ToolsCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None = None,
     ) -> tuple[str | None, ToolSet, str]:
-        """Resolve the same active tool set used by the Core prompt."""
+        """Resolve the active persona tool set for this collector target."""
         persona_id, persona = await self._resolve_persona(
             event,
             plugin_context,
@@ -114,7 +128,11 @@ class ToolsCollector(ContextCollectorInterface):
         if isinstance(request_toolset, ToolSet):
             active_toolset = ToolSet()
             for tool in request_toolset:
-                if isinstance(tool, FunctionTool) and getattr(tool, "active", True):
+                if (
+                    isinstance(tool, FunctionTool)
+                    and getattr(tool, "active", True)
+                    and tool_supports_target(tool, self.target)
+                ):
                     active_toolset.add_tool(tool)
             return active_toolset, "provider_request"
 
@@ -123,7 +141,7 @@ class ToolsCollector(ContextCollectorInterface):
             return ToolSet(), "none"
 
         if (persona and persona.get("tools") is None) or not persona:
-            full_toolset = tool_manager.get_full_tool_set()
+            full_toolset = tool_manager.get_tool_set_for_target(self.target)
             if not isinstance(full_toolset, ToolSet):
                 return ToolSet(), "unavailable"
 
@@ -139,7 +157,7 @@ class ToolsCollector(ContextCollectorInterface):
             return persona_toolset, "none"
 
         for tool_name in allowed_tools:
-            tool = tool_manager.get_func(tool_name)
+            tool = tool_manager.get_func(tool_name, target=self.target)
             if tool is not None and getattr(tool, "active", True):
                 persona_toolset.add_tool(tool)
         return persona_toolset, "whitelist"
@@ -165,6 +183,7 @@ class ToolsCollector(ContextCollectorInterface):
                 "tool_count": len(serialized_tools),
                 "persona_id": persona_id,
                 "selection_mode": selection_mode,
+                "tool_target": self.target,
             },
         )
 
@@ -176,5 +195,8 @@ class ToolsCollector(ContextCollectorInterface):
             "parameters": deepcopy(tool.parameters),
             "active": bool(getattr(tool, "active", True)),
             "handler_module_path": getattr(tool, "handler_module_path", None),
+            "execution_targets": sorted(
+                normalize_tool_targets(getattr(tool, "execution_targets", None))
+            ),
             "schema": tool_schema[0] if tool_schema else None,
         }

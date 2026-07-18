@@ -234,6 +234,8 @@ class StarTools:
         func_args: list,
         desc: str,
         func_obj: Callable[..., Awaitable[Any]],
+        *,
+        tool_targets: tuple[str, ...] | list[str] | set[str] | None = None,
     ) -> None:
         """为函数调用（function-calling/tools-use）添加工具
 
@@ -246,7 +248,13 @@ class StarTools:
         """
         if cls._context is None:
             raise ValueError("StarTools not initialized")
-        cls._context.register_llm_tool(name, func_args, desc, func_obj)
+        cls._context.register_llm_tool(
+            name,
+            func_args,
+            desc,
+            func_obj,
+            tool_targets=tool_targets,
+        )
 
     @classmethod
     def unregister_llm_tool(cls, name: str) -> None:

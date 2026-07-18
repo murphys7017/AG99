@@ -11,7 +11,11 @@ from astrbot.core import logger
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.agent.message import AudioURLPart, ImageURLPart
-from astrbot.core.agent.tool import ToolSet
+from astrbot.core.agent.tool import (
+    TOOL_TARGET_CORE,
+    ToolSet,
+    tool_supports_target,
+)
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
 from astrbot.core.astr_agent_run_util import AgentRunner
@@ -499,7 +503,7 @@ async def _prepare_persona_tools_and_subagents(
 
     # inject toolset in the persona
     if (persona and persona.get("tools") is None) or not persona:
-        persona_toolset = tmgr.get_full_tool_set()
+        persona_toolset = tmgr.get_tool_set_for_target(TOOL_TARGET_CORE)
         for tool in list(persona_toolset):
             if not tool.active:
                 persona_toolset.remove_tool(tool.name)
@@ -507,9 +511,15 @@ async def _prepare_persona_tools_and_subagents(
         persona_toolset = ToolSet()
         if persona["tools"]:
             for tool_name in persona["tools"]:
-                tool = tmgr.get_func(tool_name)
+                tool = tmgr.get_func(tool_name, target=TOOL_TARGET_CORE)
                 if tool and tool.active:
                     persona_toolset.add_tool(tool)
+    if req.func_tool:
+        core_toolset = ToolSet()
+        for tool in req.func_tool:
+            if tool_supports_target(tool, TOOL_TARGET_CORE):
+                core_toolset.add_tool(tool)
+        req.func_tool = core_toolset
     if not req.func_tool:
         req.func_tool = persona_toolset
     else:

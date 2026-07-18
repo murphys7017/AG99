@@ -14,7 +14,12 @@ from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.agent.message import Message
 from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.agent.tool import (
+    TOOL_TARGET_CORE,
+    FunctionTool,
+    ToolSet,
+    tool_supports_target,
+)
 from astrbot.core.agent.tool_executor import BaseFunctionToolExecutor
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_main_agent_resources import (
@@ -279,7 +284,10 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             for registered_tool in llm_tools.func_list:
                 if isinstance(registered_tool, HandoffTool):
                     continue
-                if registered_tool.active:
+                if (
+                    registered_tool.active
+                    and tool_supports_target(registered_tool, TOOL_TARGET_CORE)
+                ):
                     toolset.add_tool(registered_tool)
             for runtime_tool in runtime_computer_tools.values():
                 toolset.add_tool(runtime_tool)
@@ -291,14 +299,20 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         toolset = ToolSet()
         for tool_name_or_obj in tools:
             if isinstance(tool_name_or_obj, str):
-                registered_tool = llm_tools.get_func(tool_name_or_obj)
+                registered_tool = llm_tools.get_func(
+                    tool_name_or_obj,
+                    target=TOOL_TARGET_CORE,
+                )
                 if registered_tool and registered_tool.active:
                     toolset.add_tool(registered_tool)
                     continue
                 runtime_tool = runtime_computer_tools.get(tool_name_or_obj)
                 if runtime_tool:
                     toolset.add_tool(runtime_tool)
-            elif isinstance(tool_name_or_obj, FunctionTool):
+            elif isinstance(tool_name_or_obj, FunctionTool) and tool_supports_target(
+                tool_name_or_obj,
+                TOOL_TARGET_CORE,
+            ):
                 toolset.add_tool(tool_name_or_obj)
         return None if toolset.empty() else toolset
 

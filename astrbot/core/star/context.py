@@ -1234,6 +1234,8 @@ class Context:
         func_args: list,
         desc: str,
         func_obj: Callable[..., Awaitable[Any]],
+        *,
+        tool_targets: tuple[str, ...] | list[str] | set[str] | None = None,
     ) -> None:
         """[DEPRECATED]为函数调用（function-calling / tools-use）添加工具。
 
@@ -1258,7 +1260,13 @@ class Context:
             desc=desc,
         )
         star_handlers_registry.append(md)
-        self.provider_manager.llm_tools.add_func(name, func_args, desc, func_obj)
+        self.provider_manager.llm_tools.add_func(
+            name,
+            func_args,
+            desc,
+            func_obj,
+            execution_targets=tool_targets,
+        )
 
     def unregister_llm_tool(self, name: str) -> None:
         """[DEPRECATED]删除一个函数调用工具。

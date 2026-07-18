@@ -642,7 +642,7 @@ class InteractionMiddleware:
         expression = await self._generate_expression(
             event,
             interaction_config,
-            request=PersonaExpressionRequest(),
+            request=PersonaExpressionRequest(allow_plugin_tools=True),
         )
         turn_state = ensure_interaction_turn_state(event)
         route = turn_state.route_decision

@@ -1,5 +1,5 @@
 import copy
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from typing import Any, Generic
 
 import jsonschema
@@ -14,6 +14,39 @@ from .run_context import ContextWrapper, TContext
 
 ParametersType = dict[str, Any]
 ToolExecResult = str | mcp.types.CallToolResult
+
+TOOL_TARGET_CORE = "core"
+TOOL_TARGET_PERSONAL_EXPRESSION = "personal_expression"
+VALID_TOOL_TARGETS = frozenset(
+    {TOOL_TARGET_CORE, TOOL_TARGET_PERSONAL_EXPRESSION}
+)
+DEFAULT_TOOL_TARGETS = frozenset({TOOL_TARGET_CORE})
+
+
+def normalize_tool_targets(value: Iterable[str] | str | None = None) -> frozenset[str]:
+    """Validate tool execution targets while keeping legacy tools Core-only."""
+    if value is None:
+        return DEFAULT_TOOL_TARGETS
+    raw_targets = [value] if isinstance(value, str) else list(value)
+    targets = frozenset(
+        str(target).strip() for target in raw_targets if str(target).strip()
+    )
+    if not targets:
+        raise ValueError("tool_targets must contain at least one execution target")
+    invalid_targets = targets - VALID_TOOL_TARGETS
+    if invalid_targets:
+        raise ValueError(
+            "unsupported tool_targets: " + ", ".join(sorted(invalid_targets))
+        )
+    return targets
+
+
+def tool_supports_target(tool: object, target: str) -> bool:
+    """Return whether a tool is available to one execution target."""
+    resolved_target = normalize_tool_targets((target,))
+    target_name = next(iter(resolved_target))
+    raw_targets = getattr(tool, "execution_targets", None)
+    return target_name in normalize_tool_targets(raw_targets)
 
 
 @dataclass
@@ -63,6 +96,15 @@ class FunctionTool(ToolSchema, Generic[TContext]):
     Declare this tool as a background task. Background tasks return immediately
     with a task identifier while the real work continues asynchronously.
     """
+    execution_targets: frozenset[str] = Field(
+        default_factory=lambda: DEFAULT_TOOL_TARGETS
+    )
+    """Execution surfaces allowed to expose this tool; legacy default is Core only."""
+
+    @model_validator(mode="after")
+    def validate_execution_targets(self) -> "FunctionTool[TContext]":
+        self.execution_targets = normalize_tool_targets(self.execution_targets)
+        return self
 
     def __repr__(self) -> str:
         return f"FuncTool(name={self.name}, parameters={self.parameters}, description={self.description})"

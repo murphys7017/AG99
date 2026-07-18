@@ -6,7 +6,7 @@ import json
 import os
 import threading
 import urllib.parse
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -16,7 +16,13 @@ import aiohttp
 from astrbot import logger
 from astrbot.core import sp
 from astrbot.core.agent.mcp_client import MCPClient, MCPTool
-from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.agent.tool import (
+    TOOL_TARGET_CORE,
+    FunctionTool,
+    ToolSet,
+    normalize_tool_targets,
+    tool_supports_target,
+)
 from astrbot.core.tools.registry import (
     ensure_builtin_tools_loaded,
     get_builtin_tool_class,
@@ -274,6 +280,8 @@ class FunctionToolManager:
         func_args: list[dict],
         desc: str,
         handler: Callable[..., Awaitable[Any] | AsyncGenerator[Any]],
+        *,
+        execution_targets: Iterable[str] | str | None = None,
     ) -> FuncTool:
         params = {
             "type": "object",  # hard-coded here
@@ -288,6 +296,7 @@ class FunctionToolManager:
             parameters=params,
             description=desc,
             handler=handler,
+            execution_targets=normalize_tool_targets(execution_targets),
         )
 
     def add_func(
@@ -296,6 +305,8 @@ class FunctionToolManager:
         func_args: list,
         desc: str,
         handler: Callable[..., Awaitable[Any] | AsyncGenerator[Any]],
+        *,
+        execution_targets: Iterable[str] | str | None = None,
     ) -> None:
         """添加函数调用工具
 
@@ -313,6 +324,7 @@ class FunctionToolManager:
                 func_args=func_args,
                 desc=desc,
                 handler=handler,
+                execution_targets=execution_targets,
             ),
         )
         logger.info(f"Added llm tool: {name}")
@@ -324,20 +336,28 @@ class FunctionToolManager:
                 self.func_list.pop(i)
                 break
 
-    def get_func(self, name) -> FuncTool | None:
+    def get_func(self, name, *, target: str | None = None) -> FuncTool | None:
         # 优先返回已激活的工具（后加载的覆盖前面的，与 ToolSet.add_tool 保持一致）
         # 使用 getattr(..., True) 与 ToolSet.add_tool 保持一致：没有 active 属性的工具视为已激活
+        if target is not None:
+            normalize_tool_targets((target,))
         for f in reversed(self.func_list):
-            if f.name == name and getattr(f, "active", True):
+            if (
+                f.name == name
+                and getattr(f, "active", True)
+                and (target is None or tool_supports_target(f, target))
+            ):
                 return f
         # 退化则拿最后一个同名工具
         for f in reversed(self.func_list):
-            if f.name == name:
+            if f.name == name and (target is None or tool_supports_target(f, target)):
                 return f
         if isinstance(name, str):
             try:
                 builtin_tool = self.get_builtin_tool(name)
             except KeyError:
+                return None
+            if target is not None and not tool_supports_target(builtin_tool, target):
                 return None
             if getattr(builtin_tool, "active", True):
                 return builtin_tool
@@ -476,6 +496,15 @@ class FunctionToolManager:
         tool_set = ToolSet()
         for tool in self.func_list:
             tool_set.add_tool(tool)
+        return tool_set
+
+    def get_tool_set_for_target(self, target: str = TOOL_TARGET_CORE) -> ToolSet:
+        """Return registered tools explicitly exposed to one execution target."""
+        normalize_tool_targets((target,))
+        tool_set = ToolSet()
+        for tool in self.func_list:
+            if tool_supports_target(tool, target):
+                tool_set.add_tool(tool)
         return tool_set
 
     @staticmethod

@@ -28,7 +28,8 @@ context:
     - Execution Backend decoupling is deliberately last; current work first replaces transitional structures before execution preparation.
     - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
     - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
-    - Personal Runtime is the control layer; current InteractionPersonaRuntime is the Personal Expression facade, not the future plugin action runtime.
+    - Personal Runtime is the control layer; InteractionPersonaRuntime is the Personal Expression facade and owns the expression-scoped plugin tool loop, not the general Core executor.
+    - Tools are Core-only by default. Plugin authors may explicitly mount an individual tool to personal_expression or both execution targets through tool_targets; Personal Runtime remains a control layer and never owns a ToolSet.
     - Official and new plugins are future Personal Runtime defaults, but current Prompt Extension, Tool, LLM Hook, Agent Hook, and Subagent behavior remains Native-Core-owned until a reviewed mapping exists.
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and direct-send behavior remain unchanged.
