@@ -37,23 +37,22 @@ class InteractionRouterError(RuntimeError):
 
 def build_interaction_router_system_prompt() -> str:
     return (
-        "你是 Interaction Router，一个严格的三分类选择器。\n"
+        "你是 Interaction Router，一个严格的二分类选择器。\n"
         "任务：从候选标签中选择一个。当前用户输入是首要依据；聊天记录、memory 和 router 上下文用于理解当前对话。\n"
         "router 上下文可能包含插件目录；插件目录只说明本地插件是什么、负责什么，不能单独成为选择 hybrid 的理由。\n"
         "候选标签：\n"
-        "- silent：当前观察不适合回应，保持沉默比说话更自然。\n"
         "- persona：统一拟人层可以直接完成回应，不需要核心 Agent。\n"
         "- hybrid：当前输入本身包含明确的执行、查询或处理意图，明确需要核心 Agent 参与；或当前输入明确继续当前说话者未完成的核心任务。\n"
         "聊天记录、memory、插件目录或其他说话者的任务不能单独成为选择 hybrid 的理由。\n"
         "普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
-        "明确不需要回应、并且沉默更自然时选择 silent。不要限制或枚举核心 Agent 的能力范围。\n"
+        "不要限制或枚举核心 Agent 的能力范围。\n"
         "不要推断具体插件协议、动作参数或输出 schema。\n"
-        "输出约束：不要生成用户回复，不要输出 JSON，只返回 silent、persona 或 hybrid。"
+        "输出约束：不要生成用户回复，不要输出 JSON，只返回 persona 或 hybrid。"
     )
 
 
 def build_interaction_router_prompt() -> str:
-    return "请只输出 silent、persona 或 hybrid。"
+    return "请只输出 persona 或 hybrid。"
 
 
 def extract_interaction_route_payload(

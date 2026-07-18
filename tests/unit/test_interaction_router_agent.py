@@ -119,7 +119,7 @@ async def test_router_provider_call_uses_plain_text_mode_contract(monkeypatch):
         AsyncMock(
             return_value=RenderResult(
                 system_prompt="router",
-                request_prompt="请只输出 silent、persona 或 hybrid。",
+                request_prompt="请只输出 persona 或 hybrid。",
                 messages=[],
             )
         ),
@@ -154,7 +154,7 @@ def test_route_decision_contains_only_route_data():
 def test_router_system_prompt_uses_generic_local_capability_boundary():
     prompt = build_interaction_router_system_prompt()
 
-    assert "严格的三分类选择器" in prompt
+    assert "严格的二分类选择器" in prompt
     assert "当前用户输入是首要依据" in prompt
     assert "用于理解当前对话" in prompt
     assert "不能单独成为选择 hybrid 的理由" in prompt
@@ -164,7 +164,7 @@ def test_router_system_prompt_uses_generic_local_capability_boundary():
     assert "其他说话者的任务" in prompt
     assert "无明确执行意图的短消息选择 persona" in prompt
     assert "在 persona 与 hybrid 之间不确定时也选择 persona" in prompt
-    assert "保持沉默比说话更自然" in prompt
+    assert "silent" not in prompt
     assert "统一拟人层可以直接完成回应" in prompt
     assert "明确需要核心 Agent 参与" in prompt
     assert "不要限制或枚举核心 Agent 的能力范围" in prompt
