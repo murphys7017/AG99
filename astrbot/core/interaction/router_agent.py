@@ -17,7 +17,6 @@ from .context_builder import (
     build_prompt_render_provider_request,
     get_or_build_interaction_context_material,
 )
-from .memory_store import InteractionMemoryStore
 from .prompt_support import (
     build_interaction_prompt_build_config,
     build_model_context_messages,
@@ -74,9 +73,6 @@ def extract_interaction_route_payload(
 
 
 class InteractionRouterAgent:
-    def __init__(self, memory_store: InteractionMemoryStore) -> None:
-        self.memory_store = memory_store
-
     async def route(
         self,
         event,
@@ -145,7 +141,6 @@ class InteractionRouterAgent:
             plugin_context=plugin_context,
             interaction_config=interaction_config,
             build_config=build_config,
-            memory_store=self.memory_store,
         )
         render_result = PromptRenderEngine().render(
             material.prompt_context_pack,

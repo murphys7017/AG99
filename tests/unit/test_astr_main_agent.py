@@ -119,19 +119,6 @@ def _setup_conversation_for_build(conv_mgr, cid: str = "conv-id") -> MagicMock:
     return conversation
 
 
-def test_interaction_core_collectors_only_add_execution_context():
-    collector_names = {
-        collector.__class__.__name__
-        for collector in ama._build_interaction_core_collectors()
-    }
-
-    assert "ExplicitContextCollector" in collector_names
-    assert "ToolsCollector" in collector_names
-    assert "KnowledgeCollector" in collector_names
-    assert "InputCollector" not in collector_names
-    assert "InteractionMemoryCollector" not in collector_names
-
-
 @pytest.mark.asyncio
 async def test_explicit_context_collector_removes_history_prefix():
     history = [

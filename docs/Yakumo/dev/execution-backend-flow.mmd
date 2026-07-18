@@ -96,17 +96,14 @@ flowchart LR
         BYPASS{"Live Mode 或已注册协议命令?"}
         PROTOCOL["Protocol Core Bypass<br/>标记 delegate_to_core，不创建 Router 决策"]
         CTX["Turn-local Context Material single-flight<br/>PromptContextBuilder 构建规范 ContextPack"]
-        ROUTER["Router Task<br/>Router Projection → 只输出 silent / persona / hybrid"]
+        ROUTER["Router Task<br/>Router Projection → 当前只输出 persona / hybrid"]
         PERSONA["Persona Task<br/>Persona Projection → 结构化 persona_expression<br/>tool call 优先，能力不支持时受控 prompt-only 降级"]
         ROUTE{"Router 结果<br/>异常时当前代码 fallback hybrid"}
-        SIL_ARB{"silent 仲裁<br/>Persona 仍 pending?"}
-        SILENT["Silent Finalized Material<br/>停止事件"]
-        LATE_PERSONA["Persona 已 committed / emitted<br/>保留已发送回复"]
         PERSONA_ONLY["等待 Persona<br/>完成 visible turn + Finalized Material<br/>停止事件"]
         PLANNER["Core Planner<br/>Core Planner Projection + 结构化输出"]
         PLAN{"execute / not_required"}
         TASK["保存 CoreTaskSpec<br/>生命周期 delegated"]
-        PSTATE{"Persona 提交仲裁<br/>silent / Core-final 是否已先提交?"}
+        PSTATE{"Persona 提交仲裁<br/>Core-final 是否已先提交?"}
         PSUP["抑制 Persona"]
         PIMM["OutputController 发送 immediate_reply<br/>Hybrid execute 时不完成 Turn"]
         IFAIL["标记 failed / cancelled<br/>按异常语义终止"]
@@ -123,11 +120,8 @@ flowchart LR
         ROUTER --> ROUTE
         PERSONA --> PSTATE
         PSTATE -->|"允许提交"| PIMM
-        PSTATE -->|"被 silent 或 Core-final 抢先"| PSUP
+        PSTATE -->|"被 Core-final 抢先"| PSUP
 
-        ROUTE -->|"silent"| SIL_ARB
-        SIL_ARB -->|"是：取消 Persona"| SILENT
-        SIL_ARB -->|"否：Persona 已发出"| LATE_PERSONA --> PERSONA_ONLY
         ROUTE -->|"persona"| PERSONA_ONLY
         ROUTE -->|"hybrid"| PLANNER --> PLAN
         PLAN -->|"not_required"| PERSONA_ONLY
@@ -240,7 +234,7 @@ flowchart LR
         OUTPUT_FINAL{"当前输出是否拥有 Turn 完成权?"}
         TURN_ACTIVE["Turn 保持 active<br/>等待 Persona / Core / 插件后续输出"]
         FINAL_MATERIAL["Finalized Turn Material<br/>user_text / assistant_text / visible_outputs"]
-        TURN_FINAL["InteractionMiddleware._finalize_turn<br/>completed / failed / silent"]
+        TURN_FINAL["InteractionMiddleware._finalize_turn<br/>completed / failed / cancelled"]
         AFTER_TURN["调度后台 AFTER_TURN_COMPLETED"]
         POST_MANAGER["PostProcessManager<br/>按注册顺序串行分发"]
         MEMORY["MemoryPostProcessor<br/>MemoryService.update_from_postprocess"]

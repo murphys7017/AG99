@@ -1,15 +1,16 @@
 task:
   class: refactor
   risk: high
-  phase: unify_tts_output_segment_lifecycle
-  scope: Make Voice Service the sole TTS lifecycle owner and carry logical output-segment identity through the existing Pipeline and Interaction delivery path
+  phase: remove_transitional_interaction_assets
+  scope: Remove branch-added shadow state, dead compatibility APIs, implementation-coupled tests, and obsolete Yakumo design documents while preserving official AstrBot boundaries
 context:
   confidence: high
   assumptions:
     - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
     - Phase 0 investigation deferred speculative tests; implementation batches validate their affected production boundary.
-    - InteractionMemoryStore has production readers but no production writer; code removal must be separated from any migration decision for existing data/interaction_memory files.
-    - Local data/interaction_memory currently contains three JSON files totaling 5243 bytes; content was not inspected and deletion is not authorized without a migration or archival decision.
+    - InteractionMemoryStore and its prompt slot were removed because production had no writer; existing local data files are left untouched as user data, but no runtime path reads them.
+    - Local master is also a fork branch and is never treated as the official baseline; official boundary checks use the upstream remote plus current production call relationships.
+    - The unused Interaction registry scaffold was removed; active contributor registration remains owned by Context. Provider-owned output-contract tool helpers remain because OpenAI and Anthropic sources import them directly.
     - Independent Input Bus/Input Gateway plans are superseded by the official EventBus/Pipeline plus Personal Runtime Adapter boundary.
     - PersonalRuntimeKey is config_id + persona_id + audience_key + privacy_scope; actor and conversation_id remain turn facts rather than runtime identity.
     - After official filters and preprocess, the adapter reserves a PendingTurn keyed by config_id + audience_key + privacy_scope + turn_id before Plugin Handler execution; it does not resolve final persona or invoke Router, Persona, or Planner yet.
@@ -33,7 +34,7 @@ context:
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and direct-send behavior remain unchanged.
     - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
     - RespondStage-driven Interaction results finalize only after OnAfterMessageSent and visible completion; direct event.send paths retain their existing semantics.
-    - Router remains a minimal silent/persona/hybrid classifier and never plans tasks or receives tool schemas.
+    - Router remains a minimal persona/hybrid classifier and never plans tasks or receives tool schemas; the silent enum is retained but not exposed by the current Router prompt.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
     - Router and Core Planner model decisions are never inserted into the canonical ContextPack or supplied to each other.
@@ -78,9 +79,8 @@ context:
     - Logical output segment IDs and physical visible-message IDs are separate identities; physical splitting never infers logical ownership from send order.
     - The rich non-streaming platform boundary is send_message_with_extras; the replaced send_interaction_message name and dual delivery callbacks are removed rather than retained as compatibility wrappers.
   unresolved_questions:
-    - Existing data/interaction_memory files need an inspectable migration or archival policy before InteractionMemoryStore readers are removed.
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
-    - DeepSeek first-turn marker state is not derived from full official conversation history or persisted at conversation scope.
+    - DeepSeek first-turn marker state now reads canonical official conversation history, but its applied flag remains event-scoped rather than conversation-scoped.
     - Context Catalog declares lifecycle and redaction rules that are not consistently enforced at runtime.
 architecture:
   stability: review_required
@@ -89,11 +89,9 @@ architecture:
     - Message components carry non-serialized delivery metadata through the existing message-chain splitter, and every physical send receives one metadata mapping through send_message_with_extras.
     - Interaction Turn State allocates logical output-segment IDs independently from physical visible-message IDs; TTS dual output and segmented delivery preserve the logical ID without a positional ID queue.
     - ProcessStage -> InteractionMiddleware.handle_pipeline_event is now the only production Interaction inbound boundary; Middleware marks Core delegation but never reinserts events into the official queue.
-    - Conversational Router decisions are limited to silent/persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
-    - Router and Persona Expression start concurrently after input materialization; silent is a best-effort suppression decision, not a prerequisite for Persona generation.
-    - A Persona reply atomically committed before a late silent decision is retained; silent cancels only pending Persona work.
+    - Conversational Router decisions currently expose persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
+    - Router and Persona Expression start concurrently after input materialization; the dormant silent state is not a prerequisite for Persona generation.
     - Router, Persona, and Planner share one turn-local Context Material single-flight; cancelling one waiter does not cancel collection needed by another branch.
-    - A silent decision finalizes with a silent outcome only when speculative Persona remains uncommitted; late-silent after Persona commit finalizes as replied.
     - Current interaction Turn State stores a pure InteractionRouteDecision; immediate replies and effect calls travel only with the PersonaExpressionResult that produced them.
     - Core final output is returned to Middleware through core_reply_handler, rendered by the single Persona Runtime, then delivered as an explicit prepared result by Output Controller.
     - InteractionResultView exposes route_decision and phase-local effect_calls; final contributors cannot observe stale immediate effects through route state.

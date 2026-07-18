@@ -1002,28 +1002,11 @@ class Context:
             registration.effect.name: registration.effect
             for registration in self._persona_effects
         }
-        existing_aliases: dict[str, PersonaEffectSpec] = {}
-        for registration in self._persona_effects:
-            for alias in registration.effect.legacy_hint_names:
-                existing_aliases[alias] = registration.effect
 
         if effect.name in existing_names:
             raise PersonaEffectRegistryError(
                 f"Persona effect name is already registered: {effect.name!r}"
             )
-        if effect.name in existing_aliases:
-            raise PersonaEffectRegistryError(
-                f"Persona effect name conflicts with legacy alias: {effect.name!r}"
-            )
-        for alias in effect.legacy_hint_names:
-            if alias in existing_aliases:
-                raise PersonaEffectRegistryError(
-                    f"Persona effect legacy alias is already registered: {alias!r}"
-                )
-            if alias in existing_names:
-                raise PersonaEffectRegistryError(
-                    f"Persona effect legacy alias conflicts with effect name: {alias!r}"
-                )
 
     def _is_persona_effect_active(
         self,

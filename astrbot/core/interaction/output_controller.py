@@ -32,10 +32,6 @@ from .contributors import (
 )
 from .core_bridge import get_interaction_route_decision
 from .expression_agent import PersonaExpressionRequest, PersonaExpressionResult
-from .memory_store import (
-    InteractionMemoryStore,
-    build_interaction_memory_reply_from_visible_outputs,
-)
 from .output_modes import (
     PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
@@ -46,6 +42,7 @@ from .output_modes import (
 from .turn_state import (
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_visible_output,
+    build_interaction_turn_reply,
     consume_interaction_turn_finalization_pending,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
@@ -118,7 +115,6 @@ class InteractionOutputController:
         *,
         plugin_context: Any | None = None,
         interaction_config: InteractionAgentConfig | None = None,
-        interaction_memory_store: InteractionMemoryStore | None = None,
         platform_settings: dict[str, Any] | None = None,
         persist_callback: (Callable[[AstrMessageEvent], Awaitable[None]] | None) = None,
         visible_reply_renderer: (
@@ -138,7 +134,6 @@ class InteractionOutputController:
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
-        self.interaction_memory_store = interaction_memory_store
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
         self.visible_reply_renderer = visible_reply_renderer
@@ -797,7 +792,7 @@ class InteractionOutputController:
         turn_id = str(event.get_extra("_turn_id", "") or "").strip()
         visible_outputs = get_interaction_turn_visible_outputs(event)
         turn_state = get_interaction_turn_state(event)
-        canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+        canonical_reply = build_interaction_turn_reply(
             visible_outputs,
             turn_id=turn_id,
             utterances=turn_state.utterances if turn_state is not None else None,

@@ -33,7 +33,7 @@
 
 ## Interaction Core
 
-Interaction Middleware 委派 Core 时，主 Agent 使用 Core 目标投影。Core 可见官方历史、群聊上下文、当前输入、工具、skills、知识库和结构化执行意图；不可见完整人格、interaction memory、拟人效果、Motion、TTS 或 Live2D 语义。
+Interaction Middleware 委派 Core 时，主 Agent 使用 Core 目标投影。Core 可见官方历史、群聊上下文、当前输入、工具、skills、知识库和结构化执行意图；不可见完整人格、动态 persona state、拟人效果、Motion、TTS 或 Live2D 语义。
 
 Core 执行意图由 `CoreTaskCollector` 读取 turn state，主 Agent 不直接改写 `system_prompt`。
 

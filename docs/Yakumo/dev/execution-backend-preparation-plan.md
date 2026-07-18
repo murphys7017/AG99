@@ -5,10 +5,8 @@
 Runtime 主链。只有这些边界完成后，Native、Claude Code、OpenCode 等执行后台才进入
 设计和实现。
 
-本文是目标和实施顺序，不代表所述能力已经完成。当前运行事实仍以
-`execution-backend-flow.mmd` 和源码为准，第一轮依赖事实见
-`execution-backend-dependency-review.md`，过渡结构、数据边界和建议删除顺序见
-`personal-runtime-transition-inventory.md`。
+本文是目标和实施顺序，不代表所述能力已经完成。当前运行事实以
+`execution-backend-flow.mmd` 和源码为准。
 
 ## 优先级调整
 
@@ -40,7 +38,6 @@ Runtime 主链。只有这些边界完成后，Native、Claude Code、OpenCode �
   `event.complete_visible_turn()`。
 - 分散的 `_interaction_*` extra 作为内部主状态。
 - `InteractionMiddleware` 与 `InteractionOutputController` 之间的私有反向回调。
-- 没有主写入链路的 `InteractionMemoryStore`。
 - 同一共享 `context_material` 被后续阶段替换为不同 ContextPack 版本。
 - `ProcessStage` 直接操作 OutputController 内部事务。
 
@@ -86,7 +83,7 @@ Platform / Internal Event
 
 ## 实施原则
 
-- 从源码事实和现有行为测试出发，不从理想接口反推空置抽象。
+- 从源码事实和实际运行日志出发，不从理想接口反推空置抽象。
 - 一次只迁移一个 owner；新 owner 接管后删除旧 owner 的写入路径。
 - 新旧路径短暂并存时只能有一个主写者，另一条只能做只读校验或边界适配。
 - Router、Planner 和 Personal Expression 保持独立，但消费同一事实快照的不同投影。
@@ -96,9 +93,8 @@ Platform / Internal Event
 
 ## Phase 0：过渡结构清单与运行事实
 
-状态：进行中。第一轮过渡结构源码调查、Native/Third-party 执行准备对照已经完成；
-Runtime Key、session 默认并发策略和用户可见输出边界已经确定。Subagent 回流和旧
-Interaction Memory 数据策略仍待完成。前期调查暂不新增测试。
+状态：已完成。无入口的 pre-Pipeline 路径、影子 Interaction Memory、重复能力摘要和
+兼容状态镜像已经删除。后续发现的过渡结构直接在所属 Phase 清理，不再维护独立调查文档。
 
 需要完成：
 
@@ -154,7 +150,7 @@ Router/Persona/Planner task owner、插件和后台任务 identity、Output comp
   事件、原始媒体和显式可并发后台任务不占用 conversational Turn。
 - 将 Router/Persona 并发、Planner 调度、turn 仲裁和最终完成迁入 Session Runtime。
 - `InteractionMiddleware` 收缩为官方 Pipeline 的薄适配器，不再拥有业务编排。
-- 保持 Router 与 Persona 从 turn 开始并发；silent 只抑制尚未提交的 Persona。
+- 保持 Router 与 Persona 从 turn 开始并发；Core 最终结果先提交时由 Runtime 抑制尚未提交的即时表达。
 - Core 或最终结果先完成时，统一由 Session Runtime 仲裁尚未发送的推测表达。
 - Phase 1 继续以现有 `InteractionTurnState` 作为唯一可写 Turn 状态，不创建平行
   `PersonalTurnState`。类型化改名和 extra 迁移留给 Phase 2。
@@ -176,7 +172,7 @@ adapter 执行。
 - 将 route、planner、prompt、stream、output、completion 和 failure 状态从散落 extra
   迁入 TurnState。
 - 保留必要的官方插件兼容 extra，但由一个边界适配器单向投影，不允许反向成为主状态。
-- 为状态转换建立封闭方法和不变量测试，禁止模块直接修改其他 owner 的字段。
+- 为状态转换建立封闭方法和运行时不变量，禁止模块直接修改其他 owner 的字段。
 
 退出条件：内部主链不再依赖魔法字符串协作；同一状态不存在 TurnState 与 extra 两个
 可写事实源。
@@ -220,8 +216,8 @@ adapter 执行。
 - 建立唯一 Capability Resolver，统一解析 Knowledge、Tools、Skills、Plugins 和 Subagent。
 - 同一个 Snapshot 提供不同投影：Router 看极简摘要，Planner 看能力目录，执行阶段看
   完整描述与调用绑定。
-- 消除 `InteractionCapabilityCollector` 与 `build_main_agent()` 后续工具注入之间的双重
-  能力事实源。
+- 当前 Interaction 已直接复用统一 Prompt collectors，不再维护平行的能力摘要事实源；
+  后续继续统一执行绑定。
 - 插件能力声明包含 owner、scope、权限、side effect、timeout 和可挂载位置。
 - 默认能力归属 Personal Runtime；显式声明后才允许挂载 Core/Execution。
 
@@ -234,10 +230,11 @@ AgentRunner 才能被发现。
 
 - 官方 Conversation 保存精确对话记录。
 - MemoryService 保存短期摘要、长期记忆、人格状态和关系状态。
-- 迁移 `InteractionMemoryStore` 中仍有价值的字段，删除无主写入链路和重复 recent turns。
+- Interaction 私有 Memory Store 已删除；ConversationHistoryCollector 与 MemoryCollector
+  是当前唯一读取入口。
 - Persona、Router、Planner 和 Execution 通过 Prompt Projection 使用相同的历史与记忆
   事实，不各自维护副本。
-- finalized turn 是 Conversation 和 Memory 的唯一提交材料，silent/cancelled/failed 有
+- finalized turn 是 Conversation 和 Memory 的唯一提交材料，cancelled/failed 有
   明确持久化策略。
 
 退出条件：近期对话没有多套互相竞争的来源；人格状态不再按单个平台 session JSON

@@ -48,13 +48,13 @@ contexts:
     ]
 
 
-def test_default_catalog_declares_interaction_memory_slot():
+def test_default_catalog_declares_memory_short_term_slot():
     catalog = ContextCatalogLoader.load(
         Path("data/config/prompt/context_catalog.yaml"),
         strict=True,
     )
 
-    item = catalog.get("memory.interaction")
+    item = catalog.get("memory.short_term")
     assert item is not None
     assert item.category == "memory"
     assert item.slots == ["history"]

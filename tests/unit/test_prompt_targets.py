@@ -32,14 +32,11 @@ def _canonical_pack() -> ContextPack:
             "conversation.group_recent": _slot(
                 "conversation.group_recent", [{"text": "ambient"}], "conversation"
             ),
-            "memory.interaction": _slot(
-                "memory.interaction",
-                {
-                    "recent_turns": [{"id": index} for index in range(6)],
-                    "recent_topics": ["topic"],
-                    "relationship_notes": ["private"],
-                },
-                "memory",
+            "memory.topic_state": _slot(
+                "memory.topic_state", {"topics": ["topic"]}, "memory"
+            ),
+            "memory.short_term": _slot(
+                "memory.short_term", {"active_focus": "current task"}, "memory"
             ),
             "memory.persona_state": _slot(
                 "memory.persona_state", {"mood": "calm"}, "memory"
@@ -49,11 +46,6 @@ def _canonical_pack() -> ContextPack:
             ),
             "capability.tools_schema": _slot(
                 "capability.tools_schema", {"tools": []}, "tools"
-            ),
-            "capability.core_summary": _slot(
-                "capability.core_summary",
-                {"tools_available": True},
-                "capability",
             ),
             "capability.plugin_directory": _slot(
                 "capability.plugin_directory",
@@ -91,7 +83,8 @@ def test_router_projection_uses_summary_and_recent_context_only():
         "input.text",
         "conversation.history",
         "conversation.group_recent",
-        "memory.interaction",
+        "memory.topic_state",
+        "memory.short_term",
         "capability.plugin_directory",
     }
     assert projected.get_slot("conversation.history").value["turns"] == [
@@ -100,7 +93,6 @@ def test_router_projection_uses_summary_and_recent_context_only():
         {"id": 3},
         {"id": 4},
     ]
-    assert "relationship_notes" not in projected.get_slot("memory.interaction").value
     assert projected.get_slot("capability.plugin_directory").value == {
         "plugins": [
             {
@@ -131,7 +123,7 @@ def test_core_planner_projection_uses_facts_without_router_or_persona_decisions(
 
     assert projected.get_slot("input.text") is not None
     assert projected.get_slot("conversation.history") is not None
-    assert projected.get_slot("memory.interaction") is not None
+    assert projected.get_slot("memory.short_term") is not None
     assert projected.get_slot("capability.plugin_directory") is not None
     assert projected.get_slot("capability.plugin_directory").value["plugins"] == [
         {
@@ -139,7 +131,6 @@ def test_core_planner_projection_uses_facts_without_router_or_persona_decisions(
             "description": "Planner-visible capability",
         }
     ]
-    assert projected.get_slot("capability.core_summary") is not None
     assert projected.get_slot("persona.summary") is None
     assert projected.get_slot("interaction.route_decision") is None
     assert projected.get_slot("system.core_execution_context") is None
@@ -265,11 +256,9 @@ def test_core_projection_keeps_execution_context_without_persona_material():
     assert projected.get_slot("conversation.group_recent") is not None
     assert projected.get_slot("knowledge.snippets") is not None
     assert projected.get_slot("capability.tools_schema") is not None
-    assert projected.get_slot("capability.core_summary") is None
     assert projected.get_slot("persona.prompt") is None
     assert projected.get_slot("persona.summary") is None
     assert projected.get_slot("memory.persona_state") is None
-    assert projected.get_slot("memory.interaction") is None
     assert projected.get_slot("input.visible_reply_material") is None
     assert projected.get_slot("system.core_execution_context") is not None
 

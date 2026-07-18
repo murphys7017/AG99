@@ -15,7 +15,6 @@ class PersonaEffectSpec:
     name: str
     description: str
     parameters: dict[str, Any]
-    legacy_hint_names: tuple[str, ...] = ()
     priority: int = 100
     enabled: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -111,86 +110,16 @@ def validate_persona_effect_spec(effect: PersonaEffectSpec) -> None:
         raise PersonaEffectRegistryError(
             "Persona effect parameters must be an object JSON schema"
         )
-    seen_aliases: set[str] = set()
-    for alias in effect.legacy_hint_names:
-        if not isinstance(alias, str) or not alias.strip():
-            raise PersonaEffectRegistryError(
-                "Persona effect legacy hint names must be non-empty strings"
-            )
-        if alias in seen_aliases:
-            raise PersonaEffectRegistryError(
-                f"Persona effect legacy hint name is duplicated: {alias!r}"
-            )
-        seen_aliases.add(alias)
-
-
 def clone_persona_effect_spec(effect: PersonaEffectSpec) -> PersonaEffectSpec:
     return PersonaEffectSpec(
         plugin_id=effect.plugin_id,
         name=effect.name,
         description=effect.description,
         parameters=copy.deepcopy(effect.parameters),
-        legacy_hint_names=tuple(effect.legacy_hint_names),
         priority=int(effect.priority),
         enabled=bool(effect.enabled),
         metadata=copy.deepcopy(effect.metadata),
     )
-
-
-def legacy_plugin_hints_to_effect_calls(
-    plugin_hints: dict[str, Any],
-    effects: list[PersonaEffectSpec],
-) -> list[PersonaEffectCall]:
-    if not isinstance(plugin_hints, dict):
-        return []
-
-    by_name: dict[str, PersonaEffectSpec] = {}
-    by_alias: dict[str, PersonaEffectSpec] = {}
-    for effect in effects:
-        if not effect.enabled:
-            continue
-        by_name[effect.name] = effect
-        for alias in effect.legacy_hint_names:
-            by_alias[alias] = effect
-
-    calls: list[PersonaEffectCall] = []
-    for hint_name, arguments in plugin_hints.items():
-        effect = by_name.get(hint_name) or by_alias.get(hint_name)
-        if effect is None or not isinstance(arguments, dict):
-            continue
-        calls.append(
-            PersonaEffectCall(
-                name=effect.name,
-                arguments=copy.deepcopy(arguments),
-                plugin_id=effect.plugin_id,
-                source="legacy_plugin_hints",
-            )
-        )
-    return calls
-
-
-def effect_calls_to_legacy_plugin_hints(
-    effect_calls: Sequence[PersonaEffectCall],
-    effects: Sequence[PersonaEffectSpec],
-) -> dict[str, Any]:
-    if not effect_calls:
-        return {}
-
-    effects_by_name = {
-        effect.name: effect
-        for effect in effects
-        if effect.enabled and effect.legacy_hint_names
-    }
-    hints: dict[str, Any] = {}
-    for call in effect_calls:
-        if not isinstance(call, PersonaEffectCall):
-            continue
-        effect = effects_by_name.get(call.name)
-        if effect is None:
-            continue
-        alias = effect.legacy_hint_names[0]
-        hints.setdefault(alias, copy.deepcopy(call.arguments))
-    return hints
 
 
 def parse_persona_effect_calls(

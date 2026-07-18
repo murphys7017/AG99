@@ -16,7 +16,6 @@ from astrbot.core.interaction.expression_agent import (
     resolve_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
 )
-from astrbot.core.interaction.memory_store import InteractionMemoryStore
 from astrbot.core.interaction.types import InteractionAgentConfig
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
@@ -471,9 +470,9 @@ def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
                 category="input",
                 source="test",
             ),
-            "memory.interaction": ContextSlot(
-                name="memory.interaction",
-                value={"recent_turns": []},
+            "conversation.history": ContextSlot(
+                name="conversation.history",
+                value={"turns": []},
                 category="memory",
                 source="test",
             ),
@@ -529,9 +528,9 @@ def test_deepseek_first_turn_reasoning_marker_skips_nonfirst_turn_history():
                 category="input",
                 source="test",
             ),
-            "memory.interaction": ContextSlot(
-                name="memory.interaction",
-                value={"recent_turns": [{"user": "上轮", "assistant": "回复"}]},
+            "conversation.history": ContextSlot(
+                name="conversation.history",
+                value={"turns": [{"user": "上轮", "assistant": "回复"}]},
                 category="memory",
                 source="test",
             ),
@@ -611,7 +610,7 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
         },
     )()
     event = Event()
-    agent = InteractionExpressionAgent(InteractionMemoryStore())
+    agent = InteractionExpressionAgent()
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.Provider",
         Provider,
@@ -699,7 +698,7 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
         },
     )()
     event = Event()
-    agent = InteractionExpressionAgent(InteractionMemoryStore())
+    agent = InteractionExpressionAgent()
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.Provider",
         Provider,

@@ -15,8 +15,6 @@ from .conversation_postprocessor import (
     unregister_interaction_conversation_postprocessor,
 )
 from .core_bridge import (
-    INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-    INTERACTION_ROUTE_DECISION_EXTRA_KEY,
     apply_interaction_core_task_spec,
     get_core_task_spec,
     get_interaction_route_decision,
@@ -28,12 +26,9 @@ from .effects import (
     PersonaEffectRegistryError,
     PersonaEffectSpec,
     PersonaEffectValidationError,
-    effect_calls_to_legacy_plugin_hints,
-    legacy_plugin_hints_to_effect_calls,
     parse_persona_effect_calls,
 )
 from .expression_agent import InteractionExpressionAgent, InteractionExpressionError
-from .memory_store import InteractionMemorySnapshot, InteractionMemoryStore
 from .middleware import InteractionMiddleware
 from .output_controller import InteractionOutputController
 from .output_modes import (
@@ -92,8 +87,6 @@ __all__ = [
     "PersonaEffectValidationError",
     "InteractionPersonaRuntime",
     "PersonalRuntimeManager",
-    "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
-    "INTERACTION_ROUTE_DECISION_EXTRA_KEY",
     "INTERACTION_TURN_STATE_EXTRA_KEY",
     "InteractionAgentConfig",
     "InteractionConversationPostProcessor",
@@ -104,8 +97,6 @@ __all__ = [
     "InteractionExpressionAgent",
     "InteractionExpressionError",
     "InteractionMiddleware",
-    "InteractionMemorySnapshot",
-    "InteractionMemoryStore",
     "InteractionOutputContribution",
     "InteractionOutputController",
     "InteractionOutputDraft",
@@ -130,8 +121,6 @@ __all__ = [
     "get_interaction_route_decision",
     "is_middleware_enabled",
     "load_interaction_agent_config",
-    "effect_calls_to_legacy_plugin_hints",
-    "legacy_plugin_hints_to_effect_calls",
     "parse_persona_effect_calls",
     "register_interaction_conversation_postprocessor",
     "reset_interaction_conversation_postprocessor",

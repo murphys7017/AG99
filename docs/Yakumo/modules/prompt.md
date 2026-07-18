@@ -38,7 +38,7 @@ Fact Sources
 
 ### Collector
 
-默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent 和 knowledge。Interaction 还会加入 interaction memory、执行能力摘要、附件摘要和本轮待表达材料。
+默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent 和 knowledge。Interaction 在同一规范 Pack 上增加附件摘要、Interaction Prompt Contributor；Persona 阶段再派生本轮待表达材料。
 
 Collector 只返回事实：
 
@@ -59,7 +59,7 @@ Collector 只返回事实：
 
 跨阶段新增或替换事实必须经过 Builder。`ContextPack` 数据类型本身仍然可变，供收集和渲染内部使用；业务模块不得把直接 `add_slot()`、`slots.pop()` 或原地改值当作跨阶段 API。
 
-“统一收集”不等于无条件执行所有昂贵操作。Interaction 先构建本轮共享事实，Core 在真正委派后再以共享 Pack 为 base 收集 policy/tools/knowledge 等执行事实，形成派生 Pack。
+Interaction 当前通过默认 Collector 建立一份完整的本轮共享事实包，Router、Planner 和 Persona 只消费各自的极简投影。后续性能优化应由 Collector 生命周期、缓存、并发和按需采集策略完成，不能让业务模块重新建立同类事实源。
 
 ## 目标投影
 
@@ -67,10 +67,10 @@ Collector 只返回事实：
 
 | 目标 | 当前可见范围 | 明确排除 |
 |---|---|---|
-| Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、精简 interaction memory、插件目录 | 完整人格、媒体正文、工具 schema、effect、Core/Planner 决策 |
-| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、精简 interaction memory、Core 能力摘要、插件目录 | 完整人格、Router 决策、effect、实际工具 schema |
+| Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、topic/short-term memory、插件目录 | 完整人格、媒体正文、工具 schema、effect、Core/Planner 决策 |
+| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、topic/short-term memory、插件目录 | 完整人格、Router 决策、effect、实际工具 schema |
 | Persona | 完整人格、官方历史、群聊上下文、memory/persona state、当前输入、待表达材料和 Core 结果 | policy、knowledge、执行能力、Core 私有执行上下文 |
-| Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec` | 完整人格、interaction memory、待表达材料、effect 语义 |
+| Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec` | 完整人格、persona state、待表达材料、effect 语义 |
 
 Router 和 Core Planner 只共享事实来源，不共享模型 Prompt、决策或输出。投影中的历史长度、字段清理和诊断移除属于确定性安全边界，不是“让模型自己忽略”。
 
@@ -122,7 +122,7 @@ Provider Renderer 只编译已经形成的树：
 
 ### Interaction
 
-Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从该 Pack 的独立投影渲染；Persona 的待表达材料通过专用 Collector 派生。只有 Planner 选择执行后，Main Agent 才在共享 Pack 上增量收集 Core 能力并渲染 Core 目标。
+Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从该 Pack 的独立投影渲染；Persona 的待表达材料通过专用 Collector 派生。Planner 选择执行后，Main Agent 复用共享 Pack，并加入阶段性的 `CoreTaskSpec` 后渲染 Core 目标。
 
 ### 非 Interaction Core
 

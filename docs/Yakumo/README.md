@@ -1,137 +1,89 @@
-# Yakumo Notes
+# Yakumo 架构文档
 
-`docs/Yakumo` 记录的是当前这个分支上的 AstrBot 架构笔记、重构方案和实现进度，不是官方主线文档的镜像副本。
+`docs/Yakumo` 只记录这个项目当前有效的架构、稳定接口和下一步计划。官方部署、平台和插件基础用法仍以 `docs/zh`、`docs/en` 及上游 AstrBot 文档为准。
 
-如果你想看官方产品说明、部署方式、插件/平台适配器的标准用法，优先看上游官方文档：
+文档与源码冲突时，以源码为准。已经完成的实施步骤、过渡兼容方案和调查记录不在这里长期保留。
 
-- 上游仓库 `https://github.com/AstrBotDevs/AstrBot`
-- 官方文档站 `https://docs.astrbot.app/`
+## 项目目标
 
-如果你想快速了解本 fork 和上游的区别，先看仓库根目录 `README.md`。
+Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的 Persona Runtime：
 
-如果你想看这个分支到底改了什么、现在做到哪一步、后面准备怎么改，再看 `docs/Yakumo`。
+- `session` 负责平台来源、权限和隔离。
+- `conversation` 是一段对话 episode。
+- `persona` 是持续存在的交互主体。
+- `memory` 通过统一 Memory Service 为 Prompt 提供事实，不再建立 Interaction 私有记忆副本。
+- `Personal Runtime` 在官方 EventBus 和 Pipeline 之后、核心执行器之前管理 turn、并发和 follow-up。
+- `Persona Expression` 是所有用户可见文本进入 Output 前的唯一拟人层。
+- `Core Planner` 只准备执行意图；Native、Claude Code、OpenCode 等执行后台位于统一执行边界之后。
+- `effect_calls` 是插件扩展协议，AstrBot 不理解 Motion、Live2D 等插件领域语义。
 
-## 最终目标
+当前 Router 与 Persona Expression 并发启动。Router 只返回 `persona` 或 `hybrid`；`silent` 类型暂时保留在数据结构中，但当前 Prompt 不会产生该标签。
 
-Yakumo 的最终目标不是单纯把 AstrBot 从单体拆成多服务，而是把它从
-`session-centric bot runtime` 演进成 `persona-centric interaction runtime`。
+## 当前主链
 
-在这个目标下：
+```text
+Platform Adapter
+  -> EventBus
+  -> official Pipeline / plugin filters
+  -> Personal Runtime turn admission
+  -> Router || Persona Expression
+  -> persona: Output
+  -> hybrid: Core Planner -> Core Executor -> Persona Expression -> Output
+```
 
-- `session` 是输入来源、权限隔离和平台上下文，不是长期对话主体。
-- `conversation` 是某段具体 episode，不承载全部人格连续性。
-- `persona` 是真正持续存在并被长期互动塑造的主体。
-- `memory` 和 `persona state` 用于塑造本轮 `Effective Persona`，但不直接覆盖 base persona。
-- `interaction middleware` 位于官方 Pipeline 之后、核心 Agent 之前，负责一次交互回合的编排、输出和 finalized material，而不是替代 persona。
-- `router` 与唯一 Persona Runtime 并发启动。Router 只完成 `silent` / `persona` / `hybrid` 分类，不生成用户回复、不注册工具，也不接收 effect schema；`silent` 只能抑制尚未提交的 Persona，已经提交的表达不撤回。
-- `effect` 是插件扩展协议；注册插件按当前事件决定是否暴露 effect，Motion、Live2D 等具体表现能力不进入 AstrBot 主流程语义。
+Prompt 使用唯一数据流：
 
-更完整的目标态见 `docs/Yakumo/target-state.md`。
+```text
+Collectors
+  -> PromptContextBuilder / ContextPack
+  -> target projection
+  -> PromptRenderProfile
+  -> Layout / PromptTreeBuilder
+  -> Provider Renderer
+  -> ProviderRequest
+```
 
-## 和官方主线的区别
+Collector 负责收集事实，Projection 决定 Router、Planner、Persona 和 Core 各自可见的内容，Renderer 只负责编译 Provider 格式。Prompt 系统不负责路由、工具执行、Memory 写入或消息发送。
 
-当前 `docs/Yakumo` 关注的是“这个分支上的实际代码”和“这套重构中的目标结构”。其中 `current-state.md`、`modules/*`、`prompt-development-plan.md` 和本 README 优先维护为当前事实与当前计划；`target-state.md` 记录 Yakumo 最终目标；其他 `dev/*` 和早期中文详解文档主要作为设计记录或历史参考。
+## 文档边界
 
-因此和官方主线有几个关键差异：
+当前事实：
 
-### 1. Prompt 链路不是官方那套直拼流程
+- `current-state.md`
+- `消息处理流程详解.md`
+- `modules/*`
+- `dev/render-engine-implementation-spec.md`
+- `dev/output-contract.md`
+- `dev/interaction-output-plugin-contract.md`
 
-官方主线更偏向在 `astrbot/core/astr_main_agent.py` 里直接组织模型可见上下文。
+长期目标和下一步：
 
-这个分支额外推进了一套新的 prompt 子系统，核心代码在 `astrbot/core/prompt/*`，当前方向是：
+- `target-state.md`
+- `dev/persona-system-final-goal.md`
+- `dev/execution-backend-preparation-plan.md`
+- `dev/execution-backend-flow.mmd`
+- `prompt-development-plan.md`
+- `dev/cost-context-runtime-plan.md`
 
-- 先 collect：把 persona、input、session、policy、memory、history、skills、tools、subagent、knowledge、extension 等信息结构化收集成 `ContextPack`
-- 再 build：合并为带版本的规范 `ContextPack`，重复事实冲突失败
-- 再 project：按 Router、Core Planner、Persona、Core 生成确定性目标视图
-- 再 profile：应用目标局部的 system/request prompt、输出契约和隐藏规则
-- 再 layout/build tree：构建 provider-neutral 的语义树
-- 再 render：由 provider renderer 序列化消息、媒体与工具协议
-- 再 apply：把 render 结果投影回 `ProviderRequest`
+Memory 子系统：
 
-这里的功能边界是：Collector 提供事实，Builder 产生规范快照，Projection 决定目标可见范围，Profile 提供目标指令，Layout 决定语义落位，Renderer 只处理 provider 格式。Prompt 系统不拥有路由决策、memory 写入、工具执行或消息发送。
+- `dev/memory/index.md`
+- `dev/memory/progress.md`
+- `dev/memory/architecture.md`
 
-也就是说，这里的 prompt 文档描述的是“新 prompt pipeline 的设计和落地情况”，不是官方旧链路的逐字复述。
+## 阅读顺序
 
-### 2. Memory 是这个分支重点推进的新增能力
+1. `current-state.md`
+2. `消息处理流程详解.md`
+3. `modules/README.md`
+4. `modules/interaction.md`
+5. `modules/prompt.md`
+6. `target-state.md`
+7. `dev/execution-backend-preparation-plan.md`
 
-这个分支额外推进了 `astrbot/core/memory/*`：
+## 维护规则
 
-- short-term topic / summary
-- consolidation
-- experience persistence
-- long-term memory compose / promote
-- projection / document search / vector index
-
-所以 `docs/Yakumo/dev/memory/*` 记录的是这套 memory 子系统的真实实现进度和设计约束，和官方主线并不完全一致。
-
-### 3. 文档里会同时出现“现状”“目标态”“开发中方案”
-
-`docs/Yakumo` 不只写现状，还会保留：
-
-- 当前代码现状
-- 目标结构
-- 开发计划
-- 历史设计文档
-
-因此这里的文档不都表示“已经正式接入主链路”。阅读时要区分：
-
-- `current-state.md` / `modules/*`：当前事实入口
-- `dev/memory/*`：memory 子系统的实现记录，其中 `progress.md` 更接近当前进度
-- `dev/*`：设计与阶段性实现记录，可能落后于代码
-- `prompt-development-plan.md`：基于当前实现维护的 Prompt 后续收口计划
-- `target-state.md`：长期目标态，不代表已完成实现
-- `dev/history/*`、`astr_main_agent.py文件详解.md`、`消息处理流程详解.md`：历史讨论或旧链路详解，不代表当前实现
-
-### 4. Interaction middleware 已进入当前架构线
-
-这个分支新增并持续收口 `astrbot/core/interaction/*`。它不是单纯的
-WebChat/Live2D 专用逻辑，而是一个通用 interaction middleware：
-
-- 位置：复用官方 EventBus、Pipeline、权限和插件过滤，紧接在核心 Agent 之前。
-- 输入侧：完成 turn state、入站媒体 materialization 和 STT；协议任务走独立 Core bypass，普通对话同时启动 Router 与统一 Persona Runtime。Router 使用共享轻量 ContextPack 判断 `silent` / `persona` / `hybrid`，只控制沉默和 Core 委派，不作为 Persona 的前置门槛。
-- 输出侧：接管 interaction turn 的 send / streaming 语义，统一 finalizer、result contributor、TTS、t2i、utterance ledger 与 finalized turn material。
-- 表达侧：即时表达、Core 结果、插件待表达材料和流式插话共用唯一 Persona Runtime；Output Runtime 只负责物化和发送。
-- 扩展侧：主流程只把当前事件适用的 effect schema 交给 Persona，并传递通过校验的 effect call；不理解或执行 Motion、Live2D 等插件领域行为。
-- Completion：middleware 只产出 finalized material 并调度 `AFTER_TURN_COMPLETED` postprocess；memory 写入由 postprocess / memory service 消费同一份 material。
-- Voice：core 旧流程和 middleware 新流程共享 `astrbot/core/voice/*`，但 failure policy 由调用方决定。middleware 内部主链路开发期 fail-fast，不把 fallback 当正确性证明。
-
-### 5. 这个分支强调“先接管模型可见输入，再逐步替换旧链路”
-
-尤其在 prompt 方向，这个分支的策略不是一次性把官方链路全部替掉，而是分阶段推进：
-
-- 先把 collect / build / project / profile / layout / tree / render / apply 跑通
-- 先接管模型可见上下文
-- 工具执行、subagent、旧 hook 等链路先尽量复用已有实现
-- 再逐步把旧的 prompt 组织逻辑收口
-
-当前 Main Agent 仍负责 `func_tool`、provider、conversation、runner 和 sandbox 等运行时对象，但模型可见输入已经只有统一 Prompt 主链路。旧 `on_llm_request` 仍作为 Apply 后低层插件钩子存在，不是第二条 Prompt 事实来源。
-
-## 阅读建议
-
-建议按这个顺序看当前 fork 和上游的差异：
-
-1. `docs/Yakumo/current-state.md`
-2. `docs/Yakumo/modules/README.md`
-3. `docs/Yakumo/modules/prompt.md`
-4. `docs/Yakumo/prompt-development-plan.md`
-5. `docs/Yakumo/modules/interaction.md`
-6. `docs/Yakumo/dev/output-contract.md`
-7. `docs/Yakumo/dev/interaction-output-plugin-contract.md`
-8. `docs/Yakumo/dev/memory/index.md`
-9. `docs/Yakumo/dev/memory/progress.md`
-10. `docs/Yakumo/upstream-merge-ledger.md`
-
-以下文档只建议在追溯设计背景时阅读，不应直接当作当前实现说明：
-
-- `docs/Yakumo/dialog-worker-live-target-state.md`
-- `docs/Yakumo/dev/interaction-middleware-architecture-review-and-plan.md`
-- `docs/Yakumo/target-state.md`
-- `docs/Yakumo/dev/history/*`
-- `docs/Yakumo/astr_main_agent.py文件详解.md`
-- `docs/Yakumo/消息处理流程详解.md`
-
-## 使用约定
-
-- 这里优先描述“当前分支的真实代码状态”
-- 如果文档和代码冲突，以代码为准
-- 如果文档写的是目标态，会明确写成 plan / target / dev，而不是伪装成已完成
+- 现状文档只描述已经存在的代码。
+- 目标文档明确标记尚未实现的部分。
+- 已完成的迁移步骤直接从计划中删除或改写为当前边界。
+- 不为已经删除的兼容 API、影子状态或旧 Prompt 管线保留说明。

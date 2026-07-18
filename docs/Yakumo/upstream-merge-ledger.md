@@ -7,9 +7,9 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 Last updated: 2026-07-06
 
-Current comparison baseline:
+Last recorded comparison baseline:
 
-- Local branch: `master`
+- Local side: the active Yakumo working branch at review time; local `master` is also a fork branch and is not treated as the official baseline.
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
 - Last local upstream snapshot checked: `upstream/master` at `25cbd41e0` (`feat: add sanitation for malformed tool call names in ToolLoopAgentRunner (#9144)`)
 - Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-06; upstream currently includes releases through `v4.26.4` and follow-up commits through `25cbd41e0`.

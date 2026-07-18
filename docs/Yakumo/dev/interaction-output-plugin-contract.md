@@ -11,7 +11,7 @@
 ```text
 input
   -> Interaction route decision
-  -> silent / persona / hybrid
+  -> persona / hybrid
   -> core, tool, or plugin execution result
   -> Interaction output draft
   -> output plugin contributions
@@ -45,7 +45,7 @@ input
 - `turn_id`: 当前 interaction turn。
 - `message_id`: 逻辑输出段 ID；在 contributor、TTS 和物理发送之前分配。
 - `source`: `interaction | core | plugin | system`。
-- `route_mode`: `silent | persona | hybrid`；协议 Core bypass 不伪造 route。
+- `route_mode`: 当前为 `persona | hybrid`；`silent` 类型保留但未向 Router Prompt 开放，协议 Core bypass 不伪造 route。
 - `phase`: `immediate | final | background`。
 - `text`: 当前阶段的候选用户可见文本。
 - `semantic_text`: 当前阶段的候选语义文本，供 TTS、memory、analytics 或插件表现增强使用。
@@ -83,7 +83,6 @@ input
 
 Interaction route decision 只选择本轮对话的处理路径；用户可见表达与 effect 不属于 route：
 
-- `silent`: 不调用 Core，并抑制尚未提交的推测式 Persona；已经 committed/emitted 的回复不撤回。
 - `persona`: 统一 Persona Expression 直接生成最终回复。
 - `hybrid`: Persona Expression 生成委派确认，Core 生成主结果；目标态由二者并发执行并通过同一 Output Arbiter 仲裁。
 

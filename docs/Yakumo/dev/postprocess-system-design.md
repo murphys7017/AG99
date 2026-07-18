@@ -2,12 +2,7 @@
 
 本文件定义 AstrBot 的 `Post Process System`。
 
-它与以下文档平级配套：
-
-- `docs/Yakumo/dev/persona-memory-system-design.md`
-- `docs/Yakumo/dev/memory-system-design-spec.md`
-
-三者关系应理解为：
+它与 `modules/prompt.md` 和 `memory/architecture.md` 共同定义请求前后边界：
 
 - `Prompt System` 负责请求前上下文组织与 prompt 构建
 - `Memory System` 负责记忆更新、存储、检索与状态沉淀

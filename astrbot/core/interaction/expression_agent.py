@@ -36,7 +36,6 @@ from .effects import (
     normalize_persona_effect_parameters_schema,
     parse_persona_effect_calls_with_issues,
 )
-from .memory_store import InteractionMemoryStore
 from .prompt_support import (
     build_interaction_prompt_build_config,
     build_model_context_messages,
@@ -134,12 +133,12 @@ def _is_deepseek_reasoning_provider(provider: Provider) -> bool:
     )
 
 
-def _pack_has_interaction_history(pack) -> bool:
-    slot = pack.get_slot("memory.interaction")
+def _pack_has_conversation_history(pack) -> bool:
+    slot = pack.get_slot("conversation.history")
     if slot is None or not isinstance(slot.value, dict):
         return False
-    recent_turns = slot.value.get("recent_turns", [])
-    return isinstance(recent_turns, list) and len(recent_turns) > 0
+    turns = slot.value.get("turns", [])
+    return isinstance(turns, list) and len(turns) > 0
 
 
 def resolve_deepseek_first_turn_reasoning_marker(
@@ -151,7 +150,7 @@ def resolve_deepseek_first_turn_reasoning_marker(
         return ""
     if event.get_extra(_DEEPSEEK_REASONING_MARKER_APPLIED_EXTRA_KEY):
         return ""
-    if _pack_has_interaction_history(pack):
+    if _pack_has_conversation_history(pack):
         return ""
     input_slot = pack.get_slot("input.text")
     if input_slot is None or not isinstance(input_slot.value, str):
@@ -379,9 +378,6 @@ def _should_require_tool_choice(output_contract: OutputContract | None) -> bool:
 
 
 class InteractionExpressionAgent:
-    def __init__(self, memory_store: InteractionMemoryStore) -> None:
-        self.memory_store = memory_store
-
     async def generate_expression(
         self,
         event,
@@ -716,7 +712,6 @@ class InteractionExpressionAgent:
             plugin_context=plugin_context,
             interaction_config=interaction_config,
             build_config=build_config,
-            memory_store=self.memory_store,
         )
 
 

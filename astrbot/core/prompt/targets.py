@@ -29,7 +29,8 @@ _ROUTER_SLOT_NAMES = frozenset(
         "session.user_info",
         "conversation.history",
         "conversation.group_recent",
-        "memory.interaction",
+        "memory.topic_state",
+        "memory.short_term",
         "capability.plugin_directory",
         "extension.context",
     }
@@ -37,12 +38,10 @@ _ROUTER_SLOT_NAMES = frozenset(
 
 _CORE_BLOCKED_SLOT_NAMES = frozenset(
     {
-        "memory.interaction",
         "memory.persona_state",
         "input.visible_reply_material",
         "input.attachment_summary",
         "capability.plugin_directory",
-        "capability.core_summary",
     }
 )
 
@@ -56,9 +55,9 @@ _CORE_PLANNER_SLOT_NAMES = frozenset(
         "session.user_info",
         "conversation.history",
         "conversation.group_recent",
-        "memory.interaction",
+        "memory.topic_state",
+        "memory.short_term",
         "capability.plugin_directory",
-        "capability.core_summary",
         "extension.context",
     }
 )
@@ -191,13 +190,6 @@ def _project_slot(
             if target is PromptTarget.ROUTER
             else 1200,
         )
-    elif projected.name == "memory.interaction":
-        memory_turns = (
-            router_history_turns
-            if target is PromptTarget.ROUTER
-            else max(router_history_turns, 8)
-        )
-        _summarize_interaction_memory(projected, memory_turns)
     return projected
 
 
@@ -326,37 +318,6 @@ def _project_group_recent(
     )
     slot.meta["target_truncated"] = len(selected) != len(records)
     slot.meta["record_count"] = len(safe_records)
-
-
-def _summarize_interaction_memory(slot: ContextSlot, limit: int) -> None:
-    if not isinstance(slot.value, dict):
-        return
-    safe_limit = max(0, limit)
-    recent_turns = slot.value.get("recent_turns")
-    if isinstance(recent_turns, list):
-        recent_turns = deepcopy(recent_turns[:safe_limit] if safe_limit else [])
-        for turn in recent_turns:
-            if not isinstance(turn, dict):
-                continue
-            for key in ("user", "assistant"):
-                if key in turn:
-                    turn[key] = _sanitize_context_text(
-                        str(turn.get(key, "") or ""),
-                        max_chars=800,
-                    )
-    else:
-        recent_turns = []
-    slot.value = {
-        key: value
-        for key, value in {
-            "recent_turns": recent_turns,
-            "recent_topics": slot.value.get("recent_topics", []),
-            "ongoing_threads": slot.value.get("ongoing_threads", []),
-            "last_impression_summary": slot.value.get("last_impression_summary", ""),
-        }.items()
-        if value not in (None, "", [])
-    }
-    slot.meta["target_summary"] = "compact"
 
 
 def _sanitize_context_content(value: Any, *, max_chars: int) -> str:

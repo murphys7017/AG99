@@ -172,7 +172,7 @@ Context lane 表示一条有稳定上下文策略的模型调用通道。
 - 先用规则判断是否值得调用模型。
 - 低重要度 tick 不调用 LLM。
 - 能用 cheap model 不用 expensive model。
-- 能产出 silent material 就不发聊天消息。
+- 能产出 no-output material 就不发聊天消息。
 - 能复用已有 context lane 就不新建昂贵上下文。
 
 ### Cost Ledger
@@ -195,28 +195,26 @@ Context lane 表示一条有稳定上下文策略的模型调用通道。
 
 ## 与现有阶段计划的关系
 
-当前 Phase 1 仍然是：
+当前前置主链是：
 
 ```text
-EventRuntimeRefs
-  -> InputRuntime
-  -> materialization migration
-  -> EventStateStore
-  -> OutputGateway
+official EventBus / Pipeline
+  -> Personal Runtime turn admission
+  -> Router || Persona Expression
+  -> optional Planner / Execution
+  -> unified Output Runtime
 ```
 
 但在进入 `Background Mind` 前，必须补上 `Cost / Context Runtime` 的设计和最小实现。
 
 建议顺序调整为：
 
-1. `Phase 1A`: `EventRuntimeRefs`
-2. `Phase 1B`: `InputRuntime`
-3. `Phase 1C`: 入站 materialization 迁移
-4. `Phase 1D`: `EventStateStore`
-5. `Phase 1E`: `OutputGateway`
-6. `Phase 1F`: `Cost / Context Runtime` 最小设计落地
-7. `Phase 2`: `Persona Runtime Shell`
-8. `Phase 3`: `Background Mind`，必须经过 budget gate
+1. 收口 `PersonalSessionRuntime` 的 turn、mailbox 和 follow-up owner。
+2. 将剩余运行状态迁入唯一 `InteractionTurnState`。
+3. 统一 Output Dispatcher 和主动消息入口。
+4. 固化 Context Snapshot 与 Capability Snapshot。
+5. 落地 `Cost / Context Runtime` 的最小预算和 usage ledger。
+6. 接入 `Background Mind`，所有模型调用必须经过 budget gate。
 
 ## 非目标
 

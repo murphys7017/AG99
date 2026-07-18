@@ -12,9 +12,6 @@ from astrbot.core.provider.entities import ProviderRequest
 from .turn_state import get_interaction_turn_state
 from .types import CoreTaskSpec, InteractionRouteDecision
 
-INTERACTION_CORE_TASK_SPEC_EXTRA_KEY = "_interaction_core_task_spec"
-INTERACTION_ROUTE_DECISION_EXTRA_KEY = "_interaction_route_decision"
-
 
 def get_interaction_route_decision(
     event: AstrMessageEvent,
@@ -100,8 +97,6 @@ def apply_interaction_core_task_spec(
 
 
 __all__ = [
-    "INTERACTION_CORE_TASK_SPEC_EXTRA_KEY",
-    "INTERACTION_ROUTE_DECISION_EXTRA_KEY",
     "apply_interaction_core_task_spec",
     "build_core_execution_context_block",
     "get_core_task_spec",

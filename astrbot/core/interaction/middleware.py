@@ -18,10 +18,6 @@ from astrbot.core.voice import (
 )
 
 from .config import is_middleware_enabled, load_interaction_agent_config
-from .core_bridge import (
-    INTERACTION_CORE_TASK_SPEC_EXTRA_KEY,
-    INTERACTION_ROUTE_DECISION_EXTRA_KEY,
-)
 from .core_planner import CorePlannerAgent, CorePlannerError
 from .expression_agent import (
     InteractionExpressionAgent,
@@ -30,11 +26,6 @@ from .expression_agent import (
     PersonaExpressionResult,
 )
 from .lifecycle import dispatch_interaction_lifecycle
-from .memory_store import (
-    INTERACTION_MEMORY_STORE_EXTRA_KEY,
-    InteractionMemoryStore,
-    build_interaction_memory_reply_from_visible_outputs,
-)
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
@@ -44,6 +35,7 @@ from .turn_state import (
     InteractionLifecycleStage,
     InteractionSpeculativePersonaStatus,
     InteractionTurnOutcome,
+    build_interaction_turn_reply,
     ensure_interaction_turn_state,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
@@ -112,13 +104,11 @@ class InteractionMiddleware:
         self.plugin_context = plugin_context
         self._reject_development_fallback_policy(config)
         self.interaction_config = load_interaction_agent_config(config)
-        self.memory_store = InteractionMemoryStore()
-        self.expression_agent = InteractionExpressionAgent(self.memory_store)
+        self.expression_agent = InteractionExpressionAgent()
         self.persona_runtime = InteractionPersonaRuntime(self.expression_agent)
-        self.router_agent = InteractionRouterAgent(self.memory_store)
-        self.core_planner = CorePlannerAgent(self.memory_store)
+        self.router_agent = InteractionRouterAgent()
+        self.core_planner = CorePlannerAgent()
         self.output_controller.interaction_config = self.interaction_config
-        self.output_controller.interaction_memory_store = self.memory_store
         self.output_controller.plugin_context = plugin_context
         self.output_controller._persist_callback = self._on_output_persist_requested
         self.output_controller.visible_reply_renderer = (
@@ -255,11 +245,9 @@ class InteractionMiddleware:
         event.set_extra("_turn_id", turn_id)
         event.set_extra("_output_controller", self.output_controller)
         event.set_extra("_interaction_output_controller", self.output_controller)
-        event.set_extra(INTERACTION_MEMORY_STORE_EXTRA_KEY, self.memory_store)
         self._install_core_output_interceptor(event)
         if route_decision is not None:
             set_interaction_turn_route_decision(event, route_decision)
-            event.set_extra(INTERACTION_ROUTE_DECISION_EXTRA_KEY, route_decision)
 
     def _install_core_output_interceptor(self, event: AstrMessageEvent) -> None:
         if event.get_extra("_interaction_output_interceptor_installed", False):
@@ -819,10 +807,8 @@ class InteractionMiddleware:
             event.set_extra("_interaction_core_planner_failure_reason", str(exc))
             raise
         set_interaction_turn_core_planning_decision(event, decision)
-        event.set_extra("_interaction_core_planning_decision", decision.to_dict())
         if decision.action is CorePlanningAction.EXECUTE:
             set_interaction_turn_core_task_spec(event, decision.task_spec)
-            event.set_extra(INTERACTION_CORE_TASK_SPEC_EXTRA_KEY, decision.task_spec)
         return decision
 
     def _record_route_diagnostics(
@@ -1309,7 +1295,7 @@ class InteractionMiddleware:
         if canonical_reply is None:
             turn_state = get_interaction_turn_state(event)
             utterances = turn_state.utterances if turn_state is not None else None
-            canonical_reply = build_interaction_memory_reply_from_visible_outputs(
+            canonical_reply = build_interaction_turn_reply(
                 outputs,
                 turn_id=turn_id,
                 utterances=utterances,

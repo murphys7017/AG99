@@ -105,7 +105,6 @@ class InteractionTurnCompletionState:
     status: InteractionTurnStatus = InteractionTurnStatus.ACTIVE
     outcome: InteractionTurnOutcome | None = None
     material_finalized: bool = False
-    legacy_memory_persisted: bool = False
     postprocess_dispatched: bool = False
     completed: bool = False
     failure_reason: str | None = None
@@ -121,7 +120,6 @@ class InteractionTurnFailure:
     message: str | None = None
     user_visible_action: str | None = None
     material_finalized: bool = False
-    legacy_memory_persisted: bool = False
     postprocess_dispatched: bool = False
     created_at: float = field(default_factory=time.time)
 
@@ -133,7 +131,6 @@ class InteractionTurnFailure:
             "message": self.message,
             "user_visible_action": self.user_visible_action,
             "material_finalized": self.material_finalized,
-            "legacy_memory_persisted": self.legacy_memory_persisted,
             "postprocess_dispatched": self.postprocess_dispatched,
             "created_at": self.created_at,
         }
@@ -221,6 +218,40 @@ def materialize_utterance(
     )
     turn_state.utterances.append(utterance)
     return utterance
+
+
+def build_interaction_turn_reply(
+    visible_outputs: list[dict[str, Any]] | None,
+    *,
+    turn_id: str | None = None,
+    utterances: list[InteractionUtterance] | None = None,
+) -> str:
+    if isinstance(utterances, list):
+        parts = [
+            utterance.text.strip()
+            for utterance in utterances
+            if utterance.kind != "stream_interjection"
+            and utterance.memory_relevant
+            and utterance.text.strip()
+        ]
+        if parts:
+            return " ".join(parts)
+
+    if not isinstance(visible_outputs, list):
+        return ""
+    clean_turn_id = (turn_id or "").strip()
+    parts: list[str] = []
+    for item in visible_outputs:
+        if not isinstance(item, dict):
+            continue
+        if clean_turn_id and str(item.get("turn_id", "") or "").strip() != clean_turn_id:
+            continue
+        if not bool(item.get("memory_relevant", True)):
+            continue
+        text = str(item.get("text", "") or "").strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts)
 
 
 def get_interaction_turn_state(event) -> InteractionTurnState | None:
@@ -311,15 +342,6 @@ def get_interaction_turn_finalized_material(event) -> dict[str, Any] | None:
     if state is not None and isinstance(state.finalized_turn_material, dict):
         return dict(state.finalized_turn_material)
     return None
-
-
-def mark_interaction_turn_legacy_memory_persisted(
-    event,
-    persisted: bool = True,
-) -> None:
-    state = ensure_interaction_turn_state(event)
-    state.completion_state.legacy_memory_persisted = persisted
-    event.set_extra("_interaction_legacy_memory_persisted", persisted)
 
 
 def mark_interaction_turn_postprocess_dispatched(
@@ -467,7 +489,6 @@ def record_interaction_turn_failure(
         else (str(exception) if exception else None),
         user_visible_action=user_visible_action,
         material_finalized=state.completion_state.material_finalized,
-        legacy_memory_persisted=state.completion_state.legacy_memory_persisted,
         postprocess_dispatched=state.completion_state.postprocess_dispatched,
     )
     state.failures.append(failure)

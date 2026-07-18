@@ -119,7 +119,7 @@ class InteractionPromptView:
     context_snapshot: dict[str, Any] = field(default_factory=dict)
     persona: dict[str, Any] = field(default_factory=dict)
     input: dict[str, Any] = field(default_factory=dict)
-    interaction_memory: dict[str, Any] = field(default_factory=dict)
+    memory: dict[str, Any] = field(default_factory=dict)
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
     capabilities: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -140,9 +140,7 @@ class InteractionPromptView:
                 ),
                 "persona": freeze_interaction_snapshot(self.persona),
                 "input": freeze_interaction_snapshot(self.input),
-                "interaction_memory": freeze_interaction_snapshot(
-                    self.interaction_memory
-                ),
+                "memory": freeze_interaction_snapshot(self.memory),
                 "recent_messages": freeze_interaction_snapshot(self.recent_messages),
                 "capabilities": freeze_interaction_snapshot(self.capabilities),
                 "metadata": freeze_interaction_snapshot(self.metadata),
@@ -156,7 +154,7 @@ class InteractionPromptView:
             context_snapshot=freeze_interaction_snapshot(self.context_snapshot),
             persona=freeze_interaction_snapshot(self.persona),
             input=freeze_interaction_snapshot(self.input),
-            interaction_memory=freeze_interaction_snapshot(self.interaction_memory),
+            memory=freeze_interaction_snapshot(self.memory),
             recent_messages=freeze_interaction_snapshot(self.recent_messages),
             capabilities=freeze_interaction_snapshot(self.capabilities),
             metadata=freeze_interaction_snapshot(self.metadata),
@@ -384,11 +382,6 @@ class InteractionResultView:
         return self.as_read_only_mapping().get(key, default)
 
 
-def coerce_priority(value: Any, default: int = 100) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def merge_result_contributions(

@@ -4299,7 +4299,7 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",
                         "type": "int",
-                        "hint": "构建中间件上下文时读取的 interaction memory 轮数。",
+                        "hint": "构建 Interaction 只读上下文时保留的近期对话回合数。",
                     },
                 },
             },
@@ -4328,7 +4328,7 @@ CONFIG_METADATA_3 = {
             "router": {
                 "description": "Router",
                 "type": "object",
-                "hint": "只判断 silent / persona / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
+                "hint": "当前只判断 persona / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
                 "items": {
                     "interaction_middleware.router_provider_id": {
                         "description": "路由模型提供商",

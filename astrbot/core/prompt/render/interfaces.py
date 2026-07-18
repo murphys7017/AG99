@@ -899,22 +899,6 @@ class BasePromptRenderer:
         ):
             rendered_slot_names.append("memory.persona_state")
 
-        if self._render_mapping_slot(
-            target,
-            "interaction",
-            slot_map.get("memory.interaction"),
-            body_keys=(
-                "recent_turns",
-                "speaking_style_notes",
-                "user_preferences",
-                "relationship_notes",
-                "recent_topics",
-                "ongoing_threads",
-                "last_impression_summary",
-            ),
-        ):
-            rendered_slot_names.append("memory.interaction")
-
         return rendered_slot_names
 
     def render_extension_context(

@@ -174,14 +174,6 @@ contexts:
     lifecycle: rolling
     notes: "当前快照中的动态人格状态，不等于静态 persona prompt"
 
-  - id: memory.interaction
-    category: memory
-    slots: [history]
-    required: false
-    multiple: false
-    lifecycle: rolling
-    notes: "Interaction middleware 的对话连续性记忆，包含语气、偏好、熟悉度和近期话题"
-
   # ========== Input 类 (ephemeral) ==========
   - id: input.text
     category: input
@@ -191,7 +183,7 @@ contexts:
     lifecycle: ephemeral
     notes: "当前用户输入的文本；附件-only 输入允许无文本"
 
-  - id: input.router_attachment_summary
+  - id: input.attachment_summary
     category: input
     slots: [user_input]
     required: false
@@ -312,14 +304,6 @@ contexts:
     multiple: false
     lifecycle: dynamic
     notes: "子代理路由说明 prompt"
-
-  - id: capability.core_summary
-    category: capability
-    slots: [tools]
-    required: false
-    multiple: false
-    lifecycle: dynamic
-    notes: "执行层能力的精简事实摘要，仅供目标投影按需使用"
 
   - id: capability.plugin_directory
     category: capability

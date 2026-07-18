@@ -40,8 +40,7 @@ Prompt Collectors 构建本轮唯一的 ContextPack
     ↓
 Router 与 Persona Runtime 并发启动
     ├── Persona Runtime → 尽快生成并提交拟人表达
-    └── Router → 只返回 silent / persona / hybrid
-         ├── silent → Persona 尚未提交则抑制；已经提交则保留
+    └── Router → 当前只返回 persona / hybrid
          ├── persona → 不启动 Core，保留 Persona 表达
          └── hybrid → 独立 Core Planner 再判断执行层是否必要
                       ├── not_required → 不启动 Core，保留 Persona 表达
@@ -59,7 +58,7 @@ Finalized Turn Material → Postprocess / Memory
 
 | 目标视图 | 用途 |
 |----------|------|
-| Router | 用极简人格摘要和近期上下文判断 silent / persona / hybrid |
+| Router | 用极简人格摘要和近期上下文判断 persona / hybrid |
 | Core Planner | 独立复核执行层是否必要，并整理 CoreTaskSpec |
 | Persona | 使用完整人格、历史、记忆和待表达材料生成用户可见表达 |
 | Core | 使用任务、工具、知识库和执行上下文完成工作，不注入人格表达规则 |

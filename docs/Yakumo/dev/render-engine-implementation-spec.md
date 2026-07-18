@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-本文描述当前 Render 子系统的真实实现。早期 `Selector -> Renderer -> Engine` 方案已废止；历史背景可查看 `render-engine-plan.md`，但不能作为当前 API 依据。
+本文描述当前 Render 子系统的真实实现。项目不再保留早期 Selector/双管线设计文档。
 
 ## 调用关系
 

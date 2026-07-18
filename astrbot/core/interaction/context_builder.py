@@ -7,10 +7,6 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.builder import PromptContextBuilder
-from astrbot.core.prompt.collectors import ConversationHistoryCollector
-from astrbot.core.prompt.collectors.input_collector import InputCollector
-from astrbot.core.prompt.collectors.persona_collector import PersonaCollector
-from astrbot.core.prompt.collectors.session_collector import SessionCollector
 from astrbot.core.prompt.context_collect import (
     build_prompt_extension_slots,
 )
@@ -20,13 +16,11 @@ from astrbot.core.prompt.interfaces import ContextCollectorInterface
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
-from .collectors import InteractionCapabilityCollector, InteractionMemoryCollector
 from .contributors import (
     InteractionPromptPurpose,
     InteractionPromptView,
     PromptViewPhase,
 )
-from .memory_store import InteractionMemoryStore
 from .turn_state import (
     InteractionContextMaterial,
     InteractionTurnState,
@@ -102,19 +96,10 @@ async def build_interaction_context_pack(
     event,
     plugin_context: Context,
     config,
-    memory_store: InteractionMemoryStore,
 ) -> ContextPack:
     builder = PromptContextBuilder(event, plugin_context, config)
     base_pack = await builder.build(
         provider_request=event.get_extra("provider_request"),
-        collectors=[
-            InputCollector(),
-            PersonaCollector(),
-            SessionCollector(),
-            ConversationHistoryCollector(),
-            InteractionMemoryCollector(memory_store),
-            InteractionCapabilityCollector(),
-        ],
         include_prompt_extensions=True,
         scope="interaction_full",
     )
@@ -157,7 +142,6 @@ async def get_or_build_interaction_context_material(
     plugin_context: Context,
     interaction_config: InteractionAgentConfig,
     build_config: InteractionPromptBuildConfig,
-    memory_store: InteractionMemoryStore,
 ) -> InteractionContextMaterial:
     turn_state = get_interaction_turn_state(event)
     if turn_state is not None:
@@ -176,7 +160,6 @@ async def get_or_build_interaction_context_material(
                     plugin_context=plugin_context,
                     interaction_config=interaction_config,
                     build_config=build_config,
-                    memory_store=memory_store,
                 ),
                 name=(
                     f"interaction_context_material_"
@@ -197,7 +180,6 @@ async def get_or_build_interaction_context_material(
         plugin_context=plugin_context,
         interaction_config=interaction_config,
         build_config=build_config,
-        memory_store=memory_store,
     )
 
 
@@ -218,7 +200,6 @@ async def _build_interaction_context_material(
     plugin_context: Context,
     interaction_config: InteractionAgentConfig,
     build_config: InteractionPromptBuildConfig,
-    memory_store: InteractionMemoryStore,
 ) -> InteractionContextMaterial:
     turn_state = get_interaction_turn_state(event)
 
@@ -226,13 +207,12 @@ async def _build_interaction_context_material(
         event,
         plugin_context,
         build_config,
-        memory_store,
     )
     capability_payload = extract_core_capability_payload(prompt_context_pack)
     material = InteractionContextMaterial(
         prompt_context_pack=prompt_context_pack,
         persona_payload=extract_persona_payload(prompt_context_pack),
-        memory_payload=extract_interaction_memory_payload(prompt_context_pack),
+        memory_payload=extract_memory_payload(prompt_context_pack),
         recent_messages=extract_recent_messages(
             prompt_context_pack,
             interaction_config.memory_window_size,
@@ -302,32 +282,14 @@ def extract_recent_messages(
     pack: ContextPack,
     limit: int,
 ) -> list[dict[str, Any]]:
-    interaction_messages: list[dict[str, Any]] = []
-    interaction_slot = pack.get_slot("memory.interaction")
-    if interaction_slot is not None and isinstance(interaction_slot.value, dict):
-        recent_turns = interaction_slot.value.get("recent_turns", [])
-        if isinstance(recent_turns, list):
-            limited_turns = recent_turns[:limit] if limit > 0 else recent_turns
-            for turn in reversed(limited_turns):
-                if not isinstance(turn, dict):
-                    continue
-                user_text = str(turn.get("user", "") or "").strip()
-                assistant_text = str(turn.get("assistant", "") or "").strip()
-                if user_text or assistant_text:
-                    interaction_messages.append(
-                        {
-                            "source": "interaction_memory",
-                            "user_message": {
-                                "role": "user",
-                                "content": user_text,
-                            },
-                            "assistant_message": {
-                                "role": "assistant",
-                                "content": assistant_text,
-                            },
-                        }
-                    )
-    return interaction_messages[-limit:] if limit > 0 else interaction_messages
+    history_slot = pack.get_slot("conversation.history")
+    if history_slot is None or not isinstance(history_slot.value, dict):
+        return []
+    turns = history_slot.value.get("turns", [])
+    if not isinstance(turns, list):
+        return []
+    messages = [dict(turn) for turn in turns if isinstance(turn, dict)]
+    return messages[-limit:] if limit > 0 else messages
 
 
 def extract_persona_payload(pack: ContextPack) -> dict[str, Any]:
@@ -356,18 +318,36 @@ def extract_input_payload(pack: ContextPack) -> dict[str, Any]:
     return payload
 
 
-def extract_interaction_memory_payload(pack: ContextPack) -> dict[str, Any]:
-    slot = pack.get_slot("memory.interaction")
-    if slot is None or not isinstance(slot.value, dict):
-        return {}
-    return slot.value
+def extract_memory_payload(pack: ContextPack) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for slot_name, slot in pack.slots.items():
+        if slot_name.startswith("memory."):
+            payload[slot_name.split(".", 1)[1]] = slot.value
+    return payload
 
 
 def extract_core_capability_payload(pack: ContextPack) -> dict[str, Any]:
-    slot = pack.get_slot("capability.core_summary")
-    if slot is None or not isinstance(slot.value, dict):
-        return {}
-    return slot.value
+    tools_slot = pack.get_slot("capability.tools_schema")
+    tools_value = tools_slot.value if tools_slot is not None else {}
+    tools = tools_value.get("tools", []) if isinstance(tools_value, dict) else []
+    tool_names = [
+        str(tool.get("name", "")).strip()
+        for tool in tools
+        if isinstance(tool, dict) and str(tool.get("name", "")).strip()
+    ]
+    return {
+        "tools_available": bool(tool_names),
+        "tool_count": len(tool_names),
+        "sample_tools": tool_names[:12],
+        "tool_selection_mode": (
+            str(tools_slot.meta.get("selection_mode", "unavailable"))
+            if tools_slot is not None
+            else "unavailable"
+        ),
+        "knowledge_available": pack.get_slot("knowledge.snippets") is not None,
+        "subagent_available": pack.get_slot("capability.subagent_handoff_tools")
+        is not None,
+    }
 
 
 async def collect_interaction_prompt_extensions(
@@ -513,7 +493,7 @@ def _build_prompt_view(
         context_snapshot=context,
         persona=dict(context.get("persona", {}) or {}),
         input=dict(context.get("input", {}) or {}),
-        interaction_memory=dict(context.get("memory", {}) or {}),
+        memory=dict(context.get("memory", {}) or {}),
         recent_messages=list(context.get("recent_messages", []) or []),
         capabilities=dict(context.get("core_capabilities", {}) or {}),
         metadata={"canonical_context": True},
