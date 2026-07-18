@@ -38,6 +38,7 @@ context:
     - Router remains a minimal persona/hybrid classifier and never plans tasks or receives tool schemas; the silent enum is retained but not exposed by the current Router prompt.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
+    - Interaction uses an explicit base collector profile before routing; the Core overlay adds only execution-specific collectors and never recollects shared session, memory, or explicit provider context.
     - Router and Core Planner model decisions are never inserted into the canonical ContextPack or supplied to each other.
     - Planner output is internal execution material; every user-visible acknowledgement, result, and failure remains owned by the unified Persona Expression layer.
     - Protocol commands and live audio continue to bypass conversational Router and Core Planner.

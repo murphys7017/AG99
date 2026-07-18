@@ -9,6 +9,7 @@ from astrbot import logger
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.context_collect import (
     build_prompt_extension_slots,
+    interaction_base_collectors,
 )
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
@@ -100,8 +101,9 @@ async def build_interaction_context_pack(
     builder = PromptContextBuilder(event, plugin_context, config)
     base_pack = await builder.build(
         provider_request=event.get_extra("provider_request"),
+        collectors=interaction_base_collectors(),
         include_prompt_extensions=True,
-        scope="interaction_full",
+        scope="interaction_base",
     )
     return await builder.build(
         provider_request=event.get_extra("provider_request"),
@@ -220,7 +222,7 @@ async def _build_interaction_context_material(
         input_payload=extract_input_payload(prompt_context_pack),
         capability_payload=capability_payload,
         collected_scopes=set(
-            prompt_context_pack.meta.get("collection_scopes", ["interaction_full"])
+            prompt_context_pack.meta.get("collection_scopes", ["interaction_base"])
         ),
     )
     _refresh_context_material_view(material, interaction_config)

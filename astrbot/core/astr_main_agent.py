@@ -300,10 +300,7 @@ def _build_interaction_core_collectors():
     return [
         SystemCollector(),
         CoreTaskCollector(),
-        SessionCollector(),
         PolicyCollector(),
-        MemoryCollector(),
-        ExplicitContextCollector(),
         SkillsCollector(),
         ToolsCollector(),
         SubagentCollector(),

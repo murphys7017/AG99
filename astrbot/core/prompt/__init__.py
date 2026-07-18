@@ -27,6 +27,7 @@ from .context_catalog import (
 from .context_collect import (
     PROMPT_CONTEXT_PACK_EXTRA_KEY,
     collect_context_pack,
+    interaction_base_collectors,
     log_context_pack,
 )
 from .context_types import (
@@ -160,5 +161,6 @@ __all__ = [
     # Collection flow
     "PROMPT_CONTEXT_PACK_EXTRA_KEY",
     "collect_context_pack",
+    "interaction_base_collectors",
     "log_context_pack",
 ]

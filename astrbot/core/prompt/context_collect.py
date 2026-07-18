@@ -62,7 +62,7 @@ async def resolve_toolset_for_target(
 
 
 def _default_collectors() -> list[ContextCollectorInterface]:
-    """Return the collectors enabled for the current phase."""
+    """Return the full collector set used by the native Core path."""
     return [
         SystemCollector(),
         CoreTaskCollector(),
@@ -77,6 +77,23 @@ def _default_collectors() -> list[ContextCollectorInterface]:
         ToolsCollector(),
         SubagentCollector(),
         KnowledgeCollector(),
+    ]
+
+
+def interaction_base_collectors() -> list[ContextCollectorInterface]:
+    """Return facts needed before an Interaction route is known.
+
+    Core execution resources are collected later, after routing.  This keeps
+    speculative Router and Persona branches independent from Core-only state.
+    """
+    return [
+        SystemCollector(base_only=True),
+        PersonaCollector(),
+        InputCollector(),
+        SessionCollector(),
+        MemoryCollector(),
+        ConversationHistoryCollector(),
+        ExplicitContextCollector(),
     ]
 
 

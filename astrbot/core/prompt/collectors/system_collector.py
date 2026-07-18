@@ -35,6 +35,14 @@ if TYPE_CHECKING:
 class SystemCollector(ContextCollectorInterface):
     """Collect base system prompt and tool-call instruction metadata."""
 
+    def __init__(self, *, base_only: bool = False) -> None:
+        self.base_only = base_only
+
+    @property
+    def cache_key(self) -> str:
+        suffix = "base" if self.base_only else "full"
+        return f"{self.__class__.__module__}.{self.__class__.__qualname__}:{suffix}"
+
     @property
     def lifecycle(self) -> str:
         return "static"
@@ -56,6 +64,9 @@ class SystemCollector(ContextCollectorInterface):
             logger.warning(
                 "Failed to collect system base prompt: %s", exc, exc_info=True
             )
+
+        if self.base_only:
+            return slots
 
         try:
             instruction_slot = await self._build_tool_call_instruction_slot(
