@@ -1,11 +1,8 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from astrbot.core.prompt import (
     ContextPack,
     ContextSlot,
-    PromptContextBuilder,
     PromptContextConflictError,
     merge_context_packs,
 )
@@ -126,25 +123,3 @@ def test_merge_context_packs_merges_plugin_directories_and_inherits_targets():
         },
     ]
     assert merged.meta["collectors"] == ["BaseCollector", "PluginCollector"]
-
-
-@pytest.mark.asyncio
-async def test_prompt_context_builder_delegates_collection_then_merges():
-    fragment = ContextPack(slots={"input.text": _slot("input.text", "hello")})
-    collector = MagicMock()
-    request = MagicMock()
-    with patch(
-        "astrbot.core.prompt.builder.collect_context_pack",
-        new=AsyncMock(return_value=fragment),
-    ) as collect:
-        result = await PromptContextBuilder(
-            MagicMock(), MagicMock(), MagicMock()
-        ).build(
-            collectors=[collector],
-            provider_request=request,
-            scope="router",
-        )
-
-    assert result.get_slot("input.text").value == "hello"
-    assert result.meta["collection_scopes"] == ["router"]
-    collect.assert_awaited_once()

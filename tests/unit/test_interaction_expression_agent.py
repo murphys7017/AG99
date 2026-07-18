@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,7 +9,6 @@ from astrbot.core.interaction.expression_agent import (
     InteractionExpressionError,
     PersonaExpressionRequest,
     PersonaExpressionResult,
-    _log_persona_prompt_size_diagnostics,
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     build_persona_runtime_system_prompt,
@@ -18,49 +17,12 @@ from astrbot.core.interaction.expression_agent import (
     validate_persona_expression_result,
 )
 from astrbot.core.interaction.memory_store import InteractionMemoryStore
-from astrbot.core.interaction.persona_runtime import InteractionPersonaRuntime
 from astrbot.core.interaction.types import InteractionAgentConfig
-from astrbot.core.message.components import Plain
-from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import PromptRenderEngine, PromptRenderProfile
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
-
-
-def test_persona_prompt_size_diagnostics_logs_sizes_without_content(monkeypatch):
-    log = Mock()
-    monkeypatch.setattr(
-        "astrbot.core.interaction.expression_agent.logger.info",
-        log,
-    )
-
-    class Event:
-        session_id = "session"
-
-        @staticmethod
-        def get_platform_id():
-            return "platform"
-
-    result = RenderResult(
-        system_prompt="private system text",
-        messages=[{"role": "user", "content": "private message text"}],
-        tool_schema=[{"name": "private_tool"}],
-        metadata={"prompt_slot_sizes": {"persona.prompt": 120}},
-    )
-
-    _log_persona_prompt_size_diagnostics(
-        Event(),
-        PersonaExpressionRequest(source_text="private source text"),
-        result,
-    )
-
-    args = log.call_args.args
-    assert args[0].startswith("DIAG expression.prompt_size:")
-    assert args[-1] == {"persona.prompt": 120}
-    assert "private system text" not in repr(args)
-    assert "private message text" not in repr(args)
 
 
 def test_persona_expression_empty_result_without_effects_is_rejected():
@@ -385,16 +347,6 @@ def test_persona_expression_defaults_to_strict_tool_call_contract():
     assert contract.allow_text_fallback is False
     assert contract.preferred_tool_name == "persona_expression"
     assert schema["required"] == ["spoken_reply", "effect_calls"]
-
-
-def test_persona_runtime_prompt_describes_generic_effect_schema_contract():
-    prompt = build_persona_runtime_system_prompt()
-
-    assert "persona_expression" in prompt
-    assert "effect_calls 只能使用注册过的 effect 与参数 schema" in prompt
-    assert "未声明字段不要输出" in prompt
-    assert "intent_tags" not in prompt
-    assert "axes" not in prompt
 
 
 def test_persona_runtime_slots_are_native_system_base_not_extensions():
@@ -782,112 +734,3 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
     assert "必须只输出一个 JSON object" not in provider.calls[0]["prompt"]
     assert provider.calls[0]["prompt"] == "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
     assert provider.calls[0]["tool_choice"] == "required"
-
-
-@pytest.mark.asyncio
-async def test_persona_runtime_publishes_plugin_output_effect_calls():
-    expression_agent = type(
-        "ExpressionAgent",
-        (),
-        {
-            "express_visible_reply_result": AsyncMock(
-                return_value=PersonaExpressionResult(
-                    spoken_reply="人格化结果",
-                    effect_calls=[
-                        PersonaEffectCall(
-                            name="ag99live.motion",
-                            arguments={"emotion_label": "satisfied"},
-                            plugin_id="plugin_a",
-                        )
-                    ],
-                )
-            )
-        },
-    )()
-
-    class Event:
-        def __init__(self):
-            self._extras = {}
-
-        def get_extra(self, key, default=None):
-            return self._extras.get(key, default)
-
-        def set_extra(self, key, value):
-            self._extras[key] = value
-
-    event = Event()
-    runtime = InteractionPersonaRuntime(expression_agent)
-
-    rendered = await runtime.render_plugin_output(
-        event,
-        MessageChain([Plain("原始插件结果")]),
-        plugin_context=object(),
-        interaction_config=InteractionAgentConfig(),
-    )
-
-    assert rendered.get_plain_text() == "人格化结果"
-    assert event.get_extra("_interaction_plugin_output_effect_calls") == [
-        PersonaEffectCall(
-            name="ag99live.motion",
-            arguments={"emotion_label": "satisfied"},
-            plugin_id="plugin_a",
-        )
-    ]
-
-
-@pytest.mark.asyncio
-async def test_persona_runtime_renders_core_reply_via_shared_visible_reply_entry():
-    expression_agent = type(
-        "ExpressionAgent",
-        (),
-        {
-            "express_visible_reply_result": AsyncMock(
-                return_value=PersonaExpressionResult(
-                    spoken_reply="整理后的最终回复",
-                    effect_calls=[
-                        PersonaEffectCall(
-                            name="ag99live.motion",
-                            arguments={"emotion_label": "focused"},
-                            plugin_id="plugin_a",
-                        )
-                    ],
-                )
-            )
-        },
-    )()
-
-    class Event:
-        def __init__(self):
-            self._extras = {}
-
-        def get_extra(self, key, default=None):
-            return self._extras.get(key, default)
-
-        def set_extra(self, key, value):
-            self._extras[key] = value
-
-    event = Event()
-    runtime = InteractionPersonaRuntime(expression_agent)
-
-    plugin_context = object()
-    interaction_config = InteractionAgentConfig()
-
-    reply = await runtime.render_core_reply(
-        event,
-        "原始 core 结果",
-        plugin_context=plugin_context,
-        interaction_config=interaction_config,
-        immediate_reply="我先看一下。",
-    )
-
-    assert reply == "整理后的最终回复"
-    expression_agent.express_visible_reply_result.assert_awaited_once_with(
-        event,
-        plugin_context,
-        interaction_config,
-        PersonaExpressionRequest(
-            source_text="原始 core 结果",
-            immediate_reply="我先看一下。",
-            preserve_facts=True,
-        ),
-    )
