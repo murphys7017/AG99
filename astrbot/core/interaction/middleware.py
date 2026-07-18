@@ -70,7 +70,7 @@ from .types import (
 )
 
 LOCAL_FAST_EXPRESSION_FALLBACK_RESULT = PersonaExpressionResult(
-    spoken_reply="我先看一下。"
+    spoken_reply="模型服务暂时不可用，请稍后再试。"
 )
 
 CORE_MEDIA_COMPONENT_TYPES = (File, Image, Record, Video)

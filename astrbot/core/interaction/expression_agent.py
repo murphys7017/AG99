@@ -5,7 +5,7 @@ import copy
 import json
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 try:
@@ -22,7 +22,7 @@ from astrbot.core.prompt.render import (
     PromptTarget,
 )
 from astrbot.core.prompt.structured_json import extract_json_object
-from astrbot.core.provider import Provider
+from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.star.context import Context
 
 from .collectors import PersonaVisibleReplyCollector
@@ -102,6 +102,7 @@ def build_persona_runtime_system_prompt() -> str:
         "immediate_reply 是本轮之前已经说过的短回复，可参考但不要矛盾或重复。\n"
         "delegated_task_summary 表示执行层已经接受的任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
+        "当 source_text 表示调用失败时，应如实说明失败及可确认原因，不要声称仍在处理，也不要复述原始异常结构或敏感信息。\n"
         "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
         "short_reply 为 true 时只说一句简短口语短句，尽量控制在 20 字以内。\n"
         "allow_empty 为 true 且当前没有必要说话时，可以让 spoken_reply 为空字符串。\n"
@@ -389,14 +390,88 @@ class InteractionExpressionAgent:
         req: PersonaExpressionRequest,
     ) -> PersonaExpressionResult:
         """统一 Persona 表达入口，返回结构化 PersonaExpressionResult。"""
-        provider = plugin_context.get_provider_by_id(
+        selected_provider = plugin_context.get_provider_by_id(
             interaction_config.expression_provider_id
         )
-        if not isinstance(provider, Provider):
-            raise InteractionExpressionError(
+        provider = selected_provider if isinstance(selected_provider, Provider) else None
+        provider_settings = build_interaction_prompt_build_config(
+            plugin_context,
+            event,
+        ).provider_settings
+        fallback_providers = resolve_fallback_chat_providers(
+            provider,
+            provider_settings,
+            plugin_context.get_provider_by_id,
+        )
+        primary_error: InteractionExpressionError | None = None
+        if provider is None:
+            primary_error = InteractionExpressionError(
                 "provider_unavailable",
                 f"provider unavailable: provider_id={interaction_config.expression_provider_id}",
             )
+        candidates = ([provider] if provider is not None else []) + fallback_providers
+        if not candidates:
+            raise primary_error or InteractionExpressionError("provider_unavailable")
+
+        last_error: InteractionExpressionError | None = primary_error
+        for index, candidate in enumerate(candidates):
+            fallback_request = (
+                _build_failure_expression_request(req, primary_error)
+                if primary_error is not None
+                else req
+            )
+            if primary_error is not None:
+                fallback_provider_id = str(
+                    candidate.provider_config.get("id", "<unknown>")
+                )
+                event.set_extra("_interaction_expression_fallback_used", True)
+                event.set_extra(
+                    "_interaction_expression_primary_failure_reason",
+                    str(primary_error),
+                )
+                event.set_extra(
+                    "_interaction_expression_fallback_provider_id",
+                    fallback_provider_id,
+                )
+                logger.warning(
+                    "Persona expression switched to fallback provider: platform_id=%s session_id=%s provider_id=%s primary_error=%s",
+                    event.get_platform_id(),
+                    event.session_id,
+                    fallback_provider_id,
+                    primary_error,
+                )
+            try:
+                return await self._generate_expression_with_provider(
+                    event,
+                    plugin_context,
+                    interaction_config,
+                    candidate,
+                    req=fallback_request,
+                )
+            except InteractionExpressionError as exc:
+                last_error = exc
+                if primary_error is None:
+                    primary_error = exc
+                if index + 1 < len(candidates):
+                    continue
+                break
+
+        if primary_error is not None and last_error is not primary_error:
+            raise InteractionExpressionError(
+                "fallback_exhausted",
+                f"primary error: {primary_error}; fallback error: {last_error}",
+            ) from last_error
+        raise last_error or InteractionExpressionError("model_error")
+
+    async def _generate_expression_with_provider(
+        self,
+        event,
+        plugin_context: Context,
+        interaction_config: InteractionAgentConfig,
+        provider: Provider,
+        *,
+        req: PersonaExpressionRequest,
+    ) -> PersonaExpressionResult:
         turn_state = get_interaction_turn_state(event)
         if turn_state is not None:
             async with turn_state.lock:
@@ -468,6 +543,11 @@ class InteractionExpressionAgent:
         except Exception as exc:  # noqa: BLE001
             raise InteractionExpressionError("model_error", str(exc)) from exc
 
+        if llm_resp.role == "err":
+            raise InteractionExpressionError(
+                "model_error",
+                llm_resp.completion_text or "provider returned an error response",
+            )
         logger.info(
             "DIAG expression.response_shape: platform_id=%s session_id=%s phase=%s has_tool_calls=%s tool_names=%s text_length=%s",
             event.get_platform_id(),
@@ -687,4 +767,22 @@ def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:
             req.total_text,
             req.pending_text,
         )
+    )
+
+
+def _build_failure_expression_request(
+    req: PersonaExpressionRequest,
+    error: InteractionExpressionError,
+) -> PersonaExpressionRequest:
+    message = " ".join(str(error).split())
+    if len(message) > 2000:
+        message = f"{message[:1997]}..."
+    return replace(
+        req,
+        source_text=(
+            "本轮模型调用已经失败。"
+            f"可确认的错误原因：{message or error.reason}"
+        ),
+        preserve_facts=True,
+        allow_empty=False,
     )

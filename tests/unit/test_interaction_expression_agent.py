@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -26,6 +26,7 @@ from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import PromptRenderEngine, PromptRenderProfile
 from astrbot.core.prompt.render.interfaces import RenderResult
+from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import LLMResponse
 
 
@@ -649,10 +650,14 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
             return "webchat"
 
     provider = Provider()
+    provider.provider_config = {"id": "persona", "type": "test"}
     plugin_context = type(
         "PluginContext",
         (),
-        {"get_provider_by_id": lambda self, provider_id: provider},
+        {
+            "get_provider_by_id": lambda self, provider_id: provider,
+            "get_config": lambda self, **kwargs: {},
+        },
     )()
     event = Event()
     agent = InteractionExpressionAgent(InteractionMemoryStore())
@@ -702,6 +707,50 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
 
 
 @pytest.mark.asyncio
+async def test_persona_expression_uses_configured_fallback_to_explain_primary_error(
+):
+    primary = MagicMock(spec=Provider)
+    primary.provider_config = {"id": "primary"}
+    fallback = MagicMock(spec=Provider)
+    fallback.provider_config = {"id": "fallback"}
+    providers = {"primary": primary, "fallback": fallback}
+    plugin_context = MagicMock()
+    plugin_context.get_provider_by_id.side_effect = providers.get
+    plugin_context.get_config.return_value = {
+        "provider_settings": {"fallback_chat_models": ["fallback"]}
+    }
+    event = MagicMock()
+    event.session_id = "session-1"
+    event.unified_msg_origin = "webchat:friend:session-1"
+    event.get_platform_id.return_value = "webchat"
+    agent = InteractionExpressionAgent(InteractionMemoryStore())
+    agent._generate_expression_with_provider = AsyncMock(
+        side_effect=[
+            InteractionExpressionError("model_error", "daily usage limit exceeded"),
+            PersonaExpressionResult(spoken_reply="额度用完了。"),
+        ]
+    )
+
+    result = await agent.generate_expression(
+        event,
+        plugin_context,
+        InteractionAgentConfig(expression_provider_id="primary"),
+        PersonaExpressionRequest(),
+    )
+
+    assert result.spoken_reply == "额度用完了。"
+    fallback_request = agent._generate_expression_with_provider.await_args_list[
+        1
+    ].kwargs["req"]
+    assert "daily usage limit exceeded" in fallback_request.source_text
+    assert fallback_request.preserve_facts is True
+    event.set_extra.assert_any_call(
+        "_interaction_expression_fallback_provider_id",
+        "fallback",
+    )
+
+
+@pytest.mark.asyncio
 async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_prompt(
     monkeypatch,
 ):
@@ -733,10 +782,14 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
             return "webchat"
 
     provider = Provider()
+    provider.provider_config = {"id": "persona", "type": "test"}
     plugin_context = type(
         "PluginContext",
         (),
-        {"get_provider_by_id": lambda self, provider_id: provider},
+        {
+            "get_provider_by_id": lambda self, provider_id: provider,
+            "get_config": lambda self, **kwargs: {},
+        },
     )()
     event = Event()
     agent = InteractionExpressionAgent(InteractionMemoryStore())

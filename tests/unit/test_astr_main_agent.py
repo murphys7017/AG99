@@ -14,7 +14,7 @@ from astrbot.core.message.components import Image, Plain, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.prompt.collectors import ExplicitContextCollector, InputCollector
-from astrbot.core.provider import Provider
+from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import ProviderRequest
 
 
@@ -652,9 +652,8 @@ class TestBuildMainAgent:
             "fallback-provider": fallback_provider,
         }.get(provider_id)
 
-        result = ama._get_fallback_chat_providers(
+        result = resolve_fallback_chat_providers(
             mock_provider,
-            plugin_context,
             {
                 "fallback_chat_models": [
                     "test-provider",
@@ -665,6 +664,7 @@ class TestBuildMainAgent:
                     None,
                 ]
             },
+            plugin_context.get_provider_by_id,
         )
 
         assert result == [fallback_provider]

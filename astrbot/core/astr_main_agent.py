@@ -47,7 +47,7 @@ from astrbot.core.prompt.render import (
     PromptTarget,
     apply_render_result_to_request,
 )
-from astrbot.core.provider import Provider
+from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.provider.register import llm_tools
 from astrbot.core.star.context import Context
@@ -964,38 +964,6 @@ def _get_compress_provider(
     return provider
 
 
-def _get_fallback_chat_providers(
-    provider: Provider,
-    plugin_context: Context,
-    provider_settings: dict,
-) -> list[Provider]:
-    fallback_ids = provider_settings.get("fallback_chat_models", [])
-    if not isinstance(fallback_ids, list):
-        logger.warning(
-            "fallback_chat_models setting is not a list, skip fallback providers."
-        )
-        return []
-
-    provider_id = str(provider.provider_config.get("id", ""))
-    seen_provider_ids = {provider_id} if provider_id else set()
-    fallback_providers: list[Provider] = []
-    for fallback_id in fallback_ids:
-        if not isinstance(fallback_id, str) or not fallback_id:
-            continue
-        if fallback_id in seen_provider_ids:
-            continue
-        fallback_provider = plugin_context.get_provider_by_id(fallback_id)
-        if not isinstance(fallback_provider, Provider):
-            logger.warning(
-                "Fallback chat provider `%s` is unavailable or invalid, skip.",
-                fallback_id,
-            )
-            continue
-        fallback_providers.append(fallback_provider)
-        seen_provider_ids.add(fallback_id)
-    return fallback_providers
-
-
 async def build_main_agent(
     *,
     event: AstrMessageEvent,
@@ -1158,10 +1126,10 @@ async def build_main_agent(
     _modalities_fix(provider, req)
     _sanitize_context_by_modalities(config, provider, req)
 
-    fallback_providers = _get_fallback_chat_providers(
+    fallback_providers = resolve_fallback_chat_providers(
         provider,
-        plugin_context,
         config.provider_settings,
+        plugin_context.get_provider_by_id,
     )
 
     reset_coro = agent_runner.reset(
