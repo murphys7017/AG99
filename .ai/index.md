@@ -37,11 +37,12 @@ Escalate when uncertain.
 
 ## Validation Efficiency
 
-- Inspect and reuse existing coverage before adding tests.
-- Add only the smallest focused test needed for a new behavior or a distinct regression risk; do not duplicate coverage to inflate test volume.
-- Do not rerun an unchanged test suite repeatedly. Rerun it only after relevant code changes or a failed result that required correction.
-- Prefer one targeted validation pass. Use broader suites only for high-risk shared boundaries, public-interface changes, or when explicitly requested.
-- Report intentionally skipped validation instead of creating low-value tests solely for completeness.
+- Do not add or expand automated tests by default. Add a test only when the user explicitly requests it or when one basic public input-output case is necessary to establish that the primary boundary works.
+- Keep tests at observable boundaries: provide representative input through a public entry point and assert the resulting output, serialized contract, or externally visible state.
+- Do not test private methods, internal call counts or order, temporary orchestration state, or behavior that has been replaced by a mock. Coverage percentage is not a reason to add a test.
+- Prefer direct acceptance checks, static checks, and one minimal input-output smoke case over large mocked unit suites.
+- Do not rerun an unchanged test suite. Run only the smallest relevant check after a meaningful change, and report intentionally skipped validation.
+- Preserve upstream tests unless they directly conflict with the current architecture. Clean project-added transition tests when they only lock in obsolete implementation details.
 
 ## Checklists
 
