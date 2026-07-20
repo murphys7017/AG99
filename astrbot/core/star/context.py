@@ -49,7 +49,7 @@ logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
-    from astrbot.core.execution import CoreExecutionLedger
+    from astrbot.core.execution_ledger import CoreExecutionLedger
     from astrbot.core.interaction.effects import PersonaEffectSpec
 
 WebApiHandler = Callable[..., Awaitable[Any]]

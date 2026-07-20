@@ -23,7 +23,7 @@ from astrbot.core.config.default import VERSION
 from astrbot.core.conversation_mgr import ConversationManager
 from astrbot.core.cron import CronJobManager
 from astrbot.core.db import BaseDatabase
-from astrbot.core.execution import CoreExecutionLedger
+from astrbot.core.execution_ledger import CoreExecutionLedger
 from astrbot.core.interaction import (
     InteractionMiddleware,
     InteractionOutputController,
