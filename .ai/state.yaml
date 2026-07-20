@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: establish_execution_preparation_boundary
-  scope: Separate visible dialogue from Core execution continuity, add normalized asset references and durable turn commits, and make Native Core consume the first CoreExecutionSpec boundary
+  phase: runtime_lifecycle_ownership
+  scope: Establish explicit EventBus and lifecycle task ownership before continuing Core execution preparation and executor decoupling
 context:
   confidence: high
   assumptions:

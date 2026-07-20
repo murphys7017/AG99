@@ -78,6 +78,9 @@ class AstrBotCoreLifecycle:
         self.personal_runtime_manager = PersonalRuntimeManager()
         self.core_execution_ledger = CoreExecutionLedger(db)
         self._default_chat_provider_warning_emitted = False
+        self._lifecycle_service_tasks: set[asyncio.Task] = set()
+        self._shutdown_lock = asyncio.Lock()
+        self._stopped = False
 
         # 设置代理
         proxy_config = self.astrbot_config.get("http_proxy", "")
@@ -308,7 +311,35 @@ class AstrBotCoreLifecycle:
         # 初始化关闭控制面板的事件
         self.dashboard_shutdown_event = asyncio.Event()
 
-        asyncio.create_task(update_llm_metadata())
+        self._start_lifecycle_service(
+            update_llm_metadata(),
+            name="llm_metadata_refresh",
+        )
+
+    def _start_lifecycle_service(self, coro, *, name: str) -> None:
+        """Track a lifecycle-owned service task until it completes or shutdown begins."""
+        task = asyncio.create_task(coro, name=name)
+        self._lifecycle_service_tasks.add(task)
+        task.add_done_callback(self._on_lifecycle_service_done)
+
+    def _on_lifecycle_service_done(self, task: asyncio.Task) -> None:
+        self._lifecycle_service_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logger.error(
+                f"Lifecycle service task failed: {task.get_name()}",
+                exc_info=True,
+            )
+
+    async def _cancel_lifecycle_service_tasks(self) -> None:
+        tasks = list(self._lifecycle_service_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _load(self) -> None:
         """加载事件总线和任务并初始化."""
@@ -391,54 +422,65 @@ class AstrBotCoreLifecycle:
         await asyncio.gather(*self.curr_tasks, return_exceptions=True)
 
     async def stop(self) -> None:
-        """停止 AstrBot 核心生命周期管理类, 取消所有当前任务并终止各个管理器."""
-        if self.temp_dir_cleaner:
-            await self.temp_dir_cleaner.stop()
+        """Stop event processing before releasing the services it depends on."""
+        async with self._shutdown_lock:
+            if self._stopped:
+                return
 
-        # 请求停止所有正在运行的异步任务
-        for task in self.curr_tasks:
-            task.cancel()
+            event_bus = getattr(self, "event_bus", None)
+            if event_bus is not None:
+                await event_bus.stop()
 
-        if self.cron_manager:
-            await self.cron_manager.shutdown()
+            curr_tasks = list(getattr(self, "curr_tasks", []))
+            for task in curr_tasks:
+                task.cancel()
+            if curr_tasks:
+                await asyncio.gather(*curr_tasks, return_exceptions=True)
 
-        for plugin in self.plugin_manager.context.get_all_stars():
+            await self._cancel_lifecycle_service_tasks()
+
+            if self.temp_dir_cleaner:
+                await self.temp_dir_cleaner.stop()
+            if self.cron_manager:
+                await self.cron_manager.shutdown()
+
+            plugin_manager = getattr(self, "plugin_manager", None)
+            if plugin_manager is not None:
+                for plugin in plugin_manager.context.get_all_stars():
+                    try:
+                        await plugin_manager._terminate_plugin(plugin)
+                    except Exception as e:
+                        logger.warning(traceback.format_exc())
+                        logger.warning(
+                            f"插件 {plugin.name} 未被正常终止 {e!s}, 可能会导致资源泄露等问题。",
+                        )
+
+            provider_manager = getattr(self, "provider_manager", None)
+            if provider_manager is not None:
+                await provider_manager.terminate()
+            platform_manager = getattr(self, "platform_manager", None)
+            if platform_manager is not None:
+                await platform_manager.terminate()
+            kb_manager = getattr(self, "kb_manager", None)
+            if kb_manager is not None:
+                await kb_manager.terminate()
+            reset_memory_postprocessor()
+            await shutdown_memory_service()
+
+            dashboard_shutdown_event = getattr(self, "dashboard_shutdown_event", None)
+            if dashboard_shutdown_event is not None:
+                dashboard_shutdown_event.set()
+
+            # Release the database only after all event and service tasks have ended.
             try:
-                await self.plugin_manager._terminate_plugin(plugin)
+                await self.db.engine.dispose()
             except Exception as e:
-                logger.warning(traceback.format_exc())
-                logger.warning(
-                    f"插件 {plugin.name} 未被正常终止 {e!s}, 可能会导致资源泄露等问题。",
-                )
-
-        await self.provider_manager.terminate()
-        await self.platform_manager.terminate()
-        await self.kb_manager.terminate()
-        reset_memory_postprocessor()
-        await shutdown_memory_service()
-        self.dashboard_shutdown_event.set()
-
-        # 再次遍历curr_tasks等待每个任务真正结束
-        for task in self.curr_tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.error(f"任务 {task.get_name()} 发生错误: {e}")
-
-        # 释放数据库引擎连接池，避免关闭后仍持有连接。
-        try:
-            await self.db.engine.dispose()
-        except Exception as e:
-            logger.warning(f"释放数据库引擎失败: {e}")
+                logger.warning(f"释放数据库引擎失败: {e}")
+            self._stopped = True
 
     async def restart(self) -> None:
         """重启 AstrBot 核心生命周期管理类, 终止各个管理器并重新加载平台实例"""
-        await self.provider_manager.terminate()
-        await self.platform_manager.terminate()
-        await self.kb_manager.terminate()
-        self.dashboard_shutdown_event.set()
+        await self.stop()
         threading.Thread(
             target=self.astrbot_updator._reboot,
             name="restart",

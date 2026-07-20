@@ -34,10 +34,14 @@ class EventBus:
         self.pipeline_scheduler_mapping = pipeline_scheduler_mapping
         self.astrbot_config_mgr = astrbot_config_mgr
         self._pending_tasks: set[asyncio.Task] = set()
+        self._accepting_events = True
+        self._stopped = False
 
     async def dispatch(self) -> None:
-        while True:
+        while self._accepting_events:
             event: AstrMessageEvent = await self.event_queue.get()
+            if not self._accepting_events:
+                return
             conf_info = self.astrbot_config_mgr.get_conf_info(event.unified_msg_origin)
             conf_id = conf_info["id"]
             conf_name = conf_info.get("name") or conf_id
@@ -51,6 +55,19 @@ class EventBus:
             task = asyncio.create_task(scheduler.execute(event))
             self._pending_tasks.add(task)
             task.add_done_callback(self._on_task_done)
+
+    async def stop(self) -> None:
+        """Stop accepting events and settle every dispatched pipeline task."""
+        if self._stopped:
+            return
+
+        self._accepting_events = False
+        pending_tasks = list(self._pending_tasks)
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        self._stopped = True
 
     def _on_task_done(self, task: asyncio.Task) -> None:
         self._pending_tasks.discard(task)
