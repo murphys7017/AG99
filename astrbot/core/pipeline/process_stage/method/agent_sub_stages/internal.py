@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 
@@ -21,6 +22,11 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildConfig,
     MainAgentBuildResult,
     build_main_agent,
+)
+from astrbot.core.db.po import CoreExecutionRecord as CoreExecutionLedgerRecord
+from astrbot.core.execution import (
+    CORE_EXECUTION_REQUEST_EXTRA_KEY,
+    CoreExecutionRequest,
 )
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.message.components import File, Image, Record, Reply, Video
@@ -160,6 +166,8 @@ class InternalAgentSubStage(Stage):
         self, event: AstrMessageEvent, provider_wake_prefix: str
     ) -> AsyncGenerator[None, None]:
         typing_requested = False
+        agent_runner: AgentRunner | None = None
+        req: ProviderRequest | None = None
         try:
             streaming_response = self.streaming_response
             if (enable_streaming := event.get_extra("enable_streaming")) is not None:
@@ -193,7 +201,6 @@ class InternalAgentSubStage(Stage):
             if await call_event_hook(event, EventType.OnWaitingLLMRequestEvent):
                 return
 
-            agent_runner: AgentRunner | None = None
             runner_registered = False
             try:
                 build_cfg = replace(
@@ -406,6 +413,12 @@ class InternalAgentSubStage(Stage):
 
         except Exception as e:
             logger.error(f"Error occurred while processing agent: {e}")
+            await self._save_failed_interaction_core_state(
+                event,
+                req,
+                agent_runner,
+                e,
+            )
             custom_error_message = extract_persona_custom_error_message_from_event(
                 event
             )
@@ -430,6 +443,26 @@ class InternalAgentSubStage(Stage):
         runner_stats: AgentStats | None,
         user_aborted: bool = False,
     ) -> None:
+        if event.get_extra("_interaction_enabled", False):
+            try:
+                await self._save_interaction_core_state(
+                    event,
+                    req,
+                    llm_response,
+                    all_messages,
+                    runner_stats,
+                    user_aborted=user_aborted,
+                )
+            except Exception as exc:  # noqa: BLE001
+                event.set_extra("_core_execution_ledger_failed", True)
+                event.set_extra("_core_execution_ledger_failure_reason", str(exc))
+                logger.error(
+                    "Core execution ledger persistence failed after execution: turn_id=%s error=%s",
+                    event.get_extra("_turn_id"),
+                    exc,
+                    exc_info=True,
+                )
+            return
         if not req or not req.conversation:
             return
 
@@ -500,6 +533,146 @@ class InternalAgentSubStage(Stage):
             history=message_to_save,
             token_usage=token_usage,
         )
+
+    async def _save_interaction_core_state(
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest,
+        llm_response: LLMResponse | None,
+        all_messages: list[Message],
+        runner_stats: AgentStats | None,
+        *,
+        user_aborted: bool,
+    ) -> None:
+        """Persist Core telemetry and execution continuity, never visible dialogue."""
+        if not req or not req.conversation:
+            return
+
+        execution_request = event.get_extra(CORE_EXECUTION_REQUEST_EXTRA_KEY)
+        if not isinstance(execution_request, CoreExecutionRequest):
+            return
+        if (
+            event.get_extra("_core_execution_ledger_recorded_id")
+            == execution_request.execution_id
+        ):
+            return
+
+        token_usage = (
+            llm_response.usage.total
+            if llm_response is not None and llm_response.usage is not None
+            else None
+        )
+        if token_usage is not None:
+            try:
+                await self.conv_manager.update_conversation(
+                    event.unified_msg_origin,
+                    req.conversation.cid,
+                    token_usage=token_usage,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to persist Interaction Core token usage",
+                    exc_info=True,
+                )
+        messages = _extract_core_execution_messages(all_messages)
+        ledger = self.ctx.plugin_manager.context.core_execution_ledger
+        if ledger is None:
+            return
+        record = CoreExecutionLedgerRecord(
+            execution_id=execution_request.execution_id,
+            conversation_id=req.conversation.cid,
+            turn_id=execution_request.turn_id,
+            core_task_id=execution_request.core_task_id,
+            parent_execution_id=execution_request.parent_execution_id,
+            attempt=execution_request.attempt,
+            executor_id="native",
+            status="aborted" if user_aborted else "completed",
+            task_spec=execution_request.task_spec,
+            messages=messages,
+            result=(
+                llm_response.completion_text
+                if llm_response is not None
+                else ""
+            ),
+            token_usage=(
+                runner_stats.token_usage.__dict__ if runner_stats is not None else None
+            ),
+        )
+        await ledger.append(record)
+        event.set_extra(
+            "_core_execution_ledger_recorded_id",
+            execution_request.execution_id,
+        )
+
+    async def _save_failed_interaction_core_state(
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest | None,
+        agent_runner: AgentRunner | None,
+        error: Exception,
+    ) -> None:
+        if (
+            not event.get_extra("_interaction_enabled", False)
+            or req is None
+            or req.conversation is None
+        ):
+            return
+        execution_request = event.get_extra(CORE_EXECUTION_REQUEST_EXTRA_KEY)
+        if not isinstance(execution_request, CoreExecutionRequest):
+            return
+        messages: list[dict] = []
+        if agent_runner is not None:
+            try:
+                messages = _extract_core_execution_messages(
+                    agent_runner.run_context.messages
+                )
+            except Exception:  # noqa: BLE001
+                messages = []
+        record = CoreExecutionLedgerRecord(
+            execution_id=execution_request.execution_id,
+            conversation_id=req.conversation.cid,
+            turn_id=execution_request.turn_id,
+            core_task_id=execution_request.core_task_id,
+            parent_execution_id=execution_request.parent_execution_id,
+            attempt=execution_request.attempt,
+            executor_id="native",
+            status="failed",
+            task_spec=execution_request.task_spec,
+            messages=messages,
+            error=str(error),
+        )
+        try:
+            ledger = self.ctx.plugin_manager.context.core_execution_ledger
+            if ledger is None:
+                return
+            await ledger.append(record)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to persist Core execution failure", exc_info=True)
+
+
+def _extract_core_execution_messages(
+    all_messages: list[Message],
+) -> list[dict]:
+    """Keep only Core execution evidence needed by a later executor turn."""
+    execution_messages: list[dict] = []
+    for message in all_messages:
+        if message.role == "tool" or (
+            message.role == "assistant" and message.tool_calls
+        ):
+            execution_messages.append(message.model_dump(mode="json"))
+    bounded: list[dict] = []
+    for message in execution_messages[-16:]:
+        serialized = json.dumps(message, ensure_ascii=False, default=str)
+        if len(serialized) <= 6000:
+            bounded.append(message)
+            continue
+        bounded.append(
+            {
+                "role": message.get("role", "tool"),
+                "content": f"{serialized[:6000]}...",
+            }
+        )
+    return bounded
 
 
 # we prevent astrbot from connecting to known malicious hosts

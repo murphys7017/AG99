@@ -49,6 +49,7 @@ logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
+    from astrbot.core.execution import CoreExecutionLedger
     from astrbot.core.interaction.effects import PersonaEffectSpec
 
 WebApiHandler = Callable[..., Awaitable[Any]]
@@ -178,6 +179,7 @@ class Context:
         knowledge_base_manager: KnowledgeBaseManager,
         cron_manager: CronJobManager,
         subagent_orchestrator: SubAgentOrchestrator | None = None,
+        core_execution_ledger: CoreExecutionLedger | None = None,
     ) -> None:
         self._event_queue = event_queue
         """事件队列。消息平台通过事件队列传递消息事件。"""
@@ -202,6 +204,7 @@ class Context:
         self.cron_manager = cron_manager
         """Cron job manager, initialized by core lifecycle."""
         self.subagent_orchestrator = subagent_orchestrator
+        self.core_execution_ledger = core_execution_ledger
         self._prompt_extension_collectors: list[
             _PromptExtensionCollectorRegistration
         ] = []

@@ -16,6 +16,7 @@ from astrbot.core.db.po import (
     CommandConfig,
     CommandConflict,
     ConversationV2,
+    CoreExecutionRecord,
     CronJob,
     Persona,
     PersonaFolder,
@@ -385,7 +386,12 @@ class SQLiteDatabase(BaseDatabase):
                 return new_conversation
 
     async def update_conversation(
-        self, cid, title=None, persona_id=None, content=None, token_usage=None
+        self,
+        cid,
+        title=None,
+        persona_id=None,
+        content=None,
+        token_usage=None,
     ):
         async with self.get_db() as session:
             session: AsyncSession
@@ -408,10 +414,71 @@ class SQLiteDatabase(BaseDatabase):
                 await session.execute(query)
         return await self.get_conversation_by_id(cid)
 
+    async def insert_core_execution_record(
+        self,
+        record: CoreExecutionRecord,
+        *,
+        retain: int = 32,
+    ) -> bool:
+        from sqlalchemy.exc import IntegrityError
+
+        async with self.get_db() as session:
+            session: AsyncSession
+            try:
+                async with session.begin():
+                    session.add(record)
+                    await session.flush()
+                    keep = max(1, int(retain))
+                    stale_ids = (
+                        select(CoreExecutionRecord.id)
+                        .where(
+                            col(CoreExecutionRecord.conversation_id)
+                            == record.conversation_id
+                        )
+                        .order_by(
+                            desc(CoreExecutionRecord.created_at),
+                            desc(CoreExecutionRecord.id),
+                        )
+                        .offset(keep)
+                    )
+                    await session.execute(
+                        delete(CoreExecutionRecord).where(
+                            col(CoreExecutionRecord.id).in_(stale_ids)
+                        )
+                    )
+            except IntegrityError:
+                return False
+        return True
+
+    async def get_recent_core_execution_records(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 8,
+    ) -> list[CoreExecutionRecord]:
+        async with self.get_db() as session:
+            result = await session.execute(
+                select(CoreExecutionRecord)
+                .where(
+                    col(CoreExecutionRecord.conversation_id) == conversation_id
+                )
+                .order_by(
+                    desc(CoreExecutionRecord.created_at),
+                    desc(CoreExecutionRecord.id),
+                )
+                .limit(max(0, int(limit)))
+            )
+            return list(reversed(result.scalars().all()))
+
     async def delete_conversation(self, cid) -> None:
         async with self.get_db() as session:
             session: AsyncSession
             async with session.begin():
+                await session.execute(
+                    delete(CoreExecutionRecord).where(
+                        col(CoreExecutionRecord.conversation_id) == cid,
+                    ),
+                )
                 await session.execute(
                     delete(ConversationV2).where(
                         col(ConversationV2.conversation_id) == cid,
@@ -422,6 +489,14 @@ class SQLiteDatabase(BaseDatabase):
         async with self.get_db() as session:
             session: AsyncSession
             async with session.begin():
+                conversation_ids = select(ConversationV2.conversation_id).where(
+                    col(ConversationV2.user_id) == user_id
+                )
+                await session.execute(
+                    delete(CoreExecutionRecord).where(
+                        col(CoreExecutionRecord.conversation_id).in_(conversation_ids)
+                    )
+                )
                 await session.execute(
                     delete(ConversationV2).where(
                         col(ConversationV2.user_id) == user_id

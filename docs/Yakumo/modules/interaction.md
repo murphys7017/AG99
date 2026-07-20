@@ -63,12 +63,15 @@ Input Runtime / Observation
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义
 - finalized material 校验
+- 在 completed 前把规范 user message、AssetRef 元数据和最终 Persona 文本按 `turn_id` 同步幂等提交到官方 Conversation；提交失败时 turn 标记 failed
 - 调度 `AFTER_TURN_COMPLETED` postprocess
 
 当前 completion 语义：
 
 - middleware 是 turn material producer
 - postprocess 是 completion consumer boundary
+- 官方 Conversation 是可见 Dialogue History owner；它在 turn completion 前提交，不由 postprocess 反推或补写
+- Core Execution Ledger 是执行连续性 owner，不保存为用户可见对话，也不投影给 Router 或 Persona
 - memory service 是 interaction turn 的主记忆写入 owner
 - `completed=True` 表示 middleware lifecycle handoff completed，不表示 memory 一定已经写入
 - `completion_state.status` 明确区分 `active` / `completed` / `failed` / `cancelled`

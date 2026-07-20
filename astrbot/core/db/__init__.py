@@ -17,6 +17,7 @@ from astrbot.core.db.po import (
     CommandConfig,
     CommandConflict,
     ConversationV2,
+    CoreExecutionRecord,
     CronJob,
     Persona,
     PersonaFolder,
@@ -216,6 +217,26 @@ class BaseDatabase(abc.ABC):
         token_usage: int | None = None,
     ) -> None:
         """Update a conversation's history."""
+        ...
+
+    @abc.abstractmethod
+    async def insert_core_execution_record(
+        self,
+        record: CoreExecutionRecord,
+        *,
+        retain: int = 32,
+    ) -> bool:
+        """Insert one executor attempt and enforce per-conversation retention."""
+        ...
+
+    @abc.abstractmethod
+    async def get_recent_core_execution_records(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 8,
+    ) -> list[CoreExecutionRecord]:
+        """Return recent executor attempts in chronological order."""
         ...
 
     @abc.abstractmethod

@@ -102,7 +102,8 @@ interaction turn 的输出路径与普通事件不同：
 
 - 普通事件继续走旧 pipeline result decoration / respond
 - interaction 事件由 `InteractionOutputController` 接管 send / streaming 语义
-- turn completion 由 middleware 调度 postprocess，memory service 消费 finalized material 后写入
+- interaction 的 finalized material 先由 middleware 同步幂等提交到官方 Conversation；提交成功后才完成 turn 并调度 postprocess
+- memory service 在 `AFTER_TURN_COMPLETED` 消费 finalized material；Core 执行连续性写入独立 Execution Ledger，不混入可见对话
 
 ## 重构意义
 

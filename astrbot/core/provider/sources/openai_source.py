@@ -14,6 +14,7 @@ from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 
 import httpx
+from json_repair import repair_json
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai._exceptions import NotFoundError
 from openai.lib.streaming.chat._completions import ChatCompletionStreamState
@@ -1018,9 +1019,16 @@ class ProviderOpenAIOfficial(Provider):
                     # workaround for #1454
                     if isinstance(tool_call.function.arguments, str):
                         try:
-                            args = json.loads(tool_call.function.arguments)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"解析参数失败: {e}")
+                            args = repair_json(
+                                tool_call.function.arguments,
+                                return_objects=True,
+                            )
+                            if not isinstance(args, dict):
+                                raise ValueError(
+                                    "tool call arguments must repair to a JSON object"
+                                )
+                        except Exception as e:  # noqa: BLE001
+                            logger.error(f"修复工具调用参数失败: {e}")
                             args = {}
                     else:
                         args = tool_call.function.arguments

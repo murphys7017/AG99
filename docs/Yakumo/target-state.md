@@ -346,6 +346,12 @@ Dispatcher，确定 Prompt Snapshot、Capability Snapshot、Conversation/Memory 
 方法替换、extra 镜像、平行 Agent SubStage、私有反向回调或旧 Interaction Memory。
 每个阶段切换 owner 后应删除旧内部路径，不长期维护双轨实现。
 
-只有前置主链稳定后，才从统一 Execution Preparation 接入 Native、Claude Code、
-OpenCode 等 Backend。详细阶段和验收条件见
+统一 Execution Preparation 已经以 `CoreExecutionRequest` 接入 Native；它将可见 Dialogue
+History、独立 Core Execution Ledger、能力快照和任务说明保持为不同事实，并由
+`NativeExecutionAdapter` 负责官方 `ProviderRequest` 转换。Claude Code、OpenCode 等 Backend
+仍等待 Execution Event 与取消边界稳定后再接入。详细阶段和验收条件见
 [Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)。
+
+`CoreExecutionRequest` 当前只是进程内准备边界，不是最终 Backend wire contract。Native
+工具对象、执行收尾、主动消息发送和 Conversation 提交窗口仍属于下一阶段需要收口的运行时
+边界；目标态不得把这些现状固化为各 Backend 各自维护的兼容实现。

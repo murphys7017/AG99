@@ -12,6 +12,7 @@ from astrbot.core.agent.message import AssistantMessageSegment, UserMessageSegme
 from astrbot.core.db import BaseDatabase
 from astrbot.core.db.po import Conversation, ConversationV2
 from astrbot.core.utils.datetime_utils import to_utc_timestamp
+from astrbot.core.utils.session_lock import session_lock_manager
 
 
 class ConversationManager:
@@ -363,6 +364,37 @@ class ConversationManager:
             cid=cid,
             content=history,
         )
+
+    async def append_dialogue_turn(
+        self,
+        cid: str,
+        *,
+        turn_id: str,
+        user_message: dict,
+        assistant_message: dict,
+    ) -> bool:
+        """Atomically append one visible turn within this process."""
+        resolved_turn_id = turn_id.strip()
+        if not resolved_turn_id:
+            raise ValueError("turn_id is required")
+        async with session_lock_manager.acquire_lock(f"conversation:{cid}"):
+            conv = await self.db.get_conversation_by_id(cid=cid)
+            if not conv:
+                raise ValueError(f"Conversation with id {cid} not found")
+            history = list(conv.content or [])
+            if any(
+                isinstance(message, dict)
+                and message.get("_astrbot_turn_id") == resolved_turn_id
+                for message in history
+            ):
+                return False
+            user_payload = dict(user_message)
+            assistant_payload = dict(assistant_message)
+            user_payload["_astrbot_turn_id"] = resolved_turn_id
+            assistant_payload["_astrbot_turn_id"] = resolved_turn_id
+            history.extend((user_payload, assistant_payload))
+            await self.db.update_conversation(cid=cid, content=history)
+            return True
 
     async def get_human_readable_context(
         self,

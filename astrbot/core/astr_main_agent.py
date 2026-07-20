@@ -21,6 +21,13 @@ from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
 from astrbot.core.astr_agent_run_util import AgentRunner
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.conversation_mgr import Conversation
+from astrbot.core.execution import (
+    CORE_EXECUTION_REQUEST_EXTRA_KEY,
+    CoreCapabilitySnapshot,
+    CoreExecutionRequest,
+    NativeExecutionAdapter,
+)
+from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -28,14 +35,12 @@ from astrbot.core.persona_error_reply import (
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.builder import PromptContextBuilder
-from astrbot.core.prompt.collectors.core_task_collector import CoreTaskCollector
-from astrbot.core.prompt.collectors.explicit_context_collector import (
-    ExplicitContextCollector,
+from astrbot.core.prompt.collectors.core_execution_history_collector import (
+    CoreExecutionHistoryCollector,
 )
+from astrbot.core.prompt.collectors.core_task_collector import CoreTaskCollector
 from astrbot.core.prompt.collectors.knowledge_collector import KnowledgeCollector
-from astrbot.core.prompt.collectors.memory_collector import MemoryCollector
 from astrbot.core.prompt.collectors.policy_collector import PolicyCollector
-from astrbot.core.prompt.collectors.session_collector import SessionCollector
 from astrbot.core.prompt.collectors.skills_collector import SkillsCollector
 from astrbot.core.prompt.collectors.subagent_collector import SubagentCollector
 from astrbot.core.prompt.collectors.system_collector import SystemCollector
@@ -49,7 +54,7 @@ from astrbot.core.prompt.render import (
     PROMPT_RENDER_RESULT_EXTRA_KEY,
     PromptRenderEngine,
     PromptTarget,
-    apply_render_result_to_request,
+    RenderResult,
 )
 from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import ProviderRequest
@@ -178,6 +183,7 @@ class MainAgentBuildResult:
     agent_runner: AgentRunner
     provider_request: ProviderRequest
     provider: Provider
+    execution_request: CoreExecutionRequest | None = None
     reset_coro: Coroutine | None = None
 
 
@@ -300,6 +306,7 @@ def _build_interaction_core_collectors():
     return [
         SystemCollector(),
         CoreTaskCollector(),
+        CoreExecutionHistoryCollector(),
         PolicyCollector(),
         SkillsCollector(),
         ToolsCollector(),
@@ -396,7 +403,7 @@ def _build_conversation_save_user_message(
     return {"role": "user", "content": content}
 
 
-def _apply_prompt_pipeline(
+def _render_prompt_pipeline(
     *,
     event: AstrMessageEvent,
     plugin_context: Context,
@@ -405,8 +412,8 @@ def _apply_prompt_pipeline(
     prompt_context_pack,
     provider: Provider | None = None,
     target: PromptTarget | None = None,
-) -> None:
-    """Render the canonical context and replace all model-visible request fields."""
+) -> RenderResult:
+    """Render the canonical context without binding it to a provider request."""
     if provider is not None:
         event.set_extra("provider", provider)
     render_engine = PromptRenderEngine()
@@ -418,12 +425,19 @@ def _apply_prompt_pipeline(
         config=config,
         provider_request=provider_request,
     )
-    apply_result = apply_render_result_to_request(render_result, provider_request)
     event.set_extra(PROMPT_RENDER_RESULT_EXTRA_KEY, render_result)
-    event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, apply_result)
     save_user_message = _build_conversation_save_user_message(prompt_context_pack)
     if save_user_message is not None:
         event.set_extra(CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY, save_user_message)
+    return render_result
+
+
+def _record_prompt_application(
+    event: AstrMessageEvent,
+    apply_result,
+    provider_request: ProviderRequest,
+) -> None:
+    event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, apply_result)
     logger.debug(
         "Prompt apply-visible result: %s",
         json.dumps(
@@ -602,7 +616,6 @@ def _modalities_fix(provider: Provider, req: ProviderRequest) -> None:
     modalities_unknown = not isinstance(modalities, list)
     supports_image = modalities_unknown or "image" in modalities
     supports_audio = modalities_unknown or "audio" in modalities
-    supports_tool_use = modalities_unknown or "tool_use" in modalities
 
     image_placeholder_count = 0
     audio_placeholder_count = 0
@@ -670,12 +683,18 @@ def _modalities_fix(provider: Provider, req: ProviderRequest) -> None:
             req.prompt = f"{placeholder} {req.prompt}"
         else:
             req.prompt = placeholder
+
+
+def _tool_modality_fix(provider: Provider, req: ProviderRequest) -> None:
+    modalities = provider.provider_config.get("modalities")
+    if not isinstance(modalities, list) or "tool_use" in modalities:
+        return
     if req.func_tool:
-        if not supports_tool_use:
-            logger.debug(
-                "Provider %s does not support tool_use, clearing tools.", provider
-            )
-            req.func_tool = None
+        logger.debug(
+            "Provider %s does not support tool_use, clearing tools before prompt collection.",
+            provider,
+        )
+        req.func_tool = None
 
 
 def _sanitize_context_by_modalities(
@@ -1079,6 +1098,8 @@ async def build_main_agent(
             )
         )
 
+    _tool_modality_fix(provider, req)
+
     if provider.provider_config.get("max_context_tokens", 0) <= 0:
         model = provider.get_model()
         if model_info := LLM_METADATAS.get(model):
@@ -1121,7 +1142,7 @@ async def build_main_agent(
     event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
     log_context_pack(prompt_context_pack, event=event)
 
-    _apply_prompt_pipeline(
+    render_result = _render_prompt_pipeline(
         event=event,
         plugin_context=plugin_context,
         config=config,
@@ -1129,6 +1150,26 @@ async def build_main_agent(
         provider_request=req,
         prompt_context_pack=prompt_context_pack,
         target=prompt_target,
+    )
+    task_spec = get_core_task_spec(event)
+    execution_request = CoreExecutionRequest.from_context_pack(
+        context_pack=prompt_context_pack,
+        rendered_prompt=render_result,
+        turn_id=str(event.get_extra("_turn_id", "") or ""),
+        task_spec=task_spec.to_dict() if task_spec is not None else None,
+        parent_execution_id=event.get_extra("_core_parent_execution_id"),
+        capabilities=CoreCapabilitySnapshot.from_context_pack(
+            prompt_context_pack,
+            tools=req.func_tool,
+        ),
+    )
+    event.set_extra(CORE_EXECUTION_REQUEST_EXTRA_KEY, execution_request)
+    native_execution = NativeExecutionAdapter().adapt(execution_request, req)
+    req = native_execution.provider_request
+    _record_prompt_application(
+        event,
+        native_execution.prompt_apply_result,
+        req,
     )
     _modalities_fix(provider, req)
     _sanitize_context_by_modalities(config, provider, req)
@@ -1174,5 +1215,6 @@ async def build_main_agent(
         agent_runner=agent_runner,
         provider_request=req,
         provider=provider,
+        execution_request=execution_request,
         reset_coro=reset_coro if not apply_reset else None,
     )

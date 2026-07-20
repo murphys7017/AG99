@@ -75,7 +75,7 @@
 - 处理入站媒体与 STT，由 Prompt 层统一采集完整事实并形成规范 `ContextPack`；Router、Core Planner、Persona 和 Core 只读取各自投影
 - 在 interaction turn 中接管 `event.send(...)` / `event.send_streaming(...)` 的语义输出
 - 统一 visible-reply persona layer、result contributor、TTS、t2i、stream observation、stream interjection、utterance ledger 与 finalized turn material
-- 将 turn completion 收口为：middleware 产出 finalized material，postprocess consumers 再消费 material；当前 memory service 与 interaction conversation history 都在 `AFTER_TURN_COMPLETED` 阶段落地
+- 将 turn completion 收口为：middleware 产出 finalized material，先按 `turn_id` 同步幂等提交规范 Conversation，再标记 completed 并调度 postprocess；Memory Service 在 `AFTER_TURN_COMPLETED` 阶段异步消费 finalized material。Core 工具调用、结果和错误不写入可见 Conversation，而是进入独立 Core Execution Ledger
 - 对普通 core 非 interaction 事件保留原 pipeline STT/TTS 兼容路径
 
 当前已完成：
@@ -104,6 +104,8 @@
 - Router 与 Persona Expression 在输入完成 materialization 后并发启动。Turn State 用 `pending / committed / emitted / suppressed / failed` 仲裁推测式 Persona 输出；Core 最终结果先提交时可以抑制尚未提交的即时表达。
 - `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 终止 Core 路径并保留并发 Persona 表达。Planner 不向即时 Persona 注入 task summary 或短回复指令。Planner 失败仍禁止 Core；若 Persona 已成功 emitted，则保留失败记录并按 Persona-only 完成本轮，否则 fail-fast。
 - Core 执行上下文只声明本轮存在独立的 Persona 快速回复分支，并要求 Core 跳过寒暄、确认和进度填充，直接返回实质结果材料；Persona 的运行状态和已发送文本不进入 Core Prompt。
+- Native Core 当前按 `ContextPack -> RenderResult -> CoreExecutionRequest -> NativeExecutionAdapter -> ProviderRequest` 进入官方 AgentRunner。`CoreExecutionRequest` 是内存中的执行准备契约，不是完整 Backend API；官方 `OnLLMRequest` 仍在最终 `ProviderRequest` 形成后、执行前运行。
+- Core Execution Ledger 以 `execution_id` 独立保存 task、attempt、有限工具证据、结果、错误和 token usage，并仅投影给 Core。当前记录生成仍位于 Native InternalAgentSubStage；统一 Execution Event、取消和第三方 Backend 回流尚未完成。
 - Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，贡献项通过 `meta.targets` 进入目标投影；Router、Planner、Persona 不再按 purpose 分别触发采集。完整事实由默认 Collector 统一收集，Core 在同一 Pack 上加入阶段性的 `CoreTaskSpec` 后投影为 Core 视图。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 指令与输出契约由 Render Profile 提供，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料由 Collector 进入 `input.visible_reply_material`

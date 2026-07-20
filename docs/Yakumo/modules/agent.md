@@ -7,7 +7,8 @@
 - 选择 Provider 和 Conversation。
 - 装配 `func_tool`、知识库查询工具、Web Search、Cron、Sandbox/Local 工具和 SubAgent handoff。
 - 建立 Runner 配置和 fallback provider。
-- 调用统一 Prompt 管线收集、渲染并应用模型输入。
+- 调用统一 Prompt 管线收集、渲染模型输入，并形成 `CoreExecutionRequest`。
+- 通过 `NativeExecutionAdapter` 把执行准备结果投影到官方 `ProviderRequest`。
 - 启动 Agent Runner。
 
 它不再直接拼 Persona、历史、policy、knowledge、附件或 CoreTaskSpec 文本。这些模型可见事实由 Collector 提供，目标范围由 Projection 决定，最终格式由 Layout/Renderer/Adapter 生成。
@@ -20,13 +21,21 @@ Main Agent 仍拥有运行时能力装配，Prompt 系统只描述模型输入�
 |---|---|
 | `ProviderRequest.system_prompt/contexts/prompt/media/output_contract` | Prompt Render + Adapter |
 | `ProviderRequest.func_tool` | Main Agent / Capability 装配 |
+| `CoreExecutionRequest` | Core Execution Preparation |
+| Native `ProviderRequest` 转换 | `NativeExecutionAdapter` |
 | provider、conversation、runner、sandbox 环境 | Main Agent |
 | target 可见范围 | Prompt Target Projection |
 | Router/Planner/Persona 决策 | Interaction 对应 Agent |
 
-`RenderResult.tool_schema` 不会自动注册到 `func_tool`。工具 schema 与可执行工具尚待统一 capability snapshot；新代码不能把两者当作同一个对象。
+`CoreCapabilitySnapshot` 已记录本轮实际工具对象以及 Prompt 中的 tool schema、skills、knowledge 和 subagent 事实，但 `RenderResult.tool_schema` 仍不会自动注册到 `func_tool`。两者尚未统一为一个可序列化能力契约，新代码不能把渲染 schema 当作可执行工具注册表。
 
 官方 `on_llm_request` 在 Core 的统一 Prompt Apply 后运行，用于低层请求兼容。它不是 Router、Planner 或 Persona 的事实扩展入口。
+
+## 执行连续性
+
+Native Agent 完成后把有限工具证据、结果、错误和 token usage 写入独立 Core Execution Ledger。后续 Core Prompt 通过专用 Collector 读取最近记录；Router、Persona 和普通 Conversation API 不读取该 ledger。
+
+当前 ledger 记录仍由 `InternalAgentSubStage` 生成，因此这只是 Native 执行准备和连续性边界，不是完整的 `ExecutionBackend` / `ExecutionEvent` 实现。取消、进度、错误翻译和第三方执行器回流仍需后续统一。
 
 ## Agent 上下文
 

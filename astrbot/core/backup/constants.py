@@ -11,6 +11,7 @@ from astrbot.core.db.po import (
     CommandConfig,
     CommandConflict,
     ConversationV2,
+    CoreExecutionRecord,
     Persona,
     PersonaFolder,
     PlatformMessageHistory,
@@ -44,6 +45,7 @@ from astrbot.core.utils.astrbot_path import (
 MAIN_DB_MODELS: dict[str, type[SQLModel]] = {
     "platform_stats": PlatformStat,
     "conversations": ConversationV2,
+    "core_execution_records": CoreExecutionRecord,
     "personas": Persona,
     "persona_folders": PersonaFolder,
     "preferences": Preference,

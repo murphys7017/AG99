@@ -15,7 +15,8 @@ Fact Sources
   -> PromptTreeBuilder / PromptTree
   -> Provider Renderer
   -> RenderResult
-  -> ProviderRequestAdapter
+  -> CoreExecutionRequest
+  -> NativeExecutionAdapter / ProviderRequestAdapter
   -> Provider / Agent Runner
 ```
 
@@ -31,14 +32,15 @@ Fact Sources
 | `PromptRenderProfile` | 提供目标局部的 system/request prompt、输出契约、输入后缀和精确隐藏项 | 声明共享事实、判断 Provider 能力、修改原始 Pack |
 | Layout / Tree | 把逻辑 slot 放入 provider-neutral 语义树 | 选择业务事实、生成 Provider 私有 payload |
 | Provider Renderer | 编译 system/messages/media/tool schema/output contract | 选择目标上下文、执行工具、决定业务路由 |
-| Request Adapter | 把 `RenderResult` 写入现有 `ProviderRequest` 的模型可见字段 | 替换 `func_tool`、provider、conversation 或 runner 配置 |
+| Execution Preparation | 把 Core 的 `ContextPack`、`RenderResult`、TaskSpec、能力和执行身份组合成 provider-neutral `CoreExecutionRequest` | 执行 Provider 协议、重做事实收集 |
+| Native Adapter | 复用 `ProviderRequestAdapter` 把 `RenderResult` 写入官方 `ProviderRequest`，并带入已装配的实际工具 | 重新投影 Prompt、选择任务、替换官方 Hook |
 | Provider / Runner | 落地协议并执行模型或工具循环 | 回头收集、投影或修补 Prompt 事实 |
 
 ## 收集与构建
 
 ### Collector
 
-默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent 和 knowledge。Interaction 在同一规范 Pack 上增加附件摘要、Interaction Prompt Contributor；Persona 阶段再派生本轮待表达材料。
+默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent、knowledge 和 Core Execution History。Execution History 是 optional、Core-only 的独立 ledger 投影，不属于可见 Conversation。Interaction 在同一规范 Pack 上增加附件摘要、Interaction Prompt Contributor；Persona 阶段再派生本轮待表达材料。
 
 Collector 只返回事实：
 
@@ -70,7 +72,7 @@ Interaction 当前通过默认 Collector 建立一份完整的本轮共享事实
 | Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、topic/short-term memory、插件目录 | 完整人格、媒体正文、工具 schema、effect、Core/Planner 决策 |
 | Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、topic/short-term memory、插件目录 | 完整人格、Router 决策、effect、实际工具 schema |
 | Persona | 完整人格、官方历史、群聊上下文、memory/persona state、当前输入、待表达材料和 Core 结果 | policy、knowledge、执行能力、Core 私有执行上下文 |
-| Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec` | 完整人格、persona state、待表达材料、effect 语义 |
+| Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec`、有限 Core Execution History | 完整人格、persona state、待表达材料、effect 语义 |
 
 Router 和 Core Planner 只共享事实来源，不共享模型 Prompt、决策或输出。投影中的历史长度、字段清理和诊断移除属于确定性安全边界，不是“让模型自己忽略”。
 
@@ -126,7 +128,7 @@ Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从�
 
 ### 非 Interaction Core
 
-普通 Main Agent 直接运行默认 Collector，渲染完整 Pack，不使用 Router/Planner/Persona Profile。`astr_main_agent` 只装配运行时工具和 Runner，不再手写另一套模型可见 Prompt。
+普通 Main Agent 直接运行默认 Collector，渲染完整 Pack，不使用 Router/Planner/Persona Profile。`astr_main_agent` 装配运行时工具和 Runner，随后形成 `CoreExecutionRequest` 并由 Native Adapter 转为官方请求，不再手写另一套模型可见 Prompt。
 
 ### 官方钩子
 

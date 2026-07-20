@@ -141,7 +141,9 @@ flowchart LR
         PROVIDER["选择 Provider<br/>构造或复用 ProviderRequest"]
         CAP["注入现有能力<br/>插件工具 / Skills / Knowledge / SubAgent / Web Search / Sandbox / Cron"]
         CORE_PACK["PromptContextBuilder<br/>Interaction Core 复用共享 Pack 并增量加入 CoreTaskSpec 与执行能力"]
-        PROMPT["Interaction Core：Core Projection<br/>普通 Core：LLM exposure filter<br/>→ Layout / PromptTree → Provider Renderer → Apply"]
+        PROMPT["Interaction Core：Core Projection<br/>普通 Core：LLM exposure filter<br/>→ Layout / PromptTree → Provider-neutral RenderResult"]
+        EXEC_REQ["CoreExecutionRequest（当前为进程内准备契约）<br/>Execution identity / TaskSpec / ContextPack / RenderResult / CapabilitySnapshot<br/>Native ToolSet 尚未形成跨 Backend 协议"]
+        NATIVE_ADAPTER["NativeExecutionAdapter<br/>RenderResult → official ProviderRequest"]
         CORE_NOTE["Core system context<br/>告知存在独立 Persona 快速回复分支<br/>不注入 Persona 状态或已发送文本"]
         LLM_HOOK["OnLLMRequest hook"]
         ARUN["AstrBot AgentRunner<br/>Provider + FunctionToolExecutor 工具循环"]
@@ -161,7 +163,7 @@ flowchart LR
         TASK -. "CoreTaskSpec" .-> CORE_PACK
         TASK -. "启用固定 Persona 协同提示" .-> CORE_NOTE
         CORE_NOTE --> PROMPT
-        PROMPT --> LLM_HOOK --> ARUN --> RESULT
+        PROMPT --> EXEC_REQ --> NATIVE_ADAPTER --> LLM_HOOK --> ARUN --> RESULT
         ARUN -. "Agent 完成后的最终 LLMResponse" .-> LLM_POST
 
         RUNNER_TYPE -->|"third-party"| THIRD0 --> THIRD_REQ --> BRIDGE --> THIRD_HOOK --> THIRD_RUN --> RESULT
@@ -233,12 +235,13 @@ flowchart LR
         VISIBLE["记录 InteractionUtterance / visible_outputs"]
         OUTPUT_FINAL{"当前输出是否拥有 Turn 完成权?"}
         TURN_ACTIVE["Turn 保持 active<br/>等待 Persona / Core / 插件后续输出"]
-        FINAL_MATERIAL["Finalized Turn Material<br/>user_text / assistant_text / visible_outputs"]
+        FINAL_MATERIAL["Finalized Turn Material<br/>normalized user_message / AssetRef / assistant_text / visible_outputs"]
+        CONVERSATION["同步幂等提交 Canonical Dialogue History<br/>ConversationManager.append_dialogue_turn(turn_id)"]
+        EXEC_LEDGER["Independent Core Execution Ledger<br/>execution_id / task / attempt / tool evidence / result<br/>当前仍由 InternalAgentSubStage 收尾"]
         TURN_FINAL["InteractionMiddleware._finalize_turn<br/>completed / failed / cancelled"]
         AFTER_TURN["调度后台 AFTER_TURN_COMPLETED"]
         POST_MANAGER["PostProcessManager<br/>按注册顺序串行分发"]
         MEMORY["MemoryPostProcessor<br/>MemoryService.update_from_postprocess"]
-        CONVERSATION["InteractionConversationPostProcessor<br/>ConversationManager.add_message_pair"]
 
         AFTER_SENT{"OnAfterMessageSent hook 终止后续?"}
         VISIBLE_COMPLETE["complete_visible_turn"]
@@ -250,10 +253,10 @@ flowchart LR
         OUTPUT_FINAL -->|"否：Hybrid immediate / plugin progress"| TURN_ACTIVE
         OUTPUT_FINAL -->|"是：Core final / stream final / plugin final"| FINAL_MATERIAL
         PERSONA_ONLY --> FINAL_MATERIAL
-        FINAL_MATERIAL --> TURN_FINAL --> AFTER_TURN
+        FINAL_MATERIAL --> CONVERSATION --> TURN_FINAL --> AFTER_TURN
+        ARUN -. "Core 完成" .-> EXEC_LEDGER
         AFTER_TURN -. "后台任务" .-> POST_MANAGER
         POST_MANAGER --> MEMORY
-        POST_MANAGER --> CONVERSATION
 
         NORMAL_RESP -. "发送返回后" .-> AFTER_SENT
         INTERACTION_RESP -. "发送返回后；最终提交保持 deferred" .-> AFTER_SENT
@@ -276,7 +279,7 @@ flowchart LR
         ACTIVE_PLUGIN["插件调用 Context.send_message"]
         SESSION_SEND["Platform.send_by_session"]
         ACTIVE_PLATFORM["平台 Adapter 直接发送"]
-        ACTIVE_BYPASS["不创建 AstrMessageEvent Turn<br/>不经过 EventBus / Pipeline / Interaction Output Runtime"]
+        ACTIVE_BYPASS["已知未收口边界<br/>不创建 AstrMessageEvent Turn<br/>不经过 EventBus / Pipeline / Interaction Output Runtime"]
 
         ACTIVE_PLUGIN --> SESSION_SEND --> ACTIVE_PLATFORM --> ACTIVE_BYPASS
     end

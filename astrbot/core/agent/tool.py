@@ -7,6 +7,7 @@ import mcp
 from deprecated import deprecated
 from pydantic import Field, model_validator
 from pydantic.dataclasses import dataclass
+from pydantic.fields import FieldInfo
 
 from astrbot.core.message.message_event_result import MessageEventResult
 
@@ -24,7 +25,15 @@ DEFAULT_TOOL_TARGETS = frozenset({TOOL_TARGET_CORE})
 
 
 def normalize_tool_targets(value: Iterable[str] | str | None = None) -> frozenset[str]:
-    """Validate tool execution targets while keeping legacy tools Core-only."""
+    """Validate tool execution targets while keeping legacy tools Core-only.
+
+    Some existing plugins use ``dataclasses.dataclass`` subclasses over the
+    Pydantic dataclass base. In those subclasses an inherited Pydantic field
+    can remain a class-level ``FieldInfo`` instead of being materialized on the
+    tool instance. Treat that compatibility artifact as an omitted target.
+    """
+    if isinstance(value, FieldInfo):
+        value = None
     if value is None:
         return DEFAULT_TOOL_TARGETS
     raw_targets = [value] if isinstance(value, str) else list(value)

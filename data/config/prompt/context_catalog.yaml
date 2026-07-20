@@ -118,6 +118,14 @@ contexts:
     lifecycle: rolling
     notes: "对话历史记录"
 
+  - id: conversation.core_execution_history
+    category: conversation
+    slots: [history]
+    required: false
+    multiple: false
+    lifecycle: rolling
+    notes: "仅供 Core 执行连续性使用的独立 ledger 记录，不属于可见对话；仅投影到 Core"
+
   - id: conversation.group_recent
     category: conversation
     slots: [history]

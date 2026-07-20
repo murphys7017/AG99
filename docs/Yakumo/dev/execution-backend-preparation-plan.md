@@ -268,8 +268,16 @@ AgentRunner 才能被发现。
 - Output、错误、取消、进度和完成通过统一事件返回 Personal Runtime。
 - Local/Third-party 平行准备链可以被删除，而不是继续扩展。
 
-只有这些条件满足后，才单独设计 `ExecutionRequest`、`ExecutionEvent` 和 Backend
-Adapter，并先让 Native 成为第一个实现。Claude Code、OpenCode 等随后接入同一边界。
+当前已经建立 `CoreExecutionRequest`，它只保存统一 ContextPack、目标渲染结果、CoreTaskSpec、
+能力快照和执行身份。Native 通过 `NativeExecutionAdapter` 将其转换为官方
+`ProviderRequest`；这不是完整的 `ExecutionBackend` 接口。Claude Code、OpenCode 等只有在
+Output、取消和 Execution Event 边界稳定后才接入；Dify/Coze/DashScope/DeerFlow 继续作为
+官方兼容路径。
+
+这里的 `CoreExecutionRequest` 是单次进程内的准备契约，不是可持久化或可跨进程传输的
+Backend 协议。当前 `CoreCapabilitySnapshot.tools` 仍保留 Native `ToolSet` 运行时对象，
+同时提供规范化 tool schema；后续 Backend 契约只能消费规范化能力描述或显式 capability
+handle，不能依赖 `FunctionTool`、`AgentRunner` 或 `ProviderRequest` 对象。
 
 Phase 0 已确认的准备边界：
 
@@ -300,9 +308,33 @@ Phase 0 已确认的准备边界：
   `ProcessStage -> handle_pipeline_event()` 成为唯一生产入口。
 - 恢复 Interaction 非流式输出的内容安全与 `OnDecoratingResult` 兼容。
 - 修正 RespondStage 驱动输出的发送后 Hook、visible completion 和 Turn 最终化顺序。
+- 将可见 Dialogue History 与独立 Core Execution Ledger 分离；Interaction 只向 Conversation
+  写入规范化用户输入和最终 Personal Expression。Ledger 使用 execution_id 记录每次执行尝试，
+  不进入普通会话 API。
+- Conversation 使用 `turn_id` 做持久幂等标记，并在进程内按 conversation 串行追加；
+  提交失败不再把 Turn 标记为 completed。
+- 规范化输入保存 `AssetRef` 元数据和已有图片转述，不复制图片二进制，也不隐式创建
+  长期资产缓存。
+- Native Core 已通过 `NativeExecutionAdapter` 消费 `CoreExecutionRequest`；Token 统计和
+  Core 执行连续性独立持久化，不再依赖可见对话历史，也不绕过 Prompt Renderer 手动追加
+  ProviderRequest 上下文。
 
-下一步不是抽取 Backend。先完成 Phase 0 的 Subagent 回流和旧 Interaction Memory 数据
-策略，之后按“Handler 前 reserve、Handler 后 activate”的顺序进入 Phase 1。
+当前仍存在、但不应继续扩展的准备阶段边界：
+
+- Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；在统一
+  Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
+- Third-party Agent Stage 仍走官方兼容准备链，尚未消费 `CoreExecutionRequest`。它是需要
+  保留的现状，不是新 Backend 的实现模板。
+- `Context.send_message()` 主动消息仍直接进入 `Platform.send_by_session()`，没有形成统一
+  Turn、Persona Expression 和 OutputIntent。
+- 可见输出完成后才同步提交 Conversation；当前有进程内锁和 `turn_id` 幂等，但没有持久化
+  Turn Journal/outbox。进程在发送成功、提交历史之前退出时，仍可能留下“用户已看到、历史
+  未记录”的窗口。
+- `AssetRef` 在没有 Asset Store 时只提供不可解析的来源身份与已有转述，不承诺历史图片可
+  再次读取。
+
+下一步继续收口 Execution Event、取消和 Output Port，再评估 Backend Adapter；不直接
+把现有 Third-party Agent SubStage 改名或包装成新执行器接口。
 
 ## 非目标
 

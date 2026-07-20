@@ -591,6 +591,18 @@ class BasePromptRenderer:
         del pack, event, plugin_context, config, provider_request
 
         rendered_slot_names: list[str] = []
+        execution_history_slot = self._find_slot(
+            slots,
+            "conversation.core_execution_history",
+        )
+        if self._render_mapping_slot(
+            resolve_node("system/core"),
+            "core_execution_history",
+            execution_history_slot,
+            body_keys=("instruction", "records", "record_count"),
+        ):
+            rendered_slot_names.append("conversation.core_execution_history")
+
         group_recent_slot = self._find_slot(slots, "conversation.group_recent")
         if group_recent_slot is not None and isinstance(
             group_recent_slot.value,

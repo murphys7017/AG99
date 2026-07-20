@@ -23,12 +23,11 @@ from astrbot.core.config.default import VERSION
 from astrbot.core.conversation_mgr import ConversationManager
 from astrbot.core.cron import CronJobManager
 from astrbot.core.db import BaseDatabase
+from astrbot.core.execution import CoreExecutionLedger
 from astrbot.core.interaction import (
     InteractionMiddleware,
     InteractionOutputController,
     PersonalRuntimeManager,
-    register_interaction_conversation_postprocessor,
-    reset_interaction_conversation_postprocessor,
 )
 from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.memory import (
@@ -75,9 +74,9 @@ class AstrBotCoreLifecycle:
         self.temp_dir_cleaner: TempDirCleaner | None = None
         self.memory_service = None
         self.memory_postprocessor = None
-        self.interaction_conversation_postprocessor = None
         self.interaction_middleware: InteractionMiddleware | None = None
         self.personal_runtime_manager = PersonalRuntimeManager()
+        self.core_execution_ledger = CoreExecutionLedger(db)
         self._default_chat_provider_warning_emitted = False
 
         # 设置代理
@@ -263,15 +262,13 @@ class AstrBotCoreLifecycle:
             self.kb_manager,
             self.cron_manager,
             self.subagent_orchestrator,
+            self.core_execution_ledger,
         )
         self.interaction_middleware.set_plugin_context(self.star_context)
         bind_memory_provider_manager(self.provider_manager)
         self.memory_service = get_memory_service(self.astrbot_config)
         await self.memory_service.initialize()
         self.memory_postprocessor = register_memory_postprocessor(self.memory_service)
-        self.interaction_conversation_postprocessor = (
-            register_interaction_conversation_postprocessor()
-        )
 
         # 初始化插件管理器
         self.plugin_manager = PluginManager(self.star_context, self.astrbot_config)
@@ -418,7 +415,6 @@ class AstrBotCoreLifecycle:
         await self.platform_manager.terminate()
         await self.kb_manager.terminate()
         reset_memory_postprocessor()
-        reset_interaction_conversation_postprocessor()
         await shutdown_memory_service()
         self.dashboard_shutdown_event.set()
 

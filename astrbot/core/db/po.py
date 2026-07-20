@@ -62,6 +62,31 @@ class ProviderStat(TimestampMixin, SQLModel, table=True):
     time_to_first_token: float = Field(default=0.0, nullable=False)
 
 
+class CoreExecutionRecord(TimestampMixin, SQLModel, table=True):
+    """One Core executor attempt, separate from user-visible dialogue."""
+
+    __tablename__: str = "core_execution_records"
+
+    id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_column_kwargs={"autoincrement": True},
+    )
+    execution_id: str = Field(max_length=64, nullable=False, unique=True, index=True)
+    conversation_id: str = Field(max_length=36, nullable=False, index=True)
+    turn_id: str = Field(max_length=128, nullable=False, index=True)
+    core_task_id: str = Field(max_length=192, nullable=False, index=True)
+    parent_execution_id: str | None = Field(default=None, max_length=64, index=True)
+    attempt: int = Field(default=1, nullable=False)
+    executor_id: str = Field(default="native", max_length=64, nullable=False)
+    status: str = Field(default="completed", max_length=32, nullable=False, index=True)
+    task_spec: dict | None = Field(default=None, sa_type=JSON)
+    messages: list | None = Field(default=None, sa_type=JSON)
+    result: str | None = Field(default=None, sa_type=Text)
+    error: str | None = Field(default=None, sa_type=Text)
+    token_usage: dict | None = Field(default=None, sa_type=JSON)
+
+
 class ConversationV2(TimestampMixin, SQLModel, table=True):
     __tablename__: str = "conversations"
 
@@ -79,7 +104,6 @@ class ConversationV2(TimestampMixin, SQLModel, table=True):
     platform_id: str = Field(nullable=False)
     user_id: str = Field(nullable=False)
     content: list | None = Field(default=None, sa_type=JSON)
-
     title: str | None = Field(default=None, max_length=255)
     persona_id: str | None = Field(default=None)
     token_usage: int = Field(default=0, nullable=False)
@@ -539,8 +563,6 @@ class Conversation:
     updated_at: int = 0
     token_usage: int = 0
     """对话的总 token 数量。AstrBot 会保留最近一次 LLM 请求返回的总 token 数，方便统计。token_usage 可能为 0，表示未知。"""
-
-
 class Personality(TypedDict):
     """LLM 人格类。
 

@@ -28,7 +28,7 @@ Platform Adapter
   -> Personal Runtime turn admission
   -> Router || Persona Expression
   -> persona: Output
-  -> hybrid: Core Planner -> Core Executor -> Persona Expression -> Output
+  -> hybrid: Core Planner -> CoreExecutionRequest -> Native Core Executor -> Persona Expression -> Output
 ```
 
 Prompt 使用唯一数据流：
@@ -40,10 +40,14 @@ Collectors
   -> PromptRenderProfile
   -> Layout / PromptTreeBuilder
   -> Provider Renderer
-  -> ProviderRequest
+  -> RenderResult
+  -> CoreExecutionRequest
+  -> NativeExecutionAdapter -> ProviderRequest
 ```
 
 Collector 负责收集事实，Projection 决定 Router、Planner、Persona 和 Core 各自可见的内容，Renderer 只负责编译 Provider 格式。Prompt 系统不负责路由、工具执行、Memory 写入或消息发送。
+
+可见 Dialogue History 与 Core Execution Ledger 是两个事实源：Conversation 只保存规范用户输入和最终 Persona 表达；Ledger 保存 Core task、工具证据、结果和错误，并且只投影给 Core。当前 Native 已接入执行准备边界，完整 Backend/Event/取消协议仍属于后续工作。
 
 ## 文档边界
 

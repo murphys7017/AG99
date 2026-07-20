@@ -10,6 +10,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
+from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.utils.media_utils import ensure_wav
 from astrbot.core.voice import (
     VoiceServiceError,
@@ -18,7 +19,9 @@ from astrbot.core.voice import (
 )
 
 from .config import is_middleware_enabled, load_interaction_agent_config
+from .conversation_history import commit_interaction_conversation_turn
 from .core_planner import CorePlannerAgent, CorePlannerError
+from .dialogue import build_canonical_user_message
 from .expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
@@ -445,6 +448,24 @@ class InteractionMiddleware:
                 InteractionLifecycleStage.RECEIVED,
             )
             await self._materialize_inbound_media(event)
+            if isinstance(event.get_extra("provider_request"), ProviderRequest):
+                self.attach_event_context(event, turn_id=turn_state.turn_id)
+                event.set_extra("_interaction_protocol_core_bypass", True)
+                event.set_extra(
+                    "_interaction_protocol_core_bypass_reason",
+                    "explicit_provider_request",
+                )
+                await dispatch_interaction_lifecycle(
+                    event,
+                    self.plugin_context,
+                    InteractionLifecycleStage.DELEGATED,
+                    metadata={
+                        "route_kind": "explicit_provider_request",
+                        "reason": "plugin_handler_requested_llm",
+                    },
+                )
+                self._forward_to_core(event)
+                return
             protocol_reason = None
             if self._is_live_mode_event(event):
                 protocol_reason = self._prepare_live_mode_protocol_bypass(event)
@@ -1306,6 +1327,7 @@ class InteractionMiddleware:
         material = {
             "turn_id": turn_id,
             "user_text": (event.message_str or "").strip(),
+            "user_message": build_canonical_user_message(event),
             "assistant_text": canonical_reply,
             "visible_outputs": outputs,
             "history_source": "interaction.turn.material",
@@ -1341,6 +1363,7 @@ class InteractionMiddleware:
         material = {
             "turn_id": str(event.get_extra("_turn_id", "") or "").strip(),
             "user_text": (event.message_str or "").strip(),
+            "user_message": build_canonical_user_message(event),
             "assistant_text": "",
             "visible_outputs": [],
             "history_source": "interaction.turn.material",
@@ -1429,6 +1452,29 @@ class InteractionMiddleware:
             )
             return
 
+        committed = await commit_interaction_conversation_turn(
+            event=event,
+            plugin_context=self.plugin_context,
+            turn_id=turn_id,
+            turn_material=material,
+        )
+        if not committed:
+            self._record_turn_finalization_failure(
+                event,
+                "conversation_history_commit_failed",
+            )
+            record_interaction_turn_completion_failure(
+                event,
+                "conversation_history_commit_failed",
+            )
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={"reason": "conversation_history_commit_failed"},
+            )
+            return
         self._schedule_turn_postprocess(event)
         mark_interaction_turn_postprocess_dispatched(event)
         mark_interaction_turn_completed(event)
