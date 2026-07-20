@@ -77,7 +77,7 @@ Platform / Internal Event
   输出归属，不提前解析最终 persona，也不运行分类或表达。
 - `Personal Expression` 只形成统一人格表达，不执行业务能力。
 - Prompt 系统收集事实并按目标投影；Planner 不构建执行上下文。
-- Capability 系统是 Knowledge、Tools、Skills、Plugins 和 Subagent 的唯一能力来源。
+- Capability 系统是 Knowledge、Tools、Skills 和 Plugins 的唯一通用能力来源；SubAgent 仅作为 Native 兼容能力保留。
 - Output Dispatcher 是所有可见输出的唯一内部出口。
 - Backend 只消费准备好的 Execution Request，并返回统一 Execution Events。
 
@@ -213,7 +213,7 @@ adapter 执行。
 
 实施内容：
 
-- 建立唯一 Capability Resolver，统一解析 Knowledge、Tools、Skills、Plugins 和 Subagent。
+- 建立唯一 Capability Resolver，统一解析 Knowledge、Tools、Skills 和 Plugins。
 - 同一个 Snapshot 提供不同投影：Router 看极简摘要，Planner 看能力目录，执行阶段看
   完整描述与调用绑定。
 - 当前 Interaction 已直接复用统一 Prompt collectors，不再维护平行的能力摘要事实源；
@@ -249,11 +249,11 @@ AgentRunner 才能被发现。
 - ProcessStage 不再直接操作 OutputController 内部事务。
 - 多轮插件任务由 Session Runtime 持有，插件输出明确区分 progress、final、protocol 和
   raw media。
-- Subagent 定义与生命周期归 Personal Runtime；当前 Handoff 继续作为 Native 执行适配，
-  直到任务边界完成迁移。
+- 当前 SubAgent 定义、Collector、Orchestrator 和 Handoff 继续作为 Native 官方兼容路径，
+  不迁入通用 Capability 或 Personal Runtime 契约；新的专业能力优先由插件 Tool 提供。
 
-退出条件：插件和 Subagent 不依赖某个具体 Runner 的内部对象才能参与主流程；主动和
-后台结果能够恢复正确的 persona、task 和 audience。
+退出条件：插件能力不依赖某个具体 Runner 的内部对象即可参与主流程；Native SubAgent
+被明确隔离在兼容边界，主动和后台结果能够恢复正确的 persona、task 和 audience。
 
 ## Phase 8：Execution Preparation 就绪复核
 
@@ -263,21 +263,27 @@ AgentRunner 才能被发现。
 
 - ContextSnapshot、CapabilitySnapshot 和 CoreTaskSpec 均有唯一 owner。
 - Personal Runtime 能形成完整、不可变的 Execution Preparation 输入。
-- Native 当前使用的 Prompt、工具、知识库、Skills、插件和 Subagent 均能从前置边界
-  获得，不要求 Backend 自行查询。
+- Native 当前使用的 Prompt、工具、知识库、Skills 和插件均能从前置边界获得，不要求
+  Backend 自行查询；SubAgent handoff 由 Native 兼容路径自行持有，不属于此验收条件。
 - Output、错误、取消、进度和完成通过统一事件返回 Personal Runtime。
 - Local/Third-party 平行准备链可以被删除，而不是继续扩展。
 
-当前已经建立 `CoreExecutionRequest`，它只保存统一 ContextPack、目标渲染结果、CoreTaskSpec、
-能力快照和执行身份。Native 通过 `NativeExecutionAdapter` 将其转换为官方
-`ProviderRequest`；这不是完整的 `ExecutionBackend` 接口。Claude Code、OpenCode 等只有在
+当前已经建立 `CoreExecutionSpec`，它只保存统一 ContextPack、CoreTaskSpec、执行历史、
+通用能力快照和执行身份，不保存目标渲染结果或 ProviderRequest。Native 在 Spec 形成后执行
+目标投影和渲染，再通过 `NativeExecutionAdapter` 转换为官方 `ProviderRequest`；这不是完整的
+`ExecutionBackend` 接口，而且 Spec 当前仍在 Native `build_main_agent` 内形成。Claude Code、OpenCode 等只有在
 Output、取消和 Execution Event 边界稳定后才接入；Dify/Coze/DashScope/DeerFlow 继续作为
 官方兼容路径。
 
-这里的 `CoreExecutionRequest` 是单次进程内的准备契约，不是可持久化或可跨进程传输的
+这里的 `CoreExecutionSpec` 是单次进程内的事实契约，不是可持久化或可跨进程传输的
 Backend 协议。当前 `CoreCapabilitySnapshot.tools` 仍保留 Native `ToolSet` 运行时对象，
 同时提供规范化 tool schema；后续 Backend 契约只能消费规范化能力描述或显式 capability
 handle，不能依赖 `FunctionTool`、`AgentRunner` 或 `ProviderRequest` 对象。
+
+`CoreCapabilitySnapshot` 不再为 SubAgent 设置独立字段。Native 继续通过 `SubagentCollector`、
+`SubAgentOrchestrator` 和 `HandoffTool` 保持官方兼容，因此当前 Native ContextPack/ToolSet
+仍携带 handoff 信息；该绑定应在 Capability Resolver 阶段分离。其他 Backend 不承担该能力，
+新增场景优先通过插件 Tool 表达。
 
 Phase 0 已确认的准备边界：
 
@@ -315,7 +321,8 @@ Phase 0 已确认的准备边界：
   提交失败不再把 Turn 标记为 completed。
 - 规范化输入保存 `AssetRef` 元数据和已有图片转述，不复制图片二进制，也不隐式创建
   长期资产缓存。
-- Native Core 已通过 `NativeExecutionAdapter` 消费 `CoreExecutionRequest`；Token 统计和
+- Native Core 已通过 `NativeExecutionAdapter` 消费 `CoreExecutionSpec` 与其后的 Native
+  RenderResult；Token 统计和
   Core 执行连续性独立持久化，不再依赖可见对话历史，也不绕过 Prompt Renderer 手动追加
   ProviderRequest 上下文。
 
@@ -323,7 +330,7 @@ Phase 0 已确认的准备边界：
 
 - Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；在统一
   Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
-- Third-party Agent Stage 仍走官方兼容准备链，尚未消费 `CoreExecutionRequest`。它是需要
+- Third-party Agent Stage 仍走官方兼容准备链，尚未消费 `CoreExecutionSpec`。它是需要
   保留的现状，不是新 Backend 的实现模板。
 - `Context.send_message()` 主动消息仍直接进入 `Platform.send_by_session()`，没有形成统一
   Turn、Persona Expression 和 OutputIntent。

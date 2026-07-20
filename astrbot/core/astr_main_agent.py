@@ -22,9 +22,9 @@ from astrbot.core.astr_agent_run_util import AgentRunner
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.execution import (
-    CORE_EXECUTION_REQUEST_EXTRA_KEY,
+    CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreCapabilitySnapshot,
-    CoreExecutionRequest,
+    CoreExecutionSpec,
     NativeExecutionAdapter,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
@@ -183,7 +183,7 @@ class MainAgentBuildResult:
     agent_runner: AgentRunner
     provider_request: ProviderRequest
     provider: Provider
-    execution_request: CoreExecutionRequest | None = None
+    execution_spec: CoreExecutionSpec | None = None
     reset_coro: Coroutine | None = None
 
 
@@ -1142,19 +1142,9 @@ async def build_main_agent(
     event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
     log_context_pack(prompt_context_pack, event=event)
 
-    render_result = _render_prompt_pipeline(
-        event=event,
-        plugin_context=plugin_context,
-        config=config,
-        provider=provider,
-        provider_request=req,
-        prompt_context_pack=prompt_context_pack,
-        target=prompt_target,
-    )
     task_spec = get_core_task_spec(event)
-    execution_request = CoreExecutionRequest.from_context_pack(
+    execution_spec = CoreExecutionSpec.from_context_pack(
         context_pack=prompt_context_pack,
-        rendered_prompt=render_result,
         turn_id=str(event.get_extra("_turn_id", "") or ""),
         task_spec=task_spec.to_dict() if task_spec is not None else None,
         parent_execution_id=event.get_extra("_core_parent_execution_id"),
@@ -1163,8 +1153,21 @@ async def build_main_agent(
             tools=req.func_tool,
         ),
     )
-    event.set_extra(CORE_EXECUTION_REQUEST_EXTRA_KEY, execution_request)
-    native_execution = NativeExecutionAdapter().adapt(execution_request, req)
+    event.set_extra(CORE_EXECUTION_SPEC_EXTRA_KEY, execution_spec)
+    render_result = _render_prompt_pipeline(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
+        provider=provider,
+        provider_request=req,
+        prompt_context_pack=execution_spec.context_pack,
+        target=prompt_target,
+    )
+    native_execution = NativeExecutionAdapter().adapt(
+        execution_spec,
+        render_result,
+        req,
+    )
     req = native_execution.provider_request
     _record_prompt_application(
         event,
@@ -1215,6 +1218,6 @@ async def build_main_agent(
         agent_runner=agent_runner,
         provider_request=req,
         provider=provider,
-        execution_request=execution_request,
+        execution_spec=execution_spec,
         reset_coro=reset_coro if not apply_reset else None,
     )

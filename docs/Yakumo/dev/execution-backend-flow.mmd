@@ -141,8 +141,8 @@ flowchart LR
         PROVIDER["选择 Provider<br/>构造或复用 ProviderRequest"]
         CAP["注入现有能力<br/>插件工具 / Skills / Knowledge / SubAgent / Web Search / Sandbox / Cron"]
         CORE_PACK["PromptContextBuilder<br/>Interaction Core 复用共享 Pack 并增量加入 CoreTaskSpec 与执行能力"]
-        PROMPT["Interaction Core：Core Projection<br/>普通 Core：LLM exposure filter<br/>→ Layout / PromptTree → Provider-neutral RenderResult"]
-        EXEC_REQ["CoreExecutionRequest（当前为进程内准备契约）<br/>Execution identity / TaskSpec / ContextPack / RenderResult / CapabilitySnapshot<br/>Native ToolSet 尚未形成跨 Backend 协议"]
+        EXEC_SPEC["CoreExecutionSpec（当前为进程内事实契约）<br/>Execution identity / TaskSpec / ContextPack / execution history / CapabilitySnapshot<br/>不包含 RenderResult / ProviderRequest；无独立 SubAgent 字段"]
+        PROMPT["Native 目标渲染<br/>Interaction Core：Core Projection<br/>普通 Core：LLM exposure filter<br/>→ Layout / PromptTree → Provider-neutral RenderResult"]
         NATIVE_ADAPTER["NativeExecutionAdapter<br/>RenderResult → official ProviderRequest"]
         CORE_NOTE["Core system context<br/>告知存在独立 Persona 快速回复分支<br/>不注入 Persona 状态或已发送文本"]
         LLM_HOOK["OnLLMRequest hook"]
@@ -159,11 +159,11 @@ flowchart LR
         LLM_POST["Agent Hooks<br/>ON_LLM_RESPONSE Postprocess"]
 
         AGENT_ENTRY --> RUNNER_TYPE
-        RUNNER_TYPE -->|"local"| LOCAL0 --> BUILD --> PROVIDER --> CAP --> CORE_PACK --> PROMPT
+        RUNNER_TYPE -->|"local"| LOCAL0 --> BUILD --> PROVIDER --> CAP --> CORE_PACK
         TASK -. "CoreTaskSpec" .-> CORE_PACK
         TASK -. "启用固定 Persona 协同提示" .-> CORE_NOTE
         CORE_NOTE --> PROMPT
-        PROMPT --> EXEC_REQ --> NATIVE_ADAPTER --> LLM_HOOK --> ARUN --> RESULT
+        CORE_PACK --> EXEC_SPEC --> PROMPT --> NATIVE_ADAPTER --> LLM_HOOK --> ARUN --> RESULT
         ARUN -. "Agent 完成后的最终 LLMResponse" .-> LLM_POST
 
         RUNNER_TYPE -->|"third-party"| THIRD0 --> THIRD_REQ --> BRIDGE --> THIRD_HOOK --> THIRD_RUN --> RESULT

@@ -28,7 +28,7 @@ Platform Adapter
   -> Personal Runtime turn admission
   -> Router || Persona Expression
   -> persona: Output
-  -> hybrid: Core Planner -> CoreExecutionRequest -> Native Core Executor -> Persona Expression -> Output
+  -> hybrid: Core Planner -> CoreExecutionSpec -> Native Core Executor -> Persona Expression -> Output
 ```
 
 Prompt 使用唯一数据流：
@@ -36,12 +36,12 @@ Prompt 使用唯一数据流：
 ```text
 Collectors
   -> PromptContextBuilder / ContextPack
-  -> target projection
+  -> CoreExecutionSpec
+  -> Native target projection
   -> PromptRenderProfile
   -> Layout / PromptTreeBuilder
   -> Provider Renderer
   -> RenderResult
-  -> CoreExecutionRequest
   -> NativeExecutionAdapter -> ProviderRequest
 ```
 

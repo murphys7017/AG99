@@ -18,7 +18,7 @@ from astrbot.core.prompt.render.request_adapter import (
 )
 from astrbot.core.provider.entities import ProviderRequest
 
-CORE_EXECUTION_REQUEST_EXTRA_KEY = "_core_execution_request"
+CORE_EXECUTION_SPEC_EXTRA_KEY = "_core_execution_spec"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +29,6 @@ class CoreCapabilitySnapshot:
     tool_schema: Any = None
     skills: Any = None
     knowledge: Any = None
-    subagents: Any = None
 
     @classmethod
     def from_context_pack(
@@ -43,26 +42,17 @@ class CoreCapabilitySnapshot:
             tool_schema=_slot_value(context_pack, "capability.tools_schema"),
             skills=_slot_value(context_pack, "capability.skills_prompt"),
             knowledge=_slot_value(context_pack, "knowledge.snippets"),
-            subagents={
-                "handoff_tools": _slot_value(
-                    context_pack, "capability.subagent_handoff_tools"
-                ),
-                "router_prompt": _slot_value(
-                    context_pack, "capability.subagent_router_prompt"
-                ),
-            },
         )
 
 
 @dataclass(frozen=True, slots=True)
-class CoreExecutionRequest:
-    """Provider-neutral Core input prepared before backend adaptation."""
+class CoreExecutionSpec:
+    """Provider-neutral Core facts prepared before backend-specific rendering."""
 
     execution_id: str
     core_task_id: str
     turn_id: str
     context_pack: ContextPack
-    rendered_prompt: RenderResult
     task_spec: dict[str, Any] | None = None
     execution_history: tuple[dict[str, Any], ...] = ()
     capabilities: CoreCapabilitySnapshot = field(default_factory=CoreCapabilitySnapshot)
@@ -74,12 +64,11 @@ class CoreExecutionRequest:
         cls,
         *,
         context_pack: ContextPack,
-        rendered_prompt: RenderResult,
         turn_id: str,
         task_spec: dict[str, Any] | None = None,
         parent_execution_id: str | None = None,
         capabilities: CoreCapabilitySnapshot | None = None,
-    ) -> CoreExecutionRequest:
+    ) -> CoreExecutionSpec:
         execution_id = uuid4().hex
         resolved_turn_id = turn_id.strip() or execution_id
         task_metadata = task_spec.get("metadata") if isinstance(task_spec, dict) else None
@@ -102,7 +91,6 @@ class CoreExecutionRequest:
             core_task_id=core_task_id,
             turn_id=resolved_turn_id,
             context_pack=neutral_pack,
-            rendered_prompt=rendered_prompt,
             task_spec=dict(task_spec) if isinstance(task_spec, dict) else None,
             execution_history=tuple(
                 dict(item) for item in records if isinstance(item, dict)
@@ -119,21 +107,22 @@ class NativeExecutionInput:
 
 
 class NativeExecutionAdapter:
-    """Adapt a neutral execution request to AstrBot's native provider contract."""
+    """Apply a Native-rendered prompt and capabilities to AstrBot's request."""
 
     def __init__(self) -> None:
         self._request_adapter = ProviderRequestAdapter()
 
     def adapt(
         self,
-        request: CoreExecutionRequest,
+        spec: CoreExecutionSpec,
+        rendered_prompt: RenderResult,
         provider_request: ProviderRequest,
     ) -> NativeExecutionInput:
         apply_result = self._request_adapter.apply_render_result(
-            request.rendered_prompt,
+            rendered_prompt,
             provider_request,
         )
-        provider_request.func_tool = request.capabilities.tools
+        provider_request.func_tool = spec.capabilities.tools
         return NativeExecutionInput(
             provider_request=provider_request,
             prompt_apply_result=apply_result,
@@ -250,10 +239,10 @@ def _slot_value(pack: ContextPack, name: str) -> Any:
 
 
 __all__ = [
-    "CORE_EXECUTION_REQUEST_EXTRA_KEY",
+    "CORE_EXECUTION_SPEC_EXTRA_KEY",
     "CoreCapabilitySnapshot",
     "CoreExecutionLedger",
-    "CoreExecutionRequest",
+    "CoreExecutionSpec",
     "NativeExecutionAdapter",
     "NativeExecutionInput",
 ]

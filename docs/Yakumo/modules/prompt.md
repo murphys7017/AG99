@@ -9,13 +9,13 @@ Fact Sources
   -> Context Collectors
   -> PromptContextBuilder
   -> canonical / derived ContextPack
+  -> CoreExecutionSpec（Core 目标）
   -> project_context_pack(target)
   -> PromptRenderProfile
   -> PromptLayoutInterface
   -> PromptTreeBuilder / PromptTree
   -> Provider Renderer
   -> RenderResult
-  -> CoreExecutionRequest
   -> NativeExecutionAdapter / ProviderRequestAdapter
   -> Provider / Agent Runner
 ```
@@ -32,7 +32,7 @@ Fact Sources
 | `PromptRenderProfile` | 提供目标局部的 system/request prompt、输出契约、输入后缀和精确隐藏项 | 声明共享事实、判断 Provider 能力、修改原始 Pack |
 | Layout / Tree | 把逻辑 slot 放入 provider-neutral 语义树 | 选择业务事实、生成 Provider 私有 payload |
 | Provider Renderer | 编译 system/messages/media/tool schema/output contract | 选择目标上下文、执行工具、决定业务路由 |
-| Execution Preparation | 把 Core 的 `ContextPack`、`RenderResult`、TaskSpec、能力和执行身份组合成 provider-neutral `CoreExecutionRequest` | 执行 Provider 协议、重做事实收集 |
+| Execution Preparation | 在目标渲染前把 Core 的 `ContextPack`、TaskSpec、执行历史、能力和执行身份组合成 provider-neutral `CoreExecutionSpec` | 保存 RenderResult、执行 Provider 协议、重做事实收集 |
 | Native Adapter | 复用 `ProviderRequestAdapter` 把 `RenderResult` 写入官方 `ProviderRequest`，并带入已装配的实际工具 | 重新投影 Prompt、选择任务、替换官方 Hook |
 | Provider / Runner | 落地协议并执行模型或工具循环 | 回头收集、投影或修补 Prompt 事实 |
 
@@ -128,7 +128,7 @@ Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从�
 
 ### 非 Interaction Core
 
-普通 Main Agent 直接运行默认 Collector，渲染完整 Pack，不使用 Router/Planner/Persona Profile。`astr_main_agent` 装配运行时工具和 Runner，随后形成 `CoreExecutionRequest` 并由 Native Adapter 转为官方请求，不再手写另一套模型可见 Prompt。
+普通 Main Agent 直接运行默认 Collector，不使用 Router/Planner/Persona Profile。`astr_main_agent` 装配运行时工具和 Runner，从完整 Pack 形成 `CoreExecutionSpec`，随后按 Native 目标渲染并由 Native Adapter 转为官方请求，不再手写另一套模型可见 Prompt。SubAgent Collector 仍属于这一 Native 收集路径；通用 Snapshot 不再设置独立 SubAgent 字段，但 Native Pack/ToolSet 暂时保留兼容信息。
 
 ### 官方钩子
 

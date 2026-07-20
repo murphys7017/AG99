@@ -7,8 +7,8 @@
 - 选择 Provider 和 Conversation。
 - 装配 `func_tool`、知识库查询工具、Web Search、Cron、Sandbox/Local 工具和 SubAgent handoff。
 - 建立 Runner 配置和 fallback provider。
-- 调用统一 Prompt 管线收集、渲染模型输入，并形成 `CoreExecutionRequest`。
-- 通过 `NativeExecutionAdapter` 把执行准备结果投影到官方 `ProviderRequest`。
+- 调用统一 Prompt 管线收集模型事实，并在渲染前形成 `CoreExecutionSpec`。
+- 按 Native 目标渲染模型输入，再通过 `NativeExecutionAdapter` 投影到官方 `ProviderRequest`。
 - 启动 Agent Runner。
 
 它不再直接拼 Persona、历史、policy、knowledge、附件或 CoreTaskSpec 文本。这些模型可见事实由 Collector 提供，目标范围由 Projection 决定，最终格式由 Layout/Renderer/Adapter 生成。
@@ -21,13 +21,13 @@ Main Agent 仍拥有运行时能力装配，Prompt 系统只描述模型输入�
 |---|---|
 | `ProviderRequest.system_prompt/contexts/prompt/media/output_contract` | Prompt Render + Adapter |
 | `ProviderRequest.func_tool` | Main Agent / Capability 装配 |
-| `CoreExecutionRequest` | Core Execution Preparation |
+| `CoreExecutionSpec` | Core Execution Preparation facts |
 | Native `ProviderRequest` 转换 | `NativeExecutionAdapter` |
 | provider、conversation、runner、sandbox 环境 | Main Agent |
 | target 可见范围 | Prompt Target Projection |
 | Router/Planner/Persona 决策 | Interaction 对应 Agent |
 
-`CoreCapabilitySnapshot` 已记录本轮实际工具对象以及 Prompt 中的 tool schema、skills、knowledge 和 subagent 事实，但 `RenderResult.tool_schema` 仍不会自动注册到 `func_tool`。两者尚未统一为一个可序列化能力契约，新代码不能把渲染 schema 当作可执行工具注册表。
+`CoreCapabilitySnapshot` 已记录本轮实际工具对象以及 Prompt 中的 tool schema、skills 和 knowledge，但 `RenderResult.tool_schema` 仍不会自动注册到 `func_tool`。两者尚未统一为一个可序列化能力契约，新代码不能把渲染 schema 当作可执行工具注册表。
 
 官方 `on_llm_request` 在 Core 的统一 Prompt Apply 后运行，用于低层请求兼容。它不是 Router、Planner 或 Persona 的事实扩展入口。
 
@@ -51,7 +51,7 @@ Native Agent 完成后把有限工具证据、结果、错误和 token usage 写
 
 ## SubAgent
 
-`astrbot/core/subagent_orchestrator.py` 从配置构造 HandoffTool 并交给 Main Agent 装配，本身不是独立执行器。
+`astrbot/core/subagent_orchestrator.py` 从配置构造 HandoffTool 并交给 Main Agent 装配，本身不是独立执行器。`SubagentCollector`、`SubAgentOrchestrator` 和 `HandoffTool` 继续保留官方 Native 行为；`CoreCapabilitySnapshot` 不再设置独立 SubAgent 字段，但 Native ContextPack 和 ToolSet 当前仍携带 handoff 兼容信息。Claude Code、OpenCode 等 Backend 不需要支持它，新的专业能力优先通过插件 Tool 提供。
 
 ## 当前判断
 

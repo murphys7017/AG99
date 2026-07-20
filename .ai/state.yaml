@@ -2,7 +2,7 @@ task:
   class: refactor
   risk: high
   phase: establish_execution_preparation_boundary
-  scope: Separate visible dialogue from Core execution continuity, add normalized asset references and durable turn commits, and make Native Core consume the first CoreExecutionRequest boundary
+  scope: Separate visible dialogue from Core execution continuity, add normalized asset references and durable turn commits, and make Native Core consume the first CoreExecutionSpec boundary
 context:
   confidence: high
   assumptions:
@@ -75,7 +75,8 @@ context:
     - Static prompt collectors are cached only within one event/config/ProviderRequest identity and must not be treated as cross-turn global cache.
     - Canonical Dialogue History is owned by Personal Runtime output and stores normalized user input plus final Personal Expression; Core tool calls and results persist in a separate Core Execution Ledger.
     - AssetRef stores content identity when already available, otherwise an explicitly non-resolvable source reference; it never persists temporary paths, URLs, or binary media. A managed Asset Store remains future work.
-    - CoreExecutionRequest is the executor-neutral preparation contract; NativeExecutionAdapter is the only Native ProviderRequest boundary, and it is not yet a complete Backend/Event abstraction.
+    - CoreExecutionSpec is the executor-neutral fact contract and contains no rendered prompt or ProviderRequest; NativeExecutionAdapter is the only Native ProviderRequest boundary, and this is not yet a complete Backend/Event abstraction.
+    - CoreCapabilitySnapshot no longer models Subagent as a first-class portable capability. Native ContextPack and ToolSet still carry handoff compatibility data until capability binding is separated; future Backends are not required to implement AstrBot Subagent.
     - Official on_llm_request remains a post-render low-level ProviderRequest hook; preserving it does not restore removed legacy/shadow prompt modes or internal duplicate injectors.
     - DeepSeek thinking mode is controlled only by the effective Provider `thinking.type`; both thinking and non-thinking requests preserve caller-supplied `tool_choice` instead of silently changing contract semantics.
     - Persona effect applicability is plugin-owned and evaluated against the current event; Core must not hard-code platform-specific effect names or domains.

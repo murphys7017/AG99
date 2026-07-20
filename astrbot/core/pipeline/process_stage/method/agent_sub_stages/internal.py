@@ -25,8 +25,8 @@ from astrbot.core.astr_main_agent import (
 )
 from astrbot.core.db.po import CoreExecutionRecord as CoreExecutionLedgerRecord
 from astrbot.core.execution import (
-    CORE_EXECUTION_REQUEST_EXTRA_KEY,
-    CoreExecutionRequest,
+    CORE_EXECUTION_SPEC_EXTRA_KEY,
+    CoreExecutionSpec,
 )
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.message.components import File, Image, Record, Reply, Video
@@ -548,12 +548,12 @@ class InternalAgentSubStage(Stage):
         if not req or not req.conversation:
             return
 
-        execution_request = event.get_extra(CORE_EXECUTION_REQUEST_EXTRA_KEY)
-        if not isinstance(execution_request, CoreExecutionRequest):
+        execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+        if not isinstance(execution_spec, CoreExecutionSpec):
             return
         if (
             event.get_extra("_core_execution_ledger_recorded_id")
-            == execution_request.execution_id
+            == execution_spec.execution_id
         ):
             return
 
@@ -579,15 +579,15 @@ class InternalAgentSubStage(Stage):
         if ledger is None:
             return
         record = CoreExecutionLedgerRecord(
-            execution_id=execution_request.execution_id,
+            execution_id=execution_spec.execution_id,
             conversation_id=req.conversation.cid,
-            turn_id=execution_request.turn_id,
-            core_task_id=execution_request.core_task_id,
-            parent_execution_id=execution_request.parent_execution_id,
-            attempt=execution_request.attempt,
+            turn_id=execution_spec.turn_id,
+            core_task_id=execution_spec.core_task_id,
+            parent_execution_id=execution_spec.parent_execution_id,
+            attempt=execution_spec.attempt,
             executor_id="native",
             status="aborted" if user_aborted else "completed",
-            task_spec=execution_request.task_spec,
+            task_spec=execution_spec.task_spec,
             messages=messages,
             result=(
                 llm_response.completion_text
@@ -601,7 +601,7 @@ class InternalAgentSubStage(Stage):
         await ledger.append(record)
         event.set_extra(
             "_core_execution_ledger_recorded_id",
-            execution_request.execution_id,
+            execution_spec.execution_id,
         )
 
     async def _save_failed_interaction_core_state(
@@ -617,8 +617,8 @@ class InternalAgentSubStage(Stage):
             or req.conversation is None
         ):
             return
-        execution_request = event.get_extra(CORE_EXECUTION_REQUEST_EXTRA_KEY)
-        if not isinstance(execution_request, CoreExecutionRequest):
+        execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+        if not isinstance(execution_spec, CoreExecutionSpec):
             return
         messages: list[dict] = []
         if agent_runner is not None:
@@ -629,15 +629,15 @@ class InternalAgentSubStage(Stage):
             except Exception:  # noqa: BLE001
                 messages = []
         record = CoreExecutionLedgerRecord(
-            execution_id=execution_request.execution_id,
+            execution_id=execution_spec.execution_id,
             conversation_id=req.conversation.cid,
-            turn_id=execution_request.turn_id,
-            core_task_id=execution_request.core_task_id,
-            parent_execution_id=execution_request.parent_execution_id,
-            attempt=execution_request.attempt,
+            turn_id=execution_spec.turn_id,
+            core_task_id=execution_spec.core_task_id,
+            parent_execution_id=execution_spec.parent_execution_id,
+            attempt=execution_spec.attempt,
             executor_id="native",
             status="failed",
-            task_spec=execution_request.task_spec,
+            task_spec=execution_spec.task_spec,
             messages=messages,
             error=str(error),
         )
