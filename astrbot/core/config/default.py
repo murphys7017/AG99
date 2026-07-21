@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
     "config_version": 2,
     "platform_settings": {
         "unique_session": False,
+        "proactive_message_target": "",
         "rate_limit": {
             "time": 60,
             "count": 30,
@@ -1018,6 +1019,9 @@ CONFIG_METADATA_2 = {
                 "items": {
                     "unique_session": {
                         "type": "bool",
+                    },
+                    "proactive_message_target": {
+                        "type": "string",
                     },
                     "rate_limit": {
                         "type": "object",
@@ -3922,6 +3926,12 @@ CONFIG_METADATA_3 = {
                         "description": "隔离会话",
                         "type": "bool",
                         "hint": "启用后，群成员的上下文独立。",
+                    },
+                    "platform_settings.proactive_message_target": {
+                        "description": "主动消息默认目标",
+                        "type": "string",
+                        "_special": "select_session",
+                        "hint": "选择主动消息默认发送到的适配器和会话。该设置供未携带明确目标的主动能力使用，不会覆盖已经指定目标的定时任务或插件消息。",
                     },
                     "wake_prefix": {
                         "description": "唤醒词",

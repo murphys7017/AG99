@@ -48,6 +48,11 @@
     "selectProviderPool": "Select Provider Pool...",
     "selectedCount": "{count} provider(s) selected"
   },
+  "sessionSelector": {
+    "label": "Select adapter and session",
+    "noSessions": "No known sessions. Interact with the bot in the target session first.",
+    "refresh": "Refresh sessions"
+  },
   "personaSelector": {
     "notSelected": "Not selected",
     "defaultPersona": "Default Persona",

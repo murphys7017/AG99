@@ -46,6 +46,14 @@ await self.context.send_message(
 
 With this feature, you can store the `unified_msg_origin` and send messages when needed.
 
+For proactive plugin output without an explicit session, pass `None` to use the
+Default Proactive Message Target from the basic settings. The call returns
+`False` when no default is configured or its adapter is unavailable:
+
+```python
+sent = await self.context.send_message(None, message_chain)
+```
+
 > [!TIP]
 > About unified_msg_origin.
 > `unified_msg_origin` is a string that records the unique ID of a session. AstrBot uses it to identify which messaging platform and which session it belongs to. This allows messages to be sent to the correct session when using `send_message`. For more about MessageChain, see the next section.

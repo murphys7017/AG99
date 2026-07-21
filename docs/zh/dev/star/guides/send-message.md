@@ -45,6 +45,13 @@ await self.context.send_message(
 
 通过这个特性，你可以将 unified_msg_origin 存储起来，然后在需要的时候发送消息。
 
+如果插件产生的是没有明确会话的主动消息，可以传入 `None`，使用基础设置中的
+“主动消息默认目标”。未配置默认目标或目标适配器当前不可用时，调用返回 `False`：
+
+```python
+sent = await self.context.send_message(None, message_chain)
+```
+
 > [!TIP]
 > 关于 unified_msg_origin。
 > unified_msg_origin 是一个字符串，记录了一个会话的唯一 ID，AstrBot 能够据此找到属于哪个消息平台的哪个会话。这样就能够实现在 `send_message` 的时候，发送消息到正确的会话。有关 MessageChain，请参见接下来的一节。

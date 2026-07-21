@@ -470,6 +470,17 @@ class SessionManagementRoute(Route):
         """
         try:
             umos = await self._list_known_umos()
+            if request.args.get("proactive_only", "").lower() == "true":
+                proactive_platform_ids = {
+                    platform.meta().id
+                    for platform in self.core_lifecycle.platform_manager.platform_insts
+                    if platform.meta().support_proactive_message
+                }
+                umos = [
+                    umo
+                    for umo in umos
+                    if parse_umo(umo).get("platform") in proactive_platform_ids
+                ]
             alias_map = await self._get_umo_alias_map(umos)
             umo_infos = [self._build_umo_info(umo, alias_map) for umo in umos]
 

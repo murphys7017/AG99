@@ -321,6 +321,10 @@ class CronJobManager:
     async def _run_active_agent_job(self, job: CronJob, start_time: datetime) -> None:
         payload = job.payload or {}
         delivery_session_str = str(payload.get("session") or "").strip()
+        if not delivery_session_str:
+            default_target = self.ctx.get_proactive_message_target()
+            if default_target is not None:
+                delivery_session_str = str(default_target)
         session_str = delivery_session_str or str(
             MessageSession(
                 platform_name="cron",

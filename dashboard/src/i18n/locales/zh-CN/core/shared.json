@@ -48,6 +48,11 @@
     "selectProviderPool": "选择提供商池...",
     "selectedCount": "已选择 {count} 个提供商"
   },
+  "sessionSelector": {
+    "label": "选择适配器和会话",
+    "noSessions": "暂无已知会话，请先在目标会话中与机器人交互",
+    "refresh": "刷新会话列表"
+  },
   "personaSelector": {
     "notSelected": "未选择",
     "defaultPersona": "默认人格",

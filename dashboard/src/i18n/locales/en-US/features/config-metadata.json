@@ -765,6 +765,10 @@
           "description": "Isolate Sessions",
           "hint": "When enabled, group members have independent contexts."
         },
+        "proactive_message_target": {
+          "description": "Default Proactive Message Target",
+          "hint": "Select the adapter and session used by proactive messages that do not specify a target. Explicit cron or plugin targets are not overridden."
+        },
         "friend_message_needs_wake_prefix": {
           "description": "Private Messages Require Wake Word"
         },

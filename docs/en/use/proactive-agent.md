@@ -21,6 +21,15 @@ The Main Agent can now manage a global **Cron Job List**, setting tasks for its 
 > [!TIP]
 > First, ensure that "Proactive Capabilities" is enabled in the configuration.
 
+Under **Platform Settings → General → Default Proactive Message Target**, you
+can select a known session for proactive messages that do not specify their own
+destination. The selected value includes the adapter, message type, and session
+ID. Only enabled platforms that support proactive messaging are listed. Cron
+jobs and plugins with an explicit target continue to use that target.
+Active cron jobs created through the API without a `session` use this default.
+Without a configured default, targetless jobs retain their existing internal
+execution behavior.
+
 The Main Agent has the ability to manage scheduled tasks. You can tell it:
 - "Remind me to have a meeting at 8 AM tomorrow."
 - "Summarize this week's work log every Friday at 5 PM."

@@ -767,6 +767,10 @@
           "description": "隔离会话",
           "hint": "启用后,群成员的上下文独立。"
         },
+        "proactive_message_target": {
+          "description": "主动消息默认目标",
+          "hint": "选择主动消息默认发送到的适配器和会话。不会覆盖已经明确指定目标的定时任务或插件消息。"
+        },
         "friend_message_needs_wake_prefix": {
           "description": "私聊消息需要唤醒词"
         },

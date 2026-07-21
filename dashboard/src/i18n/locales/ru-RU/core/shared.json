@@ -48,6 +48,11 @@
         "selectProviderPool": "Выбрать пул провайдеров...",
         "selectedCount": "Выбрано провайдеров: {count}"
     },
+    "sessionSelector": {
+        "label": "Выберите адаптер и сеанс",
+        "noSessions": "Известных сеансов нет. Сначала напишите боту в нужном сеансе.",
+        "refresh": "Обновить список сеансов"
+    },
     "personaSelector": {
         "notSelected": "Не выбрано",
         "defaultPersona": "Персонаж по умолчанию",

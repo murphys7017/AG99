@@ -571,9 +571,42 @@ class Context:
             return self._config
         return self.astrbot_config_mgr.get_conf(umo)
 
+    def get_proactive_message_target(
+        self,
+        umo: str | None = None,
+    ) -> MessageSesion | None:
+        """Return the configured default target for targetless proactive output."""
+        config = self.get_config(umo=umo)
+        platform_settings = config.get("platform_settings", {})
+        if not isinstance(platform_settings, dict):
+            return None
+        target = str(platform_settings.get("proactive_message_target") or "").strip()
+        if not target:
+            return None
+        try:
+            session = MessageSesion.from_str(target)
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid proactive message target %r: %s", target, exc)
+            return None
+        platform = next(
+            (
+                item
+                for item in self.platform_manager.platform_insts
+                if item.meta().id == session.platform_id
+            ),
+            None,
+        )
+        if platform is None or not platform.meta().support_proactive_message:
+            logger.warning(
+                "Configured proactive message target is unavailable: %s",
+                target,
+            )
+            return None
+        return session
+
     async def send_message(
         self,
-        session: str | MessageSesion,
+        session: str | MessageSesion | None,
         message_chain: MessageChain,
         *,
         finalize: bool = True,
@@ -581,7 +614,7 @@ class Context:
         """根据 session(unified_msg_origin) 主动发送消息。
 
         Args:
-            session: 消息会话。通过 event.session 或者 event.unified_msg_origin 获取。
+            session: 消息会话。传入 None 时使用配置的主动消息默认目标。
             message_chain: 消息链。
             finalize: 当前 active turn 内是否把消息作为最终输出；进度消息设为 False。
 
@@ -595,7 +628,14 @@ class Context:
             当 session 为字符串时，会尝试解析为 MessageSession 对象。(类名为MessageSesion是因为历史遗留拼写错误)
             qq_official(QQ 官方 API 平台) 不支持此方法。
         """
-        if isinstance(session, str):
+        if session is None:
+            session = self.get_proactive_message_target()
+            if session is None:
+                logger.warning(
+                    "Cannot send targetless proactive message: no default target"
+                )
+                return False
+        elif isinstance(session, str):
             try:
                 session = MessageSesion.from_str(session)
             except BaseException as e:
