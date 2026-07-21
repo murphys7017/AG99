@@ -31,6 +31,19 @@ async def helloworld(self, event: AstrMessageEvent):
     await self.context.send_message(event.unified_msg_origin, message_chain)
 ```
 
+`send_message()` treats the message as the final output of the proactive turn by
+default. When it is called inside the current active turn for tool or task
+progress, pass `finalize=False`. The message still goes through Personal Runtime
+and the unified output controller without completing the turn early:
+
+```python
+await self.context.send_message(
+    event.unified_msg_origin,
+    message_chain,
+    finalize=False,
+)
+```
+
 With this feature, you can store the `unified_msg_origin` and send messages when needed.
 
 > [!TIP]

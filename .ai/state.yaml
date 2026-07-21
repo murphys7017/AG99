@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: runtime_architecture_review
-  scope: Verify the complete message, execution, output, and observation flow from source and record the remaining ownership blockers before Heartbeat or backend work
+  phase: runtime_ownership_cleanup
+  scope: Make Personal Runtime own admission, turn tasks, proactive text output, and atomic immediate/final arbitration before Heartbeat or backend work
 context:
   confidence: high
   assumptions:
@@ -24,7 +24,7 @@ context:
     - PendingTurn transitions are reserved -> bound -> queued|active -> settled; reserved turns do not own conversational completion.
     - One runtime key has one conversational turn with user-visible completion ownership by default; new messages are offered as follow-up first and otherwise queued.
     - Phase 1 reuses InteractionTurnState as the only writable turn state and records plugin/Subagent/background task handles without migrating their lifecycle ownership before the later plugin-task phase.
-    - Interaction event output goes through Output Controller; generic Context.send_message remains a direct proactive-send compatibility bypass and has not been migrated to OutputIntent.
+    - Interaction event output and proactive text from Context.send_message go through Personal Runtime and Output Controller; media-only proactive output remains the explicit raw-platform boundary.
     - Native and Third-party execution still diverge before execution, but both now run under Personal Runtime turn admission and serialization.
     - ThirdPartyAgentSubStage preserves a plugin-yielded ProviderRequest and only builds one from the event when no explicit request exists; it still bypasses canonical Prompt and Capability preparation.
     - ProviderRequest remains an official plugin compatibility input and low-level hook projection; it is not the future immutable Execution Preparation contract.
@@ -38,7 +38,7 @@ context:
     - Tools are Core-only by default. Plugin authors may explicitly mount an individual tool to personal_expression or both execution targets through tool_targets; Personal Runtime remains a control layer and never owns a ToolSet.
     - Official and new plugins are future Personal Runtime defaults, but current Prompt Extension, Tool, LLM Hook, Agent Hook, and Subagent behavior remains Native-Core-owned until a reviewed mapping exists.
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
-    - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and direct-send behavior remain unchanged.
+    - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
     - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
     - RespondStage-driven Interaction results finalize only after OnAfterMessageSent and visible completion; direct event.send paths retain their existing semantics.
     - Router remains a minimal persona/hybrid classifier and never plans tasks or receives tool schemas; the silent enum is retained but not exposed by the current Router prompt.
@@ -291,7 +291,7 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: runtime_architecture_review
+    phase: runtime_ownership_cleanup
     scope:
       - immutable RuntimeObservation and system event adapter
       - observation-aware PersonalTurnContext with no synthetic user input
@@ -308,9 +308,22 @@ runtime:
       - cron or active_reply migration
       - Router, Planner, or Core execution
     confirmed_gaps:
-      - plugin ProviderRequest generators do not resume after Core execution
-      - plugin side effects and follow-up capture occur before session admission
-      - speculative Persona tasks are not owned by the Personal Runtime lease
-      - Core intermediate and direct-tool outputs do not share one completion contract
-      - Observation assistant-only records are not projected into paired Prompt or Memory history
       - partial physical delivery lacks a structured receipt
+      - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
+      - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract
+      - proactive media-only output still uses the raw platform sink because it has no canonical semantic material
+      - PersonalTurnContext exists but the main Interaction path still coordinates through 117 literal event-extra keys
+    dependency_review:
+      core_modules: 474
+      runtime_import_sccs: 0
+      fixed:
+        - Process SubStages now import the pipeline Stage base directly
+        - star_manager imports StarMetadata from its defining module instead of relying on package initialization order
+        - Prompt-owned instruction resources no longer live under astr_main_agent_resources
+        - plugin ProviderRequest generators resume after delegated Core execution
+        - session admission and lease acquisition now happen before plugin handlers
+        - TurnExecutionScope owns Router, Persona, Context Material, and stream-observation tasks
+        - immediate Persona, Core final, and finalized proactive plugin output share one atomic turn-lock reservation
+        - proactive text output and same-session tool progress use Personal Runtime and Output Controller
+        - assistant-only history projects into Prompt and Memory without a synthetic user message
+        - Provider output-contract tool adapters no longer import Prompt

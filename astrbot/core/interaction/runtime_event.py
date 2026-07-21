@@ -59,7 +59,7 @@ class RuntimeObservationEvent(AstrMessageEvent):
     async def send(self, message: MessageChain) -> None:
         if message is None:
             return
-        delivered = await self.context_obj.send_message(self.session, message)
+        delivered = await self.context_obj._send_message_direct(self.session, message)
         if not delivered:
             raise RuntimeError(
                 f"Runtime observation target is unavailable: {self.session}"

@@ -17,12 +17,12 @@ from astrbot.api.provider import Provider
 from astrbot.core.agent.message import AudioURLPart, ContentPart, ImageURLPart, TextPart
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
-from astrbot.core.prompt.render.output_contract_tools import (
+from astrbot.core.provider.entities import LLMResponse, TokenUsage
+from astrbot.core.provider.func_tool_manager import ToolSet
+from astrbot.core.provider.output_contract_tools import (
     build_single_tool_set_from_compiled_contract,
     build_single_tool_set_from_contract,
 )
-from astrbot.core.provider.entities import LLMResponse, TokenUsage
-from astrbot.core.provider.func_tool_manager import ToolSet
 from astrbot.core.utils.io import download_image_by_url
 from astrbot.core.utils.network_utils import (
     create_proxy_client,

@@ -8,15 +8,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
-from astrbot.core.astr_main_agent_resources import (
+from astrbot.core.db import BaseDatabase
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.prompt.resources import (
     LIVE_MODE_SYSTEM_PROMPT,
     TOOL_CALL_PROMPT,
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
     WEB_SEARCH_CITATION_PROMPT,
     WEB_SEARCH_CITATION_TOOL_NAMES,
 )
-from astrbot.core.db import BaseDatabase
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 from astrbot.core.workspace import (

@@ -330,10 +330,13 @@ def _resolve_interaction_turn_material(
         material_turn_id = _normalize_text(ctx.turn_material.get("turn_id"))
         assistant_text = _normalize_text(ctx.turn_material.get("assistant_text"))
         if material_turn_id == turn_id and assistant_text:
+            is_observation = (
+                _normalize_text(ctx.turn_material.get("source")) == "observation"
+            )
             user_message = current_user_message or _build_user_message_from_event(
                 ctx.event
             )
-            if user_message is None:
+            if user_message is None and not is_observation:
                 return None
             visible_outputs = [
                 dict(item)

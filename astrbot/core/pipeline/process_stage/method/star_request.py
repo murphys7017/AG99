@@ -11,7 +11,7 @@ from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, StarHandlerMetadata
 
 from ...context import PipelineContext, call_event_hook, call_handler
-from ..stage import Stage
+from ...stage import Stage
 
 
 class StarRequestSubStage(Stage):

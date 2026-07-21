@@ -339,13 +339,12 @@ Phase 0 已确认的准备边界：
   Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
 - Third-party Agent Stage 仍走官方兼容准备链，尚未消费 `CoreExecutionSpec`。它是需要
   保留的现状，不是新 Backend 的实现模板。
-- 通用 `Context.send_message()` 主动消息仍直接进入 `Platform.send_by_session()`，没有
-  形成统一 Turn、Persona Expression 和 OutputIntent。新建的 Runtime Observation 是一条
-  受控内部入口，不会自动接管现有插件主动发送。
-- Observation 的 assistant-only 记录当前只完成 Conversation 审计持久化。现有
-  ConversationHistory/Memory 仍以 user-assistant turn pair 为输入，因此下一轮 Prompt 和
-  Memory TurnRecord 会忽略孤立 assistant；在 Heartbeat 接线前必须建立显式 Observation
-  history projection，而不是伪造用户消息。
+- 通用 `Context.send_message()` 保留公开调用方式；纯文本主动消息现在经 Personal Runtime
+  排队和 Output Controller 投递。同一 active turn 的 Core 工具消息明确作为 progress，
+  跨 session 输出建立独立 proactive turn。纯媒体主动消息尚未形成可持久化语义材料，当前
+  仍保留平台直发。
+- Observation 的 assistant-only 记录已经进入 Conversation、Prompt History 和 Memory
+  history projection；转换层使用空 user payload 表达 assistant-only，不伪造用户消息。
 - Interaction 物理发送现在会在全量投递失败时阻止 turn completion；分段部分成功时仍缺少
   结构化 delivery receipt，canonical history 暂时无法精确表达“仅部分内容送达”。
 - 可见输出完成后才同步提交 Conversation；当前有进程内锁和 `turn_id` 幂等，但没有持久化
@@ -360,19 +359,18 @@ Phase 0 已确认的准备边界：
 Conversation 和 Memory 后，确认总体分层方向成立，但以下问题是继续接 Heartbeat 或替换
 执行器前的优先阻断项：
 
-- 插件 Handler `yield ProviderRequest` 后，`ProcessStage` 执行 Core 并直接 return，
-  不会恢复插件生成器的 post-yield 逻辑。依赖 waiter、收尾或洋葱式调用的官方插件因此
-  存在兼容缺口。
-- PendingTurn 在插件前建立，但 persona bind、follow-up capture 和 session lease 在插件
-  Handler 之后才发生。同会话插件副作用不受 Runtime 串行保护，follow-up 也可能在插件先
-  处理后再次交给 active runner。长期需要 pre-persona audience mailbox，而不是提前猜
-  persona 或把整个官方 Pipeline 锁住。
-- Hybrid execute 后 speculative Persona task 仍由 Middleware 全局集合持有，Turn lease
-  不等待它；Core-final 与 Persona commit 也没有统一原子输出仲裁。这与 Personal Runtime
-  应拥有 turn task/completion 的目标不一致，是重复回复风险的核心来源。
-- Core tool status、tool direct output 和 `send_message_to_user` 仍存在不同输出路径；
-  部分路径可能提前请求 turn finalization，部分路径绕过 visible output ledger。它们需要
-  统一 OutputIntent 身份，不能继续依赖文本去重。
+- 插件 Handler `yield ProviderRequest` 后的生成器恢复语义已修正：Core 返回后继续
+  post-yield 和剩余 Handler，随后结束 delegated turn，不重复启动默认 Core。
+- Personal Runtime 现在在插件 Handler 前完成 persona bind、follow-up admission 和 session
+  lease；插件、Router/Persona、Core 与输出共享同一 turn 生命周期。存在 activated handler
+  时不尝试 active-runner follow-up，避免插件命令被提前吸收。
+- Router、Persona、Context Material 和 Stream Observation task 已归属 TurnExecutionScope；
+  Hybrid 放行 Core 后 speculative Persona 不再转入 Middleware 全局集合，lease 释放前统一
+  完成或取消。
+- immediate/final 使用同一 turn lock 原子预留输出槽。Final 先预留时取消 pending Persona；
+  Immediate 已预留时允许按 Hybrid 语义先发即时回复，再发最终结果。
+- 当前 session 的 `send_message_to_user` 已作为 progress 进入现有 Output Controller，不会
+  重入同 session lease 或提前完成 turn；跨 session 文本输出使用独立 proactive turn。
 - 全量物理发送失败和 canonical material 缺失已在本轮修正；分段部分成功仍缺 delivery
   receipt，after-send hook 的 stop 语义也可能让已送达内容被标记 cancelled。
 - Observation 已有输入/输出契约，但 assistant-only history projection、目标 session
@@ -383,6 +381,22 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - EventBus 在逐事件任务创建前的配置解析与 scheduler 查找缺少异常隔离。该问题属于官方
   调度基础设施风险，不应在 Interaction 内打补丁，但后续吸收上游或修改官方边界时需要
   单独处理。
+
+本轮静态依赖复核覆盖当前 474 个 `astrbot.core` 模块。修正 Process SubStage 对
+`process_stage.stage` 的偶然反向导入，以及 `star_manager` 对 `star` 包初始化顺序的依赖后，
+顶层运行时 import 强连通分量为 0。
+当前没有已知顶层 import cycle，但仍有以下接口方向债务：
+
+- Prompt 直接消费 `AstrMessageEvent`、插件 `Context` 和 `ProviderRequest`，尚未只依赖
+  runtime fact ports。
+- Provider 的 output-contract tool adapter 已迁入 Provider 协议层，不再反向依赖 Prompt。
+- Interaction 使用 `agent.tool` 描述 Persona 工具，能力契约尚未从 Native Agent 包中独立。
+- `CoreCapabilitySnapshot` 仍携带 Native `ToolSet` 运行时对象，只是浅层 frozen，不是
+  可跨 backend 或跨进程的不可变契约。
+- `PersonalTurnContext` 已建立，但平台主链仍通过 117 个 literal event extra key 协作；
+  typed context 还不是实际唯一事实源。
+
+依赖结构图见 `runtime-dependency-structure.mmd`。
 
 下一步继续收口 Execution Event、取消和 Output Port，再评估 Backend Adapter；不直接
 把现有 Third-party Agent SubStage 改名或包装成新执行器接口。

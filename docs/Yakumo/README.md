@@ -25,7 +25,9 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 Platform Adapter
   -> EventBus
   -> official Pipeline / plugin filters
-  -> Personal Runtime turn admission
+  -> Personal Runtime turn admission / session lease
+  -> official Plugin Handlers
+  -> TurnExecutionScope
   -> Router || Persona Expression
   -> persona: Output
   -> hybrid: Core Planner -> CoreExecutionSpec -> Native Core Executor -> Persona Expression -> Output
@@ -47,7 +49,7 @@ Collectors
 
 Collector 负责收集事实，Projection 决定 Router、Planner、Persona 和 Core 各自可见的内容，Renderer 只负责编译 Provider 格式。Prompt 系统不负责路由、工具执行、Memory 写入或消息发送。
 
-可见 Dialogue History 与 Core Execution Ledger 是两个事实源：Conversation 只保存规范用户输入和最终 Persona 表达；Ledger 保存 Core task、工具证据、结果和错误，并且只投影给 Core。当前 Native 已接入执行准备边界，完整 Backend/Event/取消协议仍属于后续工作。
+可见 Dialogue History 与 Core Execution Ledger 是两个事实源：Conversation 保存规范用户输入、最终 Persona 表达和明确的 assistant-only 主动表达；Ledger 保存 Core task、工具证据、结果和错误，并且只投影给 Core。当前 Native 已接入执行准备边界，完整 Backend/Event/取消协议仍属于后续工作。
 
 ## 文档边界
 
@@ -59,13 +61,14 @@ Collector 负责收集事实，Projection 决定 Router、Planner、Persona 和 
 - `dev/render-engine-implementation-spec.md`
 - `dev/output-contract.md`
 - `dev/interaction-output-plugin-contract.md`
+- `dev/execution-backend-flow.mmd`
+- `dev/runtime-dependency-structure.mmd`
 
 长期目标和下一步：
 
 - `target-state.md`
 - `dev/persona-system-final-goal.md`
 - `dev/execution-backend-preparation-plan.md`
-- `dev/execution-backend-flow.mmd`
 - `prompt-development-plan.md`
 - `dev/cost-context-runtime-plan.md`
 
@@ -82,8 +85,10 @@ Memory 子系统：
 3. `modules/README.md`
 4. `modules/interaction.md`
 5. `modules/prompt.md`
-6. `target-state.md`
-7. `dev/execution-backend-preparation-plan.md`
+6. `dev/execution-backend-flow.mmd`
+7. `dev/runtime-dependency-structure.mmd`
+8. `target-state.md`
+9. `dev/execution-backend-preparation-plan.md`
 
 ## 维护规则
 

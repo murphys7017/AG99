@@ -69,6 +69,7 @@ def _normalize_tool_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
         normalized_schema.pop("required", None)
     return normalized_schema
 
+
 __all__ = [
     "build_single_tool_set_from_compiled_contract",
     "build_single_tool_set_from_contract",

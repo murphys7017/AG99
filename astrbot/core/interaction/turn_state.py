@@ -36,6 +36,14 @@ class InteractionSpeculativePersonaStatus(str, Enum):
     FAILED = "failed"
 
 
+class InteractionFinalOutputStatus(str, Enum):
+    PENDING = "pending"
+    RESERVED = "reserved"
+    DELIVERED = "delivered"
+    SUPPRESSED = "suppressed"
+    FAILED = "failed"
+
+
 class InteractionLifecycleStage(str, Enum):
     RECEIVED = "received"
     ROUTING = "routing"
@@ -137,6 +145,58 @@ class InteractionTurnFailure:
 
 
 @dataclass(slots=True)
+class TurnExecutionScope:
+    """Own every asynchronous task whose lifetime belongs to one turn."""
+
+    tasks: dict[str, set[asyncio.Task[Any]]] = field(default_factory=dict)
+    closed: bool = False
+
+    def create_task(
+        self,
+        awaitable,
+        *,
+        role: str,
+        name: str,
+    ) -> asyncio.Task[Any]:
+        if self.closed:
+            raise RuntimeError("Turn execution scope is already closed")
+        task = asyncio.create_task(awaitable, name=name)
+        self.tasks.setdefault(role, set()).add(task)
+        task.add_done_callback(lambda done: self._task_done(role, done))
+        return task
+
+    def cancel(self, role: str) -> bool:
+        cancelled = False
+        for task in tuple(self.tasks.get(role, ())):
+            if not task.done():
+                task.cancel()
+                cancelled = True
+        return cancelled
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        tasks = [task for role_tasks in self.tasks.values() for task in role_tasks]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.tasks.clear()
+
+    def _task_done(self, role: str, task: asyncio.Task[Any]) -> None:
+        role_tasks = self.tasks.get(role)
+        if role_tasks is not None:
+            role_tasks.discard(task)
+            if not role_tasks:
+                self.tasks.pop(role, None)
+        if task.cancelled():
+            return
+        task.exception()
+
+
+@dataclass(slots=True)
 class InteractionTurnState:
     turn_id: str
     persona_id: str = ""
@@ -156,6 +216,10 @@ class InteractionTurnState:
     speculative_persona_status: InteractionSpeculativePersonaStatus = (
         InteractionSpeculativePersonaStatus.PENDING
     )
+    final_output_status: InteractionFinalOutputStatus = (
+        InteractionFinalOutputStatus.PENDING
+    )
+    execution_scope: TurnExecutionScope = field(default_factory=TurnExecutionScope)
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)
@@ -166,7 +230,6 @@ class InteractionTurnState:
     core_stream_observation_failures: list[str] = field(default_factory=list)
     core_streaming_active: bool = False
     core_streaming_result_consumed: bool = False
-    core_final_result_consumed: bool = False
     output_segment_counter: int = 0
     visible_message_counter: int = 0
     lifecycle_stage: InteractionLifecycleStage | None = None
@@ -705,19 +768,84 @@ def has_interaction_turn_core_streaming_result_consumed(event) -> bool:
     return False
 
 
-def mark_interaction_turn_core_final_result_consumed(
-    event,
-    consumed: bool = True,
-) -> None:
+async def reserve_interaction_turn_final_output(event) -> bool:
     state = ensure_interaction_turn_state(event)
-    state.core_final_result_consumed = consumed
-    event.set_extra("_interaction_core_final_result_consumed", consumed)
+    async with state.lock:
+        if state.final_output_status is not InteractionFinalOutputStatus.PENDING:
+            return False
+        state.final_output_status = InteractionFinalOutputStatus.RESERVED
+        if (
+            state.speculative_persona_status
+            is InteractionSpeculativePersonaStatus.PENDING
+        ):
+            state.speculative_persona_status = (
+                InteractionSpeculativePersonaStatus.SUPPRESSED
+            )
+            state.execution_scope.cancel("speculative_persona")
+        event.set_extra(
+            "_interaction_final_output_status",
+            state.final_output_status.value,
+        )
+        event.set_extra(
+            "_interaction_speculative_persona_status",
+            state.speculative_persona_status.value,
+        )
+        return True
 
 
-def has_interaction_turn_core_final_result_consumed(event) -> bool:
+async def finish_interaction_turn_final_output(
+    event,
+    status: InteractionFinalOutputStatus,
+) -> None:
+    if status not in {
+        InteractionFinalOutputStatus.DELIVERED,
+        InteractionFinalOutputStatus.SUPPRESSED,
+        InteractionFinalOutputStatus.FAILED,
+    }:
+        raise ValueError(f"Invalid terminal final output status: {status.value}")
+    state = ensure_interaction_turn_state(event)
+    async with state.lock:
+        if state.final_output_status is InteractionFinalOutputStatus.PENDING:
+            raise RuntimeError("Final output must be reserved before completion")
+        if state.final_output_status is not InteractionFinalOutputStatus.RESERVED:
+            if state.final_output_status is status:
+                return
+            raise RuntimeError(
+                "Final output already reached terminal status: "
+                f"{state.final_output_status.value}"
+            )
+        state.final_output_status = status
+        event.set_extra("_interaction_final_output_status", status.value)
+
+
+async def reserve_interaction_turn_immediate_output(event) -> bool:
+    state = ensure_interaction_turn_state(event)
+    async with state.lock:
+        if state.speculative_persona_status is not InteractionSpeculativePersonaStatus.PENDING:
+            return False
+        if state.final_output_status is not InteractionFinalOutputStatus.PENDING:
+            state.speculative_persona_status = (
+                InteractionSpeculativePersonaStatus.SUPPRESSED
+            )
+            event.set_extra(
+                "_interaction_speculative_persona_status",
+                state.speculative_persona_status.value,
+            )
+            return False
+        state.speculative_persona_status = (
+            InteractionSpeculativePersonaStatus.COMMITTED
+        )
+        event.set_extra(
+            "_interaction_speculative_persona_status",
+            state.speculative_persona_status.value,
+        )
+        return True
+
+
+def has_interaction_turn_final_output_claimed(event) -> bool:
     state = get_interaction_turn_state(event)
     if state is not None:
-        return state.core_final_result_consumed
+        return state.final_output_status is not InteractionFinalOutputStatus.PENDING
     return False
 
 

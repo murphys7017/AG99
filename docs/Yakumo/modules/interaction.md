@@ -44,14 +44,14 @@ RuntimeObservation
 Core；没有 `visible_reply_material` 时不会请求模型。目标平台必须明确支持主动消息，
 实际发送失败会使 turn 失败，不能把未投递内容写成成功历史。
 
-这只是已实现的输入与输出边界。Heartbeat、Runtime Sensor、目标 session registry、
-quiet hours、cooldown、daily limit 和 dedupe 尚未实现，因此当前没有生产代码自动创建
-Observation。官方插件直接调用 `Context.send_message()` 的主动消息仍是独立兼容旁路，
-尚未自动转换为 Observation。
+Heartbeat、Runtime Sensor、目标 session registry、quiet hours、cooldown、daily limit 和
+dedupe 尚未实现，因此当前没有生产代码自动产生人格化 Observation。插件调用
+`Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
+session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
 
-assistant-only 内容目前只保证写入官方 Conversation 作为可审计记录。通用 Prompt history
-和 Memory 仍按 user-assistant turn pair 解析，因此尚不会把这类主动表达投影到下一轮。
-后续应增加显式 Observation history 类型，不应通过空文本或伪造用户消息绕过该限制。
+assistant-only 内容已经进入官方 Conversation、Prompt history 和 Memory history。历史转换
+使用空 user payload 标识 assistant-only，不伪造用户消息；各目标 Renderer 再决定具体模型
+消息格式。
 
 目标链路：
 
@@ -84,6 +84,9 @@ Input Runtime / Observation
 - Router：当前只输出 `persona` / `hybrid`，不承担用户可见回复、task planning 或 effect 输出；`silent` 类型保留但未向模型开放。它读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
 - Router/Persona 协同：二者并发启动。Persona 在输出前从 `pending` 原子进入 `committed`；Core 最终结果先提交时可以抑制尚未 committed 的即时表达
+- Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
+  `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
+  lease 释放前统一完成或取消
 - Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不等待 Persona。Planner 只生成 CoreTaskSpec，不向即时 Persona 注入 task summary；若 Core 最终结果先提交，尚未 committed 的即时回复会被抑制
 - Core 协同提示：Core 只被告知本轮存在独立的 Persona 快速回复分支，并直接执行、返回实质结果材料；Persona 的内部状态和已发送文本不暴露给 Core
 - Context/失败协同：Router、Persona 和 Planner 通过 turn-local single-flight 共享一次 Context Material 构建；单个分支取消不会取消其他分支仍需要的构建。Planner 失败禁止 Core，但已经 emitted 的 Persona 回合仍会正常 finalized
@@ -136,6 +139,10 @@ Input Runtime / Observation
 - `event.send()`、`emit_output()`、`send_direct()`、`send_persona()` 默认是最终输出；官方 plugin handler 的输出事务会在 handler 结束前暂缓其 turn completion。
 - 插件需要在 yield `ProviderRequest` 前提示用户时，使用 `emit_progress()` 或 `send_progress()`；它们可见但不写入 finalized material，也不触发 turn completion。
 - 为兼容旧插件，官方 plugin handler 执行期间的普通 `event.send()` 会先进入输出事务：若 handler 后续 yield `ProviderRequest`，此前输出自动作为 progress；若 handler 正常结束且没有核心请求，则最后一条输出提交为最终回复。
+- Handler yield 的 `ProviderRequest` 执行完成后，官方异步生成器会继续运行 post-yield 代码，随后继续剩余 Handler；ProcessStage 在整条 delegated 路径结束后退出，不重复调用默认 Core。
+- `Context.send_message()` 的纯文本主动输出进入 Personal Runtime；同一 active turn 可通过
+  `finalize=False` 作为 progress，跨 session 输出建立独立 proactive turn。纯媒体主动消息
+  因缺少可持久化语义材料，当前仍使用原始平台 sink。
 
 当前失败策略：
 
@@ -156,6 +163,22 @@ Input Runtime / Observation
 - 受控读写函数
 
 必要的 `event.extra` 只用于官方接口衔接或只读诊断；内部主链路以 turn state 为唯一可写状态。
+
+### `turn_context.py` 与当前迁移状态
+
+`PersonalTurnContext` 当前拥有 admission 所需的 turn、session、actor、input、observation、
+runtime config、ProviderRequest 和官方 event 引用。平台事件通过
+`submit_platform_event()` 建立它，Observation 也使用同一类型。
+
+它尚未成为整个 Interaction 的唯一调用参数。Router、Persona、Planner、Output 和
+RespondStage 仍以 `AstrMessageEvent` 为兼容载体；静态分析在 Interaction 包中确认了
+117 个 literal extra key、225 次 literal get/set 和 22 次动态 key 调用。部分 extra 是
+只读诊断，但 route、output deferral、completion 和兼容回调仍包含可写协调状态。因此当前
+准确描述是“typed admission context + event compatibility state”，不是完整的 typed
+Personal Runtime。
+
+task scope 和 immediate/final output reservation 已迁入 typed turn state。后续继续迁移
+output intent、诊断和兼容投影；不能为减少 extra 数量而同时维护一套平行字段。
 
 ### `contributors.py`
 

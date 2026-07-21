@@ -40,10 +40,12 @@ from .output_modes import (
     temporary_output_origin,
 )
 from .turn_state import (
+    InteractionFinalOutputStatus,
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_visible_output,
     build_interaction_turn_reply,
     consume_interaction_turn_finalization_pending,
+    finish_interaction_turn_final_output,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
@@ -53,13 +55,12 @@ from .turn_state import (
     get_interaction_turn_stream_pending_text,
     get_interaction_turn_stream_text,
     get_interaction_turn_visible_outputs,
-    has_interaction_turn_core_final_result_consumed,
     has_interaction_turn_core_streaming_result_consumed,
+    has_interaction_turn_final_output_claimed,
     is_interaction_turn_completed,
     is_interaction_turn_core_streaming_active,
     is_interaction_turn_finalization_deferred,
     mark_interaction_turn_cancelled,
-    mark_interaction_turn_core_final_result_consumed,
     mark_interaction_turn_core_streaming_result_consumed,
     mark_interaction_turn_finalization_pending,
     mark_interaction_turn_stream_interjection_emitted,
@@ -69,6 +70,7 @@ from .turn_state import (
     record_interaction_turn_failure,
     record_interaction_turn_stream_observation_failure,
     remove_interaction_turn_stream_observation_task,
+    reserve_interaction_turn_final_output,
     set_interaction_turn_core_streaming_active,
     set_interaction_turn_finalized_material,
     set_interaction_turn_immediate_reply,
@@ -327,7 +329,8 @@ class InteractionOutputController:
             return
 
         if outbound_kind == "streaming_finish_marker":
-            mark_interaction_turn_core_final_result_consumed(event)
+            if not await reserve_interaction_turn_final_output(event):
+                return
             logger.warning(
                 "Interaction streaming finish marker skipped after streaming delivery: platform_id=%s session_id=%s turn_id=%s final_length=%s",
                 event.get_platform_id(),
@@ -335,8 +338,19 @@ class InteractionOutputController:
                 event.get_extra("_turn_id"),
                 len(message.get_plain_text()),
             )
-            self._materialize_finalized_turn(event)
-            await self._persist_interaction_turn(event)
+            try:
+                self._materialize_finalized_turn(event)
+                await self._persist_interaction_turn(event)
+            except Exception:
+                await finish_interaction_turn_final_output(
+                    event,
+                    InteractionFinalOutputStatus.FAILED,
+                )
+                raise
+            await finish_interaction_turn_final_output(
+                event,
+                InteractionFinalOutputStatus.DELIVERED,
+            )
             return
 
         if outbound_kind == "passthrough":
@@ -375,12 +389,26 @@ class InteractionOutputController:
         if outbound_kind == "suppressed_duplicate_final":
             return
 
-        mark_interaction_turn_core_final_result_consumed(event)
-        full_message = self._get_full_core_final_message(event, message)
-        if self.core_reply_handler is not None:
-            await self.core_reply_handler(full_message, event)
+        if not await reserve_interaction_turn_final_output(event):
             return
-        await self._deliver_core_reply(full_message, event)
+        full_message = self._get_full_core_final_message(event, message)
+        try:
+            if self.core_reply_handler is not None:
+                await self.core_reply_handler(full_message, event)
+            else:
+                await self._deliver_core_reply(full_message, event)
+        except Exception:
+            await finish_interaction_turn_final_output(
+                event,
+                InteractionFinalOutputStatus.FAILED,
+            )
+            raise
+        final_status = (
+            InteractionFinalOutputStatus.SUPPRESSED
+            if event.get_extra("_interaction_pipeline_output_suppressed", False)
+            else InteractionFinalOutputStatus.DELIVERED
+        )
+        await finish_interaction_turn_final_output(event, final_status)
 
     async def capture_plugin_output(
         self,
@@ -828,7 +856,10 @@ class InteractionOutputController:
         is_final: bool,
     ) -> None:
         set_interaction_turn_stream_observation_count(event, window_index)
-        task = asyncio.create_task(
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None:
+            raise RuntimeError("Interaction stream observation requires turn state")
+        task = turn_state.execution_scope.create_task(
             self._observe_interaction_stream_window(
                 event,
                 observed_text=observed_text,
@@ -837,6 +868,7 @@ class InteractionOutputController:
                 observation_state=observation_state,
                 is_final=is_final,
             ),
+            role="stream_observation",
             name=f"interaction_stream_observation_{event.get_platform_id()}_{window_index}",
         )
         add_interaction_turn_stream_observation_task(event, task)
@@ -2192,7 +2224,7 @@ class InteractionOutputController:
             return "immediate_reply"
         if InteractionOutputController._is_already_delivered_streaming_finish(event):
             return "streaming_finish_marker"
-        if has_interaction_turn_core_final_result_consumed(event):
+        if has_interaction_turn_final_output_claimed(event):
             return "suppressed_duplicate_final"
 
         result = event.get_result()

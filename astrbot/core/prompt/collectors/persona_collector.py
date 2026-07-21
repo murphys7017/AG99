@@ -9,10 +9,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
-from astrbot.core.astr_main_agent_resources import (
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.prompt.resources import (
     CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
 )
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 

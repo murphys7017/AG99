@@ -268,6 +268,21 @@ class AstrBotCoreLifecycle:
             self.core_execution_ledger,
         )
         self.interaction_middleware.set_plugin_context(self.star_context)
+
+        async def dispatch_proactive_message(session, message_chain, finalize=True):
+            conf_info = self.astrbot_config_mgr.get_conf_info(session)
+            runtime_config = self.astrbot_config_mgr.get_conf(session)
+            return await self.personal_runtime_manager.dispatch_proactive_message(
+                context=self.star_context,
+                middleware=self.interaction_middleware,
+                config_id=str(conf_info.get("id") or "default"),
+                runtime_config=runtime_config,
+                session=session,
+                message=message_chain,
+                finalize=finalize,
+            )
+
+        self.star_context.set_proactive_message_dispatcher(dispatch_proactive_message)
         bind_memory_provider_manager(self.provider_manager)
         self.memory_service = get_memory_service(self.astrbot_config)
         await self.memory_service.initialize()

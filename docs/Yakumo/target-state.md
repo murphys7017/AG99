@@ -353,9 +353,10 @@ History、独立 Core Execution Ledger、能力快照和任务说明保持为不
 [Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)。
 
 `CoreExecutionSpec` 当前只是进程内事实边界，不是最终 Backend wire contract，也尚未移到统一
-Backend 选择之前。Native
-工具对象、执行收尾、主动消息发送和 Conversation 提交窗口仍属于下一阶段需要收口的运行时
-边界；目标态不得把这些现状固化为各 Backend 各自维护的兼容实现。
+Backend 选择之前。Personal Runtime 已拥有 session lease、turn task scope、主动纯文本输出和
+immediate/final 仲裁；Native 工具对象、统一 Execution Event、纯媒体主动输出和 Conversation
+提交窗口仍属于下一阶段需要收口的边界。目标态不得把这些现状固化为各 Backend 各自维护的
+兼容实现。
 
 SubAgent handoff 当前只作为 Native 官方兼容能力保留，不再拥有通用 Capability Snapshot
 字段；Native ContextPack/ToolSet 暂时仍携带其兼容信息。未来 Backend 不承担 AstrBot

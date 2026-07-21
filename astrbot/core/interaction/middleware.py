@@ -37,16 +37,18 @@ from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .runtime_event import RuntimeObservationEvent
 from .turn_context import PersonalTurnContext
 from .turn_state import (
+    InteractionFinalOutputStatus,
     InteractionLifecycleStage,
     InteractionSpeculativePersonaStatus,
     InteractionTurnOutcome,
     build_interaction_turn_reply,
     ensure_interaction_turn_state,
+    finish_interaction_turn_final_output,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
-    has_interaction_turn_core_final_result_consumed,
+    has_interaction_turn_final_output_claimed,
     is_interaction_turn_completed,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
@@ -54,6 +56,8 @@ from .turn_state import (
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
+    reserve_interaction_turn_final_output,
+    reserve_interaction_turn_immediate_output,
     set_interaction_turn_core_planning_decision,
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
@@ -434,6 +438,82 @@ class InteractionMiddleware:
         finally:
             event.set_extra("_interaction_runtime_observation_active", False)
 
+    async def handle_runtime_output(
+        self,
+        event: RuntimeObservationEvent,
+        turn: PersonalTurnContext,
+        message: MessageChain,
+    ) -> None:
+        """Deliver an admitted proactive plugin output through the turn runtime."""
+        if turn.event is not event or turn.observation is not event.observation:
+            raise ValueError("Runtime output does not match the admitted turn")
+        runtime_config = self._get_runtime_config(event)
+        if isinstance(runtime_config, Mapping):
+            event.set_extra("_astrbot_config", runtime_config)
+        self.prepare_pipeline_event(event)
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.RECEIVED,
+            metadata={"source": "proactive_output"},
+        )
+        if not await reserve_interaction_turn_final_output(event):
+            return
+        try:
+            await self.output_controller.capture_plugin_output(
+                message,
+                event,
+                mode="direct",
+                finalize=True,
+            )
+        except Exception:
+            await finish_interaction_turn_final_output(
+                event,
+                InteractionFinalOutputStatus.FAILED,
+            )
+            raise
+        await finish_interaction_turn_final_output(
+            event,
+            InteractionFinalOutputStatus.DELIVERED,
+        )
+        event.set_extra("_interaction_runtime_output_handled", True)
+
+    async def handle_active_turn_output(
+        self,
+        turn: PersonalTurnContext,
+        message: MessageChain,
+        *,
+        finalize: bool,
+    ) -> None:
+        """Emit output through the active turn's existing output transaction."""
+        if not finalize:
+            await self.output_controller.capture_plugin_output(
+                message,
+                turn.event,
+                mode="direct",
+                finalize=False,
+            )
+            return
+        if not await reserve_interaction_turn_final_output(turn.event):
+            return
+        try:
+            await self.output_controller.capture_plugin_output(
+                message,
+                turn.event,
+                mode="direct",
+                finalize=True,
+            )
+        except Exception:
+            await finish_interaction_turn_final_output(
+                turn.event,
+                InteractionFinalOutputStatus.FAILED,
+            )
+            raise
+        await finish_interaction_turn_final_output(
+            turn.event,
+            InteractionFinalOutputStatus.DELIVERED,
+        )
+
     @staticmethod
     def _has_routeable_user_content(event: AstrMessageEvent) -> bool:
         if InteractionMiddleware._is_live_mode_event(event):
@@ -642,18 +722,21 @@ class InteractionMiddleware:
             event,
             InteractionSpeculativePersonaStatus.PENDING,
         )
-        router_task = asyncio.create_task(
+        turn_scope = ensure_interaction_turn_state(event).execution_scope
+        router_task = turn_scope.create_task(
             self._route_interaction(event, interaction_config),
+            role="router",
             name=(
                 f"interaction_router_{event.get_platform_id()}_"
                 f"{event.get_extra('_turn_id')}"
             ),
         )
-        persona_task = asyncio.create_task(
+        persona_task = turn_scope.create_task(
             self._generate_and_emit_speculative_persona(
                 event,
                 interaction_config,
             ),
+            role="speculative_persona",
             name=(
                 f"interaction_speculative_persona_{event.get_platform_id()}_"
                 f"{event.get_extra('_turn_id')}"
@@ -723,7 +806,6 @@ class InteractionMiddleware:
         ):
             await self._emit_delegated(event, route)
             self._forward_to_core(event)
-            self._track_inflight_task(persona_task)
             return
 
         expression = await persona_task
@@ -772,26 +854,16 @@ class InteractionMiddleware:
                     )
             return None
 
-        async with turn_state.lock:
-            status = turn_state.speculative_persona_status
-            route = turn_state.route_decision
-            if (
-                status is InteractionSpeculativePersonaStatus.SUPPRESSED
-                or (
-                    route is not None
-                    and route.route_mode is InteractionRouteMode.SILENT
-                )
-                or has_interaction_turn_core_final_result_consumed(event)
-            ):
+        route = turn_state.route_decision
+        if route is not None and route.route_mode is InteractionRouteMode.SILENT:
+            async with turn_state.lock:
                 self._set_speculative_persona_status(
                     event,
                     InteractionSpeculativePersonaStatus.SUPPRESSED,
                 )
-                return None
-            self._set_speculative_persona_status(
-                event,
-                InteractionSpeculativePersonaStatus.COMMITTED,
-            )
+            return None
+        if not await reserve_interaction_turn_immediate_output(event):
+            return None
         try:
             await self._emit_immediate_reply_or_record_failure(event, expression)
         except Exception:
@@ -972,7 +1044,7 @@ class InteractionMiddleware:
             or planning_decision.action is CorePlanningAction.NOT_REQUIRED
         ):
             return expression
-        if has_interaction_turn_core_final_result_consumed(event):
+        if has_interaction_turn_final_output_claimed(event):
             event.set_extra(
                 "_interaction_immediate_reply_suppressed_reason",
                 "core_completed_first",

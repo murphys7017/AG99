@@ -108,7 +108,9 @@ interaction turn 的输出路径与普通事件不同：
 内部系统观察不进入官方平台消息 Pipeline。当前代码提供
 `RuntimeObservationEvent -> PersonalRuntimeManager -> Personal Expression -> Output
 Controller` 的显式入口，并与平台消息共享 session runtime 锁。该入口尚未由 Heartbeat
-或 Scheduler 自动触发；普通插件 `Context.send_message()` 仍直接调用平台主动发送。
+或 Scheduler 自动触发。普通插件 `Context.send_message()` 的纯文本输出现在通过
+Personal Runtime 排队；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output
+Controller，跨 session 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
 
 ## 重构意义
 
@@ -120,3 +122,16 @@ Yakumo 架构下，这一层未来应只保留：
 - 生命周期管理
 
 不再直接承担所有能力实现的初始化细节
+
+## 静态依赖复核
+
+2026-07-21 对当前 `astrbot.core` 的 474 个模块做了顶层运行时 import 结构分析。
+Process SubStage 的基础类导入曾绕回 `process_stage.stage`，依赖该模块“先定义 Stage
+再导入 SubStage”的初始化顺序；`star_manager` 也曾通过 `star` 包级导出读取
+`StarMetadata`。两处现已改为直接依赖定义模块，运行时 import SCC 降为 0。
+
+无循环不表示边界已经完成。当前高 fan-out 装配点仍包括 `astr_main_agent`、
+`star.Context`、`CoreLifecycle`、`InteractionMiddleware` 和 `PromptContextCollector`。
+其中 Lifecycle 的高 fan-out 符合 composition root 定位；其余模块仍混有运行时协议、
+兼容对象和业务编排。完整当前依赖方向见
+`../dev/runtime-dependency-structure.mmd`。

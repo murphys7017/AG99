@@ -2,6 +2,10 @@
 
 `astrbot/core/prompt/*` 负责把运行时事实确定性地转换成模型请求。它是模型可见输入的唯一主链路，但不负责决定是否回复、执行工具、写入记忆或发送消息。
 
+Prompt 自身使用的 safety、persona fallback、tool-call、live mode、sandbox 和 citation
+文本由 `prompt.resources` 持有。Cron/background-task 唤醒提示仍属于 Agent 资源，不由
+Prompt 模块反向读取 `astr_main_agent_resources`。
+
 ## 当前主链路
 
 ```text
@@ -156,5 +160,9 @@ Router 只返回固定分类词，不使用工具或 JSON。Core Planner 使用�
 - `DefaultPromptLayout` 内部仍复用 Base Renderer 的 provider-neutral 落位实现，但 Builder 依赖的 `render_group(...)` 契约已经稳定。
 - `tool_schema` 与实际 `func_tool` 尚未统一事实源。
 - 上下文预算、Collector 并发和更细的敏感字段脱敏需要在上述边界稳定后继续处理。
+- Collector 的官方兼容签名仍直接接收 `AstrMessageEvent`、插件 `Context` 和
+  `ProviderRequest`；这使 Prompt 可以统一事实，却还不能独立于 AstrBot runtime contracts。
+- Provider 的协议 tool adapter 已迁入 `provider.output_contract_tools`，不再反向导入
+  Prompt。该 adapter 仍使用 Native `ToolSet`；完整中性 capability contract 尚未形成。
 
 后续处理顺序见 `docs/Yakumo/prompt-development-plan.md`。

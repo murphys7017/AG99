@@ -156,13 +156,14 @@ async def get_or_build_interaction_context_material(
 
         build_task = turn_state.context_material_task
         if build_task is None:
-            build_task = asyncio.create_task(
+            build_task = turn_state.execution_scope.create_task(
                 _build_interaction_context_material(
                     event=event,
                     plugin_context=plugin_context,
                     interaction_config=interaction_config,
                     build_config=build_config,
                 ),
+                role="context_material",
                 name=(
                     f"interaction_context_material_"
                     f"{event.get_platform_id()}_{turn_state.turn_id}"

@@ -8,11 +8,11 @@ import platform
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
-from astrbot.core.astr_main_agent_resources import (
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.prompt.resources import (
     LLM_SAFETY_MODE_SYSTEM_PROMPT,
     SANDBOX_MODE_PROMPT,
 )
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 

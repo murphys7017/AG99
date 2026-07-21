@@ -54,6 +54,10 @@ if TYPE_CHECKING:
 
 WebApiHandler = Callable[..., Awaitable[Any]]
 RegisteredWebApi = tuple[str, WebApiHandler, list[str], str]
+ProactiveMessageDispatcher = Callable[
+    [MessageSesion, MessageChain, bool],
+    Awaitable[bool],
+]
 _PLUGIN_MODULE_FLAGS = {"builtin_stars", "plugins"}
 
 
@@ -205,6 +209,7 @@ class Context:
         """Cron job manager, initialized by core lifecycle."""
         self.subagent_orchestrator = subagent_orchestrator
         self.core_execution_ledger = core_execution_ledger
+        self._proactive_message_dispatcher: ProactiveMessageDispatcher | None = None
         self._prompt_extension_collectors: list[
             _PromptExtensionCollectorRegistration
         ] = []
@@ -570,12 +575,15 @@ class Context:
         self,
         session: str | MessageSesion,
         message_chain: MessageChain,
+        *,
+        finalize: bool = True,
     ) -> bool:
         """根据 session(unified_msg_origin) 主动发送消息。
 
         Args:
             session: 消息会话。通过 event.session 或者 event.unified_msg_origin 获取。
             message_chain: 消息链。
+            finalize: 当前 active turn 内是否把消息作为最终输出；进度消息设为 False。
 
         Returns:
             是否找到匹配的平台。
@@ -592,6 +600,31 @@ class Context:
                 session = MessageSesion.from_str(session)
             except BaseException as e:
                 raise ValueError("不合法的 session 字符串: " + str(e))
+
+        if (
+            self._proactive_message_dispatcher is not None
+            and message_chain.get_plain_text().strip()
+        ):
+            return await self._proactive_message_dispatcher(
+                session,
+                message_chain,
+                finalize,
+            )
+
+        return await self._send_message_direct(session, message_chain)
+
+    def set_proactive_message_dispatcher(
+        self,
+        dispatcher: ProactiveMessageDispatcher | None,
+    ) -> None:
+        self._proactive_message_dispatcher = dispatcher
+
+    async def _send_message_direct(
+        self,
+        session: MessageSesion,
+        message_chain: MessageChain,
+    ) -> bool:
+        """Send through the platform adapter without re-entering Personal Runtime."""
 
         for platform in self.platform_manager.platform_insts:
             if platform.meta().id == session.platform_name:

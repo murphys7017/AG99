@@ -10,15 +10,15 @@ from dataclasses import dataclass, field
 from hashlib import sha1
 from typing import TYPE_CHECKING, Any
 
-from astrbot.core.astr_main_agent_resources import (
-    COMPUTER_USE_DISABLED_SKILLS_PROMPT,
-)
 from astrbot.core.output_contract import (
     CompiledOutputContract,
     OutputContract,
     build_output_contract_fallback_prompt,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.prompt.resources import (
+    COMPUTER_USE_DISABLED_SKILLS_PROMPT,
+)
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo, build_skills_prompt
 from astrbot.core.star.context import Context

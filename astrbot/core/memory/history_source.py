@@ -71,9 +71,23 @@ def extract_turn_payloads(messages: Iterable[dict[str, Any]]) -> list[JsonDict]:
             candidate_assistant = None
             continue
 
-        if role != "assistant" or pending_user is None:
+        if role != "assistant":
             if role == "tool":
                 continue
+            continue
+
+        if pending_user is None:
+            if message.get("content") and not _is_intermediate_assistant(
+                raw_message,
+                message,
+            ):
+                payloads.append(
+                    {
+                        "user_message": {},
+                        "assistant_message": message,
+                        "assistant_only": True,
+                    }
+                )
             continue
 
         if not pending_user.get("content"):
@@ -164,9 +178,11 @@ class RecentConversationSource:
 
     @staticmethod
     def _turn_record_to_payload(record: TurnRecord) -> JsonDict:
+        user_message = normalize_message_payload(record.user_message)
         return {
-            "user_message": normalize_message_payload(record.user_message),
+            "user_message": user_message if user_message.get("content") else {},
             "assistant_message": normalize_message_payload(record.assistant_message),
+            "assistant_only": not bool(user_message.get("content")),
         }
 
 

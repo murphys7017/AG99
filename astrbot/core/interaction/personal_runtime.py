@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import time
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -12,6 +14,7 @@ from astrbot import logger
 from astrbot.core.persona_error_reply import resolve_event_conversation_persona_id
 from astrbot.core.provider.entities import ProviderRequest
 
+from .observation import RuntimeObservation, RuntimeObservationTarget
 from .runtime_event import RuntimeObservationEvent
 from .turn_context import (
     PersonalTurnContext,
@@ -19,6 +22,10 @@ from .turn_context import (
 )
 from .turn_state import (
     set_interaction_turn_persona_id,
+)
+
+_ACTIVE_PERSONAL_TURN: contextvars.ContextVar[PersonalTurnContext | None] = (
+    contextvars.ContextVar("active_personal_turn", default=None)
 )
 
 
@@ -237,9 +244,12 @@ class PersonalTurnLease:
                     consumed_marked=False,
                 )
         finally:
-            self.runtime.active_turn_id = None
-            self.reservation.transition(PendingTurnState.SETTLED)
-            self.runtime.turn_lock.release()
+            try:
+                await self.reservation.turn.state.execution_scope.close()
+            finally:
+                self.runtime.active_turn_id = None
+                self.reservation.transition(PendingTurnState.SETTLED)
+                self.runtime.turn_lock.release()
 
 
 class PersonalSessionRuntime:
@@ -364,11 +374,87 @@ class PersonalRuntimeManager:
                     "Runtime observation admission did not acquire a lease"
                 )
             try:
-                return await handler(event, admission.turn)
+                with self.activate_turn(admission.turn):
+                    return await handler(event, admission.turn)
             finally:
                 await admission.lease.release()
         finally:
             self._settle(reservation)
+
+    async def dispatch_proactive_message(
+        self,
+        *,
+        context: Any,
+        middleware: Any,
+        config_id: str,
+        runtime_config: dict,
+        session: Any,
+        message: Any,
+        finalize: bool = True,
+    ) -> bool:
+        active_turn = _ACTIVE_PERSONAL_TURN.get()
+        if (
+            active_turn is not None
+            and not active_turn.state.execution_scope.closed
+            and active_turn.session.unified_msg_origin == str(session)
+        ):
+            await middleware.handle_active_turn_output(
+                active_turn,
+                message,
+                finalize=finalize,
+            )
+            return True
+
+        platform = next(
+            (
+                item
+                for item in context.platform_manager.platform_insts
+                if item.meta().id == session.platform_id
+            ),
+            None,
+        )
+        if platform is None:
+            logger.warning("Cannot find proactive output platform: %s", session)
+            return False
+
+        metadata = platform.meta()
+        observation = RuntimeObservation(
+            kind="proactive_output",
+            source="plugin.context.send_message",
+            occurred_at=time.time(),
+            target_session=RuntimeObservationTarget(
+                platform_id=session.platform_id,
+                platform_name=metadata.name,
+                message_type=session.message_type,
+                session_id=session.session_id,
+                support_proactive_message=metadata.support_proactive_message,
+            ),
+            payload={"visible_reply_material": message.get_plain_text()},
+        )
+        event = RuntimeObservationEvent(context=context, observation=observation)
+
+        async def _deliver(runtime_event, turn):
+            await middleware.handle_runtime_output(runtime_event, turn, message)
+            return True
+
+        return bool(
+            await self.submit_runtime_observation_event(
+                event,
+                config_id,
+                context,
+                runtime_config,
+                _deliver,
+            )
+        )
+
+    @staticmethod
+    @contextmanager
+    def activate_turn(turn: PersonalTurnContext):
+        token = _ACTIVE_PERSONAL_TURN.set(turn)
+        try:
+            yield
+        finally:
+            _ACTIVE_PERSONAL_TURN.reset(token)
 
     def _reserve(
         self,

@@ -31,6 +31,18 @@ async def helloworld(self, event: AstrMessageEvent):
     await self.context.send_message(event.unified_msg_origin, message_chain)
 ```
 
+`send_message()` 默认把消息视为该主动 turn 的最终输出。若代码运行在当前活跃 turn 内，且该
+消息只是工具或任务进度，可以传入 `finalize=False`；消息仍会经过 Personal Runtime 和统一
+输出控制器，但不会提前完成当前 turn：
+
+```python
+await self.context.send_message(
+    event.unified_msg_origin,
+    message_chain,
+    finalize=False,
+)
+```
+
 通过这个特性，你可以将 unified_msg_origin 存储起来，然后在需要的时候发送消息。
 
 > [!TIP]

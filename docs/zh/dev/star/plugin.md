@@ -734,6 +734,9 @@ async def helloworld(self, event: AstrMessageEvent):
 
 通过这个特性，你可以将 unified_msg_origin 存储起来，然后在需要的时候发送消息。
 
+`send_message()` 默认把消息视为最终输出。在当前活跃 turn 内发送工具或任务进度时，可以传入
+`finalize=False`，让消息经过统一输出控制器但不提前完成该 turn。
+
 > [!TIP]
 > 关于 unified_msg_origin。
 > unified_msg_origin 是一个字符串，记录了一个会话的唯一 ID，AstrBot 能够据此找到属于哪个消息平台的哪个会话。这样就能够实现在 `send_message` 的时候，发送消息到正确的会话。有关 MessageChain，请参见接下来的一节。

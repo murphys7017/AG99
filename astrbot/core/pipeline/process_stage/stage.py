@@ -4,8 +4,6 @@ from contextlib import AsyncExitStack
 from astrbot import logger
 from astrbot.core.interaction.personal_runtime import (
     PersonalRuntimeManager,
-    PersonalTurnLease,
-    PlatformEventSubmission,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
@@ -54,38 +52,18 @@ class ProcessStage(Stage):
     async def _run_agent_turn(
         self,
         event: AstrMessageEvent,
-        submission: PlatformEventSubmission | None,
         *,
-        allow_follow_up: bool,
         ensure_yield: bool = False,
     ) -> AsyncGenerator[None, None]:
-        lease: PersonalTurnLease | None = None
-        if submission is not None:
-            admission = await submission.admit(
-                allow_follow_up=allow_follow_up,
-            )
-            if admission.consumed_as_follow_up:
-                event.set_extra("_personal_runtime_follow_up_consumed", True)
-                logger.info(
-                    "Personal Runtime consumed message as active-runner follow-up: session_id=%s",
-                    event.unified_msg_origin,
-                )
-                return
-            lease = admission.lease
-
-        try:
-            await self._run_interaction_before_core_agent(event)
-            if event.is_stopped():
-                return
-            yielded = False
-            async for _ in self.agent_sub_stage.process(event):
-                yielded = True
-                yield
-            if ensure_yield and not yielded:
-                yield
-        finally:
-            if lease is not None:
-                await lease.release()
+        await self._run_interaction_before_core_agent(event)
+        if event.is_stopped():
+            return
+        yielded = False
+        async for _ in self.agent_sub_stage.process(event):
+            yielded = True
+            yield
+        if ensure_yield and not yielded:
+            yield
 
     async def process(
         self,
@@ -116,59 +94,81 @@ class ProcessStage(Stage):
             )
             if event.is_stopped():
                 return
-            # 有插件 Handler 被激活
-            if activated_handlers:
-                middleware = self.ctx.interaction_middleware
-                output_controller = (
-                    middleware.output_controller if middleware is not None else None
+            lease = None
+            if submission is not None:
+                admission = await submission.admit(
+                    allow_follow_up=not bool(activated_handlers),
                 )
-                event.set_extra("_interaction_plugin_output_transaction_active", True)
-                delegated_to_core = False
-                try:
-                    async for resp in self.star_request_sub_stage.process(event):
-                        if isinstance(resp, ProviderRequest):
-                            # Handler 的 LLM 请求。此前可见插件输出是进度，不拥有最终 turn。
-                            delegated_to_core = True
-                            if output_controller is not None:
-                                await output_controller.finalize_plugin_output_transaction(
+                if admission.consumed_as_follow_up:
+                    event.set_extra("_personal_runtime_follow_up_consumed", True)
+                    logger.info(
+                        "Personal Runtime consumed message as active-runner follow-up: session_id=%s",
+                        event.unified_msg_origin,
+                    )
+                    return
+                lease = admission.lease
+
+            if manager is not None and submission is not None:
+                stack.enter_context(manager.activate_turn(admission.turn))
+            try:
+                # 有插件 Handler 被激活
+                if activated_handlers:
+                    middleware = self.ctx.interaction_middleware
+                    output_controller = (
+                        middleware.output_controller if middleware is not None else None
+                    )
+                    event.set_extra(
+                        "_interaction_plugin_output_transaction_active",
+                        True,
+                    )
+                    delegated_to_core = False
+                    try:
+                        async for resp in self.star_request_sub_stage.process(event):
+                            if isinstance(resp, ProviderRequest):
+                                # Handler 的 LLM 请求。此前可见插件输出是进度，不拥有最终 turn。
+                                delegated_to_core = True
+                                if output_controller is not None:
+                                    await output_controller.finalize_plugin_output_transaction(
+                                        event,
+                                        delegated_to_core=True,
+                                    )
+                                event.set_extra("provider_request", resp)
+                                if submission is not None:
+                                    submission.set_provider_request(resp)
+                                async for _ in self._run_agent_turn(
                                     event,
-                                    delegated_to_core=True,
-                                )
-                            event.set_extra("provider_request", resp)
-                            if submission is not None:
-                                submission.set_provider_request(resp)
-                            async for _ in self._run_agent_turn(
+                                    ensure_yield=True,
+                                ):
+                                    yield
+                                continue
+                            yield
+                    finally:
+                        if output_controller is not None and not delegated_to_core:
+                            await output_controller.finalize_plugin_output_transaction(
                                 event,
-                                submission,
-                                allow_follow_up=False,
-                                ensure_yield=True,
-                            ):
-                                yield
-                            return
-                        yield
-                finally:
-                    if output_controller is not None and not delegated_to_core:
-                        await output_controller.finalize_plugin_output_transaction(
-                            event,
-                            delegated_to_core=False,
-                        )
+                                delegated_to_core=False,
+                            )
+                    if delegated_to_core:
+                        return
 
-            # 调用 LLM 相关请求
-            if not self.ctx.astrbot_config["provider_settings"].get("enable", True):
-                return
+                # 调用 LLM 相关请求
+                if not self.ctx.astrbot_config["provider_settings"].get(
+                    "enable",
+                    True,
+                ):
+                    return
 
-            if (
-                not event._has_send_oper
-                and event.is_at_or_wake_command
-                and not event.call_llm
-            ):
-                # 是否有过发送操作 and 是否是被 @ 或者通过唤醒前缀
                 if (
-                    event.get_result() and not event.is_stopped()
-                ) or not event.get_result():
-                    async for _ in self._run_agent_turn(
-                        event,
-                        submission,
-                        allow_follow_up=True,
-                    ):
-                        yield
+                    not event._has_send_oper
+                    and event.is_at_or_wake_command
+                    and not event.call_llm
+                ):
+                    # 是否有过发送操作 and 是否是被 @ 或者通过唤醒前缀
+                    if (
+                        event.get_result() and not event.is_stopped()
+                    ) or not event.get_result():
+                        async for _ in self._run_agent_turn(event):
+                            yield
+            finally:
+                if lease is not None:
+                    await lease.release()

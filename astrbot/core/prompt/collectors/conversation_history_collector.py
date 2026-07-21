@@ -223,9 +223,11 @@ class ConversationHistoryCollector(ContextCollectorInterface):
 
     @staticmethod
     def _turn_record_to_payload(record: TurnRecord) -> dict[str, Any]:
+        user_message = normalize_message_payload(record.user_message)
         return {
-            "user_message": normalize_message_payload(record.user_message),
+            "user_message": user_message if user_message.get("content") else {},
             "assistant_message": normalize_message_payload(record.assistant_message),
+            "assistant_only": not bool(user_message.get("content")),
         }
 
     def _truncate_history_payload(

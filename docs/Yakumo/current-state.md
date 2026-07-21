@@ -86,7 +86,7 @@
   状态，`thinking` / `tool_running` 已作为后续执行器可上报的通用协议状态预留
 - turn completion 已具有 `active` / `completed` / `failed` / `cancelled` 显式状态；
   visible output snapshot 复用 utterance 的 `message_id` / `delivered_message_ids`
-- PERSONA / HYBRID 主链路已由 middleware 持有 turn owner 语义；`silent` 仅保留为当前 Prompt 不可达的内部类型
+- PERSONA / HYBRID 主链路由 Personal Runtime 持有 admission、session lease 和 turn task scope；middleware 负责本轮编排，`silent` 仅保留为当前 Prompt 不可达的内部类型
 - interaction outbound phase 已迁入 `InteractionOutputController`
 - core 旧流程与 middleware 新流程共享 voice service
 - interaction 内部主链路开发期 fail-fast，不依赖 fallback 证明正确性
@@ -100,6 +100,10 @@
   不属于 interaction 主流程的领域知识
 - Persona effect 注册支持同步 `event_filter`；Persona 只把当前事件适用的 effect 编译进输出契约。无事件参数的注册表查询仅用于管理和诊断，不代表该 effect 对所有平台都可用
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
+- 插件 Handler `yield ProviderRequest` 时，ProcessStage 委托同一 turn 执行 Core；Core 返回后继续恢复插件生成器的 post-yield 逻辑和剩余 Handler，随后结束 delegated turn，不再重复进入默认 Core 路径。
+- ProcessStage 在插件 Handler 前取得 Personal Runtime lease；Router、Persona、Context Material 和 Stream Observation task 由 `TurnExecutionScope` 持有，lease 释放前统一完成或取消。
+- Immediate 与 Final 使用同一 turn lock 原子预留输出槽。Final 先到时取消 pending Persona；Immediate 已提交时保留 Hybrid 的双阶段输出语义。
+- `Context.send_message()` 的主动纯文本输出进入 Personal Runtime；当前 session 的 Core 工具输出作为 progress，跨 session 输出建立独立 proactive turn。assistant-only 输出可进入后续 Prompt 与 Memory history。
 - `router_agent` 是轻量二分类器：当前只判断 `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；`silent` 类型暂时保留但未向模型开放。直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 只消费规范 `ContextPack` 的极简投影，不参与事实采集。
 - Router 与 Persona Expression 在输入完成 materialization 后并发启动。Turn State 用 `pending / committed / emitted / suppressed / failed` 仲裁推测式 Persona 输出；Core 最终结果先提交时可以抑制尚未提交的即时表达。
 - `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 终止 Core 路径并保留并发 Persona 表达。Planner 不向即时 Persona 注入 task summary 或短回复指令。Planner 失败仍禁止 Core；若 Persona 已成功 emitted，则保留失败记录并按 Persona-only 完成本轮，否则 fail-fast。

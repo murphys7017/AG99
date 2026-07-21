@@ -44,12 +44,11 @@ from astrbot.core.utils.requirements_utils import (
     plan_missing_requirements_install,
 )
 
-from . import StarMetadata
 from .command_management import sync_command_configs
 from .context import Context
 from .error_messages import format_plugin_error
 from .filter.permission import PermissionType, PermissionTypeFilter
-from .star import star_map, star_registry
+from .star import StarMetadata, star_map, star_registry
 from .star_handler import EventType, star_handlers_registry
 from .updator import PluginUpdator
 
