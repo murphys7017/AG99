@@ -1,10 +1,11 @@
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 
 from astrbot import logger
 from astrbot.core.interaction.personal_runtime import (
-    PendingTurnReservation,
     PersonalRuntimeManager,
     PersonalTurnLease,
+    PlatformEventSubmission,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
@@ -53,27 +54,14 @@ class ProcessStage(Stage):
     async def _run_agent_turn(
         self,
         event: AstrMessageEvent,
-        reservation: PendingTurnReservation | None,
+        submission: PlatformEventSubmission | None,
         *,
         allow_follow_up: bool,
         ensure_yield: bool = False,
     ) -> AsyncGenerator[None, None]:
         lease: PersonalTurnLease | None = None
-        manager: PersonalRuntimeManager | None = getattr(
-            self,
-            "personal_runtime_manager",
-            None,
-        )
-        if manager is not None and reservation is not None:
-            await manager.bind(
-                reservation,
-                event,
-                self.plugin_manager.context,
-                self.config["provider_settings"],
-            )
-            admission = await manager.admit(
-                reservation,
-                event,
+        if submission is not None:
+            admission = await submission.admit(
                 allow_follow_up=allow_follow_up,
             )
             if admission.consumed_as_follow_up:
@@ -113,12 +101,19 @@ class ProcessStage(Stage):
             "personal_runtime_manager",
             None,
         )
-        reservation = (
-            manager.reserve(event, self.ctx.astrbot_config_id)
-            if manager is not None
-            else None
-        )
-        try:
+        async with AsyncExitStack() as stack:
+            submission = (
+                await stack.enter_async_context(
+                    manager.submit_platform_event(
+                        event,
+                        self.ctx.astrbot_config_id,
+                        self.plugin_manager.context,
+                        self.config,
+                    )
+                )
+                if manager is not None
+                else None
+            )
             if event.is_stopped():
                 return
             # 有插件 Handler 被激活
@@ -140,9 +135,11 @@ class ProcessStage(Stage):
                                     delegated_to_core=True,
                                 )
                             event.set_extra("provider_request", resp)
+                            if submission is not None:
+                                submission.set_provider_request(resp)
                             async for _ in self._run_agent_turn(
                                 event,
-                                reservation,
+                                submission,
                                 allow_follow_up=False,
                                 ensure_yield=True,
                             ):
@@ -171,10 +168,7 @@ class ProcessStage(Stage):
                 ) or not event.get_result():
                     async for _ in self._run_agent_turn(
                         event,
-                        reservation,
+                        submission,
                         allow_follow_up=True,
                     ):
                         yield
-        finally:
-            if manager is not None and reservation is not None:
-                manager.settle(reservation, event)

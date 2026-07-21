@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 import weakref
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from astrbot import logger
 from astrbot.core.persona_error_reply import resolve_event_conversation_persona_id
-from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import ProviderRequest
 
+from .runtime_event import RuntimeObservationEvent
+from .turn_context import (
+    PersonalTurnContext,
+    PlatformTurnContextFactory,
+)
 from .turn_state import (
-    InteractionTurnState,
-    get_interaction_turn_state,
     set_interaction_turn_persona_id,
 )
 
@@ -37,11 +40,7 @@ class PersonalRuntimeKey:
 
 @dataclass(slots=True)
 class PendingTurnReservation:
-    turn_id: str
-    config_id: str
-    audience_key: str
-    privacy_scope: str
-    turn_state: InteractionTurnState | None
+    turn: PersonalTurnContext
     state: PendingTurnState = PendingTurnState.RESERVED
     runtime_key: PersonalRuntimeKey | None = None
 
@@ -49,8 +48,7 @@ class PendingTurnReservation:
         if self.state is PendingTurnState.SETTLED:
             return
         self.state = state
-        if self.turn_state is not None:
-            self.turn_state.runtime_reservation_state = state.value
+        self.turn.state.runtime_reservation_state = state.value
 
 
 @dataclass(slots=True)
@@ -172,8 +170,45 @@ class _FollowUpCoordinator:
 
 @dataclass(slots=True)
 class TurnAdmission:
+    turn: PersonalTurnContext
     consumed_as_follow_up: bool
     lease: PersonalTurnLease | None = None
+
+
+class PlatformEventSubmission:
+    """Manager-owned lifecycle boundary for one official platform event."""
+
+    def __init__(
+        self,
+        manager: PersonalRuntimeManager,
+        reservation: PendingTurnReservation,
+    ) -> None:
+        self._manager = manager
+        self._reservation = reservation
+        self._admitted = False
+
+    @property
+    def turn(self) -> PersonalTurnContext:
+        return self._reservation.turn
+
+    def set_provider_request(self, request: ProviderRequest) -> None:
+        self._reservation.turn.provider_request = request
+
+    async def admit(self, *, allow_follow_up: bool) -> TurnAdmission:
+        if self._admitted:
+            raise RuntimeError("Platform event has already been admitted.")
+        self._admitted = True
+        return await self._manager._bind_and_admit(
+            self._reservation,
+            allow_follow_up=allow_follow_up,
+        )
+
+
+class RuntimeObservationEventSubmission(PlatformEventSubmission):
+    """Manager-owned lifecycle boundary for one runtime observation event."""
+
+    async def admit(self) -> TurnAdmission:
+        return await super().admit(allow_follow_up=False)
 
 
 class PersonalTurnLease:
@@ -217,11 +252,12 @@ class PersonalSessionRuntime:
 
     async def admit(
         self,
-        event: Any,
         reservation: PendingTurnReservation,
         *,
         allow_follow_up: bool,
     ) -> TurnAdmission:
+        turn = reservation.turn
+        event = turn.event
         capture = self.follow_ups.try_capture(event) if allow_follow_up else None
         follow_up_activated = False
         try:
@@ -234,7 +270,7 @@ class PersonalSessionRuntime:
                         consumed_marked=True,
                     )
                     reservation.transition(PendingTurnState.SETTLED)
-                    return TurnAdmission(consumed_as_follow_up=True)
+                    return TurnAdmission(turn=turn, consumed_as_follow_up=True)
 
             reservation.transition(PendingTurnState.QUEUED)
             await self.turn_lock.acquire()
@@ -247,8 +283,9 @@ class PersonalSessionRuntime:
                 )
             raise
         reservation.transition(PendingTurnState.ACTIVE)
-        self.active_turn_id = reservation.turn_id
+        self.active_turn_id = turn.turn_id
         return TurnAdmission(
+            turn=turn,
             consumed_as_follow_up=False,
             lease=PersonalTurnLease(
                 self,
@@ -274,70 +311,135 @@ class PersonalRuntimeManager:
             weakref.WeakKeyDictionary()
         )
 
-    def reserve(self, event: Any, config_id: str) -> PendingTurnReservation:
-        turn_state = get_interaction_turn_state(event)
-        turn_id = (
-            turn_state.turn_id
-            if turn_state is not None
-            else str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
+    @asynccontextmanager
+    async def submit_platform_event(
+        self,
+        event: Any,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: dict,
+    ) -> AsyncIterator[PlatformEventSubmission]:
+        reservation = self._reserve(
+            event,
+            config_id,
+            runtime_config=runtime_config,
+            plugin_context=plugin_context,
         )
-        audience_key = str(event.session)
-        privacy_scope = self._privacy_scope(event.get_message_type())
+        submission = PlatformEventSubmission(
+            self,
+            reservation,
+        )
+        try:
+            yield submission
+        finally:
+            self._settle(reservation)
+
+    async def submit_runtime_observation_event(
+        self,
+        event: RuntimeObservationEvent,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: dict,
+        handler: Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]],
+    ) -> Any:
+        """Submit an internal observation to the regular per-session runtime."""
+        if not isinstance(event, RuntimeObservationEvent):
+            raise TypeError("event must be a RuntimeObservationEvent")
+        if not event.platform_meta.support_proactive_message:
+            raise RuntimeError(
+                "Runtime observation target does not support proactive messages"
+            )
+        reservation = self._reserve(
+            event,
+            config_id,
+            runtime_config=runtime_config,
+            plugin_context=plugin_context,
+        )
+        submission = RuntimeObservationEventSubmission(self, reservation)
+        event.set_extra("_personal_runtime_submission_kind", "observation")
+        try:
+            admission = await submission.admit()
+            if admission.consumed_as_follow_up or admission.lease is None:
+                raise RuntimeError(
+                    "Runtime observation admission did not acquire a lease"
+                )
+            try:
+                return await handler(event, admission.turn)
+            finally:
+                await admission.lease.release()
+        finally:
+            self._settle(reservation)
+
+    def _reserve(
+        self,
+        event: Any,
+        config_id: str,
+        *,
+        runtime_config: dict,
+        plugin_context: Any,
+    ) -> PendingTurnReservation:
+        turn = PlatformTurnContextFactory.create(
+            event,
+            config_id=config_id,
+            runtime_config=runtime_config,
+            plugin_context=plugin_context,
+        )
         reservation = PendingTurnReservation(
-            turn_id=turn_id,
-            config_id=config_id or "default",
-            audience_key=audience_key,
-            privacy_scope=privacy_scope,
-            turn_state=turn_state,
+            turn=turn,
         )
-        if turn_state is not None:
-            turn_state.runtime_config_id = reservation.config_id
-            turn_state.runtime_audience_key = audience_key
-            turn_state.runtime_privacy_scope = privacy_scope
-            turn_state.runtime_reservation_state = PendingTurnState.RESERVED.value
+        turn.state.runtime_config_id = turn.session.config_id
+        turn.state.runtime_audience_key = turn.session.unified_msg_origin
+        turn.state.runtime_privacy_scope = turn.session.privacy_scope
+        turn.state.runtime_reservation_state = PendingTurnState.RESERVED.value
         return reservation
 
-    async def bind(
+    async def _bind(
         self,
         reservation: PendingTurnReservation,
-        event: Any,
-        plugin_context: Any,
-        provider_settings: dict,
     ) -> PersonalSessionRuntime:
+        turn = reservation.turn
+        event = turn.event
         persona_id = await self._resolve_persona_id(
             reservation,
-            event,
-            plugin_context,
-            provider_settings,
         )
         key = PersonalRuntimeKey(
-            config_id=reservation.config_id,
+            config_id=turn.session.config_id,
             persona_id=persona_id,
-            audience_key=reservation.audience_key,
-            privacy_scope=reservation.privacy_scope,
+            audience_key=turn.session.unified_msg_origin,
+            privacy_scope=turn.session.privacy_scope,
         )
         runtime = self._sessions.setdefault(key, PersonalSessionRuntime(key))
         runtime.bound_turn_count += 1
         reservation.runtime_key = key
         reservation.transition(PendingTurnState.BOUND)
         self._event_sessions[event] = runtime
-        if reservation.turn_state is not None:
-            reservation.turn_state.personal_runtime_key = key
-            set_interaction_turn_persona_id(event, persona_id)
+        turn.state.personal_runtime_key = key
+        set_interaction_turn_persona_id(event, persona_id)
         return runtime
 
-    async def admit(
+    async def _admit(
         self,
         reservation: PendingTurnReservation,
-        event: Any,
         *,
         allow_follow_up: bool,
     ) -> TurnAdmission:
+        event = reservation.turn.event
         runtime = self._event_sessions.get(event)
         if runtime is None:
             raise RuntimeError("Pending turn must be bound before admission.")
         return await runtime.admit(
-            event,
+            reservation,
+            allow_follow_up=allow_follow_up,
+        )
+
+    async def _bind_and_admit(
+        self,
+        reservation: PendingTurnReservation,
+        *,
+        allow_follow_up: bool,
+    ) -> TurnAdmission:
+        await self._bind(reservation)
+        return await self._admit(
             reservation,
             allow_follow_up=allow_follow_up,
         )
@@ -358,7 +460,8 @@ class PersonalRuntimeManager:
         if runtime is not None:
             runtime.follow_ups.unregister(runner)
 
-    def settle(self, reservation: PendingTurnReservation, event: Any) -> None:
+    def _settle(self, reservation: PendingTurnReservation) -> None:
+        event = reservation.turn.event
         reservation.transition(PendingTurnState.SETTLED)
         runtime = self._event_sessions.pop(event, None)
         if runtime is None:
@@ -370,12 +473,11 @@ class PersonalRuntimeManager:
     async def _resolve_persona_id(
         self,
         reservation: PendingTurnReservation,
-        event: Any,
-        plugin_context: Any,
-        provider_settings: dict,
     ) -> str:
+        turn = reservation.turn
+        event = turn.event
         try:
-            request = event.get_extra("provider_request")
+            request = turn.provider_request
             conversation_persona_id = None
             if (
                 isinstance(request, ProviderRequest)
@@ -385,18 +487,18 @@ class PersonalRuntimeManager:
             if conversation_persona_id is None:
                 conversation_persona_id = await resolve_event_conversation_persona_id(
                     event,
-                    plugin_context.conversation_manager,
+                    turn.plugin_context.conversation_manager,
                 )
             (
                 persona_id,
                 _,
                 _,
                 _,
-            ) = await plugin_context.persona_manager.resolve_selected_persona(
-                umo=event.unified_msg_origin,
+            ) = await turn.plugin_context.persona_manager.resolve_selected_persona(
+                umo=turn.session.unified_msg_origin,
                 conversation_persona_id=conversation_persona_id,
-                platform_name=event.get_platform_name(),
-                provider_settings=provider_settings,
+                platform_name=turn.session.platform_name,
+                provider_settings=turn.runtime_config.get("provider_settings", {}),
             )
             return str(persona_id or "default")
         except Exception as exc:
@@ -405,20 +507,14 @@ class PersonalRuntimeManager:
                 event.unified_msg_origin,
                 exc,
             )
-            return f"unresolved:{reservation.turn_id}"
-
-    @staticmethod
-    def _privacy_scope(message_type: MessageType) -> str:
-        if message_type is MessageType.GROUP_MESSAGE:
-            return "group"
-        if message_type is MessageType.FRIEND_MESSAGE:
-            return "private"
-        return "other"
+            return f"unresolved:{turn.turn_id}"
 
 
 __all__ = [
     "PendingTurnReservation",
     "PendingTurnState",
+    "PlatformEventSubmission",
+    "RuntimeObservationEventSubmission",
     "PersonalRuntimeKey",
     "PersonalRuntimeManager",
     "PersonalSessionRuntime",
