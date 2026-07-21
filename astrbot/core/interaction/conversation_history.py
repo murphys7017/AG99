@@ -32,7 +32,11 @@ async def commit_interaction_conversation_turn(
 
     user_message = turn_material.get("user_message")
     assistant_text = str(turn_material.get("assistant_text", "") or "").strip()
-    if not isinstance(user_message, dict) or not assistant_text:
+    source = str(turn_material.get("source", "platform") or "platform")
+    is_observation = source == "observation"
+    if not assistant_text:
+        return False
+    if not is_observation and not isinstance(user_message, dict):
         return False
 
     last_error: Exception | None = None
@@ -46,12 +50,20 @@ async def commit_interaction_conversation_turn(
                     event.unified_msg_origin,
                     event.get_platform_id(),
                 )
-            await conversation_manager.append_dialogue_turn(
-                conversation_id,
-                turn_id=resolved_turn_id,
-                user_message=user_message,
-                assistant_message={"role": "assistant", "content": assistant_text},
-            )
+            assistant_message = {"role": "assistant", "content": assistant_text}
+            if is_observation:
+                await conversation_manager.append_assistant_turn(
+                    conversation_id,
+                    turn_id=resolved_turn_id,
+                    assistant_message=assistant_message,
+                )
+            else:
+                await conversation_manager.append_dialogue_turn(
+                    conversation_id,
+                    turn_id=resolved_turn_id,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                )
             event.set_extra(CONVERSATION_COMMITTED_TURN_ID_EXTRA, resolved_turn_id)
             return True
         except Exception as exc:  # noqa: BLE001

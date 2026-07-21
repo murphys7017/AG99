@@ -34,6 +34,8 @@ from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
 from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
+from .runtime_event import RuntimeObservationEvent
+from .turn_context import PersonalTurnContext
 from .turn_state import (
     InteractionLifecycleStage,
     InteractionSpeculativePersonaStatus,
@@ -348,6 +350,89 @@ class InteractionMiddleware:
             return
         await self._handle_pipeline_turn(event)
         event.set_extra("_interaction_route_handled", True)
+
+    async def handle_runtime_observation(
+        self,
+        event: RuntimeObservationEvent,
+        turn: PersonalTurnContext,
+    ) -> PersonaExpressionResult | None:
+        """Express one admitted system observation without Router or Core."""
+        if not isinstance(event, RuntimeObservationEvent):
+            raise TypeError("event must be a RuntimeObservationEvent")
+        if turn.event is not event or turn.observation is not event.observation:
+            raise ValueError("Runtime observation does not match the admitted turn")
+        if event.get_extra("_interaction_runtime_observation_handled", False):
+            return None
+
+        material = event.observation.visible_reply_material
+        if not material:
+            event.set_extra(
+                "_interaction_runtime_observation_skipped_reason",
+                "missing_visible_reply_material",
+            )
+            return None
+
+        runtime_config = self._get_runtime_config(event)
+        if not is_middleware_enabled(runtime_config):
+            event.set_extra(
+                "_interaction_runtime_observation_skipped_reason",
+                "interaction_middleware_disabled",
+            )
+            return None
+
+        self.prepare_pipeline_event(event)
+        interaction_config = load_interaction_agent_config(runtime_config)
+        ensure_interaction_turn_state(
+            event,
+            turn_id=str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex,
+        )
+        event.set_extra("_interaction_runtime_observation_active", True)
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.RECEIVED,
+            metadata={
+                "source": "runtime_observation",
+                "kind": event.observation.kind,
+            },
+        )
+        try:
+            expression = await self._generate_expression(
+                event,
+                interaction_config,
+                request=PersonaExpressionRequest(
+                    source_text=material,
+                    preserve_facts=True,
+                    allow_plugin_tools=False,
+                ),
+            )
+            await self._emit_immediate_reply_or_record_failure(event, expression)
+            await self._complete_persona_only_turn(event, expression)
+            event.set_extra("_interaction_runtime_observation_handled", True)
+            return expression
+        except asyncio.CancelledError:
+            mark_interaction_turn_cancelled(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.CANCELLED,
+                metadata={"source": "runtime_observation"},
+            )
+            raise
+        except Exception as exc:
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={
+                    "source": "runtime_observation",
+                    "reason": str(exc),
+                },
+            )
+            raise
+        finally:
+            event.set_extra("_interaction_runtime_observation_active", False)
 
     @staticmethod
     def _has_routeable_user_content(event: AstrMessageEvent) -> bool:
@@ -1324,14 +1409,26 @@ class InteractionMiddleware:
         canonical_reply = (canonical_reply or "").strip()
         if not canonical_reply:
             return None
+        is_observation = isinstance(event, RuntimeObservationEvent)
         material = {
             "turn_id": turn_id,
-            "user_text": (event.message_str or "").strip(),
-            "user_message": build_canonical_user_message(event),
+            "source": "observation" if is_observation else "platform",
+            "user_text": "" if is_observation else (event.message_str or "").strip(),
+            "user_message": (
+                None if is_observation else build_canonical_user_message(event)
+            ),
             "assistant_text": canonical_reply,
             "visible_outputs": outputs,
-            "history_source": "interaction.turn.material",
+            "history_source": (
+                "interaction.runtime_observation"
+                if is_observation
+                else "interaction.turn.material"
+            ),
         }
+        if is_observation:
+            material["observation_kind"] = event.observation.kind
+            material["observation_source"] = event.observation.source
+            material["observation_correlation_id"] = event.observation.correlation_id
         set_interaction_turn_finalized_material(event, material)
         return material
 

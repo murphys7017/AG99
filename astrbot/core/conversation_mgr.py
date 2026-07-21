@@ -396,6 +396,38 @@ class ConversationManager:
             await self.db.update_conversation(cid=cid, content=history)
             return True
 
+    async def append_assistant_turn(
+        self,
+        cid: str,
+        *,
+        turn_id: str,
+        assistant_message: AssistantMessageSegment | dict,
+    ) -> bool:
+        """Atomically append one assistant-only turn within this process."""
+        resolved_turn_id = turn_id.strip()
+        if not resolved_turn_id:
+            raise ValueError("turn_id is required")
+        async with session_lock_manager.acquire_lock(f"conversation:{cid}"):
+            conv = await self.db.get_conversation_by_id(cid=cid)
+            if not conv:
+                raise ValueError(f"Conversation with id {cid} not found")
+            history = list(conv.content or [])
+            if any(
+                isinstance(message, dict)
+                and message.get("_astrbot_turn_id") == resolved_turn_id
+                for message in history
+            ):
+                return False
+            assistant_payload = (
+                assistant_message.model_dump()
+                if isinstance(assistant_message, AssistantMessageSegment)
+                else dict(assistant_message)
+            )
+            assistant_payload["_astrbot_turn_id"] = resolved_turn_id
+            history.append(assistant_payload)
+            await self.db.update_conversation(cid=cid, content=history)
+            return True
+
     async def get_human_readable_context(
         self,
         unified_msg_origin: str,

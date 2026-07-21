@@ -1,12 +1,18 @@
 task:
   class: refactor
   risk: high
-  phase: runtime_lifecycle_ownership
-  scope: Establish explicit EventBus and lifecycle task ownership before continuing Core execution preparation and executor decoupling
+  phase: runtime_observation_vertical_slice
+  scope: Establish a minimal system-observation to Personal Expression to unified Output path without Router, Core, Cron, or Heartbeat scheduling
 context:
   confidence: high
   assumptions:
     - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
+    - RuntimeObservation is immutable structured system input and is never projected as a user message.
+    - Runtime observation turns share the same PersonalSessionRuntime identity and lock as platform turns but bypass EventBus, Pipeline, Router, Planner, and Core.
+    - Runtime observation admission rejects targets that do not declare proactive-message support before acquiring the session lock.
+    - Runtime observation handlers receive both the compatibility event and the canonical PersonalTurnContext; cancellation and failure emit terminal lifecycle stages.
+    - RuntimeObservationEvent is only the official platform-send compatibility sink; all visible observation output still passes through InteractionOutputController interception.
+    - Observation conversation persistence is assistant-only and turn-idempotent; it never inserts an empty or synthetic user message.
     - Phase 0 investigation deferred speculative tests; implementation batches validate their affected production boundary.
     - InteractionMemoryStore and its prompt slot were removed because production had no writer; existing local data files are left untouched as user data, but no runtime path reads them.
     - Local master is also a fork branch and is never treated as the official baseline; official boundary checks use the upstream remote plus current production call relationships.
@@ -284,3 +290,17 @@ verification:
   validation_gap: "Real-platform lifecycle delivery and live provider calls were not run. The complete interaction unit set plus postprocess/memory suites passed; pytest still reports existing aiosqlite event-loop-close warnings in some interaction tests."
 runtime:
   mode: minimal_v1
+  current_batch:
+    phase: runtime_observation_vertical_slice
+    scope:
+      - immutable RuntimeObservation and system event adapter
+      - observation-aware PersonalTurnContext with no synthetic user input
+      - manager-owned observation admission on the regular session lock
+      - Persona-only middleware handling through the unified Output Controller
+      - assistant-only conversation persistence with turn-id idempotency
+      - proactive capability admission and terminal lifecycle enforcement
+    non_goals:
+      - heartbeat
+      - policy or configuration
+      - cron or active_reply migration
+      - Router, Planner, or Core execution
