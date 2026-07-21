@@ -105,6 +105,11 @@ interaction turn 的输出路径与普通事件不同：
 - interaction 的 finalized material 先由 middleware 同步幂等提交到官方 Conversation；提交成功后才完成 turn 并调度 postprocess
 - memory service 在 `AFTER_TURN_COMPLETED` 消费 finalized material；Core 执行连续性写入独立 Execution Ledger，不混入可见对话
 
+内部系统观察不进入官方平台消息 Pipeline。当前代码提供
+`RuntimeObservationEvent -> PersonalRuntimeManager -> Personal Expression -> Output
+Controller` 的显式入口，并与平台消息共享 session runtime 锁。该入口尚未由 Heartbeat
+或 Scheduler 自动触发；普通插件 `Context.send_message()` 仍直接调用平台主动发送。
+
 ## 重构意义
 
 Yakumo 架构下，这一层未来应只保留：

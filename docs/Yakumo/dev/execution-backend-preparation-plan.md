@@ -111,14 +111,17 @@ Platform / Internal Event
 
 目标是让 Personal Runtime 成为长期控制层，而不是每条消息上的协调函数集合。
 
-当前状态（2026-07-18）：第一批所有权迁移已经落地。Lifecycle 持有共享
+当前状态（2026-07-21）：第一批所有权迁移与 Runtime Observation 纵向入口已经落地。Lifecycle 持有共享
 `PersonalRuntimeManager`；`ProcessStage` 在 Handler 前 reserve，在 Router/Persona 前完成
 persona bind、follow-up admission 和 Turn lease；Native 与 Third-party Core 共用同一
 Runtime 串行策略。Native 原有的 UMO session lock 和全局 follow-up registry 已退出生产
 主链。插件显式 `ProviderRequest` 在 Third-party 路径中会保留原对象和已有字段，再进入
-现有兼容投影与 Hook。
+现有兼容投影与 Hook。内部 `RuntimeObservation` 已可在主动消息能力校验后进入同一个
+Session Runtime，绕过 Router/Core，复用唯一 Persona Expression、Output Controller、
+assistant-only Conversation 提交和完整 lifecycle 终态。
 
-本阶段尚未完成：Observation 类型与 eligibility、Runtime task registry、
+本阶段尚未完成：Heartbeat/Runtime Sensor 等 Observation 生产者、目标 session registry、
+quiet-hours/cooldown/dedupe 等本地 eligibility policy、Runtime task registry、
 Router/Persona/Planner task owner、插件和后台任务 identity、Output completion owner 迁移。
 
 实施内容：
@@ -308,6 +311,10 @@ Phase 0 已确认的准备边界：
 - 建立 `PersonalRuntimeKey`、PendingTurn 状态和每 Runtime 单 Turn lease。
 - 将 follow-up admission 移到 Router/Persona 之前，并删除 Native 私有 follow-up owner。
 - 让 Native/Third-party 共用 Runtime 串行策略，保留插件显式 `ProviderRequest`。
+- 建立不可变 `RuntimeObservation`、显式 Observation event adapter 和同 Session Runtime
+  admission；不把系统观察伪装成用户消息。
+- Observation 复用唯一 Persona 与 Output 路径，写入 assistant-only Conversation，并在
+  发送失败、取消和异常时保留正确终态；当前尚无 Heartbeat 生产者。
 - 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化
   差异审计，并确定其长期 owner。
 - 删除无生产调用者的 `handle_inbound()`、`core_queue` 和 `enqueue_core` 重投递双轨，
@@ -332,13 +339,50 @@ Phase 0 已确认的准备边界：
   Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
 - Third-party Agent Stage 仍走官方兼容准备链，尚未消费 `CoreExecutionSpec`。它是需要
   保留的现状，不是新 Backend 的实现模板。
-- `Context.send_message()` 主动消息仍直接进入 `Platform.send_by_session()`，没有形成统一
-  Turn、Persona Expression 和 OutputIntent。
+- 通用 `Context.send_message()` 主动消息仍直接进入 `Platform.send_by_session()`，没有
+  形成统一 Turn、Persona Expression 和 OutputIntent。新建的 Runtime Observation 是一条
+  受控内部入口，不会自动接管现有插件主动发送。
+- Observation 的 assistant-only 记录当前只完成 Conversation 审计持久化。现有
+  ConversationHistory/Memory 仍以 user-assistant turn pair 为输入，因此下一轮 Prompt 和
+  Memory TurnRecord 会忽略孤立 assistant；在 Heartbeat 接线前必须建立显式 Observation
+  history projection，而不是伪造用户消息。
+- Interaction 物理发送现在会在全量投递失败时阻止 turn completion；分段部分成功时仍缺少
+  结构化 delivery receipt，canonical history 暂时无法精确表达“仅部分内容送达”。
 - 可见输出完成后才同步提交 Conversation；当前有进程内锁和 `turn_id` 幂等，但没有持久化
   Turn Journal/outbox。进程在发送成功、提交历史之前退出时，仍可能留下“用户已看到、历史
   未记录”的窗口。
 - `AssetRef` 在没有 Asset Store 时只提供不可解析的来源身份与已有转述，不承诺历史图片可
   再次读取。
+
+### 2026-07-21 整体链路复核
+
+本轮按源码重新核对 EventBus、Pipeline、插件、Personal Runtime、Prompt、Core、Output、
+Conversation 和 Memory 后，确认总体分层方向成立，但以下问题是继续接 Heartbeat 或替换
+执行器前的优先阻断项：
+
+- 插件 Handler `yield ProviderRequest` 后，`ProcessStage` 执行 Core 并直接 return，
+  不会恢复插件生成器的 post-yield 逻辑。依赖 waiter、收尾或洋葱式调用的官方插件因此
+  存在兼容缺口。
+- PendingTurn 在插件前建立，但 persona bind、follow-up capture 和 session lease 在插件
+  Handler 之后才发生。同会话插件副作用不受 Runtime 串行保护，follow-up 也可能在插件先
+  处理后再次交给 active runner。长期需要 pre-persona audience mailbox，而不是提前猜
+  persona 或把整个官方 Pipeline 锁住。
+- Hybrid execute 后 speculative Persona task 仍由 Middleware 全局集合持有，Turn lease
+  不等待它；Core-final 与 Persona commit 也没有统一原子输出仲裁。这与 Personal Runtime
+  应拥有 turn task/completion 的目标不一致，是重复回复风险的核心来源。
+- Core tool status、tool direct output 和 `send_message_to_user` 仍存在不同输出路径；
+  部分路径可能提前请求 turn finalization，部分路径绕过 visible output ledger。它们需要
+  统一 OutputIntent 身份，不能继续依赖文本去重。
+- 全量物理发送失败和 canonical material 缺失已在本轮修正；分段部分成功仍缺 delivery
+  receipt，after-send hook 的 stop 语义也可能让已送达内容被标记 cancelled。
+- Observation 已有输入/输出契约，但 assistant-only history projection、目标 session
+  registry、policy 和 producer 尚未完成，因此还不能称为可用 Heartbeat。
+- Native 已消费 `CoreExecutionSpec`，Third-party 仍是官方兼容请求链。两者的上下文、
+  capability、execution identity、ledger 和错误状态尚未统一，暂不适合直接抽象成等价
+  Backend。
+- EventBus 在逐事件任务创建前的配置解析与 scheduler 查找缺少异常隔离。该问题属于官方
+  调度基础设施风险，不应在 Interaction 内打补丁，但后续吸收上游或修改官方边界时需要
+  单独处理。
 
 下一步继续收口 Execution Event、取消和 Output Port，再评估 Backend Adapter；不直接
 把现有 Third-party Agent SubStage 改名或包装成新执行器接口。

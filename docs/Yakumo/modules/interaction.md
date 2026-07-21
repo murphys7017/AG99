@@ -25,6 +25,34 @@
 
 middleware 的职责是组合这些服务，并在一个 interaction turn 内形成可观测、可扩展、可回滚的执行现场。
 
+## Runtime Observation 边界
+
+当前已经存在一条面向持续人格运行时的内部纵向入口：
+
+```text
+RuntimeObservation
+  -> RuntimeObservationEvent
+  -> PersonalRuntimeManager admission
+  -> InteractionMiddleware.handle_runtime_observation
+  -> Personal Expression
+  -> InteractionOutputController
+  -> Platform + assistant-only Conversation + lifecycle
+```
+
+它表达系统观察，而不是伪造用户消息。Observation 与平台消息使用同一个
+`PersonalRuntimeKey` 和 session lock，但不经过 EventBus、Pipeline、Router、Planner 或
+Core；没有 `visible_reply_material` 时不会请求模型。目标平台必须明确支持主动消息，
+实际发送失败会使 turn 失败，不能把未投递内容写成成功历史。
+
+这只是已实现的输入与输出边界。Heartbeat、Runtime Sensor、目标 session registry、
+quiet hours、cooldown、daily limit 和 dedupe 尚未实现，因此当前没有生产代码自动创建
+Observation。官方插件直接调用 `Context.send_message()` 的主动消息仍是独立兼容旁路，
+尚未自动转换为 Observation。
+
+assistant-only 内容目前只保证写入官方 Conversation 作为可审计记录。通用 Prompt history
+和 Memory 仍按 user-assistant turn pair 解析，因此尚不会把这类主动表达投影到下一轮。
+后续应增加显式 Observation history 类型，不应通过空文本或伪造用户消息绕过该限制。
+
 目标链路：
 
 ```text

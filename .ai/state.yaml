@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: runtime_observation_vertical_slice
-  scope: Establish a minimal system-observation to Personal Expression to unified Output path without Router, Core, Cron, or Heartbeat scheduling
+  phase: runtime_architecture_review
+  scope: Verify the complete message, execution, output, and observation flow from source and record the remaining ownership blockers before Heartbeat or backend work
 context:
   confidence: high
   assumptions:
@@ -24,7 +24,7 @@ context:
     - PendingTurn transitions are reserved -> bound -> queued|active -> settled; reserved turns do not own conversational completion.
     - One runtime key has one conversational turn with user-visible completion ownership by default; new messages are offered as follow-up first and otherwise queued.
     - Phase 1 reuses InteractionTurnState as the only writable turn state and records plugin/Subagent/background task handles without migrating their lifecycle ownership before the later plugin-task phase.
-    - All user-visible output, including direct/raw/protocol and Context.send_message output, goes through Output Dispatcher; raw is a non-rewriting output intent, not a dispatcher bypass.
+    - Interaction event output goes through Output Controller; generic Context.send_message remains a direct proactive-send compatibility bypass and has not been migrated to OutputIntent.
     - Native and Third-party execution still diverge before execution, but both now run under Personal Runtime turn admission and serialization.
     - ThirdPartyAgentSubStage preserves a plugin-yielded ProviderRequest and only builds one from the event when no explicit request exists; it still bypasses canonical Prompt and Capability preparation.
     - ProviderRequest remains an official plugin compatibility input and low-level hook projection; it is not the future immutable Execution Preparation contract.
@@ -291,7 +291,7 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: runtime_observation_vertical_slice
+    phase: runtime_architecture_review
     scope:
       - immutable RuntimeObservation and system event adapter
       - observation-aware PersonalTurnContext with no synthetic user input
@@ -299,8 +299,18 @@ runtime:
       - Persona-only middleware handling through the unified Output Controller
       - assistant-only conversation persistence with turn-id idempotency
       - proactive capability admission and terminal lifecycle enforcement
+      - canonical finalized material rebuilt at the middleware persistence boundary
+      - fail turn completion when no physical Interaction output was delivered
+      - source-derived flow diagram and explicit transition-risk inventory
     non_goals:
       - heartbeat
       - policy or configuration
       - cron or active_reply migration
       - Router, Planner, or Core execution
+    confirmed_gaps:
+      - plugin ProviderRequest generators do not resume after Core execution
+      - plugin side effects and follow-up capture occur before session admission
+      - speculative Persona tasks are not owned by the Personal Runtime lease
+      - Core intermediate and direct-tool outputs do not share one completion contract
+      - Observation assistant-only records are not projected into paired Prompt or Memory history
+      - partial physical delivery lacks a structured receipt

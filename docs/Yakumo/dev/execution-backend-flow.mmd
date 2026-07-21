@@ -8,6 +8,9 @@ flowchart LR
 %% - astrbot/core/pipeline/stage_order.py: STAGES_ORDER
 %% - astrbot/core/pipeline/process_stage/stage.py: ProcessStage.process
 %% - astrbot/core/interaction/personal_runtime.py: PersonalRuntimeManager / PersonalSessionRuntime
+%% - astrbot/core/interaction/observation.py: RuntimeObservation / RuntimeObservationTarget
+%% - astrbot/core/interaction/runtime_event.py: RuntimeObservationEvent
+%% - astrbot/core/interaction/turn_context.py: PersonalTurnContext
 %% - astrbot/core/pipeline/process_stage/method/star_request.py: StarRequestSubStage.process
 %% - astrbot/core/pipeline/process_stage/method/agent_request.py: AgentRequestSubStage.process
 %% - astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py
@@ -58,7 +61,7 @@ flowchart LR
         direction TB
         PROC["ProcessStage.process"]
         PREP["InteractionMiddleware.prepare_pipeline_event<br/>启用时建立 TurnState 并替换 send / send_streaming"]
-        RESERVE["PersonalRuntimeManager.reserve<br/>记录 config / audience / privacy / turn"]
+        RESERVE["PersonalRuntimeManager.submit_platform_event<br/>建立 PersonalTurnContext 与 PendingTurnReservation<br/>context manager 负责最终 settle"]
         HAS_HANDLER{"存在 activated_handlers?"}
         STAR["StarRequestSubStage<br/>按顺序执行插件 Handler"]
         STAR_OUT{"Handler 产出什么?"}
@@ -66,19 +69,21 @@ flowchart LR
         PROVIDER_REQ["ProviderRequest"]
         PLUGIN_TX["插件输出事务<br/>此前可见输出改记为 progress"]
         DEFAULT_GATE{"未发送消息 + 已唤醒 + 未 call_llm?"}
-        NO_CORE["ProcessStage 结束<br/>没有自动 Core 请求，settle reservation"]
+        NO_CORE["ProcessStage 结束<br/>没有自动 Core 请求<br/>submission context 自动 settle"]
         BIND["按 effective persona 绑定 PersonalRuntimeKey"]
         ADMIT["PersonalSessionRuntime.admit<br/>先尝试 active runner follow-up"]
         FOLLOW_UP{"follow-up 已被 active runner 消费?"}
         TURN_LEASE["取得同 Runtime 唯一 conversational Turn lease"]
-        FOLLOW_DONE["不启动 Router / Persona / Core<br/>settle PendingTurn"]
+        FOLLOW_DONE["不启动 Router / Persona / Core<br/>submission context 自动 settle"]
         BEFORE_CORE["InteractionMiddleware.handle_pipeline_event<br/>仅在即将调用 Core 前执行"]
+        POST_YIELD_GAP["当前兼容缺口<br/>ProviderRequest 后 ProcessStage 直接 return<br/>插件生成器 yield 后逻辑不会恢复"]
 
         PP --> PROC --> PREP --> RESERVE --> HAS_HANDLER
         HAS_HANDLER -->|"是"| STAR --> STAR_OUT
         STAR_OUT -->|"普通结果"| PLUGIN_RESULT
         PLUGIN_RESULT -. "后续 Stage 返回后继续下一个 Handler" .-> STAR
         STAR_OUT -->|"ProviderRequest"| PROVIDER_REQ --> PLUGIN_TX --> BIND
+        PROVIDER_REQ -. "Core 返回后" .-> POST_YIELD_GAP
         STAR -->|"Handler 全部结束"| DEFAULT_GATE
         HAS_HANDLER -->|"否"| DEFAULT_GATE
         DEFAULT_GATE -->|"否"| NO_CORE
@@ -106,6 +111,7 @@ flowchart LR
         PSTATE{"Persona 提交仲裁<br/>Core-final 是否已先提交?"}
         PSUP["抑制 Persona"]
         PIMM["OutputController 发送 immediate_reply<br/>Hybrid execute 时不完成 Turn"]
+        PERSONA_OWNER_GAP["当前所有权缺口<br/>execute 后 Persona task 转入 Middleware 全局集合<br/>Turn lease 不等待该 task"]
         IFAIL["标记 failed / cancelled<br/>按异常语义终止"]
 
         BEFORE_CORE --> I_ENABLED
@@ -126,6 +132,7 @@ flowchart LR
         ROUTE -->|"hybrid"| PLANNER --> PLAN
         PLAN -->|"not_required"| PERSONA_ONLY
         PLAN -->|"execute"| TASK --> AGENT_ENTRY
+        TASK -. "speculative task 继续运行" .-> PERSONA_OWNER_GAP
         PLANNER -->|"失败且 Persona 未成功发出"| IFAIL
         PLANNER -->|"失败但 Persona 已发出"| PERSONA_ONLY
         PIMM -. "persona / not_required 分支" .-> PERSONA_ONLY
@@ -196,6 +203,8 @@ flowchart LR
         FINAL_PERSONA["统一 Persona Expression<br/>source_text=Core 结果<br/>preserve_facts=true"]
         CORE_STREAM["capture_streaming<br/>Core chunk 直接流向平台"]
         STREAM_OBSERVE["可选窗口观察<br/>插件 Decider 或 Persona interjection"]
+        CORE_INTERMEDIATE["Core tool status / tool direct output<br/>经 event.send 进入 interceptor"]
+        INTERMEDIATE_RISK["当前完成权风险<br/>非 model result 可能被分类为 passthrough<br/>并提前请求 turn finalization"]
 
         CONTRIB["Result Contributors<br/>effect_calls / platform_extras / client_objects / final override"]
         MATERIAL["Interaction 输出物化<br/>前缀 / reasoning / TTS / t2i / 分段"]
@@ -226,6 +235,8 @@ flowchart LR
 
         CORE_KIND -->|"非流式"| CORE_FINAL --> FINAL_PERSONA --> CONTRIB
         CORE_KIND -->|"流式"| CORE_STREAM --> STREAM_OBSERVE --> PHYSICAL
+        ARUN -. "中间可见输出" .-> CORE_INTERMEDIATE --> INTERCEPT
+        CORE_INTERMEDIATE -.-> INTERMEDIATE_RISK
         PIMM --> CONTRIB
         CONTRIB --> MATERIAL --> PHYSICAL --> INTERACTION_PLATFORM_SEND
     end
@@ -236,7 +247,7 @@ flowchart LR
         OUTPUT_FINAL{"当前输出是否拥有 Turn 完成权?"}
         TURN_ACTIVE["Turn 保持 active<br/>等待 Persona / Core / 插件后续输出"]
         FINAL_MATERIAL["Finalized Turn Material<br/>normalized user_message / AssetRef / assistant_text / visible_outputs"]
-        CONVERSATION["同步幂等提交 Canonical Dialogue History<br/>ConversationManager.append_dialogue_turn(turn_id)"]
+        CONVERSATION["同步幂等提交 Canonical Dialogue History<br/>平台回合：user + assistant<br/>Observation 回合：assistant-only<br/>均使用 turn_id 幂等"]
         EXEC_LEDGER["Independent Core Execution Ledger<br/>execution_id / task / attempt / tool evidence / result<br/>当前仍由 InternalAgentSubStage 收尾"]
         TURN_FINAL["InteractionMiddleware._finalize_turn<br/>completed / failed / cancelled"]
         AFTER_TURN["调度后台 AFTER_TURN_COMPLETED"]
@@ -268,18 +279,38 @@ flowchart LR
         NORMAL_POST -. "AFTER_TURN_COMPLETED" .-> POST_MANAGER
         NO_CORE --> CLEANUP
         STOP0 --> CLEANUP
-        SILENT --> CLEANUP
         NORMAL_POST --> CLEANUP
         INTERACTION_AFTER --> CLEANUP
         TURN_FINAL --> CLEANUP
     end
 
-    subgraph ACTIVE["八、当前主动消息旁路"]
+    subgraph OBSERVATION["八、Runtime Observation 纵向入口（已实现，当前无生产触发源）"]
+        direction TB
+        OBS_SOURCE["未来 Heartbeat / Scheduler / Runtime Sensor<br/>当前源码尚未接入"]
+        OBS_FACT["RuntimeObservation<br/>不可变系统事实，不伪装用户消息"]
+        OBS_EVENT["RuntimeObservationEvent<br/>官方平台发送兼容 event"]
+        OBS_SUBMIT["PersonalRuntimeManager.submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
+        OBS_HANDLER["InteractionMiddleware.handle_runtime_observation<br/>显式接收 event + PersonalTurnContext<br/>绕过 Router / Planner / Core"]
+        OBS_PERSONA["唯一 Persona Expression<br/>不默认开放有副作用工具"]
+        OBS_OUTPUT["InteractionOutputController<br/>统一 materialize / platform send / visible completion"]
+        OBS_HISTORY["assistant-only Conversation commit<br/>completed / failed / cancelled lifecycle"]
+        OBS_HISTORY_GAP["当前缺口<br/>成对历史解析器与 Memory TurnRecord<br/>尚不消费 assistant-only 记录"]
+        OBS_NONE["没有 material：零模型调用并 settle"]
+
+        OBS_SOURCE -. "尚未实现" .-> OBS_FACT
+        OBS_FACT --> OBS_EVENT --> OBS_SUBMIT --> OBS_HANDLER
+        OBS_HANDLER -->|"存在 visible_reply_material"| OBS_PERSONA --> OBS_OUTPUT --> OBS_HISTORY
+        OBS_HISTORY --> OBS_HISTORY_GAP
+        OBS_HANDLER -->|"material 为空"| OBS_NONE
+        OBS_OUTPUT -. "复用同一物理发送与完成链" .-> INTERACTION_PLATFORM_SEND
+    end
+
+    subgraph ACTIVE["九、当前通用主动消息旁路"]
         direction LR
         ACTIVE_PLUGIN["插件调用 Context.send_message"]
         SESSION_SEND["Platform.send_by_session"]
         ACTIVE_PLATFORM["平台 Adapter 直接发送"]
-        ACTIVE_BYPASS["已知未收口边界<br/>不创建 AstrMessageEvent Turn<br/>不经过 EventBus / Pipeline / Interaction Output Runtime"]
+        ACTIVE_BYPASS["已知未收口边界<br/>不创建 Personal Turn<br/>不经过 EventBus / Pipeline / Persona / Interaction Output Runtime"]
 
         ACTIVE_PLUGIN --> SESSION_SEND --> ACTIVE_PLATFORM --> ACTIVE_BYPASS
     end
