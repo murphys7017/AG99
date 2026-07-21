@@ -1593,4 +1593,22 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
     ) -> None:
+        material = self._build_finalized_turn_material(event)
+        if material is None:
+            self._record_turn_finalization_failure(
+                event,
+                "missing_canonical_turn_material",
+            )
+            record_interaction_turn_completion_failure(
+                event,
+                "missing_canonical_turn_material",
+            )
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={"reason": "missing_canonical_turn_material"},
+            )
+            return
         await self._finalize_turn(event)

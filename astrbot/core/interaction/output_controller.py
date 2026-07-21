@@ -2103,7 +2103,11 @@ class InteractionOutputController:
             result_is_model_result=result_is_model_result,
             allow_segmented_reply=allow_segmented_reply,
         )
-        return delivered_message_ids if sent else []
+        if not sent:
+            raise RuntimeError(
+                f"Interaction output was not delivered: {message_kind}"
+            )
+        return delivered_message_ids
 
     async def _notify_lifecycle(
         self,
