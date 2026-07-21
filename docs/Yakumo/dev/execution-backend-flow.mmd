@@ -305,7 +305,10 @@ flowchart LR
 
     subgraph ACTIVE["九、插件主动输出"]
         direction TB
-        ACTIVE_PLUGIN["插件调用 Context.send_message"]
+        ACTIVE_PLUGIN["插件 / 主动 Cron 调用 Context.send_message"]
+        ACTIVE_TARGET{"是否携带显式 session?"}
+        ACTIVE_DEFAULT["platform_settings.proactive_message_target<br/>完整 UMO；显式目标不覆盖"]
+        ACTIVE_VALIDATE["默认目标解析时校验 Adapter 已加载<br/>且支持主动消息"]
         ACTIVE_KIND{"存在纯文本语义?"}
         ACTIVE_RUNTIME["PersonalRuntimeManager.dispatch_proactive_message"]
         ACTIVE_SCOPE{"目标是当前 active turn?"}
@@ -315,7 +318,10 @@ flowchart LR
         ACTIVE_PLATFORM["平台 Adapter 直接发送"]
         ACTIVE_BYPASS["当前纯媒体边界<br/>尚无可持久化语义材料，不创建 Personal Turn"]
 
-        ACTIVE_PLUGIN --> ACTIVE_KIND
+        ACTIVE_PLUGIN --> ACTIVE_TARGET
+        ACTIVE_TARGET -->|"是"| ACTIVE_KIND
+        ACTIVE_TARGET -->|"否"| ACTIVE_DEFAULT --> ACTIVE_VALIDATE
+        ACTIVE_VALIDATE --> ACTIVE_KIND
         ACTIVE_KIND -->|"是"| ACTIVE_RUNTIME --> ACTIVE_SCOPE
         ACTIVE_SCOPE -->|"是"| ACTIVE_PROGRESS --> INTERACTION_PLATFORM_SEND
         ACTIVE_SCOPE -->|"否"| ACTIVE_TURN --> INTERACTION_PLATFORM_SEND

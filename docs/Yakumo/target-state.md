@@ -354,7 +354,8 @@ History、独立 Core Execution Ledger、能力快照和任务说明保持为不
 
 `CoreExecutionSpec` 当前只是进程内事实边界，不是最终 Backend wire contract，也尚未移到统一
 Backend 选择之前。Personal Runtime 已拥有 session lease、turn task scope、主动纯文本输出和
-immediate/final 仲裁；Native 工具对象、统一 Execution Event、纯媒体主动输出和 Conversation
+immediate/final 仲裁，并已提供经 Adapter 能力校验的默认主动消息目标；Native 工具对象、
+统一 Execution Event、纯媒体主动输出、主动触发策略和 Conversation
 提交窗口仍属于下一阶段需要收口的边界。目标态不得把这些现状固化为各 Backend 各自维护的
 兼容实现。
 

@@ -112,6 +112,12 @@ Controller` 的显式入口，并与平台消息共享 session runtime 锁。该
 Personal Runtime 排队；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output
 Controller，跨 session 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
 
+无显式目标的主动输出通过 `Context.get_proactive_message_target()` 读取
+`platform_settings.proactive_message_target`。该值是完整 UMO；WebUI 仅列出当前支持主动
+消息的已知会话，运行时仍会重新验证 Adapter。`Context.send_message(None, ...)` 和无目标
+主动 Cron 使用它，显式 session 不会被覆盖。这个机制只提供 delivery target，不创建
+Heartbeat、Sensor 或主动回复策略。
+
 ## 重构意义
 
 Yakumo 架构下，这一层未来应只保留：

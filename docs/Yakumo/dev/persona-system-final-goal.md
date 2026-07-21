@@ -2,6 +2,8 @@
 
 本文只定义 Yakumo 持续人格运行时的长期边界，不记录已经完成的迁移步骤。当前实现以
 `current-state.md` 和源码为准，实施顺序以 `execution-backend-preparation-plan.md` 为准。
+自主人格观察、策略和 Heartbeat 的初期实施草案见
+`autonomous-persona-runtime-initial-plan.md`。
 
 ## 目标
 

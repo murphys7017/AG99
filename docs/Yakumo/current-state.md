@@ -104,6 +104,7 @@
 - ProcessStage 在插件 Handler 前取得 Personal Runtime lease；Router、Persona、Context Material 和 Stream Observation task 由 `TurnExecutionScope` 持有，lease 释放前统一完成或取消。
 - Immediate 与 Final 使用同一 turn lock 原子预留输出槽。Final 先到时取消 pending Persona；Immediate 已提交时保留 Hybrid 的双阶段输出语义。
 - `Context.send_message()` 的主动纯文本输出进入 Personal Runtime；当前 session 的 Core 工具输出作为 progress，跨 session 输出建立独立 proactive turn。assistant-only 输出可进入后续 Prompt 与 Memory history。
+- `platform_settings.proactive_message_target` 保存默认主动消息目标，WebUI 从已有会话中选择完整 UMO，并只展示当前支持主动消息的 Adapter。`Context.send_message(None, ...)` 与未携带 `session` 的主动 Cron 读取该目标；显式目标优先，运行时会再次校验 Adapter 是否仍可用。
 - `router_agent` 是轻量二分类器：当前只判断 `persona` / `hybrid`，不生成用户回复，不注册 tool-call，也不输出 effect；`silent` 类型暂时保留但未向模型开放。直播音频和协议命令走独立 Core bypass，不伪装成 Router 结果。Router 只消费规范 `ContextPack` 的极简投影，不参与事实采集。
 - Router 与 Persona Expression 在输入完成 materialization 后并发启动。Turn State 用 `pending / committed / emitted / suppressed / failed` 仲裁推测式 Persona 输出；Core 最终结果先提交时可以抑制尚未提交的即时表达。
 - `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 终止 Core 路径并保留并发 Persona 表达。Planner 不向即时 Persona 注入 task summary 或短回复指令。Planner 失败仍禁止 Core；若 Persona 已成功 emitted，则保留失败记录并按 Persona-only 完成本轮，否则 fail-fast。
@@ -127,6 +128,7 @@
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
+- 默认主动目标只解决投递位置，不是 Heartbeat 或主动策略；Heartbeat、Sensor、预算和冷却仍是后续 Runtime 触发层能力
 
 ### 3. 插件与工具整合层
 
