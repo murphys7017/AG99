@@ -1,6 +1,34 @@
 import os
+import re
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from astrbot.core import logger
+
+
+def local_path_to_file_uri(path: str | os.PathLike[str]) -> str:
+    """Return a standards-compliant file URI for a local path."""
+    return Path(path).expanduser().resolve().as_uri()
+
+
+def file_uri_to_path(file_uri: str) -> str:
+    """Decode standard and legacy Windows file URIs to local paths."""
+    if not file_uri.startswith("file:"):
+        return file_uri
+
+    # Older message components emitted file:///C:\\... on Windows. Normalize
+    # separators before parsing so those persisted references remain readable.
+    parsed = urlparse(file_uri.replace("\\", "/"))
+    netloc = unquote(parsed.netloc or "").replace("\\", "/")
+    path = unquote(parsed.path or "").replace("\\", "/")
+
+    if re.fullmatch(r"[A-Za-z]:", netloc):
+        return f"{netloc}{path}"
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
+    if netloc and netloc != "localhost":
+        return f"//{netloc}{path}"
+    return path
 
 
 def path_Mapping(mappings, srcPath: str) -> str:

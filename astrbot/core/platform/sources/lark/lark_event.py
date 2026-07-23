@@ -38,6 +38,7 @@ from astrbot.core.utils.media_utils import (
     get_media_duration,
 )
 from astrbot.core.utils.metrics import Metric
+from astrbot.core.utils.path_util import file_uri_to_path
 
 
 class LarkMessageEvent(AstrMessageEvent):
@@ -203,8 +204,8 @@ class LarkMessageEvent(AstrMessageEvent):
                 file_path = ""
                 image_file = None
 
-                if comp.file and comp.file.startswith("file:///"):
-                    file_path = comp.file.replace("file:///", "")
+                if comp.file and comp.file.startswith("file:"):
+                    file_path = file_uri_to_path(comp.file)
                 elif comp.file and comp.file.startswith("http"):
                     image_file_path = await download_image_by_url(comp.file)
                     file_path = image_file_path if image_file_path else ""

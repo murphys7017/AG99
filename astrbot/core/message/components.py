@@ -26,7 +26,6 @@ import base64
 import json
 import os
 import sys
-import urllib.parse
 import uuid
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -39,6 +38,7 @@ else:
 
 from astrbot.core import astrbot_config, file_token_service, logger
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+from astrbot.core.utils.path_util import file_uri_to_path, local_path_to_file_uri
 from astrbot.core.utils.io import download_file, download_image_by_url, file_to_base64
 
 
@@ -131,7 +131,7 @@ class Record(BaseMessageComponent):
 
     @staticmethod
     def fromFileSystem(path, **_):
-        return Record(file=f"file:///{os.path.abspath(path)}", path=path, **_)
+        return Record(file=local_path_to_file_uri(path), path=path, **_)
 
     @staticmethod
     def fromURL(url: str, **_):
@@ -151,16 +151,7 @@ class Record(BaseMessageComponent):
         file:///home/user/... → /home/user/... (Linux)
         其中的 URL 编码（如 %20 空格）也会被解码。
         """
-        path = urllib.parse.urlparse(uri).path
-        path = urllib.parse.unquote(path)
-        if (
-            sys.platform.startswith("win")
-            and len(path) >= 3
-            and path[0] == "/"
-            and path[2] == ":"
-        ):
-            path = path[1:]
-        return path
+        return file_uri_to_path(uri)
 
     async def _resolve_file_source(self) -> str:
         """选择可用的文件源。
@@ -172,7 +163,7 @@ class Record(BaseMessageComponent):
         # 1) 优先尝试 file：如果它已包含完整 URI 或已知格式，直接使用
         if self.file:
             if (
-                self.file.startswith("file:///")
+                self.file.startswith("file:")
                 or self.file.startswith("http")
                 or self.file.startswith("base64://")
                 or os.path.exists(self.file)
@@ -182,11 +173,11 @@ class Record(BaseMessageComponent):
         # 2) 尝试 url（可能是 file:/// 或 http 链接）
         if self.url:
             if (
-                self.url.startswith("file:///")
+                self.url.startswith("file:")
                 or self.url.startswith("http")
                 or os.path.exists(self.url)
                 or (
-                    self.url.startswith("file:///")
+                    self.url.startswith("file:")
                     and os.path.exists(self._decode_file_uri(self.url))
                 )
             ):
@@ -209,7 +200,7 @@ class Record(BaseMessageComponent):
         file_source = await self._resolve_file_source()
         if not file_source:
             raise Exception(f"not a valid file: {self.file}")
-        if file_source.startswith("file:///"):
+        if file_source.startswith("file:"):
             return self._decode_file_uri(file_source)
         if file_source.startswith("http"):
             file_path = await download_image_by_url(file_source)
@@ -237,7 +228,7 @@ class Record(BaseMessageComponent):
         file_source = await self._resolve_file_source()
         if not file_source:
             raise Exception(f"not a valid file: {self.file}")
-        if file_source.startswith("file:///"):
+        if file_source.startswith("file:"):
             bs64_data = file_to_base64(self._decode_file_uri(file_source))
         elif file_source.startswith("http"):
             file_path = await download_image_by_url(file_source)
@@ -287,7 +278,7 @@ class Video(BaseMessageComponent):
 
     @staticmethod
     def fromFileSystem(path, **_):
-        return Video(file=f"file:///{os.path.abspath(path)}", path=path, **_)
+        return Video(file=local_path_to_file_uri(path), path=path, **_)
 
     @staticmethod
     def fromURL(url: str, **_):
@@ -303,8 +294,8 @@ class Video(BaseMessageComponent):
 
         """
         url = self.file
-        if url and url.startswith("file:///"):
-            return url[8:]
+        if url and url.startswith("file:"):
+            return file_uri_to_path(url)
         if url and url.startswith("http"):
             video_file_path = os.path.join(
                 get_astrbot_temp_path(), f"videoseg_{uuid.uuid4().hex}"
@@ -470,7 +461,7 @@ class Image(BaseMessageComponent):
 
     @staticmethod
     def fromFileSystem(path, **_):
-        return Image(file=f"file:///{os.path.abspath(path)}", path=path, **_)
+        return Image(file=local_path_to_file_uri(path), path=path, **_)
 
     @staticmethod
     def fromBase64(base64: str, **_):
@@ -494,8 +485,8 @@ class Image(BaseMessageComponent):
         url = self.url or self.file
         if not url:
             raise ValueError("No valid file or URL provided")
-        if url.startswith("file:///"):
-            return url[8:]
+        if url.startswith("file:"):
+            return file_uri_to_path(url)
         if url.startswith("http"):
             image_file_path = await download_image_by_url(url)
             return os.path.abspath(image_file_path)
@@ -523,8 +514,8 @@ class Image(BaseMessageComponent):
         url = self.url or self.file
         if not url:
             raise ValueError("No valid file or URL provided")
-        if url.startswith("file:///"):
-            bs64_data = file_to_base64(url[8:])
+        if url.startswith("file:"):
+            bs64_data = file_to_base64(file_uri_to_path(url))
         elif url.startswith("http"):
             image_file_path = await download_image_by_url(url)
             bs64_data = file_to_base64(image_file_path)
@@ -814,18 +805,8 @@ class File(BaseMessageComponent):
 
         if self.file_:
             path = self.file_
-            if path.startswith("file://"):
-                # 处理 file:// (2 slashes) 或 file:/// (3 slashes)
-                # pathlib.as_uri() 通常生成 file:///
-                path = path[7:]
-                # 兼容 Windows: file:///C:/path -> /C:/path -> C:/path
-                if (
-                    os.name == "nt"
-                    and len(path) > 2
-                    and path[0] == "/"
-                    and path[2] == ":"
-                ):
-                    path = path[1:]
+            if path.startswith("file:"):
+                path = file_uri_to_path(path)
 
             if os.path.exists(path):
                 return os.path.abspath(path)

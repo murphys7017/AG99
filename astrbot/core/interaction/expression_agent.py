@@ -25,6 +25,10 @@ from astrbot.core.prompt.render import (
 )
 from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider, resolve_fallback_chat_providers
+from astrbot.core.provider.modalities import (
+    log_context_sanitize_stats,
+    sanitize_contexts_by_modalities,
+)
 from astrbot.core.star.context import Context
 
 from .collectors import PersonaVisibleReplyCollector
@@ -599,11 +603,19 @@ class InteractionExpressionAgent:
             ),
         )
         _log_persona_prompt_size_diagnostics(event, req, render_result)
+        model_contexts = build_model_context_messages(render_result.messages)
+        modalities = provider_config.get("modalities")
+        if isinstance(modalities, list):
+            model_contexts, sanitize_stats = sanitize_contexts_by_modalities(
+                model_contexts,
+                modalities,
+            )
+            log_context_sanitize_stats(sanitize_stats)
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(
                     prompt=render_result.request_prompt or "",
-                    contexts=build_model_context_messages(render_result.messages),
+                    contexts=model_contexts,
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.expression_temperature,
                     tool_choice="required"

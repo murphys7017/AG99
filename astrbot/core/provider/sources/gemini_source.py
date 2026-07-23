@@ -27,6 +27,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_file, download_image_by_url
 from astrbot.core.utils.media_utils import ensure_wav
 from astrbot.core.utils.network_utils import is_connection_error, log_connection_failure
+from astrbot.core.utils.path_util import file_uri_to_path
 
 from ..register import register_provider_adapter
 
@@ -997,8 +998,8 @@ class ProviderGoogleGenAI(Provider):
             if image_url.startswith("http"):
                 image_path = await download_image_by_url(image_url)
                 image_data = await self.encode_image_bs64(image_path)
-            elif image_url.startswith("file:///"):
-                image_path = image_url.replace("file:///", "")
+            elif image_url.startswith("file:"):
+                image_path = file_uri_to_path(image_url)
                 image_data = await self.encode_image_bs64(image_path)
             else:
                 image_data = await self.encode_image_bs64(image_url)
@@ -1107,11 +1108,30 @@ class ProviderGoogleGenAI(Provider):
 
     async def encode_image_bs64(self, image_url: str) -> str:
         """将图片转换为 base64"""
+        if image_url.startswith("data:"):
+            return image_url
         if image_url.startswith("base64://"):
-            return image_url.replace("base64://", "data:image/jpeg;base64,")
+            raw_base64 = image_url.removeprefix("base64://")
+            image_bytes = base64.b64decode(raw_base64)
+            mime_type = self._detect_image_mime_type(image_bytes)
+            return f"data:{mime_type};base64,{raw_base64}"
         with open(image_url, "rb") as f:
-            image_bs64 = base64.b64encode(f.read()).decode("utf-8")
-            return "data:image/jpeg;base64," + image_bs64
+            image_bytes = f.read()
+        mime_type = self._detect_image_mime_type(image_bytes)
+        image_bs64 = base64.b64encode(image_bytes).decode("utf-8")
+        return f"data:{mime_type};base64,{image_bs64}"
+
+    @staticmethod
+    def _detect_image_mime_type(image_bytes: bytes) -> str:
+        if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+        if image_bytes[:2] == b"\xff\xd8":
+            return "image/jpeg"
+        if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+            return "image/gif"
+        if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
 
     async def _close_httpx_client(self, client: httpx.AsyncClient | None) -> None:
         """Safely close an httpx.AsyncClient, swallowing errors for idempotency."""

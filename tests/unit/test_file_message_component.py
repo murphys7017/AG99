@@ -37,3 +37,20 @@ async def test_file_component_download_sanitizes_remote_name(monkeypatch, tmp_pa
     assert path.name.startswith("fileseg_report________")
     assert path.suffix == ".pdf"
     assert downloaded_paths == [path]
+
+
+@pytest.mark.asyncio
+async def test_local_media_components_use_standard_file_uris(tmp_path):
+    media_path = tmp_path / "media file.jpg"
+    media_path.write_bytes(b"media")
+    media_path_str = str(media_path)
+
+    media_components = (
+        components.Image.fromFileSystem(media_path_str),
+        components.Record.fromFileSystem(media_path_str),
+        components.Video.fromFileSystem(media_path_str),
+    )
+    for component in media_components:
+        assert component.file == media_path.resolve().as_uri()
+        assert "\\" not in component.file
+        assert Path(await component.convert_to_file_path()) == media_path.resolve()

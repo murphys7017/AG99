@@ -942,6 +942,17 @@ async def test_file_uri_to_path_preserves_windows_drive_letter():
 
 
 @pytest.mark.asyncio
+async def test_file_uri_to_path_accepts_legacy_windows_backslashes():
+    provider = _make_provider()
+    try:
+        assert provider._file_uri_to_path(
+            r"file:///C:\tmp\quoted-image.png"
+        ) == "C:/tmp/quoted-image.png"
+    finally:
+        await provider.terminate()
+
+
+@pytest.mark.asyncio
 async def test_file_uri_to_path_preserves_windows_netloc_drive_letter():
     provider = _make_provider()
     try:
@@ -1055,6 +1066,46 @@ async def test_materialize_context_image_parts_returns_new_messages(monkeypatch)
         )
         assert materialized[1] is not context_query[1]
         assert materialized[1]["content"] == "plain text"
+    finally:
+        await provider.terminate()
+
+
+@pytest.mark.asyncio
+async def test_materialize_context_drops_unreadable_image_parts(monkeypatch):
+    provider = _make_provider()
+    try:
+        async def fail_to_resolve(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(provider, "_resolve_image_part", fail_to_resolve)
+        contexts = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "file:///missing.png"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "file:///missing.png"},
+                    }
+                ],
+            },
+        ]
+
+        materialized = await provider._materialize_context_image_parts(contexts)
+
+        assert materialized[0]["content"] == [{"type": "text", "text": "look"}]
+        assert materialized[1]["content"] == [
+            {"type": "text", "text": "[Image unavailable]"}
+        ]
     finally:
         await provider.terminate()
 

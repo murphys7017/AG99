@@ -19,6 +19,7 @@ from astrbot.api.message_components import (
     Reply,
 )
 from astrbot.api.platform import AstrBotMessage, At, PlatformMetadata
+from astrbot.core.utils.path_util import file_uri_to_path
 
 from .client import DiscordBotClient
 from .components import DiscordEmbed, DiscordView
@@ -168,9 +169,9 @@ class DiscordPlatformEvent(AstrMessageEvent):
                         continue
 
                     # 2. File URI
-                    if file_content.startswith("file:///"):
+                    if file_content.startswith("file:"):
                         logger.debug(f"[Discord] 处理 File URI: {file_content}")
-                        path = Path(file_content[8:])
+                        path = Path(file_uri_to_path(file_content))
                         if await asyncio.to_thread(path.exists):
                             file_bytes = await asyncio.to_thread(path.read_bytes)
                             discord_file = discord.File(

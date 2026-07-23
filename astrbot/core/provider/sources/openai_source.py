@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from json_repair import repair_json
@@ -51,6 +51,7 @@ from astrbot.core.utils.network_utils import (
     is_connection_error,
     log_connection_failure,
 )
+from astrbot.core.utils.path_util import file_uri_to_path
 from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 from ..register import register_provider_adapter
@@ -302,24 +303,7 @@ class ProviderOpenAIOfficial(Provider):
 
     @staticmethod
     def _file_uri_to_path(file_uri: str) -> str:
-        """Normalize file URIs to paths.
-
-        `file://localhost/...` and drive-letter forms are treated as local paths.
-        Other non-empty hosts are preserved as UNC-style paths.
-        """
-        parsed = urlparse(file_uri)
-        if parsed.scheme != "file":
-            return file_uri
-
-        netloc = unquote(parsed.netloc or "")
-        path = unquote(parsed.path or "")
-        if re.fullmatch(r"[A-Za-z]:", netloc):
-            return str(Path(f"{netloc}{path}"))
-        if re.match(r"^/[A-Za-z]:/", path):
-            path = path[1:]
-        if netloc and netloc != "localhost":
-            path = f"//{netloc}{path}"
-        return str(Path(path))
+        return file_uri_to_path(file_uri)
 
     async def _image_ref_to_data_url(
         self,
@@ -370,12 +354,12 @@ class ProviderOpenAIOfficial(Provider):
 
         image_url_data = part.get("image_url")
         if not isinstance(image_url_data, dict):
-            logger.warning("图片内容块格式无效，将保留原始内容。")
+            logger.warning("图片内容块格式无效，将忽略。")
             return None, None
 
         url = image_url_data.get("url")
         if not isinstance(url, str) or not url:
-            logger.warning("图片内容块缺少有效 URL，将保留原始内容。")
+            logger.warning("图片内容块缺少有效 URL，将忽略。")
             return None, None
 
         image_detail = image_url_data.get("detail")
@@ -449,14 +433,14 @@ class ProviderOpenAIOfficial(Provider):
             },
         }
 
-    async def _transform_content_part(self, part: dict) -> dict:
+    async def _transform_content_part(self, part: dict) -> dict | None:
         if not isinstance(part, dict):
             return part
 
         if part.get("type") == "image_url":
             url, image_detail = self._extract_image_part_info(part)
             if not url:
-                return part
+                return None
 
             try:
                 resolved_part = await self._resolve_image_part(
@@ -464,13 +448,13 @@ class ProviderOpenAIOfficial(Provider):
                 )
             except Exception as exc:
                 logger.warning(
-                    "图片 %s 预处理失败，将保留原始内容。错误: %s",
+                    "图片 %s 预处理失败，将忽略。错误: %s",
                     url,
                     exc,
                 )
-                return part
+                return None
 
-            return resolved_part or part
+            return resolved_part
 
         if part.get("type") == "audio_url":
             audio_ref = self._extract_audio_part_info(part)
@@ -486,7 +470,13 @@ class ProviderOpenAIOfficial(Provider):
         if not isinstance(content, list):
             return {**message}
 
-        new_content = [await self._transform_content_part(part) for part in content]
+        new_content = []
+        for part in content:
+            transformed_part = await self._transform_content_part(part)
+            if transformed_part is not None:
+                new_content.append(transformed_part)
+        if content and not new_content:
+            new_content.append({"type": "text", "text": "[Image unavailable]"})
         return {**message, "content": new_content}
 
     async def _materialize_context_image_parts(

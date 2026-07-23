@@ -3,7 +3,6 @@ import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import unquote, urlparse
 
 import anthropic
 import httpx
@@ -29,6 +28,7 @@ from astrbot.core.utils.network_utils import (
     is_connection_error,
     log_connection_failure,
 )
+from astrbot.core.utils.path_util import file_uri_to_path
 
 from ..register import register_provider_adapter
 
@@ -471,17 +471,7 @@ class ProviderAnthropic(Provider):
     @staticmethod
     def _resolve_local_image_path(url: str) -> Path | None:
         if url.startswith("file:"):
-            parsed = urlparse(url)
-            raw_path = unquote(parsed.path or "")
-            if parsed.netloc:
-                raw_path = f"//{parsed.netloc}{raw_path}"
-            if (
-                len(raw_path) >= 3
-                and raw_path[0] == "/"
-                and raw_path[2] == ":"
-            ):
-                raw_path = raw_path[1:]
-            path = Path(raw_path)
+            path = Path(file_uri_to_path(url))
         elif "://" not in url:
             path = Path(url)
         else:
@@ -941,8 +931,8 @@ class ProviderAnthropic(Provider):
             elif image_url.startswith("http"):
                 image_path = await download_image_by_url(image_url)
                 image_data, mime_type = await self.encode_image_bs64(image_path)
-            elif image_url.startswith("file:///"):
-                image_path = image_url.replace("file:///", "")
+            elif image_url.startswith("file:"):
+                image_path = file_uri_to_path(image_url)
                 image_data, mime_type = await self.encode_image_bs64(image_path)
             else:
                 image_data, mime_type = await self.encode_image_bs64(image_url)

@@ -30,6 +30,7 @@ from astrbot.api.message_components import File, Image, Plain, Record, Video
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_image_by_url, file_to_base64
+from astrbot.core.utils.path_util import file_uri_to_path
 from astrbot.core.utils.tencent_record_helper import wav_to_tencent_silk
 
 
@@ -721,9 +722,9 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             if isinstance(i, Plain):
                 plain_text += i.text
             elif isinstance(i, Image) and not image_base64:
-                if i.file and i.file.startswith("file:///"):
-                    image_base64 = file_to_base64(i.file[8:])
-                    image_file_path = i.file[8:]
+                if i.file and i.file.startswith("file:"):
+                    image_file_path = file_uri_to_path(i.file)
+                    image_base64 = file_to_base64(image_file_path)
                 elif i.file and i.file.startswith("http"):
                     image_file_path = await download_image_by_url(i.file)
                     image_base64 = file_to_base64(image_file_path)
@@ -756,18 +757,16 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                         logger.error(f"处理语音时出错: {e}")
                         record_file_path = None
             elif isinstance(i, Video) and not video_file_source:
-                if i.file.startswith("file:///"):
-                    video_file_source = i.file[8:]
+                if i.file.startswith("file:"):
+                    video_file_source = file_uri_to_path(i.file)
                 else:
                     video_file_source = i.file
             elif isinstance(i, File) and not file_source:
                 file_name = i.name
                 if i.file_:
                     file_path = i.file_
-                    if file_path.startswith("file:///"):
-                        file_path = file_path[8:]
-                    elif file_path.startswith("file://"):
-                        file_path = file_path[7:]
+                    if file_path.startswith("file:"):
+                        file_path = file_uri_to_path(file_path)
                     file_source = file_path
                 elif i.url:
                     file_source = i.url

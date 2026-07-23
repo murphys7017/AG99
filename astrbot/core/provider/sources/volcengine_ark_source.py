@@ -26,6 +26,7 @@ from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsRes
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_image_by_url
 from astrbot.core.utils.network_utils import is_connection_error, log_connection_failure
+from astrbot.core.utils.path_util import file_uri_to_path
 
 from ..register import register_provider_adapter
 
@@ -377,9 +378,7 @@ class ProviderVolcengineArk(Provider):
             downloaded_path = await download_image_by_url(image_url)
             return await self._encode_image_to_data_url(downloaded_path)
         local_path = (
-            image_url.replace("file:///", "", 1)
-            if image_url.startswith("file:///")
-            else image_url
+            file_uri_to_path(image_url) if image_url.startswith("file:") else image_url
         )
         image_path = Path(local_path)
         image_bytes = await asyncio.to_thread(image_path.read_bytes)

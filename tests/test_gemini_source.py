@@ -31,6 +31,20 @@ def test_gemini_reasoning_only_output_is_allowed():
     )
 
 
+@pytest.mark.asyncio
+async def test_gemini_encode_image_uses_detected_png_mime(tmp_path):
+    image_path = tmp_path / "sample.png"
+    image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+    image_path.write_bytes(image_bytes)
+    provider = object.__new__(ProviderGoogleGenAI)
+
+    encoded = await provider.encode_image_bs64(str(image_path))
+
+    assert encoded == (
+        "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
+    )
+
+
 def test_prepare_conversation_preserves_tool_calls_with_assistant_text():
     provider = object.__new__(ProviderGoogleGenAI)
     provider.provider_config = {}

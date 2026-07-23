@@ -600,7 +600,11 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
             return "webchat"
 
     provider = Provider()
-    provider.provider_config = {"id": "persona", "type": "test"}
+    provider.provider_config = {
+        "id": "persona",
+        "type": "test",
+        "modalities": ["text", "tool_use"],
+    }
     plugin_context = type(
         "PluginContext",
         (),
@@ -628,7 +632,18 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
         return_value=RenderResult(
             system_prompt="persona",
             request_prompt="请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。",
-            messages=[{"role": "user", "content": "hello"}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "hello"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "file:///C:/tmp/screen.jpg"},
+                        },
+                    ],
+                }
+            ],
             output_contract=contract,
             compiled_output_contract=compiled,
             metadata={"persona_effect_specs": [effect]},
@@ -654,6 +669,15 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     assert provider.calls[0]["output_contract"] is contract
     assert provider.calls[0]["compiled_output_contract"] is compiled
     assert provider.calls[0]["tool_choice"] == "required"
+    assert provider.calls[0]["contexts"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "[Image]"},
+            ],
+        }
+    ]
 
 
 @pytest.mark.asyncio

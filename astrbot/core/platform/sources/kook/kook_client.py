@@ -14,6 +14,7 @@ import websockets
 
 from astrbot import logger
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.utils.path_util import file_uri_to_path
 
 from .kook_config import KookConfig
 from .kook_types import (
@@ -419,9 +420,9 @@ class KookClient:
             b64_str = file_url.removeprefix("base64://")
             bytes_data = base64.b64decode(b64_str)
 
-        elif file_url.startswith("file://") or os.path.exists(file_url):
-            file_url = file_url.removeprefix("file:///")
-            file_url = file_url.removeprefix("file://")
+        elif file_url.startswith("file:") or os.path.exists(file_url):
+            if file_url.startswith("file:"):
+                file_url = file_uri_to_path(file_url)
 
             try:
                 target_path = Path(file_url).resolve()
