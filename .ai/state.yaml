@@ -1,11 +1,19 @@
 task:
   class: refactor
   risk: high
-  phase: runtime_ownership_cleanup
-  scope: Make Personal Runtime own admission, turn tasks, proactive text output, and atomic immediate/final arbitration before Heartbeat or backend work
+  phase: autonomous_persona_runtime_phase_1a
+  scope: Establish process-local cross-turn PersonalState ownership, bounded PersonalSessionRuntime retention, diagnostics, and lifecycle shutdown without changing reply behavior
 context:
   confidence: high
   assumptions:
+    - The autonomous runtime implementation starts with process-local cross-turn PersonalState ownership and bounded Runtime retention; it does not start with Heartbeat, a policy model, or proactive output behavior.
+    - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
+    - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
+    - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
+    - Proactive expression cannot ship until last-expression, cooldown, mute, and daily usage state are restart-safe.
+    - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
+    - Personal Policy gets a dedicated Prompt target only in the shadow-policy phase and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
+    - The shadow-policy phase uses a read-only Prompt collection adapter for the existing event-shaped collector interface; it is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
     - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
     - RuntimeObservation is immutable structured system input and is never projected as a user message.
     - Runtime observation turns share the same PersonalSessionRuntime identity and lock as platform turns but bypass EventBus, Pipeline, Router, Planner, and Core.
@@ -158,6 +166,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Autonomous Personal Runtime Phase 1A: PersonalState and diagnostics import smoke, focused valid Core lifecycle stop tests (2 passed), Ruff, py_compile, YAML parse, docs build, and git diff checks passed; one existing cross-event-loop MagicMock task test fails before the new shutdown boundary and was not used as implementation evidence.
     - TTS lifecycle/output segment direct-path refactor: affected Voice Service, event delivery, message-chain delivery, Respond/Postprocess, Interaction Middleware, and Interaction Output Controller suite passed 236 tests; Ruff, py_compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained known aiosqlite event-loop-close warnings.
     - Dead pre-Pipeline path removal: project-venv Interaction Middleware suite passed 57 tests; production reference scan, Ruff, Python compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained an existing aiosqlite event-loop-close warning.
     - Executor preparation/output compatibility: Prompt/Main Agent/Tool Loop/Interaction suite passed 321 tests; event/message/memory suite passed 178 tests; suppressed Interaction output preserves the prior send-operation state; Ruff, py_compile, Mermaid render, VitePress build, YAML parse, and git diff checks passed.

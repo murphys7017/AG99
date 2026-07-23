@@ -470,6 +470,8 @@ class AstrBotCoreLifecycle:
                             f"插件 {plugin.name} 未被正常终止 {e!s}, 可能会导致资源泄露等问题。",
                         )
 
+            await self.personal_runtime_manager.shutdown()
+
             provider_manager = getattr(self, "provider_manager", None)
             if provider_manager is not None:
                 await provider_manager.terminate()

@@ -102,6 +102,7 @@
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
 - 插件 Handler `yield ProviderRequest` 时，ProcessStage 委托同一 turn 执行 Core；Core 返回后继续恢复插件生成器的 post-yield 逻辑和剩余 Handler，随后结束 delegated turn，不再重复进入默认 Core 路径。
 - ProcessStage 在插件 Handler 前取得 Personal Runtime lease；Router、Persona、Context Material 和 Stream Observation task 由 `TurnExecutionScope` 持有，lease 释放前统一完成或取消。
+- `PersonalSessionRuntime` 不再在 turn 结束后立即删除。它现在持有进程内 `PersonalState`，按 `config_id + persona_id + audience_key + privacy_scope` 跨 turn 复用；空闲实例通过 24 小时 TTL 和最多 1024 条的 LRU 边界惰性回收。Core stop 会关闭并清空 Runtime Manager。当前状态不写入 event extra 作为主存储，也不在重启后恢复。
 - Immediate 与 Final 使用同一 turn lock 原子预留输出槽。Final 先到时取消 pending Persona；Immediate 已提交时保留 Hybrid 的双阶段输出语义。
 - `Context.send_message()` 的主动纯文本输出进入 Personal Runtime；当前 session 的 Core 工具输出作为 progress，跨 session 输出建立独立 proactive turn。assistant-only 输出可进入后续 Prompt 与 Memory history。
 - `platform_settings.proactive_message_target` 保存默认主动消息目标，WebUI 从已有会话中选择完整 UMO，并只展示当前支持主动消息的 Adapter。`Context.send_message(None, ...)` 与未携带 `session` 的主动 Cron 读取该目标；显式目标优先，运行时会再次校验 Adapter 是否仍可用。
@@ -129,6 +130,7 @@
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
 - 默认主动目标只解决投递位置，不是 Heartbeat 或主动策略；Heartbeat、Sensor、预算和冷却仍是后续 Runtime 触发层能力
+- `CompletionFeedback` 已建立类型契约，但真实 output completion 尚未回写 `last_expression_at`、冷却和主动预算；该接线属于下一阶段
 
 ### 3. 插件与工具整合层
 

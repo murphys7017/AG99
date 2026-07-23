@@ -112,6 +112,15 @@ Controller` 的显式入口，并与平台消息共享 session runtime 锁。该
 Personal Runtime 排队；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output
 Controller，跨 session 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
 
+`PersonalSessionRuntime` 当前按 `config_id + persona_id + audience_key + privacy_scope` 在进程内
+跨 turn 保留 `PersonalState`。空闲 Runtime 最长保留 24 小时，空闲集合最多 1024 条；Manager
+在 bind、settle 和 shutdown 边界惰性执行回收，不运行独立清理线程。该状态当前只服务运行控制
+和 diagnostics，尚未持久化，也尚未接入 Completion Feedback、Inbox、Gate 或 Policy。
+
+现有 `RuntimeObservationEvent` 和 observation submission 是已经决定输出后的平台适配入口，
+不是未来通用 Observation Inbox。后续 Inbox 接收事实时不会构造用户消息、进入 EventBus 或
+要求目标 Adapter 支持主动发送；只有策略决定表达后才复用现有 Persona 和 Output 路径。
+
 无显式目标的主动输出通过 `Context.get_proactive_message_target()` 读取
 `platform_settings.proactive_message_target`。该值是完整 UMO；WebUI 仅列出当前支持主动
 消息的已知会话，运行时仍会重新验证 Adapter。`Context.send_message(None, ...)` 和无目标

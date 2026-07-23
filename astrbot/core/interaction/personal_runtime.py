@@ -15,6 +15,7 @@ from astrbot.core.persona_error_reply import resolve_event_conversation_persona_
 from astrbot.core.provider.entities import ProviderRequest
 
 from .observation import RuntimeObservation, RuntimeObservationTarget
+from .personal_state import PersonalState, PersonalStateSnapshot
 from .runtime_event import RuntimeObservationEvent
 from .turn_context import (
     PersonalTurnContext,
@@ -27,6 +28,9 @@ from .turn_state import (
 _ACTIVE_PERSONAL_TURN: contextvars.ContextVar[PersonalTurnContext | None] = (
     contextvars.ContextVar("active_personal_turn", default=None)
 )
+
+DEFAULT_IDLE_RUNTIME_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_MAX_IDLE_RUNTIMES = 1024
 
 
 class PendingTurnState(str, Enum):
@@ -43,6 +47,27 @@ class PersonalRuntimeKey:
     persona_id: str
     audience_key: str
     privacy_scope: str
+
+
+@dataclass(frozen=True, slots=True)
+class PersonalSessionRuntimeSnapshot:
+    key: PersonalRuntimeKey
+    active_turn_id: str | None
+    bound_turn_count: int
+    created_at: float
+    last_access_at: float
+    idle_since: float | None
+    state: PersonalStateSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class PersonalRuntimeManagerSnapshot:
+    accepting: bool
+    session_count: int
+    non_idle_session_count: int
+    idle_session_count: int
+    eviction_count: int
+    sessions: tuple[PersonalSessionRuntimeSnapshot, ...]
 
 
 @dataclass(slots=True)
@@ -248,17 +273,49 @@ class PersonalTurnLease:
                 await self.reservation.turn.state.execution_scope.close()
             finally:
                 self.runtime.active_turn_id = None
+                self.runtime.touch()
                 self.reservation.transition(PendingTurnState.SETTLED)
                 self.runtime.turn_lock.release()
 
 
 class PersonalSessionRuntime:
     def __init__(self, key: PersonalRuntimeKey) -> None:
+        now = time.time()
         self.key = key
         self.turn_lock = asyncio.Lock()
         self.active_turn_id: str | None = None
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
+        self.state = PersonalState()
+        self.created_at = now
+        self.last_access_at = now
+        self.idle_since: float | None = now
+
+    def touch(self, *, now: float | None = None) -> None:
+        self.last_access_at = time.time() if now is None else now
+
+    def bind_turn(self, *, now: float) -> None:
+        self.bound_turn_count += 1
+        self.idle_since = None
+        self.touch(now=now)
+
+    def settle_turn(self, *, now: float) -> None:
+        self.bound_turn_count = max(0, self.bound_turn_count - 1)
+        self.touch(now=now)
+        if self.is_idle():
+            self.idle_since = now
+            self.state.mark_idle(now=now)
+
+    def snapshot(self) -> PersonalSessionRuntimeSnapshot:
+        return PersonalSessionRuntimeSnapshot(
+            key=self.key,
+            active_turn_id=self.active_turn_id,
+            bound_turn_count=self.bound_turn_count,
+            created_at=self.created_at,
+            last_access_at=self.last_access_at,
+            idle_since=self.idle_since,
+            state=self.state.snapshot(),
+        )
 
     async def admit(
         self,
@@ -294,6 +351,21 @@ class PersonalSessionRuntime:
             raise
         reservation.transition(PendingTurnState.ACTIVE)
         self.active_turn_id = turn.turn_id
+        user_activity_at = None
+        if (
+            turn.input is not None
+            and turn.actor is not None
+            and (
+                turn.input.text.strip()
+                or turn.input.outline.strip()
+                or turn.input.components
+            )
+        ):
+            self_id = str(event.get_self_id() or "").strip()
+            if not self_id or turn.actor.actor_id != self_id:
+                user_activity_at = turn.input.created_at
+        self.touch()
+        self.state.mark_turn_active(user_activity_at=user_activity_at)
         return TurnAdmission(
             turn=turn,
             consumed_as_follow_up=False,
@@ -315,11 +387,24 @@ class PersonalSessionRuntime:
 
 
 class PersonalRuntimeManager:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        idle_runtime_ttl_seconds: float = DEFAULT_IDLE_RUNTIME_TTL_SECONDS,
+        max_idle_runtimes: int = DEFAULT_MAX_IDLE_RUNTIMES,
+    ) -> None:
+        if idle_runtime_ttl_seconds < 0:
+            raise ValueError("idle_runtime_ttl_seconds must be non-negative")
+        if max_idle_runtimes < 0:
+            raise ValueError("max_idle_runtimes must be non-negative")
+        self._idle_runtime_ttl_seconds = float(idle_runtime_ttl_seconds)
+        self._max_idle_runtimes = int(max_idle_runtimes)
         self._sessions: dict[PersonalRuntimeKey, PersonalSessionRuntime] = {}
         self._event_sessions: weakref.WeakKeyDictionary[Any, PersonalSessionRuntime] = (
             weakref.WeakKeyDictionary()
         )
+        self._accepting = True
+        self._eviction_count = 0
 
     @asynccontextmanager
     async def submit_platform_event(
@@ -329,6 +414,7 @@ class PersonalRuntimeManager:
         plugin_context: Any,
         runtime_config: dict,
     ) -> AsyncIterator[PlatformEventSubmission]:
+        self._ensure_accepting()
         reservation = self._reserve(
             event,
             config_id,
@@ -353,6 +439,7 @@ class PersonalRuntimeManager:
         handler: Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]],
     ) -> Any:
         """Submit an internal observation to the regular per-session runtime."""
+        self._ensure_accepting()
         if not isinstance(event, RuntimeObservationEvent):
             raise TypeError("event must be a RuntimeObservationEvent")
         if not event.platform_meta.support_proactive_message:
@@ -464,6 +551,7 @@ class PersonalRuntimeManager:
         runtime_config: dict,
         plugin_context: Any,
     ) -> PendingTurnReservation:
+        self._ensure_accepting()
         turn = PlatformTurnContextFactory.create(
             event,
             config_id=config_id,
@@ -494,8 +582,13 @@ class PersonalRuntimeManager:
             audience_key=turn.session.unified_msg_origin,
             privacy_scope=turn.session.privacy_scope,
         )
-        runtime = self._sessions.setdefault(key, PersonalSessionRuntime(key))
-        runtime.bound_turn_count += 1
+        now = time.time()
+        self._evict_idle_sessions(now=now)
+        runtime = self._sessions.get(key)
+        if runtime is None:
+            runtime = PersonalSessionRuntime(key)
+            self._sessions[key] = runtime
+        runtime.bind_turn(now=now)
         reservation.runtime_key = key
         reservation.transition(PendingTurnState.BOUND)
         self._event_sessions[event] = runtime
@@ -552,9 +645,88 @@ class PersonalRuntimeManager:
         runtime = self._event_sessions.pop(event, None)
         if runtime is None:
             return
-        runtime.bound_turn_count = max(0, runtime.bound_turn_count - 1)
-        if runtime.is_idle():
-            self._sessions.pop(runtime.key, None)
+        now = time.time()
+        runtime.settle_turn(now=now)
+        self._evict_idle_sessions(now=now)
+
+    def snapshot_diagnostics(self) -> PersonalRuntimeManagerSnapshot:
+        sessions = tuple(
+            runtime.snapshot()
+            for runtime in sorted(
+                self._sessions.values(),
+                key=lambda item: (
+                    item.key.config_id,
+                    item.key.persona_id,
+                    item.key.audience_key,
+                    item.key.privacy_scope,
+                ),
+            )
+        )
+        idle_count = sum(runtime.is_idle() for runtime in self._sessions.values())
+        return PersonalRuntimeManagerSnapshot(
+            accepting=self._accepting,
+            session_count=len(sessions),
+            non_idle_session_count=len(sessions) - idle_count,
+            idle_session_count=idle_count,
+            eviction_count=self._eviction_count,
+            sessions=sessions,
+        )
+
+    async def shutdown(self) -> None:
+        if not self._accepting:
+            return
+        self._accepting = False
+        active_count = sum(
+            not runtime.is_idle() for runtime in self._sessions.values()
+        )
+        if active_count:
+            logger.warning(
+                "Personal Runtime shutdown with active sessions: count=%s",
+                active_count,
+            )
+        self._event_sessions.clear()
+        self._sessions.clear()
+
+    def _ensure_accepting(self) -> None:
+        if not self._accepting:
+            raise RuntimeError("Personal Runtime Manager is shutting down")
+
+    def _evict_idle_sessions(self, *, now: float) -> None:
+        expired_keys = [
+            key
+            for key, runtime in self._sessions.items()
+            if runtime.is_idle()
+            and now - runtime.last_access_at >= self._idle_runtime_ttl_seconds
+        ]
+        for key in expired_keys:
+            self._evict_runtime(key, reason="idle_ttl")
+
+        idle_runtimes = sorted(
+            (
+                runtime
+                for runtime in self._sessions.values()
+                if runtime.is_idle()
+            ),
+            key=lambda runtime: runtime.last_access_at,
+        )
+        overflow = len(idle_runtimes) - self._max_idle_runtimes
+        for runtime in idle_runtimes[: max(0, overflow)]:
+            self._evict_runtime(runtime.key, reason="idle_lru")
+
+    def _evict_runtime(self, key: PersonalRuntimeKey, *, reason: str) -> None:
+        runtime = self._sessions.get(key)
+        if runtime is None or not runtime.is_idle():
+            return
+        self._sessions.pop(key, None)
+        self._eviction_count += 1
+        logger.debug(
+            "Personal Runtime evicted: reason=%s config_id=%s persona_id=%s audience=%s privacy_scope=%s",
+            reason,
+            key.config_id,
+            key.persona_id,
+            key.audience_key,
+            key.privacy_scope,
+        )
 
     async def _resolve_persona_id(
         self,
@@ -602,8 +774,10 @@ __all__ = [
     "PlatformEventSubmission",
     "RuntimeObservationEventSubmission",
     "PersonalRuntimeKey",
+    "PersonalRuntimeManagerSnapshot",
     "PersonalRuntimeManager",
     "PersonalSessionRuntime",
+    "PersonalSessionRuntimeSnapshot",
     "PersonalTurnLease",
     "TurnAdmission",
 ]
