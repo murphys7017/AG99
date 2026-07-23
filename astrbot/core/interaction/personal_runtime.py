@@ -17,6 +17,7 @@ from astrbot.core.persona_error_reply import (
 )
 from astrbot.core.provider.entities import ProviderRequest
 
+from .config import load_interaction_agent_config
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .observation_inbox import (
     ObservationAdmissionResult,
@@ -27,9 +28,11 @@ from .personal_gate import (
     DeterministicObservationGate,
     ObservationFeatureBuilder,
     ObservationGateDisposition,
+    ObservationGateReason,
     ObservationGateResult,
     ObservationGateSettings,
 )
+from .personal_policy import PersonalPolicyAgent, PersonalPolicyEvaluation
 from .personal_state import (
     CompletionFeedback,
     PersonalDeliveryStatus,
@@ -48,6 +51,7 @@ from .turn_state import (
     InteractionTurnStatus,
     set_interaction_turn_persona_id,
 )
+from .types import InteractionAgentConfig
 
 _ACTIVE_PERSONAL_TURN: contextvars.ContextVar[PersonalTurnContext | None] = (
     contextvars.ContextVar("active_personal_turn", default=None)
@@ -90,6 +94,7 @@ class PersonalSessionRuntimeSnapshot:
     observation_expired_drop_count: int
     last_observation_batch: ObservationBatch | None
     last_observation_gate_result: ObservationGateResult | None
+    last_personal_policy_evaluation: PersonalPolicyEvaluation | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,7 +411,14 @@ class PersonalSessionRuntime:
         self.observation_evaluation_task: asyncio.Task[None] | None = None
         self.last_observation_batch: ObservationBatch | None = None
         self.last_observation_gate_result: ObservationGateResult | None = None
+        self.last_personal_policy_evaluation: PersonalPolicyEvaluation | None = None
+        self._personal_policy_agent: PersonalPolicyAgent | None = None
+        self._plugin_context: Any | None = None
+        self._runtime_config: Mapping[str, Any] = {}
+        self._interaction_config = InteractionAgentConfig()
         self._observation_batch_due_at: float | None = None
+        self._observation_reschedule_requested = False
+        self._closing = False
         self.created_at = now
         self.last_access_at = now
         self.idle_since: float | None = now
@@ -434,6 +446,21 @@ class PersonalSessionRuntime:
     def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
         self.state.apply_completion_feedback(feedback)
         self.last_completion_feedback = feedback
+
+    def configure_personal_policy(
+        self,
+        *,
+        agent: PersonalPolicyAgent,
+        plugin_context: Any,
+        runtime_config: Mapping[str, Any],
+        interaction_config: InteractionAgentConfig,
+        gate_settings: ObservationGateSettings,
+    ) -> None:
+        self._personal_policy_agent = agent
+        self._plugin_context = plugin_context
+        self._runtime_config = dict(runtime_config)
+        self._interaction_config = interaction_config
+        self.observation_gate_settings = gate_settings
 
     def submit_observation(
         self,
@@ -465,9 +492,13 @@ class PersonalSessionRuntime:
         self,
         observation_id: str | None = None,
     ) -> bool:
+        if self._closing:
+            return False
         task = self.observation_evaluation_task
         if task is not None and not task.done():
+            self._observation_reschedule_requested = True
             return False
+        self._observation_reschedule_requested = False
         self._observation_batch_due_at = (
             asyncio.get_running_loop().time() + self.observation_debounce_seconds
         )
@@ -483,6 +514,7 @@ class PersonalSessionRuntime:
 
     async def _evaluate_observations(self) -> None:
         current_task = asyncio.current_task()
+        gate_result: ObservationGateResult | None = None
         try:
             loop = asyncio.get_running_loop()
             due_at = self._observation_batch_due_at
@@ -521,17 +553,89 @@ class PersonalSessionRuntime:
                     self.state.set_pending_observation_count(
                         self.observation_inbox.pending_count
                     )
+                elif gate_result.disposition is ObservationGateDisposition.EVALUATE:
+                    await self._evaluate_personal_policy(
+                        batch,
+                        gate_result=gate_result,
+                        state_snapshot=state_snapshot,
+                    )
             self.touch(now=closed_at)
         finally:
+            reschedule_requested = self._observation_reschedule_requested
+            self._observation_reschedule_requested = False
             if self.observation_evaluation_task is current_task:
                 self.observation_evaluation_task = None
             self._observation_batch_due_at = None
+            should_reschedule = (
+                not self._closing
+                and reschedule_requested
+                and self.observation_inbox.pending_count > 0
+                and (
+                    gate_result is None
+                    or gate_result.disposition is not ObservationGateDisposition.HOLD
+                    or (
+                        gate_result.reason_code is ObservationGateReason.RUNTIME_BUSY
+                        and not self.has_active_conversational_work()
+                    )
+                )
+            )
+            if should_reschedule:
+                self._ensure_observation_evaluation_task()
             now = time.time()
             if self.is_idle():
                 self.idle_since = now
                 self.state.mark_idle(now=now)
 
+    async def _evaluate_personal_policy(
+        self,
+        batch: ObservationBatch,
+        *,
+        gate_result: ObservationGateResult,
+        state_snapshot: PersonalStateSnapshot,
+    ) -> None:
+        agent = self._personal_policy_agent
+        plugin_context = self._plugin_context
+        if agent is None or plugin_context is None:
+            return
+
+        def record_provider_call() -> None:
+            usage_day = self.observation_gate_settings.local_datetime(
+                time.time()
+            ).date().isoformat()
+            self.state.record_policy_call(usage_day=usage_day)
+
+        evaluation = await agent.evaluate(
+            runtime_key=self.key,
+            batch=batch,
+            gate_result=gate_result,
+            state=state_snapshot,
+            gate_settings=self.observation_gate_settings,
+            plugin_context=plugin_context,
+            runtime_config=self._runtime_config,
+            interaction_config=self._interaction_config,
+            on_provider_call_started=record_provider_call,
+        )
+        if evaluation is None:
+            return
+        self.last_personal_policy_evaluation = evaluation
+        self.state.record_policy_action(evaluation.decision.action.value)
+        logger.info(
+            "Personal Policy shadow evaluation: config_id=%s persona_id=%s "
+            "batch_id=%s status=%s action=%s reason=%s failure=%s "
+            "provider_call_started=%s selected_slots=%s",
+            self.key.config_id,
+            self.key.persona_id,
+            evaluation.batch_id,
+            evaluation.status.value,
+            evaluation.decision.action.value,
+            evaluation.decision.reason_code.value,
+            evaluation.failure_code or "",
+            evaluation.provider_call_started,
+            ",".join(evaluation.selected_slot_names),
+        )
+
     async def close(self) -> None:
+        self._closing = True
         task = self.observation_evaluation_task
         if task is not None and not task.done():
             task.cancel()
@@ -541,6 +645,7 @@ class PersonalSessionRuntime:
                 pass
         self.observation_evaluation_task = None
         self._observation_batch_due_at = None
+        self._observation_reschedule_requested = False
         self.observation_inbox.clear()
         self.state.set_pending_observation_count(0)
 
@@ -564,6 +669,7 @@ class PersonalSessionRuntime:
             observation_expired_drop_count=self.observation_inbox.expired_drop_count,
             last_observation_batch=self.last_observation_batch,
             last_observation_gate_result=self.last_observation_gate_result,
+            last_personal_policy_evaluation=self.last_personal_policy_evaluation,
         )
 
     async def admit(
@@ -674,8 +780,13 @@ class PersonalRuntimeManager:
         self._event_sessions: weakref.WeakKeyDictionary[Any, PersonalSessionRuntime] = (
             weakref.WeakKeyDictionary()
         )
+        self._plugin_context: Any | None = None
+        self._personal_policy_agent = PersonalPolicyAgent()
         self._accepting = True
         self._eviction_count = 0
+
+    def bind_plugin_context(self, plugin_context: Any) -> None:
+        self._plugin_context = plugin_context
 
     async def submit_observation(
         self,
@@ -697,7 +808,11 @@ class PersonalRuntimeManager:
         )
         now = time.time()
         self._evict_idle_sessions(now=now)
-        runtime = self._get_or_create_runtime(key)
+        runtime = self._get_or_create_runtime(
+            key,
+            plugin_context=plugin_context,
+            runtime_config=runtime_config,
+        )
         return runtime.submit_observation(observation, now=now)
 
     @asynccontextmanager
@@ -880,7 +995,11 @@ class PersonalRuntimeManager:
         )
         now = time.time()
         self._evict_idle_sessions(now=now)
-        runtime = self._get_or_create_runtime(key)
+        runtime = self._get_or_create_runtime(
+            key,
+            plugin_context=turn.plugin_context,
+            runtime_config=turn.runtime_config,
+        )
         runtime.bind_turn(now=now)
         reservation.runtime_key = key
         reservation.transition(PendingTurnState.BOUND)
@@ -985,6 +1104,9 @@ class PersonalRuntimeManager:
     def _get_or_create_runtime(
         self,
         key: PersonalRuntimeKey,
+        *,
+        plugin_context: Any,
+        runtime_config: Mapping[str, Any],
     ) -> PersonalSessionRuntime:
         runtime = self._sessions.get(key)
         if runtime is None:
@@ -995,6 +1117,19 @@ class PersonalRuntimeManager:
                 observation_gate_settings=self._observation_gate_settings,
             )
             self._sessions[key] = runtime
+        interaction_config = load_interaction_agent_config(runtime_config)
+        runtime.configure_personal_policy(
+            agent=self._personal_policy_agent,
+            plugin_context=self._plugin_context or plugin_context,
+            runtime_config=runtime_config,
+            interaction_config=interaction_config,
+            gate_settings=replace(
+                self._observation_gate_settings,
+                daily_policy_call_limit=(
+                    interaction_config.personal_policy_daily_call_limit
+                ),
+            ),
+        )
         return runtime
 
     def _ensure_accepting(self) -> None:

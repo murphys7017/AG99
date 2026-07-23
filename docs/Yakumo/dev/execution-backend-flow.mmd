@@ -289,7 +289,7 @@ flowchart LR
         TURN_RELEASE --> CLEANUP
     end
 
-    subgraph OBSERVATION["八、Runtime Observation（Intake + Gate 已实现，暂无 Heartbeat / Sensor）"]
+    subgraph OBSERVATION["八、Runtime Observation（Intake + Gate + Shadow Policy 已实现，暂无 Heartbeat / Sensor）"]
         direction TB
         OBS_SOURCE["未来 Heartbeat / Scheduler / Runtime Sensor<br/>当前源码尚未接入"]
         OBS_FACT["RuntimeObservation<br/>稳定 ID / expiry / coalesce key<br/>不可变系统事实"]
@@ -299,7 +299,7 @@ flowchart LR
         OBS_BATCH["immutable ObservationBatch<br/>同一 RuntimeKey 的规范事实批次"]
         OBS_GATE["Deterministic Gate<br/>features + PersonalState + runtime busy<br/>零模型调用 / 零输出"]
         OBS_GATE_RESULT{"evaluate / hold / reject<br/>稳定 reason + diagnostics"}
-        OBS_POLICY["Phase 3 Shadow Personal Policy<br/>当前尚未实现"]
+        OBS_POLICY["Shadow Personal Policy（默认关闭）<br/>独立 Provider / 严格 tool-call<br/>fail-closed observe / diagnostics only"]
         OBS_HOLD["restore batch to Inbox<br/>busy turn settle 后重评<br/>其他 hold 等待新 Observation"]
         OBS_EVENT["RuntimeObservationEvent<br/>仅适配已经决定发送的输出"]
         OBS_SUBMIT["submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
@@ -313,8 +313,8 @@ flowchart LR
         OBS_FACT --> OBS_INTAKE --> OBS_INBOX --> OBS_DEBOUNCE --> OBS_BATCH --> OBS_GATE --> OBS_GATE_RESULT
         OBS_GATE_RESULT -->|"hold"| OBS_HOLD --> OBS_INBOX
         OBS_GATE_RESULT -->|"reject"| RUNTIME_STATE
-        OBS_GATE_RESULT -. "evaluate；Phase 3" .-> OBS_POLICY
-        OBS_POLICY -. "未来决定 express" .-> OBS_EVENT
+        OBS_GATE_RESULT -->|"evaluate 且启用"| OBS_POLICY --> RUNTIME_STATE
+        OBS_POLICY -. "未来 Phase 4 才执行 express" .-> OBS_EVENT
         OBS_EVENT --> OBS_SUBMIT --> OBS_HANDLER
         OBS_HANDLER -->|"存在 visible_reply_material"| OBS_PERSONA --> OBS_OUTPUT --> OBS_HISTORY
         OBS_HANDLER -->|"material 为空"| OBS_NONE

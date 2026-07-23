@@ -1060,7 +1060,7 @@
     },
     "router": {
       "description": "Router",
-      "hint": "Only decides silent / persona / hybrid. Router does not generate replies, decompose tasks, or output reasons or confidence.",
+      "hint": "Only decides persona / hybrid. Router does not generate replies, decompose tasks, or output reasons or confidence.",
       "interaction_middleware": {
         "router_provider_id": {
           "description": "Router Model Provider",
@@ -1087,6 +1087,29 @@
         },
         "planner_timeout": {
           "description": "Planner Timeout Seconds"
+        }
+      }
+    },
+    "personal_policy": {
+      "description": "Personal Policy",
+      "hint": "Shadow-evaluates background Observations that pass the deterministic Gate. Decisions are recorded but never execute Persona or Core.",
+      "interaction_middleware": {
+        "personal_policy_shadow_enabled": {
+          "description": "Enable Shadow Policy Evaluation"
+        },
+        "personal_policy_provider_id": {
+          "description": "Policy Model Provider",
+          "hint": "Must be selected explicitly; Persona and Core providers are never used as fallback."
+        },
+        "personal_policy_temperature": {
+          "description": "Policy Temperature"
+        },
+        "personal_policy_timeout": {
+          "description": "Policy Timeout Seconds"
+        },
+        "personal_policy_daily_call_limit": {
+          "description": "Daily Policy Call Limit",
+          "hint": "Counted when a provider request starts. Set to 0 to block all policy calls."
         }
       }
     },

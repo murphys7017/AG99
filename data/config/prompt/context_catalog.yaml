@@ -415,6 +415,31 @@ contexts:
       llm_exposure: redacted
       redact_fn: "mask_sensitive_info"
 
+  # ========== Runtime 类 (ephemeral) ==========
+  - id: runtime.personal_state
+    category: runtime
+    slots: [system]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "Personal Policy 使用的只读运行状态投影"
+
+  - id: runtime.observation_batch
+    category: runtime
+    slots: [user_input]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "Personal Policy 使用的规范 ObservationBatch 事实"
+
+  - id: runtime.observation_features
+    category: runtime
+    slots: [system]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "Deterministic Gate 生成的可验证 ObservationFeatures"
+
 # ========== Design Notes ==========
 #
 # Phase 1 Scope (Current):

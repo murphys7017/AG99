@@ -14,6 +14,7 @@ class PromptTarget(str, Enum):
 
     ROUTER = "router"
     CORE_PLANNER = "core_planner"
+    PERSONAL_POLICY = "personal_policy"
     PERSONA = "persona"
     CORE = "core"
 
@@ -63,6 +64,22 @@ _CORE_PLANNER_SLOT_NAMES = frozenset(
 )
 
 _CORE_ONLY_SLOT_NAMES = frozenset({"system.core_execution_context"})
+
+_PERSONAL_POLICY_SLOT_NAMES = frozenset(
+    {
+        "system.base",
+        "persona.summary",
+        "session.datetime",
+        "session.user_info",
+        "conversation.history",
+        "memory.topic_state",
+        "memory.short_term",
+        "memory.persona_state",
+        "runtime.personal_state",
+        "runtime.observation_batch",
+        "runtime.observation_features",
+    }
+)
 
 
 def project_context_pack(
@@ -131,6 +148,9 @@ def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
     if target is PromptTarget.CORE_PLANNER:
         return slot.name in _CORE_PLANNER_SLOT_NAMES
 
+    if target is PromptTarget.PERSONAL_POLICY:
+        return slot.name in _PERSONAL_POLICY_SLOT_NAMES
+
     group = slot.name.split(".", 1)[0]
     if target is PromptTarget.PERSONA:
         if (
@@ -166,29 +186,41 @@ def _project_slot(
         if projected is None:
             return None
 
-    if target not in {PromptTarget.ROUTER, PromptTarget.CORE_PLANNER}:
+    if target not in {
+        PromptTarget.ROUTER,
+        PromptTarget.CORE_PLANNER,
+        PromptTarget.PERSONAL_POLICY,
+    }:
         return projected
 
     if projected.name == "conversation.history":
-        history_turns = (
-            router_history_turns
-            if target is PromptTarget.ROUTER
-            else max(router_history_turns, 8)
-        )
+        if target is PromptTarget.ROUTER:
+            history_turns = router_history_turns
+            max_message_chars = 1000
+        elif target is PromptTarget.PERSONAL_POLICY:
+            history_turns = max(router_history_turns, 6)
+            max_message_chars = 1200
+        else:
+            history_turns = max(router_history_turns, 8)
+            max_message_chars = 1800
         _project_history(
             projected,
             history_turns,
-            max_message_chars=1000
-            if target is PromptTarget.ROUTER
-            else 1800,
+            max_message_chars=max_message_chars,
         )
     elif projected.name == "conversation.group_recent":
         _project_group_recent(
             projected,
-            max_records=8 if target is PromptTarget.ROUTER else 12,
-            max_record_chars=800
-            if target is PromptTarget.ROUTER
-            else 1200,
+            max_records=(
+                8
+                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
+                else 12
+            ),
+            max_record_chars=(
+                800
+                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
+                else 1200
+            ),
         )
     return projected
 

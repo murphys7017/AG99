@@ -62,6 +62,30 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
             interaction_config.get("planner_timeout", 8.0),
             8.0,
         ),
+        personal_policy_shadow_enabled=bool(
+            interaction_config.get("personal_policy_shadow_enabled", False)
+        ),
+        personal_policy_provider_id=str(
+            interaction_config.get("personal_policy_provider_id", "") or ""
+        ),
+        personal_policy_temperature=_float_or_default(
+            interaction_config.get("personal_policy_temperature", 0.1),
+            0.1,
+        ),
+        personal_policy_timeout=max(
+            0.1,
+            _float_or_default(
+                interaction_config.get("personal_policy_timeout", 8.0),
+                8.0,
+            ),
+        ),
+        personal_policy_daily_call_limit=max(
+            0,
+            _int_or_default(
+                interaction_config.get("personal_policy_daily_call_limit", 200),
+                200,
+            ),
+        ),
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
         stream_observation_enabled=bool(
             interaction_config.get("stream_observation_enabled", True)

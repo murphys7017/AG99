@@ -1062,7 +1062,7 @@
     },
     "router": {
       "description": "Router",
-      "hint": "只判断 silent / persona / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
+      "hint": "只判断 persona / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
       "interaction_middleware": {
         "router_provider_id": {
           "description": "路由模型提供商",
@@ -1089,6 +1089,29 @@
         },
         "planner_timeout": {
           "description": "规划超时秒数"
+        }
+      }
+    },
+    "personal_policy": {
+      "description": "Personal Policy",
+      "hint": "仅对通过确定性 Gate 的后台 Observation 做影子评估。当前只记录决策，不执行主动表达或 Core。",
+      "interaction_middleware": {
+        "personal_policy_shadow_enabled": {
+          "description": "启用影子策略评估"
+        },
+        "personal_policy_provider_id": {
+          "description": "策略模型提供商",
+          "hint": "必须显式选择，不回退到 Persona 或 Core 模型。"
+        },
+        "personal_policy_temperature": {
+          "description": "策略温度"
+        },
+        "personal_policy_timeout": {
+          "description": "策略超时秒数"
+        },
+        "personal_policy_daily_call_limit": {
+          "description": "每日策略调用上限",
+          "hint": "Provider 请求开始时计数；设为 0 会阻止所有策略调用。"
         }
       }
     },

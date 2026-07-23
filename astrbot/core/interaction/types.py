@@ -151,6 +151,11 @@ class InteractionAgentConfig:
     planner_provider_id: str = ""
     planner_temperature: float = 0.1
     planner_timeout: float = 8.0
+    personal_policy_shadow_enabled: bool = False
+    personal_policy_provider_id: str = ""
+    personal_policy_temperature: float = 0.1
+    personal_policy_timeout: float = 8.0
+    personal_policy_daily_call_limit: int = 200
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200

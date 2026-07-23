@@ -114,9 +114,10 @@ RuntimeObservation
   -> fixed 1.5-second aggregation window
   -> immutable ObservationBatch
   -> deterministic Gate
-     -> evaluate: retained diagnostics for Shadow Policy
+     -> evaluate: optional Shadow Personal Policy
      -> hold: restore to Inbox
      -> reject: stable diagnostics
+  -> Shadow Policy decision / fail-closed observe: Runtime diagnostics only
 
 已经决定发送的主动输出
   -> RuntimeObservationEvent
@@ -124,12 +125,13 @@ RuntimeObservation
   -> Personal Expression -> Output Controller
 ```
 
-通用 Observation Intake 不创建平台事件、不取得 turn lease，也不要求目标支持主动发送；当前
-evaluation task 会关闭 batch 并执行纯本地 Gate，但不调用 Policy、Provider、Persona、Core 或
-Output。Gate 只读取 batch、PersonalState、Runtime 忙闲和目标能力，返回稳定 disposition、reason
-与 features。`hold` 会恢复 batch；busy hold 在当前 turn settle 后重新评估，quiet hours 与冷却
-等待后续 Observation 触发。主动输出兼容入口继续与平台消息共享 session runtime 锁，并在
-admission 时校验目标发送能力。两者都尚未由
+通用 Observation Intake 不创建平台事件、不取得 turn lease，也不要求目标支持主动发送。Gate
+只读取 batch、PersonalState、Runtime 忙闲和目标能力，返回稳定 disposition、reason 与 features；
+`reject` 和 `hold` 零 Provider 调用。`evaluate` 在 Shadow Policy 显式启用时通过规范 Prompt target
+调用独立 Provider，严格要求协议级 tool-call，失败统一记录为 `observe`。Policy 不持有工具、
+Skills、知识库或输出能力，也不执行其决策。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
+重新评估，quiet hours 与冷却等待后续 Observation 触发。主动输出兼容入口继续与平台消息共享
+session runtime 锁，并在 admission 时校验目标发送能力。两者都尚未由
 Heartbeat 或 Sensor 自动触发。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
 的路径；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output Controller，跨 session
 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
@@ -138,8 +140,9 @@ Heartbeat 或 Sensor 自动触发。普通插件 `Context.send_message()` 的纯
 跨 turn 保留 `PersonalState`。空闲 Runtime 最长保留 24 小时，空闲集合最多 1024 条；Manager
 在 bind、settle 和 observation admission 边界惰性执行回收，不运行独立清理线程。每个 Runtime
 拥有最多 64 条 Observation 的 Inbox 和唯一 1.5 秒固定聚合窗口 task；窗口内的新事实不延长
-截止时间，pending facts 或 task 存在时不属于 idle。Gate settings 当前只由 Runtime 内部依赖
-注入，尚未接入用户配置；状态只服务运行控制和 diagnostics，尚未持久化，也尚未接入 Policy。
+截止时间，Policy 调用期间新增的事实会顺序进入下一批，pending facts 或 task 存在时不属于 idle。
+Shadow Policy 的开关、独立 Provider、temperature、timeout 和每日调用上限已接入配置；调用次数、
+最后 decision 和 Gate 状态只服务运行控制与 diagnostics，尚未持久化。
 
 Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形成一次
 `CompletionFeedback`。投递终态以 `InteractionUtterance.delivered_message_ids` 为准，再结合 turn

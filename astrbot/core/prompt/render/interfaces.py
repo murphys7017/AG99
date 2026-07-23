@@ -83,6 +83,7 @@ class BasePromptRenderer:
         "knowledge",
         "capability",
         "memory",
+        "runtime",
         "extension",
     )
 
@@ -124,6 +125,7 @@ class BasePromptRenderer:
             "knowledge": "context/knowledge",
             "capability": "system/capability",
             "memory": "context/memory",
+            "runtime": "context/runtime",
             "extension": "system/extensions",
         }
 
@@ -911,6 +913,89 @@ class BasePromptRenderer:
         ):
             rendered_slot_names.append("memory.persona_state")
 
+        return rendered_slot_names
+
+    def render_runtime_context(
+        self,
+        target: NodeRef,
+        slots: list[ContextSlot],
+        *,
+        pack: ContextPack,
+        resolve_node: Callable[[str], NodeRef],
+        event: AstrMessageEvent | None = None,
+        plugin_context: Context | None = None,
+        config: MainAgentBuildConfig | None = None,
+        provider_request: ProviderRequest | None = None,
+    ) -> list[str]:
+        del pack, resolve_node, event, plugin_context, config, provider_request
+
+        slot_map = {slot.name: slot for slot in slots}
+        rendered_slot_names: list[str] = []
+        for slot_name, tag, body_keys in (
+            (
+                "runtime.personal_state",
+                "personal_state",
+                (
+                    "attention_state",
+                    "availability_state",
+                    "last_observation_at",
+                    "last_user_activity_at",
+                    "last_expression_at",
+                    "seconds_since_user_activity",
+                    "seconds_since_last_expression",
+                    "reply_cooldown_until",
+                    "no_action_cooldown_until",
+                    "mute_until",
+                    "pending_observation_count",
+                    "daily_policy_calls",
+                    "daily_proactive_outputs",
+                    "last_gate_reason",
+                    "last_policy_action",
+                ),
+            ),
+            (
+                "runtime.observation_features",
+                "observation_features",
+                (
+                    "is_explicitly_summoned",
+                    "is_follow_up_candidate",
+                    "message_count",
+                    "participant_count",
+                    "echo_count",
+                    "activity_density",
+                    "seconds_since_user_activity",
+                    "seconds_since_last_expression",
+                    "has_pending_commitment",
+                    "is_runtime_busy",
+                    "is_quiet_hours",
+                    "is_muted",
+                    "policy_budget_available",
+                    "output_budget_available",
+                    "target_available",
+                ),
+            ),
+            (
+                "runtime.observation_batch",
+                "observation_batch",
+                (
+                    "batch_id",
+                    "opened_at",
+                    "closed_at",
+                    "source_counts",
+                    "observation_count",
+                    "projected_observation_count",
+                    "truncated",
+                    "observations",
+                ),
+            ),
+        ):
+            if self._render_mapping_slot(
+                target,
+                tag,
+                slot_map.get(slot_name),
+                body_keys=body_keys,
+            ):
+                rendered_slot_names.append(slot_name)
         return rendered_slot_names
 
     def render_extension_context(

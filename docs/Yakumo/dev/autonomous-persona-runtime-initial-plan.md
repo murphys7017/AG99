@@ -64,19 +64,21 @@
 - `PersonalState` 已跨 turn 保留，并从真实物理投递回执接收一次 Completion Feedback。
 - `InteractionOutputController` 已负责可见输出、最终输出仲裁、完成状态和规范记录。
 - Persona Expression 已是即时回复、Core 结果和插件可见材料的统一人格表达入口。
-- Prompt 已能从一个规范 `ContextPack` 投影 Router、Core Planner、Persona 和 Core 视图。
+- Prompt 已能从规范 `ContextPack` 投影 Router、Core Planner、Personal Policy、Persona 和 Core 视图。
+- Shadow Personal Policy 已接入 Gate 的 `evaluate` 分支，使用独立 Provider、严格 tool-call
+  `PersonalPolicyDecision` 和 fail-closed `observe`；当前只记录 diagnostics，不执行动作。
 - 默认主动消息目标、Adapter 主动消息能力校验、Cron 和插件主动文本入口已经存在。
 
 ### 2.2 当前缺口
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. 没有 Personal Policy Prompt target，也没有后台策略模型的成本、超时和失败关闭机制。
-2. Gate settings 尚未接入用户配置；冷却、静音和主动预算仍是进程内字段，尚未达到开放主动
+1. Gate settings 只接入了 Shadow Policy 每日调用上限；冷却、静音和主动预算仍是进程内字段，尚未达到开放主动
    表达所需的重启安全性。
-3. 默认主动目标只回答“发到哪里”，系统尚未回答“何时观察、何时行动、为什么不行动”。
-4. Heartbeat、Sensor 和 Action Coordinator 尚未接入，因此没有生产来源自动驱动 Inbox。
-5. 现有 Prompt Catalog 没有运行状态、Observation batch 和 Policy features 的明确槽位。
+2. 默认主动目标只回答“发到哪里”；Shadow Policy 已能判断人工 Observation，但其决策尚未进入
+   Action Coordinator。
+3. Heartbeat、Sensor 和 Action Coordinator 尚未接入，因此没有生产来源自动驱动 Inbox。
+4. Shadow diagnostics 尚未积累真实模型和真实 Observation 数据，不能据此开放主动表达。
 
 ## 三、目标流程
 
@@ -461,7 +463,7 @@ Runtime busy 在当前 turn settle 后重新评估，quiet hours 与 cooldown �
 
 ### 8.1 收集和投影
 
-Phase 3 增加 `personal_policy` target，但不建立私有 Prompt Builder：
+Phase 3 已增加 `personal_policy` target，且没有建立私有 Prompt Builder：
 
 ```text
 Collectors
@@ -646,7 +648,7 @@ Policy 不接收：
 
 ### Phase 3：Shadow Personal Policy
 
-状态：下一阶段。
+状态：已实现。默认关闭；当前只评估和记录，不执行 Action。
 
 目标：验证小模型决策质量，不执行动作。
 
@@ -658,6 +660,9 @@ Policy 不接收：
 - 定义严格 PersonalPolicyDecision output contract。
 - 增加独立 provider、timeout、temperature 和每日调用预算配置。
 - shadow 模式记录 Gate features、Policy decision 和后续事实对照。
+- Provider 必须显式选择，不继承 Persona 或 Core Provider；不支持协议级 tool-call 时不会发起
+  模型请求。
+- Provider 请求开始时才计入进程内每日调用预算；调用期间新增 Observation 顺序进入下一批。
 
 验收：
 
@@ -818,7 +823,7 @@ max_proactive_outputs_per_day
 
 ## 十四、当前建议的下一批工作
 
-Phase 1A、Phase 1B、Phase 2A 和 Phase 2B 已完成：
+Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 
 1. `PersonalState` 已由保留的 `PersonalSessionRuntime` 跨 turn 持有。
 2. 空闲 Runtime 已具有受限 TTL / LRU 生命周期、shutdown 和只读 diagnostics。
@@ -830,16 +835,20 @@ Phase 1A、Phase 1B、Phase 2A 和 Phase 2B 已完成：
    和唯一 evaluation task。
 8. batch 已进入确定性 Feature Builder 与 Gate；Gate 只生成 `evaluate / hold / reject`、稳定原因
    和 diagnostics，不调用模型或输出，hold batch 不会丢失。
+9. `evaluate` batch 已可进入默认关闭的 Shadow Personal Policy；独立 Provider、严格 tool-call、
+   timeout、temperature、每日预算和 fail-closed diagnostics 已接线。
+10. Policy 只读取受限 Prompt 投影，不取得 ToolSet、Skills、知识库、effect、Router 或 Planner
+    临时状态；所有 action 都不执行。
 
-下一次代码实施进入 Phase 3，增加独立的 Shadow Personal Policy target、严格决策契约和
-fail-closed Provider 调用。Shadow Policy 只消费 Gate 的 `evaluate` batch，不执行动作、不主动
-回复，也不修改 Router 或普通平台消息行为，避免把运行规则与模型决策混成一个所有者。
+下一次代码实施应先完成 Phase 4 的前置条件：确定持久状态边界，接入 quiet hours、mute、cooldown
+和主动输出预算配置，并用真实 shadow diagnostics 验证策略质量。满足这些条件后，再增加只提交
+Observation 的单目标 Heartbeat Source；不能直接从当前 shadow decision 跳到主动发送。
 
 ## 十五、后续仍需用运行数据决定的问题
 
-以下问题不阻塞 Phase 1 和 Phase 2，但必须在对应阶段前确认：
+以下问题不阻塞已完成阶段，但必须在对应阶段前确认：
 
-- Phase 3 的默认 Policy Provider 是否允许继承普通小模型配置，还是必须显式选择。
+- 哪些模型在严格 tool-call 下能稳定满足 Policy schema，以及 shadow decision 的误触发率。
 - Phase 4 quiet hours 的默认时间段，不在代码里隐式假设。
 - Phase 5 哪些群聊和 Adapter 默认允许环境观察，默认应关闭。
 - Phase 6 Sensor payload 的公共版本化和权限模型。

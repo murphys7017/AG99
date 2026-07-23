@@ -1061,7 +1061,7 @@
         },
         "router": {
             "description": "Router",
-            "hint": "Только выбирает silent / persona / hybrid. Router не генерирует ответы, не декомпозирует задачи и не выводит причины или уверенность.",
+            "hint": "Только выбирает persona / hybrid. Router не генерирует ответы, не декомпозирует задачи и не выводит причины или уверенность.",
             "interaction_middleware": {
                 "router_provider_id": {
                     "description": "Провайдер модели маршрутизации",
@@ -1088,6 +1088,29 @@
                 },
                 "planner_timeout": {
                     "description": "Таймаут планирования (сек)"
+                }
+            }
+        },
+        "personal_policy": {
+            "description": "Personal Policy",
+            "hint": "В теневом режиме оценивает фоновые Observation после deterministic Gate. Решения только записываются и не запускают Persona или Core.",
+            "interaction_middleware": {
+                "personal_policy_shadow_enabled": {
+                    "description": "Включить теневую оценку Policy"
+                },
+                "personal_policy_provider_id": {
+                    "description": "Провайдер модели Policy",
+                    "hint": "Выбирается явно; провайдеры Persona и Core не используются как резервные."
+                },
+                "personal_policy_temperature": {
+                    "description": "Температура Policy"
+                },
+                "personal_policy_timeout": {
+                    "description": "Таймаут Policy (сек)"
+                },
+                "personal_policy_daily_call_limit": {
+                    "description": "Дневной лимит вызовов Policy",
+                    "hint": "Счётчик увеличивается при запуске запроса к провайдеру. Значение 0 блокирует все вызовы."
                 }
             }
         },

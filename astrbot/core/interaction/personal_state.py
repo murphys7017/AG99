@@ -112,6 +112,19 @@ class PersonalState:
     def record_gate_result(self, reason_code: str) -> None:
         self.last_gate_reason = str(reason_code or "").strip() or None
 
+    def record_policy_call(self, *, usage_day: str) -> None:
+        normalized_day = str(usage_day or "").strip()
+        if not normalized_day:
+            raise ValueError("usage_day is required")
+        if self.usage_day != normalized_day:
+            self.usage_day = normalized_day
+            self.daily_policy_calls = 0
+            self.daily_proactive_outputs = 0
+        self.daily_policy_calls += 1
+
+    def record_policy_action(self, action: str) -> None:
+        self.last_policy_action = str(action or "").strip() or None
+
     def snapshot(self) -> PersonalStateSnapshot:
         return PersonalStateSnapshot(
             attention_state=self.attention_state,

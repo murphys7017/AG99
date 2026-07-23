@@ -116,6 +116,7 @@ class ContextCatalogLoader:
         "rag",
         "tools",
         "session",
+        "runtime",
         "extension",
     }
 

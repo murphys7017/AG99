@@ -268,6 +268,7 @@ class AstrBotCoreLifecycle:
             self.core_execution_ledger,
         )
         self.interaction_middleware.set_plugin_context(self.star_context)
+        self.personal_runtime_manager.bind_plugin_context(self.star_context)
 
         async def dispatch_proactive_message(session, message_chain, finalize=True):
             conf_info = self.astrbot_config_mgr.get_conf_info(session)

@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: high
-  phase: autonomous_persona_runtime_phase_2b
-  scope: Evaluate immutable ObservationBatch facts through a deterministic local Gate without adding Personal Policy, proactive behavior, EventBus insertion, provider calls, or synthetic messages
+  phase: autonomous_persona_runtime_phase_3
+  scope: Shadow-evaluate only deterministic-Gate evaluate batches through a dedicated strict-tool-call Personal Policy target without executing actions or changing ordinary message behavior
 context:
   confidence: high
   assumptions:
@@ -300,6 +300,7 @@ verification:
     - uv run ruff check, py_compile, project-environment import smoke, and git diff --check for Phase 2B Gate, Inbox, Runtime, and state modules (passed)
     - Minimal Gate smoke covered accepted, target rejection, runtime-busy hold, mute and cooldown, cross-midnight quiet hours, policy/output budgets, feature aggregation, held-batch restoration, and settle-triggered reevaluation (passed)
     - YAML parse check and pnpm VitePress production build after Phase 2B documentation and Mermaid flow updates (passed)
+    - Phase 3 Ruff, py_compile, import, JSON/YAML, public submit_observation shadow-policy, and VitePress checks (passed)
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -309,27 +310,28 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "Phase 2B has no production Heartbeat, Sensor, or Personal Policy by design, so real-source and live-provider evaluation were not run. Targeted Pyright remains unavailable. Gate settings are dependency-injected only and are not yet exposed as restart-safe user configuration."
+  validation_gap: "Phase 3 has no production Heartbeat, Sensor, Action Coordinator, persistent control state, or live Policy Provider evaluation by design. Shadow quality and false-positive rates require real observations and a user-selected provider. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: autonomous_persona_runtime_phase_2b
+    phase: autonomous_persona_runtime_phase_3
     scope:
-      - deterministic ObservationFeatures derived from immutable batches and PersonalState snapshots
-      - stable evaluate, hold, and reject dispositions with reason codes
-      - expiry, minimum material, target capability, mute, quiet-hours, busy, cooldown, and budget gates
-      - held-batch restoration into the same bounded per-Runtime Inbox
-      - busy-hold reevaluation at the existing turn-settle boundary
-      - diagnostics-only execution with no provider, Persona, Core, Output, EventBus, or synthetic event
+      - dedicated Personal Policy Prompt target over canonical ContextPack projection
+      - explicit independent Provider, timeout, temperature, feature flag, and daily call limit
+      - strict protocol tool-call PersonalPolicyDecision with fail-closed observe diagnostics
+      - sequential evaluation when new observations arrive during an active Policy call
+      - Runtime snapshots for the last Gate and shadow Policy evaluation
+      - no Action, Persona, Core, Output, EventBus, or synthetic event execution
     non_goals:
       - heartbeat
-      - Personal Policy or policy Prompt target
       - proactive reply or Action Coordinator
+      - execution of express, defer, or execute decisions
       - EventBus, Pipeline, Router, Planner, Persona, Core, or Output execution
       - synthetic platform or user messages
     confirmed_gaps:
-      - Gate settings are not yet projected from user configuration and cooldown, mute, and daily usage are not restart-safe
+      - only the Policy daily call limit is projected from user configuration; cooldown, mute, quiet hours, proactive output usage, and all control state are not restart-safe
       - quiet-hours and cooldown holds require a later Observation to wake them until the producer lifecycle exists
+      - no production Observation source or live Provider diagnostics exist yet
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract

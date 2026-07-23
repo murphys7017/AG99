@@ -35,7 +35,8 @@ RuntimeObservation
   -> bounded Inbox / fixed aggregation window / coalesce
   -> ObservationBatch
   -> Deterministic Gate
-     -> evaluate / hold / reject diagnostics
+     -> hold / reject diagnostics
+     -> evaluate -> optional Shadow Personal Policy -> diagnostics only
 
 已经决定发送的 RuntimeObservation
   -> RuntimeObservationEvent
@@ -50,17 +51,19 @@ RuntimeObservation
 `PersonalRuntimeKey`；每个 Runtime 最多保留 64 条事实，同一显式 coalesce identity 只保留
 最新项，第一条事实创建唯一的 1.5 秒固定聚合窗口，后续事实不延长截止时间，窗口结束后关闭为
 一个不可变 batch。Gate 只根据结构化 features 和 Runtime state 判断 `evaluate / hold / reject`，
-不执行语义决策；hold batch 会返回 Inbox，busy hold 在 turn settle 后重新评估。该路径不经过
-EventBus、Pipeline、Router、Planner、Core、Persona 或 Output；不支持主动消息的目标可以进入
-Intake，但会在 target capability Gate 被拒绝，不会被误当成发送失败。
+不执行语义决策；hold batch 会返回 Inbox，busy hold 在 turn settle 后重新评估。只有 `evaluate`
+可以进入显式启用的 Shadow Personal Policy。Policy 通过统一 Prompt 管线读取受限事实，以严格
+tool-call 契约返回 `ignore / observe / express / defer / execute`，但当前所有结果都只写 diagnostics，
+不执行 Action。该路径不经过 EventBus、Pipeline、Router、Planner、Core、Persona 或 Output；
+不支持主动消息的目标可以进入 Intake，但会在 target capability Gate 被拒绝。
 
 `RuntimeObservationEvent` 只适配已经决定发送的可见输出。它与平台消息共享同一个 Runtime 和
 session lock，目标必须明确支持主动消息；没有 `visible_reply_material` 时不会请求模型，实际
 发送失败会使 turn 失败，不能把未投递内容写成成功历史。
 
-Heartbeat、Runtime Sensor、Policy、Action Coordinator 和目标 session registry 尚未实现；quiet
-hours、cooldown 和 daily limit 已有 Gate 契约，但尚未接入用户配置与持久状态。因此当前 Inbox
-不会自行产生模型决策或可见输出。插件调用
+Heartbeat、Runtime Sensor、Action Coordinator 和目标 session registry 尚未实现；Policy 每日
+调用上限已接入配置，但状态仍只在进程内，quiet hours、cooldown 和主动输出预算也尚未形成
+持久配置。因此 Inbox 不会自行产生 Observation，Shadow Policy 也不会产生可见输出。插件调用
 `Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
 session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
 

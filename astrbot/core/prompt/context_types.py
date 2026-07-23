@@ -29,6 +29,7 @@ CategoryType = Literal[
     "rag",  # 知识库检索
     "tools",  # 工具
     "session",  # 会话
+    "runtime",  # 持续运行时状态与观察事实
     "extension",  # 插件扩展
 ]
 

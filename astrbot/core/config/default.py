@@ -222,6 +222,11 @@ DEFAULT_CONFIG = {
         "planner_provider_id": "",
         "planner_temperature": 0.1,
         "planner_timeout": 8.0,
+        "personal_policy_shadow_enabled": False,
+        "personal_policy_provider_id": "",
+        "personal_policy_temperature": 0.1,
+        "personal_policy_timeout": 8.0,
+        "personal_policy_daily_call_limit": 200,
         "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
@@ -4376,6 +4381,49 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.planner_timeout": {
                         "description": "规划超时秒数",
                         "type": "float",
+                    },
+                },
+            },
+            "personal_policy": {
+                "description": "Personal Policy",
+                "type": "object",
+                "hint": "仅对通过确定性 Gate 的后台 Observation 做影子评估。当前只记录决策，不执行主动表达或 Core。",
+                "items": {
+                    "interaction_middleware.personal_policy_shadow_enabled": {
+                        "description": "启用影子策略评估",
+                        "type": "bool",
+                    },
+                    "interaction_middleware.personal_policy_provider_id": {
+                        "description": "策略模型提供商",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "必须显式选择，不回退到 Persona 或 Core 模型。",
+                        "condition": {
+                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_policy_temperature": {
+                        "description": "策略温度",
+                        "type": "float",
+                        "slider": {"min": 0, "max": 2, "step": 0.05},
+                        "condition": {
+                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_policy_timeout": {
+                        "description": "策略超时秒数",
+                        "type": "float",
+                        "condition": {
+                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_policy_daily_call_limit": {
+                        "description": "每日策略调用上限",
+                        "type": "int",
+                        "hint": "Provider 请求开始时计数；设为 0 会阻止所有策略调用。",
+                        "condition": {
+                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                        },
                     },
                 },
             },
