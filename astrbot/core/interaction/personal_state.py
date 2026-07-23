@@ -91,6 +91,16 @@ class PersonalState:
             else PersonalAvailabilityState.AVAILABLE
         )
 
+    def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
+        if (
+            feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+            and feedback.output_completed_at is not None
+        ):
+            self.last_expression_at = max(
+                feedback.output_completed_at,
+                self.last_expression_at or feedback.output_completed_at,
+            )
+
     def snapshot(self) -> PersonalStateSnapshot:
         return PersonalStateSnapshot(
             attention_state=self.attention_state,

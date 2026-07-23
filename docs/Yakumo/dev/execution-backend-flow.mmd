@@ -175,8 +175,7 @@ flowchart LR
         TASK -. "CoreTaskSpec" .-> BRIDGE
         THIRD_RUN -. "Agent Hooks" .-> LLM_POST
         RESULT --> YIELD
-        YIELD -. "后续 Pipeline 返回、Agent 完成" .-> TURN_RELEASE["释放 Turn lease"]
-        TURN_RELEASE -. "插件 ProviderRequest 路径" .-> POST_YIELD_RESUME
+        YIELD -. "插件 ProviderRequest 路径的下游 Stage 返回" .-> POST_YIELD_RESUME
         POST_YIELD_RESUME -. "恢复迭代" .-> STAR
     end
 
@@ -258,6 +257,8 @@ flowchart LR
         VISIBLE_COMPLETE["complete_visible_turn"]
         NORMAL_POST["非 Interaction：后台调度 AFTER_MESSAGE_SENT<br/>+ AFTER_TURN_COMPLETED"]
         INTERACTION_AFTER["Interaction：RespondStage 只调度 AFTER_MESSAGE_SENT<br/>Turn 完成由 Middleware 持有"]
+        TURN_RELEASE["ProcessStage finally<br/>关闭 TurnExecutionScope<br/>生成一次 CompletionFeedback<br/>释放 Turn lease"]
+        RUNTIME_STATE["PersonalSessionRuntime.state<br/>保存最后反馈供 diagnostics"]
         CLEANUP["PipelineScheduler 收尾<br/>必要时补 visible completion<br/>finally 清理临时文件 + 注销 active event"]
 
         INTERACTION_PLATFORM_SEND --> VISIBLE --> OUTPUT_FINAL
@@ -271,17 +272,21 @@ flowchart LR
 
         NORMAL_RESP -. "发送返回后" .-> AFTER_SENT
         INTERACTION_RESP -. "发送返回后；最终提交保持 deferred" .-> AFTER_SENT
-        AFTER_SENT -->|"是"| CLEANUP
+        AFTER_SENT -->|"是"| TURN_RELEASE
         AFTER_SENT -->|"否"| VISIBLE_COMPLETE
         VISIBLE_COMPLETE -->|"非 Interaction"| NORMAL_POST
         VISIBLE_COMPLETE -->|"Interaction"| INTERACTION_AFTER
         INTERACTION_AFTER -. "先调度 AFTER_MESSAGE_SENT，再释放 pending finalization" .-> TURN_FINAL
         NORMAL_POST -. "AFTER_TURN_COMPLETED" .-> POST_MANAGER
-        NO_CORE --> CLEANUP
+        NO_CORE --> TURN_RELEASE
         STOP0 --> CLEANUP
-        NORMAL_POST --> CLEANUP
-        INTERACTION_AFTER --> CLEANUP
-        TURN_FINAL --> CLEANUP
+        FOLLOW_DONE --> CLEANUP
+        NORMAL_POST --> TURN_RELEASE
+        INTERACTION_AFTER --> TURN_RELEASE
+        TURN_FINAL --> TURN_RELEASE
+        IFAIL --> TURN_RELEASE
+        TURN_RELEASE -. "真实 delivered 回执才更新 last_expression_at" .-> RUNTIME_STATE
+        TURN_RELEASE --> CLEANUP
     end
 
     subgraph OBSERVATION["八、人格化 Runtime Observation（已实现，暂无 Heartbeat / Sensor 触发源）"]

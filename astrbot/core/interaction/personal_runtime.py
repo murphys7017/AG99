@@ -15,13 +15,21 @@ from astrbot.core.persona_error_reply import resolve_event_conversation_persona_
 from astrbot.core.provider.entities import ProviderRequest
 
 from .observation import RuntimeObservation, RuntimeObservationTarget
-from .personal_state import PersonalState, PersonalStateSnapshot
+from .personal_state import (
+    CompletionFeedback,
+    PersonalDeliveryStatus,
+    PersonalExecutionStatus,
+    PersonalState,
+    PersonalStateSnapshot,
+)
 from .runtime_event import RuntimeObservationEvent
 from .turn_context import (
     PersonalTurnContext,
     PlatformTurnContextFactory,
 )
 from .turn_state import (
+    InteractionFinalOutputStatus,
+    InteractionTurnStatus,
     set_interaction_turn_persona_id,
 )
 
@@ -58,6 +66,7 @@ class PersonalSessionRuntimeSnapshot:
     last_access_at: float
     idle_since: float | None
     state: PersonalStateSnapshot
+    last_completion_feedback: CompletionFeedback | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +77,68 @@ class PersonalRuntimeManagerSnapshot:
     idle_session_count: int
     eviction_count: int
     sessions: tuple[PersonalSessionRuntimeSnapshot, ...]
+
+
+def _build_completion_feedback(turn: PersonalTurnContext) -> CompletionFeedback:
+    turn_state = turn.state
+    completion = turn_state.completion_state
+    delivered_utterances = [
+        utterance
+        for utterance in turn_state.utterances
+        if utterance.visible and utterance.delivered_message_ids
+    ]
+    delivered = bool(delivered_utterances) or any(
+        isinstance(output, dict) and output.get("delivered_message_ids")
+        for output in turn_state.visible_outputs
+    )
+    delivered_at = (
+        max(utterance.created_at for utterance in delivered_utterances)
+        if delivered_utterances
+        else None
+    )
+
+    failure_code = completion.failure_reason
+    if failure_code is None and turn_state.failures:
+        failure = turn_state.failures[-1]
+        failure_code = f"{failure.stage}:{failure.reason}"
+
+    if delivered:
+        delivery_status = PersonalDeliveryStatus.DELIVERED
+    elif completion.status is InteractionTurnStatus.CANCELLED:
+        delivery_status = PersonalDeliveryStatus.CANCELLED
+        failure_code = failure_code or "turn_cancelled"
+    elif turn_state.final_output_status is InteractionFinalOutputStatus.SUPPRESSED:
+        delivery_status = PersonalDeliveryStatus.SUPPRESSED
+    elif (
+        completion.status is InteractionTurnStatus.FAILED
+        or turn_state.final_output_status is InteractionFinalOutputStatus.FAILED
+        or failure_code is not None
+    ):
+        delivery_status = PersonalDeliveryStatus.FAILED
+        failure_code = failure_code or "output_failed"
+    else:
+        delivery_status = PersonalDeliveryStatus.NOT_ATTEMPTED
+
+    if completion.status is InteractionTurnStatus.COMPLETED:
+        execution_status = PersonalExecutionStatus.SUCCEEDED
+    elif completion.status is InteractionTurnStatus.FAILED:
+        execution_status = PersonalExecutionStatus.FAILED
+        failure_code = failure_code or "turn_failed"
+    elif completion.status is InteractionTurnStatus.CANCELLED:
+        execution_status = PersonalExecutionStatus.CANCELLED
+    elif failure_code is not None:
+        execution_status = PersonalExecutionStatus.FAILED
+    else:
+        execution_status = PersonalExecutionStatus.NOT_STARTED
+
+    return CompletionFeedback(
+        action_id=None,
+        turn_id=turn.turn_id,
+        delivery_status=delivery_status,
+        execution_status=execution_status,
+        output_completed_at=delivered_at or completion.terminal_at,
+        failure_code=failure_code,
+    )
 
 
 @dataclass(slots=True)
@@ -272,10 +343,19 @@ class PersonalTurnLease:
             try:
                 await self.reservation.turn.state.execution_scope.close()
             finally:
-                self.runtime.active_turn_id = None
-                self.runtime.touch()
-                self.reservation.transition(PendingTurnState.SETTLED)
-                self.runtime.turn_lock.release()
+                try:
+                    feedback = _build_completion_feedback(self.reservation.turn)
+                    self.runtime.apply_completion_feedback(feedback)
+                except Exception:
+                    logger.exception(
+                        "Personal Runtime completion feedback failed: turn_id=%s",
+                        self.reservation.turn.turn_id,
+                    )
+                finally:
+                    self.runtime.active_turn_id = None
+                    self.runtime.touch()
+                    self.reservation.transition(PendingTurnState.SETTLED)
+                    self.runtime.turn_lock.release()
 
 
 class PersonalSessionRuntime:
@@ -287,6 +367,7 @@ class PersonalSessionRuntime:
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
+        self.last_completion_feedback: CompletionFeedback | None = None
         self.created_at = now
         self.last_access_at = now
         self.idle_since: float | None = now
@@ -306,6 +387,10 @@ class PersonalSessionRuntime:
             self.idle_since = now
             self.state.mark_idle(now=now)
 
+    def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
+        self.state.apply_completion_feedback(feedback)
+        self.last_completion_feedback = feedback
+
     def snapshot(self) -> PersonalSessionRuntimeSnapshot:
         return PersonalSessionRuntimeSnapshot(
             key=self.key,
@@ -315,6 +400,7 @@ class PersonalSessionRuntime:
             last_access_at=self.last_access_at,
             idle_since=self.idle_since,
             state=self.state.snapshot(),
+            last_completion_feedback=self.last_completion_feedback,
         )
 
     async def admit(

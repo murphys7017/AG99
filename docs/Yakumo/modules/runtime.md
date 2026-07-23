@@ -115,7 +115,14 @@ Controller，跨 session 输出建立独立 proactive turn。纯媒体主动消�
 `PersonalSessionRuntime` 当前按 `config_id + persona_id + audience_key + privacy_scope` 在进程内
 跨 turn 保留 `PersonalState`。空闲 Runtime 最长保留 24 小时，空闲集合最多 1024 条；Manager
 在 bind、settle 和 shutdown 边界惰性执行回收，不运行独立清理线程。该状态当前只服务运行控制
-和 diagnostics，尚未持久化，也尚未接入 Completion Feedback、Inbox、Gate 或 Policy。
+和 diagnostics，尚未持久化，也尚未接入 Inbox、Gate 或 Policy。
+
+Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形成一次
+`CompletionFeedback`。投递终态以 `InteractionUtterance.delivered_message_ids` 为准，再结合 turn
+的 completed / failed / cancelled 和 final output 的 suppressed / failed 状态；不能仅根据发送意图
+或 final output 标记推测成功。只有真实 delivered 的可见输出更新 `last_expression_at`。最后一份
+不可变反馈保存在 Runtime diagnostics，不写入 event extra。主动输出预算尚未计数，因为当前还没有
+可以区分主动行动与普通回复的 `ActionIntent/action_id`。
 
 现有 `RuntimeObservationEvent` 和 observation submission 是已经决定输出后的平台适配入口，
 不是未来通用 Observation Inbox。后续 Inbox 接收事实时不会构造用户消息、进入 EventBus 或

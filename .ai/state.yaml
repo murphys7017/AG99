@@ -1,12 +1,14 @@
 task:
   class: refactor
   risk: high
-  phase: autonomous_persona_runtime_phase_1a
-  scope: Establish process-local cross-turn PersonalState ownership, bounded PersonalSessionRuntime retention, diagnostics, and lifecycle shutdown without changing reply behavior
+  phase: autonomous_persona_runtime_phase_1b
+  scope: Feed canonical turn completion and physical delivery receipts into retained PersonalState without adding policy, proactive behavior, or a second lifecycle observer
 context:
   confidence: high
   assumptions:
     - The autonomous runtime implementation starts with process-local cross-turn PersonalState ownership and bounded Runtime retention; it does not start with Heartbeat, a policy model, or proactive output behavior.
+    - Completion Feedback is formed once at turn lease release; delivery success requires a visible utterance delivery receipt and is not inferred from send intent or final-output status alone.
+    - Daily proactive output usage remains unchanged until ActionIntent provides a reliable action_id and proactive identity.
     - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
     - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
@@ -166,6 +168,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Autonomous Personal Runtime Phase 1B: delivered/failed/cancelled/suppressed completion feedback smoke, interaction package import, Ruff, py_compile, YAML parse, VitePress build, and git diff checks passed; no implementation-detail test files were added.
     - Autonomous Personal Runtime Phase 1A: PersonalState and diagnostics import smoke, focused valid Core lifecycle stop tests (2 passed), Ruff, py_compile, YAML parse, docs build, and git diff checks passed; one existing cross-event-loop MagicMock task test fails before the new shutdown boundary and was not used as implementation evidence.
     - TTS lifecycle/output segment direct-path refactor: affected Voice Service, event delivery, message-chain delivery, Respond/Postprocess, Interaction Middleware, and Interaction Output Controller suite passed 236 tests; Ruff, py_compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained known aiosqlite event-loop-close warnings.
     - Dead pre-Pipeline path removal: project-venv Interaction Middleware suite passed 57 tests; production reference scan, Ruff, Python compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained an existing aiosqlite event-loop-close warning.

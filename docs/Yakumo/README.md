@@ -24,7 +24,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Router、Planner、Persona 和 Core 不再各自采集或拼接 Prompt。
 - Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；第三方 Backend 尚未接入这一边界。
 - Personal Runtime 在插件 Handler 前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。
-- `PersonalSessionRuntime` 现在按 RuntimeKey 在进程内跨 turn 保留控制状态；空闲实例受 24 小时 TTL 和 1024 条 LRU 上限约束。该状态尚未持久化，重启后不会恢复。
+- `PersonalSessionRuntime` 现在按 RuntimeKey 在进程内跨 turn 保留控制状态；空闲实例受 24 小时 TTL 和 1024 条 LRU 上限约束。Turn 结束时根据真实物理投递回执形成 Completion Feedback，只有已送达可见输出会推进最近表达时间。该状态尚未持久化，重启后不会恢复。
 - Runtime Observation 和主动纯文本输出复用 Personal Runtime、Persona Expression、Output Controller 与 assistant-only 历史。基础设置可保存一个默认主动消息目标；显式 session 始终优先。
 
 ## 当前主链

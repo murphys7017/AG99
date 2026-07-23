@@ -562,6 +562,9 @@ Policy 不接收：
 
 ### Phase 1B：Completion Feedback
 
+状态：已实现。当前反馈覆盖现有 turn 的真实投递与终态，不提前引入 Action Coordinator、主动
+预算或持久化。
+
 目标：用真实终态更新状态，不从发送意图猜测完成。
 
 工作：
@@ -570,6 +573,15 @@ Policy 不接收：
 - delivered、failed、cancelled、suppressed 分别记录稳定终态。
 - 只有 delivered 可见表达更新 `last_expression_at`。
 - diagnostics 关联 runtime key、turn id、action id 和 completion status。
+
+实现边界：
+
+- `InteractionTurnCompletionState` 保存 terminal timestamp。
+- lease release 在关闭 turn task 后读取规范 `InteractionUtterance` 投递回执和 turn 终态，并且
+  只应用一次反馈。
+- 即时表达已经送达、后续 turn 又失败时，delivery 仍为 delivered，同时保留 execution failure
+  和 failure code。
+- 当前尚无 Action Coordinator，因此 `action_id` 保持空值，主动输出成功预算不递增。
 
 验收：
 
@@ -785,17 +797,17 @@ max_proactive_outputs_per_day
 
 ## 十四、当前建议的下一批工作
 
-Phase 1A 已完成：
+Phase 1A 和 Phase 1B 已完成：
 
-1. `PersonalState` 和 `CompletionFeedback` 类型已经建立。
-2. `PersonalSessionRuntime` 已持有进程内 state 和 last-access 信息。
-3. turn 结束后的立即删除已改为受限的 TTL / LRU 保留。
-4. Manager 已提供 shutdown 和不可变 diagnostics snapshot。
-5. admission 只记录当前用户活动和忙闲事实，没有连接 Inbox、Gate、Policy 或 Heartbeat。
+1. `PersonalState` 已由保留的 `PersonalSessionRuntime` 跨 turn 持有。
+2. 空闲 Runtime 已具有受限 TTL / LRU 生命周期、shutdown 和只读 diagnostics。
+3. admission 记录用户活动和忙闲事实。
+4. lease release 已把真实投递回执和 turn 终态转换为一次 `CompletionFeedback`。
+5. 只有 delivered 可见输出更新 `last_expression_at`；主动预算保持不变。
 
-下一次代码实施只做 Phase 1B：从现有 final output status 和 turn material 形成真实
-Completion Feedback，并且只在 delivered 可见输出后更新 `last_expression_at`。Phase 1B 审阅
-通过后再开始 Observation Intake，避免同时引入完成语义和后台并发。
+下一次代码实施进入 Phase 2A，只建立通用 Observation Intake 与有界 Inbox，不调用 Policy
+模型、不主动回复，也不把 Observation 伪装成平台用户消息。Phase 2A 审阅通过后再增加 shadow
+Policy，避免同时引入队列并发和模型决策。
 
 ## 十五、后续仍需用运行数据决定的问题
 

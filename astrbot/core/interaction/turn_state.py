@@ -116,6 +116,7 @@ class InteractionTurnCompletionState:
     postprocess_dispatched: bool = False
     completed: bool = False
     failure_reason: str | None = None
+    terminal_at: float | None = None
     finalization_deferred: bool = False
     finalization_pending: bool = False
 
@@ -473,6 +474,7 @@ def mark_interaction_turn_completed(
     state.completion_state.status = (
         InteractionTurnStatus.COMPLETED if completed else InteractionTurnStatus.ACTIVE
     )
+    state.completion_state.terminal_at = time.time() if completed else None
     event.set_extra("_interaction_turn_completed", completed)
     event.set_extra("_interaction_turn_status", state.completion_state.status.value)
 
@@ -481,6 +483,7 @@ def mark_interaction_turn_failed(event) -> None:
     state = ensure_interaction_turn_state(event)
     state.completion_state.completed = False
     state.completion_state.status = InteractionTurnStatus.FAILED
+    state.completion_state.terminal_at = time.time()
     event.set_extra("_interaction_turn_completed", False)
     event.set_extra("_interaction_turn_status", InteractionTurnStatus.FAILED.value)
 
@@ -489,6 +492,7 @@ def mark_interaction_turn_cancelled(event) -> None:
     state = ensure_interaction_turn_state(event)
     state.completion_state.completed = False
     state.completion_state.status = InteractionTurnStatus.CANCELLED
+    state.completion_state.terminal_at = time.time()
     event.set_extra("_interaction_turn_completed", False)
     event.set_extra("_interaction_turn_status", InteractionTurnStatus.CANCELLED.value)
 
