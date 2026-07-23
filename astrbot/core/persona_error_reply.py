@@ -73,13 +73,24 @@ async def resolve_event_conversation_persona_id(
     event: Any, conversation_manager: Any
 ) -> str | None:
     """Resolve current conversation persona_id from event and conversation manager."""
+    return await resolve_conversation_persona_id(
+        event.unified_msg_origin,
+        conversation_manager,
+    )
+
+
+async def resolve_conversation_persona_id(
+    unified_msg_origin: str,
+    conversation_manager: Any,
+) -> str | None:
+    """Resolve current conversation persona_id without requiring a platform event."""
     curr_cid = await conversation_manager.get_curr_conversation_id(
-        event.unified_msg_origin
+        unified_msg_origin
     )
     if not curr_cid:
         return None
     conversation = await conversation_manager.get_conversation(
-        event.unified_msg_origin, curr_cid
+        unified_msg_origin, curr_cid
     )
     if not conversation:
         return None

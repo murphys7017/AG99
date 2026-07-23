@@ -16,6 +16,14 @@ from .runtime_event import RuntimeObservationEvent
 from .turn_state import InteractionTurnState, ensure_interaction_turn_state
 
 
+def resolve_privacy_scope(message_type: MessageType) -> str:
+    if message_type is MessageType.GROUP_MESSAGE:
+        return "group"
+    if message_type is MessageType.FRIEND_MESSAGE:
+        return "private"
+    return "other"
+
+
 @dataclass(frozen=True, slots=True)
 class TurnSession:
     platform_id: str
@@ -96,9 +104,7 @@ class PlatformTurnContextFactory:
             session_id=event.get_session_id(),
             unified_msg_origin=event.unified_msg_origin,
             config_id=config_id or "default",
-            privacy_scope=PlatformTurnContextFactory._privacy_scope(
-                event.get_message_type()
-            ),
+            privacy_scope=resolve_privacy_scope(event.get_message_type()),
             group_id=(str(event.get_group_id()).strip() or None)
             if getattr(event, "get_group_id", None) and event.get_group_id()
             else None,
@@ -156,14 +162,6 @@ class PlatformTurnContextFactory:
             plugin_context=plugin_context,
         )
 
-    @staticmethod
-    def _privacy_scope(message_type: MessageType) -> str:
-        if message_type is MessageType.GROUP_MESSAGE:
-            return "group"
-        if message_type is MessageType.FRIEND_MESSAGE:
-            return "private"
-        return "other"
-
 
 __all__ = [
     "OutputTarget",
@@ -172,4 +170,5 @@ __all__ = [
     "TurnActor",
     "TurnInput",
     "TurnSession",
+    "resolve_privacy_scope",
 ]

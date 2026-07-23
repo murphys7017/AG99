@@ -116,13 +116,14 @@ Platform / Internal Event
 persona bind、follow-up admission 和 Turn lease；Native 与 Third-party Core 共用同一
 Runtime 串行策略。Native 原有的 UMO session lock 和全局 follow-up registry 已退出生产
 主链。插件显式 `ProviderRequest` 在 Third-party 路径中会保留原对象和已有字段，再进入
-现有兼容投影与 Hook。内部 `RuntimeObservation` 已可在主动消息能力校验后进入同一个
-Session Runtime，绕过 Router/Core，复用唯一 Persona Expression、Output Controller、
-assistant-only Conversation 提交和完整 lifecycle 终态。
+现有兼容投影与 Hook。内部 `RuntimeObservation` 已可通过通用 Intake 进入同一个 Session
+Runtime 的有界 Inbox；该路径不检查主动消息能力、不创建 event，也不触发输出。已经决定表达
+的 Observation 则通过独立 event adapter 校验发送能力，绕过 Router/Core，复用唯一 Persona
+Expression、Output Controller、assistant-only Conversation 提交和完整 lifecycle 终态。
 
 本阶段尚未完成：Heartbeat/Runtime Sensor 等 Observation 生产者、目标 session registry、
-quiet-hours/cooldown/dedupe 等本地 eligibility policy、Runtime task registry、
-Router/Persona/Planner task owner、插件和后台任务 identity、Output completion owner 迁移。
+quiet-hours/cooldown 等本地 eligibility policy、插件和后台任务 identity，以及完整 Gate / Policy /
+Action Coordinator。
 
 实施内容：
 
@@ -313,6 +314,8 @@ Phase 0 已确认的准备边界：
 - 让 Native/Third-party 共用 Runtime 串行策略，保留插件显式 `ProviderRequest`。
 - 建立不可变 `RuntimeObservation`、显式 Observation event adapter 和同 Session Runtime
   admission；不把系统观察伪装成用户消息。
+- 建立独立 `submit_observation()`、有界 Inbox、expiry、显式 coalesce、overflow、单 Runtime
+  固定聚合窗口 task 和只读 `ObservationBatch` diagnostics；不进入 EventBus 或输出路径。
 - Observation 复用唯一 Persona 与 Output 路径，写入 assistant-only Conversation，并在
   发送失败、取消和异常时保留正确终态；当前尚无 Heartbeat 生产者。
 - 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化
@@ -343,8 +346,9 @@ Phase 0 已确认的准备边界：
   排队和 Output Controller 投递。同一 active turn 的 Core 工具消息明确作为 progress，
   跨 session 输出建立独立 proactive turn。纯媒体主动消息尚未形成可持久化语义材料，当前
   仍保留平台直发。
-- Observation 的 assistant-only 记录已经进入 Conversation、Prompt History 和 Memory
-  history projection；转换层使用空 user payload 表达 assistant-only，不伪造用户消息。
+- 已经决定发送的 Observation 输出会形成 assistant-only Conversation、Prompt History 和
+  Memory history projection；通用 Inbox facts 不写 Conversation。转换层使用空 user payload
+  表达 assistant-only，不伪造用户消息。
 - Interaction 物理发送现在会在全量投递失败时阻止 turn completion；分段部分成功时仍缺少
   结构化 delivery receipt，canonical history 暂时无法精确表达“仅部分内容送达”。
 - 可见输出完成后才同步提交 Conversation；当前有进程内锁和 `turn_id` 幂等，但没有持久化

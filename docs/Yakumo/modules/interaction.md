@@ -27,25 +27,35 @@ middleware 的职责是组合这些服务，并在一个 interaction turn 内形
 
 ## Runtime Observation 边界
 
-当前已经存在一条面向持续人格运行时的内部纵向入口：
+当前存在两条语义不同的内部入口：
 
 ```text
 RuntimeObservation
+  -> PersonalRuntimeManager.submit_observation
+  -> bounded Inbox / fixed aggregation window / coalesce
+  -> ObservationBatch diagnostics
+
+已经决定发送的 RuntimeObservation
   -> RuntimeObservationEvent
-  -> PersonalRuntimeManager admission
+  -> PersonalRuntimeManager turn admission
   -> InteractionMiddleware.handle_runtime_observation
   -> Personal Expression
   -> InteractionOutputController
   -> Platform + assistant-only Conversation + lifecycle
 ```
 
-它表达系统观察，而不是伪造用户消息。Observation 与平台消息使用同一个
-`PersonalRuntimeKey` 和 session lock，但不经过 EventBus、Pipeline、Router、Planner 或
-Core；没有 `visible_reply_material` 时不会请求模型。目标平台必须明确支持主动消息，
-实际发送失败会使 turn 失败，不能把未投递内容写成成功历史。
+通用 Intake 表达系统事实，而不是伪造用户消息。Manager 复用官方会话与人格管理器解析
+`PersonalRuntimeKey`；每个 Runtime 最多保留 64 条事实，同一显式 coalesce identity 只保留
+最新项，第一条事实创建唯一的 1.5 秒固定聚合窗口，后续事实不延长截止时间，窗口结束后关闭为
+一个不可变 batch。该路径不经过 EventBus、Pipeline、
+Router、Planner、Core、Persona 或 Output；不支持主动消息的目标也可以被观察。
 
-Heartbeat、Runtime Sensor、目标 session registry、quiet hours、cooldown、daily limit 和
-dedupe 尚未实现，因此当前没有生产代码自动产生人格化 Observation。插件调用
+`RuntimeObservationEvent` 只适配已经决定发送的可见输出。它与平台消息共享同一个 Runtime 和
+session lock，目标必须明确支持主动消息；没有 `visible_reply_material` 时不会请求模型，实际
+发送失败会使 turn 失败，不能把未投递内容写成成功历史。
+
+Heartbeat、Runtime Sensor、Gate、Policy、目标 session registry、quiet hours、cooldown 和
+daily limit 尚未实现，因此当前 Inbox 不会自行产生决策或可见输出。插件调用
 `Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
 session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
 
@@ -166,9 +176,10 @@ Input Runtime / Observation
 
 ### `turn_context.py` 与当前迁移状态
 
-`PersonalTurnContext` 当前拥有 admission 所需的 turn、session、actor、input、observation、
-runtime config、ProviderRequest 和官方 event 引用。平台事件通过
-`submit_platform_event()` 建立它，Observation 也使用同一类型。
+`PersonalTurnContext` 当前拥有 turn admission 所需的 turn、session、actor、input、observation、
+runtime config、ProviderRequest 和官方 event 引用。普通平台事件与已经决定发送的
+`RuntimeObservationEvent` 会建立该类型；通用 `submit_observation()` 不创建 event 或 turn
+context，只将事实写入对应 Runtime Inbox。
 
 它尚未成为整个 Interaction 的唯一调用参数。Router、Persona、Planner、Output 和
 RespondStage 仍以 `AstrMessageEvent` 为兼容载体；静态分析在 Interaction 包中确认了

@@ -56,7 +56,10 @@
 - `PersonalSessionRuntime` 已持有 session 级 turn lock、active turn 和 follow-up 协调器。
 - `TurnExecutionScope` 已持有单 turn 的 Router、Persona、Context Material 和流式观察任务。
 - `RuntimeObservation` 已是不可变内部事实，不伪装成用户消息。
+- `submit_observation()` 已按 RuntimeKey 把内部事实写入有界 Inbox，并由单 Runtime 固定聚合窗口
+  task 关闭为不可变 `ObservationBatch`；这一过程不产生模型调用或输出。
 - `RuntimeObservationEvent` 能把已经形成的主动表达适配到平台发送边界。
+- `PersonalState` 已跨 turn 保留，并从真实物理投递回执接收一次 Completion Feedback。
 - `InteractionOutputController` 已负责可见输出、最终输出仲裁、完成状态和规范记录。
 - Persona Expression 已是即时回复、Core 结果和插件可见材料的统一人格表达入口。
 - Prompt 已能从一个规范 `ContextPack` 投影 Router、Core Planner、Persona 和 Core 视图。
@@ -66,14 +69,13 @@
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. `PersonalSessionRuntime` 在空闲后立即从 Manager 删除，不能保存跨 turn 状态。
-2. 现有 observation submission 会立即取得 turn lease 并要求 Adapter 支持主动消息，只适合输出，
-   不适合接收无需输出的内部事实。
-3. 没有有界 Observation Inbox、过期策略、合并策略和稳定的 Gate reason code。
-4. 没有 Personal Policy Prompt target，也没有后台策略模型的成本、冷却和失败关闭机制。
-5. 没有将真实 output completion 反馈到持续状态的规范契约。
-6. 默认主动目标只回答“发到哪里”，系统尚未回答“何时观察、何时行动、为什么不行动”。
-7. 现有 Prompt Catalog 没有运行状态、Observation batch 和 Policy features 的明确槽位。
+1. Inbox 已处理事实级 expiry、coalesce 和 overflow，但还没有基于运行状态的 Deterministic Gate
+   与稳定 Gate result。
+2. 没有 Personal Policy Prompt target，也没有后台策略模型的成本、冷却和失败关闭机制。
+3. 冷却、静音和主动预算仍是进程内字段，尚未达到开放主动表达所需的重启安全性。
+4. 默认主动目标只回答“发到哪里”，系统尚未回答“何时观察、何时行动、为什么不行动”。
+5. Heartbeat、Sensor 和 Action Coordinator 尚未接入，因此没有生产来源自动驱动 Inbox。
+6. 现有 Prompt Catalog 没有运行状态、Observation batch 和 Policy features 的明确槽位。
 
 ## 三、目标流程
 
@@ -216,9 +218,9 @@ payload
 
 约束：
 
-- `observation_id` 在提交时生成并保持稳定。
+- `observation_id` 在 Observation 创建时生成，提交后保持稳定；重复提交同一 ID 只替换待处理项。
 - `coalesce_key` 只用于同类事实替换，不作为 Runtime 身份。
-- `expires_at` 到期后由 Gate 丢弃。
+- `expires_at` 到期后在 Inbox admission 或 batch close 时丢弃，不等待模型 Gate。
 - payload 必须保持不可变，不能放 event、ProviderRequest、ToolSet 或可变运行对象。
 - `visible_reply_material` 只用于已决定表达的兼容路径，不是所有 Observation 的必填字段。
 
@@ -407,7 +409,7 @@ turn lease。只有 Policy 已决定 `express` 时，Action Coordinator 才使�
 初始边界：
 
 - 每个 Runtime 最多 64 条待处理 Observation。
-- 默认 debounce 窗口 1.5 秒。
+- 默认固定聚合窗口 1.5 秒；窗口内的新事实不延长截止时间，避免持续输入造成 batch 饥饿。
 - 同一 `kind + source + coalesce_key` 保留最新事实。
 - 入队前先删除过期项，再处理容量限制。
 - 容量仍满时丢弃最旧项并记录 `inbox_overflow_drop_oldest`。
@@ -423,13 +425,22 @@ hold
 reject
 ```
 
-首批 reason code：
+Inbox admission 当前已经使用：
+
+```text
+observation_expired
+inbox_expired_removed
+inbox_duplicate_replaced
+inbox_coalesced_replaced
+inbox_overflow_drop_oldest
+```
+
+Phase 2B Gate 计划使用：
 
 ```text
 accepted
 feature_disabled
 observation_expired
-duplicate_replaced
 missing_material
 runtime_busy
 muted
@@ -439,7 +450,6 @@ no_action_cooldown
 policy_budget_exhausted
 output_budget_exhausted
 target_unavailable
-inbox_overflow_drop_oldest
 ```
 
 Phase 2 只记录 Gate 结果，不改变当前回复和发送行为。
@@ -591,6 +601,8 @@ Policy 不接收：
 
 ### Phase 2A：Observation Intake 与 Inbox
 
+状态：已完成。
+
 目标：接收和合并内部事实，但不改变行为。
 
 工作：
@@ -598,7 +610,7 @@ Policy 不接收：
 - 扩展 RuntimeObservation 的 inbox 字段。
 - 定义 ObservationBatch 和 admission result。
 - 新增 `submit_observation()`，与现有主动输出 submission 分离。
-- 为 Runtime 增加有界 Inbox、debounce、coalesce、expiry 和 overflow。
+- 为 Runtime 增加有界 Inbox、固定聚合窗口、coalesce、expiry 和 overflow。
 - 增加单 Runtime evaluation task 所有权。
 
 验收：
@@ -746,7 +758,7 @@ max_proactive_outputs_per_day
 | 模块 | Phase | 计划改动 | 不应承担的职责 |
 | --- | --- | --- | --- |
 | `interaction/personal_runtime.py` | 1-2 | Runtime 保留、state、Inbox、evaluation 所有权 | Prompt 拼装、人格文案 |
-| `interaction/observation.py` | 2 | Observation / Batch 契约 | 平台发送、模型决策 |
+| `interaction/observation.py`、`interaction/observation_inbox.py` | 2 | Observation / Batch / admission / Inbox 契约 | 平台发送、模型决策 |
 | 新的 Personal State 模块 | 1 | State、Feedback 类型 | Conversation / Memory |
 | 新的 Personal Policy 模块 | 2-3 | Gate、Features、Decision、shadow policy | Router、Planner、Tool loop |
 | `interaction/turn_state.py` | 1 | 只提供 completion 事实读取 | 持续状态主存储 |
@@ -797,17 +809,20 @@ max_proactive_outputs_per_day
 
 ## 十四、当前建议的下一批工作
 
-Phase 1A 和 Phase 1B 已完成：
+Phase 1A、Phase 1B 和 Phase 2A 已完成：
 
 1. `PersonalState` 已由保留的 `PersonalSessionRuntime` 跨 turn 持有。
 2. 空闲 Runtime 已具有受限 TTL / LRU 生命周期、shutdown 和只读 diagnostics。
 3. admission 记录用户活动和忙闲事实。
 4. lease release 已把真实投递回执和 turn 终态转换为一次 `CompletionFeedback`。
 5. 只有 delivered 可见输出更新 `last_expression_at`；主动预算保持不变。
+6. 通用 `submit_observation()` 已与主动输出 submission 分离，并复用官方人格和隐私解析规则。
+7. 每个 Runtime 已拥有 64 条上限、1.5 秒固定聚合窗口、显式 coalesce、expiry、overflow
+   和唯一 evaluation task；batch 当前只进入 diagnostics。
 
-下一次代码实施进入 Phase 2A，只建立通用 Observation Intake 与有界 Inbox，不调用 Policy
-模型、不主动回复，也不把 Observation 伪装成平台用户消息。Phase 2A 审阅通过后再增加 shadow
-Policy，避免同时引入队列并发和模型决策。
+下一次代码实施进入 Phase 2B，只增加确定性的 Feature Builder 与 Gate。Gate 先以 diagnostics
+方式运行，不调用 Policy 模型、不主动回复，也不修改普通平台消息行为。Phase 2B 审阅通过后再
+增加 shadow Policy，避免把运行规则与模型决策混成一个所有者。
 
 ## 十五、后续仍需用运行数据决定的问题
 
@@ -818,4 +833,4 @@ Policy，避免同时引入队列并发和模型决策。
 - Phase 5 哪些群聊和 Adapter 默认允许环境观察，默认应关闭。
 - Phase 6 Sensor payload 的公共版本化和权限模型。
 - Phase 7 主动 execute 的用户确认、风险等级和工具权限策略。
-- 24 小时 / 1024 Runtime、64 Observation 和 1.5 秒 debounce 是否需要根据真实 diagnostics 调整。
+- 24 小时 / 1024 Runtime、64 Observation 和 1.5 秒聚合窗口是否需要根据真实 diagnostics 调整。

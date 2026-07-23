@@ -1,8 +1,8 @@
 task:
-  class: refactor
+  class: feature
   risk: high
-  phase: autonomous_persona_runtime_phase_1b
-  scope: Feed canonical turn completion and physical delivery receipts into retained PersonalState without adding policy, proactive behavior, or a second lifecycle observer
+  phase: autonomous_persona_runtime_phase_2a
+  scope: Admit immutable system observations into bounded per-Runtime inboxes and close diagnostic batches without adding Gate, Policy, proactive behavior, EventBus insertion, or synthetic messages
 context:
   confidence: high
   assumptions:
@@ -18,8 +18,10 @@ context:
     - The shadow-policy phase uses a read-only Prompt collection adapter for the existing event-shaped collector interface; it is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
     - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
     - RuntimeObservation is immutable structured system input and is never projected as a user message.
-    - Runtime observation turns share the same PersonalSessionRuntime identity and lock as platform turns but bypass EventBus, Pipeline, Router, Planner, and Core.
-    - Runtime observation admission rejects targets that do not declare proactive-message support before acquiring the session lock.
+    - Generic observation intake shares the same PersonalSessionRuntime identity as platform turns but does not acquire the turn lock and bypasses EventBus, Pipeline, Router, Planner, Core, Persona, and Output.
+    - RuntimeObservationEvent output admission rejects targets that do not declare proactive-message support before acquiring the session lock; generic submit_observation accepts such targets because observation is not delivery.
+    - Each PersonalSessionRuntime owns at most 64 pending observations and one fixed 1.5-second aggregation task; new observations do not extend the deadline, and explicit coalesce identity is kind + source + coalesce_key.
+    - Observation evaluation currently only closes an immutable diagnostic batch. It cannot invoke Gate, Policy, a provider, Persona, Core, Output, or create RuntimeObservationEvent.
     - Runtime observation handlers receive both the compatibility event and the canonical PersonalTurnContext; cancellation and failure emit terminal lifecycle stages.
     - RuntimeObservationEvent is only the official platform-send compatibility sink; all visible observation output still passes through InteractionOutputController interception.
     - Observation conversation persistence is assistant-only and turn-idempotent; it never inserts an empty or synthetic user message.
@@ -291,7 +293,10 @@ verification:
     - py_compile for all affected runtime modules (passed)
     - npm --dir docs run docs:build (passed)
     - YAML parse check for .ai/state.yaml and git diff --check after Personal Runtime owner implementation (passed)
+    - uv run ruff check and py_compile for Phase 2A Observation, Inbox, Runtime, state, context, and persona-resolution modules (passed)
+    - Minimal public submit_observation smoke covered coalesce, overflow, expiry, unsupported-proactive targets, one evaluation task, batch close, diagnostics, and shutdown (passed)
   checks_failed:
+    - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
     - Initial empty-password CLI test expected local validation text, but Click aborts repeated empty prompts before local validation; test was corrected to cover invalid username validation instead.
     - Initial knowledge-base/sandbox targeted run found Shipyard Neo profile auto-selection tests failing because default config still set `shipyard_neo_profile` to `python-default`; fixed by making the default blank and adding explicit-default-profile coverage.
@@ -299,26 +304,24 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "Real-platform lifecycle delivery and live provider calls were not run. The complete interaction unit set plus postprocess/memory suites passed; pytest still reports existing aiosqlite event-loop-close warnings in some interaction tests."
+  validation_gap: "Phase 2A has no production Heartbeat or Sensor source by design, so real-source admission was not run. Targeted Pyright was unavailable. Real-platform lifecycle delivery and live provider calls were also not run."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: runtime_ownership_cleanup
+    phase: autonomous_persona_runtime_phase_2a
     scope:
-      - immutable RuntimeObservation and system event adapter
-      - observation-aware PersonalTurnContext with no synthetic user input
-      - manager-owned observation admission on the regular session lock
-      - Persona-only middleware handling through the unified Output Controller
-      - assistant-only conversation persistence with turn-id idempotency
-      - proactive capability admission and terminal lifecycle enforcement
-      - canonical finalized material rebuilt at the middleware persistence boundary
-      - fail turn completion when no physical Interaction output was delivered
-      - source-derived flow diagram and explicit transition-risk inventory
+      - immutable RuntimeObservation identity, expiry, and explicit coalesce fields
+      - manager-owned submit_observation identity resolution without platform events
+      - bounded per-Runtime Inbox with expiry, coalesce, and overflow
+      - one fixed-window aggregation and batch evaluation task per Runtime
+      - immutable ObservationBatch retained only in diagnostics
+      - shutdown and idle retention ownership for pending facts and evaluation tasks
     non_goals:
       - heartbeat
-      - policy or configuration
-      - cron or active_reply migration
-      - Router, Planner, or Core execution
+      - deterministic Gate or Personal Policy
+      - proactive reply or Action Coordinator
+      - EventBus, Pipeline, Router, Planner, Persona, Core, or Output execution
+      - synthetic platform or user messages
     confirmed_gaps:
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports

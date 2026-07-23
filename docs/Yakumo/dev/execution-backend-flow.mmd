@@ -289,12 +289,17 @@ flowchart LR
         TURN_RELEASE --> CLEANUP
     end
 
-    subgraph OBSERVATION["八、人格化 Runtime Observation（已实现，暂无 Heartbeat / Sensor 触发源）"]
+    subgraph OBSERVATION["八、Runtime Observation（Intake 已实现，暂无 Heartbeat / Sensor 触发源）"]
         direction TB
         OBS_SOURCE["未来 Heartbeat / Scheduler / Runtime Sensor<br/>当前源码尚未接入"]
-        OBS_FACT["RuntimeObservation<br/>不可变系统事实，不伪装用户消息"]
-        OBS_EVENT["RuntimeObservationEvent<br/>官方平台发送兼容 event"]
-        OBS_SUBMIT["PersonalRuntimeManager.submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
+        OBS_FACT["RuntimeObservation<br/>稳定 ID / expiry / coalesce key<br/>不可变系统事实"]
+        OBS_INTAKE["PersonalRuntimeManager.submit_observation<br/>复用官方会话人格与隐私规则解析 RuntimeKey<br/>不构造 event / message"]
+        OBS_INBOX["PersonalSessionRuntime Inbox<br/>每 Runtime 最多 64 条<br/>expiry / coalesce / overflow drop oldest"]
+        OBS_DEBOUNCE["唯一固定聚合窗口 task<br/>1.5 秒；新事实不延长截止时间<br/>pending/task 存在时不可回收"]
+        OBS_BATCH["immutable ObservationBatch<br/>当前只保留到 diagnostics<br/>零模型调用 / 零输出"]
+        OBS_DECISION["未来 Gate / Personal Policy / Action Coordinator<br/>当前尚未实现"]
+        OBS_EVENT["RuntimeObservationEvent<br/>仅适配已经决定发送的输出"]
+        OBS_SUBMIT["submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
         OBS_HANDLER["InteractionMiddleware.handle_runtime_observation<br/>显式接收 event + PersonalTurnContext<br/>绕过 Router / Planner / Core"]
         OBS_PERSONA["唯一 Persona Expression<br/>不默认开放有副作用工具"]
         OBS_OUTPUT["InteractionOutputController<br/>统一 materialize / platform send / visible completion"]
@@ -302,7 +307,10 @@ flowchart LR
         OBS_NONE["没有 material：零模型调用并 settle"]
 
         OBS_SOURCE -. "尚未实现" .-> OBS_FACT
-        OBS_FACT --> OBS_EVENT --> OBS_SUBMIT --> OBS_HANDLER
+        OBS_FACT --> OBS_INTAKE --> OBS_INBOX --> OBS_DEBOUNCE --> OBS_BATCH
+        OBS_BATCH -. "Phase 2B+" .-> OBS_DECISION
+        OBS_DECISION -. "决定 express 后" .-> OBS_EVENT
+        OBS_EVENT --> OBS_SUBMIT --> OBS_HANDLER
         OBS_HANDLER -->|"存在 visible_reply_material"| OBS_PERSONA --> OBS_OUTPUT --> OBS_HISTORY
         OBS_HANDLER -->|"material 为空"| OBS_NONE
         OBS_OUTPUT -. "复用同一物理发送与完成链" .-> INTERACTION_PLATFORM_SEND

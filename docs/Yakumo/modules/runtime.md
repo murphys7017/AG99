@@ -105,17 +105,35 @@ interaction turn 的输出路径与普通事件不同：
 - interaction 的 finalized material 先由 middleware 同步幂等提交到官方 Conversation；提交成功后才完成 turn 并调度 postprocess
 - memory service 在 `AFTER_TURN_COMPLETED` 消费 finalized material；Core 执行连续性写入独立 Execution Ledger，不混入可见对话
 
-内部系统观察不进入官方平台消息 Pipeline。当前代码提供
-`RuntimeObservationEvent -> PersonalRuntimeManager -> Personal Expression -> Output
-Controller` 的显式入口，并与平台消息共享 session runtime 锁。该入口尚未由 Heartbeat
-或 Scheduler 自动触发。普通插件 `Context.send_message()` 的纯文本输出现在通过
-Personal Runtime 排队；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output
-Controller，跨 session 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
+内部系统观察不进入官方平台消息 Pipeline。当前代码已经分开两个入口：
+
+```text
+RuntimeObservation
+  -> PersonalRuntimeManager.submit_observation
+  -> per-Runtime bounded Inbox
+  -> fixed 1.5-second aggregation window
+  -> immutable ObservationBatch diagnostics
+
+已经决定发送的主动输出
+  -> RuntimeObservationEvent
+  -> submit_runtime_observation_event
+  -> Personal Expression -> Output Controller
+```
+
+通用 Observation Intake 不创建平台事件、不取得 turn lease，也不要求目标支持主动发送；当前
+evaluation task 只关闭 batch，不调用 Gate、Policy、Persona、Core 或 Output。主动输出兼容入口
+继续与平台消息共享 session runtime 锁，并在 admission 时校验目标发送能力。两者都尚未由
+Heartbeat 或 Sensor 自动触发。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
+的路径；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output Controller，跨 session
+输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
 
 `PersonalSessionRuntime` 当前按 `config_id + persona_id + audience_key + privacy_scope` 在进程内
 跨 turn 保留 `PersonalState`。空闲 Runtime 最长保留 24 小时，空闲集合最多 1024 条；Manager
-在 bind、settle 和 shutdown 边界惰性执行回收，不运行独立清理线程。该状态当前只服务运行控制
-和 diagnostics，尚未持久化，也尚未接入 Inbox、Gate 或 Policy。
+在 bind、settle 和 observation admission 边界惰性执行回收，不运行独立清理线程。每个 Runtime
+拥有最多 64 条 Observation 的 Inbox 和唯一 1.5 秒固定聚合窗口 task；窗口内的新事实不延长
+截止时间，pending facts 或
+task 存在时不属于 idle。该状态当前只服务运行控制和 diagnostics，尚未持久化，也尚未接入 Gate
+或 Policy。
 
 Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形成一次
 `CompletionFeedback`。投递终态以 `InteractionUtterance.delivered_message_ids` 为准，再结合 turn
@@ -124,9 +142,10 @@ Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形�
 不可变反馈保存在 Runtime diagnostics，不写入 event extra。主动输出预算尚未计数，因为当前还没有
 可以区分主动行动与普通回复的 `ActionIntent/action_id`。
 
-现有 `RuntimeObservationEvent` 和 observation submission 是已经决定输出后的平台适配入口，
-不是未来通用 Observation Inbox。后续 Inbox 接收事实时不会构造用户消息、进入 EventBus 或
-要求目标 Adapter 支持主动发送；只有策略决定表达后才复用现有 Persona 和 Output 路径。
+现有 `RuntimeObservationEvent` 和 `submit_runtime_observation_event()` 是已经决定输出后的平台
+适配入口，不是通用 Observation Inbox。通用 `submit_observation()` 已按相同 Runtime 身份接收
+不可变事实，并执行 expiry、coalesce、overflow 和 batch close；只有后续策略决定表达后才会复用
+现有 Persona 和 Output 路径。
 
 无显式目标的主动输出通过 `Context.get_proactive_message_target()` 读取
 `platform_settings.proactive_message_target`。该值是完整 UMO；WebUI 仅列出当前支持主动

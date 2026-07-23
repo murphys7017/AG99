@@ -101,6 +101,16 @@ class PersonalState:
                 self.last_expression_at or feedback.output_completed_at,
             )
 
+    def record_observation(self, *, occurred_at: float, pending_count: int) -> None:
+        self.last_observation_at = max(
+            occurred_at,
+            self.last_observation_at or occurred_at,
+        )
+        self.pending_observation_count = max(0, int(pending_count))
+
+    def set_pending_observation_count(self, pending_count: int) -> None:
+        self.pending_observation_count = max(0, int(pending_count))
+
     def snapshot(self) -> PersonalStateSnapshot:
         return PersonalStateSnapshot(
             attention_state=self.attention_state,

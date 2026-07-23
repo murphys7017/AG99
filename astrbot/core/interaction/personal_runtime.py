@@ -4,17 +4,25 @@ import asyncio
 import contextvars
 import time
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.persona_error_reply import resolve_event_conversation_persona_id
+from astrbot.core.persona_error_reply import (
+    resolve_conversation_persona_id,
+    resolve_event_conversation_persona_id,
+)
 from astrbot.core.provider.entities import ProviderRequest
 
 from .observation import RuntimeObservation, RuntimeObservationTarget
+from .observation_inbox import (
+    ObservationAdmissionResult,
+    ObservationBatch,
+    ObservationInbox,
+)
 from .personal_state import (
     CompletionFeedback,
     PersonalDeliveryStatus,
@@ -26,6 +34,7 @@ from .runtime_event import RuntimeObservationEvent
 from .turn_context import (
     PersonalTurnContext,
     PlatformTurnContextFactory,
+    resolve_privacy_scope,
 )
 from .turn_state import (
     InteractionFinalOutputStatus,
@@ -39,6 +48,8 @@ _ACTIVE_PERSONAL_TURN: contextvars.ContextVar[PersonalTurnContext | None] = (
 
 DEFAULT_IDLE_RUNTIME_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_MAX_IDLE_RUNTIMES = 1024
+DEFAULT_MAX_PENDING_OBSERVATIONS = 64
+DEFAULT_OBSERVATION_DEBOUNCE_SECONDS = 1.5
 
 
 class PendingTurnState(str, Enum):
@@ -67,6 +78,10 @@ class PersonalSessionRuntimeSnapshot:
     idle_since: float | None
     state: PersonalStateSnapshot
     last_completion_feedback: CompletionFeedback | None
+    observation_evaluation_active: bool
+    observation_overflow_drop_count: int
+    observation_expired_drop_count: int
+    last_observation_batch: ObservationBatch | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,7 +374,13 @@ class PersonalTurnLease:
 
 
 class PersonalSessionRuntime:
-    def __init__(self, key: PersonalRuntimeKey) -> None:
+    def __init__(
+        self,
+        key: PersonalRuntimeKey,
+        *,
+        max_pending_observations: int = DEFAULT_MAX_PENDING_OBSERVATIONS,
+        observation_debounce_seconds: float = DEFAULT_OBSERVATION_DEBOUNCE_SECONDS,
+    ) -> None:
         now = time.time()
         self.key = key
         self.turn_lock = asyncio.Lock()
@@ -368,6 +389,11 @@ class PersonalSessionRuntime:
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
         self.last_completion_feedback: CompletionFeedback | None = None
+        self.observation_inbox = ObservationInbox(max_pending=max_pending_observations)
+        self.observation_debounce_seconds = observation_debounce_seconds
+        self.observation_evaluation_task: asyncio.Task[None] | None = None
+        self.last_observation_batch: ObservationBatch | None = None
+        self._observation_batch_due_at: float | None = None
         self.created_at = now
         self.last_access_at = now
         self.idle_since: float | None = now
@@ -391,6 +417,87 @@ class PersonalSessionRuntime:
         self.state.apply_completion_feedback(feedback)
         self.last_completion_feedback = feedback
 
+    def submit_observation(
+        self,
+        observation: RuntimeObservation,
+        *,
+        now: float,
+    ) -> ObservationAdmissionResult:
+        result = self.observation_inbox.admit(
+            observation,
+            runtime_key=self.key,
+            now=now,
+        )
+        self.state.set_pending_observation_count(self.observation_inbox.pending_count)
+        if not result.admitted:
+            return result
+
+        self.idle_since = None
+        self.touch(now=now)
+        self.state.record_observation(
+            occurred_at=observation.occurred_at,
+            pending_count=self.observation_inbox.pending_count,
+        )
+        task_created = self._ensure_observation_evaluation_task(observation)
+        return replace(result, evaluation_task_created=task_created)
+
+    def _ensure_observation_evaluation_task(
+        self,
+        observation: RuntimeObservation,
+    ) -> bool:
+        task = self.observation_evaluation_task
+        if task is not None and not task.done():
+            return False
+        self._observation_batch_due_at = (
+            asyncio.get_running_loop().time() + self.observation_debounce_seconds
+        )
+        self.observation_evaluation_task = asyncio.create_task(
+            self._evaluate_observations(),
+            name=f"personal_runtime_observation_{observation.observation_id[:12]}",
+        )
+        return True
+
+    async def _evaluate_observations(self) -> None:
+        current_task = asyncio.current_task()
+        try:
+            loop = asyncio.get_running_loop()
+            due_at = self._observation_batch_due_at
+            if due_at is None:
+                return
+            await asyncio.sleep(max(0.0, due_at - loop.time()))
+            closed_at = time.time()
+            batch = self.observation_inbox.drain(
+                runtime_key=self.key,
+                closed_at=closed_at,
+            )
+            self.state.set_pending_observation_count(
+                self.observation_inbox.pending_count
+            )
+            if batch is not None:
+                self.last_observation_batch = batch
+            self.touch(now=closed_at)
+        finally:
+            if self.observation_evaluation_task is current_task:
+                self.observation_evaluation_task = None
+            self._observation_batch_due_at = None
+            now = time.time()
+            if self.is_idle():
+                self.idle_since = now
+                self.state.mark_idle(now=now)
+
+    async def close(self) -> None:
+        task = self.observation_evaluation_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self.observation_evaluation_task = None
+        self._observation_batch_due_at = None
+        self.observation_inbox.clear()
+        self.state.set_pending_observation_count(0)
+
     def snapshot(self) -> PersonalSessionRuntimeSnapshot:
         return PersonalSessionRuntimeSnapshot(
             key=self.key,
@@ -401,6 +508,15 @@ class PersonalSessionRuntime:
             idle_since=self.idle_since,
             state=self.state.snapshot(),
             last_completion_feedback=self.last_completion_feedback,
+            observation_evaluation_active=(
+                self.observation_evaluation_task is not None
+                and not self.observation_evaluation_task.done()
+            ),
+            observation_overflow_drop_count=(
+                self.observation_inbox.overflow_drop_count
+            ),
+            observation_expired_drop_count=self.observation_inbox.expired_drop_count,
+            last_observation_batch=self.last_observation_batch,
         )
 
     async def admit(
@@ -469,6 +585,11 @@ class PersonalSessionRuntime:
             and self.active_turn_id is None
             and self.bound_turn_count == 0
             and self.follow_ups.is_idle()
+            and self.observation_inbox.pending_count == 0
+            and (
+                self.observation_evaluation_task is None
+                or self.observation_evaluation_task.done()
+            )
         )
 
 
@@ -478,19 +599,50 @@ class PersonalRuntimeManager:
         *,
         idle_runtime_ttl_seconds: float = DEFAULT_IDLE_RUNTIME_TTL_SECONDS,
         max_idle_runtimes: int = DEFAULT_MAX_IDLE_RUNTIMES,
+        max_pending_observations: int = DEFAULT_MAX_PENDING_OBSERVATIONS,
+        observation_debounce_seconds: float = DEFAULT_OBSERVATION_DEBOUNCE_SECONDS,
     ) -> None:
         if idle_runtime_ttl_seconds < 0:
             raise ValueError("idle_runtime_ttl_seconds must be non-negative")
         if max_idle_runtimes < 0:
             raise ValueError("max_idle_runtimes must be non-negative")
+        if max_pending_observations <= 0:
+            raise ValueError("max_pending_observations must be positive")
+        if observation_debounce_seconds < 0:
+            raise ValueError("observation_debounce_seconds must be non-negative")
         self._idle_runtime_ttl_seconds = float(idle_runtime_ttl_seconds)
         self._max_idle_runtimes = int(max_idle_runtimes)
+        self._max_pending_observations = int(max_pending_observations)
+        self._observation_debounce_seconds = float(observation_debounce_seconds)
         self._sessions: dict[PersonalRuntimeKey, PersonalSessionRuntime] = {}
         self._event_sessions: weakref.WeakKeyDictionary[Any, PersonalSessionRuntime] = (
             weakref.WeakKeyDictionary()
         )
         self._accepting = True
         self._eviction_count = 0
+
+    async def submit_observation(
+        self,
+        observation: RuntimeObservation,
+        *,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: Mapping[str, Any],
+    ) -> ObservationAdmissionResult:
+        """Admit a system fact without creating a platform or user event."""
+        self._ensure_accepting()
+        if not isinstance(observation, RuntimeObservation):
+            raise TypeError("observation must be a RuntimeObservation")
+        key = await self._resolve_observation_runtime_key(
+            observation,
+            config_id=config_id,
+            plugin_context=plugin_context,
+            runtime_config=runtime_config,
+        )
+        now = time.time()
+        self._evict_idle_sessions(now=now)
+        runtime = self._get_or_create_runtime(key)
+        return runtime.submit_observation(observation, now=now)
 
     @asynccontextmanager
     async def submit_platform_event(
@@ -670,10 +822,7 @@ class PersonalRuntimeManager:
         )
         now = time.time()
         self._evict_idle_sessions(now=now)
-        runtime = self._sessions.get(key)
-        if runtime is None:
-            runtime = PersonalSessionRuntime(key)
-            self._sessions[key] = runtime
+        runtime = self._get_or_create_runtime(key)
         runtime.bind_turn(now=now)
         reservation.runtime_key = key
         reservation.transition(PendingTurnState.BOUND)
@@ -770,8 +919,26 @@ class PersonalRuntimeManager:
                 "Personal Runtime shutdown with active sessions: count=%s",
                 active_count,
             )
+        await asyncio.gather(
+            *(runtime.close() for runtime in tuple(self._sessions.values())),
+            return_exceptions=False,
+        )
         self._event_sessions.clear()
         self._sessions.clear()
+
+    def _get_or_create_runtime(
+        self,
+        key: PersonalRuntimeKey,
+    ) -> PersonalSessionRuntime:
+        runtime = self._sessions.get(key)
+        if runtime is None:
+            runtime = PersonalSessionRuntime(
+                key,
+                max_pending_observations=self._max_pending_observations,
+                observation_debounce_seconds=self._observation_debounce_seconds,
+            )
+            self._sessions[key] = runtime
+        return runtime
 
     def _ensure_accepting(self) -> None:
         if not self._accepting:
@@ -833,18 +1000,13 @@ class PersonalRuntimeManager:
                     event,
                     turn.plugin_context.conversation_manager,
                 )
-            (
-                persona_id,
-                _,
-                _,
-                _,
-            ) = await turn.plugin_context.persona_manager.resolve_selected_persona(
-                umo=turn.session.unified_msg_origin,
-                conversation_persona_id=conversation_persona_id,
+            return await self._resolve_selected_persona_id(
+                unified_msg_origin=turn.session.unified_msg_origin,
                 platform_name=turn.session.platform_name,
+                conversation_persona_id=conversation_persona_id,
+                plugin_context=turn.plugin_context,
                 provider_settings=turn.runtime_config.get("provider_settings", {}),
             )
-            return str(persona_id or "default")
         except Exception as exc:
             logger.warning(
                 "Personal Runtime persona resolution failed; isolating turn: session_id=%s error=%s",
@@ -852,6 +1014,55 @@ class PersonalRuntimeManager:
                 exc,
             )
             return f"unresolved:{turn.turn_id}"
+
+    async def _resolve_observation_runtime_key(
+        self,
+        observation: RuntimeObservation,
+        *,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: Mapping[str, Any],
+    ) -> PersonalRuntimeKey:
+        target = observation.target_session
+        conversation_persona_id = await resolve_conversation_persona_id(
+            target.unified_msg_origin,
+            plugin_context.conversation_manager,
+        )
+        persona_id = await self._resolve_selected_persona_id(
+            unified_msg_origin=target.unified_msg_origin,
+            platform_name=target.platform_name,
+            conversation_persona_id=conversation_persona_id,
+            plugin_context=plugin_context,
+            provider_settings=runtime_config.get("provider_settings", {}),
+        )
+        return PersonalRuntimeKey(
+            config_id=str(config_id or "default"),
+            persona_id=persona_id,
+            audience_key=target.unified_msg_origin,
+            privacy_scope=resolve_privacy_scope(target.message_type),
+        )
+
+    @staticmethod
+    async def _resolve_selected_persona_id(
+        *,
+        unified_msg_origin: str,
+        platform_name: str,
+        conversation_persona_id: str | None,
+        plugin_context: Any,
+        provider_settings: Mapping[str, Any] | None,
+    ) -> str:
+        (
+            persona_id,
+            _,
+            _,
+            _,
+        ) = await plugin_context.persona_manager.resolve_selected_persona(
+            umo=unified_msg_origin,
+            conversation_persona_id=conversation_persona_id,
+            platform_name=platform_name,
+            provider_settings=dict(provider_settings or {}),
+        )
+        return str(persona_id or "default")
 
 
 __all__ = [
