@@ -119,11 +119,13 @@ Runtime 串行策略。Native 原有的 UMO session lock 和全局 follow-up reg
 现有兼容投影与 Hook。内部 `RuntimeObservation` 已可通过通用 Intake 进入同一个 Session
 Runtime 的有界 Inbox；该路径不检查主动消息能力、不创建 event，也不触发输出。已经决定表达
 的 Observation 则通过独立 event adapter 校验发送能力，绕过 Router/Core，复用唯一 Persona
-Expression、Output Controller、assistant-only Conversation 提交和完整 lifecycle 终态。
+Expression、Output Controller、assistant-only Conversation 提交和完整 lifecycle 终态。Inbox
+关闭的 batch 已进入纯本地 Deterministic Gate，只形成 `evaluate / hold / reject` diagnostics；
+不调用模型，hold batch 会返回 Inbox。
 
 本阶段尚未完成：Heartbeat/Runtime Sensor 等 Observation 生产者、目标 session registry、
-quiet-hours/cooldown 等本地 eligibility policy、插件和后台任务 identity，以及完整 Gate / Policy /
-Action Coordinator。
+Gate settings 与持久状态接线、插件和后台任务 identity，以及 Personal Policy / Action
+Coordinator。
 
 实施内容：
 
@@ -316,6 +318,8 @@ Phase 0 已确认的准备边界：
   admission；不把系统观察伪装成用户消息。
 - 建立独立 `submit_observation()`、有界 Inbox、expiry、显式 coalesce、overflow、单 Runtime
   固定聚合窗口 task 和只读 `ObservationBatch` diagnostics；不进入 EventBus 或输出路径。
+- 建立 Deterministic Gate，从规范 batch 与 Runtime state 构建 features，执行 expiry、busy、
+  mute、quiet hours、cooldown、budget 和 target capability 检查；只写稳定 diagnostics。
 - Observation 复用唯一 Persona 与 Output 路径，写入 assistant-only Conversation，并在
   发送失败、取消和异常时保留正确终态；当前尚无 Heartbeat 生产者。
 - 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化

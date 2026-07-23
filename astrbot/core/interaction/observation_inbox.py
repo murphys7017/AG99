@@ -171,6 +171,20 @@ class ObservationInbox:
             observations=observations,
         )
 
+    def restore(self, batch: ObservationBatch) -> None:
+        """Restore a held batch without changing its order or accounting."""
+        if self._items:
+            raise RuntimeError(
+                "Cannot restore an observation batch into a non-empty inbox"
+            )
+        self._opened_at = batch.opened_at
+        for observation in batch.observations:
+            self._items[observation.observation_id] = observation
+            if observation.coalesce_identity is not None:
+                self._coalesced_ids[observation.coalesce_identity] = (
+                    observation.observation_id
+                )
+
     def clear(self) -> None:
         self._items.clear()
         self._coalesced_ids.clear()

@@ -58,6 +58,8 @@
 - `RuntimeObservation` 已是不可变内部事实，不伪装成用户消息。
 - `submit_observation()` 已按 RuntimeKey 把内部事实写入有界 Inbox，并由单 Runtime 固定聚合窗口
   task 关闭为不可变 `ObservationBatch`；这一过程不产生模型调用或输出。
+- Deterministic Gate 已从 batch 和 `PersonalState` 构建可验证 features，并返回稳定的
+  `evaluate / hold / reject`、原因码与 diagnostics；不调用模型或输出。
 - `RuntimeObservationEvent` 能把已经形成的主动表达适配到平台发送边界。
 - `PersonalState` 已跨 turn 保留，并从真实物理投递回执接收一次 Completion Feedback。
 - `InteractionOutputController` 已负责可见输出、最终输出仲裁、完成状态和规范记录。
@@ -69,13 +71,12 @@
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. Inbox 已处理事实级 expiry、coalesce 和 overflow，但还没有基于运行状态的 Deterministic Gate
-   与稳定 Gate result。
-2. 没有 Personal Policy Prompt target，也没有后台策略模型的成本、冷却和失败关闭机制。
-3. 冷却、静音和主动预算仍是进程内字段，尚未达到开放主动表达所需的重启安全性。
-4. 默认主动目标只回答“发到哪里”，系统尚未回答“何时观察、何时行动、为什么不行动”。
-5. Heartbeat、Sensor 和 Action Coordinator 尚未接入，因此没有生产来源自动驱动 Inbox。
-6. 现有 Prompt Catalog 没有运行状态、Observation batch 和 Policy features 的明确槽位。
+1. 没有 Personal Policy Prompt target，也没有后台策略模型的成本、超时和失败关闭机制。
+2. Gate settings 尚未接入用户配置；冷却、静音和主动预算仍是进程内字段，尚未达到开放主动
+   表达所需的重启安全性。
+3. 默认主动目标只回答“发到哪里”，系统尚未回答“何时观察、何时行动、为什么不行动”。
+4. Heartbeat、Sensor 和 Action Coordinator 尚未接入，因此没有生产来源自动驱动 Inbox。
+5. 现有 Prompt Catalog 没有运行状态、Observation batch 和 Policy features 的明确槽位。
 
 ## 三、目标流程
 
@@ -435,7 +436,7 @@ inbox_coalesced_replaced
 inbox_overflow_drop_oldest
 ```
 
-Phase 2B Gate 计划使用：
+Deterministic Gate 当前使用：
 
 ```text
 accepted
@@ -452,7 +453,9 @@ output_budget_exhausted
 target_unavailable
 ```
 
-Phase 2 只记录 Gate 结果，不改变当前回复和发送行为。
+Phase 2 只记录 Gate 结果，不改变当前回复和发送行为。`hold` 会把 batch 原样恢复到 Inbox；
+Runtime busy 在当前 turn settle 后重新评估，quiet hours 与 cooldown 等待后续 Observation 唤醒，
+不建立第二套调度器。
 
 ## 八、Prompt 与模型边界
 
@@ -622,6 +625,8 @@ Policy 不接收：
 
 ### Phase 2B：Deterministic Gate
 
+状态：已完成。
+
 目标：完成模型调用前的确定性成本和打扰控制。
 
 工作：
@@ -636,8 +641,12 @@ Policy 不接收：
 - 每个 reject / hold 都有稳定原因码。
 - Gate 计算不修改 event wake 状态。
 - Gate 不阻塞官方 Pipeline。
+- Gate 只读取 batch、PersonalState、Runtime 忙闲与目标能力，不持有 event、Provider 或 ToolSet。
+- hold batch 不丢失；busy hold 会在现有 turn settle 边界重新评估。
 
 ### Phase 3：Shadow Personal Policy
+
+状态：下一阶段。
 
 目标：验证小模型决策质量，不执行动作。
 
@@ -809,7 +818,7 @@ max_proactive_outputs_per_day
 
 ## 十四、当前建议的下一批工作
 
-Phase 1A、Phase 1B 和 Phase 2A 已完成：
+Phase 1A、Phase 1B、Phase 2A 和 Phase 2B 已完成：
 
 1. `PersonalState` 已由保留的 `PersonalSessionRuntime` 跨 turn 持有。
 2. 空闲 Runtime 已具有受限 TTL / LRU 生命周期、shutdown 和只读 diagnostics。
@@ -818,11 +827,13 @@ Phase 1A、Phase 1B 和 Phase 2A 已完成：
 5. 只有 delivered 可见输出更新 `last_expression_at`；主动预算保持不变。
 6. 通用 `submit_observation()` 已与主动输出 submission 分离，并复用官方人格和隐私解析规则。
 7. 每个 Runtime 已拥有 64 条上限、1.5 秒固定聚合窗口、显式 coalesce、expiry、overflow
-   和唯一 evaluation task；batch 当前只进入 diagnostics。
+   和唯一 evaluation task。
+8. batch 已进入确定性 Feature Builder 与 Gate；Gate 只生成 `evaluate / hold / reject`、稳定原因
+   和 diagnostics，不调用模型或输出，hold batch 不会丢失。
 
-下一次代码实施进入 Phase 2B，只增加确定性的 Feature Builder 与 Gate。Gate 先以 diagnostics
-方式运行，不调用 Policy 模型、不主动回复，也不修改普通平台消息行为。Phase 2B 审阅通过后再
-增加 shadow Policy，避免把运行规则与模型决策混成一个所有者。
+下一次代码实施进入 Phase 3，增加独立的 Shadow Personal Policy target、严格决策契约和
+fail-closed Provider 调用。Shadow Policy 只消费 Gate 的 `evaluate` batch，不执行动作、不主动
+回复，也不修改 Router 或普通平台消息行为，避免把运行规则与模型决策混成一个所有者。
 
 ## 十五、后续仍需用运行数据决定的问题
 

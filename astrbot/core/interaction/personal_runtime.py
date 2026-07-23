@@ -23,6 +23,13 @@ from .observation_inbox import (
     ObservationBatch,
     ObservationInbox,
 )
+from .personal_gate import (
+    DeterministicObservationGate,
+    ObservationFeatureBuilder,
+    ObservationGateDisposition,
+    ObservationGateResult,
+    ObservationGateSettings,
+)
 from .personal_state import (
     CompletionFeedback,
     PersonalDeliveryStatus,
@@ -82,6 +89,7 @@ class PersonalSessionRuntimeSnapshot:
     observation_overflow_drop_count: int
     observation_expired_drop_count: int
     last_observation_batch: ObservationBatch | None
+    last_observation_gate_result: ObservationGateResult | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,6 +388,7 @@ class PersonalSessionRuntime:
         *,
         max_pending_observations: int = DEFAULT_MAX_PENDING_OBSERVATIONS,
         observation_debounce_seconds: float = DEFAULT_OBSERVATION_DEBOUNCE_SECONDS,
+        observation_gate_settings: ObservationGateSettings | None = None,
     ) -> None:
         now = time.time()
         self.key = key
@@ -391,8 +400,12 @@ class PersonalSessionRuntime:
         self.last_completion_feedback: CompletionFeedback | None = None
         self.observation_inbox = ObservationInbox(max_pending=max_pending_observations)
         self.observation_debounce_seconds = observation_debounce_seconds
+        self.observation_gate_settings = (
+            observation_gate_settings or ObservationGateSettings()
+        )
         self.observation_evaluation_task: asyncio.Task[None] | None = None
         self.last_observation_batch: ObservationBatch | None = None
+        self.last_observation_gate_result: ObservationGateResult | None = None
         self._observation_batch_due_at: float | None = None
         self.created_at = now
         self.last_access_at = now
@@ -409,6 +422,11 @@ class PersonalSessionRuntime:
     def settle_turn(self, *, now: float) -> None:
         self.bound_turn_count = max(0, self.bound_turn_count - 1)
         self.touch(now=now)
+        if (
+            not self.has_active_conversational_work()
+            and self.observation_inbox.pending_count > 0
+        ):
+            self._ensure_observation_evaluation_task()
         if self.is_idle():
             self.idle_since = now
             self.state.mark_idle(now=now)
@@ -438,12 +456,14 @@ class PersonalSessionRuntime:
             occurred_at=observation.occurred_at,
             pending_count=self.observation_inbox.pending_count,
         )
-        task_created = self._ensure_observation_evaluation_task(observation)
+        task_created = self._ensure_observation_evaluation_task(
+            observation.observation_id
+        )
         return replace(result, evaluation_task_created=task_created)
 
     def _ensure_observation_evaluation_task(
         self,
-        observation: RuntimeObservation,
+        observation_id: str | None = None,
     ) -> bool:
         task = self.observation_evaluation_task
         if task is not None and not task.done():
@@ -453,7 +473,11 @@ class PersonalSessionRuntime:
         )
         self.observation_evaluation_task = asyncio.create_task(
             self._evaluate_observations(),
-            name=f"personal_runtime_observation_{observation.observation_id[:12]}",
+            name=(
+                "personal_runtime_observation"
+                if observation_id is None
+                else f"personal_runtime_observation_{observation_id[:12]}"
+            ),
         )
         return True
 
@@ -475,6 +499,28 @@ class PersonalSessionRuntime:
             )
             if batch is not None:
                 self.last_observation_batch = batch
+                state_snapshot = self.state.snapshot()
+                features = ObservationFeatureBuilder.build(
+                    batch,
+                    state=state_snapshot,
+                    runtime_busy=self.has_active_conversational_work(),
+                    settings=self.observation_gate_settings,
+                    evaluated_at=closed_at,
+                )
+                gate_result = DeterministicObservationGate.evaluate(
+                    batch,
+                    state=state_snapshot,
+                    features=features,
+                    settings=self.observation_gate_settings,
+                    evaluated_at=closed_at,
+                )
+                self.last_observation_gate_result = gate_result
+                self.state.record_gate_result(gate_result.reason_code.value)
+                if gate_result.disposition is ObservationGateDisposition.HOLD:
+                    self.observation_inbox.restore(batch)
+                    self.state.set_pending_observation_count(
+                        self.observation_inbox.pending_count
+                    )
             self.touch(now=closed_at)
         finally:
             if self.observation_evaluation_task is current_task:
@@ -517,6 +563,7 @@ class PersonalSessionRuntime:
             ),
             observation_expired_drop_count=self.observation_inbox.expired_drop_count,
             last_observation_batch=self.last_observation_batch,
+            last_observation_gate_result=self.last_observation_gate_result,
         )
 
     async def admit(
@@ -581,15 +628,20 @@ class PersonalSessionRuntime:
 
     def is_idle(self) -> bool:
         return (
-            not self.turn_lock.locked()
-            and self.active_turn_id is None
-            and self.bound_turn_count == 0
-            and self.follow_ups.is_idle()
+            not self.has_active_conversational_work()
             and self.observation_inbox.pending_count == 0
             and (
                 self.observation_evaluation_task is None
                 or self.observation_evaluation_task.done()
             )
+        )
+
+    def has_active_conversational_work(self) -> bool:
+        return (
+            self.turn_lock.locked()
+            or self.active_turn_id is not None
+            or self.bound_turn_count > 0
+            or not self.follow_ups.is_idle()
         )
 
 
@@ -601,6 +653,7 @@ class PersonalRuntimeManager:
         max_idle_runtimes: int = DEFAULT_MAX_IDLE_RUNTIMES,
         max_pending_observations: int = DEFAULT_MAX_PENDING_OBSERVATIONS,
         observation_debounce_seconds: float = DEFAULT_OBSERVATION_DEBOUNCE_SECONDS,
+        observation_gate_settings: ObservationGateSettings | None = None,
     ) -> None:
         if idle_runtime_ttl_seconds < 0:
             raise ValueError("idle_runtime_ttl_seconds must be non-negative")
@@ -614,6 +667,9 @@ class PersonalRuntimeManager:
         self._max_idle_runtimes = int(max_idle_runtimes)
         self._max_pending_observations = int(max_pending_observations)
         self._observation_debounce_seconds = float(observation_debounce_seconds)
+        self._observation_gate_settings = (
+            observation_gate_settings or ObservationGateSettings()
+        )
         self._sessions: dict[PersonalRuntimeKey, PersonalSessionRuntime] = {}
         self._event_sessions: weakref.WeakKeyDictionary[Any, PersonalSessionRuntime] = (
             weakref.WeakKeyDictionary()
@@ -674,7 +730,9 @@ class PersonalRuntimeManager:
         config_id: str,
         plugin_context: Any,
         runtime_config: dict,
-        handler: Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]],
+        handler: Callable[
+            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
+        ],
     ) -> Any:
         """Submit an internal observation to the regular per-session runtime."""
         self._ensure_accepting()
@@ -911,9 +969,7 @@ class PersonalRuntimeManager:
         if not self._accepting:
             return
         self._accepting = False
-        active_count = sum(
-            not runtime.is_idle() for runtime in self._sessions.values()
-        )
+        active_count = sum(not runtime.is_idle() for runtime in self._sessions.values())
         if active_count:
             logger.warning(
                 "Personal Runtime shutdown with active sessions: count=%s",
@@ -936,6 +992,7 @@ class PersonalRuntimeManager:
                 key,
                 max_pending_observations=self._max_pending_observations,
                 observation_debounce_seconds=self._observation_debounce_seconds,
+                observation_gate_settings=self._observation_gate_settings,
             )
             self._sessions[key] = runtime
         return runtime
@@ -955,11 +1012,7 @@ class PersonalRuntimeManager:
             self._evict_runtime(key, reason="idle_ttl")
 
         idle_runtimes = sorted(
-            (
-                runtime
-                for runtime in self._sessions.values()
-                if runtime.is_idle()
-            ),
+            (runtime for runtime in self._sessions.values() if runtime.is_idle()),
             key=lambda runtime: runtime.last_access_at,
         )
         overflow = len(idle_runtimes) - self._max_idle_runtimes

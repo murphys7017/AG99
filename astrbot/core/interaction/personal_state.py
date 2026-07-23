@@ -54,9 +54,7 @@ class PersonalState:
     """Process-local control state owned by one Personal Session Runtime."""
 
     attention_state: PersonalAttentionState = PersonalAttentionState.IDLE
-    availability_state: PersonalAvailabilityState = (
-        PersonalAvailabilityState.AVAILABLE
-    )
+    availability_state: PersonalAvailabilityState = PersonalAvailabilityState.AVAILABLE
     last_observation_at: float | None = None
     last_user_activity_at: float | None = None
     last_expression_at: float | None = None
@@ -110,6 +108,9 @@ class PersonalState:
 
     def set_pending_observation_count(self, pending_count: int) -> None:
         self.pending_observation_count = max(0, int(pending_count))
+
+    def record_gate_result(self, reason_code: str) -> None:
+        self.last_gate_reason = str(reason_code or "").strip() or None
 
     def snapshot(self) -> PersonalStateSnapshot:
         return PersonalStateSnapshot(

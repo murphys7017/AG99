@@ -67,8 +67,10 @@ Router 与 Core Planner 只共享事实源，不共享模型决策、Prompt 指�
 
 持续人格 Runtime 已具备独立的 Observation Intake：内部事实按会话人格解析到同一个
 RuntimeKey，在每个 Runtime 的有界 Inbox 中执行过期清理、显式合并和 1.5 秒聚合窗口，最后
-形成只读 `ObservationBatch`。这一阶段不构造平台消息、不进入 EventBus，也不调用模型或主动
-回复；已经决定发送的主动输出仍走单独的 Persona Expression 与 Output 路径。
+形成只读 `ObservationBatch`。确定性 Gate 随后只根据运行状态、quiet hours、冷却、预算和目标
+能力给出 `evaluate / hold / reject` 及稳定原因码；`hold` 会保留事实，整个阶段不构造平台消息、
+不进入 EventBus，也不调用模型或主动回复。已经决定发送的主动输出仍走单独的 Persona
+Expression 与 Output 路径。
 
 ---
 
@@ -118,7 +120,7 @@ collect → build → target projection → render profile → prompt layout/tre
 | 即时表达 | 🟡 开发中 | 已复用统一 Persona Runtime，流式体验继续优化 |
 | 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
 | Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
-| 持续人格 Runtime | 🟡 开发中 | 跨 turn 状态与 Observation Inbox 已完成，Gate、Policy、Heartbeat 尚未接入 |
+| 持续人格 Runtime | 🟡 开发中 | 跨 turn 状态、Observation Inbox 与确定性 Gate 已完成，Policy、Heartbeat 尚未接入 |
 | 结构化 Prompt | 🟡 开发中 | collect/build/project/profile/layout/tree/render/apply 已跑通，继续物理拆分默认 Layout 并统一工具与 Provider capability |
 | 上游兼容 | 🟢 稳定 | 安全修复、provider 稳定修复持续同步 |
 
