@@ -68,8 +68,8 @@ session lock，目标必须明确支持主动消息；没有 `visible_reply_mate
 提交可过期、可合并的 `heartbeat` Observation，不构造消息或直接发送。群聊环境观察默认关闭；
 启用后，官方 Waking 阶段只让同一默认目标的非唤醒群聊文本继续通过白名单和会话状态检查，
 再转换为不含原文的 `conversation_activity` Observation，并在普通限流、插件、Router 和 Core 前
-终止该平台事件。Action Coordinator 已实现 `express / defer`；其余 Runtime Sensor、多目标
-session registry 与 `execute` 仍未实现。Policy 每日调用上限会在 Provider 请求前写入独立
+终止该平台事件。Action Coordinator 已实现 `express / defer`。插件可以注册受限 Runtime Sensor，
+通过 handle 提交可过期的结构化事实；多目标 session registry 与 `execute` 仍未实现。Policy 每日调用上限会在 Provider 请求前写入独立
 Personal State Repository。
 最近表达、冷却、静音和每日用量具备窄化的重启恢复边界。静音、quiet hours、cooldown 时长与
 主动输出上限已经接入用户配置；Gate 立即执行静音、全局时区安静时段和输出预算。`express` 的可见输出
@@ -77,6 +77,42 @@ Personal State Repository。
 但只有显式启用 Policy、配置 Provider 且通过 Gate 才可能主动表达。插件调用
 `Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
 session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
+
+### Plugin Runtime Sensor
+
+插件后台任务若只是在报告世界状态，应使用 Sensor，而不是构造事件或调用 `send_message()`：
+
+```python
+from astrbot.api import star
+
+
+class CalendarDueSensor:
+    plugin_id = "example.calendar"
+    source_id = "due"
+
+
+class Main(star.Star):
+    def __init__(self, context: star.Context) -> None:
+        self.sensor = context.register_runtime_observation_sensor(
+            CalendarDueSensor()
+        )
+
+    async def report_due(self) -> None:
+        await self.sensor.submit(
+            kind="calendar_due",
+            session=None,
+            payload={"event_id": "evt-42", "due_in_seconds": 60},
+            expires_in_seconds=300,
+            coalesce_key="evt-42",
+        )
+```
+
+`session=None` 使用配置的默认主动目标；显式 session 是完整 UMO。注册来源的 `plugin_id` 和
+`source_id` 必须稳定且仅含字母、数字、`.`, `_`, `-`。payload 只能含不可变标量和嵌套容器；
+`text`、`message`、`prompt`、`visible_reply_material` 等消息或回复材料会被拒绝。Sensor 不会
+创建 `AstrMessageEvent`、拿到 Provider/ToolSet、执行 Router/Core 或直接发送；最终是否行动仍由
+Inbox、Gate、Policy、Persona 和 Output 决定。插件 reload/unload 会清理其注册，之后的 handle
+提交会失败。
 
 assistant-only 内容已经进入官方 Conversation、Prompt history 和 Memory history。历史转换
 使用空 user payload 标识 assistant-only，不伪造用户消息；各目标 Renderer 再决定具体模型
@@ -147,6 +183,8 @@ Input Runtime / Observation
 - 捕获 interaction turn 的 `send` / `send_streaming`
 - 分类 immediate reply、passthrough、core reply、core stream、streaming finish marker
 - **新增** `capture_plugin_output()` — 插件输出的独立入口，支持 `direct` / `persona` 两种模式；默认 finalizes turn，`finalize=False` 仅用于随后还会有最终输出的进度消息
+- 插件流式输出选择 `persona` 时先收集完整文本，再走一次 `capture_plugin_output(..., mode="persona")`；
+  它不会先发送原始流，`direct` 流则保持原有实时发送。
 - 统一 visible-reply persona 入口、result contributor、reply prefix、reasoning display、TTS、t2i
 - 记录 `InteractionUtterance` 与 visible output
 - visible output snapshot 保留与 utterance 相同的 `message_id` / `delivered_message_ids`

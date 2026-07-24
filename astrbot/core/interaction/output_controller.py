@@ -503,8 +503,35 @@ class InteractionOutputController:
         mode: str = PluginOutputMode.DIRECT.value,
         use_fallback: bool = False,
     ) -> None:
-        """Deliver plugin-origin streaming output without core stream semantics."""
+        """Deliver plugin-origin streaming output without core stream semantics.
+
+        Persona rewriting needs the complete semantic text before it can form one
+        coherent reply. Therefore an explicitly persona-routed plugin stream is
+        buffered and delivered through ``capture_plugin_output`` once, while
+        direct plugin streams retain their regular low-latency delivery path.
+        """
         resolved_mode = PluginOutputMode(mode)
+        if resolved_mode is PluginOutputMode.PERSONA:
+            stream_text_parts: list[str] = []
+            async for chain in generator:
+                chunk_text = self._extract_observable_stream_text(chain)
+                if chunk_text:
+                    stream_text_parts.append(chunk_text)
+
+            text = "".join(stream_text_parts).strip()
+            event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
+            event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, "plugin_persona")
+            event.set_extra("_interaction_plugin_streaming_consumed", True)
+            event.set_extra("_interaction_plugin_streaming_text", text)
+            if text:
+                await self.capture_plugin_output(
+                    MessageChain([Plain(text)]),
+                    event,
+                    mode=resolved_mode.value,
+                    finalize=True,
+                )
+            return
+
         resolved_kind = "plugin_direct"
         event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
         event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)

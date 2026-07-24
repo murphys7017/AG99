@@ -741,12 +741,24 @@ max_proactive_outputs_per_day
 
 目标：允许插件贡献世界事实，而不是绕过控制层主动发文案。
 
-工作：
+当前进度：最小受限入口已完成。`Context.register_runtime_observation_sensor(sensor)` 接收
+稳定的 `plugin_id` / `source_id`，返回 handle；handle 只接受 kind、目标会话、有限 TTL、
+coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 使用现有 Runtime identity
+解析、Inbox、Gate、Policy 和 diagnostics，不新增队列、事件或发送链路。插件卸载会删除其注册，
+失效 handle 不能继续提交。
+
+已完成：
 
 - 提供结构化 Sensor 注册和 Observation 提交 API。
-- 插件声明 source id、支持的 kind、目标范围和 payload schema。
 - 复用 Runtime 身份解析、Inbox、Gate、Policy 和 diagnostics。
 - 保留官方 `Context.send_message()` 兼容入口；它仍代表插件已经决定发送，不伪装成 Sensor。
+- 拒绝常见消息、回复和 Prompt payload key，且限制字符串为短标量事实。
+- 插件卸载后清理 Sensor 注册。
+
+后续：
+
+- 可在登记时声明支持的 kind、目标范围和更精确的 payload schema；当前最小入口由公共结构约束
+  和 Runtime Gate 负责通用校验。
 
 验收：
 

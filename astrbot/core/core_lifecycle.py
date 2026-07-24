@@ -42,6 +42,7 @@ from astrbot.core.memory import (
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.pipeline.scheduler import PipelineContext, PipelineScheduler
 from astrbot.core.platform.manager import PlatformManager
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 from astrbot.core.provider.manager import ProviderManager
 from astrbot.core.star.context import Context
@@ -292,6 +293,26 @@ class AstrBotCoreLifecycle:
             )
 
         self.star_context.set_proactive_message_dispatcher(dispatch_proactive_message)
+
+        async def dispatch_runtime_observation(observation):
+            target = observation.target_session
+            session = MessageSession(
+                target.platform_id,
+                target.message_type,
+                target.session_id,
+            )
+            conf_info = self.astrbot_config_mgr.get_conf_info(session)
+            runtime_config = self.astrbot_config_mgr.get_conf(session)
+            return await self.personal_runtime_manager.submit_observation(
+                observation,
+                config_id=str(conf_info.get("id") or "default"),
+                plugin_context=self.star_context,
+                runtime_config=runtime_config,
+            )
+
+        self.star_context.set_runtime_observation_dispatcher(
+            dispatch_runtime_observation
+        )
         bind_memory_provider_manager(self.provider_manager)
         self.memory_service = get_memory_service(self.astrbot_config)
         await self.memory_service.initialize()

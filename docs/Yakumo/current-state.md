@@ -100,6 +100,7 @@
   不属于 interaction 主流程的领域知识
 - Persona effect 注册支持同步 `event_filter`；Persona 只把当前事件适用的 effect 编译进输出契约。无事件参数的注册表查询仅用于管理和诊断，不代表该 effect 对所有平台都可用
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
+- 显式 `persona` 模式的插件流式输出会缓冲为一个完整语义文本，再经一次 Persona 表达发送；不会先透传原始流再追加改写回复。`direct` 流保持实时输出兼容。
 - 插件 Handler `yield ProviderRequest` 时，ProcessStage 委托同一 turn 执行 Core；Core 返回后继续恢复插件生成器的 post-yield 逻辑和剩余 Handler，随后结束 delegated turn，不再重复进入默认 Core 路径。
 - ProcessStage 在插件 Handler 前取得 Personal Runtime lease；Router、Persona、Context Material 和 Stream Observation task 由 `TurnExecutionScope` 持有，lease 释放前统一完成或取消。
 - `PersonalSessionRuntime` 不再在 turn 结束后立即删除。它现在持有进程内 `PersonalState`，按 `config_id + persona_id + audience_key + privacy_scope` 跨 turn 复用；空闲实例通过 24 小时 TTL 和最多 1024 条的 LRU 边界惰性回收。Core stop 会关闭并清空 Runtime Manager。窄化的 `PersonalStateRepository` 使用独立 `personal_runtime_states` 表，只恢复最近表达、冷却、静音和每日用量等重启安全控制字段；Inbox、active turn、attention、临时 Prompt 和 diagnostics 不持久化。Turn lease 释放时会从规范 turn state 和物理投递回执形成一次 `CompletionFeedback`；只有存在 `delivered_message_ids` 的可见输出才更新并持久化 `last_expression_at`。
@@ -132,7 +133,7 @@
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
-- 默认主动目标同时限定首个 Heartbeat 和群聊环境 Observation 的范围。Heartbeat 由生命周期任务以该目标实际命中的 Runtime 配置读取开关与间隔，并只调用通用 `submit_observation()`；群聊环境观察默认关闭，启用后仅放行同一默认目标中的非唤醒群聊文本，经官方白名单和会话状态检查后转换为不含原文的 `conversation_activity` fact，并在进入限流、插件、Router 和 Core 前停止原事件。两类 Source 都不构造平台事件、不直接调用 Persona/Core/Output；多目标 registry 与其他 Sensor 仍未实现。
+- 默认主动目标同时限定首个 Heartbeat 和群聊环境 Observation 的范围。Heartbeat 由生命周期任务以该目标实际命中的 Runtime 配置读取开关与间隔，并只调用通用 `submit_observation()`；群聊环境观察默认关闭，启用后仅放行同一默认目标中的非唤醒群聊文本，经官方白名单和会话状态检查后转换为不含原文的 `conversation_activity` fact，并在进入限流、插件、Router 和 Core 前停止原事件。两类 Source 都不构造平台事件、不直接调用 Persona/Core/Output。插件可通过 `Context.register_runtime_observation_sensor()` 注册受限的结构化事实来源；Context 只解析目标并经 Lifecycle dispatcher 交给已有 Runtime Manager，注册随插件卸载清理。多目标 registry 和内置的其他 Sensor 仍未实现。
 - `CompletionFeedback` 已接入真实 turn completion。最后一份不可变反馈进入 Runtime diagnostics；`defer` 立即写入不动作冷却，带 `ActionIntent/action_id` 的 `express` 只有在可见输出确认送达后才写回复冷却并递增主动输出预算，普通被动回复不会被误算。
 
 ### 3. 插件与工具整合层

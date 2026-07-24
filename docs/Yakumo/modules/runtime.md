@@ -139,6 +139,11 @@ Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtim
 `submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
 环境 Source 复用该目标作为观察范围：同一目标的非唤醒群聊文本通过官方白名单和会话状态检查后，
 仅提交不含原文的 `conversation_activity` fact，并在普通限流、插件、Router 和 Core 前结束原事件。
+插件可通过 `Context.register_runtime_observation_sensor(sensor)` 注册受限的事实 Source；返回的
+handle 只能向同一通用 Intake 提交带目标会话、类别、过期时间和结构化 payload 的 Observation。
+生命周期装配器负责把它交给既有 `PersonalRuntimeManager`，因此插件不会拿到 Runtime、EventBus、
+Provider、ToolSet 或平台直发能力。插件卸载时注册会按 module prefix 自动删除，旧 handle 随即失效。
+`Context.send_message()` 仍是已经决定发送的兼容 API，不是 Sensor。
 主动输出兼容
 入口继续与平台消息共享 session runtime 锁，并在 admission 时校验目标发送能力。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
 的路径；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output Controller，跨 session

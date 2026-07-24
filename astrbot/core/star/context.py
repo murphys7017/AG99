@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from asyncio import Queue
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
     from astrbot.core.execution_ledger import CoreExecutionLedger
     from astrbot.core.interaction.effects import PersonaEffectSpec
+    from astrbot.core.interaction.runtime_sensor import RuntimeObservationSensorHandle
 
 WebApiHandler = Callable[..., Awaitable[Any]]
 RegisteredWebApi = tuple[str, WebApiHandler, list[str], str]
@@ -58,6 +60,7 @@ ProactiveMessageDispatcher = Callable[
     [MessageSesion, MessageChain, bool],
     Awaitable[bool],
 ]
+RuntimeObservationDispatcher = Callable[[Any], Awaitable[Any]]
 _PLUGIN_MODULE_FLAGS = {"builtin_stars", "plugins"}
 
 
@@ -156,8 +159,26 @@ class _PersonaEffectRegistration:
     seq: int
 
 
+@dataclass(slots=True)
+class _RuntimeObservationSensorRegistration:
+    """Internal registration record for one plugin Runtime Observation source."""
+
+    plugin_id: str
+    source_id: str
+    definition_module_path: str
+    owner_module_path: str | None
+    seq: int
+
+
 class PlatformManagerProtocol(Protocol):
     platform_insts: list[Platform]
+
+
+class RuntimeObservationSensor(Protocol):
+    """Plugin-declared identity for one Runtime Observation source."""
+
+    plugin_id: str
+    source_id: str
 
 
 class Context:
@@ -210,6 +231,7 @@ class Context:
         self.subagent_orchestrator = subagent_orchestrator
         self.core_execution_ledger = core_execution_ledger
         self._proactive_message_dispatcher: ProactiveMessageDispatcher | None = None
+        self._runtime_observation_dispatcher: RuntimeObservationDispatcher | None = None
         self._prompt_extension_collectors: list[
             _PromptExtensionCollectorRegistration
         ] = []
@@ -232,6 +254,10 @@ class Context:
         self._interaction_lifecycle_observer_seq = 0
         self._persona_effects: list[_PersonaEffectRegistration] = []
         self._persona_effect_seq = 0
+        self._runtime_observation_sensors: list[
+            _RuntimeObservationSensorRegistration
+        ] = []
+        self._runtime_observation_sensor_seq = 0
 
     async def llm_generate(
         self,
@@ -658,6 +684,198 @@ class Context:
         dispatcher: ProactiveMessageDispatcher | None,
     ) -> None:
         self._proactive_message_dispatcher = dispatcher
+
+    def set_runtime_observation_dispatcher(
+        self,
+        dispatcher: RuntimeObservationDispatcher | None,
+    ) -> None:
+        """Bind the lifecycle-owned Observation Inbox dispatcher."""
+        self._runtime_observation_dispatcher = dispatcher
+
+    def register_runtime_observation_sensor(
+        self,
+        sensor: RuntimeObservationSensor,
+    ) -> RuntimeObservationSensorHandle:
+        """Register one plugin-owned source of structured Runtime facts.
+
+        The returned handle only submits immutable ``RuntimeObservation`` facts.
+        It cannot enqueue an event, call a model, invoke a tool, or send a
+        response. Registrations are removed automatically with their plugin.
+        """
+        from astrbot.core.interaction.runtime_sensor import (
+            RuntimeObservationSensorHandle,
+            normalize_runtime_sensor_identifier,
+        )
+
+        plugin_id = normalize_runtime_sensor_identifier(
+            getattr(sensor, "plugin_id", None),
+            field_name="plugin_id",
+        )
+        source_id = normalize_runtime_sensor_identifier(
+            getattr(sensor, "source_id", None),
+            field_name="source_id",
+        )
+        if any(
+            registration.plugin_id == plugin_id
+            and registration.source_id == source_id
+            for registration in self._runtime_observation_sensors
+        ):
+            raise ValueError(
+                "Runtime Observation sensor is already registered: "
+                f"{plugin_id}.{source_id}"
+            )
+
+        definition_module_path = getattr(type(sensor), "__module__", "") or getattr(
+            sensor,
+            "__module__",
+            "",
+        )
+        owner_module_path = self._normalize_plugin_owner_module(
+            str(definition_module_path)
+        )
+        self._runtime_observation_sensor_seq += 1
+        registration = _RuntimeObservationSensorRegistration(
+            plugin_id=plugin_id,
+            source_id=source_id,
+            definition_module_path=str(definition_module_path),
+            owner_module_path=owner_module_path,
+            seq=self._runtime_observation_sensor_seq,
+        )
+        self._runtime_observation_sensors.append(registration)
+        logger.info(
+            "plugin(module_path %s) registered Runtime Observation sensor: %s.%s",
+            owner_module_path or definition_module_path or "<unknown>",
+            plugin_id,
+            source_id,
+        )
+        return RuntimeObservationSensorHandle(
+            registration_id=registration.seq,
+            submitter=self._submit_runtime_observation_from_sensor,
+        )
+
+    def remove_runtime_observation_sensors_by_module_prefix(
+        self,
+        module_prefix: str,
+    ) -> int:
+        clean_prefix = module_prefix.strip()
+        if not clean_prefix:
+            return 0
+        kept: list[_RuntimeObservationSensorRegistration] = []
+        removed = 0
+        for registration in self._runtime_observation_sensors:
+            if self._matches_runtime_observation_sensor_module_prefix(
+                registration,
+                clean_prefix,
+            ):
+                removed += 1
+                continue
+            kept.append(registration)
+        self._runtime_observation_sensors = kept
+        if removed:
+            logger.info(
+                "removed %s Runtime Observation sensor(s) for module prefix %s",
+                removed,
+                clean_prefix,
+            )
+        return removed
+
+    async def _submit_runtime_observation_from_sensor(
+        self,
+        registration_id: int,
+        kind: str,
+        session: str | MessageSesion | None,
+        payload: Mapping[str, Any] | None,
+        expires_in_seconds: float,
+        coalesce_key: str | None,
+        correlation_id: str | None,
+    ) -> Any:
+        from astrbot.core.interaction.observation import (
+            RuntimeObservation,
+            RuntimeObservationTarget,
+        )
+        from astrbot.core.interaction.runtime_sensor import (
+            validate_runtime_observation_kind,
+            validate_runtime_observation_payload,
+        )
+        from astrbot.core.platform.message_type import MessageType
+
+        registration = next(
+            (
+                item
+                for item in self._runtime_observation_sensors
+                if item.seq == registration_id
+            ),
+            None,
+        )
+        if registration is None:
+            raise RuntimeError(
+                "Runtime Observation sensor is no longer registered; "
+                "the plugin may have been reloaded or unloaded"
+            )
+        if not self._is_runtime_observation_sensor_active(registration):
+            raise RuntimeError("Runtime Observation sensor plugin is inactive")
+
+        target_session = self._resolve_runtime_observation_session(session)
+        platform = self.get_platform_inst(target_session.platform_id)
+        if platform is None:
+            raise RuntimeError(
+                "Runtime Observation target platform is unavailable: "
+                f"{target_session.platform_id}"
+            )
+        metadata = platform.meta()
+        occurred_at = time.time()
+        observation = RuntimeObservation(
+            kind=validate_runtime_observation_kind(kind),
+            source=(
+                f"plugin_sensor:{registration.plugin_id}:{registration.source_id}"
+            ),
+            occurred_at=occurred_at,
+            expires_at=occurred_at + expires_in_seconds,
+            coalesce_key=coalesce_key,
+            correlation_id=correlation_id,
+            target_session=RuntimeObservationTarget(
+                platform_id=target_session.platform_id,
+                platform_name=metadata.name,
+                message_type=target_session.message_type,
+                session_id=target_session.session_id,
+                support_proactive_message=metadata.support_proactive_message,
+                group_id=(
+                    target_session.session_id
+                    if target_session.message_type is MessageType.GROUP_MESSAGE
+                    else None
+                ),
+            ),
+            payload=validate_runtime_observation_payload(payload),
+        )
+        dispatcher = self._runtime_observation_dispatcher
+        if dispatcher is None:
+            raise RuntimeError("Runtime Observation dispatcher is unavailable")
+        return await dispatcher(observation)
+
+    def _resolve_runtime_observation_session(
+        self,
+        session: str | MessageSesion | None,
+    ) -> MessageSesion:
+        if session is None:
+            target = self.get_proactive_message_target()
+            if target is None:
+                raise RuntimeError(
+                    "Runtime Observation requires a session or configured "
+                    "proactive message target"
+                )
+            return target
+        if isinstance(session, str):
+            try:
+                return MessageSesion.from_str(session)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid Runtime Observation session: {session!r}"
+                ) from exc
+        if isinstance(session, MessageSesion):
+            return session
+        raise TypeError(
+            "Runtime Observation session must be a MessageSesion, UMO string, or None"
+        )
 
     async def _send_message_direct(
         self,
@@ -1101,6 +1319,21 @@ class Context:
                 return bool(plugin.activated)
         return True
 
+    def _is_runtime_observation_sensor_active(
+        self,
+        registration: _RuntimeObservationSensorRegistration,
+    ) -> bool:
+        for candidate in (
+            registration.owner_module_path,
+            registration.definition_module_path,
+        ):
+            if not candidate:
+                continue
+            plugin = star_map.get(candidate)
+            if plugin is not None:
+                return bool(plugin.activated)
+        return True
+
     @staticmethod
     def _matches_persona_effect_module_prefix(
         registration: _PersonaEffectRegistration,
@@ -1111,6 +1344,20 @@ class Context:
             for candidate in (
                 registration.owner_module_path,
                 registration.definition_module_path,
+            )
+            if candidate
+        )
+
+    @staticmethod
+    def _matches_runtime_observation_sensor_module_prefix(
+        registration: _RuntimeObservationSensorRegistration,
+        module_prefix: str,
+    ) -> bool:
+        return any(
+            candidate == module_prefix or candidate.startswith(f"{module_prefix}.")
+            for candidate in (
+                registration.definition_module_path,
+                registration.owner_module_path,
             )
             if candidate
         )

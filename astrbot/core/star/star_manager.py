@@ -1711,6 +1711,7 @@ class PluginManager:
             module_prefix
         )
         self.context.unregister_persona_effects(module_prefix=module_prefix)
+        self.context.remove_runtime_observation_sensors_by_module_prefix(module_prefix)
 
     async def update_plugin(
         self, plugin_name: str, proxy="", download_url: str = ""

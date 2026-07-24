@@ -70,7 +70,8 @@ RuntimeKey，在每个 Runtime 的有界 Inbox 中执行过期清理、显式合
 形成只读 `ObservationBatch`。确定性 Gate 随后只根据运行状态、quiet hours、冷却、预算和目标
 能力给出 `evaluate / hold / reject` 及稳定原因码；`hold` 会保留事实，整个阶段不构造平台消息、
 不进入 EventBus，也不调用模型或主动回复。已经决定发送的主动输出仍走单独的 Persona
-Expression 与 Output 路径。
+Expression 与 Output 路径。插件可以注册受限 Sensor 向同一 Intake 提交可过期的结构化事实；
+Sensor 不能提交用户文本、Prompt、工具调用或最终文案，仍需经过 Gate、Policy、Persona 和 Output。
 
 ---
 
@@ -82,6 +83,7 @@ Expression 与 Output 路径。
 - **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；Router 与 Persona 并发消费各自投影，hybrid 再由独立 Core Planner 复核是否执行
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
+- **流式例外收口**：插件显式选择 `persona` 输出时，流文本先完整收集再执行一次 Persona 表达，避免原文流与改写文案同时发送；`direct` 流保持原有低延迟发送
 - **扩展侧**：effect 是通用插件协议，按当前事件过滤后才进入 Persona 输出契约；Motion 或 Live2D 的解析和执行不属于主流程
 - **Completion 收口**：middleware 产出 finalized material，postprocess / memory service 消费同一份 material 写记忆
 - **Voice 共享**：core 旧流程和 middleware 新流程共享 `voice/*`，failure policy 由调用方决定
