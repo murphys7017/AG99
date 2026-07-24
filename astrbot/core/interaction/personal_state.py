@@ -100,8 +100,14 @@ class PersonalState:
             else PersonalAvailabilityState.AVAILABLE
         )
 
-    def apply_completion_feedback(self, feedback: CompletionFeedback) -> bool:
-        previous_expression_at = self.last_expression_at
+    def apply_completion_feedback(
+        self,
+        feedback: CompletionFeedback,
+        *,
+        reply_cooldown_seconds: float = 0.0,
+        usage_day: str | None = None,
+    ) -> bool:
+        previous_state = self.persistent_snapshot()
         if (
             feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
             and feedback.output_completed_at is not None
@@ -110,7 +116,23 @@ class PersonalState:
                 feedback.output_completed_at,
                 self.last_expression_at or feedback.output_completed_at,
             )
-        return self.last_expression_at != previous_expression_at
+        if (
+            feedback.action_id
+            and feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+        ):
+            completed_at = feedback.output_completed_at
+            if completed_at is None:
+                raise ValueError("Delivered proactive action requires completion time")
+            if usage_day is None:
+                raise ValueError("Delivered proactive action requires usage_day")
+            self._ensure_usage_day(usage_day)
+            cooldown_until = completed_at + max(0.0, reply_cooldown_seconds)
+            self.reply_cooldown_until = max(
+                cooldown_until,
+                self.reply_cooldown_until or cooldown_until,
+            )
+            self.daily_proactive_outputs += 1
+        return self.persistent_snapshot() != previous_state
 
     def record_observation(self, *, occurred_at: float, pending_count: int) -> None:
         self.last_observation_at = max(
@@ -126,6 +148,21 @@ class PersonalState:
         self.last_gate_reason = str(reason_code or "").strip() or None
 
     def record_policy_call(self, *, usage_day: str) -> None:
+        self._ensure_usage_day(usage_day)
+        self.daily_policy_calls += 1
+
+    def record_policy_action(self, action: str) -> None:
+        self.last_policy_action = str(action or "").strip() or None
+
+    def defer_actions_until(self, not_before: float) -> bool:
+        previous = self.no_action_cooldown_until
+        self.no_action_cooldown_until = max(
+            float(not_before),
+            self.no_action_cooldown_until or float(not_before),
+        )
+        return self.no_action_cooldown_until != previous
+
+    def _ensure_usage_day(self, usage_day: str) -> None:
         normalized_day = str(usage_day or "").strip()
         if not normalized_day:
             raise ValueError("usage_day is required")
@@ -133,10 +170,6 @@ class PersonalState:
             self.usage_day = normalized_day
             self.daily_policy_calls = 0
             self.daily_proactive_outputs = 0
-        self.daily_policy_calls += 1
-
-    def record_policy_action(self, action: str) -> None:
-        self.last_policy_action = str(action or "").strip() or None
 
     def restore_persistent(self, state: PersonalPersistentState) -> None:
         self.last_expression_at = state.last_expression_at

@@ -36,7 +36,9 @@ RuntimeObservation
   -> ObservationBatch
   -> Deterministic Gate
      -> hold / reject diagnostics
-     -> evaluate -> optional Shadow Personal Policy -> diagnostics only
+     -> evaluate -> optional Personal Policy
+        -> express ActionIntent -> RuntimeObservationEvent -> Persona -> Output
+        -> defer persists a no-action deadline
 
 已经决定发送的 RuntimeObservation
   -> RuntimeObservationEvent
@@ -52,9 +54,10 @@ RuntimeObservation
 最新项，第一条事实创建唯一的 1.5 秒固定聚合窗口，后续事实不延长截止时间，窗口结束后关闭为
 一个不可变 batch。Gate 只根据结构化 features 和 Runtime state 判断 `evaluate / hold / reject`，
 不执行语义决策；hold batch 会返回 Inbox，busy hold 在 turn settle 后重新评估。只有 `evaluate`
-可以进入显式启用的 Shadow Personal Policy。Policy 通过统一 Prompt 管线读取受限事实，以严格
-tool-call 契约返回 `ignore / observe / express / defer / execute`，但当前所有结果都只写 diagnostics，
-不执行 Action。该路径不经过 EventBus、Pipeline、Router、Planner、Core、Persona 或 Output；
+可以进入显式启用的 Personal Policy。Policy 通过统一 Prompt 管线读取受限事实，以严格
+tool-call 契约返回 `ignore / observe / express / defer / execute`。`express` 被转换为内部
+`ActionIntent` 后才进入已经决定发送的输出适配链；`defer` 仅写入无动作截止时间；`execute` 当前只写
+diagnostics。通用 Intake 本身不经过 EventBus、Pipeline、Router、Planner、Core、Persona 或 Output；
 不支持主动消息的目标可以进入 Intake，但会在 target capability Gate 被拒绝。
 
 `RuntimeObservationEvent` 只适配已经决定发送的可见输出。它与平台消息共享同一个 Runtime 和
@@ -65,8 +68,9 @@ session lock，目标必须明确支持主动消息；没有 `visible_reply_mate
 提交可过期、可合并的 `heartbeat` Observation，不构造消息或直接发送。Runtime Sensor、Action
 Coordinator 和多目标 session registry 尚未实现；Policy 每日调用上限已接入配置，其调用计数会在 Provider 请求前写入独立 Personal State Repository。
 最近表达、冷却、静音和每日用量具备窄化的重启恢复边界。静音、quiet hours、cooldown 时长与
-主动输出上限已经接入用户配置；Gate 立即执行静音、全局时区安静时段和输出预算，但 cooldown
-截止时间与主动输出计数仍须由后续 Action 生命周期写入。因此 Inbox 现在可以由 Heartbeat 驱动，但 Shadow Policy 仍不会产生可见输出。插件调用
+主动输出上限已经接入用户配置；Gate 立即执行静音、全局时区安静时段和输出预算。`express` 的可见输出
+确认送达后才写回复冷却与主动输出计数，`defer` 写入无动作截止时间。因此 Inbox 可以由 Heartbeat 驱动，
+但只有显式启用 Policy、配置 Provider 且通过 Gate 才可能主动表达。插件调用
 `Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
 session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
 

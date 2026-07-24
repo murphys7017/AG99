@@ -66,20 +66,20 @@
 - `InteractionOutputController` 已负责可见输出、最终输出仲裁、完成状态和规范记录。
 - Persona Expression 已是即时回复、Core 结果和插件可见材料的统一人格表达入口。
 - Prompt 已能从规范 `ContextPack` 投影 Router、Core Planner、Personal Policy、Persona 和 Core 视图。
-- Shadow Personal Policy 已接入 Gate 的 `evaluate` 分支，使用独立 Provider、严格 tool-call
-  `PersonalPolicyDecision` 和 fail-closed `observe`；当前只记录 diagnostics，不执行动作。
+- Personal Policy 已接入 Gate 的 `evaluate` 分支，使用独立 Provider、严格 tool-call
+  `PersonalPolicyDecision` 和 fail-closed `observe`；`express` 形成内部 `ActionIntent` 后复用统一
+  Persona 输出链路，`defer` 写入无动作截止时间，`execute` 暂不执行。
 - 默认主动消息目标、Adapter 主动消息能力校验、Cron 和插件主动文本入口已经存在。
 
 ### 2.2 当前缺口
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. 重启安全的状态仓库及 quiet hours、冷却时长、静音和主动输出预算配置已经接入；冷却截止时间
-   和主动输出计数仍未接入 Action 生命周期，尚不能开放主动表达。
-2. 默认主动目标同时承载首个 Heartbeat Source；Shadow Policy 已能判断 Heartbeat 与人工
-   Observation，但其决策尚未进入 Action Coordinator。
-3. Heartbeat 已只读接入 Inbox；Sensor 和 Action Coordinator 尚未接入，当前没有主动表达能力。
-4. Shadow diagnostics 尚未积累真实模型和真实 Observation 数据，不能据此开放主动表达。
+1. `express` 与 `defer` 已有最小 Action 生命周期，但 `execute`、Runtime Sensor、多目标目标注册和
+   更复杂的节律策略仍未接入。
+2. 默认主动目标同时承载首个 Heartbeat Source；Policy 的表达只复用该目标与同一 Runtime identity。
+3. Action 的可见文本仍只由 Persona Expression 形成，Policy 只提供表达意图；真实输出质量和误触发率
+   仍需基于运行数据审阅。
 
 ## 三、目标流程
 
@@ -92,12 +92,10 @@ flowchart TD
     GATE -->|hold or coalesce| INBOX
     GATE -->|evaluate| POLICY["Personal Policy"]
     POLICY -->|ignore or observe| FEEDBACK
-    POLICY -->|defer| INBOX
+    POLICY -->|defer| STATE
     POLICY -->|express| ACTION["Action Coordinator"]
-    POLICY -->|execute, later phase| ACTION
+    POLICY -.->|execute, future phase| PLANNER["Core Planner / Execution Backend"]
     ACTION --> PERSONA["Persona Expression"]
-    ACTION --> PLANNER["Core Planner / Execution Backend"]
-    PLANNER --> PERSONA
     PERSONA --> OUTPUT["Output Runtime"]
     OUTPUT --> COMPLETION["Completion Feedback"]
     COMPLETION --> FEEDBACK
@@ -833,26 +831,28 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 2. 空闲 Runtime 已具有受限 TTL / LRU 生命周期、shutdown 和只读 diagnostics。
 3. admission 记录用户活动和忙闲事实。
 4. lease release 已把真实投递回执和 turn 终态转换为一次 `CompletionFeedback`。
-5. 只有 delivered 可见输出更新 `last_expression_at`；主动预算保持不变。
+5. 只有 delivered 可见输出更新 `last_expression_at`；带 `ActionIntent/action_id` 的主动表达才写回复
+   冷却并消耗主动输出预算。
 6. 通用 `submit_observation()` 已与主动输出 submission 分离，并复用官方人格和隐私解析规则。
 7. 每个 Runtime 已拥有 64 条上限、1.5 秒固定聚合窗口、显式 coalesce、expiry、overflow
    和唯一 evaluation task。
 8. batch 已进入确定性 Feature Builder 与 Gate；Gate 只生成 `evaluate / hold / reject`、稳定原因
    和 diagnostics，不调用模型或输出，hold batch 不会丢失。
-9. `evaluate` batch 已可进入默认关闭的 Shadow Personal Policy；独立 Provider、严格 tool-call、
+9. `evaluate` batch 已可进入默认关闭的 Personal Policy；独立 Provider、严格 tool-call、
    timeout、temperature、每日预算和 fail-closed diagnostics 已接线。
 10. Policy 只读取受限 Prompt 投影，不取得 ToolSet、Skills、知识库、effect、Router 或 Planner
-    临时状态；所有 action 都不执行。
+    临时状态；只允许 `express` 经 ActionIntent 进入 Persona 输出、`defer` 写截止时间，`execute` 不执行。
 11. 独立 Personal State Repository 已持久化最近表达、冷却、静音和每日用量。Policy 请求前先
     持久化调用计数；写入失败时 fail closed 且零 Provider 请求。
 12. 未成功落盘的控制状态不属于 idle，不能被 Runtime TTL / LRU 静默回收。
 13. 静音、安静时段、回复/不动作冷却时长和每日主动输出上限已接入配置。Gate 立即执行静音、
-    全局时区安静时段和输出预算；Shadow Policy 不写 cooldown 截止时间或主动输出计数。
+    全局时区安静时段和输出预算；`defer` 写无动作截止时间，`express` 只在可见输出确认送达后写
+    回复冷却和主动输出计数。
 
 单目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后只重新验证
-`platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不能
-直接发送消息，也不能从当前 shadow decision 跳到主动表达。下一次代码实施应先用真实 shadow
-diagnostics 验证策略质量，再独立设计 Action Coordinator、ActionIntent、冷却截止时间和主动输出计数。
+`platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不直接
+发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过同一 Runtime 的 Persona
+与 Output 链路表达。下一步应使用真实运行数据审阅策略质量，再设计 Runtime Sensor、多目标注册和 execute。
 
 ## 十五、后续仍需用运行数据决定的问题
 

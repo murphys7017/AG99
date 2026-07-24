@@ -32,6 +32,7 @@ from .lifecycle import dispatch_interaction_lifecycle
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
+from .personal_action import PersonalActionIntent
 from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .runtime_event import RuntimeObservationEvent
@@ -368,6 +369,8 @@ class InteractionMiddleware:
         if event.get_extra("_interaction_runtime_observation_handled", False):
             return None
 
+        action_intent = event.get_extra("_personal_action_intent")
+        is_personal_action = isinstance(action_intent, PersonalActionIntent)
         material = event.observation.visible_reply_material
         if not material:
             event.set_extra(
@@ -409,6 +412,7 @@ class InteractionMiddleware:
                     preserve_facts=True,
                     allow_plugin_tools=False,
                 ),
+                fallback_on_error=not is_personal_action,
             )
             await self._emit_immediate_reply_or_record_failure(event, expression)
             await self._complete_persona_only_turn(event, expression)
@@ -1074,8 +1078,11 @@ class InteractionMiddleware:
         interaction_config,
         *,
         request: PersonaExpressionRequest | None = None,
+        fallback_on_error: bool = True,
     ) -> PersonaExpressionResult:
         if self.plugin_context is None:
+            if not fallback_on_error:
+                raise InteractionExpressionError("plugin_context_unavailable")
             event.set_extra("_interaction_expression_failed", True)
             event.set_extra(
                 "_interaction_expression_failure_reason",
@@ -1095,6 +1102,8 @@ class InteractionMiddleware:
         except Exception as exc:  # noqa: BLE001
             reason = "expression_pipeline_error"
             error = exc
+        if not fallback_on_error:
+            raise error
 
         event.set_extra("_interaction_expression_failed", True)
         event.set_extra("_interaction_expression_failure_reason", str(error))

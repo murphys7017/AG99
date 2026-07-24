@@ -65,8 +65,8 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
             interaction_config.get("planner_timeout", 8.0),
             8.0,
         ),
-        personal_policy_shadow_enabled=bool(
-            interaction_config.get("personal_policy_shadow_enabled", False)
+        personal_policy_enabled=bool(
+            interaction_config.get("personal_policy_enabled", False)
         ),
         personal_policy_provider_id=str(
             interaction_config.get("personal_policy_provider_id", "") or ""

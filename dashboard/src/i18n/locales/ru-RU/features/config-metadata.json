@@ -1093,10 +1093,10 @@
         },
         "personal_policy": {
             "description": "Personal Policy",
-            "hint": "В теневом режиме оценивает фоновые Observation после deterministic Gate. Решения только записываются и не запускают Persona или Core.",
+            "hint": "Принимает решения для фоновых Observation после deterministic Gate. express использует единый путь вывода Persona; execute пока не активен.",
             "interaction_middleware": {
-                "personal_policy_shadow_enabled": {
-                    "description": "Включить теневую оценку Policy"
+                "personal_policy_enabled": {
+                    "description": "Включить Personal Policy"
                 },
                 "personal_policy_provider_id": {
                     "description": "Провайдер модели Policy",
@@ -1116,7 +1116,7 @@
         },
         "personal_runtime_policy": {
             "description": "Управление проактивной Persona",
-            "hint": "Определяет, могут ли фоновые Observation переходить к оценке Policy. Heartbeat только создаёт наблюдения; проактивные ответы пока не включены.",
+            "hint": "Управляет фоновыми Observation, отложенными решениями Policy и проактивным выражением. Heartbeat создаёт только Observation; Policy решает, выражаться ли через единый вывод Persona.",
             "interaction_middleware": {
                 "personal_heartbeat_enabled": {
                     "description": "Включить heartbeat Persona",
@@ -1142,11 +1142,11 @@
                 },
                 "personal_runtime_reply_cooldown_seconds": {
                     "description": "Пауза после проактивного ответа (сек)",
-                    "hint": "Зарезервировано для будущих Action; Shadow Policy не изменяет это состояние."
+                    "hint": "Записывается только после подтверждённой доставки видимого вывода проактивного Action."
                 },
                 "personal_runtime_no_action_cooldown_seconds": {
                     "description": "Пауза без действия (сек)",
-                    "hint": "Зарезервировано для будущих решений без действия или с отсрочкой."
+                    "hint": "Минимальное ожидание для defer; следующая Observation запустит повторную оценку после ожидания."
                 },
                 "personal_runtime_daily_proactive_output_limit": {
                     "description": "Дневной лимит проактивных ответов",

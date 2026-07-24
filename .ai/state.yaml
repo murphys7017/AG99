@@ -1,23 +1,23 @@
 task:
   class: feature
   risk: high
-  phase: autonomous_persona_runtime_phase_4_heartbeat_observation
-  scope: Establish restart-safe Personal Runtime state, deterministic Gate controls, and a single-target Heartbeat Observation source before action execution or proactive output behavior
+  phase: autonomous_persona_runtime_phase_5_controlled_policy_actions
+  scope: Execute only Policy express and defer decisions through the existing Runtime, Persona, and Output boundaries while preserving delivery-based state accounting
 context:
   confidence: high
   assumptions:
     - PersonalState keeps process-local conversational and diagnostic fields while a narrow repository persists only last expression, cooldown, mute, and daily usage control fields by full PersonalRuntimeKey.
     - Completion Feedback is formed once at turn lease release; delivery success requires a visible utterance delivery receipt and is not inferred from send intent or final-output status alone.
-    - Daily proactive output usage remains unchanged until ActionIntent provides a reliable action_id and proactive identity.
+    - Policy express creates an internal ActionIntent with a reliable action_id; only its confirmed visible delivery can write proactive cooldown and daily usage.
     - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
     - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
-    - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; proactive expression still requires an Action lifecycle that writes cooldown deadlines and proactive usage.
+    - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline while express writes reply cooldown and proactive usage only after delivery.
     - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
     - PersonalHeartbeatSource is lifecycle-owned, follows the configured default proactive target and that target's matched runtime configuration, and only submits an expiring/coalescing heartbeat fact after revalidating Adapter capability; it does not create an event, acquire a turn lease, or invoke Persona, Core, or Output.
     - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
-    - Personal Policy gets a dedicated Prompt target only in the shadow-policy phase and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
-    - The shadow-policy phase uses a read-only Prompt collection adapter for the existing event-shaped collector interface; it is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
+    - Personal Policy gets a dedicated read-only Prompt target and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
+    - The Personal Policy Prompt collection adapter is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
     - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
     - RuntimeObservation is immutable structured system input and is never projected as a user message.
     - Generic observation intake shares the same PersonalSessionRuntime identity as platform turns but does not acquire the turn lock and bypasses EventBus, Pipeline, Router, Planner, Core, Persona, and Output.
@@ -314,27 +314,27 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "The single-target Heartbeat source is disabled by default and does not execute actions. Sensor coverage, Action Coordinator, proactive output accounting, and real shadow-policy quality data remain absent. Targeted Pyright remains unavailable."
+  validation_gap: "The single-target Heartbeat source and Personal Policy are disabled by default. Runtime Sensor coverage, multi-target routing, execute permissions, and real policy-quality data remain absent. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: autonomous_persona_runtime_phase_4_heartbeat_observation
+    phase: autonomous_persona_runtime_phase_5_controlled_policy_actions
     scope:
       - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
       - restart-safe last expression, cooldown, mute, and daily usage fields
       - mute, quiet-hours, cooldown-duration, policy budget, and output budget configuration
-      - Gate enforcement before any Shadow Policy Provider request
+      - Gate enforcement before any Personal Policy Provider request
       - lifecycle-owned, default-disabled, single-target Heartbeat Observation submission
-      - no Action, Persona, Core, Output, EventBus, or synthetic event execution
+      - controlled express ActionIntent through existing RuntimeObservationEvent, Persona, and Output boundaries
+      - defer no-action deadlines persisted by PersonalState
     non_goals:
-      - proactive reply or Action Coordinator
-      - execution of express, defer, or execute decisions
-      - EventBus, Pipeline, Router, Planner, Persona, Core, or Output execution
+      - execute decisions, Runtime Sensor, and multi-target active scheduling
+      - EventBus, Pipeline, Router, Planner, or Core execution from Policy
       - synthetic platform or user messages
     confirmed_gaps:
-      - cooldown deadlines and proactive output usage require a future Action lifecycle; configured durations do not mutate Shadow Policy state
+      - execute decisions do not enter a backend; only express and defer are actionable
       - quiet-hours and cooldown holds require a later Observation to wake them until the producer lifecycle exists
-      - no Runtime Sensor, multi-target registry, or Action lifecycle exists yet
+      - no Runtime Sensor or multi-target registry exists yet
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract

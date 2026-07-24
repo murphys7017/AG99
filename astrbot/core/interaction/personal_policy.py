@@ -73,7 +73,7 @@ class PersonalPolicyReason(str, Enum):
 
 
 class PersonalPolicyEvaluationStatus(str, Enum):
-    SHADOW = "shadow"
+    EVALUATED = "evaluated"
     FAIL_CLOSED = "fail_closed"
 
 
@@ -206,7 +206,7 @@ def build_personal_policy_system_prompt() -> str:
         "- observe：事实值得记住或影响状态，但现在不需要行动。\n"
         "- express：值得主动表达；reply_intent 只写表达意图，不写最终台词。\n"
         "- defer：需要等待更多事实；填写 defer_seconds。\n"
-        "- execute：出现明确工作机会；task_intent 只写任务意图。当前是 shadow 模式，不会实际执行。\n"
+        "- execute：出现明确工作机会；task_intent 只写任务意图。当前不会实际执行。\n"
         "reason_code 只能从以下值选择："
         + ", ".join(_MODEL_REASON_CODES)
         + "。\n"
@@ -298,7 +298,7 @@ class PersonalPolicyAgent:
         interaction_config: InteractionAgentConfig,
         on_provider_call_started: Callable[[], Awaitable[None]],
     ) -> PersonalPolicyEvaluation | None:
-        if not interaction_config.personal_policy_shadow_enabled:
+        if not interaction_config.personal_policy_enabled:
             return None
         provider_id = interaction_config.personal_policy_provider_id.strip()
         if not provider_id:
@@ -458,7 +458,7 @@ class PersonalPolicyAgent:
             )
         return PersonalPolicyEvaluation(
             batch_id=batch.batch_id,
-            status=PersonalPolicyEvaluationStatus.SHADOW,
+            status=PersonalPolicyEvaluationStatus.EVALUATED,
             decision=decision,
             evaluated_at=gate_result.evaluated_at,
             provider_id=provider_id,

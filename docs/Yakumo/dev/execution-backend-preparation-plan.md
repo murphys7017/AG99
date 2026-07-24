@@ -123,9 +123,9 @@ Expression、Output Controller、assistant-only Conversation 提交和完整 lif
 关闭的 batch 已进入纯本地 Deterministic Gate，只形成 `evaluate / hold / reject` diagnostics；
 不调用模型，hold batch 会返回 Inbox。
 
-本阶段已完成：持久状态接线、Gate settings、Shadow Policy 与单目标 Heartbeat Observation
-生产者。仍未完成：Runtime Sensor、多目标 session registry、插件和后台任务 identity，以及
-Personal Policy 的 Action Coordinator。
+本阶段已完成：持久状态接线、Gate settings、Personal Policy、单目标 Heartbeat Observation
+生产者，以及受控的 `express / defer` Action Coordinator。仍未完成：Runtime Sensor、多目标
+session registry、插件和后台任务 identity，以及 `execute` 的权限和执行设计。
 
 实施内容：
 

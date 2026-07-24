@@ -222,7 +222,7 @@ DEFAULT_CONFIG = {
         "planner_provider_id": "",
         "planner_temperature": 0.1,
         "planner_timeout": 8.0,
-        "personal_policy_shadow_enabled": False,
+        "personal_policy_enabled": False,
         "personal_policy_provider_id": "",
         "personal_policy_temperature": 0.1,
         "personal_policy_timeout": 8.0,
@@ -4396,10 +4396,10 @@ CONFIG_METADATA_3 = {
             "personal_policy": {
                 "description": "Personal Policy",
                 "type": "object",
-                "hint": "仅对通过确定性 Gate 的后台 Observation 做影子评估。当前只记录决策，不执行主动表达或 Core。",
+                "hint": "对通过确定性 Gate 的后台 Observation 做行动决策。express 仅通过统一 Persona 输出链路主动表达；execute 当前不执行。",
                 "items": {
-                    "interaction_middleware.personal_policy_shadow_enabled": {
-                        "description": "启用影子策略评估",
+                    "interaction_middleware.personal_policy_enabled": {
+                        "description": "启用人格策略",
                         "type": "bool",
                     },
                     "interaction_middleware.personal_policy_provider_id": {
@@ -4408,7 +4408,7 @@ CONFIG_METADATA_3 = {
                         "_special": "select_provider",
                         "hint": "必须显式选择，不回退到 Persona 或 Core 模型。",
                         "condition": {
-                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                            "interaction_middleware.personal_policy_enabled": True,
                         },
                     },
                     "interaction_middleware.personal_policy_temperature": {
@@ -4416,14 +4416,14 @@ CONFIG_METADATA_3 = {
                         "type": "float",
                         "slider": {"min": 0, "max": 2, "step": 0.05},
                         "condition": {
-                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                            "interaction_middleware.personal_policy_enabled": True,
                         },
                     },
                     "interaction_middleware.personal_policy_timeout": {
                         "description": "策略超时秒数",
                         "type": "float",
                         "condition": {
-                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                            "interaction_middleware.personal_policy_enabled": True,
                         },
                     },
                     "interaction_middleware.personal_policy_daily_call_limit": {
@@ -4431,7 +4431,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "Provider 请求开始时计数；设为 0 会阻止所有策略调用。",
                         "condition": {
-                            "interaction_middleware.personal_policy_shadow_enabled": True,
+                            "interaction_middleware.personal_policy_enabled": True,
                         },
                     },
                 },
@@ -4439,7 +4439,7 @@ CONFIG_METADATA_3 = {
             "personal_runtime_policy": {
                 "description": "主动人格控制",
                 "type": "object",
-                "hint": "控制后台 Observation 是否允许进入策略评估。Heartbeat 只产生观察，主动表达尚未开放。",
+                "hint": "控制后台 Observation、延后策略与主动表达。Heartbeat 只产生 Observation；Policy 决定是否经统一 Persona 输出链路表达。",
                 "items": {
                     "interaction_middleware.personal_heartbeat_enabled": {
                         "description": "启用人格心跳",
@@ -4483,12 +4483,12 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.personal_runtime_reply_cooldown_seconds": {
                         "description": "主动回复冷却秒数",
                         "type": "float",
-                        "hint": "供后续主动 Action 成功后设置冷却；当前 Shadow Policy 不写入该状态。",
+                        "hint": "仅在主动 Action 的可见输出确认送达后写入冷却。",
                     },
                     "interaction_middleware.personal_runtime_no_action_cooldown_seconds": {
                         "description": "不动作冷却秒数",
                         "type": "float",
-                        "hint": "供后续 Policy 决定不动作或延后时设置冷却；当前 Shadow Policy 不写入该状态。",
+                        "hint": "Policy 选择 defer 时的最小等待时间；等待后由后续 Observation 重新评估。",
                     },
                     "interaction_middleware.personal_runtime_daily_proactive_output_limit": {
                         "description": "每日主动输出上限",

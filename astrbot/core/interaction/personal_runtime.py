@@ -24,6 +24,7 @@ from .observation_inbox import (
     ObservationBatch,
     ObservationInbox,
 )
+from .personal_action import PersonalActionCoordinator, PersonalActionIntent
 from .personal_gate import (
     DeterministicObservationGate,
     ObservationFeatureBuilder,
@@ -162,13 +163,20 @@ def _build_completion_feedback(turn: PersonalTurnContext) -> CompletionFeedback:
         execution_status = PersonalExecutionStatus.NOT_STARTED
 
     return CompletionFeedback(
-        action_id=None,
+        action_id=_resolve_personal_action_id(turn),
         turn_id=turn.turn_id,
         delivery_status=delivery_status,
         execution_status=execution_status,
         output_completed_at=delivered_at or completion.terminal_at,
         failure_code=failure_code,
     )
+
+
+def _resolve_personal_action_id(turn: PersonalTurnContext) -> str | None:
+    intent = turn.event.get_extra("_personal_action_intent")
+    if not isinstance(intent, PersonalActionIntent):
+        return None
+    return intent.action_id
 
 
 @dataclass(slots=True)
@@ -423,6 +431,10 @@ class PersonalSessionRuntime:
         self.last_observation_gate_result: ObservationGateResult | None = None
         self.last_personal_policy_evaluation: PersonalPolicyEvaluation | None = None
         self._personal_policy_agent: PersonalPolicyAgent | None = None
+        self._personal_action_handler: (
+            Callable[[PersonalSessionRuntime, PersonalActionIntent], Awaitable[Any]]
+            | None
+        ) = None
         self._plugin_context: Any | None = None
         self._runtime_config: Mapping[str, Any] = {}
         self._interaction_config = InteractionAgentConfig()
@@ -454,7 +466,21 @@ class PersonalSessionRuntime:
             self.state.mark_idle(now=now)
 
     async def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
-        if self.state.apply_completion_feedback(feedback):
+        completed_at = feedback.output_completed_at or time.time()
+        usage_day = (
+            self.observation_gate_settings.local_datetime(completed_at).date().isoformat()
+            if feedback.action_id
+            else None
+        )
+        if self.state.apply_completion_feedback(
+            feedback,
+            reply_cooldown_seconds=(
+                self._interaction_config.personal_runtime_reply_cooldown_seconds
+                if feedback.action_id
+                else 0.0
+            ),
+            usage_day=usage_day,
+        ):
             self._persistent_state_dirty = True
             await self._persist_state()
         self.last_completion_feedback = feedback
@@ -467,8 +493,13 @@ class PersonalSessionRuntime:
         runtime_config: Mapping[str, Any],
         interaction_config: InteractionAgentConfig,
         gate_settings: ObservationGateSettings,
+        action_handler: Callable[
+            [PersonalSessionRuntime, PersonalActionIntent], Awaitable[Any]
+        ]
+        | None,
     ) -> None:
         self._personal_policy_agent = agent
+        self._personal_action_handler = action_handler
         self._plugin_context = plugin_context
         self._runtime_config = dict(runtime_config)
         self._interaction_config = interaction_config
@@ -634,7 +665,7 @@ class PersonalSessionRuntime:
         self.last_personal_policy_evaluation = evaluation
         self.state.record_policy_action(evaluation.decision.action.value)
         logger.info(
-            "Personal Policy shadow evaluation: config_id=%s persona_id=%s "
+            "Personal Policy evaluation: config_id=%s persona_id=%s "
             "batch_id=%s status=%s action=%s reason=%s failure=%s "
             "provider_call_started=%s selected_slots=%s",
             self.key.config_id,
@@ -647,6 +678,52 @@ class PersonalSessionRuntime:
             evaluation.provider_call_started,
             ",".join(evaluation.selected_slot_names),
         )
+        plan = PersonalActionCoordinator.plan(
+            decision=evaluation.decision,
+            batch=batch,
+            evaluated_at=evaluation.evaluated_at,
+            minimum_defer_seconds=(
+                self._interaction_config.personal_runtime_no_action_cooldown_seconds
+            ),
+        )
+        if plan.defer_until is not None:
+            if self.state.defer_actions_until(plan.defer_until):
+                self._persistent_state_dirty = True
+                await self._persist_state()
+            logger.info(
+                "Personal Policy deferred action: config_id=%s persona_id=%s "
+                "batch_id=%s not_before=%s",
+                self.key.config_id,
+                self.key.persona_id,
+                batch.batch_id,
+                plan.defer_until,
+            )
+            return
+        if plan.intent is None:
+            return
+        handler = self._personal_action_handler
+        if handler is None:
+            logger.warning(
+                "Personal Policy express action skipped; no action handler is bound: "
+                "config_id=%s persona_id=%s batch_id=%s",
+                self.key.config_id,
+                self.key.persona_id,
+                batch.batch_id,
+            )
+            return
+        try:
+            await handler(self, plan.intent)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Personal Policy express action failed: config_id=%s persona_id=%s "
+                "batch_id=%s action_id=%s",
+                self.key.config_id,
+                self.key.persona_id,
+                batch.batch_id,
+                plan.intent.action_id,
+            )
 
     async def close(self) -> None:
         self._closing = True
@@ -822,6 +899,10 @@ class PersonalRuntimeManager:
         )
         self._plugin_context: Any | None = None
         self._personal_policy_agent = PersonalPolicyAgent()
+        self._personal_action_handler: (
+            Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]]
+            | None
+        ) = None
         self._state_repository = state_repository
         self._runtime_creation_lock = asyncio.Lock()
         self._accepting = True
@@ -829,6 +910,15 @@ class PersonalRuntimeManager:
 
     def bind_plugin_context(self, plugin_context: Any) -> None:
         self._plugin_context = plugin_context
+
+    def bind_personal_action_handler(
+        self,
+        handler: Callable[
+            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
+        ]
+        | None,
+    ) -> None:
+        self._personal_action_handler = handler
 
     async def submit_observation(
         self,
@@ -890,6 +980,8 @@ class PersonalRuntimeManager:
         handler: Callable[
             [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
         ],
+        *,
+        bound_runtime: PersonalSessionRuntime | None = None,
     ) -> Any:
         """Submit an internal observation to the regular per-session runtime."""
         self._ensure_accepting()
@@ -906,9 +998,19 @@ class PersonalRuntimeManager:
             plugin_context=plugin_context,
         )
         submission = RuntimeObservationEventSubmission(self, reservation)
-        event.set_extra("_personal_runtime_submission_kind", "observation")
+        if event.get_extra("_personal_runtime_submission_kind") is None:
+            event.set_extra("_personal_runtime_submission_kind", "observation")
         try:
-            admission = await submission.admit()
+            if bound_runtime is None:
+                admission = await submission.admit()
+            else:
+                if self._sessions.get(bound_runtime.key) is not bound_runtime:
+                    raise RuntimeError("Bound runtime is no longer active")
+                self._bind_to_runtime(reservation, bound_runtime)
+                admission = await self._admit(
+                    reservation,
+                    allow_follow_up=False,
+                )
             if admission.consumed_as_follow_up or admission.lease is None:
                 raise RuntimeError(
                     "Runtime observation admission did not acquire a lease"
@@ -987,6 +1089,38 @@ class PersonalRuntimeManager:
             )
         )
 
+    async def _dispatch_personal_action(
+        self,
+        runtime: PersonalSessionRuntime,
+        intent: PersonalActionIntent,
+    ) -> bool:
+        handler = self._personal_action_handler
+        if handler is None:
+            raise RuntimeError("Personal action handler is not bound")
+        if self._sessions.get(runtime.key) is not runtime:
+            raise RuntimeError("Personal action runtime is no longer active")
+        plugin_context = runtime._plugin_context
+        if plugin_context is None:
+            raise RuntimeError("Personal action plugin context is unavailable")
+        event = RuntimeObservationEvent(
+            context=plugin_context,
+            observation=intent.to_observation(),
+        )
+        event.set_extra("_personal_action_intent", intent)
+        event.set_extra("_personal_action_id", intent.action_id)
+        event.set_extra("_personal_action_batch_id", intent.batch_id)
+        event.set_extra("_personal_runtime_submission_kind", "personal_action")
+        return bool(
+            await self.submit_runtime_observation_event(
+                event,
+                runtime.key.config_id,
+                plugin_context,
+                dict(runtime._runtime_config),
+                handler,
+                bound_runtime=runtime,
+            )
+        )
+
     @staticmethod
     @contextmanager
     def activate_turn(turn: PersonalTurnContext):
@@ -1025,7 +1159,6 @@ class PersonalRuntimeManager:
         reservation: PendingTurnReservation,
     ) -> PersonalSessionRuntime:
         turn = reservation.turn
-        event = turn.event
         persona_id = await self._resolve_persona_id(
             reservation,
         )
@@ -1035,20 +1168,34 @@ class PersonalRuntimeManager:
             audience_key=turn.session.unified_msg_origin,
             privacy_scope=turn.session.privacy_scope,
         )
-        now = time.time()
-        self._evict_idle_sessions(now=now)
+        self._evict_idle_sessions(now=time.time())
         runtime = await self._get_or_create_runtime(
             key,
             plugin_context=turn.plugin_context,
             runtime_config=turn.runtime_config,
         )
-        runtime.bind_turn(now=now)
-        reservation.runtime_key = key
+        self._bind_to_runtime(reservation, runtime)
+        return runtime
+
+    def _bind_to_runtime(
+        self,
+        reservation: PendingTurnReservation,
+        runtime: PersonalSessionRuntime,
+    ) -> None:
+        turn = reservation.turn
+        event = turn.event
+        if (
+            turn.session.config_id != runtime.key.config_id
+            or turn.session.unified_msg_origin != runtime.key.audience_key
+            or turn.session.privacy_scope != runtime.key.privacy_scope
+        ):
+            raise ValueError("Personal action turn does not match its runtime identity")
+        runtime.bind_turn(now=time.time())
+        reservation.runtime_key = runtime.key
         reservation.transition(PendingTurnState.BOUND)
         self._event_sessions[event] = runtime
-        turn.state.personal_runtime_key = key
-        set_interaction_turn_persona_id(event, persona_id)
-        return runtime
+        turn.state.personal_runtime_key = runtime.key
+        set_interaction_turn_persona_id(event, runtime.key.persona_id)
 
     async def _admit(
         self,
@@ -1201,6 +1348,7 @@ class PersonalRuntimeManager:
                     interaction_config.personal_runtime_daily_proactive_output_limit
                 ),
             ),
+            action_handler=self._dispatch_personal_action,
         )
         return runtime
 

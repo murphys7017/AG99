@@ -1094,10 +1094,10 @@
     },
     "personal_policy": {
       "description": "Personal Policy",
-      "hint": "仅对通过确定性 Gate 的后台 Observation 做影子评估。当前只记录决策，不执行主动表达或 Core。",
+      "hint": "对通过确定性 Gate 的后台 Observation 做行动决策。express 仅通过统一 Persona 输出链路主动表达；execute 当前不执行。",
       "interaction_middleware": {
-        "personal_policy_shadow_enabled": {
-          "description": "启用影子策略评估"
+        "personal_policy_enabled": {
+          "description": "启用人格策略"
         },
         "personal_policy_provider_id": {
           "description": "策略模型提供商",
@@ -1117,7 +1117,7 @@
     },
     "personal_runtime_policy": {
       "description": "主动人格控制",
-      "hint": "控制后台 Observation 是否允许进入策略评估。Heartbeat 只产生观察，主动表达尚未开放。",
+      "hint": "控制后台 Observation、延后策略与主动表达。Heartbeat 只产生 Observation；Policy 决定是否经统一 Persona 输出链路表达。",
       "interaction_middleware": {
         "personal_heartbeat_enabled": {
           "description": "启用人格心跳",
@@ -1143,11 +1143,11 @@
         },
         "personal_runtime_reply_cooldown_seconds": {
           "description": "主动回复冷却秒数",
-          "hint": "供后续主动 Action 成功后使用；当前 Shadow Policy 不写入该状态。"
+          "hint": "仅在主动 Action 的可见输出确认送达后写入冷却。"
         },
         "personal_runtime_no_action_cooldown_seconds": {
           "description": "不动作冷却秒数",
-          "hint": "供后续不动作或延后决策使用；当前 Shadow Policy 不写入该状态。"
+          "hint": "Policy 选择 defer 时的最小等待时间；等待后由后续 Observation 重新评估。"
         },
         "personal_runtime_daily_proactive_output_limit": {
           "description": "每日主动输出上限",

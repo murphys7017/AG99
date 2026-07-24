@@ -114,10 +114,13 @@ RuntimeObservation
   -> fixed 1.5-second aggregation window
   -> immutable ObservationBatch
   -> deterministic Gate
-     -> evaluate: optional Shadow Personal Policy
+     -> evaluate: optional Personal Policy
      -> hold: restore to Inbox
      -> reject: stable diagnostics
-  -> Shadow Policy decision / fail-closed observe: Runtime diagnostics only
+  -> Policy decision / fail-closed observe
+     -> express: ActionIntent -> RuntimeObservationEvent -> Persona -> Output
+     -> defer: persist no-action deadline
+     -> ignore / observe / execute: Runtime diagnostics only
 
 已经决定发送的主动输出
   -> RuntimeObservationEvent
@@ -127,9 +130,10 @@ RuntimeObservation
 
 通用 Observation Intake 不创建平台事件、不取得 turn lease，也不要求目标支持主动发送。Gate
 只读取 batch、PersonalState、Runtime 忙闲和目标能力，返回稳定 disposition、reason 与 features；
-`reject` 和 `hold` 零 Provider 调用。`evaluate` 在 Shadow Policy 显式启用时通过规范 Prompt target
+`reject` 和 `hold` 零 Provider 调用。`evaluate` 在 Personal Policy 显式启用时通过规范 Prompt target
 调用独立 Provider，严格要求协议级 tool-call，失败统一记录为 `observe`。Policy 不持有工具、
-Skills、知识库或输出能力，也不执行其决策。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
+Skills、知识库或输出能力；`express` 只形成 `ActionIntent` 并交回 Runtime，最终可见内容始终由
+Persona Expression 生成。`defer` 只持久化无动作截止时间，`execute` 目前不执行。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
 重新评估，quiet hours 与冷却等待后续 Observation 触发。单目标 Heartbeat Source 已由现有 Core
 Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtime 配置；配置关闭时不提交事实，启用后每个 tick 只重新验证默认主动目标并调用
 `submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。主动输出兼容
@@ -143,21 +147,22 @@ Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtim
 拥有最多 64 条 Observation 的 Inbox 和唯一 1.5 秒固定聚合窗口 task；窗口内的新事实不延长
 截止时间，Policy 调用期间新增的事实会顺序进入下一批，pending facts 或 task 存在时不属于 idle。
 尚未成功落盘的控制状态同样不属于 idle，不能被 TTL / LRU 静默回收。
-Shadow Policy 的开关、独立 Provider、temperature、timeout 和每日调用上限已接入配置。首次创建
+Personal Policy 的开关、独立 Provider、temperature、timeout 和每日调用上限已接入配置。首次创建
 Runtime 时，窄化的 Personal State Repository 按 RuntimeKey 恢复最近表达、冷却、静音和每日
 用量；Policy 调用计数在 Provider 请求前持久化，写入失败时零 Provider 调用。最后 decision、Gate
 状态、Inbox、active turn 和 attention 只服务进程内运行控制与 diagnostics，不持久化。
 Repository 恢复失败会降级为当前进程内状态，最终保存失败只记录诊断，不会中断 Core shutdown。
 主动人格静音、安静时段、回复/不动作冷却时长和每日主动输出上限也已接入配置。安静时段复用
 官方全局 IANA timezone；Gate 当前执行静音、安静时段和输出预算。两个 cooldown 时长只作为后续
-Action 配置，Shadow Policy 不会伪造截止时间或主动输出计数。
+Action 配置：`defer` 使用不动作冷却作为最小等待时间；`express` 只有在可见输出确认送达后才写入
+回复冷却和每日主动输出计数。
 
 Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形成一次
 `CompletionFeedback`。投递终态以 `InteractionUtterance.delivered_message_ids` 为准，再结合 turn
 的 completed / failed / cancelled 和 final output 的 suppressed / failed 状态；不能仅根据发送意图
 或 final output 标记推测成功。只有真实 delivered 的可见输出更新 `last_expression_at`。最后一份
-不可变反馈保存在 Runtime diagnostics，不写入 event extra。主动输出预算尚未计数，因为当前还没有
-可以区分主动行动与普通回复的 `ActionIntent/action_id`。
+不可变反馈保存在 Runtime diagnostics，不写入 event extra。带 `ActionIntent/action_id` 的表达和普通
+回复可区分；前者只有在物理投递回执确认后才消耗主动输出预算。
 
 现有 `RuntimeObservationEvent` 和 `submit_runtime_observation_event()` 是已经决定输出后的平台
 适配入口，不是通用 Observation Inbox。通用 `submit_observation()` 已按相同 Runtime 身份接收

@@ -151,7 +151,7 @@ class InteractionAgentConfig:
     planner_provider_id: str = ""
     planner_temperature: float = 0.1
     planner_timeout: float = 8.0
-    personal_policy_shadow_enabled: bool = False
+    personal_policy_enabled: bool = False
     personal_policy_provider_id: str = ""
     personal_policy_temperature: float = 0.1
     personal_policy_timeout: float = 8.0

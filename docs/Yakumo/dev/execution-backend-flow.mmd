@@ -292,7 +292,7 @@ flowchart LR
         TURN_RELEASE --> CLEANUP
     end
 
-    subgraph OBSERVATION["八、Runtime Observation（Heartbeat + Intake + Gate + Shadow Policy 已实现）"]
+    subgraph OBSERVATION["八、Runtime Observation（Heartbeat + Intake + Gate + Policy Action 已实现）"]
         direction TB
         OBS_HEARTBEAT_CONFIG["默认主动目标 + 目标命中配置<br/>heartbeat enable / interval"]
         OBS_SOURCE["PersonalHeartbeatSource<br/>Core Lifecycle 托管<br/>tick 不直接发送"]
@@ -305,7 +305,8 @@ flowchart LR
         OBS_GATE_CONFIG["Gate 配置<br/>mute / quiet hours + 全局时区<br/>policy + output budget"]
         OBS_GATE["Deterministic Gate<br/>features + PersonalState + runtime busy<br/>零模型调用 / 零输出"]
         OBS_GATE_RESULT{"evaluate / hold / reject<br/>稳定 reason + diagnostics"}
-        OBS_POLICY["Shadow Personal Policy（默认关闭）<br/>独立 Provider / 严格 tool-call<br/>fail-closed observe / diagnostics only"]
+        OBS_POLICY["Personal Policy（默认关闭）<br/>独立 Provider / 严格 tool-call<br/>fail-closed observe"]
+        OBS_ACTION["Action Coordinator<br/>express -> ActionIntent<br/>defer -> no-action deadline<br/>execute 尚未开放"]
         OBS_HOLD["restore batch to Inbox<br/>busy turn settle 后重评<br/>其他 hold 等待新 Observation"]
         OBS_EVENT["RuntimeObservationEvent<br/>仅适配已经决定发送的输出"]
         OBS_SUBMIT["submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
@@ -321,8 +322,11 @@ flowchart LR
         OBS_GATE_CONFIG --> OBS_GATE
         OBS_GATE_RESULT -->|"hold"| OBS_HOLD --> OBS_INBOX
         OBS_GATE_RESULT -->|"reject"| RUNTIME_STATE
-        OBS_GATE_RESULT -->|"evaluate 且启用"| OBS_POLICY --> RUNTIME_STATE
-        OBS_POLICY -. "未来 Phase 4 才执行 express" .-> OBS_EVENT
+        OBS_GATE_RESULT -->|"evaluate 且启用"| OBS_POLICY
+        OBS_POLICY -->|"ignore / observe / execute"| RUNTIME_STATE
+        OBS_POLICY --> OBS_ACTION
+        OBS_ACTION -->|"defer"| RUNTIME_STATE
+        OBS_ACTION -->|"express"| OBS_EVENT
         OBS_EVENT --> OBS_SUBMIT --> OBS_HANDLER
         OBS_HANDLER -->|"存在 visible_reply_material"| OBS_PERSONA --> OBS_OUTPUT --> OBS_HISTORY
         OBS_HANDLER -->|"material 为空"| OBS_NONE

@@ -1092,10 +1092,10 @@
     },
     "personal_policy": {
       "description": "Personal Policy",
-      "hint": "Shadow-evaluates background Observations that pass the deterministic Gate. Decisions are recorded but never execute Persona or Core.",
+      "hint": "Decides actions for background Observations that pass the deterministic Gate. express uses the unified Persona output path; execute is not active yet.",
       "interaction_middleware": {
-        "personal_policy_shadow_enabled": {
-          "description": "Enable Shadow Policy Evaluation"
+        "personal_policy_enabled": {
+          "description": "Enable Personal Policy"
         },
         "personal_policy_provider_id": {
           "description": "Policy Model Provider",
@@ -1115,7 +1115,7 @@
     },
     "personal_runtime_policy": {
       "description": "Proactive Persona Controls",
-      "hint": "Controls whether background Observations may enter policy evaluation. Heartbeat only produces observations; proactive expression is not enabled yet.",
+      "hint": "Controls background Observations, deferred policy decisions, and proactive expression. Heartbeat only produces Observations; Policy decides whether to express through the unified Persona output path.",
       "interaction_middleware": {
         "personal_heartbeat_enabled": {
           "description": "Enable Persona Heartbeat",
@@ -1141,11 +1141,11 @@
         },
         "personal_runtime_reply_cooldown_seconds": {
           "description": "Proactive Reply Cooldown Seconds",
-          "hint": "Reserved for successful proactive Actions; Shadow Policy does not write this state."
+          "hint": "Written only after a proactive Action's visible output is confirmed delivered."
         },
         "personal_runtime_no_action_cooldown_seconds": {
           "description": "No-Action Cooldown Seconds",
-          "hint": "Reserved for future no-action or defer decisions; Shadow Policy does not write this state."
+          "hint": "Minimum wait for a defer decision; the next Observation re-evaluates after the wait."
         },
         "personal_runtime_daily_proactive_output_limit": {
           "description": "Daily Proactive Output Limit",
