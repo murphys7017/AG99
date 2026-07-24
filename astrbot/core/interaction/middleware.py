@@ -1023,7 +1023,6 @@ class InteractionMiddleware:
     ) -> None:
         turn_state = ensure_interaction_turn_state(event)
         turn_state.speculative_persona_status = status
-        event.set_extra("_interaction_speculative_persona_status", status.value)
 
     async def _plan_core_execution(
         self,

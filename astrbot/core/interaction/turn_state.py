@@ -343,7 +343,6 @@ def set_interaction_turn_persona_id(event, persona_id: str) -> None:
     state = get_interaction_turn_state(event)
     if state is not None:
         state.persona_id = normalized_persona_id
-    event.set_extra("_interaction_persona_id", normalized_persona_id)
 
 
 def set_interaction_turn_route_decision(
@@ -416,7 +415,6 @@ def mark_interaction_turn_postprocess_dispatched(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.completion_state.postprocess_dispatched = dispatched
-    event.set_extra("_interaction_turn_postprocess_dispatched", dispatched)
 
 
 def begin_interaction_turn_finalization_deferral(event) -> bool:
@@ -428,8 +426,6 @@ def begin_interaction_turn_finalization_deferral(event) -> bool:
         return True
     completion.finalization_deferred = True
     completion.finalization_pending = False
-    event.set_extra("_interaction_turn_finalization_deferred", True)
-    event.set_extra("_interaction_turn_finalization_pending", False)
     return True
 
 
@@ -441,7 +437,6 @@ def is_interaction_turn_finalization_deferred(event) -> bool:
 def mark_interaction_turn_finalization_pending(event) -> None:
     state = ensure_interaction_turn_state(event)
     state.completion_state.finalization_pending = True
-    event.set_extra("_interaction_turn_finalization_pending", True)
 
 
 def consume_interaction_turn_finalization_pending(event) -> bool:
@@ -452,8 +447,6 @@ def consume_interaction_turn_finalization_pending(event) -> bool:
     pending = completion.finalization_pending
     completion.finalization_deferred = False
     completion.finalization_pending = False
-    event.set_extra("_interaction_turn_finalization_deferred", False)
-    event.set_extra("_interaction_turn_finalization_pending", False)
     return pending
 
 
@@ -463,8 +456,6 @@ def cancel_interaction_turn_finalization_deferral(event) -> None:
         return
     state.completion_state.finalization_deferred = False
     state.completion_state.finalization_pending = False
-    event.set_extra("_interaction_turn_finalization_deferred", False)
-    event.set_extra("_interaction_turn_finalization_pending", False)
 
 
 def mark_interaction_turn_completed(
@@ -477,8 +468,6 @@ def mark_interaction_turn_completed(
         InteractionTurnStatus.COMPLETED if completed else InteractionTurnStatus.ACTIVE
     )
     state.completion_state.terminal_at = time.time() if completed else None
-    event.set_extra("_interaction_turn_completed", completed)
-    event.set_extra("_interaction_turn_status", state.completion_state.status.value)
 
 
 def mark_interaction_turn_failed(event) -> None:
@@ -486,8 +475,6 @@ def mark_interaction_turn_failed(event) -> None:
     state.completion_state.completed = False
     state.completion_state.status = InteractionTurnStatus.FAILED
     state.completion_state.terminal_at = time.time()
-    event.set_extra("_interaction_turn_completed", False)
-    event.set_extra("_interaction_turn_status", InteractionTurnStatus.FAILED.value)
 
 
 def mark_interaction_turn_cancelled(event) -> None:
@@ -495,8 +482,6 @@ def mark_interaction_turn_cancelled(event) -> None:
     state.completion_state.completed = False
     state.completion_state.status = InteractionTurnStatus.CANCELLED
     state.completion_state.terminal_at = time.time()
-    event.set_extra("_interaction_turn_completed", False)
-    event.set_extra("_interaction_turn_status", InteractionTurnStatus.CANCELLED.value)
 
 
 def transition_interaction_lifecycle(
@@ -515,11 +500,6 @@ def transition_interaction_lifecycle(
     }
     state.lifecycle_stage = stage
     state.lifecycle_transitions.append(transition)
-    event.set_extra("_interaction_lifecycle_stage", stage.value)
-    event.set_extra(
-        "_interaction_lifecycle_transitions",
-        [dict(item) for item in state.lifecycle_transitions],
-    )
     return previous_stage, transition
 
 
@@ -532,7 +512,6 @@ def record_interaction_turn_completion_failure(
         return
     state = ensure_interaction_turn_state(event)
     state.completion_state.failure_reason = clean_reason
-    event.set_extra("_interaction_turn_completion_failure_reason", clean_reason)
 
 
 def record_interaction_turn_failure(
@@ -561,9 +540,6 @@ def record_interaction_turn_failure(
         postprocess_dispatched=state.completion_state.postprocess_dispatched,
     )
     state.failures.append(failure)
-    event.set_extra(
-        "_interaction_turn_failures", [item.to_dict() for item in state.failures]
-    )
     record_interaction_turn_completion_failure(event, f"{clean_stage}:{clean_reason}")
 
 
@@ -762,14 +738,6 @@ async def reserve_interaction_turn_final_output(event) -> bool:
                 InteractionSpeculativePersonaStatus.SUPPRESSED
             )
             state.execution_scope.cancel("speculative_persona")
-        event.set_extra(
-            "_interaction_final_output_status",
-            state.final_output_status.value,
-        )
-        event.set_extra(
-            "_interaction_speculative_persona_status",
-            state.speculative_persona_status.value,
-        )
         return True
 
 
@@ -795,7 +763,6 @@ async def finish_interaction_turn_final_output(
                 f"{state.final_output_status.value}"
             )
         state.final_output_status = status
-        event.set_extra("_interaction_final_output_status", status.value)
 
 
 async def reserve_interaction_turn_immediate_output(event) -> bool:
@@ -807,17 +774,9 @@ async def reserve_interaction_turn_immediate_output(event) -> bool:
             state.speculative_persona_status = (
                 InteractionSpeculativePersonaStatus.SUPPRESSED
             )
-            event.set_extra(
-                "_interaction_speculative_persona_status",
-                state.speculative_persona_status.value,
-            )
             return False
         state.speculative_persona_status = (
             InteractionSpeculativePersonaStatus.COMMITTED
-        )
-        event.set_extra(
-            "_interaction_speculative_persona_status",
-            state.speculative_persona_status.value,
         )
         return True
 
