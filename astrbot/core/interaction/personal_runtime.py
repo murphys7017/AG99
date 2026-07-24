@@ -24,7 +24,11 @@ from .observation_inbox import (
     ObservationBatch,
     ObservationInbox,
 )
-from .personal_action import PersonalActionCoordinator, PersonalActionIntent
+from .personal_action import (
+    PersonalActionCoordinator,
+    PersonalActionIntent,
+    PersonalExecutionIntent,
+)
 from .personal_gate import (
     DeterministicObservationGate,
     ObservationFeatureBuilder,
@@ -173,10 +177,8 @@ def _build_completion_feedback(turn: PersonalTurnContext) -> CompletionFeedback:
 
 
 def _resolve_personal_action_id(turn: PersonalTurnContext) -> str | None:
-    intent = turn.event.get_extra("_personal_action_intent")
-    if not isinstance(intent, PersonalActionIntent):
-        return None
-    return intent.action_id
+    action_id = str(turn.event.get_extra("_personal_action_id", "") or "").strip()
+    return action_id or None
 
 
 @dataclass(slots=True)
@@ -432,7 +434,10 @@ class PersonalSessionRuntime:
         self.last_personal_policy_evaluation: PersonalPolicyEvaluation | None = None
         self._personal_policy_agent: PersonalPolicyAgent | None = None
         self._personal_action_handler: (
-            Callable[[PersonalSessionRuntime, PersonalActionIntent], Awaitable[Any]]
+            Callable[
+                [PersonalSessionRuntime, PersonalActionIntent | PersonalExecutionIntent],
+                Awaitable[Any],
+            ]
             | None
         ) = None
         self._plugin_context: Any | None = None
@@ -494,7 +499,8 @@ class PersonalSessionRuntime:
         interaction_config: InteractionAgentConfig,
         gate_settings: ObservationGateSettings,
         action_handler: Callable[
-            [PersonalSessionRuntime, PersonalActionIntent], Awaitable[Any]
+            [PersonalSessionRuntime, PersonalActionIntent | PersonalExecutionIntent],
+            Awaitable[Any],
         ]
         | None,
     ) -> None:
@@ -699,12 +705,13 @@ class PersonalSessionRuntime:
                 plan.defer_until,
             )
             return
-        if plan.intent is None:
+        intent = plan.intent or plan.execution_intent
+        if intent is None:
             return
         handler = self._personal_action_handler
         if handler is None:
             logger.warning(
-                "Personal Policy express action skipped; no action handler is bound: "
+                "Personal Policy action skipped; no action handler is bound: "
                 "config_id=%s persona_id=%s batch_id=%s",
                 self.key.config_id,
                 self.key.persona_id,
@@ -712,17 +719,17 @@ class PersonalSessionRuntime:
             )
             return
         try:
-            await handler(self, plan.intent)
+            await handler(self, intent)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception(
-                "Personal Policy express action failed: config_id=%s persona_id=%s "
+                "Personal Policy action failed: config_id=%s persona_id=%s "
                 "batch_id=%s action_id=%s",
                 self.key.config_id,
                 self.key.persona_id,
                 batch.batch_id,
-                plan.intent.action_id,
+                intent.action_id,
             )
 
     async def close(self) -> None:
@@ -899,7 +906,11 @@ class PersonalRuntimeManager:
         )
         self._plugin_context: Any | None = None
         self._personal_policy_agent = PersonalPolicyAgent()
-        self._personal_action_handler: (
+        self._personal_expression_handler: (
+            Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]]
+            | None
+        ) = None
+        self._personal_execution_handler: (
             Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]]
             | None
         ) = None
@@ -911,14 +922,23 @@ class PersonalRuntimeManager:
     def bind_plugin_context(self, plugin_context: Any) -> None:
         self._plugin_context = plugin_context
 
-    def bind_personal_action_handler(
+    def bind_personal_expression_handler(
         self,
         handler: Callable[
             [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
         ]
         | None,
     ) -> None:
-        self._personal_action_handler = handler
+        self._personal_expression_handler = handler
+
+    def bind_personal_execution_handler(
+        self,
+        handler: Callable[
+            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
+        ]
+        | None,
+    ) -> None:
+        self._personal_execution_handler = handler
 
     async def submit_observation(
         self,
@@ -991,6 +1011,7 @@ class PersonalRuntimeManager:
             raise RuntimeError(
                 "Runtime observation target does not support proactive messages"
             )
+        event.set_extra("_astrbot_config_id", config_id)
         reservation = self._reserve(
             event,
             config_id,
@@ -1092,9 +1113,16 @@ class PersonalRuntimeManager:
     async def _dispatch_personal_action(
         self,
         runtime: PersonalSessionRuntime,
-        intent: PersonalActionIntent,
+        intent: PersonalActionIntent | PersonalExecutionIntent,
     ) -> bool:
-        handler = self._personal_action_handler
+        if isinstance(intent, PersonalActionIntent):
+            handler = self._personal_expression_handler
+            intent_extra_key = "_personal_action_intent"
+            submission_kind = "personal_expression"
+        else:
+            handler = self._personal_execution_handler
+            intent_extra_key = "_personal_execution_intent"
+            submission_kind = "personal_execution"
         if handler is None:
             raise RuntimeError("Personal action handler is not bound")
         if self._sessions.get(runtime.key) is not runtime:
@@ -1106,10 +1134,10 @@ class PersonalRuntimeManager:
             context=plugin_context,
             observation=intent.to_observation(),
         )
-        event.set_extra("_personal_action_intent", intent)
+        event.set_extra(intent_extra_key, intent)
         event.set_extra("_personal_action_id", intent.action_id)
         event.set_extra("_personal_action_batch_id", intent.batch_id)
-        event.set_extra("_personal_runtime_submission_kind", "personal_action")
+        event.set_extra("_personal_runtime_submission_kind", submission_kind)
         return bool(
             await self.submit_runtime_observation_event(
                 event,

@@ -23,6 +23,9 @@ from .collectors.knowledge_collector import KnowledgeCollector
 from .collectors.memory_collector import MemoryCollector
 from .collectors.persona_collector import PersonaCollector
 from .collectors.policy_collector import PolicyCollector
+from .collectors.runtime_execution_intent_collector import (
+    RuntimeExecutionIntentCollector,
+)
 from .collectors.session_collector import SessionCollector
 from .collectors.skills_collector import SkillsCollector
 from .collectors.subagent_collector import SubagentCollector
@@ -96,6 +99,7 @@ def interaction_base_collectors() -> list[ContextCollectorInterface]:
         MemoryCollector(),
         ConversationHistoryCollector(),
         ExplicitContextCollector(),
+        RuntimeExecutionIntentCollector(),
     ]
 
 

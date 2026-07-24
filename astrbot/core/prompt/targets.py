@@ -60,6 +60,7 @@ _CORE_PLANNER_SLOT_NAMES = frozenset(
         "memory.short_term",
         "capability.plugin_directory",
         "extension.context",
+        "runtime.execution_intent",
     }
 )
 

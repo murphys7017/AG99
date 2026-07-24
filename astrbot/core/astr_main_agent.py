@@ -27,7 +27,10 @@ from astrbot.core.execution import (
     CoreExecutionSpec,
     NativeExecutionAdapter,
 )
-from astrbot.core.interaction.core_bridge import get_core_task_spec
+from astrbot.core.interaction.core_bridge import (
+    ensure_interaction_core_execution_prompt,
+    get_core_task_spec,
+)
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -1004,6 +1007,7 @@ async def build_main_agent(
     If apply_reset is False, will not call reset on the agent runner.
     """
     logger.debug(f"req received in build_main_agent: {req}")
+    interaction_core = should_use_interaction_core_profile(event)
     provider = provider or _select_provider(event, plugin_context)
     if provider is None:
         logger.info("未找到任何对话模型（提供商），跳过 LLM 请求处理。")
@@ -1028,8 +1032,10 @@ async def build_main_agent(
             req.audio_urls = []
             if sel_model := event.get_extra("selected_model"):
                 req.model = sel_model
-            if config.provider_wake_prefix and not event.message_str.startswith(
+            if (
                 config.provider_wake_prefix
+                and not event.message_str.startswith(config.provider_wake_prefix)
+                and not interaction_core
             ):
                 return None
 
@@ -1052,7 +1058,12 @@ async def build_main_agent(
         for comp in event.message_obj.message
     )
 
-    if not req.prompt and not req.image_urls and not req.audio_urls:
+    if (
+        not req.prompt
+        and not req.image_urls
+        and not req.audio_urls
+        and not interaction_core
+    ):
         if has_event_attachment or req.extra_user_content_parts:
             req.prompt = "<attachment>"
         else:
@@ -1115,7 +1126,6 @@ async def build_main_agent(
     if event.get_platform_name() == "webchat":
         asyncio.create_task(_handle_webchat(event, req, provider))
 
-    interaction_core = should_use_interaction_core_profile(event)
     prompt_target = PromptTarget.CORE if interaction_core else None
     turn_state = event.get_extra("_interaction_turn_state")
     context_material = getattr(turn_state, "context_material", None)
@@ -1169,6 +1179,8 @@ async def build_main_agent(
         req,
     )
     req = native_execution.provider_request
+    if interaction_core:
+        ensure_interaction_core_execution_prompt(req, event)
     _record_prompt_application(
         event,
         native_execution.prompt_apply_result,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
+from collections.abc import Awaitable
 
 from astrbot.core import logger
 
@@ -13,6 +15,41 @@ class PostProcessManager:
         self._trigger_mapping: dict[PostProcessTrigger, list[PostProcessor]] = (
             defaultdict(list)
         )
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._accepting_tasks = True
+
+    def start(self) -> None:
+        """Reopen task admission when a Core lifecycle starts."""
+        self._accepting_tasks = True
+
+    def schedule(
+        self,
+        awaitable: Awaitable[None],
+        *,
+        name: str,
+    ) -> asyncio.Task[None] | None:
+        """Own one background postprocess task until it settles or shutdown begins."""
+        if not self._accepting_tasks:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            logger.debug("postprocess: reject task during shutdown name=%s", name)
+            return None
+
+        task = asyncio.create_task(awaitable, name=name)
+        self._tasks.add(task)
+        task.add_done_callback(self._on_task_done)
+        return task
+
+    async def shutdown(self) -> None:
+        """Stop new postprocess work and settle all owned background tasks."""
+        self._accepting_tasks = False
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
 
     def register(self, processor: PostProcessor) -> bool:
         if processor in self._processors:
@@ -91,3 +128,6 @@ class PostProcessManager:
                 trigger.value,
                 processor.name,
             )
+
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)

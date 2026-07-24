@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: high
-  phase: autonomous_persona_runtime_phase_6_plugin_sensor
-  scope: Add a restricted plugin Runtime Observation source API through Context and the existing Lifecycle/Personal Runtime boundary while preserving the official message, plugin, Router, Core, and delivery ownership
+  phase: autonomous_persona_runtime_phase_7_controlled_execute
+  scope: Complete Policy execute -> independently reviewed Core Planner -> existing Core-only Pipeline delegation, including P1 background-Core knowledge, postprocess lifecycle, shutdown ordering, and EventBus isolation fixes
 context:
   confidence: high
   assumptions:
@@ -19,6 +19,13 @@ context:
     - Plugin Runtime Sensors register stable plugin_id/source_id ownership in Context and receive only a restricted submit handle; Context resolves the target, Lifecycle dispatches to existing PersonalRuntimeManager.submit_observation, and plugin unload removes registrations so stale handles cannot submit.
     - Plugin Sensor payloads are immutable structured facts with a finite expiry. They reject known message/reply/prompt fields and cannot supply events, ProviderRequest, ToolSet, platform connections, or visible reply material.
     - Explicit persona-mode plugin streams buffer semantic text and run through one final Persona output; direct-mode plugin streams retain real-time compatibility delivery.
+    - Policy execute forms an internal PersonalExecutionIntent, exposes the task intent and the same bounded ObservationBatch fact projection to the independent Core Planner, and can reach Core only after Planner returns execute with a CoreTaskSpec.
+    - Runtime execute reuses the current configuration's AgentRequestSubStage plus result decoration and output stages through a Core-only scheduler entry; it never re-enters EventBus, ordinary input stages, Router, or plugin Handler dispatch.
+    - A background Core task without current user input uses only Planner-produced CoreTaskSpec.execution_prompt as the executor transport request; the Observation remains structured runtime context and is never a user message.
+    - Non-agentic Knowledge collection uses Planner-approved CoreTaskSpec.execution_prompt only when no explicit ProviderRequest or event text exists, so background Core execution retains retrieval without treating an Observation as user input.
+    - PostprocessManager owns all background after-message and after-turn tasks; it rejects new tasks during shutdown and is explicitly reopened by Core lifecycle startup.
+    - Core shutdown settles Personal Runtime and PostprocessManager before plugin, Provider, knowledge-base, memory, platform, and database teardown.
+    - EventBus isolates configuration lookup and task-scheduling failures to the affected event, logs them, and continues consuming later events.
     - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
     - Personal Policy gets a dedicated read-only Prompt target and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
     - The Personal Policy Prompt collection adapter is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
@@ -309,6 +316,9 @@ verification:
     - Minimal Gate smoke covered accepted, target rejection, runtime-busy hold, mute and cooldown, cross-midnight quiet hours, policy/output budgets, feature aggregation, held-batch restoration, and settle-triggered reevaluation (passed)
     - YAML parse check and pnpm VitePress production build after Phase 2B documentation and Mermaid flow updates (passed)
     - Phase 3 Ruff, py_compile, import, JSON/YAML, public submit_observation shadow-policy, and VitePress checks (passed)
+    - Phase 7/P1 Ruff and py_compile over all changed runtime, pipeline, prompt, lifecycle, and postprocess modules (passed)
+    - Minimal Phase 7/P1 boundary smoke covered background-Core knowledge retrieval from CoreTaskSpec.execution_prompt, PostProcessManager shutdown/restart admission, and EventBus continuation after one invalid event (passed)
+    - pnpm --dir docs docs:build and git diff --check after Phase 7/P1 documentation and governance updates (passed)
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -318,11 +328,11 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "The single-target Heartbeat, ambient group source, Personal Policy, and plugin Sensor entry are present but disabled or unused until configured by operators/plugins. Multi-target routing, execute permissions, declared per-Sensor schemas, and real policy-quality data remain absent. Targeted Pyright remains unavailable."
+  validation_gap: "The single-target Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and controlled execute path are present but disabled or unused until configured by operators/plugins. Multi-target routing, explicit execute permissions, declared per-Sensor schemas, external execution backends, and real policy-quality data remain absent. Targeted Pyright remains unavailable. P1 smoke coverage is intentionally limited to observable boundary behavior rather than internal orchestration order."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: autonomous_persona_runtime_phase_6_plugin_sensor
+    phase: autonomous_persona_runtime_phase_7_controlled_execute
     scope:
       - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
       - restart-safe last expression, cooldown, mute, and daily usage fields
@@ -333,12 +343,17 @@ runtime:
       - defer no-action deadlines persisted by PersonalState
       - default-disabled ambient group conversation_activity Observation through the official Waking, whitelist, and session-status stages
       - plugin-owned Runtime Observation Sensor registration, structured fact submission, and unload cleanup through Context and Lifecycle
+      - Policy execute intent through an independent Core Planner review and the existing Core-only Pipeline/output path
+      - background Core knowledge query fallback from Planner-approved execution_prompt
+      - lifecycle-owned postprocess task admission, cancellation, and restart-safe reopening
+      - shutdown sequencing that settles Personal Runtime and postprocess work before their dependencies
+      - per-event EventBus preparation failure isolation
     non_goals:
-      - execute decisions, built-in additional Runtime Sensors, per-Sensor schemas, and multi-target active scheduling
-      - EventBus, Pipeline, Router, Planner, or Core execution from Policy
+      - built-in additional Runtime Sensors, per-Sensor schemas, multi-target active scheduling, and explicit execute permissions
+      - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy
       - synthetic platform or user messages
     confirmed_gaps:
-      - execute decisions do not enter a backend; only express and defer are actionable
+      - controlled execute only reaches the current Core AgentRequest path; a backend-neutral progress, cancellation, and permission contract remains absent
       - quiet-hours and cooldown holds require a later Observation to wake them until the producer lifecycle exists
       - no built-in additional Runtime Sensor or multi-target registry exists yet
       - partial physical delivery lacks a structured receipt

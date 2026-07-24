@@ -80,6 +80,17 @@ class KnowledgeCollector(ContextCollectorInterface):
             if message_text:
                 return message_text, "event.message_str"
 
+        task_spec = getattr(
+            event.get_extra("_interaction_turn_state"),
+            "core_task_spec",
+            None,
+        )
+        execution_prompt = str(
+            getattr(task_spec, "execution_prompt", "") or ""
+        ).strip()
+        if execution_prompt:
+            return execution_prompt, "core_task_spec.execution_prompt"
+
         return None, None
 
     def _build_knowledge_slot(

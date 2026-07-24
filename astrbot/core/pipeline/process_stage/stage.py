@@ -65,6 +65,17 @@ class ProcessStage(Stage):
         if ensure_yield and not yielded:
             yield
 
+    async def process_core_delegation(
+        self,
+        event: AstrMessageEvent,
+    ) -> AsyncGenerator[None, None]:
+        """Run an already-admitted internal Core delegation without input stages."""
+        self._prepare_interaction_output(event)
+        if event.is_stopped():
+            return
+        async for _ in self.agent_sub_stage.process(event):
+            yield
+
     async def process(
         self,
         event: AstrMessageEvent,

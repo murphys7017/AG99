@@ -13,7 +13,7 @@ from astrbot.core.message.components import ComponentType
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.postprocess import dispatch_postprocess
+from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.star_handler import EventType
@@ -168,7 +168,7 @@ class RespondStage(Stage):
             if getattr(provider_request, "conversation", None) is not None
             else event.get_extra("conversation")
         )
-        task = asyncio.create_task(
+        task = get_postprocess_manager().schedule(
             dispatch_postprocess(
                 event=event,
                 trigger=trigger,
@@ -194,9 +194,10 @@ class RespondStage(Stage):
             ),
             name=task_name,
         )
-        task.add_done_callback(
-            lambda done_task: self._log_postprocess_failure(trigger, done_task)
-        )
+        if task is not None:
+            task.add_done_callback(
+                lambda done_task: self._log_postprocess_failure(trigger, done_task)
+            )
 
     @staticmethod
     def _snapshot_provider_request(

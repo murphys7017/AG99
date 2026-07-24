@@ -103,7 +103,8 @@ interaction turn 的输出路径与普通事件不同：
 - 普通事件继续走旧 pipeline result decoration / respond
 - interaction 事件由 `InteractionOutputController` 接管 send / streaming 语义
 - interaction 的 finalized material 先由 middleware 同步幂等提交到官方 Conversation；提交成功后才完成 turn 并调度 postprocess
-- memory service 在 `AFTER_TURN_COMPLETED` 消费 finalized material；Core 执行连续性写入独立 Execution Ledger，不混入可见对话
+- memory service 在 `AFTER_TURN_COMPLETED` 消费 finalized material；后台 postprocess 任务由 `PostProcessManager` 统一持有，Core shutdown 会在卸载插件和 Provider 前停止并等待它们
+- Core 执行连续性写入独立 Execution Ledger，不混入可见对话
 
 内部系统观察不进入官方平台消息 Pipeline。当前代码已经分开两个入口：
 
@@ -120,7 +121,8 @@ RuntimeObservation
   -> Policy decision / fail-closed observe
      -> express: ActionIntent -> RuntimeObservationEvent -> Persona -> Output
      -> defer: persist no-action deadline
-     -> ignore / observe / execute: Runtime diagnostics only
+     -> execute: independent Core Planner -> CoreTaskSpec -> Core-only Pipeline
+     -> ignore / observe: Runtime diagnostics only
 
 已经决定发送的主动输出
   -> RuntimeObservationEvent
@@ -133,7 +135,8 @@ RuntimeObservation
 `reject` 和 `hold` 零 Provider 调用。`evaluate` 在 Personal Policy 显式启用时通过规范 Prompt target
 调用独立 Provider，严格要求协议级 tool-call，失败统一记录为 `observe`。Policy 不持有工具、
 Skills、知识库或输出能力；`express` 只形成 `ActionIntent` 并交回 Runtime，最终可见内容始终由
-Persona Expression 生成。`defer` 只持久化无动作截止时间，`execute` 目前不执行。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
+Persona Expression 生成。`defer` 只持久化无动作截止时间；`execute` 先由独立 Core Planner
+复核，只有 Planner 输出 `CoreTaskSpec` 后才通过既有 Core-only Pipeline 执行。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
 重新评估，quiet hours 与冷却等待后续 Observation 触发。单目标 Heartbeat Source 已由现有 Core
 Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtime 配置；配置关闭时不提交事实，启用后每个 tick 只重新验证默认主动目标并调用
 `submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊

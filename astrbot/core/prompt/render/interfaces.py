@@ -988,6 +988,16 @@ class BasePromptRenderer:
                     "observations",
                 ),
             ),
+            (
+                "runtime.execution_intent",
+                "execution_intent",
+                (
+                    "action_id",
+                    "batch_id",
+                    "task_intent",
+                    "observation_batch",
+                ),
+            ),
         ):
             if self._render_mapping_slot(
                 target,
@@ -1033,13 +1043,26 @@ class BasePromptRenderer:
 
     def _compile_system_prompt(self, prompt_tree: PromptBuilder) -> str | None:
         system_node = self._find_tag_path(prompt_tree, "system")
-        if system_node is None:
-            return None
-
-        if not self._system_prompt_has_visible_content(prompt_tree, system_node):
-            return None
-        rendered = self._render_system_prompt_text(prompt_tree, system_node)
-        return rendered or None
+        runtime_node = self._find_tag_path(prompt_tree, "context/runtime")
+        rendered_system = (
+            self._render_system_prompt_text(prompt_tree, system_node)
+            if system_node is not None
+            and self._system_prompt_has_visible_content(prompt_tree, system_node)
+            else None
+        )
+        rendered_runtime = (
+            self._render_subtree_text(
+                prompt_tree,
+                runtime_node,
+                include_root=True,
+                escape_text=True,
+            )
+            if runtime_node is not None
+            else None
+        )
+        return "\n".join(
+            value for value in (rendered_system, rendered_runtime) if value
+        ) or None
 
     def _compile_messages(self, prompt_tree: PromptBuilder) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []

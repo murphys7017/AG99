@@ -68,15 +68,16 @@
 - Prompt 已能从规范 `ContextPack` 投影 Router、Core Planner、Personal Policy、Persona 和 Core 视图。
 - Personal Policy 已接入 Gate 的 `evaluate` 分支，使用独立 Provider、严格 tool-call
   `PersonalPolicyDecision` 和 fail-closed `observe`；`express` 形成内部 `ActionIntent` 后复用统一
-  Persona 输出链路，`defer` 写入无动作截止时间，`execute` 暂不执行。
+  Persona 输出链路，`defer` 写入无动作截止时间，`execute` 形成内部执行意图后必须由 Core Planner
+  独立复核。
 - 默认主动消息目标、Adapter 主动消息能力校验、Cron 和插件主动文本入口已经存在。
 
 ### 2.2 当前缺口
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. `express` 与 `defer` 已有最小 Action 生命周期，但 `execute`、Runtime Sensor、多目标目标注册和
-   更复杂的节律策略仍未接入。
+1. `express`、`defer` 与受控 `execute` 已有最小 Action 生命周期；多目标目标注册和更复杂的节律策略
+   仍未接入。
 2. 默认主动目标同时承载首个 Heartbeat Source；Policy 的表达只复用该目标与同一 Runtime identity。
 3. Action 的可见文本仍只由 Persona Expression 形成，Policy 只提供表达意图；真实输出质量和误触发率
    仍需基于运行数据审阅。
@@ -94,7 +95,10 @@ flowchart TD
     POLICY -->|ignore or observe| FEEDBACK
     POLICY -->|defer| STATE
     POLICY -->|express| ACTION["Action Coordinator"]
-    POLICY -.->|execute, future phase| PLANNER["Core Planner / Execution Backend"]
+    POLICY -->|execute| PLANNER["Core Planner"]
+    PLANNER -->|not_required| FEEDBACK
+    PLANNER -->|execute| CORE["Existing Core Execution"]
+    CORE --> PERSONA
     ACTION --> PERSONA["Persona Expression"]
     PERSONA --> OUTPUT["Output Runtime"]
     OUTPUT --> COMPLETION["Completion Feedback"]
@@ -184,7 +188,7 @@ Action Coordinator 将 Policy 决策转换为规范 Action Intent：
 - `observe`：更新状态，保留事实影响，不产生输出。
 - `defer`：保留规范 batch 与重新评估时间，不保存模型私有上下文。
 - `express`：把 `reply_intent` 交给 Persona Expression。
-- `execute`：后续阶段才允许进入 Core Planner。
+- `execute`：形成不含可见文本的执行意图，先交给独立 Core Planner；Planner 拒绝时不启动执行器。
 
 它不能绕过现有 Output Runtime，也不能直接调用平台 Adapter。
 
@@ -318,7 +322,7 @@ Feature 不包含模型判断、回复文案或隐藏推理。
 - `reason_code` 使用稳定枚举，不接受自由解释替代原因码。
 - 非 `express` 时 `reply_intent` 必须为空。
 - 非 `execute` 时 `task_intent` 必须为空。
-- 第一至第五阶段拒绝执行 `execute`，即使模型返回该值。
+- 第一至第六阶段拒绝执行 `execute`，即使模型返回该值；第七阶段仅允许它进入独立 Planner。
 - 使用 OutputContract / tool call 生成并校验，不手工解析自由文本 JSON。
 
 ### 5.6 ActionIntent
@@ -770,13 +774,22 @@ coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 
 
 目标：在主动表达稳定后，允许 Policy 按需发起 Core 工作。
 
-工作：
+已实现的基础边界：
 
-- 开放 `execute` 并转换为 Core Planner 输入。
-- Planner 独立判断 execute / not_required，不能直接信任 Policy。
-- Execution Backend 返回进度、结果或错误材料。
-- 所有用户可见结果继续经 Persona Expression 和 Output Runtime。
-- Core 错误形成 CompletionFeedback，并由 Persona 使用已配置兜底 Provider 表达。
+- `execute` 转换为不可见的 `PersonalExecutionIntent`，把任务意图和与 Policy 相同的有界
+  `ObservationBatch` 事实投影到 Core Planner 的 `runtime.execution_intent` 槽位；Observation 本身
+  不伪装为用户消息。
+- Planner 独立判断 `execute / not_required`，不能直接信任 Policy；拒绝时不会启动执行器。
+- Planner 批准后复用当前配置的官方 Core AgentRequestSubStage 和后续结果装饰/发送阶段，不进入
+  EventBus、输入 Pipeline、插件 Handler 或第二套执行器。
+- 没有原始用户输入的后台任务只使用经 Planner 验证的 `CoreTaskSpec.execution_prompt` 作为执行器运输
+  请求，不把 Observation 投影为用户内容。
+- Core 的可见结果和错误仍经 Persona Expression、Output Runtime 以及 Completion Feedback。
+
+仍待后续执行器解耦阶段确认：
+
+- 第三方 Execution Backend 的统一取消、进度和错误契约。
+- 主动 execute 的用户确认、风险等级和工具权限策略。
 
 验收：
 
@@ -857,7 +870,8 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 9. `evaluate` batch 已可进入默认关闭的 Personal Policy；独立 Provider、严格 tool-call、
    timeout、temperature、每日预算和 fail-closed diagnostics 已接线。
 10. Policy 只读取受限 Prompt 投影，不取得 ToolSet、Skills、知识库、effect、Router 或 Planner
-    临时状态；只允许 `express` 经 ActionIntent 进入 Persona 输出、`defer` 写截止时间，`execute` 不执行。
+    临时状态；`express` 经 ActionIntent 进入 Persona 输出、`defer` 写截止时间，`execute` 只形成执行
+    意图并接受独立 Planner 审核。
 11. 独立 Personal State Repository 已持久化最近表达、冷却、静音和每日用量。Policy 请求前先
     持久化调用计数；写入失败时 fail closed 且零 Provider 请求。
 12. 未成功落盘的控制状态不属于 idle，不能被 Runtime TTL / LRU 静默回收。
@@ -868,7 +882,8 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 单目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后只重新验证
 `platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不直接
 发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过同一 Runtime 的 Persona
-与 Output 链路表达。下一步应使用真实运行数据审阅策略质量，再设计其他 Runtime Sensor、多目标注册和 execute。
+与 Output 链路表达。受控 `execute` 已复用同一 Runtime 与官方 Core 后段；下一步应使用真实运行数据审阅
+策略质量，再设计其他 Runtime Sensor、多目标注册和执行器解耦。
 
 ## 十五、后续仍需用运行数据决定的问题
 

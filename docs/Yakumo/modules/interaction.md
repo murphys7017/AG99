@@ -160,7 +160,7 @@ Input Runtime / Observation
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义
 - finalized material 校验
 - 在 completed 前把规范 user message、AssetRef 元数据和最终 Persona 文本按 `turn_id` 同步幂等提交到官方 Conversation；提交失败时 turn 标记 failed
-- 调度 `AFTER_TURN_COMPLETED` postprocess
+- 调度 `AFTER_TURN_COMPLETED` postprocess；后台任务由 `PostProcessManager` 统一持有，并在插件与 Provider 释放前停止
 
 当前 completion 语义：
 

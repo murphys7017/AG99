@@ -42,19 +42,30 @@ class EventBus:
             event: AstrMessageEvent = await self.event_queue.get()
             if not self._accepting_events:
                 return
-            conf_info = self.astrbot_config_mgr.get_conf_info(event.unified_msg_origin)
-            conf_id = conf_info["id"]
-            conf_name = conf_info.get("name") or conf_id
-            self._print_event(event, conf_name)
-            scheduler = self.pipeline_scheduler_mapping.get(conf_id)
-            if not scheduler:
-                logger.error(
-                    f"PipelineScheduler not found for id: {conf_id}, event ignored."
+            try:
+                conf_info = self.astrbot_config_mgr.get_conf_info(
+                    event.unified_msg_origin
                 )
-                continue
-            task = asyncio.create_task(scheduler.execute(event))
-            self._pending_tasks.add(task)
-            task.add_done_callback(self._on_task_done)
+                conf_id = conf_info["id"]
+                conf_name = conf_info.get("name") or conf_id
+                self._print_event(event, conf_name)
+                scheduler = self.pipeline_scheduler_mapping.get(conf_id)
+                if not scheduler:
+                    logger.error(
+                        f"PipelineScheduler not found for id: {conf_id}, event ignored."
+                    )
+                    continue
+                task = asyncio.create_task(scheduler.execute(event))
+                self._pending_tasks.add(task)
+                task.add_done_callback(self._on_task_done)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error(
+                    "Event dispatch preparation failed: event_type=%s",
+                    type(event).__name__,
+                    exc_info=True,
+                )
 
     async def stop(self) -> None:
         """Stop accepting events and settle every dispatched pipeline task."""

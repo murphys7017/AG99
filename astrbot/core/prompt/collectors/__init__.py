@@ -14,6 +14,7 @@ from .memory_collector import MemoryCollector
 from .persona_collector import PersonaCollector
 from .policy_collector import PolicyCollector
 from .runtime_context_collector import RuntimeContextCollector
+from .runtime_execution_intent_collector import RuntimeExecutionIntentCollector
 from .session_collector import SessionCollector
 from .skills_collector import SkillsCollector
 from .subagent_collector import SubagentCollector
@@ -31,6 +32,7 @@ __all__ = [
     "PolicyCollector",
     "PersonaCollector",
     "RuntimeContextCollector",
+    "RuntimeExecutionIntentCollector",
     "SessionCollector",
     "SkillsCollector",
     "SubagentCollector",

@@ -32,6 +32,7 @@ from .prompt_support import (
     build_interaction_prompt_build_config,
     build_model_context_messages,
 )
+from .runtime_context_projection import project_observation_batch
 from .types import InteractionAgentConfig
 
 if TYPE_CHECKING:
@@ -206,7 +207,7 @@ def build_personal_policy_system_prompt() -> str:
         "- observe：事实值得记住或影响状态，但现在不需要行动。\n"
         "- express：值得主动表达；reply_intent 只写表达意图，不写最终台词。\n"
         "- defer：需要等待更多事实；填写 defer_seconds。\n"
-        "- execute：出现明确工作机会；task_intent 只写任务意图。当前不会实际执行。\n"
+        "- execute：出现明确工作机会；task_intent 只写任务意图。后续仍须由 Core Planner 独立复核。\n"
         "reason_code 只能从以下值选择："
         + ", ".join(_MODEL_REASON_CODES)
         + "。\n"
@@ -635,28 +636,7 @@ def _observation_features_payload(
 
 
 def _observation_batch_payload(batch: ObservationBatch) -> dict[str, Any]:
-    observations = batch.observations[-24:]
-    return {
-        "batch_id": batch.batch_id,
-        "opened_at": batch.opened_at,
-        "closed_at": batch.closed_at,
-        "source_counts": _to_prompt_value(batch.source_counts),
-        "observation_count": len(batch.observations),
-        "projected_observation_count": len(observations),
-        "truncated": len(observations) != len(batch.observations),
-        "observations": [
-            {
-                "observation_id": observation.observation_id,
-                "kind": observation.kind,
-                "source": observation.source,
-                "occurred_at": observation.occurred_at,
-                "expires_at": observation.expires_at,
-                "correlation_id": observation.correlation_id,
-                "payload": _to_prompt_value(observation.payload),
-            }
-            for observation in observations
-        ],
-    }
+    return project_observation_batch(batch)
 
 
 def _session_datetime_payload(
@@ -686,25 +666,6 @@ def _session_info_payload(batch: ObservationBatch) -> dict[str, Any]:
         "is_group": is_group,
         "conversation_scope": "group_multi_user" if is_group else "private_single_user",
     }
-
-
-def _to_prompt_value(value: Any, *, depth: int = 0) -> Any:
-    if depth >= 5:
-        return "[nested value omitted]"
-    if value is None or isinstance(value, bool | int | float):
-        return value
-    if isinstance(value, str):
-        return value if len(value) <= 1200 else f"{value[:1200]}..."
-    if isinstance(value, bytes):
-        return f"[bytes:{len(value)}]"
-    if isinstance(value, Mapping):
-        return {
-            str(key): _to_prompt_value(item, depth=depth + 1)
-            for key, item in list(value.items())[:24]
-        }
-    if isinstance(value, list | tuple | set | frozenset):
-        return [_to_prompt_value(item, depth=depth + 1) for item in list(value)[:24]]
-    return str(value)[:1200]
 
 
 def _selected_slot_names(metadata: object) -> tuple[str, ...]:

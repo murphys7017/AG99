@@ -8,7 +8,7 @@ from astrbot import logger
 from astrbot.core.message.components import File, Image, Plain, Record, Reply, Video
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.postprocess import dispatch_postprocess
+from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.utils.media_utils import ensure_wav
@@ -32,7 +32,7 @@ from .lifecycle import dispatch_interaction_lifecycle
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
-from .personal_action import PersonalActionIntent
+from .personal_action import PersonalActionIntent, PersonalExecutionIntent
 from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .runtime_event import RuntimeObservationEvent
@@ -126,7 +126,9 @@ class InteractionMiddleware:
         )
         self.output_controller.core_reply_handler = self._handle_core_reply_via_persona
         self.output_controller.lifecycle_callback = self._emit_lifecycle_from_output
-        self._inflight_tasks: set[asyncio.Task] = set()
+        self._runtime_core_executor: (
+            Callable[[RuntimeObservationEvent], Awaitable[None]] | None
+        ) = None
 
     async def _emit_lifecycle_from_output(
         self,
@@ -144,6 +146,12 @@ class InteractionMiddleware:
     def set_plugin_context(self, plugin_context: Any) -> None:
         self.plugin_context = plugin_context
         self.output_controller.plugin_context = plugin_context
+
+    def bind_runtime_core_executor(
+        self,
+        executor: Callable[[RuntimeObservationEvent], Awaitable[None]] | None,
+    ) -> None:
+        self._runtime_core_executor = executor
 
     async def _render_visible_reply_via_persona(
         self,
@@ -442,6 +450,111 @@ class InteractionMiddleware:
         finally:
             event.set_extra("_interaction_runtime_observation_active", False)
 
+    async def handle_runtime_execution(
+        self,
+        event: RuntimeObservationEvent,
+        turn: PersonalTurnContext,
+    ) -> bool:
+        """Run a Policy task through Planner and the existing Core-only bridge."""
+        if not isinstance(event, RuntimeObservationEvent):
+            raise TypeError("event must be a RuntimeObservationEvent")
+        if turn.event is not event or turn.observation is not event.observation:
+            raise ValueError("Runtime execution does not match the admitted turn")
+        intent = event.get_extra("_personal_execution_intent")
+        if not isinstance(intent, PersonalExecutionIntent):
+            raise ValueError("Runtime execution requires a PersonalExecutionIntent")
+        executor = self._runtime_core_executor
+        if executor is None:
+            raise RuntimeError("Runtime Core executor is not bound")
+
+        runtime_config = self._get_runtime_config(event)
+        if not is_middleware_enabled(runtime_config):
+            event.set_extra(
+                "_interaction_runtime_execution_skipped_reason",
+                "interaction_middleware_disabled",
+            )
+            return False
+
+        self.prepare_pipeline_event(event)
+        interaction_config = load_interaction_agent_config(runtime_config)
+        event.set_extra("_interaction_runtime_execution_active", True)
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.RECEIVED,
+            metadata={
+                "source": "runtime_execution",
+                "action_id": intent.action_id,
+                "batch_id": intent.batch_id,
+            },
+        )
+        try:
+            decision = await self._plan_core_execution(event, interaction_config)
+            if decision.action is not CorePlanningAction.EXECUTE:
+                event.set_extra(
+                    "_interaction_runtime_execution_skipped_reason",
+                    "planner_not_required",
+                )
+                return False
+            if decision.task_spec is None:
+                raise CorePlannerError("missing_task_spec")
+            decision.task_spec.metadata.update(
+                {
+                    "personal_action_id": intent.action_id,
+                    "personal_policy_batch_id": intent.batch_id,
+                    "personal_runtime_execution": True,
+                }
+            )
+            event.set_extra("_interaction_runtime_execution_planned", True)
+            self._forward_to_core(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.DELEGATED,
+                metadata={
+                    "source": "runtime_execution",
+                    "action_id": intent.action_id,
+                },
+            )
+            await executor(event)
+            return True
+        except asyncio.CancelledError:
+            mark_interaction_turn_cancelled(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.CANCELLED,
+                metadata={"source": "runtime_execution"},
+            )
+            raise
+        except Exception as exc:
+            record_interaction_turn_failure(
+                event,
+                stage="runtime_core_execution",
+                reason=str(exc),
+                exception=exc,
+                user_visible_action="none",
+            )
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={
+                    "source": "runtime_execution",
+                    "reason": str(exc),
+                },
+            )
+            logger.exception(
+                "Personal Runtime Core execution failed: platform_id=%s session_id=%s action_id=%s",
+                event.get_platform_id(),
+                event.session_id,
+                intent.action_id,
+            )
+            return False
+        finally:
+            event.set_extra("_interaction_runtime_execution_active", False)
+
     async def handle_runtime_output(
         self,
         event: RuntimeObservationEvent,
@@ -546,58 +659,6 @@ class InteractionMiddleware:
         if isinstance(raw_message, Mapping):
             return raw_message.get(field)
         return None
-
-    def _spawn_background_task(
-        self,
-        coro: Awaitable[Any],
-        *,
-        name: str,
-        done_callback: Callable[[asyncio.Task], None] | None = None,
-    ) -> None:
-        task = asyncio.create_task(coro, name=name)
-        self._track_inflight_task(task, done_callback=done_callback)
-
-    def _track_inflight_task(
-        self,
-        task: asyncio.Task,
-        *,
-        done_callback: Callable[[asyncio.Task], None] | None = None,
-    ) -> None:
-        self._inflight_tasks.add(task)
-        if done_callback is not None:
-            task.add_done_callback(
-                lambda done_task: self._on_specific_inflight_task_done(
-                    done_task,
-                    done_callback,
-                )
-            )
-        else:
-            task.add_done_callback(self._on_inflight_task_done)
-
-    def _on_specific_inflight_task_done(
-        self,
-        task: asyncio.Task,
-        done_callback: Callable[[asyncio.Task], None],
-    ) -> None:
-        self._inflight_tasks.discard(task)
-        done_callback(task)
-
-    def _on_inflight_task_done(self, task: asyncio.Task) -> None:
-        self._inflight_tasks.discard(task)
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            logger.debug(
-                "Interaction middleware task cancelled: name=%s",
-                task.get_name(),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Interaction middleware task failed: name=%s error=%s",
-                task.get_name(),
-                exc,
-                exc_info=True,
-            )
 
     async def _handle_pipeline_turn(
         self,
@@ -1404,7 +1465,7 @@ class InteractionMiddleware:
                 event.get_extra("_turn_id"),
             )
             return
-        self._spawn_background_task(
+        task = get_postprocess_manager().schedule(
             dispatch_postprocess(
                 event=event,
                 trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
@@ -1414,11 +1475,11 @@ class InteractionMiddleware:
                 turn_material=turn_material,
             ),
             name=f"interaction_turn_postprocess_{event.get_platform_id()}",
-            done_callback=lambda done_task: self._log_turn_postprocess_failure(
-                event,
-                done_task,
-            ),
         )
+        if task is not None:
+            task.add_done_callback(
+                lambda done_task: self._log_turn_postprocess_failure(event, done_task)
+            )
 
     @staticmethod
     def _log_turn_postprocess_failure(

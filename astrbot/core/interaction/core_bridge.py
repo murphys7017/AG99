@@ -86,6 +86,7 @@ def apply_interaction_core_task_spec(
         )
         return
     req.system_prompt = f"{req.system_prompt or ''}\n{block}\n"
+    ensure_interaction_core_execution_prompt(req, event)
     logger.debug(
         "Interaction core task spec applied through compatibility API: platform_id=%s session_id=%s task_intent=%s has_execution_prompt=%s suggested_capabilities=%s",
         event.get_platform_id(),
@@ -96,9 +97,23 @@ def apply_interaction_core_task_spec(
     )
 
 
+def ensure_interaction_core_execution_prompt(
+    req: ProviderRequest,
+    event: AstrMessageEvent,
+) -> None:
+    """Provide a transport request for a delegated task with no user input."""
+    if str(req.prompt or "").strip():
+        return
+    task_spec = get_core_task_spec(event)
+    if task_spec is None:
+        return
+    req.prompt = task_spec.execution_prompt
+
+
 __all__ = [
     "apply_interaction_core_task_spec",
     "build_core_execution_context_block",
+    "ensure_interaction_core_execution_prompt",
     "get_core_task_spec",
     "get_interaction_route_decision",
 ]

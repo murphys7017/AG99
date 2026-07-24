@@ -44,6 +44,7 @@ from astrbot.core.pipeline.scheduler import PipelineContext, PipelineScheduler
 from astrbot.core.platform.manager import PlatformManager
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
+from astrbot.core.postprocess import get_postprocess_manager
 from astrbot.core.provider.manager import ProviderManager
 from astrbot.core.star.context import Context
 from astrbot.core.star.star_handler import EventType, star_handlers_registry, star_map
@@ -275,8 +276,11 @@ class AstrBotCoreLifecycle:
         )
         self.interaction_middleware.set_plugin_context(self.star_context)
         self.personal_runtime_manager.bind_plugin_context(self.star_context)
-        self.personal_runtime_manager.bind_personal_action_handler(
+        self.personal_runtime_manager.bind_personal_expression_handler(
             self.interaction_middleware.handle_runtime_observation
+        )
+        self.personal_runtime_manager.bind_personal_execution_handler(
+            self.interaction_middleware.handle_runtime_execution
         )
 
         async def dispatch_proactive_message(session, message_chain, finalize=True):
@@ -316,6 +320,7 @@ class AstrBotCoreLifecycle:
         bind_memory_provider_manager(self.provider_manager)
         self.memory_service = get_memory_service(self.astrbot_config)
         await self.memory_service.initialize()
+        get_postprocess_manager().start()
         self.memory_postprocessor = register_memory_postprocessor(self.memory_service)
 
         # 初始化插件管理器
@@ -333,6 +338,17 @@ class AstrBotCoreLifecycle:
 
         # 初始化消息事件流水线调度器
         self.pipeline_scheduler_mapping = await self.load_pipeline_scheduler()
+
+        async def dispatch_runtime_core(event):
+            config_id = str(event.get_extra("_astrbot_config_id", "") or "").strip()
+            scheduler = self.pipeline_scheduler_mapping.get(config_id)
+            if scheduler is None:
+                raise RuntimeError(
+                    f"PipelineScheduler not found for runtime Core config: {config_id}"
+                )
+            await scheduler.execute_core_delegation(event)
+
+        self.interaction_middleware.bind_runtime_core_executor(dispatch_runtime_core)
 
         # 初始化更新器
         self.astrbot_updator = AstrBotUpdator()
@@ -499,6 +515,9 @@ class AstrBotCoreLifecycle:
             if self.cron_manager:
                 await self.cron_manager.shutdown()
 
+            await self.personal_runtime_manager.shutdown()
+            await get_postprocess_manager().shutdown()
+
             plugin_manager = getattr(self, "plugin_manager", None)
             if plugin_manager is not None:
                 for plugin in plugin_manager.context.get_all_stars():
@@ -509,8 +528,6 @@ class AstrBotCoreLifecycle:
                         logger.warning(
                             f"插件 {plugin.name} 未被正常终止 {e!s}, 可能会导致资源泄露等问题。",
                         )
-
-            await self.personal_runtime_manager.shutdown()
 
             provider_manager = getattr(self, "provider_manager", None)
             if provider_manager is not None:

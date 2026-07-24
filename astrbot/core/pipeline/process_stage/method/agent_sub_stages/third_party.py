@@ -17,7 +17,10 @@ from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
 )
 from astrbot.core.agent.runners.dify.dify_agent_runner import DifyAgentRunner
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
-from astrbot.core.interaction.core_bridge import apply_interaction_core_task_spec
+from astrbot.core.interaction.core_bridge import (
+    apply_interaction_core_task_spec,
+    get_core_task_spec,
+)
 from astrbot.core.message.components import Image, Record
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -293,11 +296,16 @@ class ThirdPartyAgentSubStage(Stage):
         plugin_request = event.get_extra("provider_request")
         explicit_request = isinstance(plugin_request, ProviderRequest)
         req = plugin_request if explicit_request else None
+        has_delegated_core_task = (
+            bool(event.get_extra("_interaction_delegate_to_core"))
+            and get_core_task_spec(event) is not None
+        )
 
         if (
             req is None
             and provider_wake_prefix
             and not event.message_str.startswith(provider_wake_prefix)
+            and not has_delegated_core_task
         ):
             return
 
@@ -333,6 +341,7 @@ class ThirdPartyAgentSubStage(Stage):
             and not req.prompt
             and not req.image_urls
             and not req.audio_urls
+            and not has_delegated_core_task
         ):
             return
 
