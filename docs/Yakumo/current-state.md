@@ -80,7 +80,7 @@
 
 当前已完成：
 
-- `InteractionTurnState`、`InteractionUtterance`、`InteractionStreamState` 已成为主状态模型
+- `InteractionTurnState`、`InteractionUtterance`、`InteractionStreamState` 已成为主状态模型；Core delegation 也由 Turn State 保存，不再通过平行 event extra 协调。
 - prompt / result / stream 插件扩展点已收口到只读阶段视图；通用 lifecycle observer 可读取
   `received` / `routing` / `delegated` / `speaking` / `completed` / `failed` / `cancelled`
   状态，`thinking` / `tool_running` 已作为后续执行器可上报的通用协议状态预留

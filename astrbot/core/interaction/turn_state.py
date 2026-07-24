@@ -212,6 +212,7 @@ class InteractionTurnState:
     route_decision: InteractionRouteDecision | None = None
     core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
+    core_delegated: bool = False
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
     speculative_persona_status: InteractionSpeculativePersonaStatus = (
@@ -375,6 +376,15 @@ def set_interaction_turn_core_task_spec(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.core_task_spec = task_spec
+
+
+def mark_interaction_turn_core_delegated(event) -> None:
+    ensure_interaction_turn_state(event).core_delegated = True
+
+
+def is_interaction_turn_core_delegated(event) -> bool:
+    state = get_interaction_turn_state(event)
+    return bool(state and state.core_delegated)
 
 
 def set_interaction_turn_finalized_material(

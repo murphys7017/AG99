@@ -53,6 +53,7 @@ from .turn_state import (
     is_interaction_turn_completed,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
+    mark_interaction_turn_core_delegated,
     mark_interaction_turn_failed,
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
@@ -1507,7 +1508,7 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
     ) -> None:
-        event.set_extra("_interaction_delegate_to_core", True)
+        mark_interaction_turn_core_delegated(event)
         event.is_wake = True
         event.is_at_or_wake_command = True
         event._extras.pop("provider", None)

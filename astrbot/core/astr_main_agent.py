@@ -31,6 +31,7 @@ from astrbot.core.interaction.core_bridge import (
     ensure_interaction_core_execution_prompt,
     get_core_task_spec,
 )
+from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -302,7 +303,7 @@ def _clean_conversation_save_text(value: object) -> str | None:
 
 def should_use_interaction_core_profile(event: AstrMessageEvent) -> bool:
     """Return whether Core is executing a Persona Runtime delegation."""
-    return bool(event.get_extra("_interaction_delegate_to_core"))
+    return is_interaction_turn_core_delegated(event)
 
 
 def _build_interaction_core_collectors():

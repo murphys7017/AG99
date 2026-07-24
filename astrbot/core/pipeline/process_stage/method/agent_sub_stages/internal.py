@@ -30,6 +30,7 @@ from astrbot.core.execution import (
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
+from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -177,7 +178,7 @@ class InternalAgentSubStage(Stage):
             has_provider_request = event.get_extra("provider_request") is not None
             has_valid_message = bool(event.message_str and event.message_str.strip())
             has_delegated_core_task = (
-                bool(event.get_extra("_interaction_delegate_to_core"))
+                is_interaction_turn_core_delegated(event)
                 and get_core_task_spec(event) is not None
             )
             has_media_content = any(

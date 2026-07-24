@@ -238,11 +238,6 @@ class WakingCheckStage(Stage):
         event.set_extra("activated_handlers", activated_handlers)
         event.set_extra("handlers_parsed_params", handlers_parsed_params)
 
-        if event.get_extra("_interaction_delegate_to_core", False):
-            is_wake = True
-            event.is_wake = True
-            event.is_at_or_wake_command = True
-
         if not is_wake:
             if is_conversation_activity_candidate(event, self.ctx.astrbot_config):
                 event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)

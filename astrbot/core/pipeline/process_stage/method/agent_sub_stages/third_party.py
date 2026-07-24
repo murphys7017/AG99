@@ -21,6 +21,7 @@ from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
 )
+from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import Image, Record
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -297,7 +298,7 @@ class ThirdPartyAgentSubStage(Stage):
         explicit_request = isinstance(plugin_request, ProviderRequest)
         req = plugin_request if explicit_request else None
         has_delegated_core_task = (
-            bool(event.get_extra("_interaction_delegate_to_core"))
+            is_interaction_turn_core_delegated(event)
             and get_core_task_spec(event) is not None
         )
 
