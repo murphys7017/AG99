@@ -151,7 +151,6 @@ async def get_or_build_interaction_context_material(
         material = turn_state.context_material
         if material is not None:
             _refresh_context_material_view(material, interaction_config)
-            _publish_context_material(event, material)
             return material
 
         build_task = turn_state.context_material_task
@@ -242,7 +241,6 @@ async def _build_interaction_context_material(
     )
     material.prompt_context_pack = prompt_context_pack
     material.collected_scopes.add("interaction_contributors")
-    _publish_context_material(event, material)
     if turn_state is not None:
         turn_state.context_material = material
     return material
@@ -263,13 +261,6 @@ def _refresh_context_material_view(
         "input": material.input_payload,
         "core_capabilities": material.capability_payload,
     }
-
-
-def _publish_context_material(
-    event,
-    material: InteractionContextMaterial,
-) -> None:
-    event.set_extra("_interaction_context_snapshot", material.context_snapshot)
 
 
 def build_prompt_render_provider_request(event, provider) -> ProviderRequest:

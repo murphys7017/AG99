@@ -2,7 +2,7 @@ task:
   class: feature
   risk: high
   phase: execution_preparation_phase_8_turn_state_ownership
-  scope: Make CoreExecutionSpec own an independent in-process snapshot, remove unused Interaction Prompt extra mirrors, and move Core delegation ownership into InteractionTurnState while preserving Phase 7 controlled execution
+  scope: Make CoreExecutionSpec own an independent in-process snapshot, remove unused Interaction Prompt extras, and move Core delegation ownership into InteractionTurnState while preserving Phase 7 controlled execution
 context:
   confidence: high
   assumptions:
@@ -29,6 +29,7 @@ context:
     - CoreExecutionSpec owns deep-copied ContextPack slots and metadata, TaskSpec, execution history, and serializable capability descriptions; the Native ToolSet remains the explicit live execution handle until the future capability binding boundary.
     - InteractionTurnState owns the canonical Interaction ContextPack; the unused _interaction_prompt_context_pack extra mirror is removed.
     - InteractionTurnState owns the canonical Core-delegation state; ordinary forwarding remains after Waking, while background delegation bypasses Waking through the Core-only scheduler entry.
+    - Prompt branches retain RenderResult locally, and InteractionContextMaterial retains its snapshot in Turn State; unused event-extra render and snapshot mirrors are removed.
     - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
     - Personal Policy gets a dedicated read-only Prompt target and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
     - The Personal Policy Prompt collection adapter is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
@@ -356,6 +357,7 @@ runtime:
       - independently owned CoreExecutionSpec ContextPack, TaskSpec, execution-history, and serializable capability snapshots
       - removal of the unused Interaction Prompt ContextPack extra mirror
       - InteractionTurnState ownership of Core delegation without a parallel event-extra marker
+      - removal of unused Interaction Prompt render and context-snapshot event extras
     non_goals:
       - built-in additional Runtime Sensors, per-Sensor schemas, multi-target active scheduling, and explicit execute permissions
       - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy

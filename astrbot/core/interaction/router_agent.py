@@ -95,7 +95,6 @@ class InteractionRouterAgent:
             interaction_config,
             provider,
         )
-        event.set_extra("_interaction_router_prompt_render_result", render_result)
         try:
             llm_resp = await asyncio.wait_for(
                 provider.text_chat(

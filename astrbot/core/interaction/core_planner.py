@@ -226,7 +226,6 @@ class CorePlannerAgent:
                 output_contract=build_core_planner_output_contract(),
             ),
         )
-        event.set_extra("_interaction_core_planner_prompt_render_result", render_result)
         return render_result
 
 

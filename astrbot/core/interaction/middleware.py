@@ -506,7 +506,6 @@ class InteractionMiddleware:
                     "personal_runtime_execution": True,
                 }
             )
-            event.set_extra("_interaction_runtime_execution_planned", True)
             self._forward_to_core(event)
             await dispatch_interaction_lifecycle(
                 event,

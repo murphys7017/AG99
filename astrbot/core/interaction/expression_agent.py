@@ -570,7 +570,6 @@ class InteractionExpressionAgent:
                         req=req,
                     )
 
-        event.set_extra("_interaction_expression_prompt_render_result", render_result)
         output_contract = render_result.output_contract
         persona_effect_specs = render_result.metadata.get(
             "persona_effect_specs",
