@@ -276,7 +276,8 @@ AgentRunner 才能被发现。
 - Local/Third-party 平行准备链可以被删除，而不是继续扩展。
 
 当前已经建立 `CoreExecutionSpec`，它只保存统一 ContextPack、CoreTaskSpec、执行历史、
-通用能力快照和执行身份，不保存目标渲染结果或 ProviderRequest。Native 在 Spec 形成后执行
+通用能力快照和执行身份，不保存目标渲染结果或 ProviderRequest。Spec 形成时深拷贝所有
+事实数据，只有 Native `ToolSet` 作为明确的实时执行句柄保留。Native 在 Spec 形成后执行
 目标投影和渲染，再通过 `NativeExecutionAdapter` 转换为官方 `ProviderRequest`；这不是完整的
 `ExecutionBackend` 接口，而且 Spec 当前仍在 Native `build_main_agent` 内形成。Claude Code、OpenCode 等只有在
 Output、取消和 Execution Event 边界稳定后才接入；Dify/Coze/DashScope/DeerFlow 继续作为

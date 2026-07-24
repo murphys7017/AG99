@@ -269,7 +269,6 @@ def _publish_context_material(
     event,
     material: InteractionContextMaterial,
 ) -> None:
-    event.set_extra("_interaction_prompt_context_pack", material.prompt_context_pack)
     event.set_extra("_interaction_context_snapshot", material.context_snapshot)
 
 

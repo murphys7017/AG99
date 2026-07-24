@@ -27,7 +27,7 @@ Main Agent 仍拥有运行时能力装配，Prompt 系统只描述模型输入�
 | target 可见范围 | Prompt Target Projection |
 | Router/Planner/Persona 决策 | Interaction 对应 Agent |
 
-`CoreCapabilitySnapshot` 已记录本轮实际工具对象以及 Prompt 中的 tool schema、skills 和 knowledge，但 `RenderResult.tool_schema` 仍不会自动注册到 `func_tool`。两者尚未统一为一个可序列化能力契约，新代码不能把渲染 schema 当作可执行工具注册表。
+`CoreCapabilitySnapshot` 已记录本轮实际工具对象以及 Prompt 中的 tool schema、skills 和 knowledge；后面三者在形成快照时与 Prompt 构建侧分离，只有 Native `ToolSet` 作为明确的实时执行句柄保留。`RenderResult.tool_schema` 仍不会自动注册到 `func_tool`。两者尚未统一为一个可序列化能力契约，新代码不能把渲染 schema 当作可执行工具注册表。
 
 官方 `on_llm_request` 在 Core 的统一 Prompt Apply 后运行，用于低层请求兼容。它不是 Router、Planner 或 Persona 的事实扩展入口。
 

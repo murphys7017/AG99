@@ -63,7 +63,7 @@ Collector 只返回事实：
 - `slot_count`
 - Collector 与缓存诊断
 
-跨阶段新增或替换事实必须经过 Builder。`ContextPack` 数据类型本身仍然可变，供收集和渲染内部使用；业务模块不得把直接 `add_slot()`、`slots.pop()` 或原地改值当作跨阶段 API。
+跨阶段新增或替换事实必须经过 Builder。`ContextPack` 数据类型本身仍然可变，供收集和渲染内部使用；业务模块不得把直接 `add_slot()`、`slots.pop()` 或原地改值当作跨阶段 API。进入 `CoreExecutionSpec` 时，slots、meta、TaskSpec、执行历史和可序列化 capability 描述会被深拷贝，避免后续构建侧变更影响已经准备的执行事实；Native `ToolSet` 是唯一明确保留的实时执行句柄。
 
 Interaction 当前通过默认 Collector 建立一份完整的本轮共享事实包，Router、Planner 和 Persona 只消费各自的极简投影。后续性能优化应由 Collector 生命周期、缓存、并发和按需采集策略完成，不能让业务模块重新建立同类事实源。
 

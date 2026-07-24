@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: high
-  phase: autonomous_persona_runtime_phase_7_controlled_execute
-  scope: Complete Policy execute -> independently reviewed Core Planner -> existing Core-only Pipeline delegation, including P1 background-Core knowledge, postprocess lifecycle, shutdown ordering, and EventBus isolation fixes
+  phase: execution_preparation_phase_8_snapshot_ownership
+  scope: Make CoreExecutionSpec own an independent in-process snapshot and remove an unused Interaction Prompt extra mirror while preserving Phase 7 controlled execution
 context:
   confidence: high
   assumptions:
@@ -26,6 +26,8 @@ context:
     - PostprocessManager owns all background after-message and after-turn tasks; it rejects new tasks during shutdown and is explicitly reopened by Core lifecycle startup.
     - Core shutdown settles Personal Runtime and PostprocessManager before plugin, Provider, knowledge-base, memory, platform, and database teardown.
     - EventBus isolates configuration lookup and task-scheduling failures to the affected event, logs them, and continues consuming later events.
+    - CoreExecutionSpec owns deep-copied ContextPack slots and metadata, TaskSpec, execution history, and serializable capability descriptions; the Native ToolSet remains the explicit live execution handle until the future capability binding boundary.
+    - InteractionTurnState owns the canonical Interaction ContextPack; the unused _interaction_prompt_context_pack extra mirror is removed.
     - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
     - Personal Policy gets a dedicated read-only Prompt target and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
     - The Personal Policy Prompt collection adapter is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
@@ -319,6 +321,8 @@ verification:
     - Phase 7/P1 Ruff and py_compile over all changed runtime, pipeline, prompt, lifecycle, and postprocess modules (passed)
     - Minimal Phase 7/P1 boundary smoke covered background-Core knowledge retrieval from CoreTaskSpec.execution_prompt, PostProcessManager shutdown/restart admission, and EventBus continuation after one invalid event (passed)
     - pnpm --dir docs docs:build and git diff --check after Phase 7/P1 documentation and governance updates (passed)
+    - Phase 8 snapshot-ownership Ruff, py_compile, and minimal CoreExecutionSpec input-output smoke covering ContextPack, TaskSpec, execution-history, and capability fact isolation while retaining the Native ToolSet handle (passed)
+    - pnpm --dir docs docs:build after Phase 8 snapshot-ownership documentation updates (passed)
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -332,7 +336,7 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: autonomous_persona_runtime_phase_7_controlled_execute
+    phase: execution_preparation_phase_8_snapshot_ownership
     scope:
       - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
       - restart-safe last expression, cooldown, mute, and daily usage fields
@@ -348,6 +352,8 @@ runtime:
       - lifecycle-owned postprocess task admission, cancellation, and restart-safe reopening
       - shutdown sequencing that settles Personal Runtime and postprocess work before their dependencies
       - per-event EventBus preparation failure isolation
+      - independently owned CoreExecutionSpec ContextPack, TaskSpec, execution-history, and serializable capability snapshots
+      - removal of the unused Interaction Prompt ContextPack extra mirror
     non_goals:
       - built-in additional Runtime Sensors, per-Sensor schemas, multi-target active scheduling, and explicit execute permissions
       - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -24,6 +25,15 @@ class CoreCapabilitySnapshot:
     skills: Any = None
     knowledge: Any = None
 
+    def snapshot(self) -> CoreCapabilitySnapshot:
+        """Copy serializable capability facts while retaining the live ToolSet handle."""
+        return type(self)(
+            tools=self.tools,
+            tool_schema=deepcopy(self.tool_schema),
+            skills=deepcopy(self.skills),
+            knowledge=deepcopy(self.knowledge),
+        )
+
     @classmethod
     def from_context_pack(
         cls,
@@ -33,9 +43,11 @@ class CoreCapabilitySnapshot:
     ) -> CoreCapabilitySnapshot:
         return cls(
             tools=tools,
-            tool_schema=_slot_value(context_pack, "capability.tools_schema"),
-            skills=_slot_value(context_pack, "capability.skills_prompt"),
-            knowledge=_slot_value(context_pack, "knowledge.snippets"),
+            tool_schema=deepcopy(
+                _slot_value(context_pack, "capability.tools_schema")
+            ),
+            skills=deepcopy(_slot_value(context_pack, "capability.skills_prompt")),
+            knowledge=deepcopy(_slot_value(context_pack, "knowledge.snippets")),
         )
 
 
@@ -76,20 +88,24 @@ class CoreExecutionSpec:
         history_value = history_slot.value if history_slot is not None else None
         records = history_value.get("records", []) if isinstance(history_value, dict) else []
         neutral_pack = ContextPack(
-            slots=dict(context_pack.slots),
+            slots=deepcopy(context_pack.slots),
             provider_request_ref=None,
-            meta=dict(context_pack.meta),
+            meta=deepcopy(context_pack.meta),
         )
         return cls(
             execution_id=execution_id,
             core_task_id=core_task_id,
             turn_id=resolved_turn_id,
             context_pack=neutral_pack,
-            task_spec=dict(task_spec) if isinstance(task_spec, dict) else None,
+            task_spec=deepcopy(task_spec) if isinstance(task_spec, dict) else None,
             execution_history=tuple(
-                dict(item) for item in records if isinstance(item, dict)
+                deepcopy(item) for item in records if isinstance(item, dict)
             ),
-            capabilities=capabilities or CoreCapabilitySnapshot(),
+            capabilities=(
+                capabilities.snapshot()
+                if capabilities is not None
+                else CoreCapabilitySnapshot()
+            ),
             parent_execution_id=parent_execution_id,
         )
 
