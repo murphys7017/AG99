@@ -68,15 +68,14 @@
 - Prompt 已能从规范 `ContextPack` 投影 Router、Core Planner、Personal Policy、Persona 和 Core 视图。
 - Personal Policy 已接入 Gate 的 `evaluate` 分支，使用独立 Provider、严格 tool-call
   `PersonalPolicyDecision` 和 fail-closed `observe`；`express` 形成内部 `ActionIntent` 后复用统一
-  Persona 输出链路，`defer` 写入无动作截止时间，`execute` 形成内部执行意图后必须由 Core Planner
-  独立复核。
+  Persona 输出链路，`defer` 写入无动作截止时间并保留 batch，由 Wake Scheduler 到期后重新评估。
 - 默认主动消息目标、Adapter 主动消息能力校验、Cron 和插件主动文本入口已经存在。
 
 ### 2.2 当前缺口
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. `express`、`defer` 与受控 `execute` 已有最小 Action 生命周期；多目标目标注册和更复杂的节律策略
+1. `express` 与 `defer` 已有最小 Action 生命周期；多目标目标注册和更复杂的节律策略
    仍未接入。
 2. 默认主动目标同时承载首个 Heartbeat Source；Policy 的表达只复用该目标与同一 Runtime identity。
 3. Action 的可见文本仍只由 Persona Expression 形成，Policy 只提供表达意图；真实输出质量和误触发率
@@ -93,12 +92,9 @@ flowchart TD
     GATE -->|hold or coalesce| INBOX
     GATE -->|evaluate| POLICY["Personal Policy"]
     POLICY -->|ignore or observe| FEEDBACK
-    POLICY -->|defer| STATE
+    POLICY -->|defer| WAKE["Wake Scheduler"]
+    WAKE --> INBOX
     POLICY -->|express| ACTION["Action Coordinator"]
-    POLICY -->|execute| PLANNER["Core Planner"]
-    PLANNER -->|not_required| FEEDBACK
-    PLANNER -->|execute| CORE["Existing Core Execution"]
-    CORE --> PERSONA
     ACTION --> PERSONA["Persona Expression"]
     PERSONA --> OUTPUT["Output Runtime"]
     OUTPUT --> COMPLETION["Completion Feedback"]
@@ -177,7 +173,6 @@ Policy 与现有模块的关系：
 
 - Router：判断普通入站消息是否进入 Core 候选路径。
 - Personal Policy：判断后台或环境 Observation 是否形成行动。
-- Core Planner：判断一个明确任务是否值得执行并构造 `CoreTaskSpec`。
 - Persona Expression：把待表达材料转换为最终人格表达。
 
 ### 4.5 Action Coordinator
@@ -188,7 +183,6 @@ Action Coordinator 将 Policy 决策转换为规范 Action Intent：
 - `observe`：更新状态，保留事实影响，不产生输出。
 - `defer`：保留规范 batch 与重新评估时间，不保存模型私有上下文。
 - `express`：把 `reply_intent` 交给 Persona Expression。
-- `execute`：形成不含可见文本的执行意图，先交给独立 Core Planner；Planner 拒绝时不启动执行器。
 
 它不能绕过现有 Output Runtime，也不能直接调用平台 Adapter。
 
@@ -307,10 +301,9 @@ Feature 不包含模型判断、回复文案或隐藏推理。
 
 ```json
 {
-  "action": "ignore | observe | express | defer | execute",
+  "action": "ignore | observe | express | defer",
   "reason_code": "stable_reason_code",
   "reply_intent": "",
-  "task_intent": "",
   "importance": 0.0,
   "defer_seconds": 0
 }
@@ -321,8 +314,7 @@ Feature 不包含模型判断、回复文案或隐藏推理。
 - `importance` 必须是 `0.0` 到 `1.0` 的 number。
 - `reason_code` 使用稳定枚举，不接受自由解释替代原因码。
 - 非 `express` 时 `reply_intent` 必须为空。
-- 非 `execute` 时 `task_intent` 必须为空。
-- 第一至第六阶段拒绝执行 `execute`，即使模型返回该值；第七阶段仅允许它进入独立 Planner。
+- Policy 不包含任务意图、工具或后台执行能力。
 - 使用 OutputContract / tool call 生成并校验，不手工解析自由文本 JSON。
 
 ### 5.6 ActionIntent
@@ -770,33 +762,11 @@ coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 
 - payload 不允许携带 event、ProviderRequest、ToolSet 或平台连接对象。
 - 插件卸载后清理 Sensor 注册和未处理来源引用。
 
-### Phase 7：受控 Execute
+### 后续：后台执行权限模型
 
-目标：在主动表达稳定后，允许 Policy 按需发起 Core 工作。
-
-已实现的基础边界：
-
-- `execute` 转换为不可见的 `PersonalExecutionIntent`，把任务意图和与 Policy 相同的有界
-  `ObservationBatch` 事实投影到 Core Planner 的 `runtime.execution_intent` 槽位；Observation 本身
-  不伪装为用户消息。
-- Planner 独立判断 `execute / not_required`，不能直接信任 Policy；拒绝时不会启动执行器。
-- Planner 批准后复用当前配置的官方 Core AgentRequestSubStage 和后续结果装饰/发送阶段，不进入
-  EventBus、输入 Pipeline、插件 Handler 或第二套执行器。
-- 没有原始用户输入的后台任务只使用经 Planner 验证的 `CoreTaskSpec.execution_prompt` 作为执行器运输
-  请求，不把 Observation 投影为用户内容。
-- Core 的可见结果和错误仍经 Persona Expression、Output Runtime 以及 Completion Feedback。
-
-仍待后续执行器解耦阶段确认：
-
-- 第三方 Execution Backend 的统一取消、进度和错误契约。
-- 主动 execute 的用户确认、风险等级和工具权限策略。
-
-验收：
-
-- Policy 不能直接调用 ToolSet。
-- Planner 拒绝后不会启动执行器。
-- 同一 action 的进度和最终结果共享 identity，不重复完成。
-- Native、Claude Code、OpenCode 等 Backend 使用同一 Action / Execution 边界。
+后台 `execute` 已从当前 Personal Runtime 删除。持续人格的现阶段目标是受控主动表达，
+而不是自行调用 Core、工具或外部系统。未来若重新引入后台执行，必须先独立设计用户确认、
+风险等级、工具权限、取消、进度和 delivery receipt 协议，不能复用本阶段已删除的私有 bridge。
 
 ## 十一、模块改动矩阵
 
@@ -807,7 +777,7 @@ coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 
 | 新的 Personal State 模块 | 1 | State、Feedback 类型 | Conversation / Memory |
 | 新的 Personal Policy 模块 | 2-3 | Gate、Features、Decision、shadow policy | Router、Planner、Tool loop |
 | `interaction/turn_state.py` | 1 | 只提供 completion 事实读取 | 持续状态主存储 |
-| `interaction/middleware.py` | 1、4、7 | 复用 Persona / Output action 边界 | Observation Inbox |
+| `interaction/middleware.py` | 1、4 | 复用 Persona / Output action 边界 | Observation Inbox、后台 Core 执行 |
 | `pipeline/process_stage/stage.py` | 5 | 官方过滤后的只读环境观察 tap | 新 Pipeline、wake 改写 |
 | `prompt/context_types.py`、Catalog | 3 | runtime 类别和规范槽 | Policy 私有数据管线 |
 | `prompt/targets.py` | 3 | `personal_policy` projection | 模型决策 |
@@ -869,9 +839,8 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
    和 diagnostics，不调用模型或输出，hold batch 不会丢失。
 9. `evaluate` batch 已可进入默认关闭的 Personal Policy；独立 Provider、严格 tool-call、
    timeout、temperature、每日预算和 fail-closed diagnostics 已接线。
-10. Policy 只读取受限 Prompt 投影，不取得 ToolSet、Skills、知识库、effect、Router 或 Planner
-    临时状态；`express` 经 ActionIntent 进入 Persona 输出、`defer` 写截止时间，`execute` 只形成执行
-    意图并接受独立 Planner 审核。
+10. Policy 只读取受限 Prompt 投影，不取得 ToolSet、Skills、知识库、effect、Router、Planner、Core
+    或工具；`express` 经 ActionIntent 进入 Persona 输出，`defer` 保留 batch 并写截止时间。
 11. 独立 Personal State Repository 已持久化最近表达、冷却、静音和每日用量。Policy 请求前先
     持久化调用计数；写入失败时 fail closed 且零 Provider 请求。
 12. 未成功落盘的控制状态不属于 idle，不能被 Runtime TTL / LRU 静默回收。
@@ -882,8 +851,8 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 单目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后只重新验证
 `platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不直接
 发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过同一 Runtime 的 Persona
-与 Output 链路表达。受控 `execute` 已复用同一 Runtime 与官方 Core 后段；下一步应使用真实运行数据审阅
-策略质量，再设计其他 Runtime Sensor、多目标注册和执行器解耦。
+与 Output 链路表达。defer、cooldown 和 quiet-hours 的 retained batch 由生命周期托管 Wake Scheduler
+到期重评；下一步应使用真实运行数据审阅策略质量，再设计其他 Runtime Sensor 与多目标注册。
 
 ## 十五、后续仍需用运行数据决定的问题
 
@@ -893,5 +862,5 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 - quiet hours 默认关闭；启用后的 23:00-08:00 建议值仍需用真实使用数据验证。
 - Phase 5 哪些群聊和 Adapter 默认允许环境观察，默认应关闭。
 - Phase 6 Sensor payload 的公共版本化和权限模型。
-- Phase 7 主动 execute 的用户确认、风险等级和工具权限策略。
+- 后台执行若重新引入，必须先设计用户确认、风险等级和工具权限策略。
 - 24 小时 / 1024 Runtime、64 Observation 和 1.5 秒聚合窗口是否需要根据真实 diagnostics 调整。

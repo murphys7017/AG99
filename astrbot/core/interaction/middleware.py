@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from types import MethodType
 from typing import Any
 
@@ -32,7 +32,7 @@ from .lifecycle import dispatch_interaction_lifecycle
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
-from .personal_action import PersonalActionIntent, PersonalExecutionIntent
+from .personal_action import PersonalActionIntent
 from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .runtime_event import RuntimeObservationEvent
@@ -127,10 +127,6 @@ class InteractionMiddleware:
         )
         self.output_controller.core_reply_handler = self._handle_core_reply_via_persona
         self.output_controller.lifecycle_callback = self._emit_lifecycle_from_output
-        self._runtime_core_executor: (
-            Callable[[RuntimeObservationEvent], Awaitable[None]] | None
-        ) = None
-
     async def _emit_lifecycle_from_output(
         self,
         event: AstrMessageEvent,
@@ -147,12 +143,6 @@ class InteractionMiddleware:
     def set_plugin_context(self, plugin_context: Any) -> None:
         self.plugin_context = plugin_context
         self.output_controller.plugin_context = plugin_context
-
-    def bind_runtime_core_executor(
-        self,
-        executor: Callable[[RuntimeObservationEvent], Awaitable[None]] | None,
-    ) -> None:
-        self._runtime_core_executor = executor
 
     async def _render_visible_reply_via_persona(
         self,
@@ -450,110 +440,6 @@ class InteractionMiddleware:
             raise
         finally:
             event.set_extra("_interaction_runtime_observation_active", False)
-
-    async def handle_runtime_execution(
-        self,
-        event: RuntimeObservationEvent,
-        turn: PersonalTurnContext,
-    ) -> bool:
-        """Run a Policy task through Planner and the existing Core-only bridge."""
-        if not isinstance(event, RuntimeObservationEvent):
-            raise TypeError("event must be a RuntimeObservationEvent")
-        if turn.event is not event or turn.observation is not event.observation:
-            raise ValueError("Runtime execution does not match the admitted turn")
-        intent = event.get_extra("_personal_execution_intent")
-        if not isinstance(intent, PersonalExecutionIntent):
-            raise ValueError("Runtime execution requires a PersonalExecutionIntent")
-        executor = self._runtime_core_executor
-        if executor is None:
-            raise RuntimeError("Runtime Core executor is not bound")
-
-        runtime_config = self._get_runtime_config(event)
-        if not is_middleware_enabled(runtime_config):
-            event.set_extra(
-                "_interaction_runtime_execution_skipped_reason",
-                "interaction_middleware_disabled",
-            )
-            return False
-
-        self.prepare_pipeline_event(event)
-        interaction_config = load_interaction_agent_config(runtime_config)
-        event.set_extra("_interaction_runtime_execution_active", True)
-        await dispatch_interaction_lifecycle(
-            event,
-            self.plugin_context,
-            InteractionLifecycleStage.RECEIVED,
-            metadata={
-                "source": "runtime_execution",
-                "action_id": intent.action_id,
-                "batch_id": intent.batch_id,
-            },
-        )
-        try:
-            decision = await self._plan_core_execution(event, interaction_config)
-            if decision.action is not CorePlanningAction.EXECUTE:
-                event.set_extra(
-                    "_interaction_runtime_execution_skipped_reason",
-                    "planner_not_required",
-                )
-                return False
-            if decision.task_spec is None:
-                raise CorePlannerError("missing_task_spec")
-            decision.task_spec.metadata.update(
-                {
-                    "personal_action_id": intent.action_id,
-                    "personal_policy_batch_id": intent.batch_id,
-                    "personal_runtime_execution": True,
-                }
-            )
-            self._forward_to_core(event)
-            await dispatch_interaction_lifecycle(
-                event,
-                self.plugin_context,
-                InteractionLifecycleStage.DELEGATED,
-                metadata={
-                    "source": "runtime_execution",
-                    "action_id": intent.action_id,
-                },
-            )
-            await executor(event)
-            return True
-        except asyncio.CancelledError:
-            mark_interaction_turn_cancelled(event)
-            await dispatch_interaction_lifecycle(
-                event,
-                self.plugin_context,
-                InteractionLifecycleStage.CANCELLED,
-                metadata={"source": "runtime_execution"},
-            )
-            raise
-        except Exception as exc:
-            record_interaction_turn_failure(
-                event,
-                stage="runtime_core_execution",
-                reason=str(exc),
-                exception=exc,
-                user_visible_action="none",
-            )
-            mark_interaction_turn_failed(event)
-            await dispatch_interaction_lifecycle(
-                event,
-                self.plugin_context,
-                InteractionLifecycleStage.FAILED,
-                metadata={
-                    "source": "runtime_execution",
-                    "reason": str(exc),
-                },
-            )
-            logger.exception(
-                "Personal Runtime Core execution failed: platform_id=%s session_id=%s action_id=%s",
-                event.get_platform_id(),
-                event.session_id,
-                intent.action_id,
-            )
-            return False
-        finally:
-            event.set_extra("_interaction_runtime_execution_active", False)
 
     async def handle_runtime_output(
         self,

@@ -311,8 +311,9 @@ flowchart LR
         OBS_GATE["Deterministic Gate<br/>features + PersonalState + runtime busy<br/>零模型调用 / 零输出"]
         OBS_GATE_RESULT{"evaluate / hold / reject<br/>稳定 reason + diagnostics"}
         OBS_POLICY["Personal Policy（默认关闭）<br/>独立 Provider / 严格 tool-call<br/>fail-closed observe"]
-        OBS_ACTION["Action Coordinator<br/>express -> ActionIntent<br/>defer -> no-action deadline<br/>execute 尚未开放"]
-        OBS_HOLD["restore batch to Inbox<br/>busy turn settle 后重评<br/>其他 hold 等待新 Observation"]
+        OBS_ACTION["Action Coordinator<br/>express -> ActionIntent<br/>defer -> no-action deadline"]
+        OBS_WAKE["Wake Scheduler<br/>defer / quiet-hours / cooldown 到期重评"]
+        OBS_HOLD["restore batch to Inbox<br/>busy turn settle 后重评"]
         OBS_EVENT["RuntimeObservationEvent<br/>仅适配已经决定发送的输出"]
         OBS_SUBMIT["submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
         OBS_HANDLER["InteractionMiddleware.handle_runtime_observation<br/>显式接收 event + PersonalTurnContext<br/>绕过 Router / Planner / Core"]
@@ -326,12 +327,14 @@ flowchart LR
         OBS_FUTURE_SOURCE -. "尚未实现" .-> OBS_FACT
         OBS_FACT --> OBS_INTAKE --> OBS_INBOX --> OBS_DEBOUNCE --> OBS_BATCH --> OBS_GATE --> OBS_GATE_RESULT
         OBS_GATE_CONFIG --> OBS_GATE
-        OBS_GATE_RESULT -->|"hold"| OBS_HOLD --> OBS_INBOX
+        OBS_GATE_RESULT -->|"hold"| OBS_HOLD
+        OBS_HOLD -->|"quiet-hours / cooldown"| OBS_WAKE --> OBS_INBOX
+        OBS_HOLD -->|"runtime busy"| OBS_INBOX
         OBS_GATE_RESULT -->|"reject"| RUNTIME_STATE
         OBS_GATE_RESULT -->|"evaluate 且启用"| OBS_POLICY
-        OBS_POLICY -->|"ignore / observe / execute"| RUNTIME_STATE
+        OBS_POLICY -->|"ignore / observe"| RUNTIME_STATE
         OBS_POLICY --> OBS_ACTION
-        OBS_ACTION -->|"defer"| RUNTIME_STATE
+        OBS_ACTION -->|"defer"| OBS_WAKE
         OBS_ACTION -->|"express"| OBS_EVENT
         OBS_EVENT --> OBS_SUBMIT --> OBS_HANDLER
         OBS_HANDLER -->|"存在 visible_reply_material"| OBS_PERSONA --> OBS_OUTPUT --> OBS_HISTORY

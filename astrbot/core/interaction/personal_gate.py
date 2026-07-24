@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -85,6 +85,28 @@ class ObservationGateSettings:
         if start < end:
             return start <= minute < end
         return minute >= start or minute < end
+
+    def quiet_hours_end_at(self, timestamp: float) -> float | None:
+        """Return the next quiet-hours boundary when the current time is held."""
+        start = self.quiet_hours_start_minute
+        end = self.quiet_hours_end_minute
+        if start is None or end is None or start == end:
+            return None
+        local = self.local_datetime(timestamp)
+        minute = local.hour * 60 + local.minute
+        if start < end and not start <= minute < end:
+            return None
+        if start > end and not (minute >= start or minute < end):
+            return None
+        boundary = local.replace(
+            hour=end // 60,
+            minute=end % 60,
+            second=0,
+            microsecond=0,
+        )
+        if start > end and minute >= start:
+            boundary += timedelta(days=1)
+        return boundary.timestamp()
 
 
 @dataclass(frozen=True, slots=True)

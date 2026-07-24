@@ -1,11 +1,14 @@
 task:
   class: feature
   risk: high
-  phase: execution_preparation_phase_8_turn_state_ownership
-  scope: Make CoreExecutionSpec own an independent in-process snapshot, remove unused Interaction Prompt extras, and move Core delegation ownership into InteractionTurnState while preserving Phase 7 controlled execution
+  phase: personal_runtime_continuity_closure
+  scope: Restrict Personal Runtime to safe proactive expression, remove the ungoverned background Core-execute path, add lifecycle-owned Observation wake scheduling, and expose read-only runtime diagnostics
 context:
   confidence: high
   assumptions:
+    - Personal Runtime currently prioritizes proactive expression; Policy actions are limited to ignore, observe, express, and defer until a separately reviewed background-execution permission model exists.
+    - Deferred, cooldown-held, and quiet-hours-held Observation batches must retain their facts and be re-evaluated by one lifecycle-owned wake scheduler without synthetic user messages or per-runtime polling loops.
+    - Runtime diagnostics are read-only, exclude raw Observation payloads and reply material, and report only operational state needed to validate proactive behavior.
     - PersonalState keeps process-local conversational and diagnostic fields while a narrow repository persists only last expression, cooldown, mute, and daily usage control fields by full PersonalRuntimeKey.
     - Completion Feedback is formed once at turn lease release; delivery success requires a visible utterance delivery receipt and is not inferred from send intent or final-output status alone.
     - Policy express creates an internal ActionIntent with a reliable action_id; only its confirmed visible delivery can write proactive cooldown and daily usage.

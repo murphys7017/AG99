@@ -29,6 +29,7 @@ from astrbot.core.interaction import (
     InteractionOutputController,
     PersonalHeartbeatSource,
     PersonalRuntimeManager,
+    PersonalRuntimeWakeScheduler,
     PersonalStateRepository,
 )
 from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
@@ -82,6 +83,12 @@ class AstrBotCoreLifecycle:
         self.personal_heartbeat_source: PersonalHeartbeatSource | None = None
         self.personal_runtime_manager = PersonalRuntimeManager(
             state_repository=PersonalStateRepository(db)
+        )
+        self.personal_runtime_wake_scheduler = PersonalRuntimeWakeScheduler(
+            self.personal_runtime_manager.wake_observations
+        )
+        self.personal_runtime_manager.bind_observation_wake_scheduler(
+            self.personal_runtime_wake_scheduler
         )
         self.core_execution_ledger = CoreExecutionLedger(db)
         self._default_chat_provider_warning_emitted = False
@@ -279,9 +286,6 @@ class AstrBotCoreLifecycle:
         self.personal_runtime_manager.bind_personal_expression_handler(
             self.interaction_middleware.handle_runtime_observation
         )
-        self.personal_runtime_manager.bind_personal_execution_handler(
-            self.interaction_middleware.handle_runtime_execution
-        )
 
         async def dispatch_proactive_message(session, message_chain, finalize=True):
             conf_info = self.astrbot_config_mgr.get_conf_info(session)
@@ -339,17 +343,6 @@ class AstrBotCoreLifecycle:
         # 初始化消息事件流水线调度器
         self.pipeline_scheduler_mapping = await self.load_pipeline_scheduler()
 
-        async def dispatch_runtime_core(event):
-            config_id = str(event.get_extra("_astrbot_config_id", "") or "").strip()
-            scheduler = self.pipeline_scheduler_mapping.get(config_id)
-            if scheduler is None:
-                raise RuntimeError(
-                    f"PipelineScheduler not found for runtime Core config: {config_id}"
-                )
-            await scheduler.execute_core_delegation(event)
-
-        self.interaction_middleware.bind_runtime_core_executor(dispatch_runtime_core)
-
         # 初始化更新器
         self.astrbot_updator = AstrBotUpdator()
 
@@ -369,6 +362,7 @@ class AstrBotCoreLifecycle:
         # 根据配置实例化各个平台适配器
         await self.platform_manager.initialize()
 
+        await self.personal_runtime_wake_scheduler.start()
         self.personal_heartbeat_source = PersonalHeartbeatSource(
             context=self.star_context,
             config_manager=self.astrbot_config_mgr,
@@ -515,6 +509,7 @@ class AstrBotCoreLifecycle:
             if self.cron_manager:
                 await self.cron_manager.shutdown()
 
+            await self.personal_runtime_wake_scheduler.shutdown()
             await self.personal_runtime_manager.shutdown()
             await get_postprocess_manager().shutdown()
 

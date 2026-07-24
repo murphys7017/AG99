@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 from astrbot import logger
 from astrbot.core.persona_error_reply import (
@@ -27,7 +27,6 @@ from .observation_inbox import (
 from .personal_action import (
     PersonalActionCoordinator,
     PersonalActionIntent,
-    PersonalExecutionIntent,
 )
 from .personal_gate import (
     DeterministicObservationGate,
@@ -41,7 +40,6 @@ from .personal_policy import PersonalPolicyAgent, PersonalPolicyEvaluation
 from .personal_state import (
     CompletionFeedback,
     PersonalDeliveryStatus,
-    PersonalExecutionStatus,
     PersonalPersistentState,
     PersonalState,
     PersonalStateSnapshot,
@@ -86,6 +84,14 @@ class PersonalRuntimeKey:
     privacy_scope: str
 
 
+class ObservationWakeScheduler(Protocol):
+    """Lifecycle-owned deadline scheduler used by Personal Session Runtimes."""
+
+    def schedule(self, key: PersonalRuntimeKey, due_at: float) -> None: ...
+
+    def cancel(self, key: PersonalRuntimeKey) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class PersonalSessionRuntimeSnapshot:
     key: PersonalRuntimeKey
@@ -99,6 +105,7 @@ class PersonalSessionRuntimeSnapshot:
     observation_evaluation_active: bool
     observation_overflow_drop_count: int
     observation_expired_drop_count: int
+    next_observation_wake_at: float | None
     last_observation_batch: ObservationBatch | None
     last_observation_gate_result: ObservationGateResult | None
     last_personal_policy_evaluation: PersonalPolicyEvaluation | None
@@ -154,23 +161,10 @@ def _build_completion_feedback(turn: PersonalTurnContext) -> CompletionFeedback:
     else:
         delivery_status = PersonalDeliveryStatus.NOT_ATTEMPTED
 
-    if completion.status is InteractionTurnStatus.COMPLETED:
-        execution_status = PersonalExecutionStatus.SUCCEEDED
-    elif completion.status is InteractionTurnStatus.FAILED:
-        execution_status = PersonalExecutionStatus.FAILED
-        failure_code = failure_code or "turn_failed"
-    elif completion.status is InteractionTurnStatus.CANCELLED:
-        execution_status = PersonalExecutionStatus.CANCELLED
-    elif failure_code is not None:
-        execution_status = PersonalExecutionStatus.FAILED
-    else:
-        execution_status = PersonalExecutionStatus.NOT_STARTED
-
     return CompletionFeedback(
         action_id=_resolve_personal_action_id(turn),
         turn_id=turn.turn_id,
         delivery_status=delivery_status,
-        execution_status=execution_status,
         output_completed_at=delivered_at or completion.terminal_at,
         failure_code=failure_code,
     )
@@ -435,7 +429,7 @@ class PersonalSessionRuntime:
         self._personal_policy_agent: PersonalPolicyAgent | None = None
         self._personal_action_handler: (
             Callable[
-                [PersonalSessionRuntime, PersonalActionIntent | PersonalExecutionIntent],
+                [PersonalSessionRuntime, PersonalActionIntent],
                 Awaitable[Any],
             ]
             | None
@@ -445,6 +439,8 @@ class PersonalSessionRuntime:
         self._interaction_config = InteractionAgentConfig()
         self._observation_batch_due_at: float | None = None
         self._observation_reschedule_requested = False
+        self.next_observation_wake_at: float | None = None
+        self._observation_wake_scheduler: ObservationWakeScheduler | None = None
         self._closing = False
         self.created_at = now
         self.last_access_at = now
@@ -465,6 +461,7 @@ class PersonalSessionRuntime:
             not self.has_active_conversational_work()
             and self.observation_inbox.pending_count > 0
         ):
+            self._clear_observation_wake()
             self._ensure_observation_evaluation_task()
         if self.is_idle():
             self.idle_since = now
@@ -499,7 +496,7 @@ class PersonalSessionRuntime:
         interaction_config: InteractionAgentConfig,
         gate_settings: ObservationGateSettings,
         action_handler: Callable[
-            [PersonalSessionRuntime, PersonalActionIntent | PersonalExecutionIntent],
+            [PersonalSessionRuntime, PersonalActionIntent],
             Awaitable[Any],
         ]
         | None,
@@ -510,6 +507,14 @@ class PersonalSessionRuntime:
         self._runtime_config = dict(runtime_config)
         self._interaction_config = interaction_config
         self.observation_gate_settings = gate_settings
+
+    def bind_observation_wake_scheduler(
+        self,
+        scheduler: ObservationWakeScheduler | None,
+    ) -> None:
+        self._observation_wake_scheduler = scheduler
+        if self.next_observation_wake_at is not None and scheduler is not None:
+            scheduler.schedule(self.key, self.next_observation_wake_at)
 
     def submit_observation(
         self,
@@ -527,6 +532,7 @@ class PersonalSessionRuntime:
             return result
 
         self.idle_since = None
+        self._clear_observation_wake()
         self.touch(now=now)
         self.state.record_observation(
             occurred_at=observation.occurred_at,
@@ -540,6 +546,8 @@ class PersonalSessionRuntime:
     def _ensure_observation_evaluation_task(
         self,
         observation_id: str | None = None,
+        *,
+        delay_seconds: float | None = None,
     ) -> bool:
         if self._closing:
             return False
@@ -549,7 +557,12 @@ class PersonalSessionRuntime:
             return False
         self._observation_reschedule_requested = False
         self._observation_batch_due_at = (
-            asyncio.get_running_loop().time() + self.observation_debounce_seconds
+            asyncio.get_running_loop().time()
+            + (
+                self.observation_debounce_seconds
+                if delay_seconds is None
+                else max(0.0, delay_seconds)
+            )
         )
         self.observation_evaluation_task = asyncio.create_task(
             self._evaluate_observations(),
@@ -561,9 +574,35 @@ class PersonalSessionRuntime:
         )
         return True
 
+    def wake_observations(self) -> bool:
+        """Re-evaluate retained facts after a lifecycle-owned wake deadline."""
+        self.next_observation_wake_at = None
+        if self._closing or self.observation_inbox.pending_count == 0:
+            return False
+        return self._ensure_observation_evaluation_task(delay_seconds=0.0)
+
+    def _schedule_observation_wake_at(self, due_at: float | None) -> None:
+        if due_at is None or self._closing:
+            return
+        normalized_due_at = max(time.time(), float(due_at))
+        current_due_at = self.next_observation_wake_at
+        if current_due_at is not None and current_due_at <= normalized_due_at:
+            return
+        self.next_observation_wake_at = normalized_due_at
+        if self._observation_wake_scheduler is not None:
+            self._observation_wake_scheduler.schedule(self.key, normalized_due_at)
+
+    def _clear_observation_wake(self) -> None:
+        if self.next_observation_wake_at is None:
+            return
+        self.next_observation_wake_at = None
+        if self._observation_wake_scheduler is not None:
+            self._observation_wake_scheduler.cancel(self.key)
+
     async def _evaluate_observations(self) -> None:
         current_task = asyncio.current_task()
         gate_result: ObservationGateResult | None = None
+        wake_at: float | None = None
         try:
             loop = asyncio.get_running_loop()
             due_at = self._observation_batch_due_at
@@ -602,8 +641,12 @@ class PersonalSessionRuntime:
                     self.state.set_pending_observation_count(
                         self.observation_inbox.pending_count
                     )
+                    wake_at = self._hold_wake_at(
+                        gate_result,
+                        state_snapshot=state_snapshot,
+                    )
                 elif gate_result.disposition is ObservationGateDisposition.EVALUATE:
-                    await self._evaluate_personal_policy(
+                    wake_at = await self._evaluate_personal_policy(
                         batch,
                         gate_result=gate_result,
                         state_snapshot=state_snapshot,
@@ -628,7 +671,9 @@ class PersonalSessionRuntime:
                     )
                 )
             )
-            if should_reschedule:
+            if wake_at is not None and self.observation_inbox.pending_count > 0:
+                self._schedule_observation_wake_at(wake_at)
+            elif should_reschedule:
                 self._ensure_observation_evaluation_task()
             now = time.time()
             if self.is_idle():
@@ -641,11 +686,11 @@ class PersonalSessionRuntime:
         *,
         gate_result: ObservationGateResult,
         state_snapshot: PersonalStateSnapshot,
-    ) -> None:
+    ) -> float | None:
         agent = self._personal_policy_agent
         plugin_context = self._plugin_context
         if agent is None or plugin_context is None:
-            return
+            return None
 
         async def record_provider_call() -> None:
             usage_day = self.observation_gate_settings.local_datetime(
@@ -667,7 +712,7 @@ class PersonalSessionRuntime:
             on_provider_call_started=record_provider_call,
         )
         if evaluation is None:
-            return
+            return None
         self.last_personal_policy_evaluation = evaluation
         self.state.record_policy_action(evaluation.decision.action.value)
         logger.info(
@@ -693,9 +738,20 @@ class PersonalSessionRuntime:
             ),
         )
         if plan.defer_until is not None:
+            self.observation_inbox.restore(batch)
+            self.state.set_pending_observation_count(self.observation_inbox.pending_count)
             if self.state.defer_actions_until(plan.defer_until):
                 self._persistent_state_dirty = True
-                await self._persist_state()
+                try:
+                    await self._persist_state()
+                except Exception:
+                    logger.exception(
+                        "Personal Policy defer persistence failed: "
+                        "config_id=%s persona_id=%s batch_id=%s",
+                        self.key.config_id,
+                        self.key.persona_id,
+                        batch.batch_id,
+                    )
             logger.info(
                 "Personal Policy deferred action: config_id=%s persona_id=%s "
                 "batch_id=%s not_before=%s",
@@ -704,10 +760,10 @@ class PersonalSessionRuntime:
                 batch.batch_id,
                 plan.defer_until,
             )
-            return
-        intent = plan.intent or plan.execution_intent
+            return plan.defer_until
+        intent = plan.intent
         if intent is None:
-            return
+            return None
         handler = self._personal_action_handler
         if handler is None:
             logger.warning(
@@ -717,7 +773,7 @@ class PersonalSessionRuntime:
                 self.key.persona_id,
                 batch.batch_id,
             )
-            return
+            return None
         try:
             await handler(self, intent)
         except asyncio.CancelledError:
@@ -731,6 +787,24 @@ class PersonalSessionRuntime:
                 batch.batch_id,
                 intent.action_id,
             )
+        return None
+
+    def _hold_wake_at(
+        self,
+        gate_result: ObservationGateResult,
+        *,
+        state_snapshot: PersonalStateSnapshot,
+    ) -> float | None:
+        reason = gate_result.reason_code
+        if reason is ObservationGateReason.QUIET_HOURS:
+            return self.observation_gate_settings.quiet_hours_end_at(
+                gate_result.evaluated_at
+            )
+        if reason is ObservationGateReason.REPLY_COOLDOWN:
+            return state_snapshot.reply_cooldown_until
+        if reason is ObservationGateReason.NO_ACTION_COOLDOWN:
+            return state_snapshot.no_action_cooldown_until
+        return None
 
     async def close(self) -> None:
         self._closing = True
@@ -744,6 +818,7 @@ class PersonalSessionRuntime:
         self.observation_evaluation_task = None
         self._observation_batch_due_at = None
         self._observation_reschedule_requested = False
+        self._clear_observation_wake()
         self.observation_inbox.clear()
         self.state.set_pending_observation_count(0)
         try:
@@ -789,6 +864,7 @@ class PersonalSessionRuntime:
                 self.observation_inbox.overflow_drop_count
             ),
             observation_expired_drop_count=self.observation_inbox.expired_drop_count,
+            next_observation_wake_at=self.next_observation_wake_at,
             last_observation_batch=self.last_observation_batch,
             last_observation_gate_result=self.last_observation_gate_result,
             last_personal_policy_evaluation=self.last_personal_policy_evaluation,
@@ -910,10 +986,7 @@ class PersonalRuntimeManager:
             Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]]
             | None
         ) = None
-        self._personal_execution_handler: (
-            Callable[[RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]]
-            | None
-        ) = None
+        self._observation_wake_scheduler: ObservationWakeScheduler | None = None
         self._state_repository = state_repository
         self._runtime_creation_lock = asyncio.Lock()
         self._accepting = True
@@ -931,14 +1004,21 @@ class PersonalRuntimeManager:
     ) -> None:
         self._personal_expression_handler = handler
 
-    def bind_personal_execution_handler(
+    def bind_observation_wake_scheduler(
         self,
-        handler: Callable[
-            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
-        ]
-        | None,
+        scheduler: ObservationWakeScheduler | None,
     ) -> None:
-        self._personal_execution_handler = handler
+        self._observation_wake_scheduler = scheduler
+        for runtime in self._sessions.values():
+            runtime.bind_observation_wake_scheduler(scheduler)
+
+    async def wake_observations(self, key: PersonalRuntimeKey) -> None:
+        if not self._accepting:
+            return
+        runtime = self._sessions.get(key)
+        if runtime is None:
+            return
+        runtime.wake_observations()
 
     async def submit_observation(
         self,
@@ -1113,16 +1193,9 @@ class PersonalRuntimeManager:
     async def _dispatch_personal_action(
         self,
         runtime: PersonalSessionRuntime,
-        intent: PersonalActionIntent | PersonalExecutionIntent,
+        intent: PersonalActionIntent,
     ) -> bool:
-        if isinstance(intent, PersonalActionIntent):
-            handler = self._personal_expression_handler
-            intent_extra_key = "_personal_action_intent"
-            submission_kind = "personal_expression"
-        else:
-            handler = self._personal_execution_handler
-            intent_extra_key = "_personal_execution_intent"
-            submission_kind = "personal_execution"
+        handler = self._personal_expression_handler
         if handler is None:
             raise RuntimeError("Personal action handler is not bound")
         if self._sessions.get(runtime.key) is not runtime:
@@ -1134,10 +1207,10 @@ class PersonalRuntimeManager:
             context=plugin_context,
             observation=intent.to_observation(),
         )
-        event.set_extra(intent_extra_key, intent)
+        event.set_extra("_personal_action_intent", intent)
         event.set_extra("_personal_action_id", intent.action_id)
         event.set_extra("_personal_action_batch_id", intent.batch_id)
-        event.set_extra("_personal_runtime_submission_kind", submission_kind)
+        event.set_extra("_personal_runtime_submission_kind", "personal_expression")
         return bool(
             await self.submit_runtime_observation_event(
                 event,
@@ -1301,6 +1374,129 @@ class PersonalRuntimeManager:
             sessions=sessions,
         )
 
+    def diagnostics_view(self) -> dict[str, Any]:
+        """Return a read-only operational view without Observation payloads."""
+        snapshot = self.snapshot_diagnostics()
+        return {
+            "accepting": snapshot.accepting,
+            "session_count": snapshot.session_count,
+            "non_idle_session_count": snapshot.non_idle_session_count,
+            "idle_session_count": snapshot.idle_session_count,
+            "eviction_count": snapshot.eviction_count,
+            "sessions": [
+                {
+                    "runtime_key": {
+                        "config_id": item.key.config_id,
+                        "persona_id": item.key.persona_id,
+                        "audience_key": item.key.audience_key,
+                        "privacy_scope": item.key.privacy_scope,
+                    },
+                    "active_turn_id": item.active_turn_id,
+                    "bound_turn_count": item.bound_turn_count,
+                    "created_at": item.created_at,
+                    "last_access_at": item.last_access_at,
+                    "idle_since": item.idle_since,
+                    "next_observation_wake_at": item.next_observation_wake_at,
+                    "state": {
+                        "attention_state": item.state.attention_state.value,
+                        "availability_state": item.state.availability_state.value,
+                        "last_observation_at": item.state.last_observation_at,
+                        "last_user_activity_at": item.state.last_user_activity_at,
+                        "last_expression_at": item.state.last_expression_at,
+                        "reply_cooldown_until": item.state.reply_cooldown_until,
+                        "no_action_cooldown_until": item.state.no_action_cooldown_until,
+                        "mute_until": item.state.mute_until,
+                        "pending_observation_count": item.state.pending_observation_count,
+                        "usage_day": item.state.usage_day,
+                        "daily_policy_calls": item.state.daily_policy_calls,
+                        "daily_proactive_outputs": item.state.daily_proactive_outputs,
+                        "last_gate_reason": item.state.last_gate_reason,
+                        "last_policy_action": item.state.last_policy_action,
+                    },
+                    "observation": {
+                        "evaluation_active": item.observation_evaluation_active,
+                        "overflow_drop_count": item.observation_overflow_drop_count,
+                        "expired_drop_count": item.observation_expired_drop_count,
+                        "last_batch": (
+                            {
+                                "batch_id": item.last_observation_batch.batch_id,
+                                "opened_at": item.last_observation_batch.opened_at,
+                                "closed_at": item.last_observation_batch.closed_at,
+                                "observation_count": len(
+                                    item.last_observation_batch.observations
+                                ),
+                                "source_counts": dict(
+                                    item.last_observation_batch.source_counts
+                                ),
+                            }
+                            if item.last_observation_batch is not None
+                            else None
+                        ),
+                        "last_gate": (
+                            {
+                                "batch_id": item.last_observation_gate_result.batch_id,
+                                "disposition": (
+                                    item.last_observation_gate_result.disposition.value
+                                ),
+                                "reason_code": (
+                                    item.last_observation_gate_result.reason_code.value
+                                ),
+                                "evaluated_at": (
+                                    item.last_observation_gate_result.evaluated_at
+                                ),
+                            }
+                            if item.last_observation_gate_result is not None
+                            else None
+                        ),
+                    },
+                    "policy": (
+                        {
+                            "batch_id": item.last_personal_policy_evaluation.batch_id,
+                            "status": (
+                                item.last_personal_policy_evaluation.status.value
+                            ),
+                            "action": (
+                                item.last_personal_policy_evaluation.decision.action.value
+                            ),
+                            "reason_code": (
+                                item.last_personal_policy_evaluation.decision.reason_code.value
+                            ),
+                            "evaluated_at": (
+                                item.last_personal_policy_evaluation.evaluated_at
+                            ),
+                            "provider_id": (
+                                item.last_personal_policy_evaluation.provider_id
+                            ),
+                            "provider_call_started": (
+                                item.last_personal_policy_evaluation.provider_call_started
+                            ),
+                            "failure_code": (
+                                item.last_personal_policy_evaluation.failure_code
+                            ),
+                        }
+                        if item.last_personal_policy_evaluation is not None
+                        else None
+                    ),
+                    "completion": (
+                        {
+                            "action_id": item.last_completion_feedback.action_id,
+                            "turn_id": item.last_completion_feedback.turn_id,
+                            "delivery_status": (
+                                item.last_completion_feedback.delivery_status.value
+                            ),
+                            "output_completed_at": (
+                                item.last_completion_feedback.output_completed_at
+                            ),
+                            "failure_code": item.last_completion_feedback.failure_code,
+                        }
+                        if item.last_completion_feedback is not None
+                        else None
+                    ),
+                }
+                for item in snapshot.sessions
+            ],
+        }
+
     async def shutdown(self) -> None:
         if not self._accepting:
             return
@@ -1378,6 +1574,7 @@ class PersonalRuntimeManager:
             ),
             action_handler=self._dispatch_personal_action,
         )
+        runtime.bind_observation_wake_scheduler(self._observation_wake_scheduler)
         return runtime
 
     def _ensure_accepting(self) -> None:
@@ -1407,6 +1604,8 @@ class PersonalRuntimeManager:
         if runtime is None or not runtime.is_idle():
             return
         self._sessions.pop(key, None)
+        if self._observation_wake_scheduler is not None:
+            self._observation_wake_scheduler.cancel(key)
         self._eviction_count += 1
         logger.debug(
             "Personal Runtime evicted: reason=%s config_id=%s persona_id=%s audience=%s privacy_scope=%s",

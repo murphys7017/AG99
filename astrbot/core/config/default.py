@@ -4397,7 +4397,7 @@ CONFIG_METADATA_3 = {
             "personal_policy": {
                 "description": "Personal Policy",
                 "type": "object",
-                "hint": "对通过确定性 Gate 的后台 Observation 做行动决策。express 仅通过统一 Persona 输出链路主动表达；execute 当前不执行。",
+                "hint": "对通过确定性 Gate 的后台 Observation 做行动决策。express 仅通过统一 Persona 输出链路主动表达；Policy 不调用 Core 或工具。",
                 "items": {
                     "interaction_middleware.personal_policy_enabled": {
                         "description": "启用人格策略",

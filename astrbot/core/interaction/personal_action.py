@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from .observation import RuntimeObservation
 from .observation_inbox import ObservationBatch
 from .personal_policy import PersonalPolicyAction, PersonalPolicyDecision
-from .runtime_context_projection import project_observation_batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,57 +46,8 @@ class PersonalActionIntent:
 
 
 @dataclass(frozen=True, slots=True)
-class PersonalExecutionIntent:
-    """One policy-approved background task that still requires Planner review."""
-
-    batch: ObservationBatch
-    task_intent: str
-    created_at: float
-    action_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.batch, ObservationBatch):
-            raise TypeError("PersonalExecutionIntent.batch is required")
-        if not self.task_intent.strip():
-            raise ValueError("PersonalExecutionIntent.task_intent is required")
-
-    @property
-    def batch_id(self) -> str:
-        return self.batch.batch_id
-
-    @property
-    def target_observation(self) -> RuntimeObservation:
-        return self.batch.observations[-1]
-
-    def to_core_planner_context(self) -> dict[str, object]:
-        """Expose the Policy task and its original facts to Core Planner."""
-        return {
-            "action_id": self.action_id,
-            "batch_id": self.batch_id,
-            "task_intent": self.task_intent,
-            "observation_batch": project_observation_batch(self.batch),
-        }
-
-    def to_observation(self) -> RuntimeObservation:
-        return RuntimeObservation(
-            kind="personal_execution",
-            source="personal_runtime.policy",
-            occurred_at=self.created_at,
-            target_session=self.target_observation.target_session,
-            correlation_id=self.action_id,
-            payload={
-                "personal_action_id": self.action_id,
-                "personal_action_kind": PersonalPolicyAction.EXECUTE.value,
-                "personal_policy_batch_id": self.batch_id,
-                "task_intent": self.task_intent,
-            },
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class PersonalActionPlan:
     intent: PersonalActionIntent | None = None
-    execution_intent: PersonalExecutionIntent | None = None
     defer_until: float | None = None
 
 
@@ -126,14 +76,6 @@ class PersonalActionCoordinator:
                 defer_until=evaluated_at
                 + max(float(decision.defer_seconds), minimum_defer_seconds)
             )
-        if decision.action is PersonalPolicyAction.EXECUTE:
-            return PersonalActionPlan(
-                execution_intent=PersonalExecutionIntent(
-                    batch=batch,
-                    task_intent=decision.task_intent,
-                    created_at=evaluated_at,
-                )
-            )
         return PersonalActionPlan()
 
 
@@ -141,5 +83,4 @@ __all__ = [
     "PersonalActionCoordinator",
     "PersonalActionIntent",
     "PersonalActionPlan",
-    "PersonalExecutionIntent",
 ]

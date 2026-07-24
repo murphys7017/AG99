@@ -51,6 +51,7 @@ class StatRoute(Route):
         super().__init__(context)
         self.routes = {
             "/stat/get": ("GET", self.get_stat),
+            "/stat/personal-runtime": ("GET", self.get_personal_runtime),
             "/stat/provider-tokens": ("GET", self.get_provider_token_stats),
             "/stat/version": ("GET", self.get_version),
             "/stat/start-time": ("GET", self.get_start_time),
@@ -135,6 +136,13 @@ class StatRoute(Route):
 
     async def get_start_time(self):
         return Response().ok({"start_time": self.core_lifecycle.start_time}).__dict__
+
+    async def get_personal_runtime(self):
+        return (
+            Response()
+            .ok(self.core_lifecycle.personal_runtime_manager.diagnostics_view())
+            .__dict__
+        )
 
     async def get_storage_status(self):
         try:

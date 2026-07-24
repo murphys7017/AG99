@@ -23,14 +23,6 @@ class PersonalDeliveryStatus(str, Enum):
     SUPPRESSED = "suppressed"
 
 
-class PersonalExecutionStatus(str, Enum):
-    NOT_STARTED = "not_started"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
 @dataclass(frozen=True, slots=True)
 class PersonalStateSnapshot:
     attention_state: PersonalAttentionState
@@ -215,7 +207,6 @@ class CompletionFeedback:
     action_id: str | None
     turn_id: str
     delivery_status: PersonalDeliveryStatus
-    execution_status: PersonalExecutionStatus = PersonalExecutionStatus.NOT_STARTED
     output_completed_at: float | None = None
     failure_code: str | None = None
     user_follow_up_observed: bool = False
@@ -226,7 +217,6 @@ __all__ = [
     "PersonalAttentionState",
     "PersonalAvailabilityState",
     "PersonalDeliveryStatus",
-    "PersonalExecutionStatus",
     "PersonalPersistentState",
     "PersonalState",
     "PersonalStateSnapshot",

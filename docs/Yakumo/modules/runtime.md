@@ -120,8 +120,7 @@ RuntimeObservation
      -> reject: stable diagnostics
   -> Policy decision / fail-closed observe
      -> express: ActionIntent -> RuntimeObservationEvent -> Persona -> Output
-     -> defer: persist no-action deadline
-     -> execute: independent Core Planner -> CoreTaskSpec -> Core-only Pipeline
+     -> defer: persist no-action deadline -> Wake Scheduler
      -> ignore / observe: Runtime diagnostics only
 
 已经决定发送的主动输出
@@ -135,9 +134,9 @@ RuntimeObservation
 `reject` 和 `hold` 零 Provider 调用。`evaluate` 在 Personal Policy 显式启用时通过规范 Prompt target
 调用独立 Provider，严格要求协议级 tool-call，失败统一记录为 `observe`。Policy 不持有工具、
 Skills、知识库或输出能力；`express` 只形成 `ActionIntent` 并交回 Runtime，最终可见内容始终由
-Persona Expression 生成。`defer` 只持久化无动作截止时间；`execute` 先由独立 Core Planner
-复核，只有 Planner 输出 `CoreTaskSpec` 后才通过既有 Core-only Pipeline 执行。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
-重新评估，quiet hours 与冷却等待后续 Observation 触发。单目标 Heartbeat Source 已由现有 Core
+Persona Expression 生成。`defer` 写入无动作截止时间并保留 batch；生命周期托管的 Wake Scheduler
+会在 defer、quiet hours 或冷却到期后重新评估。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
+重新评估。单目标 Heartbeat Source 已由现有 Core
 Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtime 配置；配置关闭时不提交事实，启用后每个 tick 只重新验证默认主动目标并调用
 `submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
 环境 Source 复用该目标作为观察范围：同一目标的非唤醒群聊文本通过官方白名单和会话状态检查后，

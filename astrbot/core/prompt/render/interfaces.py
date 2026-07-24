@@ -988,16 +988,6 @@ class BasePromptRenderer:
                     "observations",
                 ),
             ),
-            (
-                "runtime.execution_intent",
-                "execution_intent",
-                (
-                    "action_id",
-                    "batch_id",
-                    "task_intent",
-                    "observation_batch",
-                ),
-            ),
         ):
             if self._render_mapping_slot(
                 target,

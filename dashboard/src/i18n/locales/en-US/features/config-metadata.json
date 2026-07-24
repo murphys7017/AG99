@@ -1092,7 +1092,7 @@
     },
     "personal_policy": {
       "description": "Personal Policy",
-      "hint": "Decides actions for background Observations that pass the deterministic Gate. express uses the unified Persona output path; execute is not active yet.",
+      "hint": "Decides actions for background Observations that pass the deterministic Gate. express uses the unified Persona output path; Policy never calls Core or tools.",
       "interaction_middleware": {
         "personal_policy_enabled": {
           "description": "Enable Personal Policy"

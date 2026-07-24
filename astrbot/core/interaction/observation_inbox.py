@@ -172,18 +172,42 @@ class ObservationInbox:
         )
 
     def restore(self, batch: ObservationBatch) -> None:
-        """Restore a held batch without changing its order or accounting."""
-        if self._items:
-            raise RuntimeError(
-                "Cannot restore an observation batch into a non-empty inbox"
-            )
-        self._opened_at = batch.opened_at
-        for observation in batch.observations:
-            self._items[observation.observation_id] = observation
+        """Restore held facts while retaining newer observations admitted meanwhile."""
+        restored = OrderedDict(
+            (observation.observation_id, observation)
+            for observation in batch.observations
+        )
+        for observation_id, observation in self._items.items():
+            restored.pop(observation_id, None)
             if observation.coalesce_identity is not None:
-                self._coalesced_ids[observation.coalesce_identity] = (
-                    observation.observation_id
-                )
+                stale_ids = [
+                    item_id
+                    for item_id, item in restored.items()
+                    if item.coalesce_identity == observation.coalesce_identity
+                ]
+                for stale_id in stale_ids:
+                    restored.pop(stale_id, None)
+            restored[observation_id] = observation
+
+        overflow = max(0, len(restored) - self._max_pending)
+        for _ in range(overflow):
+            restored.popitem(last=False)
+        self.overflow_drop_count += overflow
+        self._items = restored
+        self._coalesced_ids = {
+            observation.coalesce_identity: observation_id
+            for observation_id, observation in restored.items()
+            if observation.coalesce_identity is not None
+        }
+        if restored:
+            opened_at = self._opened_at
+            self._opened_at = min(
+                value
+                for value in (batch.opened_at, opened_at)
+                if value is not None
+            )
+        else:
+            self._opened_at = None
 
     def clear(self) -> None:
         self._items.clear()

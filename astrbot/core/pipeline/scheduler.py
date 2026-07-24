@@ -93,28 +93,3 @@ class PipelineScheduler:
         finally:
             event.cleanup_temporary_local_files()
             active_event_registry.unregister(event)
-
-    async def execute_core_delegation(self, event: AstrMessageEvent) -> None:
-        """Run the existing Core and output stages for an admitted runtime task."""
-        event.set_extra("_astrbot_config", self.ctx.astrbot_config)
-        event.set_extra("_astrbot_config_id", self.ctx.astrbot_config_id)
-        active_event_registry.register(event)
-        try:
-            for index, stage in enumerate(self.stages):
-                process_core_delegation = getattr(stage, "process_core_delegation", None)
-                if not callable(process_core_delegation):
-                    continue
-                async for _ in process_core_delegation(event):
-                    if event.is_stopped():
-                        break
-                    await self._process_stages(event, index + 1)
-                if event.requires_visible_turn_completion() and not event.get_extra(
-                    "_visible_turn_completion_sent",
-                    False,
-                ):
-                    await event.complete_visible_turn()
-                return
-            raise RuntimeError("Pipeline has no Core delegation stage")
-        finally:
-            event.cleanup_temporary_local_files()
-            active_event_registry.unregister(event)

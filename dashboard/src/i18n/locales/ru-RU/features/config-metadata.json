@@ -1093,7 +1093,7 @@
         },
         "personal_policy": {
             "description": "Personal Policy",
-            "hint": "Принимает решения для фоновых Observation после deterministic Gate. express использует единый путь вывода Persona; execute пока не активен.",
+            "hint": "Принимает решения для фоновых Observation после deterministic Gate. express использует единый путь вывода Persona; Policy не вызывает Core или инструменты.",
             "interaction_middleware": {
                 "personal_policy_enabled": {
                     "description": "Включить Personal Policy"

@@ -39,6 +39,7 @@ from .persona_runtime import InteractionPersonaRuntime
 from .personal_heartbeat import PersonalHeartbeatSource
 from .personal_runtime import PersonalRuntimeManager
 from .personal_state_repository import PersonalStateRepository
+from .personal_wake_scheduler import PersonalRuntimeWakeScheduler
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
@@ -85,6 +86,7 @@ __all__ = [
     "PersonalHeartbeatSource",
     "PersonalRuntimeManager",
     "PersonalStateRepository",
+    "PersonalRuntimeWakeScheduler",
     "INTERACTION_TURN_STATE_EXTRA_KEY",
     "InteractionAgentConfig",
     "InteractionContextMaterial",

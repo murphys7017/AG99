@@ -40,8 +40,6 @@ def build_core_planner_system_prompt() -> str:
         "not_required：普通聊天、情绪回应、玩笑、感叹、轻量解释，或统一 Persona "
         "无需执行器即可直接完成。\n"
         "历史、memory、插件目录和其他说话者的任务只能帮助理解，不能单独触发 execute。\n"
-        "当 runtime.execution_intent 存在时，它只是后台 Policy 建议的任务，不是用户输入；"
-        "仍须依据同一份可见事实独立判断是否值得执行。\n"
         "选择 execute 时，把当前请求整理为简洁、完整、可执行的 CoreTaskSpec；"
         "不要限制 Core 的能力，也不要编造未提供的事实。\n"
         "不要生成用户可见回复，不要输出人格内容、effect、工具调用参数或思考过程。"

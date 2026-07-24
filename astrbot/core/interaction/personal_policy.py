@@ -49,7 +49,6 @@ _MODEL_REASON_CODES = (
     "meaningful_activity",
     "insufficient_value",
     "needs_more_context",
-    "task_opportunity",
 )
 
 
@@ -58,7 +57,6 @@ class PersonalPolicyAction(str, Enum):
     OBSERVE = "observe"
     EXPRESS = "express"
     DEFER = "defer"
-    EXECUTE = "execute"
 
 
 class PersonalPolicyReason(str, Enum):
@@ -69,7 +67,6 @@ class PersonalPolicyReason(str, Enum):
     MEANINGFUL_ACTIVITY = "meaningful_activity"
     INSUFFICIENT_VALUE = "insufficient_value"
     NEEDS_MORE_CONTEXT = "needs_more_context"
-    TASK_OPPORTUNITY = "task_opportunity"
     POLICY_FAILURE = "policy_failure"
 
 
@@ -83,7 +80,6 @@ class PersonalPolicyDecision:
     action: PersonalPolicyAction
     reason_code: PersonalPolicyReason
     reply_intent: str
-    task_intent: str
     importance: float
     defer_seconds: int
 
@@ -95,7 +91,6 @@ class PersonalPolicyDecision:
             "action",
             "reason_code",
             "reply_intent",
-            "task_intent",
             "importance",
             "defer_seconds",
         }
@@ -110,17 +105,15 @@ class PersonalPolicyDecision:
             return None
 
         reply_intent = payload["reply_intent"]
-        task_intent = payload["task_intent"]
         importance = payload["importance"]
         defer_seconds = payload["defer_seconds"]
-        if not isinstance(reply_intent, str) or not isinstance(task_intent, str):
+        if not isinstance(reply_intent, str):
             return None
         if isinstance(importance, bool) or not isinstance(importance, int | float):
             return None
         if isinstance(defer_seconds, bool) or not isinstance(defer_seconds, int):
             return None
         normalized_reply = reply_intent.strip()
-        normalized_task = task_intent.strip()
         normalized_importance = float(importance)
         if not 0.0 <= normalized_importance <= 1.0:
             return None
@@ -128,20 +121,17 @@ class PersonalPolicyDecision:
             return None
 
         if action is PersonalPolicyAction.EXPRESS:
-            valid_shape = bool(normalized_reply) and not normalized_task and defer_seconds == 0
-        elif action is PersonalPolicyAction.EXECUTE:
-            valid_shape = bool(normalized_task) and not normalized_reply and defer_seconds == 0
+            valid_shape = bool(normalized_reply) and defer_seconds == 0
         elif action is PersonalPolicyAction.DEFER:
-            valid_shape = not normalized_reply and not normalized_task and defer_seconds > 0
+            valid_shape = not normalized_reply and defer_seconds > 0
         else:
-            valid_shape = not normalized_reply and not normalized_task and defer_seconds == 0
+            valid_shape = not normalized_reply and defer_seconds == 0
         if not valid_shape:
             return None
         return cls(
             action=action,
             reason_code=reason,
             reply_intent=normalized_reply,
-            task_intent=normalized_task,
             importance=normalized_importance,
             defer_seconds=defer_seconds,
         )
@@ -152,7 +142,6 @@ class PersonalPolicyDecision:
             action=PersonalPolicyAction.OBSERVE,
             reason_code=PersonalPolicyReason.POLICY_FAILURE,
             reply_intent="",
-            task_intent="",
             importance=0.0,
             defer_seconds=0,
         )
@@ -207,7 +196,6 @@ def build_personal_policy_system_prompt() -> str:
         "- observe：事实值得记住或影响状态，但现在不需要行动。\n"
         "- express：值得主动表达；reply_intent 只写表达意图，不写最终台词。\n"
         "- defer：需要等待更多事实；填写 defer_seconds。\n"
-        "- execute：出现明确工作机会；task_intent 只写任务意图。后续仍须由 Core Planner 独立复核。\n"
         "reason_code 只能从以下值选择："
         + ", ".join(_MODEL_REASON_CODES)
         + "。\n"
@@ -238,7 +226,6 @@ def build_personal_policy_output_contract() -> OutputContract:
                     "enum": list(_MODEL_REASON_CODES),
                 },
                 "reply_intent": {"type": "string"},
-                "task_intent": {"type": "string"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1},
                 "defer_seconds": {
                     "type": "integer",
@@ -250,7 +237,6 @@ def build_personal_policy_output_contract() -> OutputContract:
                 "action",
                 "reason_code",
                 "reply_intent",
-                "task_intent",
                 "importance",
                 "defer_seconds",
             ],
