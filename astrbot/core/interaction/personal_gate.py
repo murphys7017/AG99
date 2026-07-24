@@ -37,6 +37,7 @@ class ObservationGateReason(str, Enum):
 class ObservationGateSettings:
     enabled: bool = True
     minimum_observation_count: int = 1
+    muted: bool = False
     quiet_hours_start_minute: int | None = None
     quiet_hours_end_minute: int | None = None
     timezone_name: str | None = None
@@ -53,8 +54,6 @@ class ObservationGateSettings:
         if start is not None:
             if not 0 <= start < 24 * 60 or not 0 <= end < 24 * 60:
                 raise ValueError("quiet hour minutes must be between 0 and 1439")
-            if start == end:
-                raise ValueError("quiet hour start and end must differ")
         for name, value in (
             ("daily_policy_call_limit", self.daily_policy_call_limit),
             ("daily_proactive_output_limit", self.daily_proactive_output_limit),
@@ -79,6 +78,8 @@ class ObservationGateSettings:
         end = self.quiet_hours_end_minute
         if start is None or end is None:
             return False
+        if start == end:
+            return True
         local = self.local_datetime(timestamp)
         minute = local.hour * 60 + local.minute
         if start < end:
@@ -182,7 +183,8 @@ class ObservationFeatureBuilder:
             is_runtime_busy=runtime_busy,
             is_quiet_hours=settings.is_quiet_hours(evaluated_at),
             is_muted=(
-                state.mute_until is not None
+                settings.muted
+                or state.mute_until is not None
                 and state.mute_until > evaluated_at
                 or state.availability_state is PersonalAvailabilityState.MUTED
                 and state.mute_until is None

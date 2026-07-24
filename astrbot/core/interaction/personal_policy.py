@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import SimpleNamespace
@@ -296,7 +296,7 @@ class PersonalPolicyAgent:
         plugin_context: Context,
         runtime_config: Mapping[str, Any],
         interaction_config: InteractionAgentConfig,
-        on_provider_call_started: Callable[[], None],
+        on_provider_call_started: Callable[[], Awaitable[None]],
     ) -> PersonalPolicyEvaluation | None:
         if not interaction_config.personal_policy_shadow_enabled:
             return None
@@ -390,7 +390,16 @@ class PersonalPolicyAgent:
 
         provider_call_started = False
         try:
-            on_provider_call_started()
+            await on_provider_call_started()
+        except Exception:
+            return PersonalPolicyEvaluation.fail_closed(
+                batch_id=batch.batch_id,
+                evaluated_at=gate_result.evaluated_at,
+                provider_id=provider_id,
+                failure_code="policy_usage_persistence_error",
+                selected_slot_names=slot_names,
+            )
+        try:
             provider_call_started = True
             response = await asyncio.wait_for(
                 provider.text_chat(

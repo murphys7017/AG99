@@ -247,6 +247,39 @@ class Preference(TimestampMixin, SQLModel, table=True):
     )
 
 
+class PersonalRuntimeState(TimestampMixin, SQLModel, table=True):
+    """Restart-safe control state for one Personal Runtime identity."""
+
+    __tablename__: str = "personal_runtime_states"
+
+    id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_column_kwargs={"autoincrement": True},
+    )
+    config_id: str = Field(nullable=False)
+    persona_id: str = Field(nullable=False)
+    audience_key: str = Field(nullable=False)
+    privacy_scope: str = Field(nullable=False)
+    last_expression_at: float | None = Field(default=None)
+    reply_cooldown_until: float | None = Field(default=None)
+    no_action_cooldown_until: float | None = Field(default=None)
+    mute_until: float | None = Field(default=None)
+    usage_day: str | None = Field(default=None)
+    daily_policy_calls: int = Field(default=0, nullable=False)
+    daily_proactive_outputs: int = Field(default=0, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "config_id",
+            "persona_id",
+            "audience_key",
+            "privacy_scope",
+            name="uix_personal_runtime_state_identity",
+        ),
+    )
+
+
 class PlatformMessageHistory(TimestampMixin, SQLModel, table=True):
     """This class represents the message history for a specific platform.
 

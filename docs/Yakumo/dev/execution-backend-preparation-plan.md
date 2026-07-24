@@ -123,9 +123,9 @@ Expression、Output Controller、assistant-only Conversation 提交和完整 lif
 关闭的 batch 已进入纯本地 Deterministic Gate，只形成 `evaluate / hold / reject` diagnostics；
 不调用模型，hold batch 会返回 Inbox。
 
-本阶段尚未完成：Heartbeat/Runtime Sensor 等 Observation 生产者、目标 session registry、
-Gate settings 与持久状态接线、插件和后台任务 identity，以及 Personal Policy / Action
-Coordinator。
+本阶段已完成：持久状态接线、Gate settings、Shadow Policy 与单目标 Heartbeat Observation
+生产者。仍未完成：Runtime Sensor、多目标 session registry、插件和后台任务 identity，以及
+Personal Policy 的 Action Coordinator。
 
 实施内容：
 
@@ -321,7 +321,7 @@ Phase 0 已确认的准备边界：
 - 建立 Deterministic Gate，从规范 batch 与 Runtime state 构建 features，执行 expiry、busy、
   mute、quiet hours、cooldown、budget 和 target capability 检查；只写稳定 diagnostics。
 - Observation 复用唯一 Persona 与 Output 路径，写入 assistant-only Conversation，并在
-  发送失败、取消和异常时保留正确终态；当前尚无 Heartbeat 生产者。
+  发送失败、取消和异常时保留正确终态；单目标 Heartbeat 只提交 Observation，不进入该输出路径。
 - 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化
   差异审计，并确定其长期 owner。
 - 删除无生产调用者的 `handle_inbound()`、`core_queue` 和 `enqueue_core` 重投递双轨，
@@ -381,8 +381,8 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   重入同 session lease 或提前完成 turn；跨 session 文本输出使用独立 proactive turn。
 - 全量物理发送失败和 canonical material 缺失已在本轮修正；分段部分成功仍缺 delivery
   receipt，after-send hook 的 stop 语义也可能让已送达内容被标记 cancelled。
-- Observation 已有输入/输出契约，但 assistant-only history projection、目标 session
-  registry、policy 和 producer 尚未完成，因此还不能称为可用 Heartbeat。
+- Observation 已有输入/输出契约；单目标 Heartbeat 已通过现有生命周期接入 Inbox。assistant-only
+  history projection、Runtime Sensor、多目标 session registry 和 Action 仍未完成，因此还不能称为主动表达能力。
 - Native 已消费 `CoreExecutionSpec`，Third-party 仍是官方兼容请求链。两者的上下文、
   capability、execution identity、ledger 和错误状态尚未统一，暂不适合直接抽象成等价
   Backend。

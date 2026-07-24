@@ -49,6 +49,17 @@ class PersonalStateSnapshot:
     last_policy_action: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class PersonalPersistentState:
+    last_expression_at: float | None
+    reply_cooldown_until: float | None
+    no_action_cooldown_until: float | None
+    mute_until: float | None
+    usage_day: str | None
+    daily_policy_calls: int
+    daily_proactive_outputs: int
+
+
 @dataclass(slots=True)
 class PersonalState:
     """Process-local control state owned by one Personal Session Runtime."""
@@ -89,7 +100,8 @@ class PersonalState:
             else PersonalAvailabilityState.AVAILABLE
         )
 
-    def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
+    def apply_completion_feedback(self, feedback: CompletionFeedback) -> bool:
+        previous_expression_at = self.last_expression_at
         if (
             feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
             and feedback.output_completed_at is not None
@@ -98,6 +110,7 @@ class PersonalState:
                 feedback.output_completed_at,
                 self.last_expression_at or feedback.output_completed_at,
             )
+        return self.last_expression_at != previous_expression_at
 
     def record_observation(self, *, occurred_at: float, pending_count: int) -> None:
         self.last_observation_at = max(
@@ -124,6 +137,26 @@ class PersonalState:
 
     def record_policy_action(self, action: str) -> None:
         self.last_policy_action = str(action or "").strip() or None
+
+    def restore_persistent(self, state: PersonalPersistentState) -> None:
+        self.last_expression_at = state.last_expression_at
+        self.reply_cooldown_until = state.reply_cooldown_until
+        self.no_action_cooldown_until = state.no_action_cooldown_until
+        self.mute_until = state.mute_until
+        self.usage_day = str(state.usage_day or "").strip() or None
+        self.daily_policy_calls = max(0, int(state.daily_policy_calls))
+        self.daily_proactive_outputs = max(0, int(state.daily_proactive_outputs))
+
+    def persistent_snapshot(self) -> PersonalPersistentState:
+        return PersonalPersistentState(
+            last_expression_at=self.last_expression_at,
+            reply_cooldown_until=self.reply_cooldown_until,
+            no_action_cooldown_until=self.no_action_cooldown_until,
+            mute_until=self.mute_until,
+            usage_day=self.usage_day,
+            daily_policy_calls=self.daily_policy_calls,
+            daily_proactive_outputs=self.daily_proactive_outputs,
+        )
 
     def snapshot(self) -> PersonalStateSnapshot:
         return PersonalStateSnapshot(
@@ -161,6 +194,7 @@ __all__ = [
     "PersonalAvailabilityState",
     "PersonalDeliveryStatus",
     "PersonalExecutionStatus",
+    "PersonalPersistentState",
     "PersonalState",
     "PersonalStateSnapshot",
 ]

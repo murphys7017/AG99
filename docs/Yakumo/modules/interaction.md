@@ -61,9 +61,12 @@ tool-call 契约返回 `ignore / observe / express / defer / execute`，但当�
 session lock，目标必须明确支持主动消息；没有 `visible_reply_material` 时不会请求模型，实际
 发送失败会使 turn 失败，不能把未投递内容写成成功历史。
 
-Heartbeat、Runtime Sensor、Action Coordinator 和目标 session registry 尚未实现；Policy 每日
-调用上限已接入配置，但状态仍只在进程内，quiet hours、cooldown 和主动输出预算也尚未形成
-持久配置。因此 Inbox 不会自行产生 Observation，Shadow Policy 也不会产生可见输出。插件调用
+单目标 Heartbeat Source 已由 Core Lifecycle 托管；它只针对已配置且仍支持主动消息的默认目标
+提交可过期、可合并的 `heartbeat` Observation，不构造消息或直接发送。Runtime Sensor、Action
+Coordinator 和多目标 session registry 尚未实现；Policy 每日调用上限已接入配置，其调用计数会在 Provider 请求前写入独立 Personal State Repository。
+最近表达、冷却、静音和每日用量具备窄化的重启恢复边界。静音、quiet hours、cooldown 时长与
+主动输出上限已经接入用户配置；Gate 立即执行静音、全局时区安静时段和输出预算，但 cooldown
+截止时间与主动输出计数仍须由后续 Action 生命周期写入。因此 Inbox 现在可以由 Heartbeat 驱动，但 Shadow Policy 仍不会产生可见输出。插件调用
 `Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
 session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
 

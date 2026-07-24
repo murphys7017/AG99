@@ -27,7 +27,9 @@ from astrbot.core.execution_ledger import CoreExecutionLedger
 from astrbot.core.interaction import (
     InteractionMiddleware,
     InteractionOutputController,
+    PersonalHeartbeatSource,
     PersonalRuntimeManager,
+    PersonalStateRepository,
 )
 from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.memory import (
@@ -75,7 +77,10 @@ class AstrBotCoreLifecycle:
         self.memory_service = None
         self.memory_postprocessor = None
         self.interaction_middleware: InteractionMiddleware | None = None
-        self.personal_runtime_manager = PersonalRuntimeManager()
+        self.personal_heartbeat_source: PersonalHeartbeatSource | None = None
+        self.personal_runtime_manager = PersonalRuntimeManager(
+            state_repository=PersonalStateRepository(db)
+        )
         self.core_execution_ledger = CoreExecutionLedger(db)
         self._default_chat_provider_warning_emitted = False
         self._lifecycle_service_tasks: set[asyncio.Task] = set()
@@ -323,6 +328,16 @@ class AstrBotCoreLifecycle:
 
         # 根据配置实例化各个平台适配器
         await self.platform_manager.initialize()
+
+        self.personal_heartbeat_source = PersonalHeartbeatSource(
+            context=self.star_context,
+            config_manager=self.astrbot_config_mgr,
+            runtime_manager=self.personal_runtime_manager,
+        )
+        self._start_lifecycle_service(
+            self.personal_heartbeat_source.run(),
+            name="personal_runtime_heartbeat",
+        )
 
         # 初始化关闭控制面板的事件
         self.dashboard_shutdown_event = asyncio.Event()

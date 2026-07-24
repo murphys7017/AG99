@@ -156,6 +156,16 @@ class InteractionAgentConfig:
     personal_policy_temperature: float = 0.1
     personal_policy_timeout: float = 8.0
     personal_policy_daily_call_limit: int = 200
+    personal_runtime_muted: bool = False
+    personal_runtime_quiet_hours_enabled: bool = False
+    personal_runtime_quiet_hours_start: int = 23
+    personal_runtime_quiet_hours_end: int = 8
+    personal_runtime_timezone: str | None = None
+    personal_runtime_reply_cooldown_seconds: float = 1800.0
+    personal_runtime_no_action_cooldown_seconds: float = 300.0
+    personal_runtime_daily_proactive_output_limit: int = 6
+    personal_heartbeat_enabled: bool = False
+    personal_heartbeat_interval_seconds: float = 300.0
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200

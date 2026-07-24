@@ -1,18 +1,20 @@
 task:
   class: feature
   risk: high
-  phase: autonomous_persona_runtime_phase_3
-  scope: Shadow-evaluate only deterministic-Gate evaluate batches through a dedicated strict-tool-call Personal Policy target without executing actions or changing ordinary message behavior
+  phase: autonomous_persona_runtime_phase_4_heartbeat_observation
+  scope: Establish restart-safe Personal Runtime state, deterministic Gate controls, and a single-target Heartbeat Observation source before action execution or proactive output behavior
 context:
   confidence: high
   assumptions:
-    - The autonomous runtime implementation starts with process-local cross-turn PersonalState ownership and bounded Runtime retention; it does not start with Heartbeat, a policy model, or proactive output behavior.
+    - PersonalState keeps process-local conversational and diagnostic fields while a narrow repository persists only last expression, cooldown, mute, and daily usage control fields by full PersonalRuntimeKey.
     - Completion Feedback is formed once at turn lease release; delivery success requires a visible utterance delivery receipt and is not inferred from send intent or final-output status alone.
     - Daily proactive output usage remains unchanged until ActionIntent provides a reliable action_id and proactive identity.
     - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
     - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
-    - Proactive expression cannot ship until last-expression, cooldown, mute, and daily usage state are restart-safe.
+    - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; proactive expression still requires an Action lifecycle that writes cooldown deadlines and proactive usage.
+    - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
+    - PersonalHeartbeatSource is lifecycle-owned, follows the configured default proactive target and that target's matched runtime configuration, and only submits an expiring/coalescing heartbeat fact after revalidating Adapter capability; it does not create an event, acquire a turn lease, or invoke Persona, Core, or Output.
     - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
     - Personal Policy gets a dedicated Prompt target only in the shadow-policy phase and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
     - The shadow-policy phase uses a read-only Prompt collection adapter for the existing event-shaped collector interface; it is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.
@@ -172,6 +174,8 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Autonomous Personal Runtime Gate configuration: public config/Gate smoke covered mute, cross-midnight quiet hours, and proactive output budget; Ruff, py_compile, and three locale JSON parses passed; no test file was added.
+    - Autonomous Personal Runtime Phase 4 persistence prerequisite: dedicated SQLite repository create/update/reload smoke, Ruff, py_compile, Core Lifecycle import, and git diff checks passed; no test file was added.
     - Autonomous Personal Runtime Phase 1B: delivered/failed/cancelled/suppressed completion feedback smoke, interaction package import, Ruff, py_compile, YAML parse, VitePress build, and git diff checks passed; no implementation-detail test files were added.
     - Autonomous Personal Runtime Phase 1A: PersonalState and diagnostics import smoke, focused valid Core lifecycle stop tests (2 passed), Ruff, py_compile, YAML parse, docs build, and git diff checks passed; one existing cross-event-loop MagicMock task test fails before the new shutdown boundary and was not used as implementation evidence.
     - TTS lifecycle/output segment direct-path refactor: affected Voice Service, event delivery, message-chain delivery, Respond/Postprocess, Interaction Middleware, and Interaction Output Controller suite passed 236 tests; Ruff, py_compile, VitePress build, YAML parse, and git diff checks passed. Pytest retained known aiosqlite event-loop-close warnings.
@@ -310,28 +314,27 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "Phase 3 has no production Heartbeat, Sensor, Action Coordinator, persistent control state, or live Policy Provider evaluation by design. Shadow quality and false-positive rates require real observations and a user-selected provider. Targeted Pyright remains unavailable."
+  validation_gap: "The single-target Heartbeat source is disabled by default and does not execute actions. Sensor coverage, Action Coordinator, proactive output accounting, and real shadow-policy quality data remain absent. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: autonomous_persona_runtime_phase_3
+    phase: autonomous_persona_runtime_phase_4_heartbeat_observation
     scope:
-      - dedicated Personal Policy Prompt target over canonical ContextPack projection
-      - explicit independent Provider, timeout, temperature, feature flag, and daily call limit
-      - strict protocol tool-call PersonalPolicyDecision with fail-closed observe diagnostics
-      - sequential evaluation when new observations arrive during an active Policy call
-      - Runtime snapshots for the last Gate and shadow Policy evaluation
+      - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
+      - restart-safe last expression, cooldown, mute, and daily usage fields
+      - mute, quiet-hours, cooldown-duration, policy budget, and output budget configuration
+      - Gate enforcement before any Shadow Policy Provider request
+      - lifecycle-owned, default-disabled, single-target Heartbeat Observation submission
       - no Action, Persona, Core, Output, EventBus, or synthetic event execution
     non_goals:
-      - heartbeat
       - proactive reply or Action Coordinator
       - execution of express, defer, or execute decisions
       - EventBus, Pipeline, Router, Planner, Persona, Core, or Output execution
       - synthetic platform or user messages
     confirmed_gaps:
-      - only the Policy daily call limit is projected from user configuration; cooldown, mute, quiet hours, proactive output usage, and all control state are not restart-safe
+      - cooldown deadlines and proactive output usage require a future Action lifecycle; configured durations do not mutate Shadow Policy state
       - quiet-hours and cooldown holds require a later Observation to wake them until the producer lifecycle exists
-      - no production Observation source or live Provider diagnostics exist yet
+      - no Runtime Sensor, multi-target registry, or Action lifecycle exists yet
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract

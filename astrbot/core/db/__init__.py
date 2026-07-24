@@ -21,6 +21,7 @@ from astrbot.core.db.po import (
     CronJob,
     Persona,
     PersonaFolder,
+    PersonalRuntimeState,
     PlatformMessageHistory,
     PlatformSession,
     PlatformStat,
@@ -631,6 +632,36 @@ class BaseDatabase(abc.ABC):
     @abc.abstractmethod
     async def clear_preferences(self, scope: str, scope_id: str) -> None:
         """Clear all preferences for a specific scope ID."""
+        ...
+
+    @abc.abstractmethod
+    async def get_personal_runtime_state(
+        self,
+        config_id: str,
+        persona_id: str,
+        audience_key: str,
+        privacy_scope: str,
+    ) -> PersonalRuntimeState | None:
+        """Get the persisted control state for one Personal Runtime."""
+        ...
+
+    @abc.abstractmethod
+    async def upsert_personal_runtime_state(
+        self,
+        *,
+        config_id: str,
+        persona_id: str,
+        audience_key: str,
+        privacy_scope: str,
+        last_expression_at: float | None,
+        reply_cooldown_until: float | None,
+        no_action_cooldown_until: float | None,
+        mute_until: float | None,
+        usage_day: str | None,
+        daily_policy_calls: int,
+        daily_proactive_outputs: int,
+    ) -> PersonalRuntimeState:
+        """Create or replace the persisted control state for one Personal Runtime."""
         ...
 
     @abc.abstractmethod

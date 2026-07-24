@@ -1113,6 +1113,46 @@
         }
       }
     },
+    "personal_runtime_policy": {
+      "description": "Proactive Persona Controls",
+      "hint": "Controls whether background Observations may enter policy evaluation. Heartbeat only produces observations; proactive expression is not enabled yet.",
+      "interaction_middleware": {
+        "personal_heartbeat_enabled": {
+          "description": "Enable Persona Heartbeat",
+          "hint": "Only submits Observations to Personal Runtime; it never sends messages or calls Core directly."
+        },
+        "personal_heartbeat_interval_seconds": {
+          "description": "Persona Heartbeat Interval Seconds",
+          "hint": "Minimum 30 seconds; initially applies only to the default proactive message target."
+        },
+        "personal_runtime_muted": {
+          "description": "Mute Proactive Persona",
+          "hint": "Rejects background Observations at the Gate without calling the policy model."
+        },
+        "personal_runtime_quiet_hours_enabled": {
+          "description": "Enable Quiet Hours"
+        },
+        "personal_runtime_quiet_hours_start": {
+          "description": "Quiet Hours Start",
+          "hint": "Hour from 0 to 23 in the global timezone. Equal start and end means quiet all day."
+        },
+        "personal_runtime_quiet_hours_end": {
+          "description": "Quiet Hours End"
+        },
+        "personal_runtime_reply_cooldown_seconds": {
+          "description": "Proactive Reply Cooldown Seconds",
+          "hint": "Reserved for successful proactive Actions; Shadow Policy does not write this state."
+        },
+        "personal_runtime_no_action_cooldown_seconds": {
+          "description": "No-Action Cooldown Seconds",
+          "hint": "Reserved for future no-action or defer decisions; Shadow Policy does not write this state."
+        },
+        "personal_runtime_daily_proactive_output_limit": {
+          "description": "Daily Proactive Output Limit",
+          "hint": "Set to 0 to block all background policy evaluation. Ordinary replies do not consume this budget."
+        }
+      }
+    },
     "stream": {
       "description": "In-Progress Prompts",
       "hint": "Observes core streaming output windows and lets the middleware insert short in-progress prompts while core is still working.",

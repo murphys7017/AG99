@@ -130,9 +130,10 @@ RuntimeObservation
 `reject` 和 `hold` 零 Provider 调用。`evaluate` 在 Shadow Policy 显式启用时通过规范 Prompt target
 调用独立 Provider，严格要求协议级 tool-call，失败统一记录为 `observe`。Policy 不持有工具、
 Skills、知识库或输出能力，也不执行其决策。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
-重新评估，quiet hours 与冷却等待后续 Observation 触发。主动输出兼容入口继续与平台消息共享
-session runtime 锁，并在 admission 时校验目标发送能力。两者都尚未由
-Heartbeat 或 Sensor 自动触发。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
+重新评估，quiet hours 与冷却等待后续 Observation 触发。单目标 Heartbeat Source 已由现有 Core
+Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtime 配置；配置关闭时不提交事实，启用后每个 tick 只重新验证默认主动目标并调用
+`submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。主动输出兼容
+入口继续与平台消息共享 session runtime 锁，并在 admission 时校验目标发送能力。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
 的路径；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output Controller，跨 session
 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
 
@@ -141,8 +142,15 @@ Heartbeat 或 Sensor 自动触发。普通插件 `Context.send_message()` 的纯
 在 bind、settle 和 observation admission 边界惰性执行回收，不运行独立清理线程。每个 Runtime
 拥有最多 64 条 Observation 的 Inbox 和唯一 1.5 秒固定聚合窗口 task；窗口内的新事实不延长
 截止时间，Policy 调用期间新增的事实会顺序进入下一批，pending facts 或 task 存在时不属于 idle。
-Shadow Policy 的开关、独立 Provider、temperature、timeout 和每日调用上限已接入配置；调用次数、
-最后 decision 和 Gate 状态只服务运行控制与 diagnostics，尚未持久化。
+尚未成功落盘的控制状态同样不属于 idle，不能被 TTL / LRU 静默回收。
+Shadow Policy 的开关、独立 Provider、temperature、timeout 和每日调用上限已接入配置。首次创建
+Runtime 时，窄化的 Personal State Repository 按 RuntimeKey 恢复最近表达、冷却、静音和每日
+用量；Policy 调用计数在 Provider 请求前持久化，写入失败时零 Provider 调用。最后 decision、Gate
+状态、Inbox、active turn 和 attention 只服务进程内运行控制与 diagnostics，不持久化。
+Repository 恢复失败会降级为当前进程内状态，最终保存失败只记录诊断，不会中断 Core shutdown。
+主动人格静音、安静时段、回复/不动作冷却时长和每日主动输出上限也已接入配置。安静时段复用
+官方全局 IANA timezone；Gate 当前执行静音、安静时段和输出预算。两个 cooldown 时长只作为后续
+Action 配置，Shadow Policy 不会伪造截止时间或主动输出计数。
 
 Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形成一次
 `CompletionFeedback`。投递终态以 `InteractionUtterance.delivered_message_ids` 为准，再结合 turn
@@ -159,8 +167,8 @@ Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形�
 无显式目标的主动输出通过 `Context.get_proactive_message_target()` 读取
 `platform_settings.proactive_message_target`。该值是完整 UMO；WebUI 仅列出当前支持主动
 消息的已知会话，运行时仍会重新验证 Adapter。`Context.send_message(None, ...)` 和无目标
-主动 Cron 使用它，显式 session 不会被覆盖。这个机制只提供 delivery target，不创建
-Heartbeat、Sensor 或主动回复策略。
+主动 Cron 使用它，显式 session 不会被覆盖。Heartbeat 复用同一个默认目标，但只创建
+Observation；它不创建 Sensor、Action 或主动回复。
 
 ## 重构意义
 

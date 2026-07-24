@@ -20,6 +20,7 @@ from astrbot.core.db.po import (
     CronJob,
     Persona,
     PersonaFolder,
+    PersonalRuntimeState,
     PlatformMessageHistory,
     PlatformSession,
     PlatformStat,
@@ -1373,6 +1374,75 @@ class SQLiteDatabase(BaseDatabase):
                     ),
                 )
             await session.commit()
+
+    async def get_personal_runtime_state(
+        self,
+        config_id,
+        persona_id,
+        audience_key,
+        privacy_scope,
+    ):
+        async with self.get_db() as session:
+            result = await session.execute(
+                select(PersonalRuntimeState).where(
+                    PersonalRuntimeState.config_id == config_id,
+                    PersonalRuntimeState.persona_id == persona_id,
+                    PersonalRuntimeState.audience_key == audience_key,
+                    PersonalRuntimeState.privacy_scope == privacy_scope,
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def upsert_personal_runtime_state(
+        self,
+        *,
+        config_id,
+        persona_id,
+        audience_key,
+        privacy_scope,
+        last_expression_at,
+        reply_cooldown_until,
+        no_action_cooldown_until,
+        mute_until,
+        usage_day,
+        daily_policy_calls,
+        daily_proactive_outputs,
+    ):
+        async with self.get_db() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(PersonalRuntimeState).where(
+                        PersonalRuntimeState.config_id == config_id,
+                        PersonalRuntimeState.persona_id == persona_id,
+                        PersonalRuntimeState.audience_key == audience_key,
+                        PersonalRuntimeState.privacy_scope == privacy_scope,
+                    )
+                )
+                state = result.scalar_one_or_none()
+                values = {
+                    "last_expression_at": last_expression_at,
+                    "reply_cooldown_until": reply_cooldown_until,
+                    "no_action_cooldown_until": no_action_cooldown_until,
+                    "mute_until": mute_until,
+                    "usage_day": usage_day,
+                    "daily_policy_calls": max(0, int(daily_policy_calls)),
+                    "daily_proactive_outputs": max(
+                        0, int(daily_proactive_outputs)
+                    ),
+                }
+                if state is None:
+                    state = PersonalRuntimeState(
+                        config_id=config_id,
+                        persona_id=persona_id,
+                        audience_key=audience_key,
+                        privacy_scope=privacy_scope,
+                        **values,
+                    )
+                    session.add(state)
+                else:
+                    for field_name, value in values.items():
+                        setattr(state, field_name, value)
+                return state
 
     # ====
     # Command Configuration & Conflict Tracking

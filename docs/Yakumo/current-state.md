@@ -102,10 +102,10 @@
 - **新增** `emit_output()` / `send_direct()` / `send_persona()`：`AstrMessageEvent` 上的最终插件输出 helper；`emit_progress()` / `send_progress()` 发送可见进度但不完成 turn，供随后 yield `ProviderRequest` 的插件使用。
 - 插件 Handler `yield ProviderRequest` 时，ProcessStage 委托同一 turn 执行 Core；Core 返回后继续恢复插件生成器的 post-yield 逻辑和剩余 Handler，随后结束 delegated turn，不再重复进入默认 Core 路径。
 - ProcessStage 在插件 Handler 前取得 Personal Runtime lease；Router、Persona、Context Material 和 Stream Observation task 由 `TurnExecutionScope` 持有，lease 释放前统一完成或取消。
-- `PersonalSessionRuntime` 不再在 turn 结束后立即删除。它现在持有进程内 `PersonalState`，按 `config_id + persona_id + audience_key + privacy_scope` 跨 turn 复用；空闲实例通过 24 小时 TTL 和最多 1024 条的 LRU 边界惰性回收。Core stop 会关闭并清空 Runtime Manager。Turn lease 释放时会从规范 turn state 和物理投递回执形成一次 `CompletionFeedback`；只有存在 `delivered_message_ids` 的可见输出才更新 `last_expression_at`。当前状态不写入 event extra 作为主存储，也不在重启后恢复。
+- `PersonalSessionRuntime` 不再在 turn 结束后立即删除。它现在持有进程内 `PersonalState`，按 `config_id + persona_id + audience_key + privacy_scope` 跨 turn 复用；空闲实例通过 24 小时 TTL 和最多 1024 条的 LRU 边界惰性回收。Core stop 会关闭并清空 Runtime Manager。窄化的 `PersonalStateRepository` 使用独立 `personal_runtime_states` 表，只恢复最近表达、冷却、静音和每日用量等重启安全控制字段；Inbox、active turn、attention、临时 Prompt 和 diagnostics 不持久化。Turn lease 释放时会从规范 turn state 和物理投递回执形成一次 `CompletionFeedback`；只有存在 `delivered_message_ids` 的可见输出才更新并持久化 `last_expression_at`。
 - `PersonalRuntimeManager.submit_observation()` 是独立的系统事实入口。它按官方会话人格、session rule、配置默认人格和统一隐私规则解析同一个 RuntimeKey；不要求目标支持主动发送，不创建 `AstrMessageEvent`，也不进入 EventBus、Pipeline、Router、Planner、Core 或 Output。
 - 每个 `PersonalSessionRuntime` 独占最多 64 条待处理 Observation 和一个 1.5 秒固定聚合窗口 task。显式 `coalesce_key` 按 `kind + source + coalesce_key` 保留最新事实；入队先清理过期项，满载后丢弃最旧项并记录稳定 reason。窗口内的新事实不会延长截止时间，避免持续输入导致 batch 饥饿。batch 关闭后由确定性 Gate 计算可验证 features，并按 expiry、有效材料、目标能力、mute、quiet hours、Runtime busy、冷却和预算返回 `evaluate / hold / reject`。只有 `evaluate` 可以进入可选的 Shadow Personal Policy；Policy 使用独立 Provider、严格 tool-call 契约和 fail-closed `observe`，只保存 diagnostics，不执行 Action。调用期间到达的新事实会由同一 Runtime 顺序调度为下一批。`hold` batch 会恢复到 Inbox，busy hold 在当前 turn settle 后重新评估。待处理事实和 task 存在时 Runtime 不可回收，shutdown 会取消并等待 task。
-- `PromptTarget.PERSONAL_POLICY` 只投影人格摘要、有限 Conversation history、必要 Memory 和 Runtime facts；不投影工具、Skills、知识库、effect、Router 或 Planner 临时决策。`personal_policy_shadow_enabled` 默认关闭，Provider 必须显式选择，每日调用上限在 Provider 请求开始时计入进程内 `PersonalState`。
+- `PromptTarget.PERSONAL_POLICY` 只投影人格摘要、有限 Conversation history、必要 Memory 和 Runtime facts；不投影工具、Skills、知识库、effect、Router 或 Planner 临时决策。`personal_policy_shadow_enabled` 默认关闭，Provider 必须显式选择；每日调用计数在 Provider 请求前先写入 Personal State Repository，持久化失败时以 `policy_usage_persistence_error` fail closed，且不会发起 Provider 请求。
 - Immediate 与 Final 使用同一 turn lock 原子预留输出槽。Final 先到时取消 pending Persona；Immediate 已提交时保留 Hybrid 的双阶段输出语义。
 - `Context.send_message()` 的主动纯文本输出进入 Personal Runtime；当前 session 的 Core 工具输出作为 progress，跨 session 输出建立独立 proactive turn。assistant-only 输出可进入后续 Prompt 与 Memory history。
 - `platform_settings.proactive_message_target` 保存默认主动消息目标，WebUI 从已有会话中选择完整 UMO，并只展示当前支持主动消息的 Adapter。`Context.send_message(None, ...)` 与未携带 `session` 的主动 Cron 读取该目标；显式目标优先，运行时会再次校验 Adapter 是否仍可用。
@@ -132,7 +132,7 @@
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
-- 默认主动目标只解决投递位置，不是 Heartbeat 或主动策略；Observation Inbox、确定性 Gate 和 Shadow Personal Policy 已能接收、筛选并评估人工提交的内部事实，但 Heartbeat、Sensor、Action Coordinator、冷却/静音配置和持久预算仍是后续 Runtime 触发层能力
+- 默认主动目标同时作为首个 Heartbeat Observation 的唯一目标。生命周期任务以该目标实际命中的 Runtime 配置读取开关与间隔，并重新校验目标与 Adapter 能力；tick 只调用通用 `submit_observation()`，不构造平台事件、不直接调用 Persona/Core/Output。静音、安静时段、回复/不动作冷却时长和每日主动输出上限已经进入配置；Gate 立即执行静音、全局时区安静时段和输出预算。冷却时长尚未由 Action 写成截止时间，主动输出也尚未计数，因为 Sensor 与 Action Coordinator 仍未接入。
 - `CompletionFeedback` 已接入真实 turn completion。最后一份不可变反馈进入 Runtime diagnostics；冷却和主动预算仍未启用，后者必须等待可验证的 `ActionIntent/action_id`，不能把普通被动回复误算为主动输出
 
 ### 3. 插件与工具整合层

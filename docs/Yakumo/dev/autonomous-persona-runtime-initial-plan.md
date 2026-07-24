@@ -22,8 +22,7 @@
 7. Core Planner 与 Execution Backend 只负责工作判断和执行，不拥有持续人格状态。
 8. Prompt 继续遵守 `Collectors -> ContextPack -> target projection -> Render Profile -> Renderer`。
 9. Heartbeat tick 不等于模型调用；确定性 Gate 在任何后台模型调用之前执行。
-10. 第一阶段只建立进程内跨 turn 状态，不承诺重启恢复。主动表达开放前，冷却、静音和预算
-    必须具备重启安全的持久化。
+10. 对话和诊断状态保持进程内；主动控制字段在主动表达开放前必须具备重启安全的持久化。
 11. 现有 `RuntimeObservationEvent` 和 `submit_runtime_observation_event()` 是“已决定输出后的平台
     适配入口”，不是通用 Observation Inbox，不能直接扩展成后台观察总线。
 12. 初期主动策略只作用于用户明确配置的默认主动目标，不自动为所有历史会话创建 Heartbeat。
@@ -62,6 +61,8 @@
   `evaluate / hold / reject`、原因码与 diagnostics；不调用模型或输出。
 - `RuntimeObservationEvent` 能把已经形成的主动表达适配到平台发送边界。
 - `PersonalState` 已跨 turn 保留，并从真实物理投递回执接收一次 Completion Feedback。
+- 窄化的 Personal State Repository 已按 RuntimeKey 持久化最近表达、冷却、静音和每日用量；
+  Runtime 首次创建时恢复这些控制字段，不恢复 Inbox、active turn 或模型临时状态。
 - `InteractionOutputController` 已负责可见输出、最终输出仲裁、完成状态和规范记录。
 - Persona Expression 已是即时回复、Core 结果和插件可见材料的统一人格表达入口。
 - Prompt 已能从规范 `ContextPack` 投影 Router、Core Planner、Personal Policy、Persona 和 Core 视图。
@@ -73,11 +74,11 @@
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. Gate settings 只接入了 Shadow Policy 每日调用上限；冷却、静音和主动预算仍是进程内字段，尚未达到开放主动
-   表达所需的重启安全性。
-2. 默认主动目标只回答“发到哪里”；Shadow Policy 已能判断人工 Observation，但其决策尚未进入
-   Action Coordinator。
-3. Heartbeat、Sensor 和 Action Coordinator 尚未接入，因此没有生产来源自动驱动 Inbox。
+1. 重启安全的状态仓库及 quiet hours、冷却时长、静音和主动输出预算配置已经接入；冷却截止时间
+   和主动输出计数仍未接入 Action 生命周期，尚不能开放主动表达。
+2. 默认主动目标同时承载首个 Heartbeat Source；Shadow Policy 已能判断 Heartbeat 与人工
+   Observation，但其决策尚未进入 Action Coordinator。
+3. Heartbeat 已只读接入 Inbox；Sensor 和 Action Coordinator 尚未接入，当前没有主动表达能力。
 4. Shadow diagnostics 尚未积累真实模型和真实 Observation 数据，不能据此开放主动表达。
 
 ## 三、目标流程
@@ -378,7 +379,7 @@ actor、message_id、conversation_id 和 turn_id 是单轮事实，不加入 Run
 
 ### 6.3 重启持久化
 
-第一阶段不写数据库。第四阶段启用主动表达前，增加窄化的 State Repository，只持久化：
+第一阶段没有写数据库。Phase 4 前置批次已经增加窄化的 State Repository，只持久化：
 
 - `last_expression_at`
 - `reply_cooldown_until`
@@ -388,8 +389,8 @@ actor、message_id、conversation_id 和 turn_id 是单轮事实，不加入 Run
 - `daily_policy_calls`
 - `daily_proactive_outputs`
 
-Inbox、active turn、模型临时上下文和短期 attention 不持久化。启动后可以重新观察世界，不能恢复
-到一个伪造的进行中 turn。
+Inbox、active turn、模型临时上下文和短期 attention 不持久化。Runtime 首次创建时按完整
+RuntimeKey 恢复控制字段；启动后可以重新观察世界，不能恢复到一个伪造的进行中 turn。
 
 ## 七、Inbox、合并和 Gate 规则
 
@@ -662,7 +663,7 @@ Policy 不接收：
 - shadow 模式记录 Gate features、Policy decision 和后续事实对照。
 - Provider 必须显式选择，不继承 Persona 或 Core Provider；不支持协议级 tool-call 时不会发起
   模型请求。
-- Provider 请求开始时才计入进程内每日调用预算；调用期间新增 Observation 顺序进入下一批。
+- Provider 请求开始前先持久化每日调用预算；调用期间新增 Observation 顺序进入下一批。
 
 验收：
 
@@ -674,6 +675,9 @@ Policy 不接收：
 ### Phase 4：单目标 Heartbeat Express
 
 目标：让配置目标具备受控的主动人格表达能力。
+
+当前进度：Heartbeat Observation Source 已完成，仍处于 Shadow 阶段；ActionIntent、主动表达和
+主动输出计数尚未开放。
 
 前置条件：
 
@@ -839,17 +843,23 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
    timeout、temperature、每日预算和 fail-closed diagnostics 已接线。
 10. Policy 只读取受限 Prompt 投影，不取得 ToolSet、Skills、知识库、effect、Router 或 Planner
     临时状态；所有 action 都不执行。
+11. 独立 Personal State Repository 已持久化最近表达、冷却、静音和每日用量。Policy 请求前先
+    持久化调用计数；写入失败时 fail closed 且零 Provider 请求。
+12. 未成功落盘的控制状态不属于 idle，不能被 Runtime TTL / LRU 静默回收。
+13. 静音、安静时段、回复/不动作冷却时长和每日主动输出上限已接入配置。Gate 立即执行静音、
+    全局时区安静时段和输出预算；Shadow Policy 不写 cooldown 截止时间或主动输出计数。
 
-下一次代码实施应先完成 Phase 4 的前置条件：确定持久状态边界，接入 quiet hours、mute、cooldown
-和主动输出预算配置，并用真实 shadow diagnostics 验证策略质量。满足这些条件后，再增加只提交
-Observation 的单目标 Heartbeat Source；不能直接从当前 shadow decision 跳到主动发送。
+单目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后只重新验证
+`platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不能
+直接发送消息，也不能从当前 shadow decision 跳到主动表达。下一次代码实施应先用真实 shadow
+diagnostics 验证策略质量，再独立设计 Action Coordinator、ActionIntent、冷却截止时间和主动输出计数。
 
 ## 十五、后续仍需用运行数据决定的问题
 
 以下问题不阻塞已完成阶段，但必须在对应阶段前确认：
 
 - 哪些模型在严格 tool-call 下能稳定满足 Policy schema，以及 shadow decision 的误触发率。
-- Phase 4 quiet hours 的默认时间段，不在代码里隐式假设。
+- quiet hours 默认关闭；启用后的 23:00-08:00 建议值仍需用真实使用数据验证。
 - Phase 5 哪些群聊和 Adapter 默认允许环境观察，默认应关闭。
 - Phase 6 Sensor payload 的公共版本化和权限模型。
 - Phase 7 主动 execute 的用户确认、风险等级和工具权限策略。

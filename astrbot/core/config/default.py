@@ -227,6 +227,15 @@ DEFAULT_CONFIG = {
         "personal_policy_temperature": 0.1,
         "personal_policy_timeout": 8.0,
         "personal_policy_daily_call_limit": 200,
+        "personal_runtime_muted": False,
+        "personal_runtime_quiet_hours_enabled": False,
+        "personal_runtime_quiet_hours_start": 23,
+        "personal_runtime_quiet_hours_end": 8,
+        "personal_runtime_reply_cooldown_seconds": 1800.0,
+        "personal_runtime_no_action_cooldown_seconds": 300.0,
+        "personal_runtime_daily_proactive_output_limit": 6,
+        "personal_heartbeat_enabled": False,
+        "personal_heartbeat_interval_seconds": 300.0,
         "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
@@ -4424,6 +4433,67 @@ CONFIG_METADATA_3 = {
                         "condition": {
                             "interaction_middleware.personal_policy_shadow_enabled": True,
                         },
+                    },
+                },
+            },
+            "personal_runtime_policy": {
+                "description": "主动人格控制",
+                "type": "object",
+                "hint": "控制后台 Observation 是否允许进入策略评估。Heartbeat 只产生观察，主动表达尚未开放。",
+                "items": {
+                    "interaction_middleware.personal_heartbeat_enabled": {
+                        "description": "启用人格心跳",
+                        "type": "bool",
+                        "hint": "仅向 Personal Runtime 提交 Observation，不直接发送消息或调用 Core。",
+                    },
+                    "interaction_middleware.personal_heartbeat_interval_seconds": {
+                        "description": "人格心跳间隔秒数",
+                        "type": "float",
+                        "hint": "最小 30 秒；初期只作用于主动消息默认目标。",
+                        "condition": {
+                            "interaction_middleware.personal_heartbeat_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_runtime_muted": {
+                        "description": "静音主动人格",
+                        "type": "bool",
+                        "hint": "启用后，后台 Observation 会在 Gate 被拒绝，不调用策略模型。",
+                    },
+                    "interaction_middleware.personal_runtime_quiet_hours_enabled": {
+                        "description": "启用安静时段",
+                        "type": "bool",
+                    },
+                    "interaction_middleware.personal_runtime_quiet_hours_start": {
+                        "description": "安静时段开始小时",
+                        "type": "int",
+                        "slider": {"min": 0, "max": 23, "step": 1},
+                        "hint": "使用全局时区设置；起止小时相同表示全天安静。",
+                        "condition": {
+                            "interaction_middleware.personal_runtime_quiet_hours_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_runtime_quiet_hours_end": {
+                        "description": "安静时段结束小时",
+                        "type": "int",
+                        "slider": {"min": 0, "max": 23, "step": 1},
+                        "condition": {
+                            "interaction_middleware.personal_runtime_quiet_hours_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_runtime_reply_cooldown_seconds": {
+                        "description": "主动回复冷却秒数",
+                        "type": "float",
+                        "hint": "供后续主动 Action 成功后设置冷却；当前 Shadow Policy 不写入该状态。",
+                    },
+                    "interaction_middleware.personal_runtime_no_action_cooldown_seconds": {
+                        "description": "不动作冷却秒数",
+                        "type": "float",
+                        "hint": "供后续 Policy 决定不动作或延后时设置冷却；当前 Shadow Policy 不写入该状态。",
+                    },
+                    "interaction_middleware.personal_runtime_daily_proactive_output_limit": {
+                        "description": "每日主动输出上限",
+                        "type": "int",
+                        "hint": "设为 0 会在 Gate 阻止所有后台策略评估。普通被动回复不计入此预算。",
                     },
                 },
             },

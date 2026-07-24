@@ -258,7 +258,8 @@ flowchart LR
         NORMAL_POST["非 Interaction：后台调度 AFTER_MESSAGE_SENT<br/>+ AFTER_TURN_COMPLETED"]
         INTERACTION_AFTER["Interaction：RespondStage 只调度 AFTER_MESSAGE_SENT<br/>Turn 完成由 Middleware 持有"]
         TURN_RELEASE["ProcessStage finally<br/>关闭 TurnExecutionScope<br/>生成一次 CompletionFeedback<br/>释放 Turn lease"]
-        RUNTIME_STATE["PersonalSessionRuntime.state<br/>保存最后反馈供 diagnostics"]
+        RUNTIME_STATE["PersonalSessionRuntime.state<br/>进程内控制状态与 diagnostics"]
+        RUNTIME_REPOSITORY["PersonalStateRepository / personal_runtime_states<br/>仅最近表达、冷却、静音、每日用量"]
         CLEANUP["PipelineScheduler 收尾<br/>必要时补 visible completion<br/>finally 清理临时文件 + 注销 active event"]
 
         INTERACTION_PLATFORM_SEND --> VISIBLE --> OUTPUT_FINAL
@@ -286,17 +287,22 @@ flowchart LR
         TURN_FINAL --> TURN_RELEASE
         IFAIL --> TURN_RELEASE
         TURN_RELEASE -. "真实 delivered 回执才更新 last_expression_at" .-> RUNTIME_STATE
+        RUNTIME_REPOSITORY -->|"Runtime 首次创建恢复"| RUNTIME_STATE
+        RUNTIME_STATE -. "持久控制字段变更" .-> RUNTIME_REPOSITORY
         TURN_RELEASE --> CLEANUP
     end
 
-    subgraph OBSERVATION["八、Runtime Observation（Intake + Gate + Shadow Policy 已实现，暂无 Heartbeat / Sensor）"]
+    subgraph OBSERVATION["八、Runtime Observation（Heartbeat + Intake + Gate + Shadow Policy 已实现）"]
         direction TB
-        OBS_SOURCE["未来 Heartbeat / Scheduler / Runtime Sensor<br/>当前源码尚未接入"]
+        OBS_HEARTBEAT_CONFIG["默认主动目标 + 目标命中配置<br/>heartbeat enable / interval"]
+        OBS_SOURCE["PersonalHeartbeatSource<br/>Core Lifecycle 托管<br/>tick 不直接发送"]
+        OBS_FUTURE_SOURCE["未来 Scheduler / Runtime Sensor"]
         OBS_FACT["RuntimeObservation<br/>稳定 ID / expiry / coalesce key<br/>不可变系统事实"]
         OBS_INTAKE["PersonalRuntimeManager.submit_observation<br/>复用官方会话人格与隐私规则解析 RuntimeKey<br/>不构造 event / message"]
         OBS_INBOX["PersonalSessionRuntime Inbox<br/>每 Runtime 最多 64 条<br/>expiry / coalesce / overflow drop oldest"]
         OBS_DEBOUNCE["唯一固定聚合窗口 task<br/>1.5 秒；新事实不延长截止时间<br/>pending/task 存在时不可回收"]
         OBS_BATCH["immutable ObservationBatch<br/>同一 RuntimeKey 的规范事实批次"]
+        OBS_GATE_CONFIG["Gate 配置<br/>mute / quiet hours + 全局时区<br/>policy + output budget"]
         OBS_GATE["Deterministic Gate<br/>features + PersonalState + runtime busy<br/>零模型调用 / 零输出"]
         OBS_GATE_RESULT{"evaluate / hold / reject<br/>稳定 reason + diagnostics"}
         OBS_POLICY["Shadow Personal Policy（默认关闭）<br/>独立 Provider / 严格 tool-call<br/>fail-closed observe / diagnostics only"]
@@ -309,8 +315,10 @@ flowchart LR
         OBS_HISTORY["assistant-only Conversation commit<br/>Prompt / Memory history projection<br/>completed / failed / cancelled lifecycle"]
         OBS_NONE["没有 material：零模型调用并 settle"]
 
-        OBS_SOURCE -. "尚未实现" .-> OBS_FACT
+        OBS_HEARTBEAT_CONFIG --> OBS_SOURCE --> OBS_FACT
+        OBS_FUTURE_SOURCE -. "尚未实现" .-> OBS_FACT
         OBS_FACT --> OBS_INTAKE --> OBS_INBOX --> OBS_DEBOUNCE --> OBS_BATCH --> OBS_GATE --> OBS_GATE_RESULT
+        OBS_GATE_CONFIG --> OBS_GATE
         OBS_GATE_RESULT -->|"hold"| OBS_HOLD --> OBS_INBOX
         OBS_GATE_RESULT -->|"reject"| RUNTIME_STATE
         OBS_GATE_RESULT -->|"evaluate 且启用"| OBS_POLICY --> RUNTIME_STATE

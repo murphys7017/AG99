@@ -33,6 +33,9 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     planner_provider_id = str(
         interaction_config.get("planner_provider_id", "") or ""
     ) or expression_provider_id
+    quiet_hours_enabled = bool(
+        interaction_config.get("personal_runtime_quiet_hours_enabled", False)
+    )
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", False)),
         expression_provider_id=expression_provider_id,
@@ -84,6 +87,72 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
             _int_or_default(
                 interaction_config.get("personal_policy_daily_call_limit", 200),
                 200,
+            ),
+        ),
+        personal_runtime_muted=bool(
+            interaction_config.get("personal_runtime_muted", False)
+        ),
+        personal_runtime_quiet_hours_enabled=quiet_hours_enabled,
+        personal_runtime_quiet_hours_start=min(
+            23,
+            max(
+                0,
+                _int_or_default(
+                    interaction_config.get("personal_runtime_quiet_hours_start", 23),
+                    23,
+                ),
+            ),
+        ),
+        personal_runtime_quiet_hours_end=min(
+            23,
+            max(
+                0,
+                _int_or_default(
+                    interaction_config.get("personal_runtime_quiet_hours_end", 8),
+                    8,
+                ),
+            ),
+        ),
+        personal_runtime_timezone=(
+            str(config.get("timezone", "") or "").strip() or None
+        )
+        if quiet_hours_enabled
+        else None,
+        personal_runtime_reply_cooldown_seconds=max(
+            0.0,
+            _float_or_default(
+                interaction_config.get(
+                    "personal_runtime_reply_cooldown_seconds", 1800.0
+                ),
+                1800.0,
+            ),
+        ),
+        personal_runtime_no_action_cooldown_seconds=max(
+            0.0,
+            _float_or_default(
+                interaction_config.get(
+                    "personal_runtime_no_action_cooldown_seconds", 300.0
+                ),
+                300.0,
+            ),
+        ),
+        personal_runtime_daily_proactive_output_limit=max(
+            0,
+            _int_or_default(
+                interaction_config.get(
+                    "personal_runtime_daily_proactive_output_limit", 6
+                ),
+                6,
+            ),
+        ),
+        personal_heartbeat_enabled=bool(
+            interaction_config.get("personal_heartbeat_enabled", False)
+        ),
+        personal_heartbeat_interval_seconds=max(
+            30.0,
+            _float_or_default(
+                interaction_config.get("personal_heartbeat_interval_seconds", 300.0),
+                300.0,
             ),
         ),
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),

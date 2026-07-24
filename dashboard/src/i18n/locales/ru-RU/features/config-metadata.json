@@ -1114,6 +1114,46 @@
                 }
             }
         },
+        "personal_runtime_policy": {
+            "description": "Управление проактивной Persona",
+            "hint": "Определяет, могут ли фоновые Observation переходить к оценке Policy. Heartbeat только создаёт наблюдения; проактивные ответы пока не включены.",
+            "interaction_middleware": {
+                "personal_heartbeat_enabled": {
+                    "description": "Включить heartbeat Persona",
+                    "hint": "Только отправляет Observation в Personal Runtime; сообщения и Core напрямую не запускаются."
+                },
+                "personal_heartbeat_interval_seconds": {
+                    "description": "Интервал heartbeat Persona (сек)",
+                    "hint": "Минимум 30 секунд; сначала используется только цель проактивных сообщений по умолчанию."
+                },
+                "personal_runtime_muted": {
+                    "description": "Отключить проактивную Persona",
+                    "hint": "Gate отклоняет фоновые Observation без вызова модели Policy."
+                },
+                "personal_runtime_quiet_hours_enabled": {
+                    "description": "Включить тихие часы"
+                },
+                "personal_runtime_quiet_hours_start": {
+                    "description": "Начало тихих часов",
+                    "hint": "Час от 0 до 23 в глобальном часовом поясе; одинаковые значения означают тишину весь день."
+                },
+                "personal_runtime_quiet_hours_end": {
+                    "description": "Конец тихих часов"
+                },
+                "personal_runtime_reply_cooldown_seconds": {
+                    "description": "Пауза после проактивного ответа (сек)",
+                    "hint": "Зарезервировано для будущих Action; Shadow Policy не изменяет это состояние."
+                },
+                "personal_runtime_no_action_cooldown_seconds": {
+                    "description": "Пауза без действия (сек)",
+                    "hint": "Зарезервировано для будущих решений без действия или с отсрочкой."
+                },
+                "personal_runtime_daily_proactive_output_limit": {
+                    "description": "Дневной лимит проактивных ответов",
+                    "hint": "Значение 0 блокирует фоновую оценку Policy. Обычные ответы не расходуют лимит."
+                }
+            }
+        },
         "stream": {
             "description": "Подсказки во время выполнения",
             "hint": "Наблюдает окна потокового вывода core и позволяет middleware вставлять короткие подсказки, пока core еще выполняет задачу.",

@@ -37,9 +37,11 @@ from .personal_state import (
     CompletionFeedback,
     PersonalDeliveryStatus,
     PersonalExecutionStatus,
+    PersonalPersistentState,
     PersonalState,
     PersonalStateSnapshot,
 )
+from .personal_state_repository import PersonalStateRepository
 from .runtime_event import RuntimeObservationEvent
 from .turn_context import (
     PersonalTurnContext,
@@ -373,7 +375,7 @@ class PersonalTurnLease:
             finally:
                 try:
                     feedback = _build_completion_feedback(self.reservation.turn)
-                    self.runtime.apply_completion_feedback(feedback)
+                    await self.runtime.apply_completion_feedback(feedback)
                 except Exception:
                     logger.exception(
                         "Personal Runtime completion feedback failed: turn_id=%s",
@@ -394,6 +396,8 @@ class PersonalSessionRuntime:
         max_pending_observations: int = DEFAULT_MAX_PENDING_OBSERVATIONS,
         observation_debounce_seconds: float = DEFAULT_OBSERVATION_DEBOUNCE_SECONDS,
         observation_gate_settings: ObservationGateSettings | None = None,
+        state_repository: PersonalStateRepository | None = None,
+        persistent_state: PersonalPersistentState | None = None,
     ) -> None:
         now = time.time()
         self.key = key
@@ -402,6 +406,12 @@ class PersonalSessionRuntime:
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
+        if persistent_state is not None:
+            self.state.restore_persistent(persistent_state)
+            self.state.mark_idle(now=now)
+        self._state_repository = state_repository
+        self._state_persistence_lock = asyncio.Lock()
+        self._persistent_state_dirty = False
         self.last_completion_feedback: CompletionFeedback | None = None
         self.observation_inbox = ObservationInbox(max_pending=max_pending_observations)
         self.observation_debounce_seconds = observation_debounce_seconds
@@ -443,8 +453,10 @@ class PersonalSessionRuntime:
             self.idle_since = now
             self.state.mark_idle(now=now)
 
-    def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
-        self.state.apply_completion_feedback(feedback)
+    async def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
+        if self.state.apply_completion_feedback(feedback):
+            self._persistent_state_dirty = True
+            await self._persist_state()
         self.last_completion_feedback = feedback
 
     def configure_personal_policy(
@@ -598,11 +610,13 @@ class PersonalSessionRuntime:
         if agent is None or plugin_context is None:
             return
 
-        def record_provider_call() -> None:
+        async def record_provider_call() -> None:
             usage_day = self.observation_gate_settings.local_datetime(
                 time.time()
             ).date().isoformat()
             self.state.record_policy_call(usage_day=usage_day)
+            self._persistent_state_dirty = True
+            await self._persist_state()
 
         evaluation = await agent.evaluate(
             runtime_key=self.key,
@@ -648,6 +662,30 @@ class PersonalSessionRuntime:
         self._observation_reschedule_requested = False
         self.observation_inbox.clear()
         self.state.set_pending_observation_count(0)
+        try:
+            await self._persist_state()
+        except Exception:
+            logger.exception(
+                "Personal Runtime final state persistence failed: config_id=%s "
+                "persona_id=%s audience=%s",
+                self.key.config_id,
+                self.key.persona_id,
+                self.key.audience_key,
+            )
+
+    async def _persist_state(self) -> None:
+        if self._state_repository is None:
+            self._persistent_state_dirty = False
+            return
+        async with self._state_persistence_lock:
+            while self._persistent_state_dirty:
+                snapshot = self.state.persistent_snapshot()
+                self._persistent_state_dirty = False
+                try:
+                    await self._state_repository.save(self.key, snapshot)
+                except Exception:
+                    self._persistent_state_dirty = True
+                    raise
 
     def snapshot(self) -> PersonalSessionRuntimeSnapshot:
         return PersonalSessionRuntimeSnapshot(
@@ -736,6 +774,7 @@ class PersonalSessionRuntime:
         return (
             not self.has_active_conversational_work()
             and self.observation_inbox.pending_count == 0
+            and not self._persistent_state_dirty
             and (
                 self.observation_evaluation_task is None
                 or self.observation_evaluation_task.done()
@@ -760,6 +799,7 @@ class PersonalRuntimeManager:
         max_pending_observations: int = DEFAULT_MAX_PENDING_OBSERVATIONS,
         observation_debounce_seconds: float = DEFAULT_OBSERVATION_DEBOUNCE_SECONDS,
         observation_gate_settings: ObservationGateSettings | None = None,
+        state_repository: PersonalStateRepository | None = None,
     ) -> None:
         if idle_runtime_ttl_seconds < 0:
             raise ValueError("idle_runtime_ttl_seconds must be non-negative")
@@ -782,6 +822,8 @@ class PersonalRuntimeManager:
         )
         self._plugin_context: Any | None = None
         self._personal_policy_agent = PersonalPolicyAgent()
+        self._state_repository = state_repository
+        self._runtime_creation_lock = asyncio.Lock()
         self._accepting = True
         self._eviction_count = 0
 
@@ -808,7 +850,7 @@ class PersonalRuntimeManager:
         )
         now = time.time()
         self._evict_idle_sessions(now=now)
-        runtime = self._get_or_create_runtime(
+        runtime = await self._get_or_create_runtime(
             key,
             plugin_context=plugin_context,
             runtime_config=runtime_config,
@@ -995,7 +1037,7 @@ class PersonalRuntimeManager:
         )
         now = time.time()
         self._evict_idle_sessions(now=now)
-        runtime = self._get_or_create_runtime(
+        runtime = await self._get_or_create_runtime(
             key,
             plugin_context=turn.plugin_context,
             runtime_config=turn.runtime_config,
@@ -1101,22 +1143,37 @@ class PersonalRuntimeManager:
         self._event_sessions.clear()
         self._sessions.clear()
 
-    def _get_or_create_runtime(
+    async def _get_or_create_runtime(
         self,
         key: PersonalRuntimeKey,
         *,
         plugin_context: Any,
         runtime_config: Mapping[str, Any],
     ) -> PersonalSessionRuntime:
-        runtime = self._sessions.get(key)
-        if runtime is None:
-            runtime = PersonalSessionRuntime(
-                key,
-                max_pending_observations=self._max_pending_observations,
-                observation_debounce_seconds=self._observation_debounce_seconds,
-                observation_gate_settings=self._observation_gate_settings,
-            )
-            self._sessions[key] = runtime
+        async with self._runtime_creation_lock:
+            runtime = self._sessions.get(key)
+            if runtime is None:
+                persistent_state = None
+                if self._state_repository is not None:
+                    try:
+                        persistent_state = await self._state_repository.load(key)
+                    except Exception:
+                        logger.exception(
+                            "Personal Runtime state restore failed; using process-local state: "
+                            "config_id=%s persona_id=%s audience=%s",
+                            key.config_id,
+                            key.persona_id,
+                            key.audience_key,
+                        )
+                runtime = PersonalSessionRuntime(
+                    key,
+                    max_pending_observations=self._max_pending_observations,
+                    observation_debounce_seconds=self._observation_debounce_seconds,
+                    observation_gate_settings=self._observation_gate_settings,
+                    state_repository=self._state_repository,
+                    persistent_state=persistent_state,
+                )
+                self._sessions[key] = runtime
         interaction_config = load_interaction_agent_config(runtime_config)
         runtime.configure_personal_policy(
             agent=self._personal_policy_agent,
@@ -1125,8 +1182,23 @@ class PersonalRuntimeManager:
             interaction_config=interaction_config,
             gate_settings=replace(
                 self._observation_gate_settings,
+                muted=interaction_config.personal_runtime_muted,
+                quiet_hours_start_minute=(
+                    interaction_config.personal_runtime_quiet_hours_start * 60
+                    if interaction_config.personal_runtime_quiet_hours_enabled
+                    else None
+                ),
+                quiet_hours_end_minute=(
+                    interaction_config.personal_runtime_quiet_hours_end * 60
+                    if interaction_config.personal_runtime_quiet_hours_enabled
+                    else None
+                ),
+                timezone_name=interaction_config.personal_runtime_timezone,
                 daily_policy_call_limit=(
                     interaction_config.personal_policy_daily_call_limit
+                ),
+                daily_proactive_output_limit=(
+                    interaction_config.personal_runtime_daily_proactive_output_limit
                 ),
             ),
         )

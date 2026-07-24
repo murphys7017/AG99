@@ -1115,6 +1115,46 @@
         }
       }
     },
+    "personal_runtime_policy": {
+      "description": "主动人格控制",
+      "hint": "控制后台 Observation 是否允许进入策略评估。Heartbeat 只产生观察，主动表达尚未开放。",
+      "interaction_middleware": {
+        "personal_heartbeat_enabled": {
+          "description": "启用人格心跳",
+          "hint": "仅向 Personal Runtime 提交 Observation，不直接发送消息或调用 Core。"
+        },
+        "personal_heartbeat_interval_seconds": {
+          "description": "人格心跳间隔秒数",
+          "hint": "最小 30 秒；初期只作用于主动消息默认目标。"
+        },
+        "personal_runtime_muted": {
+          "description": "静音主动人格",
+          "hint": "后台 Observation 会在 Gate 被拒绝，不调用策略模型。"
+        },
+        "personal_runtime_quiet_hours_enabled": {
+          "description": "启用安静时段"
+        },
+        "personal_runtime_quiet_hours_start": {
+          "description": "安静时段开始小时",
+          "hint": "使用全局时区，范围 0 到 23；起止小时相同表示全天安静。"
+        },
+        "personal_runtime_quiet_hours_end": {
+          "description": "安静时段结束小时"
+        },
+        "personal_runtime_reply_cooldown_seconds": {
+          "description": "主动回复冷却秒数",
+          "hint": "供后续主动 Action 成功后使用；当前 Shadow Policy 不写入该状态。"
+        },
+        "personal_runtime_no_action_cooldown_seconds": {
+          "description": "不动作冷却秒数",
+          "hint": "供后续不动作或延后决策使用；当前 Shadow Policy 不写入该状态。"
+        },
+        "personal_runtime_daily_proactive_output_limit": {
+          "description": "每日主动输出上限",
+          "hint": "设为 0 会阻止全部后台策略评估；普通回复不消耗此预算。"
+        }
+      }
+    },
     "stream": {
       "description": "执行过程提示",
       "hint": "观察核心流式输出窗口，并允许中间件在核心执行过程中插入简短提示。",
