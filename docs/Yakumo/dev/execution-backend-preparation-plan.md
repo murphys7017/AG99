@@ -124,8 +124,9 @@ Expression、Output Controller、assistant-only Conversation 提交和完整 lif
 不调用模型，hold batch 会返回 Inbox。
 
 本阶段已完成：持久状态接线、Gate settings、Personal Policy、单目标 Heartbeat Observation
-生产者，以及受控的 `express / defer` Action Coordinator。仍未完成：Runtime Sensor、多目标
-session registry、插件和后台任务 identity，以及 `execute` 的权限和执行设计。
+生产者、受控的 `express / defer` Action Coordinator，以及只覆盖默认主动群聊目标的首个
+`conversation_activity` Source。仍未完成：其他 Runtime Sensor、多目标 session registry、插件和
+后台任务 identity，以及 `execute` 的权限和执行设计。
 
 实施内容：
 
@@ -381,8 +382,10 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   重入同 session lease 或提前完成 turn；跨 session 文本输出使用独立 proactive turn。
 - 全量物理发送失败和 canonical material 缺失已在本轮修正；分段部分成功仍缺 delivery
   receipt，after-send hook 的 stop 语义也可能让已送达内容被标记 cancelled。
-- Observation 已有输入/输出契约；单目标 Heartbeat 已通过现有生命周期接入 Inbox。assistant-only
-  history projection、Runtime Sensor、多目标 session registry 和 Action 仍未完成，因此还不能称为主动表达能力。
+- Observation 已有输入/输出契约；单目标 Heartbeat 和受控群聊 `conversation_activity` 已通过现有
+  生命周期与官方 Pipeline 接入 Inbox。assistant-only history projection 和受控 Action 已完成，
+  因此系统已有最小主动表达能力；其他 Runtime Sensor、多目标 session registry 与 `execute`
+  仍未完成。
 - Native 已消费 `CoreExecutionSpec`，Third-party 仍是官方兼容请求链。两者的上下文、
   capability、execution identity、ledger 和错误状态尚未统一，暂不适合直接抽象成等价
   Backend。

@@ -1126,6 +1126,10 @@
                     "description": "Интервал heartbeat Persona (сек)",
                     "hint": "Минимум 30 секунд; сначала используется только цель проактивных сообщений по умолчанию."
                 },
+                "personal_conversation_activity_enabled": {
+                    "description": "Включить фоновую активность группы",
+                    "hint": "Наблюдает только неадресованный текст группы в цели проактивных сообщений по умолчанию. После whitelist и проверки сессии отправляет Runtime Observation без запуска обычных Router, плагинов или Core."
+                },
                 "personal_runtime_muted": {
                     "description": "Отключить проактивную Persona",
                     "hint": "Gate отклоняет фоновые Observation без вызова модели Policy."

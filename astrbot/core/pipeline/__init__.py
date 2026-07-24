@@ -19,6 +19,7 @@ from .stage_order import STAGES_ORDER
 
 if TYPE_CHECKING:
     from .content_safety_check.stage import ContentSafetyCheckStage
+    from .conversation_activity.stage import ConversationActivityStage
     from .preprocess_stage.stage import PreProcessStage
     from .process_stage.stage import ProcessStage
     from .rate_limit_check.stage import RateLimitStage
@@ -32,6 +33,10 @@ _LAZY_EXPORTS = {
     "ContentSafetyCheckStage": (
         "astrbot.core.pipeline.content_safety_check.stage",
         "ContentSafetyCheckStage",
+    ),
+    "ConversationActivityStage": (
+        "astrbot.core.pipeline.conversation_activity.stage",
+        "ConversationActivityStage",
     ),
     "PreProcessStage": (
         "astrbot.core.pipeline.preprocess_stage.stage",
@@ -70,6 +75,7 @@ _LAZY_EXPORTS = {
 # Type-checking imports to satisfy static analyzers for __all__ exports
 if TYPE_CHECKING:
     from .content_safety_check.stage import ContentSafetyCheckStage
+    from .conversation_activity.stage import ConversationActivityStage
     from .preprocess_stage.stage import PreProcessStage
     from .process_stage.stage import ProcessStage
     from .rate_limit_check.stage import RateLimitStage
@@ -81,6 +87,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ContentSafetyCheckStage",
+    "ConversationActivityStage",
     "EventResultType",
     "MessageEventResult",
     "PreProcessStage",

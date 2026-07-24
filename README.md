@@ -120,7 +120,7 @@ collect → build → target projection → render profile → prompt layout/tre
 | 即时表达 | 🟡 开发中 | 已复用统一 Persona Runtime，流式体验继续优化 |
 | 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
 | Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
-| 持续人格 Runtime | 🟡 开发中 | 状态持久化、Gate、Policy、单目标 Heartbeat 与受控 express/defer Action 已接入；execute 尚未开放 |
+| 持续人格 Runtime | 🟡 开发中 | 状态持久化、Gate、Policy、单目标 Heartbeat、受控群聊环境观察与 express/defer Action 已接入；execute、更多 Sensor 与多目标注册尚未开放 |
 | 结构化 Prompt | 🟡 开发中 | collect/build/project/profile/layout/tree/render/apply 已跑通，继续物理拆分默认 Layout 并统一工具与 Provider capability |
 | 上游兼容 | 🟢 稳定 | 安全修复、provider 稳定修复持续同步 |
 

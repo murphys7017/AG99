@@ -716,12 +716,16 @@ max_proactive_outputs_per_day
 
 ### Phase 5：环境对话 Observation
 
+状态：初步实现。当前仅覆盖默认主动消息目标中的非唤醒群聊文本；多目标范围和其他环境
+来源仍留在后续阶段。
+
 目标：让人格可以谨慎参与未明确唤醒的环境对话。
 
 工作：
 
-- 在官方过滤和预处理之后、插件 Handler / Core Agent 之前增加只读 observation tap。
-- 只把符合配置范围的非唤醒群聊文本转换为 `conversation_activity`。
+- 在官方 Waking、白名单和会话状态检查之后、普通限流/插件 Handler/Core Agent 之前增加只读
+  observation tap。
+- 只把已配置默认主动群聊目标中的非唤醒文本转换为 `conversation_activity`，不保存原文。
 - 排除 Notice、平台控制、空内容、已停止和协议事件。
 - Feature Builder 计算参与人数、复读、密度、连续追问候选和最近表达时间。
 - Policy 只允许 express / observe / ignore / defer，不允许环境消息直接进入 Core。
@@ -852,7 +856,7 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 单目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后只重新验证
 `platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不直接
 发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过同一 Runtime 的 Persona
-与 Output 链路表达。下一步应使用真实运行数据审阅策略质量，再设计 Runtime Sensor、多目标注册和 execute。
+与 Output 链路表达。下一步应使用真实运行数据审阅策略质量，再设计其他 Runtime Sensor、多目标注册和 execute。
 
 ## 十五、后续仍需用运行数据决定的问题
 

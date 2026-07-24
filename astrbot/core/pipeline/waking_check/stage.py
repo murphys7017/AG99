@@ -1,6 +1,10 @@
 from collections.abc import AsyncGenerator, Callable
 
 from astrbot import logger
+from astrbot.core.interaction.conversation_activity_source import (
+    CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY,
+    is_conversation_activity_candidate,
+)
 from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -240,4 +244,7 @@ class WakingCheckStage(Stage):
             event.is_at_or_wake_command = True
 
         if not is_wake:
+            if is_conversation_activity_candidate(event, self.ctx.astrbot_config):
+                event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)
+                return
             event.stop_event()

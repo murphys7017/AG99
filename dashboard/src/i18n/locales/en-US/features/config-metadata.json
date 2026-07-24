@@ -1125,6 +1125,10 @@
           "description": "Persona Heartbeat Interval Seconds",
           "hint": "Minimum 30 seconds; initially applies only to the default proactive message target."
         },
+        "personal_conversation_activity_enabled": {
+          "description": "Enable Ambient Group Activity",
+          "hint": "Observes only unaddressed group text in the default proactive message target. After whitelist and session checks, it submits a Runtime Observation without invoking the normal Router, plugins, or Core."
+        },
         "personal_runtime_muted": {
           "description": "Mute Proactive Persona",
           "hint": "Rejects background Observations at the Gate without calling the policy model."

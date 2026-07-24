@@ -136,7 +136,10 @@ Skills、知识库或输出能力；`express` 只形成 `ActionIntent` 并交回
 Persona Expression 生成。`defer` 只持久化无动作截止时间，`execute` 目前不执行。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
 重新评估，quiet hours 与冷却等待后续 Observation 触发。单目标 Heartbeat Source 已由现有 Core
 Lifecycle 托管：开关和间隔读取默认主动目标实际命中的 Runtime 配置；配置关闭时不提交事实，启用后每个 tick 只重新验证默认主动目标并调用
-`submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。主动输出兼容
+`submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
+环境 Source 复用该目标作为观察范围：同一目标的非唤醒群聊文本通过官方白名单和会话状态检查后，
+仅提交不含原文的 `conversation_activity` fact，并在普通限流、插件、Router 和 Core 前结束原事件。
+主动输出兼容
 入口继续与平台消息共享 session runtime 锁，并在 admission 时校验目标发送能力。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
 的路径；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output Controller，跨 session
 输出建立独立 proactive turn。纯媒体主动消息暂时保留平台直发。
@@ -172,8 +175,9 @@ Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形�
 无显式目标的主动输出通过 `Context.get_proactive_message_target()` 读取
 `platform_settings.proactive_message_target`。该值是完整 UMO；WebUI 仅列出当前支持主动
 消息的已知会话，运行时仍会重新验证 Adapter。`Context.send_message(None, ...)` 和无目标
-主动 Cron 使用它，显式 session 不会被覆盖。Heartbeat 复用同一个默认目标，但只创建
-Observation；它不创建 Sensor、Action 或主动回复。
+主动 Cron 使用它，显式 session 不会被覆盖。Heartbeat 和初始群聊环境 Source 都复用同一个默认
+目标：前者仅创建周期 Observation，后者只在显式开关开启时把该群的非唤醒文本转为结构化
+`conversation_activity`；二者都不直接创建 Action 或主动回复。
 
 ## 重构意义
 

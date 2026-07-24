@@ -1127,6 +1127,10 @@
           "description": "人格心跳间隔秒数",
           "hint": "最小 30 秒；初期只作用于主动消息默认目标。"
         },
+        "personal_conversation_activity_enabled": {
+          "description": "启用群聊环境观察",
+          "hint": "仅观察默认主动消息目标中的未唤醒群聊文本。通过白名单和会话状态检查后只提交 Runtime Observation，不触发普通 Router、插件或 Core。"
+        },
         "personal_runtime_muted": {
           "description": "静音主动人格",
           "hint": "后台 Observation 会在 Gate 被拒绝，不调用策略模型。"

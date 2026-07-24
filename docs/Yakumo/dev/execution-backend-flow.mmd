@@ -6,6 +6,8 @@ flowchart LR
 %% - astrbot/core/event_bus.py: EventBus.dispatch
 %% - astrbot/core/pipeline/scheduler.py: PipelineScheduler.execute / _process_stages
 %% - astrbot/core/pipeline/stage_order.py: STAGES_ORDER
+%% - astrbot/core/pipeline/conversation_activity/stage.py: ConversationActivityStage
+%% - astrbot/core/interaction/conversation_activity_source.py: ConversationActivitySource
 %% - astrbot/core/pipeline/process_stage/stage.py: ProcessStage.process
 %% - astrbot/core/interaction/personal_runtime.py: PersonalRuntimeManager / PersonalSessionRuntime
 %% - astrbot/core/interaction/observation.py: RuntimeObservation / RuntimeObservationTarget
@@ -39,18 +41,20 @@ flowchart LR
         W["WakingCheckStage<br/>自消息过滤 / 唤醒判断 / 插件 Handler 过滤"]
         WL["WhitelistCheckStage"]
         SS["SessionStatusCheckStage"]
+        ACTIVITY_TAP["ConversationActivityStage<br/>默认关闭：仅默认主动群聊目标<br/>提交无原文 conversation_activity 后停止"]
         RL["RateLimitStage"]
         CS["ContentSafetyCheckStage"]
         PP["PreProcessStage<br/>路径映射 / Record 转换 / STT"]
         STOP0["event.stop_event<br/>本轮不再进入后续 Stage"]
 
         PS --> W
-        W -->|"未唤醒 / 自消息 / 权限失败"| STOP0
-        W -->|"继续"| WL
+        W -->|"未唤醒 / 自消息 / 权限失败<br/>且不属于环境观察候选"| STOP0
+        W -->|"已唤醒，或合格环境观察候选"| WL
         WL -->|"不在白名单"| STOP0
         WL -->|"继续"| SS
         SS -->|"会话关闭"| STOP0
-        SS -->|"继续"| RL
+        SS -->|"环境观察候选"| ACTIVITY_TAP --> STOP0
+        SS -->|"普通消息"| RL
         RL -->|"拒绝或停止"| STOP0
         RL -->|"继续"| CS
         CS -->|"内容拒绝"| STOP0
@@ -292,11 +296,12 @@ flowchart LR
         TURN_RELEASE --> CLEANUP
     end
 
-    subgraph OBSERVATION["八、Runtime Observation（Heartbeat + Intake + Gate + Policy Action 已实现）"]
+    subgraph OBSERVATION["八、Runtime Observation（Heartbeat + 群聊环境 Source + Intake + Gate + Policy Action 已实现）"]
         direction TB
         OBS_HEARTBEAT_CONFIG["默认主动目标 + 目标命中配置<br/>heartbeat enable / interval"]
         OBS_SOURCE["PersonalHeartbeatSource<br/>Core Lifecycle 托管<br/>tick 不直接发送"]
-        OBS_FUTURE_SOURCE["未来 Scheduler / Runtime Sensor"]
+        OBS_ACTIVITY["ConversationActivityStage<br/>默认关闭；同一默认群聊目标<br/>Waking -> whitelist -> session 后只读 tap"]
+        OBS_FUTURE_SOURCE["未来 Scheduler / 其他 Runtime Sensor"]
         OBS_FACT["RuntimeObservation<br/>稳定 ID / expiry / coalesce key<br/>不可变系统事实"]
         OBS_INTAKE["PersonalRuntimeManager.submit_observation<br/>复用官方会话人格与隐私规则解析 RuntimeKey<br/>不构造 event / message"]
         OBS_INBOX["PersonalSessionRuntime Inbox<br/>每 Runtime 最多 64 条<br/>expiry / coalesce / overflow drop oldest"]
@@ -317,6 +322,7 @@ flowchart LR
         OBS_NONE["没有 material：零模型调用并 settle"]
 
         OBS_HEARTBEAT_CONFIG --> OBS_SOURCE --> OBS_FACT
+        OBS_HEARTBEAT_CONFIG --> OBS_ACTIVITY --> OBS_FACT
         OBS_FUTURE_SOURCE -. "尚未实现" .-> OBS_FACT
         OBS_FACT --> OBS_INTAKE --> OBS_INBOX --> OBS_DEBOUNCE --> OBS_BATCH --> OBS_GATE --> OBS_GATE_RESULT
         OBS_GATE_CONFIG --> OBS_GATE

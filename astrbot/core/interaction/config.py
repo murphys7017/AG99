@@ -148,6 +148,9 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         personal_heartbeat_enabled=bool(
             interaction_config.get("personal_heartbeat_enabled", False)
         ),
+        personal_conversation_activity_enabled=bool(
+            interaction_config.get("personal_conversation_activity_enabled", False)
+        ),
         personal_heartbeat_interval_seconds=max(
             30.0,
             _float_or_default(

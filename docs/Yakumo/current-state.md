@@ -132,8 +132,8 @@
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
-- 默认主动目标同时作为首个 Heartbeat Observation 的唯一目标。生命周期任务以该目标实际命中的 Runtime 配置读取开关与间隔，并重新校验目标与 Adapter 能力；tick 只调用通用 `submit_observation()`，不构造平台事件、不直接调用 Persona/Core/Output。静音、安静时段、回复/不动作冷却时长和每日主动输出上限已经进入配置；Gate 立即执行静音、全局时区安静时段和输出预算。冷却时长尚未由 Action 写成截止时间，主动输出也尚未计数，因为 Sensor 与 Action Coordinator 仍未接入。
-- `CompletionFeedback` 已接入真实 turn completion。最后一份不可变反馈进入 Runtime diagnostics；冷却和主动预算仍未启用，后者必须等待可验证的 `ActionIntent/action_id`，不能把普通被动回复误算为主动输出
+- 默认主动目标同时限定首个 Heartbeat 和群聊环境 Observation 的范围。Heartbeat 由生命周期任务以该目标实际命中的 Runtime 配置读取开关与间隔，并只调用通用 `submit_observation()`；群聊环境观察默认关闭，启用后仅放行同一默认目标中的非唤醒群聊文本，经官方白名单和会话状态检查后转换为不含原文的 `conversation_activity` fact，并在进入限流、插件、Router 和 Core 前停止原事件。两类 Source 都不构造平台事件、不直接调用 Persona/Core/Output；多目标 registry 与其他 Sensor 仍未实现。
+- `CompletionFeedback` 已接入真实 turn completion。最后一份不可变反馈进入 Runtime diagnostics；`defer` 立即写入不动作冷却，带 `ActionIntent/action_id` 的 `express` 只有在可见输出确认送达后才写回复冷却并递增主动输出预算，普通被动回复不会被误算。
 
 ### 3. 插件与工具整合层
 
