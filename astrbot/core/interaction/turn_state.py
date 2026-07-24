@@ -225,18 +225,10 @@ class InteractionTurnState:
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)
-    core_stream_text: str = ""
-    core_stream_pending_text: str = ""
-    core_stream_observation_count: int = 0
-    core_stream_observation_tasks: list[asyncio.Task[Any]] = field(default_factory=list)
-    core_stream_observation_failures: list[str] = field(default_factory=list)
-    core_streaming_active: bool = False
-    core_streaming_result_consumed: bool = False
     output_segment_counter: int = 0
     visible_message_counter: int = 0
     lifecycle_stage: InteractionLifecycleStage | None = None
     lifecycle_transitions: list[dict[str, Any]] = field(default_factory=list)
-    stream_interjections_emitted: int = 0
     completion_state: InteractionTurnCompletionState = field(
         default_factory=InteractionTurnCompletionState
     )
@@ -654,10 +646,6 @@ def update_interaction_turn_stream_buffer(
     state = ensure_interaction_turn_state(event)
     state.stream_state.total_text = total_text
     state.stream_state.pending_text = pending_text
-    state.core_stream_text = total_text
-    state.core_stream_pending_text = pending_text
-    event.set_extra("_interaction_core_stream_text", total_text)
-    event.set_extra("_interaction_core_stream_pending_text", pending_text)
 
 
 def set_interaction_turn_stream_progress(
@@ -679,8 +667,6 @@ def set_interaction_turn_stream_observation_count(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.stream_state.observation_count = window_index
-    state.core_stream_observation_count = window_index
-    event.set_extra("_interaction_core_stream_observation_count", window_index)
 
 
 def add_interaction_turn_stream_observation_task(
@@ -689,11 +675,6 @@ def add_interaction_turn_stream_observation_task(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.stream_state.observation_tasks.append(task)
-    state.core_stream_observation_tasks.append(task)
-    event.set_extra(
-        "_interaction_stream_observation_tasks",
-        list(state.stream_state.observation_tasks),
-    )
 
 
 def remove_interaction_turn_stream_observation_task(
@@ -703,12 +684,6 @@ def remove_interaction_turn_stream_observation_task(
     state = ensure_interaction_turn_state(event)
     if task in state.stream_state.observation_tasks:
         state.stream_state.observation_tasks.remove(task)
-    if task in state.core_stream_observation_tasks:
-        state.core_stream_observation_tasks.remove(task)
-    event.set_extra(
-        "_interaction_stream_observation_tasks",
-        list(state.stream_state.observation_tasks),
-    )
 
 
 def get_interaction_turn_stream_observation_tasks(
@@ -727,11 +702,6 @@ def record_interaction_turn_stream_observation_failure(
         return
     state = ensure_interaction_turn_state(event)
     state.stream_state.observation_failures.append(clean_failure)
-    state.core_stream_observation_failures.append(clean_failure)
-    event.set_extra(
-        "_interaction_stream_observation_failures",
-        list(state.stream_state.observation_failures),
-    )
 
 
 def get_interaction_turn_stream_text(event) -> str:
@@ -761,8 +731,6 @@ def set_interaction_turn_core_streaming_active(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.stream_state.active = is_active
-    state.core_streaming_active = is_active
-    event.set_extra("_interaction_core_streaming_active", is_active)
 
 
 def mark_interaction_turn_core_streaming_result_consumed(
@@ -771,8 +739,6 @@ def mark_interaction_turn_core_streaming_result_consumed(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.stream_state.result_consumed = consumed
-    state.core_streaming_result_consumed = consumed
-    event.set_extra("_interaction_core_streaming_result_consumed", consumed)
 
 
 def has_interaction_turn_core_streaming_result_consumed(event) -> bool:
@@ -873,11 +839,6 @@ def is_interaction_turn_core_streaming_active(event) -> bool:
 def mark_interaction_turn_stream_interjection_emitted(event) -> int:
     state = ensure_interaction_turn_state(event)
     state.stream_state.interjections_emitted += 1
-    state.stream_interjections_emitted = state.stream_state.interjections_emitted
-    event.set_extra(
-        "_interaction_stream_interjections_emitted",
-        state.stream_state.interjections_emitted,
-    )
     return state.stream_state.interjections_emitted
 
 
@@ -904,10 +865,6 @@ def next_interaction_turn_visible_message_id(event, message_kind: str) -> str:
     state = ensure_interaction_turn_state(event)
     turn_id = state.turn_id.strip() or "turn"
     state.visible_message_counter += 1
-    event.set_extra(
-        "_interaction_visible_message_counter",
-        state.visible_message_counter,
-    )
     safe_kind = "".join(
         char if char.isalnum() or char in {"_", "-"} else "_" for char in message_kind
     ).strip("_")
