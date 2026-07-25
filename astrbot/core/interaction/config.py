@@ -145,6 +145,15 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 6,
             ),
         ),
+        personal_runtime_conversation_continuation_seconds=max(
+            0.0,
+            _float_or_default(
+                interaction_config.get(
+                    "personal_runtime_conversation_continuation_seconds", 120.0
+                ),
+                120.0,
+            ),
+        ),
         personal_heartbeat_enabled=bool(
             interaction_config.get("personal_heartbeat_enabled", False)
         ),

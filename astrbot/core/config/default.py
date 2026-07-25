@@ -235,6 +235,7 @@ DEFAULT_CONFIG = {
         "personal_runtime_reply_cooldown_seconds": 1800.0,
         "personal_runtime_no_action_cooldown_seconds": 300.0,
         "personal_runtime_daily_proactive_output_limit": 6,
+        "personal_runtime_conversation_continuation_seconds": 120.0,
         "personal_heartbeat_enabled": False,
         "personal_conversation_activity_enabled": False,
         "personal_heartbeat_interval_seconds": 300.0,
@@ -4471,6 +4472,11 @@ CONFIG_METADATA_3 = {
                         "description": "启用群聊环境观察",
                         "type": "bool",
                         "hint": "仅观察默认主动消息目标中的未唤醒群聊文本。通过白名单和会话状态检查后只提交 Runtime Observation，不触发普通 Router、插件或 Core。",
+                    },
+                    "interaction_middleware.personal_runtime_conversation_continuation_seconds": {
+                        "description": "群聊连续对话窗口秒数",
+                        "type": "float",
+                        "hint": "机器人成功回复后，同一用户在同一群内可免唤醒词继续对话；设为 0 可关闭。",
                     },
                     "interaction_middleware.personal_runtime_muted": {
                         "description": "静音主动人格",

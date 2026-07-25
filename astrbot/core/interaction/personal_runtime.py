@@ -15,6 +15,7 @@ from astrbot.core.persona_error_reply import (
     resolve_conversation_persona_id,
     resolve_event_conversation_persona_id,
 )
+from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
@@ -379,7 +380,10 @@ class PersonalTurnLease:
             finally:
                 try:
                     feedback = _build_completion_feedback(self.reservation.turn)
-                    await self.runtime.apply_completion_feedback(feedback)
+                    await self.runtime.apply_completion_feedback(
+                        feedback,
+                        turn=self.reservation.turn,
+                    )
                 except Exception:
                     logger.exception(
                         "Personal Runtime completion feedback failed: turn_id=%s",
@@ -387,6 +391,7 @@ class PersonalTurnLease:
                     )
                 finally:
                     self.runtime.active_turn_id = None
+                    self.runtime.active_actor_id = None
                     self.runtime.touch()
                     self.reservation.transition(PendingTurnState.SETTLED)
                     self.runtime.turn_lock.release()
@@ -407,6 +412,9 @@ class PersonalSessionRuntime:
         self.key = key
         self.turn_lock = asyncio.Lock()
         self.active_turn_id: str | None = None
+        self.active_actor_id: str | None = None
+        self.conversation_actor_id: str | None = None
+        self.conversation_continuation_until: float | None = None
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
@@ -467,14 +475,21 @@ class PersonalSessionRuntime:
             self.idle_since = now
             self.state.mark_idle(now=now)
 
-    async def apply_completion_feedback(self, feedback: CompletionFeedback) -> None:
+    async def apply_completion_feedback(
+        self,
+        feedback: CompletionFeedback,
+        *,
+        turn: PersonalTurnContext,
+    ) -> None:
         completed_at = feedback.output_completed_at or time.time()
         usage_day = (
-            self.observation_gate_settings.local_datetime(completed_at).date().isoformat()
+            self.observation_gate_settings.local_datetime(completed_at)
+            .date()
+            .isoformat()
             if feedback.action_id
             else None
         )
-        if self.state.apply_completion_feedback(
+        persistent_state_changed = self.state.apply_completion_feedback(
             feedback,
             reply_cooldown_seconds=(
                 self._interaction_config.personal_runtime_reply_cooldown_seconds
@@ -482,10 +497,68 @@ class PersonalSessionRuntime:
                 else 0.0
             ),
             usage_day=usage_day,
-        ):
+        )
+        self._update_conversation_continuation(
+            turn,
+            feedback=feedback,
+            completed_at=completed_at,
+        )
+        self.last_completion_feedback = feedback
+        if persistent_state_changed:
             self._persistent_state_dirty = True
             await self._persist_state()
-        self.last_completion_feedback = feedback
+
+    def accepts_conversation_continuation(
+        self,
+        actor_id: str,
+        *,
+        now: float,
+    ) -> bool:
+        normalized_actor_id = str(actor_id or "").strip()
+        if (
+            not self._interaction_config.enabled
+            or self._interaction_config.personal_runtime_conversation_continuation_seconds
+            <= 0
+            or not normalized_actor_id
+        ):
+            self.conversation_actor_id = None
+            self.conversation_continuation_until = None
+            return False
+        if self.active_actor_id is not None:
+            return self.active_actor_id == normalized_actor_id
+        continuation_until = self.conversation_continuation_until
+        if continuation_until is None or continuation_until <= now:
+            self.conversation_actor_id = None
+            self.conversation_continuation_until = None
+            return False
+        return self.conversation_actor_id == normalized_actor_id
+
+    def _update_conversation_continuation(
+        self,
+        turn: PersonalTurnContext,
+        *,
+        feedback: CompletionFeedback,
+        completed_at: float,
+    ) -> None:
+        if (
+            turn.observation is not None
+            or turn.session.message_type is not MessageType.GROUP_MESSAGE
+            or turn.actor is None
+        ):
+            return
+        continuation_seconds = (
+            self._interaction_config.personal_runtime_conversation_continuation_seconds
+        )
+        if (
+            not self._interaction_config.enabled
+            or feedback.delivery_status is not PersonalDeliveryStatus.DELIVERED
+            or continuation_seconds <= 0
+        ):
+            self.conversation_actor_id = None
+            self.conversation_continuation_until = None
+            return
+        self.conversation_actor_id = str(turn.actor.actor_id or "").strip() or None
+        self.conversation_continuation_until = completed_at + continuation_seconds
 
     def configure_personal_policy(
         self,
@@ -904,6 +977,11 @@ class PersonalSessionRuntime:
             raise
         reservation.transition(PendingTurnState.ACTIVE)
         self.active_turn_id = turn.turn_id
+        self.active_actor_id = (
+            str(turn.actor.actor_id or "").strip() or None
+            if turn.actor is not None
+            else None
+        )
         user_activity_at = None
         if (
             turn.input is not None
@@ -1011,6 +1089,41 @@ class PersonalRuntimeManager:
         self._observation_wake_scheduler = scheduler
         for runtime in self._sessions.values():
             runtime.bind_observation_wake_scheduler(scheduler)
+
+    def should_continue_group_conversation(
+        self,
+        event: Any,
+        *,
+        config_id: str,
+        runtime_config: Mapping[str, Any],
+    ) -> bool:
+        interaction_config = load_interaction_agent_config(runtime_config)
+        if (
+            not self._accepting
+            or not interaction_config.enabled
+            or interaction_config.personal_runtime_conversation_continuation_seconds
+            <= 0
+            or event.get_message_type() is not MessageType.GROUP_MESSAGE
+            or event.get_extra("action_type") == "live"
+        ):
+            return False
+        actor_id = str(event.get_sender_id() or "").strip()
+        self_id = str(event.get_self_id() or "").strip()
+        if not actor_id or actor_id == self_id:
+            return False
+        if not event.get_message_str().strip() and not event.get_messages():
+            return False
+
+        normalized_config_id = str(config_id or "default")
+        audience_key = event.unified_msg_origin
+        now = time.time()
+        return any(
+            key.config_id == normalized_config_id
+            and key.audience_key == audience_key
+            and key.privacy_scope == "group"
+            and runtime.accepts_conversation_continuation(actor_id, now=now)
+            for key, runtime in self._sessions.items()
+        )
 
     async def wake_observations(self, key: PersonalRuntimeKey) -> None:
         if not self._accepting:

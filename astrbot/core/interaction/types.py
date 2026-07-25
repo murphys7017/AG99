@@ -164,6 +164,7 @@ class InteractionAgentConfig:
     personal_runtime_reply_cooldown_seconds: float = 1800.0
     personal_runtime_no_action_cooldown_seconds: float = 300.0
     personal_runtime_daily_proactive_output_limit: int = 6
+    personal_runtime_conversation_continuation_seconds: float = 120.0
     personal_heartbeat_enabled: bool = False
     personal_conversation_activity_enabled: bool = False
     personal_heartbeat_interval_seconds: float = 300.0

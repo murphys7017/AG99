@@ -35,6 +35,11 @@ class PersonalHeartbeatSource:
         self._runtime_manager = runtime_manager
         self._next_tick_at: dict[str, float] = {}
 
+    def _prune_inactive_targets(self, active_targets: set[str]) -> None:
+        for target_key in tuple(self._next_tick_at):
+            if target_key not in active_targets:
+                del self._next_tick_at[target_key]
+
     async def run(self) -> None:
         while True:
             try:
@@ -111,7 +116,7 @@ class PersonalHeartbeatSource:
                 continue
             self._next_tick_at[target_key] = occurred_at + interval
             results.append(result)
-        self._next_tick_at.intersection_update(active_targets)
+        self._prune_inactive_targets(active_targets)
         return tuple(results)
 
     def _next_poll_seconds(self) -> float:
@@ -133,7 +138,7 @@ class PersonalHeartbeatSource:
                     now + settings.personal_heartbeat_interval_seconds,
                 )
             )
-        self._next_tick_at.intersection_update(active_targets)
+        self._prune_inactive_targets(active_targets)
         if not active_due_at:
             return self._DISABLED_POLL_SECONDS
         return max(0.0, min(active_due_at) - now)

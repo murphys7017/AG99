@@ -1133,6 +1133,10 @@
           "description": "Enable Ambient Group Activity",
           "hint": "Observes only unaddressed group text in the default proactive message target. After whitelist and session checks, it submits a Runtime Observation without invoking the normal Router, plugins, or Core."
         },
+        "personal_runtime_conversation_continuation_seconds": {
+          "description": "Group Conversation Continuation Seconds",
+          "hint": "After a delivered reply, the same user can continue in the same group without another wake prefix. Set to 0 to disable."
+        },
         "personal_runtime_muted": {
           "description": "Mute Proactive Persona",
           "hint": "Rejects background Observations at the Gate without calling the policy model."
