@@ -17,7 +17,10 @@ class ConversationActivityStage(Stage):
 
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
-        self.source = ConversationActivitySource(ctx.personal_runtime_manager)
+        self.source = ConversationActivitySource(
+            ctx.personal_runtime_manager,
+            ctx.plugin_manager.context,
+        )
 
     async def process(
         self,

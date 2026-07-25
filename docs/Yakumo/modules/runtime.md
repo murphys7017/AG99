@@ -185,7 +185,12 @@ Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形�
 主动 Cron 使用它，显式 session 不会被覆盖。`platform_settings.personal_runtime_observation_targets`
 单独定义 Personal Runtime 的多目标观察范围；留空时才兼容使用默认主动目标。Heartbeat 仅为这些目标创建周期
 Observation，群聊环境 Source 只在显式开关开启时把这些群的非唤醒文本转为结构化
-`conversation_activity`；二者都不直接创建 Action 或主动回复。
+`conversation_activity`。这份范围由 Context 的默认配置统一解析；群聊当前命中的配置只决定环境观察开关和
+该 Runtime 的 Policy 设置。二者都不直接创建 Action 或主动回复。
+
+`/stat/personal-runtime` 是只读运行诊断入口。除已实体化 Runtime 的 batch、Gate、Policy 和投递
+终态外，它还列出已配置 Heartbeat 目标的开关、间隔、调度状态和下一次到期时间；不输出
+Observation payload、用户原文或 Persona 文案。
 
 ## 重构意义
 

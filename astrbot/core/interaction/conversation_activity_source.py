@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
 from .observation import RuntimeObservation, RuntimeObservationTarget
-from .runtime_targets import configured_runtime_observation_targets
 
 if TYPE_CHECKING:
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
+    from astrbot.core.star.context import Context
 
     from .observation_inbox import ObservationAdmissionResult
     from .personal_runtime import PersonalRuntimeManager
@@ -32,6 +33,7 @@ def is_conversation_activity_capture_enabled(config: Mapping[str, object]) -> bo
 def is_conversation_activity_candidate(
     event: AstrMessageEvent,
     config: Mapping[str, object],
+    target: RuntimeObservationTarget | None,
 ) -> bool:
     """Return whether an unaddressed group event may continue to the observation tap."""
     if (
@@ -48,17 +50,17 @@ def is_conversation_activity_candidate(
     self_id = str(event.get_self_id() or "").strip()
     if self_id and sender_id and sender_id == self_id:
         return False
-    return _resolve_target(event, config) is not None
+    return target is not None
 
 
-def _resolve_target(
+def resolve_conversation_activity_target(
     event: AstrMessageEvent,
-    config: Mapping[str, object],
+    runtime_targets: Iterable[MessageSession],
 ) -> RuntimeObservationTarget | None:
     group_id = str(event.get_group_id() or "").strip()
     if not group_id or not event.platform_meta.support_proactive_message:
         return None
-    for target in configured_runtime_observation_targets(config):
+    for target in runtime_targets:
         if (
             target.platform_id != event.get_platform_id()
             or target.message_type is not MessageType.GROUP_MESSAGE
@@ -79,8 +81,13 @@ def _resolve_target(
 class ConversationActivitySource:
     """Convert eligible ambient group activity into an internal Runtime fact."""
 
-    def __init__(self, runtime_manager: PersonalRuntimeManager | None) -> None:
+    def __init__(
+        self,
+        runtime_manager: PersonalRuntimeManager | None,
+        runtime_context: Context,
+    ) -> None:
         self._runtime_manager = runtime_manager
+        self._runtime_context = runtime_context
 
     async def submit(
         self,
@@ -91,10 +98,13 @@ class ConversationActivitySource:
         runtime_config: Mapping[str, object],
     ) -> ObservationAdmissionResult | None:
         runtime_manager = self._runtime_manager
-        target = _resolve_target(event, runtime_config)
+        target = resolve_conversation_activity_target(
+            event,
+            self._runtime_context.get_runtime_observation_targets(),
+        )
         if runtime_manager is None or target is None:
             return None
-        if not is_conversation_activity_candidate(event, runtime_config):
+        if not is_conversation_activity_candidate(event, runtime_config, target):
             return None
 
         occurred_at = time.time()
@@ -123,4 +133,5 @@ __all__ = [
     "ConversationActivitySource",
     "is_conversation_activity_candidate",
     "is_conversation_activity_capture_enabled",
+    "resolve_conversation_activity_target",
 ]

@@ -138,5 +138,45 @@ class PersonalHeartbeatSource:
             return self._DISABLED_POLL_SECONDS
         return max(0.0, min(active_due_at) - now)
 
+    def diagnostics_view(self) -> dict[str, object]:
+        """Return configured Heartbeat scheduling state without observation payloads."""
+        now = time.time()
+        targets: list[dict[str, object]] = []
+        for session in self._context.get_runtime_observation_targets():
+            settings = load_interaction_agent_config(
+                self._config_manager.get_conf(session)
+            )
+            next_tick_at = self._next_tick_at.get(str(session))
+            enabled = settings.personal_heartbeat_enabled
+            targets.append(
+                {
+                    "umo": str(session),
+                    "heartbeat_enabled": enabled,
+                    "interval_seconds": (
+                        settings.personal_heartbeat_interval_seconds
+                        if enabled
+                        else None
+                    ),
+                    "scheduler_state": (
+                        "disabled"
+                        if not enabled
+                        else "scheduled"
+                        if next_tick_at is not None
+                        else "pending_initial_tick"
+                    ),
+                    "next_tick_at": next_tick_at,
+                    "seconds_until_next_tick": (
+                        max(0.0, next_tick_at - now)
+                        if next_tick_at is not None
+                        else None
+                    ),
+                }
+            )
+        return {
+            "idle_poll_seconds": self._DISABLED_POLL_SECONDS,
+            "target_count": len(targets),
+            "targets": targets,
+        }
+
 
 __all__ = ["PersonalHeartbeatSource"]

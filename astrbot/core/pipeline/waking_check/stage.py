@@ -4,6 +4,8 @@ from astrbot import logger
 from astrbot.core.interaction.conversation_activity_source import (
     CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY,
     is_conversation_activity_candidate,
+    is_conversation_activity_capture_enabled,
+    resolve_conversation_activity_target,
 )
 from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
@@ -239,7 +241,16 @@ class WakingCheckStage(Stage):
         event.set_extra("handlers_parsed_params", handlers_parsed_params)
 
         if not is_wake:
-            if is_conversation_activity_candidate(event, self.ctx.astrbot_config):
-                event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)
-                return
+            if is_conversation_activity_capture_enabled(self.ctx.astrbot_config):
+                target = resolve_conversation_activity_target(
+                    event,
+                    self.ctx.plugin_manager.context.get_runtime_observation_targets(),
+                )
+                if is_conversation_activity_candidate(
+                    event,
+                    self.ctx.astrbot_config,
+                    target,
+                ):
+                    event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)
+                    return
             event.stop_event()

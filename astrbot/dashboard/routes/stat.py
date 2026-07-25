@@ -138,9 +138,22 @@ class StatRoute(Route):
         return Response().ok({"start_time": self.core_lifecycle.start_time}).__dict__
 
     async def get_personal_runtime(self):
+        runtime_diagnostics = (
+            self.core_lifecycle.personal_runtime_manager.diagnostics_view()
+        )
+        heartbeat_source = self.core_lifecycle.personal_heartbeat_source
+        runtime_diagnostics["heartbeat"] = (
+            heartbeat_source.diagnostics_view()
+            if heartbeat_source is not None
+            else {
+                "idle_poll_seconds": None,
+                "target_count": 0,
+                "targets": [],
+            }
+        )
         return (
             Response()
-            .ok(self.core_lifecycle.personal_runtime_manager.diagnostics_view())
+            .ok(runtime_diagnostics)
             .__dict__
         )
 

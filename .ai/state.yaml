@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: high
-  phase: personal_runtime_multitarget_observation
-  scope: Extend safe Personal Runtime observation from one legacy default target to an explicit multi-target registry while preserving default proactive-message delivery semantics
+  phase: personal_runtime_observation_operations
+  scope: Operate safe multi-target Personal Runtime observation through explicit target configuration and read-only scheduling diagnostics while preserving default proactive-message delivery semantics
 context:
   confidence: high
   assumptions:
@@ -18,7 +18,7 @@ context:
     - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline while express writes reply cooldown and proactive usage only after delivery.
     - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
     - PersonalHeartbeatSource is lifecycle-owned and applies one independent due time per configured Runtime observation target. An empty target list falls back to the legacy default proactive-message target; Heartbeat only submits expiring/coalescing facts and never creates an event, acquires a turn lease, or invokes Persona, Core, or Output.
-    - ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in a configured Runtime observation group target. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
+    - Context resolves the single global Runtime observation target registry from the default configuration. ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in one of those group targets; the event-matched configuration only controls its feature flag and Runtime/Policy settings. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
     - Plugin Runtime Sensors register stable plugin_id/source_id ownership in Context and receive only a restricted submit handle; Context resolves the target, Lifecycle dispatches to existing PersonalRuntimeManager.submit_observation, and plugin unload removes registrations so stale handles cannot submit.
     - Plugin Sensor payloads are immutable structured facts with a finite expiry. They reject known message/reply/prompt fields and cannot supply events, ProviderRequest, ToolSet, platform connections, or visible reply material.
     - Explicit persona-mode plugin streams buffer semantic text and run through one final Persona output; direct-mode plugin streams retain real-time compatibility delivery.

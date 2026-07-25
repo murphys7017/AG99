@@ -133,7 +133,8 @@
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
-- `platform_settings.personal_runtime_observation_targets` 可以显式选择多个 Personal Runtime 观察目标；留空时兼容使用 `proactive_message_target`，且不改变无目标主动消息的发送位置。Heartbeat 由生命周期任务按每个目标实际命中的 Runtime 配置读取开关与间隔，并为每个启用目标维护独立 due time，只调用通用 `submit_observation()`；群聊环境观察默认关闭，启用后仅放行配置目标中的非唤醒群聊文本，经官方白名单和会话状态检查后转换为不含原文的 `conversation_activity` fact，并在进入限流、插件、Router 和 Core 前停止原事件。两类 Source 都不构造平台事件、不直接调用 Persona/Core/Output。插件可通过 `Context.register_runtime_observation_sensor()` 注册受限的结构化事实来源；Context 只解析目标并经 Lifecycle dispatcher 交给已有 Runtime Manager，注册随插件卸载清理。
+- `platform_settings.personal_runtime_observation_targets` 可以显式选择多个 Personal Runtime 观察目标；留空时兼容使用 `proactive_message_target`，且不改变无目标主动消息的发送位置。Context 始终从默认配置解析这一份全局观察范围；Heartbeat 按每个目标实际命中的 Runtime 配置读取开关与间隔，并为每个启用目标维护独立 due time，只调用通用 `submit_observation()`；群聊环境观察默认关闭，启用后仅放行该范围内、且当前会话配置已开启功能的非唤醒群聊文本，经官方白名单和会话状态检查后转换为不含原文的 `conversation_activity` fact，并在进入限流、插件、Router 和 Core 前停止原事件。两类 Source 都不构造平台事件、不直接调用 Persona/Core/Output。插件可通过 `Context.register_runtime_observation_sensor()` 注册受限的结构化事实来源；Context 只解析目标并经 Lifecycle dispatcher 交给已有 Runtime Manager，注册随插件卸载清理。
+- Dashboard 的 `/stat/personal-runtime` 诊断除了已实体化 Runtime 的 Gate、Policy 和投递终态外，也返回 Heartbeat 的已配置目标、启用状态、间隔和下一次调度状态；该视图不包含 Observation payload、用户原文或可见回复内容。
 - `CompletionFeedback` 已接入真实 turn completion。最后一份不可变反馈进入 Runtime diagnostics；`defer` 立即写入不动作冷却，带 `ActionIntent/action_id` 的 `express` 只有在可见输出确认送达后才写回复冷却并递增主动输出预算，普通被动回复不会被误算。
 
 ### 3. 插件与工具整合层
