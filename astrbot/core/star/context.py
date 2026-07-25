@@ -630,6 +630,37 @@ class Context:
             return None
         return session
 
+    def get_runtime_observation_targets(
+        self,
+        umo: str | None = None,
+    ) -> tuple[MessageSesion, ...]:
+        """Return configured proactive-capable targets for Personal Runtime sources."""
+        from astrbot.core.interaction.runtime_targets import (
+            configured_runtime_observation_target_values,
+        )
+
+        targets: list[MessageSesion] = []
+        for target in configured_runtime_observation_target_values(
+            self.get_config(umo=umo)
+        ):
+            try:
+                session = MessageSesion.from_str(target)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid Personal Runtime observation target %r",
+                    target,
+                )
+                continue
+            platform = self.get_platform_inst(session.platform_id)
+            if platform is None or not platform.meta().support_proactive_message:
+                logger.warning(
+                    "Personal Runtime observation target is unavailable: %s",
+                    target,
+                )
+                continue
+            targets.append(session)
+        return tuple(targets)
+
     async def send_message(
         self,
         session: str | MessageSesion | None,

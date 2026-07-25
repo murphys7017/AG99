@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "platform_settings": {
         "unique_session": False,
         "proactive_message_target": "",
+        "personal_runtime_observation_targets": [],
         "rate_limit": {
             "time": 60,
             "count": 30,
@@ -1037,6 +1038,10 @@ CONFIG_METADATA_2 = {
                     },
                     "proactive_message_target": {
                         "type": "string",
+                    },
+                    "personal_runtime_observation_targets": {
+                        "type": "list",
+                        "items": {"type": "string"},
                     },
                     "rate_limit": {
                         "type": "object",
@@ -3948,6 +3953,13 @@ CONFIG_METADATA_3 = {
                         "_special": "select_session",
                         "hint": "选择主动消息默认发送到的适配器和会话。该设置供未携带明确目标的主动能力使用，不会覆盖已经指定目标的定时任务或插件消息。",
                     },
+                    "platform_settings.personal_runtime_observation_targets": {
+                        "description": "人格运行时观察目标",
+                        "type": "list",
+                        "items": {"type": "string"},
+                        "_special": "select_sessions",
+                        "hint": "选择允许人格心跳和环境观察的会话。留空时兼容使用主动消息默认目标；不会改变未指定目标的插件或定时消息发送位置。",
+                    },
                     "wake_prefix": {
                         "description": "唤醒词",
                         "type": "list",
@@ -4450,7 +4462,7 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.personal_heartbeat_interval_seconds": {
                         "description": "人格心跳间隔秒数",
                         "type": "float",
-                        "hint": "最小 30 秒；初期只作用于主动消息默认目标。",
+                        "hint": "最小 30 秒；每个已配置的人格运行时观察目标独立计时。",
                         "condition": {
                             "interaction_middleware.personal_heartbeat_enabled": True,
                         },

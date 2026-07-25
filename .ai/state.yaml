@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: high
-  phase: personal_runtime_continuity_closure
-  scope: Restrict Personal Runtime to safe proactive expression, remove the ungoverned background Core-execute path, add lifecycle-owned Observation wake scheduling, and expose read-only runtime diagnostics
+  phase: personal_runtime_multitarget_observation
+  scope: Extend safe Personal Runtime observation from one legacy default target to an explicit multi-target registry while preserving default proactive-message delivery semantics
 context:
   confidence: high
   assumptions:
@@ -17,21 +17,17 @@ context:
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
     - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline while express writes reply cooldown and proactive usage only after delivery.
     - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
-    - PersonalHeartbeatSource is lifecycle-owned, follows the configured default proactive target and that target's matched runtime configuration, and only submits an expiring/coalescing heartbeat fact after revalidating Adapter capability; it does not create an event, acquire a turn lease, or invoke Persona, Core, or Output.
-    - ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed group text in the configured default proactive group target; Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
+    - PersonalHeartbeatSource is lifecycle-owned and applies one independent due time per configured Runtime observation target. An empty target list falls back to the legacy default proactive-message target; Heartbeat only submits expiring/coalescing facts and never creates an event, acquires a turn lease, or invokes Persona, Core, or Output.
+    - ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in a configured Runtime observation group target. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
     - Plugin Runtime Sensors register stable plugin_id/source_id ownership in Context and receive only a restricted submit handle; Context resolves the target, Lifecycle dispatches to existing PersonalRuntimeManager.submit_observation, and plugin unload removes registrations so stale handles cannot submit.
     - Plugin Sensor payloads are immutable structured facts with a finite expiry. They reject known message/reply/prompt fields and cannot supply events, ProviderRequest, ToolSet, platform connections, or visible reply material.
     - Explicit persona-mode plugin streams buffer semantic text and run through one final Persona output; direct-mode plugin streams retain real-time compatibility delivery.
-    - Policy execute forms an internal PersonalExecutionIntent, exposes the task intent and the same bounded ObservationBatch fact projection to the independent Core Planner, and can reach Core only after Planner returns execute with a CoreTaskSpec.
-    - Runtime execute reuses the current configuration's AgentRequestSubStage plus result decoration and output stages through a Core-only scheduler entry; it never re-enters EventBus, ordinary input stages, Router, or plugin Handler dispatch.
-    - A background Core task without current user input uses only Planner-produced CoreTaskSpec.execution_prompt as the executor transport request; the Observation remains structured runtime context and is never a user message.
-    - Non-agentic Knowledge collection uses Planner-approved CoreTaskSpec.execution_prompt only when no explicit ProviderRequest or event text exists, so background Core execution retains retrieval without treating an Observation as user input.
     - PostprocessManager owns all background after-message and after-turn tasks; it rejects new tasks during shutdown and is explicitly reopened by Core lifecycle startup.
     - Core shutdown settles Personal Runtime and PostprocessManager before plugin, Provider, knowledge-base, memory, platform, and database teardown.
     - EventBus isolates configuration lookup and task-scheduling failures to the affected event, logs them, and continues consuming later events.
     - CoreExecutionSpec owns deep-copied ContextPack slots and metadata, TaskSpec, execution history, and serializable capability descriptions; the Native ToolSet remains the explicit live execution handle until the future capability binding boundary.
     - InteractionTurnState owns the canonical Interaction ContextPack; the unused _interaction_prompt_context_pack extra mirror is removed.
-    - InteractionTurnState owns the canonical Core-delegation state; ordinary forwarding remains after Waking, while background delegation bypasses Waking through the Core-only scheduler entry.
+    - InteractionTurnState owns the canonical Core-delegation state for ordinary forwarded turns.
     - Prompt branches retain RenderResult locally, and InteractionContextMaterial retains its snapshot in Turn State; unused event-extra render and snapshot mirrors are removed.
     - InteractionStreamState is the sole owner of stream buffers, observations, completion flags, and interjection counts; duplicate Turn State fields and unread event-extra mirrors are removed.
     - InteractionTurnState is the sole owner of persona, lifecycle, completion, failure, finalization, and output-arbitration state; private event-extra mirrors are removed.
@@ -44,7 +40,7 @@ context:
     - RuntimeObservationEvent output admission rejects targets that do not declare proactive-message support before acquiring the session lock; generic submit_observation accepts such targets because observation is not delivery.
     - Each PersonalSessionRuntime owns at most 64 pending observations and one fixed 1.5-second aggregation task; new observations do not extend the deadline, and explicit coalesce identity is kind + source + coalesce_key.
     - Observation evaluation closes an immutable diagnostic batch and runs a deterministic Gate over batch facts, PersonalState, Runtime busy state, and target capability. It cannot invoke Policy, a provider, Persona, Core, Output, or create RuntimeObservationEvent.
-    - Gate hold restores the original batch to the same bounded Inbox. Runtime-busy holds are reevaluated when the active turn settles; quiet-hours and cooldown holds wait for a later Observation rather than creating another scheduler.
+    - Gate hold restores the original batch to the same bounded Inbox. Runtime-busy holds are reevaluated when the active turn settles; quiet-hours and cooldown holds are re-evaluated by the lifecycle-owned Wake Scheduler.
     - Generic intake still accepts targets without proactive-message support; the deterministic Gate rejects those batches before any future Policy or output work.
     - Runtime observation handlers receive both the compatibility event and the canonical PersonalTurnContext; cancellation and failure emit terminal lifecycle stages.
     - RuntimeObservationEvent is only the official platform-send compatibility sink; all visible observation output still passes through InteractionOutputController interception.
@@ -339,23 +335,21 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_prompt_context_collect.py tests/unit/test_prompt_pipeline_integration.py` still shows existing apply-visible prompt-pipeline/test-fixture drift and a missing local quoted-image caption provider fixture; not caused by the new group-context collector.
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
-  validation_gap: "The single-target Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and controlled execute path are present but disabled or unused until configured by operators/plugins. Multi-target routing, explicit execute permissions, declared per-Sensor schemas, external execution backends, and real policy-quality data remain absent. Targeted Pyright remains unavailable. P1 smoke coverage is intentionally limited to observable boundary behavior rather than internal orchestration order."
+  validation_gap: "Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain disabled or unused until configured by operators/plugins. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and real policy-quality data remain absent. Targeted Pyright remains unavailable. P1 smoke coverage is intentionally limited to observable boundary behavior rather than internal orchestration order."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: execution_preparation_phase_8_turn_state_ownership
+    phase: personal_runtime_multitarget_observation
     scope:
       - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
       - restart-safe last expression, cooldown, mute, and daily usage fields
       - mute, quiet-hours, cooldown-duration, policy budget, and output budget configuration
       - Gate enforcement before any Personal Policy Provider request
-      - lifecycle-owned, default-disabled, single-target Heartbeat Observation submission
+      - lifecycle-owned, default-disabled, multi-target Heartbeat Observation submission with per-target due times
       - controlled express ActionIntent through existing RuntimeObservationEvent, Persona, and Output boundaries
       - defer no-action deadlines persisted by PersonalState
       - default-disabled ambient group conversation_activity Observation through the official Waking, whitelist, and session-status stages
       - plugin-owned Runtime Observation Sensor registration, structured fact submission, and unload cleanup through Context and Lifecycle
-      - Policy execute intent through an independent Core Planner review and the existing Core-only Pipeline/output path
-      - background Core knowledge query fallback from Planner-approved execution_prompt
       - lifecycle-owned postprocess task admission, cancellation, and restart-safe reopening
       - shutdown sequencing that settles Personal Runtime and postprocess work before their dependencies
       - per-event EventBus preparation failure isolation
@@ -366,13 +360,12 @@ runtime:
       - InteractionStreamState ownership without duplicate fields or unread event-extra mirrors
       - InteractionTurnState lifecycle and completion ownership without private event-extra mirrors
     non_goals:
-      - built-in additional Runtime Sensors, per-Sensor schemas, multi-target active scheduling, and explicit execute permissions
+      - built-in additional Runtime Sensors, per-Sensor schemas, and explicit background-execution permissions
       - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy
       - synthetic platform or user messages
     confirmed_gaps:
-      - controlled execute only reaches the current Core AgentRequest path; a backend-neutral progress, cancellation, and permission contract remains absent
-      - quiet-hours and cooldown holds require a later Observation to wake them until the producer lifecycle exists
-      - no built-in additional Runtime Sensor or multi-target registry exists yet
+      - a backend-neutral progress, cancellation, and background-execution permission contract remains absent
+      - no built-in additional Runtime Sensor or per-Sensor schema exists yet
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract

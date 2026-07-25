@@ -1,7 +1,7 @@
 <template>
   <v-autocomplete
     :model-value="modelValue"
-    @update:model-value="emit('update:modelValue', $event || '')"
+    @update:model-value="emitValue"
     :items="sessionItems"
     :loading="loading"
     :label="tm('sessionSelector.label')"
@@ -13,6 +13,8 @@
     clearable
     hide-details
     no-filter
+    :multiple="multiple"
+    :chips="multiple"
     @update:search="search = $event || ''"
   >
     <template #item="{ props, item }">
@@ -42,10 +44,14 @@ import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { useModuleI18n } from '@/i18n/composables'
 
-defineProps({
+const props = defineProps({
   modelValue: {
-    type: String,
+    type: [String, Array],
     default: ''
+  },
+  multiple: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -54,6 +60,13 @@ const { tm } = useModuleI18n('core/shared')
 const loading = ref(false)
 const search = ref('')
 const sessions = ref([])
+
+function emitValue(value) {
+  emit(
+    'update:modelValue',
+    props.multiple ? (Array.isArray(value) ? value : []) : (value || '')
+  )
+}
 
 const sessionItems = computed(() => {
   const keyword = search.value.trim().toLowerCase()

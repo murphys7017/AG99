@@ -65,12 +65,13 @@ Core、Persona 或 Output；
 session lock，目标必须明确支持主动消息；没有 `visible_reply_material` 时不会请求模型，实际
 发送失败会使 turn 失败，不能把未投递内容写成成功历史。
 
-单目标 Heartbeat Source 已由 Core Lifecycle 托管；它只针对已配置且仍支持主动消息的默认目标
-提交可过期、可合并的 `heartbeat` Observation，不构造消息或直接发送。群聊环境观察默认关闭；
-启用后，官方 Waking 阶段只让同一默认目标的非唤醒群聊文本继续通过白名单和会话状态检查，
+多目标 Heartbeat Source 已由 Core Lifecycle 托管；`platform_settings.personal_runtime_observation_targets`
+留空时兼容默认主动目标，它会为每个已配置且仍支持主动消息的目标独立提交可过期、可合并的
+`heartbeat` Observation，不构造消息或直接发送。群聊环境观察默认关闭；启用后，官方 Waking 阶段只让
+配置群聊目标中的非唤醒文本继续通过白名单和会话状态检查，
 再转换为不含原文的 `conversation_activity` Observation，并在普通限流、插件、Router 和 Core 前
 终止该平台事件。Action Coordinator 已实现 `express / defer`。插件可以注册受限 Runtime Sensor，
-通过 handle 提交可过期的结构化事实；多目标 session registry 仍未实现。Policy 每日调用上限会在 Provider 请求前写入独立
+通过 handle 提交可过期的结构化事实。Policy 每日调用上限会在 Provider 请求前写入独立
 Personal State Repository。
 最近表达、冷却、静音和每日用量具备窄化的重启恢复边界。静音、quiet hours、cooldown 时长与
 主动输出上限已经接入用户配置；Gate 立即执行静音、全局时区安静时段和输出预算。`express` 的可见输出

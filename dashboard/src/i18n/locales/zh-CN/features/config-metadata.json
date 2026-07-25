@@ -771,6 +771,10 @@
           "description": "主动消息默认目标",
           "hint": "选择主动消息默认发送到的适配器和会话。不会覆盖已经明确指定目标的定时任务或插件消息。"
         },
+        "personal_runtime_observation_targets": {
+          "description": "人格运行时观察目标",
+          "hint": "选择允许人格心跳和环境观察的会话。留空时兼容使用主动消息默认目标；不会改变未指定目标的插件或定时消息发送位置。"
+        },
         "friend_message_needs_wake_prefix": {
           "description": "私聊消息需要唤醒词"
         },

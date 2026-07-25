@@ -25,7 +25,7 @@
 10. 对话和诊断状态保持进程内；主动控制字段在主动表达开放前必须具备重启安全的持久化。
 11. 现有 `RuntimeObservationEvent` 和 `submit_runtime_observation_event()` 是“已决定输出后的平台
     适配入口”，不是通用 Observation Inbox，不能直接扩展成后台观察总线。
-12. 初期主动策略只作用于用户明确配置的默认主动目标，不自动为所有历史会话创建 Heartbeat。
+12. 主动策略只作用于用户明确配置的 Personal Runtime 观察目标；留空时兼容默认主动目标，不自动为所有历史会话创建 Heartbeat。
 
 ### 1.1 设计参考和非目标
 
@@ -75,9 +75,9 @@
 
 当前实现还不是持续人格运行时，主要缺口如下：
 
-1. `express` 与 `defer` 已有最小 Action 生命周期；多目标目标注册和更复杂的节律策略
+1. `express` 与 `defer` 已有最小 Action 生命周期；更复杂的节律策略和更多 Sensor
    仍未接入。
-2. 默认主动目标同时承载首个 Heartbeat Source；Policy 的表达只复用该目标与同一 Runtime identity。
+2. `personal_runtime_observation_targets` 可以显式选择多个观察会话；每个目标保持独立 Runtime identity。
 3. Action 的可见文本仍只由 Persona Expression 形成，Policy 只提供表达意图；真实输出质量和误触发率
    仍需基于运行数据审阅。
 
@@ -666,7 +666,7 @@ Policy 不接收：
 - schema 错误、超时和 provider 错误统一 fail closed。
 - shadow 模式不发送消息、不调用 Core、不修改 Router。
 
-### Phase 4：单目标 Heartbeat Express
+### Phase 4：多目标 Heartbeat Express
 
 目标：让配置目标具备受控的主动人格表达能力。
 
@@ -677,12 +677,12 @@ Policy 不接收：
 
 - 冷却、静音和每日预算已持久化。
 - shadow policy 日志稳定。
-- 默认主动目标可用并支持主动消息。
+- 至少一个显式观察目标或默认主动目标可用并支持主动消息。
 
 工作：
 
 - 增加本地 Heartbeat Source；tick 只提交 Observation。
-- 初期只针对 `platform_settings.proactive_message_target` 创建实例。
+- `platform_settings.personal_runtime_observation_targets` 为空时回退 `proactive_message_target`；非空时每个目标独立创建 Observation。
 - quiet hours 使用显式 IANA timezone；未配置时使用主机时区。
 - 开放 `ignore / observe / express / defer`，继续禁止 `execute`。
 - `express` 经 ActionIntent、Persona Expression 和 Output Runtime 投递。
@@ -712,8 +712,7 @@ max_proactive_outputs_per_day
 
 ### Phase 5：环境对话 Observation
 
-状态：初步实现。当前仅覆盖默认主动消息目标中的非唤醒群聊文本；多目标范围和其他环境
-来源仍留在后续阶段。
+状态：初步实现。当前覆盖配置观察目标中的非唤醒群聊文本；其他环境来源仍留在后续阶段。
 
 目标：让人格可以谨慎参与未明确唤醒的环境对话。
 
@@ -721,7 +720,7 @@ max_proactive_outputs_per_day
 
 - 在官方 Waking、白名单和会话状态检查之后、普通限流/插件 Handler/Core Agent 之前增加只读
   observation tap。
-- 只把已配置默认主动群聊目标中的非唤醒文本转换为 `conversation_activity`，不保存原文。
+- 只把已配置观察群聊目标中的非唤醒文本转换为 `conversation_activity`，不保存原文。
 - 排除 Notice、平台控制、空内容、已停止和协议事件。
 - Feature Builder 计算参与人数、复读、密度、连续追问候选和最近表达时间。
 - Policy 只允许 express / observe / ignore / defer，不允许环境消息直接进入 Core。
@@ -848,11 +847,12 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
     全局时区安静时段和输出预算；`defer` 写无动作截止时间，`express` 只在可见输出确认送达后写
     回复冷却和主动输出计数。
 
-单目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后只重新验证
-`platform_settings.proactive_message_target` 并提交可过期、可合并的 Observation。Heartbeat 不直接
-发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过同一 Runtime 的 Persona
+多目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后按
+`platform_settings.personal_runtime_observation_targets` 逐个重新验证，留空时兼容
+`platform_settings.proactive_message_target`，并为每个目标独立提交可过期、可合并的 Observation。Heartbeat 不直接
+发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过对应 Runtime 的 Persona
 与 Output 链路表达。defer、cooldown 和 quiet-hours 的 retained batch 由生命周期托管 Wake Scheduler
-到期重评；下一步应使用真实运行数据审阅策略质量，再设计其他 Runtime Sensor 与多目标注册。
+到期重评；下一步应使用真实运行数据审阅策略质量，再设计其他 Runtime Sensor。
 
 ## 十五、后续仍需用运行数据决定的问题
 

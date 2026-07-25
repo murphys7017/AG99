@@ -41,7 +41,7 @@ flowchart LR
         W["WakingCheckStage<br/>自消息过滤 / 唤醒判断 / 插件 Handler 过滤"]
         WL["WhitelistCheckStage"]
         SS["SessionStatusCheckStage"]
-        ACTIVITY_TAP["ConversationActivityStage<br/>默认关闭：仅默认主动群聊目标<br/>提交无原文 conversation_activity 后停止"]
+        ACTIVITY_TAP["ConversationActivityStage<br/>默认关闭：仅配置的观察群聊目标<br/>提交无原文 conversation_activity 后停止"]
         RL["RateLimitStage"]
         CS["ContentSafetyCheckStage"]
         PP["PreProcessStage<br/>路径映射 / Record 转换 / STT"]
@@ -298,9 +298,9 @@ flowchart LR
 
     subgraph OBSERVATION["八、Runtime Observation（Heartbeat + 群聊环境 Source + Intake + Gate + Policy Action 已实现）"]
         direction TB
-        OBS_HEARTBEAT_CONFIG["默认主动目标 + 目标命中配置<br/>heartbeat enable / interval"]
-        OBS_SOURCE["PersonalHeartbeatSource<br/>Core Lifecycle 托管<br/>tick 不直接发送"]
-        OBS_ACTIVITY["ConversationActivityStage<br/>默认关闭；同一默认群聊目标<br/>Waking -> whitelist -> session 后只读 tap"]
+        OBS_HEARTBEAT_CONFIG["Runtime 观察目标列表（留空回退默认主动目标）<br/>每目标 heartbeat enable / interval"]
+        OBS_SOURCE["PersonalHeartbeatSource<br/>Core Lifecycle 托管<br/>每目标 due time；tick 不直接发送"]
+        OBS_ACTIVITY["ConversationActivityStage<br/>默认关闭；配置群聊观察目标<br/>Waking -> whitelist -> session 后只读 tap"]
         OBS_FUTURE_SOURCE["未来 Scheduler / 其他 Runtime Sensor"]
         OBS_FACT["RuntimeObservation<br/>稳定 ID / expiry / coalesce key<br/>不可变系统事实"]
         OBS_INTAKE["PersonalRuntimeManager.submit_observation<br/>复用官方会话人格与隐私规则解析 RuntimeKey<br/>不构造 event / message"]

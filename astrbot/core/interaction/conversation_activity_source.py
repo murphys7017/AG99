@@ -4,10 +4,10 @@ import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
 from .observation import RuntimeObservation, RuntimeObservationTarget
+from .runtime_targets import configured_runtime_observation_targets
 
 if TYPE_CHECKING:
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -55,34 +55,25 @@ def _resolve_target(
     event: AstrMessageEvent,
     config: Mapping[str, object],
 ) -> RuntimeObservationTarget | None:
-    platform_settings = config.get("platform_settings", {})
-    if not isinstance(platform_settings, Mapping):
-        return None
-    raw_target = str(platform_settings.get("proactive_message_target", "") or "").strip()
-    if not raw_target:
-        return None
-    try:
-        target = MessageSession.from_str(raw_target)
-    except (TypeError, ValueError):
-        return None
-
     group_id = str(event.get_group_id() or "").strip()
-    if (
-        target.platform_id != event.get_platform_id()
-        or target.message_type is not MessageType.GROUP_MESSAGE
-        or not group_id
-        or target.session_id != group_id
-        or not event.platform_meta.support_proactive_message
-    ):
+    if not group_id or not event.platform_meta.support_proactive_message:
         return None
-    return RuntimeObservationTarget(
-        platform_id=target.platform_id,
-        platform_name=event.get_platform_name(),
-        message_type=target.message_type,
-        session_id=target.session_id,
-        support_proactive_message=True,
-        group_id=group_id,
-    )
+    for target in configured_runtime_observation_targets(config):
+        if (
+            target.platform_id != event.get_platform_id()
+            or target.message_type is not MessageType.GROUP_MESSAGE
+            or target.session_id != group_id
+        ):
+            continue
+        return RuntimeObservationTarget(
+            platform_id=target.platform_id,
+            platform_name=event.get_platform_name(),
+            message_type=target.message_type,
+            session_id=target.session_id,
+            support_proactive_message=True,
+            group_id=group_id,
+        )
+    return None
 
 
 class ConversationActivitySource:

@@ -769,6 +769,10 @@
           "description": "Default Proactive Message Target",
           "hint": "Select the adapter and session used by proactive messages that do not specify a target. Explicit cron or plugin targets are not overridden."
         },
+        "personal_runtime_observation_targets": {
+          "description": "Personal Runtime Observation Targets",
+          "hint": "Select sessions that allow Persona heartbeats and ambient observation. When empty, the default proactive target is used for compatibility; this does not change targetless cron or plugin delivery."
+        },
         "friend_message_needs_wake_prefix": {
           "description": "Private Messages Require Wake Word"
         },

@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING
 
 from astrbot.api import logger
+from astrbot.core.platform.message_type import MessageType
 
 from .config import load_interaction_agent_config
 from .observation import RuntimeObservation, RuntimeObservationTarget
@@ -32,6 +33,7 @@ class PersonalHeartbeatSource:
         self._context = context
         self._config_manager = config_manager
         self._runtime_manager = runtime_manager
+        self._next_tick_at: dict[str, float] = {}
 
     async def run(self) -> None:
         while True:
@@ -46,63 +48,95 @@ class PersonalHeartbeatSource:
             except Exception:
                 logger.exception("Personal Runtime heartbeat tick failed")
 
-    async def tick(self) -> ObservationAdmissionResult | None:
-        session = self._context.get_proactive_message_target()
-        if session is None:
-            return None
-
-        runtime_config = self._config_manager.get_conf(session)
-        runtime_settings = load_interaction_agent_config(runtime_config)
-        if not runtime_settings.personal_heartbeat_enabled:
-            return None
-
-        platform = next(
-            (
-                item
-                for item in self._context.platform_manager.platform_insts
-                if item.meta().id == session.platform_id
-            ),
-            None,
-        )
-        if platform is None:
-            return None
-        metadata = platform.meta()
-        if not metadata.support_proactive_message:
-            return None
-
-        config_info = self._config_manager.get_conf_info(session)
+    async def tick(self) -> tuple[ObservationAdmissionResult, ...]:
         occurred_at = time.time()
-        interval = runtime_settings.personal_heartbeat_interval_seconds
-        observation = RuntimeObservation(
-            kind="heartbeat",
-            source="personal_runtime.heartbeat",
-            occurred_at=occurred_at,
-            expires_at=occurred_at + interval * 2,
-            coalesce_key="default_target",
-            target_session=RuntimeObservationTarget(
-                platform_id=session.platform_id,
-                platform_name=metadata.name,
-                message_type=session.message_type,
-                session_id=session.session_id,
-                support_proactive_message=True,
-            ),
-        )
-        return await self._runtime_manager.submit_observation(
-            observation,
-            config_id=str(config_info.get("id") or "default"),
-            plugin_context=self._context,
-            runtime_config=runtime_config,
-        )
+        results: list[ObservationAdmissionResult] = []
+        active_targets: set[str] = set()
+        for session in self._context.get_runtime_observation_targets():
+            target_key = str(session)
+            active_targets.add(target_key)
+            runtime_config = self._config_manager.get_conf(session)
+            runtime_settings = load_interaction_agent_config(runtime_config)
+            if not runtime_settings.personal_heartbeat_enabled:
+                self._next_tick_at.pop(target_key, None)
+                continue
+            due_at = self._next_tick_at.get(target_key, occurred_at)
+            if due_at > occurred_at:
+                continue
+
+            platform = self._context.get_platform_inst(session.platform_id)
+            if platform is None:
+                continue
+            metadata = platform.meta()
+            if not metadata.support_proactive_message:
+                continue
+
+            interval = runtime_settings.personal_heartbeat_interval_seconds
+            config_info = self._config_manager.get_conf_info(session)
+            observation = RuntimeObservation(
+                kind="heartbeat",
+                source="personal_runtime.heartbeat",
+                occurred_at=occurred_at,
+                expires_at=occurred_at + interval * 2,
+                coalesce_key="heartbeat",
+                target_session=RuntimeObservationTarget(
+                    platform_id=session.platform_id,
+                    platform_name=metadata.name,
+                    message_type=session.message_type,
+                    session_id=session.session_id,
+                    support_proactive_message=True,
+                    group_id=(
+                        session.session_id
+                        if session.message_type is MessageType.GROUP_MESSAGE
+                        else None
+                    ),
+                ),
+            )
+            try:
+                result = await self._runtime_manager.submit_observation(
+                    observation,
+                    config_id=str(config_info.get("id") or "default"),
+                    plugin_context=self._context,
+                    runtime_config=runtime_config,
+                )
+            except Exception:
+                logger.exception(
+                    "Personal Runtime heartbeat submission failed for target %s",
+                    target_key,
+                )
+                self._next_tick_at[target_key] = occurred_at + min(
+                    interval,
+                    self._DISABLED_POLL_SECONDS,
+                )
+                continue
+            self._next_tick_at[target_key] = occurred_at + interval
+            results.append(result)
+        self._next_tick_at.intersection_update(active_targets)
+        return tuple(results)
 
     def _next_poll_seconds(self) -> float:
-        session = self._context.get_proactive_message_target()
-        if session is None:
+        now = time.time()
+        active_due_at: list[float] = []
+        active_targets: set[str] = set()
+        for session in self._context.get_runtime_observation_targets():
+            target_key = str(session)
+            active_targets.add(target_key)
+            settings = load_interaction_agent_config(
+                self._config_manager.get_conf(session)
+            )
+            if not settings.personal_heartbeat_enabled:
+                self._next_tick_at.pop(target_key, None)
+                continue
+            active_due_at.append(
+                self._next_tick_at.setdefault(
+                    target_key,
+                    now + settings.personal_heartbeat_interval_seconds,
+                )
+            )
+        self._next_tick_at.intersection_update(active_targets)
+        if not active_due_at:
             return self._DISABLED_POLL_SECONDS
-        runtime_config = self._config_manager.get_conf(session)
-        settings = load_interaction_agent_config(runtime_config)
-        if not settings.personal_heartbeat_enabled:
-            return self._DISABLED_POLL_SECONDS
-        return settings.personal_heartbeat_interval_seconds
+        return max(0.0, min(active_due_at) - now)
 
 
 __all__ = ["PersonalHeartbeatSource"]
