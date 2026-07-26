@@ -214,7 +214,7 @@ class ObservationFeatureBuilder:
             policy_budget_available=policy_budget_available,
             output_budget_available=output_budget_available,
             budget_available=(policy_budget_available and output_budget_available),
-            target_available=bool(latest_target.support_proactive_message),
+            target_available=bool(latest_target.support_personal_runtime),
         )
 
     @staticmethod

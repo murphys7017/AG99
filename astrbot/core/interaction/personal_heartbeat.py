@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.platform.platform_metadata import supports_personal_runtime
 
 from .config import load_interaction_agent_config
 from .observation import RuntimeObservation, RuntimeObservationTarget
@@ -73,7 +74,7 @@ class PersonalHeartbeatSource:
             if platform is None:
                 continue
             metadata = platform.meta()
-            if not metadata.support_proactive_message:
+            if not supports_personal_runtime(metadata):
                 continue
 
             interval = runtime_settings.personal_heartbeat_interval_seconds
@@ -89,7 +90,8 @@ class PersonalHeartbeatSource:
                     platform_name=metadata.name,
                     message_type=session.message_type,
                     session_id=session.session_id,
-                    support_proactive_message=True,
+                    support_proactive_message=metadata.support_proactive_message,
+                    support_personal_runtime=True,
                     group_id=(
                         session.session_id
                         if session.message_type is MessageType.GROUP_MESSAGE

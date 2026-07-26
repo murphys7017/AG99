@@ -29,6 +29,7 @@ class RuntimeObservationTarget:
     message_type: MessageType
     session_id: str
     support_proactive_message: bool = False
+    support_personal_runtime: bool = False
     group_id: str | None = None
     group_name: str | None = None
 
@@ -49,6 +50,9 @@ class RuntimeObservationTarget:
         object.__setattr__(self, "session_id", session_id)
         object.__setattr__(
             self, "support_proactive_message", bool(self.support_proactive_message)
+        )
+        object.__setattr__(
+            self, "support_personal_runtime", bool(self.support_personal_runtime)
         )
         object.__setattr__(
             self,

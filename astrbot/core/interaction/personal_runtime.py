@@ -16,6 +16,7 @@ from astrbot.core.persona_error_reply import (
     resolve_event_conversation_persona_id,
 )
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
@@ -1200,9 +1201,18 @@ class PersonalRuntimeManager:
         self._ensure_accepting()
         if not isinstance(event, RuntimeObservationEvent):
             raise TypeError("event must be a RuntimeObservationEvent")
-        if not event.platform_meta.support_proactive_message:
+        get_platform = getattr(plugin_context, "get_platform_inst", None)
+        platform = (
+            get_platform(event.get_platform_id()) if callable(get_platform) else None
+        )
+        if (
+            not event.platform_meta.support_personal_runtime
+            or platform is None
+            or not supports_personal_runtime(platform.meta())
+        ):
             raise RuntimeError(
-                "Runtime observation target does not support proactive messages"
+                "Runtime observation target does not explicitly support Personal "
+                "Runtime output"
             )
         event.set_extra("_astrbot_config_id", config_id)
         reservation = self._reserve(
@@ -1274,6 +1284,12 @@ class PersonalRuntimeManager:
             return False
 
         metadata = platform.meta()
+        if not supports_personal_runtime(metadata):
+            logger.warning(
+                "Cannot send Personal Runtime output to unsupported platform: %s",
+                session,
+            )
+            return False
         observation = RuntimeObservation(
             kind="proactive_output",
             source="plugin.context.send_message",
@@ -1284,6 +1300,7 @@ class PersonalRuntimeManager:
                 message_type=session.message_type,
                 session_id=session.session_id,
                 support_proactive_message=metadata.support_proactive_message,
+                support_personal_runtime=True,
             ),
             payload={"visible_reply_material": message.get_plain_text()},
         )

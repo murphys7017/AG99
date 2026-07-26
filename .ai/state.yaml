@@ -37,7 +37,7 @@ context:
     - The official EventBus and Pipeline are the only production inbound path; InteractionMiddleware.handle_inbound, its spawn path, core_queue dependency, and enqueue_core branches have been removed.
     - RuntimeObservation is immutable structured system input and is never projected as a user message.
     - Generic observation intake shares the same PersonalSessionRuntime identity as platform turns but does not acquire the turn lock and bypasses EventBus, Pipeline, Router, Planner, Core, Persona, and Output.
-    - RuntimeObservationEvent output admission rejects targets that do not declare proactive-message support before acquiring the session lock; generic submit_observation accepts such targets because observation is not delivery.
+    - Personal Runtime output requires the Adapter to explicitly declare both proactive-message and Personal Runtime delivery support before target admission or session locking; generic submit_observation accepts unsupported targets because observation is not delivery.
     - Each PersonalSessionRuntime owns at most 64 pending observations and one fixed 1.5-second aggregation task; new observations do not extend the deadline, and explicit coalesce identity is kind + source + coalesce_key.
     - Observation evaluation closes an immutable diagnostic batch and runs a deterministic Gate over batch facts, PersonalState, Runtime busy state, and target capability. It cannot invoke Policy, a provider, Persona, Core, Output, or create RuntimeObservationEvent.
     - Gate hold restores the original batch to the same bounded Inbox. Runtime-busy holds are reevaluated when the active turn settles; quiet-hours and cooldown holds are re-evaluated by the lifecycle-owned Wake Scheduler.

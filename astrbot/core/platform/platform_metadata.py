@@ -35,3 +35,14 @@ class PlatformMetadata:
 
     参考 https://github.com/AstrBotDevs/AstrBot/pull/5045
     """
+
+    support_personal_runtime: bool = False
+    """平台是否已验证支持 Personal Runtime 的会话级可见输出。"""
+
+
+def supports_personal_runtime(metadata: PlatformMetadata) -> bool:
+    """Return whether an adapter explicitly supports Personal Runtime output."""
+
+    return bool(
+        metadata.support_proactive_message and metadata.support_personal_runtime
+    )

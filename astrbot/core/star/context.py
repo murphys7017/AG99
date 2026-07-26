@@ -22,6 +22,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.platform import Platform
 from astrbot.core.platform.astr_message_event import AstrMessageEvent, MessageSesion
+from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest, ProviderType
 from astrbot.core.provider.func_tool_manager import FunctionTool, FunctionToolManager
@@ -652,9 +653,10 @@ class Context:
                 )
                 continue
             platform = self.get_platform_inst(session.platform_id)
-            if platform is None or not platform.meta().support_proactive_message:
+            if platform is None or not supports_personal_runtime(platform.meta()):
                 logger.warning(
-                    "Personal Runtime observation target is unavailable: %s",
+                    "Personal Runtime observation target does not explicitly support "
+                    "Personal Runtime output: %s",
                     target,
                 )
                 continue
@@ -870,6 +872,7 @@ class Context:
                 message_type=target_session.message_type,
                 session_id=target_session.session_id,
                 support_proactive_message=metadata.support_proactive_message,
+                support_personal_runtime=supports_personal_runtime(metadata),
                 group_id=(
                     target_session.session_id
                     if target_session.message_type is MessageType.GROUP_MESSAGE

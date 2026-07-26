@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.platform.platform_metadata import supports_personal_runtime
 
 from .observation import RuntimeObservation, RuntimeObservationTarget
 
@@ -58,7 +59,7 @@ def resolve_conversation_activity_target(
     runtime_targets: Iterable[MessageSession],
 ) -> RuntimeObservationTarget | None:
     group_id = str(event.get_group_id() or "").strip()
-    if not group_id or not event.platform_meta.support_proactive_message:
+    if not group_id or not supports_personal_runtime(event.platform_meta):
         return None
     for target in runtime_targets:
         if (
@@ -72,7 +73,8 @@ def resolve_conversation_activity_target(
             platform_name=event.get_platform_name(),
             message_type=target.message_type,
             session_id=target.session_id,
-            support_proactive_message=True,
+            support_proactive_message=event.platform_meta.support_proactive_message,
+            support_personal_runtime=True,
             group_id=group_id,
         )
     return None

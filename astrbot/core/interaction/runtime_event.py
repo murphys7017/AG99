@@ -46,6 +46,7 @@ class RuntimeObservationEvent(AstrMessageEvent):
                 description="Runtime observation",
                 id=target.platform_id,
                 support_proactive_message=target.support_proactive_message,
+                support_personal_runtime=target.support_personal_runtime,
             ),
             target.session_id,
         )

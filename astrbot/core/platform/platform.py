@@ -98,6 +98,7 @@ class Platform(abc.ABC):
             "description": meta.description,
             "support_streaming_message": meta.support_streaming_message,
             "support_proactive_message": meta.support_proactive_message,
+            "support_personal_runtime": meta.support_personal_runtime,
         }
         return {
             "id": meta.id or self.config.get("id"),
