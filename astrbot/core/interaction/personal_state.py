@@ -61,6 +61,7 @@ class PersonalState:
     last_observation_at: float | None = None
     last_user_activity_at: float | None = None
     last_expression_at: float | None = None
+    last_expression_fingerprint: str | None = None
     reply_cooldown_until: float | None = None
     no_action_cooldown_until: float | None = None
     mute_until: float | None = None
@@ -114,6 +115,10 @@ class PersonalState:
                 cooldown_until,
                 self.reply_cooldown_until or cooldown_until,
             )
+            if feedback.visible_reply_fingerprint:
+                self.last_expression_fingerprint = (
+                    feedback.visible_reply_fingerprint
+                )
         if (
             feedback.action_id
             and feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
@@ -211,6 +216,7 @@ class CompletionFeedback:
     output_completed_at: float | None = None
     failure_code: str | None = None
     user_follow_up_observed: bool = False
+    visible_reply_fingerprint: str | None = None
 
 
 __all__ = [

@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 from astrbot import logger
 from astrbot.core.agent.tool import TOOL_TARGET_PERSONAL_EXPRESSION, ToolSet
+from astrbot.core.memory.history_source import extract_message_text
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.context_collect import resolve_toolset_for_target
@@ -42,6 +43,10 @@ from .effects import (
     normalize_persona_effect_parameters_schema,
     parse_persona_effect_calls_with_issues,
 )
+from .personal_expression_guard import (
+    PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY,
+    fingerprint_personal_expression,
+)
 from .prompt_support import (
     build_interaction_prompt_build_config,
     build_model_context_messages,
@@ -62,6 +67,7 @@ class PersonaExpressionRequest:
     short_reply: bool = False
     allow_empty: bool = False
     allow_plugin_tools: bool = False
+    avoid_previous_reply: bool = False
 
 
 @dataclass(slots=True)
@@ -389,8 +395,13 @@ def extract_persona_expression_result(
 
 
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
-    del req
-    return "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
+    prompt = "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
+    if req.avoid_previous_reply:
+        prompt += (
+            "\n这是自主表达。spoken_reply 不得重复 conversation history 中最近一条 "
+            "assistant 回复；即使表达意图相近，也必须换用有实质差异的措辞和角度。"
+        )
+    return prompt
 
 
 def _should_require_tool_choice(output_contract: OutputContract | None) -> bool:
@@ -664,6 +675,13 @@ class InteractionExpressionAgent:
             if tool_material and not exc.tool_material:
                 exc.tool_material = tool_material
             raise
+        previous_expression_fingerprint = render_result.metadata.get(
+            PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY
+        )
+        if isinstance(previous_expression_fingerprint, str):
+            result.metadata[
+                PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY
+            ] = previous_expression_fingerprint
         logger.info(
             "DIAG expression.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
             event.get_platform_id(),
@@ -881,6 +899,14 @@ class InteractionExpressionAgent:
             )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
         render_result.metadata["prompt_slot_sizes"] = prompt_slot_sizes
+        if req.avoid_previous_reply:
+            previous_expression_fingerprint = (
+                _latest_assistant_expression_fingerprint(expression_pack)
+            )
+            if previous_expression_fingerprint is not None:
+                render_result.metadata[
+                    PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY
+                ] = previous_expression_fingerprint
         return render_result
 
     @staticmethod
@@ -958,6 +984,27 @@ def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:
             req.pending_text,
         )
     )
+
+
+def _latest_assistant_expression_fingerprint(pack) -> str | None:
+    history_slot = pack.get_slot("conversation.history")
+    if history_slot is None or not isinstance(history_slot.value, dict):
+        return None
+    turns = history_slot.value.get("turns")
+    if not isinstance(turns, list):
+        return None
+    for turn in reversed(turns):
+        if not isinstance(turn, dict):
+            continue
+        assistant_message = turn.get("assistant_message")
+        if not isinstance(assistant_message, dict):
+            continue
+        fingerprint = fingerprint_personal_expression(
+            extract_message_text(assistant_message)
+        )
+        if fingerprint is not None:
+            return fingerprint
+    return None
 
 
 def _build_failure_expression_request(

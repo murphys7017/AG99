@@ -95,8 +95,13 @@
 6. 官方前置 stage 执行：唤醒、白名单、会话状态、限流、内容安全、预处理
 7. 进入 `ProcessStage`
 8. interaction middleware 创建 turn state；协议任务走独立 Core bypass，普通对话并发启动 Router 与统一 Persona Expression
-9. Router 选择 `persona` 时不启动 Core；选择 `hybrid` 时调用 Planner，并只在 Planner 返回 `execute` 后继续调用 core agent
+9. Router 选择 `persona` 时不启动 Core；选择 `hybrid` 时调用 Planner，并只在 Planner 返回 `execute` 后继续调用 core agent；群聊模型续接候选还可选择 `silent`
 10. pipeline 内部调用插件、主 Agent、工具等能力
+
+群聊的 Conversation 历史只为语义判断提供上下文，不自行扩大 Waking 边界。当前 active turn 的同一
+发送者可立即 follow-up；Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口截止只进入现有 Router，
+由它判断 `silent / persona / hybrid`。该候选路径先等 Router 再启动 Persona，Router 失败按 `silent`
+完成；窗口外和其他发送者仍需唤醒词、@ 或引用 Bot。
 
 interaction turn 的输出路径与普通事件不同：
 
@@ -166,6 +171,12 @@ Repository 恢复失败会降级为当前进程内状态，最终保存失败只
 官方全局 IANA timezone；Gate 当前执行静音、安静时段和输出预算。两个 cooldown 时长只作为后续
 Action 配置：`defer` 使用不动作冷却作为最小等待时间；`express` 只有在可见输出确认送达后才写入
 回复冷却和每日主动输出计数。
+
+Policy 对近期已表达且当前 batch 没有新事实的同一意图应返回 `ignore / observe`。只有携带
+`PersonalActionIntent` 的自主 Persona 请求会启用上一条回复防重：Runtime 从真实投递回执保留不可逆
+规范化指纹，Persona 的 Conversation history 快照提供重启兜底；生成后若与上一条一致，则在 effect、
+TTS、平台投递和 Conversation 提交前以 `suppressed` 完成。抑制不会推进冷却或主动配额。显式
+`Context.send_message()`、Cron 和插件主动输出不进入该检查。
 
 Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形成一次
 `CompletionFeedback`。投递终态以 `InteractionUtterance.delivered_message_ids` 为准，再结合 turn

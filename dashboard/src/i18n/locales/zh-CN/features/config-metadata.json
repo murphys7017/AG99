@@ -1137,7 +1137,7 @@
         },
         "personal_runtime_conversation_continuation_seconds": {
           "description": "群聊连续对话窗口秒数",
-          "hint": "机器人成功回复后，同一用户在同一群内可免唤醒词继续对话；设为 0 可关闭。"
+          "hint": "机器人成功回复后，同一用户 10 秒内可直接续接；此后到窗口结束由现有 Router 判断 persona、hybrid 或 silent。设为 0 可关闭。"
         },
         "personal_runtime_muted": {
           "description": "静音主动人格",

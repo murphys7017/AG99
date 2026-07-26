@@ -1135,7 +1135,7 @@
         },
         "personal_runtime_conversation_continuation_seconds": {
           "description": "Group Conversation Continuation Seconds",
-          "hint": "After a delivered reply, the same user can continue in the same group without another wake prefix. Set to 0 to disable."
+          "hint": "After a delivered reply, the same user can continue directly for 10 seconds. For the rest of the window, the existing Router chooses persona, hybrid, or silent. Set to 0 to disable."
         },
         "personal_runtime_muted": {
           "description": "Mute Proactive Persona",

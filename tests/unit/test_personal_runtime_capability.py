@@ -1,14 +1,21 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from astrbot.core.cron.events import CronMessageEvent
+from astrbot.core.interaction.expression_agent import PersonaExpressionResult
+from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.observation import (
     RuntimeObservation,
     RuntimeObservationTarget,
 )
 from astrbot.core.interaction.observation_inbox import ObservationBatch
 from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.personal_action import PersonalActionIntent
+from astrbot.core.interaction.personal_expression_guard import (
+    fingerprint_personal_expression,
+)
 from astrbot.core.interaction.personal_gate import (
     DeterministicObservationGate,
     ObservationFeatureBuilder,
@@ -23,7 +30,12 @@ from astrbot.core.interaction.turn_state import (
     InteractionFinalOutputStatus,
     append_interaction_turn_visible_output,
     finish_interaction_turn_final_output,
+    get_interaction_turn_state,
     reserve_interaction_turn_final_output,
+)
+from astrbot.core.interaction.types import (
+    InteractionRouteDecision,
+    InteractionRouteMode,
 )
 from astrbot.core.message.components import Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
@@ -66,17 +78,25 @@ class _FailingPlatform(_Platform):
 
 
 class _DirectEvent(AstrMessageEvent):
-    def __init__(self, metadata: PlatformMetadata, *, fail_send: bool = False) -> None:
+    def __init__(
+        self,
+        metadata: PlatformMetadata,
+        *,
+        fail_send: bool = False,
+        message_type: MessageType = MessageType.FRIEND_MESSAGE,
+        session_id: str = "target",
+        sender_id: str = "user-1",
+    ) -> None:
         message = AstrBotMessage()
-        message.type = MessageType.FRIEND_MESSAGE
+        message.type = message_type
         message.self_id = "bot"
-        message.session_id = "target"
+        message.session_id = session_id
         message.message_id = "user-message-1"
-        message.sender = MessageMember(user_id="user-1", nickname="User")
+        message.sender = MessageMember(user_id=sender_id, nickname="User")
         message.message = [Plain("hello")]
         message.message_str = "hello"
         message.raw_message = {"post_type": "message"}
-        super().__init__("hello", message, metadata, "target")
+        super().__init__("hello", message, metadata, session_id)
         self.fail_send = fail_send
         self.sent: list[MessageChain] = []
 
@@ -207,6 +227,14 @@ def test_personal_runtime_targets_accept_explicit_adapter_support():
 
     assert len(targets) == 1
     assert str(targets[0]) == "demo:FriendMessage:target"
+
+
+def test_personal_expression_fingerprint_ignores_formatting_only_changes():
+    expected = fingerprint_personal_expression("Direct reply")
+
+    assert expected is not None
+    assert fingerprint_personal_expression(" direct REPLY!!! ") == expected
+    assert fingerprint_personal_expression("Direct reply🙂") != expected
 
 
 async def _deliver_runtime_output(
@@ -451,6 +479,228 @@ async def test_direct_reply_delivery_starts_gate_cooldown_without_proactive_quot
     )
     assert gate_result.disposition is ObservationGateDisposition.HOLD
     assert gate_result.reason_code is ObservationGateReason.REPLY_COOLDOWN
+
+
+@pytest.mark.asyncio
+async def test_group_follow_up_uses_fast_then_model_continuation(monkeypatch):
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    same_actor_follow_up = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    other_actor_message = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+        sender_id="user-2",
+    )
+    runtime_config = {
+        "interaction_middleware": {
+            "enabled": True,
+            "personal_runtime_conversation_continuation_seconds": 120,
+        }
+    }
+    event.set_extra("_interaction_output_controller", InteractionOutputController())
+
+    async with manager.submit_platform_event(
+        event,
+        "default",
+        context,
+        runtime_config,
+    ) as submission:
+        admission = await submission.admit(allow_follow_up=False)
+        assert admission.lease is not None
+        try:
+            with manager.activate_turn(admission.turn):
+                assert manager.classify_group_conversation_continuation(
+                    same_actor_follow_up,
+                    config_id="default",
+                    runtime_config=runtime_config,
+                ) == "active"
+                assert manager.classify_group_conversation_continuation(
+                    other_actor_message,
+                    config_id="default",
+                    runtime_config=runtime_config,
+                ) is None
+                await event.emit_output(
+                    MessageChain([Plain("group reply")]),
+                    mode="direct",
+                )
+        finally:
+            await admission.lease.release()
+
+    feedback = manager.snapshot_diagnostics().sessions[0].last_completion_feedback
+    assert feedback is not None
+    assert feedback.output_completed_at is not None
+    completed_at = feedback.output_completed_at
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.personal_runtime.time.time",
+        lambda: completed_at + 5,
+    )
+    assert manager.classify_group_conversation_continuation(
+        same_actor_follow_up,
+        config_id="default",
+        runtime_config=runtime_config,
+    ) == "fast"
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.personal_runtime.time.time",
+        lambda: completed_at + 30,
+    )
+    assert manager.classify_group_conversation_continuation(
+        same_actor_follow_up,
+        config_id="default",
+        runtime_config=runtime_config,
+    ) == "model"
+    assert manager.classify_group_conversation_continuation(
+        other_actor_message,
+        config_id="default",
+        runtime_config=runtime_config,
+    ) is None
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.personal_runtime.time.time",
+        lambda: completed_at + 120,
+    )
+    assert manager.classify_group_conversation_continuation(
+        same_actor_follow_up,
+        config_id="default",
+        runtime_config=runtime_config,
+    ) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("router_fails", [False, True])
+async def test_model_continuation_silent_route_starts_no_persona(
+    monkeypatch,
+    router_fails,
+):
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    event.set_extra("_personal_runtime_model_continuation", True)
+    runtime_config = {"interaction_middleware": {"enabled": True}}
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    route = AsyncMock(
+        side_effect=RuntimeError("router failed")
+        if router_fails
+        else None,
+        return_value=InteractionRouteDecision(
+            route_mode=InteractionRouteMode.SILENT
+        ),
+    )
+    middleware.router_agent.route = route
+    middleware._materialize_inbound_media = AsyncMock()
+    middleware._generate_and_emit_speculative_persona = AsyncMock()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
+        AsyncMock(),
+    )
+
+    await middleware.handle_pipeline_event(event)
+
+    route.assert_awaited_once()
+    middleware._generate_and_emit_speculative_persona.assert_not_awaited()
+    assert event.sent == []
+    assert event.get_extra("_interaction_silent_completed") is True
+    assert event.is_stopped()
+    assert bool(event.get_extra("_interaction_router_failed", False)) is router_fails
+
+
+@pytest.mark.asyncio
+async def test_duplicate_autonomous_expression_is_suppressed_without_accounting():
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _RecordingPlatform(metadata)
+    context = _RuntimeContext(metadata)
+    context._platform = platform
+    context.platform_manager = SimpleNamespace(platform_insts=[platform])
+    manager = PersonalRuntimeManager()
+    direct_event = _DirectEvent(metadata)
+
+    await _submit_direct_output(
+        manager=manager,
+        context=context,
+        event=direct_event,
+    )
+    initial_runtime = manager.snapshot_diagnostics().sessions[0]
+    initial_cooldown = initial_runtime.state.reply_cooldown_until
+    assert initial_cooldown is not None
+
+    event = _runtime_event(context, metadata)
+    intent = PersonalActionIntent(
+        batch_id="batch-duplicate",
+        reply_intent="repeat the previous reply",
+        created_at=2.0,
+        target_observation=event.observation,
+        action_id="action-duplicate",
+    )
+    event.set_extra("_personal_action_intent", intent)
+    event.set_extra("_personal_action_id", intent.action_id)
+    event.set_extra("_personal_runtime_submission_kind", "personal_expression")
+    controller = InteractionOutputController()
+    middleware = InteractionMiddleware(
+        {"interaction_middleware": {"enabled": True}},
+        controller,
+        context,
+    )
+    expression_requests = []
+
+    async def generate_expression(
+        _event,
+        _interaction_config,
+        *,
+        request,
+        fallback_on_error,
+    ):
+        expression_requests.append((request, fallback_on_error))
+        return PersonaExpressionResult(spoken_reply=" direct REPLY!!! ")
+
+    middleware._generate_expression = generate_expression
+
+    result = await manager.submit_runtime_observation_event(
+        event,
+        "default",
+        context,
+        {"interaction_middleware": {"enabled": True}},
+        middleware.handle_runtime_observation,
+    )
+
+    runtime = manager.snapshot_diagnostics().sessions[0]
+    feedback = runtime.last_completion_feedback
+    turn_state = get_interaction_turn_state(event)
+    assert result is None
+    assert platform.sent == []
+    assert expression_requests[0][0].avoid_previous_reply is True
+    assert expression_requests[0][1] is False
+    assert event.get_extra("_interaction_runtime_observation_skipped_reason") == (
+        "duplicate_previous_expression"
+    )
+    assert turn_state is not None
+    assert (
+        turn_state.final_output_status
+        is InteractionFinalOutputStatus.SUPPRESSED
+    )
+    assert feedback is not None
+    assert feedback.delivery_status is PersonalDeliveryStatus.SUPPRESSED
+    assert feedback.action_id == intent.action_id
+    assert runtime.state.reply_cooldown_until == initial_cooldown
+    assert runtime.state.daily_proactive_outputs == 0
 
 
 @pytest.mark.asyncio

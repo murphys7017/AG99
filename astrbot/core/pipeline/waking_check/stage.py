@@ -149,38 +149,40 @@ class WakingCheckStage(Stage):
                 event.is_wake = True
                 event.is_at_or_wake_command = True
                 wake_prefix = ""
-            elif (
-                not any(
-                    (
-                        isinstance(message, At)
-                        and str(message.qq)
-                        not in {str(event.get_self_id()), "all"}
-                    )
-                    or (isinstance(message, AtAll) and self.ignore_at_all)
-                    or (
-                        isinstance(message, Reply)
-                        and str(message.sender_id)
-                        not in {"", str(event.get_self_id())}
-                    )
-                    for message in messages
+            elif not any(
+                (
+                    isinstance(message, At)
+                    and str(message.qq) not in {str(event.get_self_id()), "all"}
                 )
-                and self.ctx.personal_runtime_manager is not None
-                and self.ctx.personal_runtime_manager.should_continue_group_conversation(
+                or (isinstance(message, AtAll) and self.ignore_at_all)
+                or (
+                    isinstance(message, Reply)
+                    and str(message.sender_id)
+                    not in {"", str(event.get_self_id())}
+                )
+                for message in messages
+            ) and self.ctx.personal_runtime_manager is not None:
+                continuation = self.ctx.personal_runtime_manager.classify_group_conversation_continuation(
                     event,
                     config_id=self.ctx.astrbot_config_id,
                     runtime_config=self.ctx.astrbot_config,
                 )
-            ):
-                is_wake = True
-                event.is_wake = True
-                event.is_at_or_wake_command = True
-                event.set_extra("_personal_runtime_conversation_continuation", True)
-                logger.info(
-                    "Personal Runtime continued recent group conversation: "
-                    "session_id=%s sender_id=%s",
-                    event.unified_msg_origin,
-                    event.get_sender_id(),
-                )
+                if continuation is not None:
+                    is_wake = True
+                    event.is_wake = True
+                    event.is_at_or_wake_command = True
+                    if continuation == "model":
+                        event.set_extra(
+                            "_personal_runtime_model_continuation",
+                            True,
+                        )
+                    logger.info(
+                        "Personal Runtime accepted group continuation: "
+                        "session_id=%s sender_id=%s mode=%s",
+                        event.unified_msg_origin,
+                        event.get_sender_id(),
+                        continuation,
+                    )
 
         # 检查插件的 handler filter
         activated_handlers = []

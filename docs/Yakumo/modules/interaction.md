@@ -148,16 +148,16 @@ Input Runtime / Observation
 - interaction STT
 - observation / reflex 前置判断
 - Prompt Collectors：一次收集本轮输入、人格、session、官方对话历史、统一 Memory、执行能力和插件贡献，生成规范 `ContextPack`
-- Router：当前只输出 `persona` / `hybrid`，不承担用户可见回复、task planning 或 effect 输出；`silent` 类型保留但未向模型开放。它读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
+- Router：普通显式唤醒只输出 `persona` / `hybrid`；仅 Personal Runtime 标记的有界群聊模型续接候选开放 `silent`。它不承担用户可见回复、task planning 或 effect 输出，读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
-- Router/Persona 协同：二者并发启动。Persona 在输出前从 `pending` 原子进入 `committed`；Core 最终结果先提交时可以抑制尚未 committed 的即时表达
+- Router/Persona 协同：普通消息并发启动二者；群聊模型续接候选先等待 Router，`silent` 零输出完成，`persona / hybrid` 才启动 Persona，Router 失败也按 `silent` 完成。Persona 在输出前从 `pending` 原子进入 `committed`；Core 最终结果先提交时可以抑制尚未 committed 的即时表达
 - Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
   `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
   lease 释放前统一完成或取消
 - Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不等待 Persona。Planner 只生成 CoreTaskSpec，不向即时 Persona 注入 task summary；若 Core 最终结果先提交，尚未 committed 的即时回复会被抑制
 - Core 协同提示：Core 只被告知本轮存在独立的 Persona 快速回复分支，并直接执行、返回实质结果材料；Persona 的内部状态和已发送文本不暴露给 Core
 - Context/失败协同：Router、Persona 和 Planner 通过 turn-local single-flight 共享一次 Context Material 构建；单个分支取消不会取消其他分支仍需要的构建。Planner 失败禁止 Core，但已经 emitted 的 Persona 回合仍会正常 finalized
-- PERSONA / HYBRID 编排；`silent` 类型仅保留为未向当前 Router Prompt 开放的内部状态
+- PERSONA / HYBRID 编排；`silent` 只用于有界群聊模型续接候选
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义
 - finalized material 校验

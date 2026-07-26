@@ -1,6 +1,10 @@
 import pytest
 
-from astrbot.core.interaction.router_agent import extract_interaction_route_payload
+from astrbot.core.interaction.router_agent import (
+    build_interaction_router_prompt,
+    build_interaction_router_system_prompt,
+    extract_interaction_route_payload,
+)
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
     InteractionRouteMode,
@@ -39,3 +43,20 @@ def test_extract_route_payload_accepts_json_and_plain_mode(text, mode):
 
 def test_extract_route_payload_rejects_legacy_self_reply_mode():
     assert extract_interaction_route_payload("self_reply") is None
+
+
+def test_router_exposes_silent_only_for_model_continuation_candidates():
+    default_system_prompt = build_interaction_router_system_prompt()
+    default_request_prompt = build_interaction_router_prompt()
+    continuation_system_prompt = build_interaction_router_system_prompt(
+        allow_silent=True
+    )
+    continuation_request_prompt = build_interaction_router_prompt(
+        allow_silent=True
+    )
+
+    assert "silent" not in default_system_prompt
+    assert "silent" not in default_request_prompt
+    assert "- silent" in continuation_system_prompt
+    assert "否则选择 silent" in continuation_system_prompt
+    assert "silent" in continuation_request_prompt

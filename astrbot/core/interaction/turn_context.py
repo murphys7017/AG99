@@ -76,6 +76,7 @@ class PersonalTurnContext:
     runtime_config: Mapping[str, Any]
     provider_request: ProviderRequest | None
     plugin_context: Any
+    previous_expression_fingerprint: str | None = None
 
 
 class PlatformTurnContextFactory:

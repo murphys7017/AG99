@@ -33,6 +33,10 @@ from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
 from .personal_action import PersonalActionIntent
+from .personal_expression_guard import (
+    PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY,
+    fingerprint_personal_expression,
+)
 from .protocol_bypass import match_protocol_command_bypass
 from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .runtime_event import RuntimeObservationEvent
@@ -410,9 +414,16 @@ class InteractionMiddleware:
                     source_text=material,
                     preserve_facts=True,
                     allow_plugin_tools=False,
+                    avoid_previous_reply=is_personal_action,
                 ),
                 fallback_on_error=not is_personal_action,
             )
+            if is_personal_action and self._is_duplicate_personal_expression(
+                turn,
+                expression,
+            ):
+                await self._suppress_duplicate_personal_expression(event)
+                return None
             await self._emit_immediate_reply_or_record_failure(event, expression)
             await self._complete_persona_only_turn(event, expression)
             event.set_extra("_interaction_runtime_observation_handled", True)
@@ -440,6 +451,64 @@ class InteractionMiddleware:
             raise
         finally:
             event.set_extra("_interaction_runtime_observation_active", False)
+
+    @staticmethod
+    def _is_duplicate_personal_expression(
+        turn: PersonalTurnContext,
+        expression: PersonaExpressionResult,
+    ) -> bool:
+        current_fingerprint = fingerprint_personal_expression(
+            expression.spoken_reply
+        )
+        if current_fingerprint is None:
+            return False
+        previous_fingerprints = {
+            fingerprint
+            for fingerprint in (
+                turn.previous_expression_fingerprint,
+                expression.metadata.get(
+                    PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY
+                ),
+            )
+            if isinstance(fingerprint, str) and fingerprint
+        }
+        return current_fingerprint in previous_fingerprints
+
+    async def _suppress_duplicate_personal_expression(
+        self,
+        event: RuntimeObservationEvent,
+    ) -> None:
+        reason = "duplicate_previous_expression"
+        event.set_extra(
+            "_interaction_runtime_observation_skipped_reason",
+            reason,
+        )
+        event.set_extra("_interaction_personal_expression_suppressed", True)
+        if await reserve_interaction_turn_final_output(event):
+            await finish_interaction_turn_final_output(
+                event,
+                InteractionFinalOutputStatus.SUPPRESSED,
+            )
+        mark_interaction_turn_completed(event)
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.COMPLETED,
+            metadata={
+                "source": "runtime_observation",
+                "outcome": "suppressed",
+                "reason": reason,
+            },
+        )
+        event.set_extra("_interaction_runtime_observation_handled", True)
+        logger.info(
+            "Personal autonomous expression suppressed: platform_id=%s "
+            "session_id=%s turn_id=%s reason=%s",
+            event.get_platform_id(),
+            event.session_id,
+            event.get_extra("_turn_id"),
+            reason,
+        )
 
     async def handle_runtime_output(
         self,
@@ -674,6 +743,23 @@ class InteractionMiddleware:
             InteractionSpeculativePersonaStatus.PENDING,
         )
         turn_scope = ensure_interaction_turn_state(event).execution_scope
+        defer_persona_until_route = bool(
+            event.get_extra("_personal_runtime_model_continuation", False)
+        )
+
+        def start_persona_task() -> asyncio.Task:
+            return turn_scope.create_task(
+                self._generate_and_emit_speculative_persona(
+                    event,
+                    interaction_config,
+                ),
+                role="speculative_persona",
+                name=(
+                    f"interaction_speculative_persona_{event.get_platform_id()}_"
+                    f"{event.get_extra('_turn_id')}"
+                ),
+            )
+
         router_task = turn_scope.create_task(
             self._route_interaction(event, interaction_config),
             role="router",
@@ -682,23 +768,16 @@ class InteractionMiddleware:
                 f"{event.get_extra('_turn_id')}"
             ),
         )
-        persona_task = turn_scope.create_task(
-            self._generate_and_emit_speculative_persona(
-                event,
-                interaction_config,
-            ),
-            role="speculative_persona",
-            name=(
-                f"interaction_speculative_persona_{event.get_platform_id()}_"
-                f"{event.get_extra('_turn_id')}"
-            ),
+        persona_task = (
+            None if defer_persona_until_route else start_persona_task()
         )
         try:
             route = await router_task
         except asyncio.CancelledError:
-            if not persona_task.done():
+            if persona_task is not None and not persona_task.done():
                 persona_task.cancel()
-            await asyncio.gather(persona_task, return_exceptions=True)
+            if persona_task is not None:
+                await asyncio.gather(persona_task, return_exceptions=True)
             raise
         self._record_route_diagnostics(event, route)
         self.attach_event_context(
@@ -707,12 +786,22 @@ class InteractionMiddleware:
             route_decision=route,
         )
         if route.route_mode == InteractionRouteMode.SILENT:
-            expression = await self._suppress_or_await_speculative_persona(
-                event,
-                persona_task,
-            )
+            if persona_task is None:
+                self._set_speculative_persona_status(
+                    event,
+                    InteractionSpeculativePersonaStatus.SUPPRESSED,
+                )
+                expression = None
+            else:
+                expression = await self._suppress_or_await_speculative_persona(
+                    event,
+                    persona_task,
+                )
             await self._complete_silent_or_committed_persona_turn(event, expression)
             return
+
+        if persona_task is None:
+            persona_task = start_persona_task()
 
         planning_decision = None
         if route.route_mode == InteractionRouteMode.HYBRID:
@@ -1075,6 +1164,11 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         interaction_config,
     ) -> InteractionRouteDecision:
+        fallback_mode = (
+            InteractionRouteMode.SILENT
+            if event.get_extra("_personal_runtime_model_continuation", False)
+            else InteractionRouteMode.HYBRID
+        )
         if self.plugin_context is None:
             event.set_extra("_interaction_router_failed", True)
             event.set_extra(
@@ -1082,7 +1176,7 @@ class InteractionMiddleware:
                 "plugin_context_unavailable",
             )
             event.set_extra("_interaction_router_result_source", "fallback")
-            return InteractionRouteDecision(route_mode=InteractionRouteMode.HYBRID)
+            return InteractionRouteDecision(route_mode=fallback_mode)
         try:
             return await self.router_agent.route(
                 event,
@@ -1104,17 +1198,18 @@ class InteractionMiddleware:
             stage="router",
             reason=reason,
             exception=error,
-            user_visible_action="fallback_hybrid",
+            user_visible_action=f"fallback_{fallback_mode.value}",
         )
         logger.warning(
-            "Interaction router failed; falling back to hybrid: platform_id=%s session_id=%s reason=%s error=%s",
+            "Interaction router failed; falling back to %s: platform_id=%s session_id=%s reason=%s error=%s",
+            fallback_mode.value,
             event.get_platform_id(),
             event.session_id,
             reason,
             error,
             exc_info=(type(error), error, error.__traceback__),
         )
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.HYBRID)
+        return InteractionRouteDecision(route_mode=fallback_mode)
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:
         runtime_config = self._get_runtime_config(event)

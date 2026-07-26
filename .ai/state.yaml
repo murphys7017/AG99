@@ -1,8 +1,8 @@
 task:
   class: bugfix
   risk: high
-  phase: personal_runtime_post_review_remediation
-  scope: Fix duplicate proactive TTS delivery, delivery-based cooldown accounting, Persona prompt capability bloat, Policy parsing diagnostics, and assistant-only memory logging without changing AG99Live or test timing configuration
+  phase: personal_runtime_expression_and_group_continuation_correctness
+  scope: Prevent repeated autonomous expression and replace unconditional post-turn group wake with a 10-second fast path plus existing-Router silent judgment without changing explicit Context, Cron, plugin sends, AG99Live, or test timing configuration
 context:
   confidence: high
   assumptions:
@@ -12,7 +12,12 @@ context:
     - PersonalState keeps process-local conversational and diagnostic fields while a narrow repository persists only last expression, cooldown, mute, and daily usage control fields by full PersonalRuntimeKey.
     - Completion Feedback is formed once at turn lease release; delivery success requires a visible utterance delivery receipt and is not inferred from send intent or final-output status alone.
     - Policy express creates an internal ActionIntent with a reliable action_id; only its confirmed visible delivery can write proactive daily usage, while every confirmed visible reply starts the shared autonomous-expression cooldown.
+    - Policy must not re-express a recently covered intent when the current Observation batch has no new or changed fact; Heartbeat is an evaluation time signal, not proof that conversation facts changed.
+    - Only Policy-approved PersonalActionIntent expression is compared with the previous delivered visible reply. Explicit Context.send_message, Cron, and plugin proactive output retain exact-send compatibility behavior.
+    - Autonomous expression deduplication uses an irreversible normalized fingerprint from physical delivery feedback, with the Persona Conversation history snapshot as a restart fallback; raw reply text is not added to PersonalState or diagnostics.
+    - A duplicate autonomous expression is suppressed before effects, TTS, platform delivery, Conversation persistence, cooldown, or proactive quota accounting.
     - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
+    - Canonical Conversation history supplies semantic context but does not grant wake permission by itself; same-actor group follow-ups use the active turn, a 10-second direct window, then the existing Router with silent enabled until the bounded continuation window expires.
     - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
     - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline, every delivered visible reply writes reply cooldown, and only delivered ActionIntent output writes proactive usage.
@@ -75,7 +80,7 @@ context:
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
     - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
     - RespondStage-driven Interaction results finalize only after OnAfterMessageSent and visible completion; direct event.send paths retain their existing semantics.
-    - Router remains a minimal persona/hybrid classifier and never plans tasks or receives tool schemas; the silent enum is retained but not exposed by the current Router prompt.
+    - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed only for bounded group model-continuation candidates, which await Router before Persona and fail closed to silent.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
     - Interaction uses an explicit base collector profile before routing; the Core overlay adds only execution-specific collectors and never recollects shared session, memory, or explicit provider context.
@@ -331,6 +336,8 @@ verification:
     - pnpm --dir docs docs:build after Phase 8 snapshot-ownership documentation updates (passed)
     - "Personal Runtime post-review remediation: tests/unit/test_personal_runtime_capability.py public Context/Cron compatibility and platform-send failure accounting checks (6 passed); affected-file Ruff, py_compile, and git diff --check passed"
     - "Personal Runtime log-review remediation: Interaction, delivery, Prompt target/catalog, Policy, Runtime accounting, and assistant-only Memory checks passed (100 tests); focused Ruff, py_compile, YAML parses, VitePress build, and git diff checks passed. Default Record standalone behavior and Personal Runtime composite TTS behavior were both covered."
+    - "Autonomous expression deduplication: 75 Interaction, Persona, Policy, Runtime, Context/Cron compatibility, and deterministic suppression tests passed; focused Ruff, py_compile, YAML parse, VitePress build, and diff checks passed."
+    - "Bounded group continuation: active, 10-second fast, 10-to-120-second model candidate, conditional Router silent, Router failure fail-closed, and zero-Persona-output cases passed within 62 focused Interaction/Policy/Persona/Runtime tests; Ruff, py_compile, JSON/YAML parse, VitePress build, and diff checks passed."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -342,12 +349,17 @@ verification:
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
     - Personal Runtime capability cross-check `tests/unit/test_core_lifecycle.py` still has an unrelated stop-task fixture failure where `MagicMock(spec=asyncio.Task)` is treated as a different-loop Future by `asyncio.gather`; the new capability/Cron suites, py_compile, Ruff, and diff check passed.
     - The expanded log-review test run retained the existing background Metric/aiosqlite event-loop-close thread warning; the new direct-reply acceptance case passes alone without that warning.
-  validation_gap: "Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain disabled or unused until configured by operators/plugins. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and real policy-quality data remain absent. Targeted Pyright remains unavailable. P1 smoke coverage is intentionally limited to observable boundary behavior rather than internal orchestration order."
+  validation_gap: "The deterministic duplicate guard is acceptance-tested, but the revised novelty prompts still require live-model observation after restart; prompt compliance is not treated as the guarantee. Conditional Router continuation timing, zero-output silent behavior, and fail-closed errors are acceptance-tested, while real-group semantic classification quality still requires operator observation. Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain operator-configured capabilities rather than general defaults. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and broader policy-quality data remain absent. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: personal_runtime_post_review_remediation
+    phase: personal_runtime_expression_and_group_continuation_correctness
     scope:
+      - Policy novelty guidance for Heartbeat batches without new or changed facts
+      - autonomous Persona instruction to avoid the latest assistant reply
+      - deterministic pre-delivery fingerprint suppression limited to PersonalActionIntent output
+      - suppressed duplicate completion without effects, TTS, Conversation, cooldown, or proactive quota
+      - explicit Context, Cron, and plugin proactive-send compatibility preserved
       - delivery-confirmed reply cooldown with proactive quota limited to delivered ActionIntent output
       - one physical proactive turn for dual-output TTS components sharing a logical segment ID
       - Persona projection exclusion of execution capability prompt extensions
@@ -371,6 +383,7 @@ runtime:
       - removal of unused Interaction Prompt render and context-snapshot event extras
       - InteractionStreamState ownership without duplicate fields or unread event-extra mirrors
       - InteractionTurnState lifecycle and completion ownership without private event-extra mirrors
+      - same-actor group continuation through active, 10-second fast, and bounded existing-Router silent paths
     non_goals:
       - built-in additional Runtime Sensors, per-Sensor schemas, and explicit background-execution permissions
       - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy

@@ -6,9 +6,17 @@ from astrbot.core.interaction.personal_policy import (
     PersonalPolicyAction,
     PersonalPolicyError,
     build_personal_policy_output_contract,
+    build_personal_policy_system_prompt,
     extract_personal_policy_decision,
 )
 from astrbot.core.output_contract import CompiledOutputContract
+
+
+def test_policy_prompt_requires_novel_facts_before_reexpressing():
+    prompt = build_personal_policy_system_prompt()
+
+    assert "最近 assistant 已表达相同意图" in prompt
+    assert "Heartbeat 只表示到了评估时点" in prompt
 
 
 def _compiled_contract():
