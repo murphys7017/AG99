@@ -106,11 +106,11 @@ class SatoriPlatformEvent(AstrMessageEvent):
             )
             if result:
                 return result
-            return None
+            raise RuntimeError("Satori message.create did not return a result")
 
         except Exception as e:
             logger.error(f"Satori 消息发送异常: {e}")
-            return None
+            raise RuntimeError("Satori failed to send message") from e
 
     async def send(self, message: MessageChain) -> None:
         platform = getattr(self, "platform", None)

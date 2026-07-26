@@ -110,6 +110,7 @@ class SlackAdapter(Platform):
                 )
         except Exception as e:
             logger.error(f"Slack 发送消息失败: {e}")
+            raise RuntimeError("Slack failed to send message") from e
 
         await super().send_by_session(session, message_chain)
 

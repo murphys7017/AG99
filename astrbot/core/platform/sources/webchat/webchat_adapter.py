@@ -108,6 +108,9 @@ class WebChatAdapter(Platform):
                     f"[WebChatAdapter] Failed to save proactive message: {e}",
                     exc_info=True,
                 )
+                raise RuntimeError(
+                    "[WebChatAdapter] Failed to persist proactive message"
+                ) from e
             await super().send_by_session(session, message_chain)
             return
 

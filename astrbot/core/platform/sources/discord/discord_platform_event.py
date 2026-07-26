@@ -60,7 +60,7 @@ class DiscordPlatformEvent(AstrMessageEvent):
             ) = await self._parse_to_discord(message)
         except Exception as e:
             logger.error(f"[Discord] 解析消息链时失败: {e}", exc_info=True)
-            return
+            raise RuntimeError("[Discord] Failed to parse message chain") from e
 
         kwargs = {}
         if content:
@@ -74,8 +74,7 @@ class DiscordPlatformEvent(AstrMessageEvent):
         if reference_message_id and not self.interaction_followup_webhook:
             kwargs["reference"] = self.client.get_message(int(reference_message_id))
         if not kwargs:
-            logger.debug("[Discord] 尝试发送空消息，已忽略。")
-            return
+            raise RuntimeError("[Discord] Cannot send an empty message")
 
         # 根据上下文执行发送/回复操作
         try:
@@ -87,14 +86,18 @@ class DiscordPlatformEvent(AstrMessageEvent):
             else:
                 channel = await self._get_channel()
                 if not channel:
-                    return
+                    raise RuntimeError(
+                        f"[Discord] Cannot find channel for {self.session_id}"
+                    )
                 if not isinstance(channel, discord.abc.Messageable):
-                    logger.error(f"[Discord] 频道 {channel.id} 不是可发送消息的类型")
-                    return
+                    raise RuntimeError(
+                        f"[Discord] Channel {channel.id} cannot send messages"
+                    )
                 await channel.send(**kwargs)
 
         except Exception as e:
             logger.error(f"[Discord] 发送消息时发生未知错误: {e}", exc_info=True)
+            raise RuntimeError("[Discord] Failed to send message") from e
 
         await super().send(message)
 

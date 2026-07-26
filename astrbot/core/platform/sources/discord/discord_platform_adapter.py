@@ -63,10 +63,9 @@ class DiscordPlatformAdapter(Platform):
     ) -> None:
         """通过会话发送消息"""
         if self.client.user is None:
-            logger.error(
-                "[Discord] Client is not ready (self.client.user is None); message send skipped"
+            raise RuntimeError(
+                "[Discord] Client is not ready (self.client.user is None)"
             )
-            return
 
         # 创建一个 message_obj 以便在 event 中使用
         message_obj = AstrBotMessage()

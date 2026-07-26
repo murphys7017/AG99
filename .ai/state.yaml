@@ -326,6 +326,7 @@ verification:
     - pnpm --dir docs docs:build and git diff --check after Phase 7/P1 documentation and governance updates (passed)
     - Phase 8 snapshot-ownership Ruff, py_compile, and minimal CoreExecutionSpec input-output smoke covering ContextPack, TaskSpec, execution-history, and capability fact isolation while retaining the Native ToolSet handle (passed)
     - pnpm --dir docs docs:build after Phase 8 snapshot-ownership documentation updates (passed)
+    - "Personal Runtime post-review remediation: tests/unit/test_personal_runtime_capability.py public Context/Cron compatibility and platform-send failure accounting checks (6 passed); affected-file Ruff, py_compile, and git diff --check passed"
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.

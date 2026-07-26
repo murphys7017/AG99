@@ -372,8 +372,7 @@ class MisskeyPlatformAdapter(Platform):
         message_chain: MessageChain,
     ) -> None:
         if not self.api:
-            logger.error("[Misskey] API 客户端未初始化")
-            return await super().send_by_session(session, message_chain)
+            raise RuntimeError("[Misskey] API client is not initialized")
 
         try:
             session_id = session.session_id
@@ -629,6 +628,7 @@ class MisskeyPlatformAdapter(Platform):
 
         except Exception as e:
             logger.error(f"[Misskey] 发送消息失败: {e}")
+            raise RuntimeError("[Misskey] Failed to send message") from e
 
         return await super().send_by_session(session, message_chain)
 

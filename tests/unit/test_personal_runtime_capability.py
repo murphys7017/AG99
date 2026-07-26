@@ -10,7 +10,11 @@ from astrbot.core.interaction.observation import (
 from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
 from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
-from astrbot.core.interaction.turn_state import mark_interaction_turn_failed
+from astrbot.core.interaction.turn_state import (
+    InteractionFinalOutputStatus,
+    finish_interaction_turn_final_output,
+    reserve_interaction_turn_final_output,
+)
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_session import MessageSession
@@ -25,6 +29,28 @@ class _Platform:
 
     def meta(self) -> PlatformMetadata:
         return self._metadata
+
+
+class _RecordingPlatform(_Platform):
+    def __init__(self, metadata: PlatformMetadata) -> None:
+        super().__init__(metadata)
+        self.sent: list[tuple[MessageSession, MessageChain]] = []
+
+    async def send_by_session(
+        self,
+        session: MessageSession,
+        message_chain: MessageChain,
+    ) -> None:
+        self.sent.append((session, message_chain))
+
+
+class _FailingPlatform(_Platform):
+    async def send_by_session(
+        self,
+        _session: MessageSession,
+        _message_chain: MessageChain,
+    ) -> None:
+        raise RuntimeError("platform send failed")
 
 
 def _context_for_target(metadata: PlatformMetadata) -> Context:
@@ -72,6 +98,15 @@ class _RuntimeContext:
         return None
 
 
+def _context_for_runtime(platform: _Platform) -> Context:
+    context = Context.__new__(Context)
+    context.platform_manager = SimpleNamespace(platform_insts=[platform])
+    context.conversation_manager = _ConversationManager()
+    context.persona_manager = _PersonaManager()
+    context._proactive_message_dispatcher = None
+    return context
+
+
 def _runtime_event(
     context: _RuntimeContext,
     metadata: PlatformMetadata,
@@ -109,35 +144,54 @@ def test_personal_runtime_targets_accept_explicit_adapter_support():
     assert str(targets[0]) == "demo:FriendMessage:target"
 
 
-@pytest.mark.asyncio
-async def test_explicit_runtime_output_keeps_proactive_message_boundary():
-    metadata = _metadata()
-    context = _RuntimeContext(metadata)
-    manager = PersonalRuntimeManager()
-    event = _runtime_event(context, metadata)
-    event.set_extra("_personal_runtime_submission_kind", "explicit_proactive_output")
-    seen = {}
-
-    async def handler(runtime_event, turn):
-        seen["support_personal_runtime"] = (
-            runtime_event.platform_meta.support_personal_runtime
+async def _deliver_runtime_output(
+    event: RuntimeObservationEvent,
+    message: MessageChain,
+) -> None:
+    if not await reserve_interaction_turn_final_output(event):
+        return
+    try:
+        await event.send(message)
+    except Exception:
+        await finish_interaction_turn_final_output(
+            event,
+            InteractionFinalOutputStatus.FAILED,
         )
-        seen["support_proactive_message"] = turn.session.support_proactive_message
-        return "ok"
-
-    result = await manager.submit_runtime_observation_event(
+        raise
+    await finish_interaction_turn_final_output(
         event,
-        "default",
-        context,
-        {},
-        handler,
+        InteractionFinalOutputStatus.DELIVERED,
     )
 
-    assert result == "ok"
-    assert seen == {
-        "support_personal_runtime": False,
-        "support_proactive_message": True,
-    }
+
+@pytest.mark.asyncio
+async def test_context_send_message_keeps_proactive_message_boundary():
+    metadata = _metadata()
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    manager = PersonalRuntimeManager()
+
+    class Middleware:
+        async def handle_runtime_output(self, event, _turn, message):
+            await _deliver_runtime_output(event, message)
+
+    async def dispatcher(session, message, finalize):
+        return await manager.dispatch_proactive_message(
+            context=context,
+            middleware=Middleware(),
+            config_id="default",
+            runtime_config={},
+            session=session,
+            message=message,
+            finalize=finalize,
+        )
+
+    context.set_proactive_message_dispatcher(dispatcher)
+    session = MessageSession("demo", MessageType.FRIEND_MESSAGE, "target")
+    message = MessageChain([Plain("done")])
+
+    assert await context.send_message(session, message)
+    assert platform.sent == [(session, message)]
 
 
 @pytest.mark.asyncio
@@ -164,17 +218,16 @@ async def test_autonomous_expression_requires_personal_runtime_support():
 @pytest.mark.asyncio
 async def test_failed_autonomous_expression_does_not_consume_cooldown_or_quota():
     metadata = _metadata(support_personal_runtime=True)
-    context = _RuntimeContext(metadata)
+    context = _context_for_runtime(_FailingPlatform(metadata))
     manager = PersonalRuntimeManager()
     event = _runtime_event(context, metadata)
     event.set_extra("_personal_runtime_submission_kind", "personal_expression")
     event.set_extra("_personal_action_id", "action-1")
 
     async def handler(runtime_event, _turn):
-        mark_interaction_turn_failed(runtime_event)
-        raise RuntimeError("send failed")
+        await _deliver_runtime_output(runtime_event, MessageChain([Plain("hello")]))
 
-    with pytest.raises(RuntimeError, match="send failed"):
+    with pytest.raises(RuntimeError, match="platform send failed"):
         await manager.submit_runtime_observation_event(
             event,
             "default",
@@ -197,16 +250,30 @@ async def test_failed_autonomous_expression_does_not_consume_cooldown_or_quota()
 
 @pytest.mark.asyncio
 async def test_cron_send_uses_context_send_message_compatibility_path():
-    calls = []
+    metadata = _metadata()
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    manager = PersonalRuntimeManager()
 
-    class CronContext:
-        async def send_message(self, session, message):
-            calls.append((session, message))
-            return True
+    class Middleware:
+        async def handle_runtime_output(self, event, _turn, message):
+            await _deliver_runtime_output(event, message)
 
+    async def dispatcher(session, message, finalize):
+        return await manager.dispatch_proactive_message(
+            context=context,
+            middleware=Middleware(),
+            config_id="default",
+            runtime_config={},
+            session=session,
+            message=message,
+            finalize=finalize,
+        )
+
+    context.set_proactive_message_dispatcher(dispatcher)
     session = MessageSession("demo", MessageType.FRIEND_MESSAGE, "target")
     event = CronMessageEvent(
-        context=CronContext(),
+        context=context,
         session=session,
         message="tick",
     )
@@ -214,4 +281,4 @@ async def test_cron_send_uses_context_send_message_compatibility_path():
 
     await event.send(message)
 
-    assert calls == [(session, message)]
+    assert platform.sent == [(session, message)]
