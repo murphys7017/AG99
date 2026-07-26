@@ -494,8 +494,6 @@ class PersonalSessionRuntime:
             feedback,
             reply_cooldown_seconds=(
                 self._interaction_config.personal_runtime_reply_cooldown_seconds
-                if feedback.action_id
-                else 0.0
             ),
             usage_day=usage_day,
         )

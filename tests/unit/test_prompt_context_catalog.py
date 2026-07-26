@@ -72,6 +72,19 @@ def test_default_catalog_declares_dynamic_context_extension_slot():
     assert item.slots == ["user_input"]
 
 
+def test_default_catalog_declares_visible_reply_material_slot():
+    catalog = ContextCatalogLoader.load(
+        Path("data/config/prompt/context_catalog.yaml"),
+        strict=True,
+    )
+
+    item = catalog.get("input.visible_reply_material")
+    assert item is not None
+    assert item.category == "input"
+    assert item.slots == ["user_input"]
+    assert item.lifecycle == "ephemeral"
+
+
 def test_context_catalog_loader_skips_invalid_items_fail_open(tmp_path: Path):
     catalog_path = tmp_path / "context_catalog.yaml"
     catalog_path.write_text(

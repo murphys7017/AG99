@@ -191,6 +191,14 @@ contexts:
     lifecycle: ephemeral
     notes: "当前用户输入的文本；附件-only 输入允许无文本"
 
+  - id: input.visible_reply_material
+    category: input
+    slots: [user_input]
+    required: false
+    multiple: false
+    lifecycle: ephemeral
+    notes: "Persona 表达阶段使用的结构化可见回复材料"
+
   - id: input.attachment_summary
     category: input
     slots: [user_input]

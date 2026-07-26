@@ -57,6 +57,7 @@ async def deliver_message_chain(
     platform_settings: dict[str, Any] | None = None,
     result_is_model_result: bool = False,
     allow_segmented_reply: bool = True,
+    preserve_record_delivery_groups: bool = False,
 ) -> bool:
     working_chain = list(message.chain)
     _apply_path_mapping(working_chain, platform_settings or {})
@@ -98,6 +99,7 @@ async def deliver_message_chain(
         message,
         working_chain,
         send_message,
+        preserve_record_delivery_groups=preserve_record_delivery_groups,
     )
 
 
@@ -159,6 +161,8 @@ async def _deliver_regular_message_chain(
     message: MessageChain,
     working_chain: list[BaseMessageComponent],
     send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
+    *,
+    preserve_record_delivery_groups: bool,
 ) -> bool:
     if all(comp.type in _HEADER_COMPONENT_TYPES for comp in working_chain):
         logger.warning(
@@ -167,10 +171,9 @@ async def _deliver_regular_message_chain(
         return False
 
     sent_any = False
-    sep_comps = _extract_comp(
+    sep_comps = _extract_standalone_records(
         working_chain,
-        _RECORD_COMPONENT_TYPES,
-        modify_raw_chain=True,
+        preserve_delivery_groups=preserve_record_delivery_groups,
     )
     for comp in sep_comps:
         chain = message.derive([comp])
@@ -250,6 +253,32 @@ def _delivery_group_key(component: BaseMessageComponent) -> str | None:
         return None
     message_id = str(segment.get("message_id") or "").strip()
     return message_id or None
+
+
+def _extract_standalone_records(
+    components: list[BaseMessageComponent],
+    *,
+    preserve_delivery_groups: bool,
+) -> list[BaseMessageComponent]:
+    if not preserve_delivery_groups:
+        return _extract_comp(
+            components,
+            _RECORD_COMPONENT_TYPES,
+            modify_raw_chain=True,
+        )
+
+    extracted: list[BaseMessageComponent] = []
+    remaining: list[BaseMessageComponent] = []
+    for component in components:
+        if (
+            component.type in _RECORD_COMPONENT_TYPES
+            and _delivery_group_key(component) is None
+        ):
+            extracted.append(component)
+        else:
+            remaining.append(component)
+    components[:] = remaining
+    return extracted
 
 
 def _is_segmented_reply_required(

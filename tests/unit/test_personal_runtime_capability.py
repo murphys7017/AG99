@@ -7,16 +7,28 @@ from astrbot.core.interaction.observation import (
     RuntimeObservation,
     RuntimeObservationTarget,
 )
+from astrbot.core.interaction.observation_inbox import ObservationBatch
+from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.personal_gate import (
+    DeterministicObservationGate,
+    ObservationFeatureBuilder,
+    ObservationGateDisposition,
+    ObservationGateReason,
+    ObservationGateSettings,
+)
 from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
 from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
 from astrbot.core.interaction.turn_state import (
     InteractionFinalOutputStatus,
+    append_interaction_turn_visible_output,
     finish_interaction_turn_final_output,
     reserve_interaction_turn_final_output,
 )
-from astrbot.core.message.components import Plain
+from astrbot.core.message.components import Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
@@ -51,6 +63,28 @@ class _FailingPlatform(_Platform):
         _message_chain: MessageChain,
     ) -> None:
         raise RuntimeError("platform send failed")
+
+
+class _DirectEvent(AstrMessageEvent):
+    def __init__(self, metadata: PlatformMetadata, *, fail_send: bool = False) -> None:
+        message = AstrBotMessage()
+        message.type = MessageType.FRIEND_MESSAGE
+        message.self_id = "bot"
+        message.session_id = "target"
+        message.message_id = "user-message-1"
+        message.sender = MessageMember(user_id="user-1", nickname="User")
+        message.message = [Plain("hello")]
+        message.message_str = "hello"
+        message.raw_message = {"post_type": "message"}
+        super().__init__("hello", message, metadata, "target")
+        self.fail_send = fail_send
+        self.sent: list[MessageChain] = []
+
+    async def send(self, message: MessageChain) -> None:
+        if self.fail_send:
+            raise RuntimeError("direct send failed")
+        self.sent.append(message)
+        self._has_send_oper = True
 
 
 def _context_for_target(metadata: PlatformMetadata) -> Context:
@@ -128,6 +162,37 @@ def _runtime_event(
     return RuntimeObservationEvent(context=context, observation=observation)
 
 
+async def _submit_direct_output(
+    *,
+    manager: PersonalRuntimeManager,
+    context: Context,
+    event: _DirectEvent,
+) -> None:
+    runtime_config = {
+        "interaction_middleware": {
+            "personal_runtime_reply_cooldown_seconds": 45,
+        }
+    }
+    controller = InteractionOutputController()
+    event.set_extra("_interaction_output_controller", controller)
+    async with manager.submit_platform_event(
+        event,
+        "default",
+        context,
+        runtime_config,
+    ) as submission:
+        admission = await submission.admit(allow_follow_up=False)
+        assert admission.lease is not None
+        try:
+            with manager.activate_turn(admission.turn):
+                await event.emit_output(
+                    MessageChain([Plain("direct reply")]),
+                    mode="direct",
+                )
+        finally:
+            await admission.lease.release()
+
+
 def test_personal_runtime_targets_require_explicit_adapter_support():
     context = _context_for_target(_metadata())
 
@@ -158,6 +223,12 @@ async def _deliver_runtime_output(
             InteractionFinalOutputStatus.FAILED,
         )
         raise
+    append_interaction_turn_visible_output(
+        event,
+        message_kind="plugin_direct",
+        text=message.get_plain_text(),
+        delivered_message_ids=["test-delivery"],
+    )
     await finish_interaction_turn_final_output(
         event,
         InteractionFinalOutputStatus.DELIVERED,
@@ -246,6 +317,201 @@ async def test_failed_autonomous_expression_does_not_consume_cooldown_or_quota()
     )
     assert runtime.state.daily_proactive_outputs == 0
     assert runtime.state.reply_cooldown_until is None
+
+
+@pytest.mark.asyncio
+async def test_delivered_autonomous_expression_consumes_cooldown_and_quota():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _runtime_event(context, metadata)
+    event.set_extra("_personal_runtime_submission_kind", "personal_expression")
+    event.set_extra("_personal_action_id", "action-1")
+
+    async def handler(runtime_event, _turn):
+        await _deliver_runtime_output(runtime_event, MessageChain([Plain("hello")]))
+
+    await manager.submit_runtime_observation_event(
+        event,
+        "default",
+        context,
+        {
+            "interaction_middleware": {
+                "personal_runtime_reply_cooldown_seconds": 45,
+            }
+        },
+        handler,
+    )
+
+    snapshot = manager.snapshot_diagnostics()
+    runtime = snapshot.sessions[0]
+    feedback = runtime.last_completion_feedback
+    assert feedback is not None
+    assert feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+    assert feedback.output_completed_at is not None
+    assert runtime.state.reply_cooldown_until == pytest.approx(
+        feedback.output_completed_at + 45
+    )
+    assert runtime.state.daily_proactive_outputs == 1
+
+
+@pytest.mark.asyncio
+async def test_delivered_output_without_action_id_starts_cooldown_without_quota():
+    metadata = _metadata()
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _runtime_event(context, metadata)
+    event.set_extra(
+        "_personal_runtime_submission_kind",
+        "explicit_proactive_output",
+    )
+
+    async def handler(runtime_event, _turn):
+        await _deliver_runtime_output(runtime_event, MessageChain([Plain("hello")]))
+
+    await manager.submit_runtime_observation_event(
+        event,
+        "default",
+        context,
+        {
+            "interaction_middleware": {
+                "personal_runtime_reply_cooldown_seconds": 45,
+            }
+        },
+        handler,
+    )
+
+    snapshot = manager.snapshot_diagnostics()
+    runtime = snapshot.sessions[0]
+    feedback = runtime.last_completion_feedback
+    assert feedback is not None
+    assert feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+    assert feedback.output_completed_at is not None
+    assert runtime.state.reply_cooldown_until == pytest.approx(
+        feedback.output_completed_at + 45
+    )
+    assert runtime.state.daily_proactive_outputs == 0
+
+
+@pytest.mark.asyncio
+async def test_direct_reply_delivery_starts_gate_cooldown_without_proactive_quota():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(metadata)
+
+    await _submit_direct_output(manager=manager, context=context, event=event)
+
+    runtime = manager.snapshot_diagnostics().sessions[0]
+    feedback = runtime.last_completion_feedback
+    assert event.sent[0].get_plain_text() == "direct reply"
+    assert feedback is not None
+    assert feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+    assert feedback.output_completed_at is not None
+    assert runtime.state.reply_cooldown_until == pytest.approx(
+        feedback.output_completed_at + 45
+    )
+    assert runtime.state.daily_proactive_outputs == 0
+
+    evaluated_at = feedback.output_completed_at + 1
+    observation = RuntimeObservation(
+        kind="heartbeat",
+        source="test",
+        occurred_at=evaluated_at,
+        target_session=RuntimeObservationTarget(
+            platform_id=metadata.id,
+            platform_name=metadata.name,
+            message_type=MessageType.FRIEND_MESSAGE,
+            session_id="target",
+            support_proactive_message=True,
+            support_personal_runtime=True,
+        ),
+        payload={"visible_reply_material": "follow up"},
+    )
+    batch = ObservationBatch.create(
+        runtime_key=runtime.key,
+        opened_at=evaluated_at,
+        closed_at=evaluated_at,
+        observations=[observation],
+    )
+    settings = ObservationGateSettings()
+    features = ObservationFeatureBuilder.build(
+        batch,
+        state=runtime.state,
+        runtime_busy=False,
+        settings=settings,
+        evaluated_at=evaluated_at,
+    )
+    gate_result = DeterministicObservationGate.evaluate(
+        batch,
+        state=runtime.state,
+        features=features,
+        settings=settings,
+        evaluated_at=evaluated_at,
+    )
+    assert gate_result.disposition is ObservationGateDisposition.HOLD
+    assert gate_result.reason_code is ObservationGateReason.REPLY_COOLDOWN
+
+
+@pytest.mark.asyncio
+async def test_failed_direct_reply_sets_neither_cooldown_nor_proactive_quota():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(metadata, fail_send=True)
+
+    with pytest.raises(RuntimeError, match="Interaction output was not delivered"):
+        await _submit_direct_output(manager=manager, context=context, event=event)
+
+    runtime = manager.snapshot_diagnostics().sessions[0]
+    assert event.sent == []
+    assert runtime.state.reply_cooldown_until is None
+    assert runtime.state.daily_proactive_outputs == 0
+
+
+@pytest.mark.asyncio
+async def test_personal_runtime_output_keeps_dual_tts_in_one_platform_send():
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    manager = PersonalRuntimeManager()
+    event = _runtime_event(context, metadata)
+    controller = InteractionOutputController()
+    segment = {
+        "output_segment": {
+            "turn_id": "turn-1",
+            "message_id": "message-1",
+            "tts": {"tts_request_id": "tts-1", "status": "succeeded"},
+        }
+    }
+
+    async def handler(runtime_event, _turn):
+        await controller.capture_plugin_output(
+            MessageChain(
+                [
+                    Record(
+                        file="reply.wav",
+                        delivery_metadata={**segment, "audio_attachment": "present"},
+                    ),
+                    Plain(
+                        "reply",
+                        delivery_metadata={**segment, "audio_attachment": "absent"},
+                    ),
+                ]
+            ),
+            runtime_event,
+        )
+
+    await manager.submit_runtime_observation_event(
+        event,
+        "default",
+        context,
+        {},
+        handler,
+    )
+
+    assert len(platform.sent) == 1
+    assert [type(comp) for comp in platform.sent[0][1].chain] == [Record, Plain]
 
 
 @pytest.mark.asyncio

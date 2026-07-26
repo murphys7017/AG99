@@ -14,6 +14,7 @@ from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.voice import (
     TTSState,
@@ -2161,6 +2162,10 @@ class InteractionOutputController:
             platform_settings=self.platform_settings,
             result_is_model_result=result_is_model_result,
             allow_segmented_reply=allow_segmented_reply,
+            preserve_record_delivery_groups=(
+                bool(event.get_extra("_runtime_observation_event", False))
+                and supports_personal_runtime(event.platform_meta)
+            ),
         )
         if not sent:
             raise RuntimeError(

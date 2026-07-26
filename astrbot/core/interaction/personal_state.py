@@ -104,9 +104,15 @@ class PersonalState:
             feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
             and feedback.output_completed_at is not None
         ):
+            completed_at = feedback.output_completed_at
             self.last_expression_at = max(
-                feedback.output_completed_at,
-                self.last_expression_at or feedback.output_completed_at,
+                completed_at,
+                self.last_expression_at or completed_at,
+            )
+            cooldown_until = completed_at + max(0.0, reply_cooldown_seconds)
+            self.reply_cooldown_until = max(
+                cooldown_until,
+                self.reply_cooldown_until or cooldown_until,
             )
         if (
             feedback.action_id
@@ -118,11 +124,6 @@ class PersonalState:
             if usage_day is None:
                 raise ValueError("Delivered proactive action requires usage_day")
             self._ensure_usage_day(usage_day)
-            cooldown_until = completed_at + max(0.0, reply_cooldown_seconds)
-            self.reply_cooldown_until = max(
-                cooldown_until,
-                self.reply_cooldown_until or cooldown_until,
-            )
             self.daily_proactive_outputs += 1
         return self.persistent_snapshot() != previous_state
 

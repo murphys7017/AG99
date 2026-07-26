@@ -1504,6 +1504,75 @@ async def test_memory_service_update_and_snapshot_form_closed_loop(temp_dir: Pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_message", "assistant_only"),
+    [
+        ({}, True),
+        (
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.invalid/image.png"},
+                    }
+                ],
+            },
+            False,
+        ),
+    ],
+)
+async def test_memory_service_classifies_assistant_only_by_empty_user_payload(
+    user_message: dict[str, object],
+    assistant_only: bool,
+):
+    turn = TurnRecord(
+        turn_id="turn-1",
+        umo=TEST_UMO,
+        conversation_id="conv-1",
+        platform_id=TEST_PLATFORM_ID,
+        platform_user_key=TEST_PLATFORM_USER_KEY,
+        canonical_user_id=None,
+        session_id="session-1",
+        user_message=user_message,
+        assistant_message={"role": "assistant", "content": "hello"},
+        message_timestamp=datetime.now(UTC),
+    )
+    turn_record_service = MagicMock()
+    turn_record_service.ingest_turn = AsyncMock(return_value=turn)
+    short_term_service = MagicMock()
+    short_term_service.update_after_turn = AsyncMock()
+    memory_service = MemoryService(
+        MagicMock(),
+        turn_record_service,
+        short_term_service,
+        MagicMock(),
+    )
+    req = _memory_update_request(
+        user_message=user_message,
+        assistant_message=turn.assistant_message,
+        message_timestamp=turn.message_timestamp,
+        canonical_user_id=None,
+    )
+
+    with patch("astrbot.core.memory.service.logger") as memory_logger:
+        await memory_service.update_from_postprocess(req)
+
+    if assistant_only:
+        memory_logger.warning.assert_not_called()
+        assert any(
+            "assistant-only turn" in str(call.args[0])
+            for call in memory_logger.debug.call_args_list
+        )
+    else:
+        memory_logger.debug.assert_not_called()
+        assert any(
+            "missing canonical_user_id" in str(call.args[0])
+            for call in memory_logger.warning.call_args_list
+        )
+
+
+@pytest.mark.asyncio
 async def test_memory_service_snapshot_keeps_query_as_debug_meta(temp_dir: Path):
     store = MemoryStore(db_path=temp_dir / "memory.db")
     snapshot_builder = MemorySnapshotBuilder(store)

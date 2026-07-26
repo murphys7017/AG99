@@ -118,6 +118,32 @@ def test_persona_projection_keeps_history_and_hides_core_capabilities():
     assert projected.get_slot("system.core_execution_context") is None
 
 
+def test_persona_projection_drops_execution_capability_extensions():
+    pack = ContextPack(
+        slots={
+            "extension.capability": _slot(
+                "extension.capability",
+                {
+                    "items": [
+                        {
+                            "plugin_id": "shared-capability",
+                            "value": "large execution contract",
+                            "meta": {"targets": ["persona", "core"]},
+                        }
+                    ]
+                },
+                "extension",
+            )
+        }
+    )
+
+    persona = project_context_pack(pack, PromptTarget.PERSONA)
+    core = project_context_pack(pack, PromptTarget.CORE)
+
+    assert persona.get_slot("extension.capability") is None
+    assert core.get_slot("extension.capability") is not None
+
+
 def test_core_planner_projection_uses_facts_without_router_or_persona_decisions():
     projected = project_context_pack(_canonical_pack(), PromptTarget.CORE_PLANNER)
 
@@ -263,7 +289,7 @@ def test_core_projection_keeps_execution_context_without_persona_material():
     assert projected.get_slot("system.core_execution_context") is not None
 
 
-def test_extension_targets_are_filtered_for_every_prompt_target():
+def test_extension_targets_are_filtered_for_extension_enabled_prompt_targets():
     pack = ContextPack(
         slots={
             "extension.context": _slot(
@@ -284,7 +310,15 @@ def test_extension_targets_are_filtered_for_every_prompt_target():
         }
     )
 
-    for target in PromptTarget:
+    for target in (
+        PromptTarget.ROUTER,
+        PromptTarget.CORE_PLANNER,
+        PromptTarget.PERSONA,
+        PromptTarget.CORE,
+    ):
         projected = project_context_pack(pack, target)
         items = projected.get_slot("extension.context").value["items"]
         assert [item["plugin_id"] for item in items] == [target.value]
+
+    policy = project_context_pack(pack, PromptTarget.PERSONAL_POLICY)
+    assert policy.get_slot("extension.context") is None

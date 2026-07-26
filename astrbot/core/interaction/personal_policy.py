@@ -196,6 +196,10 @@ def build_personal_policy_system_prompt() -> str:
         "- observe：事实值得记住或影响状态，但现在不需要行动。\n"
         "- express：值得主动表达；reply_intent 只写表达意图，不写最终台词。\n"
         "- defer：需要等待更多事实；填写 defer_seconds。\n"
+        "字段约束：ignore/observe 的 reply_intent 必须为空且 defer_seconds=0；"
+        "express 的 reply_intent 必须非空且 defer_seconds=0；"
+        "defer 的 reply_intent 必须为空且 defer_seconds>0。"
+        "不要使用 reply_intent 解释 ignore、observe 或 defer 的理由。\n"
         "reason_code 只能从以下值选择："
         + ", ".join(_MODEL_REASON_CODES)
         + "。\n"
@@ -225,12 +229,16 @@ def build_personal_policy_output_contract() -> OutputContract:
                     "type": "string",
                     "enum": list(_MODEL_REASON_CODES),
                 },
-                "reply_intent": {"type": "string"},
+                "reply_intent": {
+                    "type": "string",
+                    "description": "仅 action=express 时填写；其他动作必须为空字符串",
+                },
                 "importance": {"type": "number", "minimum": 0, "maximum": 1},
                 "defer_seconds": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 86400,
+                    "description": "仅 action=defer 时为正整数；其他动作必须为 0",
                 },
             },
             "required": [
@@ -257,6 +265,7 @@ def extract_personal_policy_decision(
     ):
         raise PersonalPolicyError("unsupported_policy_tool_call")
     preferred_name = output_contract.preferred_tool_name
+    matched_tool_call = False
     for tool_name, tool_arg in zip(
         list(getattr(llm_response, "tools_call_name", []) or []),
         list(getattr(llm_response, "tools_call_args", []) or []),
@@ -264,10 +273,13 @@ def extract_personal_policy_decision(
     ):
         if preferred_name and tool_name != preferred_name:
             continue
+        matched_tool_call = True
         payload = tool_arg if isinstance(tool_arg, dict) else extract_json_object(tool_arg)
         decision = PersonalPolicyDecision.from_mapping(payload)
         if decision is not None:
             return decision
+    if matched_tool_call:
+        raise PersonalPolicyError("invalid_policy_tool_call")
     raise PersonalPolicyError("missing_policy_tool_call")
 
 

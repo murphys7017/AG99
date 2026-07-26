@@ -103,12 +103,19 @@ class MemoryService:
             conversation_history=conversation_history,
         )
         if not turn.canonical_user_id:
-            logger.warning(
-                "memory update skipped mid-long pipeline: missing canonical_user_id turn_id=%s umo=%s platform_user_key=%s",
-                turn.turn_id,
-                turn.umo,
-                turn.platform_user_key,
-            )
+            if turn.user_message:
+                logger.warning(
+                    "memory update skipped mid-long pipeline: missing canonical_user_id turn_id=%s umo=%s platform_user_key=%s",
+                    turn.turn_id,
+                    turn.umo,
+                    turn.platform_user_key,
+                )
+            else:
+                logger.debug(
+                    "memory mid-long pipeline skipped for assistant-only turn: turn_id=%s umo=%s",
+                    turn.turn_id,
+                    turn.umo,
+                )
             logger.info(
                 "memory update finished: turn_id=%s umo=%s conversation_id=%s",
                 turn.turn_id,

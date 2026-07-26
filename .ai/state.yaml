@@ -1,8 +1,8 @@
 task:
-  class: feature
+  class: bugfix
   risk: high
-  phase: personal_runtime_observation_operations
-  scope: Operate safe multi-target Personal Runtime observation through explicit target configuration and read-only scheduling diagnostics while preserving default proactive-message delivery semantics
+  phase: personal_runtime_post_review_remediation
+  scope: Fix duplicate proactive TTS delivery, delivery-based cooldown accounting, Persona prompt capability bloat, Policy parsing diagnostics, and assistant-only memory logging without changing AG99Live or test timing configuration
 context:
   confidence: high
   assumptions:
@@ -11,11 +11,11 @@ context:
     - Runtime diagnostics are read-only, exclude raw Observation payloads and reply material, and report only operational state needed to validate proactive behavior.
     - PersonalState keeps process-local conversational and diagnostic fields while a narrow repository persists only last expression, cooldown, mute, and daily usage control fields by full PersonalRuntimeKey.
     - Completion Feedback is formed once at turn lease release; delivery success requires a visible utterance delivery receipt and is not inferred from send intent or final-output status alone.
-    - Policy express creates an internal ActionIntent with a reliable action_id; only its confirmed visible delivery can write proactive cooldown and daily usage.
+    - Policy express creates an internal ActionIntent with a reliable action_id; only its confirmed visible delivery can write proactive daily usage, while every confirmed visible reply starts the shared autonomous-expression cooldown.
     - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
     - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
-    - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline while express writes reply cooldown and proactive usage only after delivery.
+    - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline, every delivered visible reply writes reply cooldown, and only delivered ActionIntent output writes proactive usage.
     - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
     - PersonalHeartbeatSource is lifecycle-owned and applies one independent due time per configured Runtime observation target. An empty target list falls back to the legacy default proactive-message target; Heartbeat only submits expiring/coalescing facts and never creates an event, acquires a turn lease, or invokes Persona, Core, or Output.
     - Context resolves the single global Runtime observation target registry from the default configuration. ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in one of those group targets; the event-matched configuration only controls its feature flag and Runtime/Policy settings. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
@@ -44,7 +44,9 @@ context:
     - Generic intake still accepts targets without proactive-message support; the deterministic Gate rejects those batches before any future Policy or output work.
     - Runtime observation handlers receive both the compatibility event and the canonical PersonalTurnContext; cancellation and failure emit terminal lifecycle stages.
     - RuntimeObservationEvent is only the official platform-send compatibility sink; all visible observation output still passes through InteractionOutputController interception.
+    - A RuntimeObservationEvent target with explicit Personal Runtime support preserves Record and Plain components sharing one TTS output-segment identity as one physical chain; default Record standalone delivery remains unchanged for other paths.
     - Observation conversation persistence is assistant-only and turn-idempotent; it never inserts an empty or synthetic user message.
+    - Memory represents an assistant-only turn with an empty user_message payload; nonempty text or media user payloads without canonical identity remain warnings.
     - Phase 0 investigation deferred speculative tests; implementation batches validate their affected production boundary.
     - InteractionMemoryStore and its prompt slot were removed because production had no writer; existing local data files are left untouched as user data, but no runtime path reads them.
     - Local master is also a fork branch and is never treated as the official baseline; official boundary checks use the upstream remote plus current production call relationships.
@@ -110,6 +112,7 @@ context:
     - Group-chat prompt records use stable sender IDs when available, while nicknames remain display labels only.
     - Prompt target selection is deterministic code projection over one canonical ContextPack; the removed LLM/rule Prompt Selector is not part of the current architecture.
     - Router, Core Planner, Persona, and Core target projections define distinct context boundaries over the single canonical ContextPack pipeline.
+    - Persona projection excludes extension.capability even when a plugin targets it to Persona; stable capability contracts remain available to Core targets.
     - Static prompt collectors are cached only within one event/config/ProviderRequest identity and must not be treated as cross-turn global cache.
     - Canonical Dialogue History is owned by Personal Runtime output and stores normalized user input plus final Personal Expression; Core tool calls and results persist in a separate Core Execution Ledger.
     - AssetRef stores content identity when already available, otherwise an explicitly non-resolvable source reference; it never persists temporary paths, URLs, or binary media. A managed Asset Store remains future work.
@@ -327,6 +330,7 @@ verification:
     - Phase 8 snapshot-ownership Ruff, py_compile, and minimal CoreExecutionSpec input-output smoke covering ContextPack, TaskSpec, execution-history, and capability fact isolation while retaining the Native ToolSet handle (passed)
     - pnpm --dir docs docs:build after Phase 8 snapshot-ownership documentation updates (passed)
     - "Personal Runtime post-review remediation: tests/unit/test_personal_runtime_capability.py public Context/Cron compatibility and platform-send failure accounting checks (6 passed); affected-file Ruff, py_compile, and git diff --check passed"
+    - "Personal Runtime log-review remediation: Interaction, delivery, Prompt target/catalog, Policy, Runtime accounting, and assistant-only Memory checks passed (100 tests); focused Ruff, py_compile, YAML parses, VitePress build, and git diff checks passed. Default Record standalone behavior and Personal Runtime composite TTS behavior were both covered."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -337,12 +341,18 @@ verification:
     - Context/LTM cross-check run `tests/unit/test_config.py` currently fails before tests because local `data/cmd_config.json` is not valid JSON; this is a local runtime data issue, not a `default.py` syntax issue.
     - Expanded prompt-context validation still has one existing quoted-image caption fixture failure because the test expects the active provider to act as an implicit caption provider; current runtime requires a dedicated caption provider.
     - Personal Runtime capability cross-check `tests/unit/test_core_lifecycle.py` still has an unrelated stop-task fixture failure where `MagicMock(spec=asyncio.Task)` is treated as a different-loop Future by `asyncio.gather`; the new capability/Cron suites, py_compile, Ruff, and diff check passed.
+    - The expanded log-review test run retained the existing background Metric/aiosqlite event-loop-close thread warning; the new direct-reply acceptance case passes alone without that warning.
   validation_gap: "Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain disabled or unused until configured by operators/plugins. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and real policy-quality data remain absent. Targeted Pyright remains unavailable. P1 smoke coverage is intentionally limited to observable boundary behavior rather than internal orchestration order."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: personal_runtime_multitarget_observation
+    phase: personal_runtime_post_review_remediation
     scope:
+      - delivery-confirmed reply cooldown with proactive quota limited to delivered ActionIntent output
+      - one physical proactive turn for dual-output TTS components sharing a logical segment ID
+      - Persona projection exclusion of execution capability prompt extensions
+      - strict Personal Policy field guidance and invalid matching tool-call diagnostics
+      - assistant-only memory identity skip classification by empty user payload
       - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
       - restart-safe last expression, cooldown, mute, and daily usage fields
       - mute, quiet-hours, cooldown-duration, policy budget, and output budget configuration

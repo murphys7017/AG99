@@ -65,6 +65,14 @@ _CORE_PLANNER_SLOT_NAMES = frozenset(
 
 _CORE_ONLY_SLOT_NAMES = frozenset({"system.core_execution_context"})
 
+_PERSONA_BLOCKED_SLOT_NAMES = frozenset(
+    {
+        "extension.capability",
+        "input.attachment_summary",
+        *_CORE_ONLY_SLOT_NAMES,
+    }
+)
+
 _PERSONAL_POLICY_SLOT_NAMES = frozenset(
     {
         "system.base",
@@ -153,10 +161,7 @@ def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
 
     group = slot.name.split(".", 1)[0]
     if target is PromptTarget.PERSONA:
-        if (
-            slot.name == "input.attachment_summary"
-            or slot.name in _CORE_ONLY_SLOT_NAMES
-        ):
+        if slot.name in _PERSONA_BLOCKED_SLOT_NAMES:
             return False
         if group == "conversation":
             return slot.name in {

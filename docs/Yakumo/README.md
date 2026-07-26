@@ -24,8 +24,9 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Router、Planner、Personal Policy、Persona 和 Core 不再各自采集或拼接 Prompt。
 - Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；第三方 Backend 尚未接入这一边界。
 - Personal Runtime 在插件 Handler 前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。
-- `PersonalSessionRuntime` 现在按 RuntimeKey 在进程内跨 turn 保留控制状态；空闲实例受 24 小时 TTL 和 1024 条 LRU 上限约束。窄化的 Personal State Repository 只持久化最近表达、冷却、静音和每日用量，重启后按同一 RuntimeKey 恢复；Inbox、active turn、attention 和模型临时状态仍只存在于进程内。每个 Runtime 还持有最多 64 条 Observation 的有界 Inbox、唯一固定聚合窗口 task、确定性 Gate 和最后一次 Personal Policy 结果。Turn 结束时根据真实物理投递回执形成 Completion Feedback，只有已送达可见输出会推进并持久化最近表达时间。
+- `PersonalSessionRuntime` 现在按 RuntimeKey 在进程内跨 turn 保留控制状态；空闲实例受 24 小时 TTL 和 1024 条 LRU 上限约束。窄化的 Personal State Repository 只持久化最近表达、冷却、静音和每日用量，重启后按同一 RuntimeKey 恢复；Inbox、active turn、attention 和模型临时状态仍只存在于进程内。每个 Runtime 还持有最多 64 条 Observation 的有界 Inbox、唯一固定聚合窗口 task、确定性 Gate 和最后一次 Personal Policy 结果。Turn 结束时根据真实物理投递回执形成 Completion Feedback；所有已送达可见回复都会推进最近表达时间并启动自主表达冷却，只有携带 `ActionIntent.action_id` 的已送达输出才消耗每日主动输出配额，失败发送两者都不更新。
 - 通用 Runtime Observation 通过 `submit_observation()` 合并为只读 `ObservationBatch`，再由 Gate 生成 `evaluate / hold / reject` 及稳定原因码。`evaluate` 仅在显式启用时调用独立 Personal Policy Provider，并以严格 tool-call 契约形成 decision；Provider、超时或解析失败统一记录为 fail-closed `observe`。`express` 先形成内部 `ActionIntent`，再通过独立的 `RuntimeObservationEvent` 兼容路径复用 Persona Expression、Output Controller 与 assistant-only 历史；`defer`、冷却和 quiet-hours 的 held batch 由生命周期托管的 Wake Scheduler 到期后重新评估。普通 Intake 不直接进入 Persona、Core 或 Output；Policy 不调用 Core 或工具。
+- Persona target 不接收 `extension.capability`；执行能力契约保留在 Core lane。显式支持 Personal Runtime 的 Observation 输出会把同一逻辑 TTS segment 的 Record 与双输出文本作为一个物理消息链发送，避免一个自主表达被 Adapter 拆成多个 proactive turn。
 
 ## 当前主链
 
