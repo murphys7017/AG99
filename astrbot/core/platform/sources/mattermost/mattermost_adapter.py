@@ -55,6 +55,7 @@ class MattermostPlatformAdapter(Platform):
             description="Mattermost 平台适配器",
             id=cast(str, self.config.get("id", "mattermost")),
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
         self.bot_self_id = ""
         self.bot_username = ""

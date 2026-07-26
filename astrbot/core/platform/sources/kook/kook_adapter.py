@@ -77,7 +77,10 @@ class KookPlatformAdapter(Platform):
 
     def meta(self) -> PlatformMetadata:
         return PlatformMetadata(
-            name="kook", description="KOOK 适配器", id=self.kook_config.id
+            name="kook",
+            description="KOOK 适配器",
+            id=self.kook_config.id,
+            support_personal_runtime=True,
         )
 
     def _should_ignore_event_by_bot_nickname(self, author_id: str) -> bool:

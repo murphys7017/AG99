@@ -1201,19 +1201,27 @@ class PersonalRuntimeManager:
         self._ensure_accepting()
         if not isinstance(event, RuntimeObservationEvent):
             raise TypeError("event must be a RuntimeObservationEvent")
-        get_platform = getattr(plugin_context, "get_platform_inst", None)
-        platform = (
-            get_platform(event.get_platform_id()) if callable(get_platform) else None
-        )
-        if (
-            not event.platform_meta.support_personal_runtime
-            or platform is None
-            or not supports_personal_runtime(platform.meta())
-        ):
+        if not event.platform_meta.support_proactive_message:
             raise RuntimeError(
-                "Runtime observation target does not explicitly support Personal "
-                "Runtime output"
+                "Runtime observation target does not support proactive messages"
             )
+        submission_kind = event.get_extra("_personal_runtime_submission_kind")
+        if submission_kind == "personal_expression":
+            get_platform = getattr(plugin_context, "get_platform_inst", None)
+            platform = (
+                get_platform(event.get_platform_id())
+                if callable(get_platform)
+                else None
+            )
+            if (
+                not event.platform_meta.support_personal_runtime
+                or platform is None
+                or not supports_personal_runtime(platform.meta())
+            ):
+                raise RuntimeError(
+                    "Runtime observation target does not explicitly support Personal "
+                    "Runtime output"
+                )
         event.set_extra("_astrbot_config_id", config_id)
         reservation = self._reserve(
             event,
@@ -1284,9 +1292,9 @@ class PersonalRuntimeManager:
             return False
 
         metadata = platform.meta()
-        if not supports_personal_runtime(metadata):
+        if not metadata.support_proactive_message:
             logger.warning(
-                "Cannot send Personal Runtime output to unsupported platform: %s",
+                "Cannot send proactive output to unsupported platform: %s",
                 session,
             )
             return False
@@ -1300,11 +1308,14 @@ class PersonalRuntimeManager:
                 message_type=session.message_type,
                 session_id=session.session_id,
                 support_proactive_message=metadata.support_proactive_message,
-                support_personal_runtime=True,
+                support_personal_runtime=supports_personal_runtime(metadata),
             ),
             payload={"visible_reply_material": message.get_plain_text()},
         )
         event = RuntimeObservationEvent(context=context, observation=observation)
+        event.set_extra(
+            "_personal_runtime_submission_kind", "explicit_proactive_output"
+        )
 
         async def _deliver(runtime_event, turn):
             await middleware.handle_runtime_output(runtime_event, turn, message)

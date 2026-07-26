@@ -59,6 +59,7 @@ class SatoriPlatformAdapter(Platform):
             description="Satori 通用协议适配器",
             id=self.config["id"],
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
         self.ws: ClientConnection | None = None

@@ -122,6 +122,7 @@ class WecomAIBotAdapter(Platform):
             description="企业微信智能机器人适配器，支持 HTTP 回调和长连接模式",
             id=self.config.get("id", "wecom_ai_bot"),
             support_proactive_message=bool(self.msg_push_webhook_url),
+            support_personal_runtime=bool(self.msg_push_webhook_url),
         )
 
         self.api_client: WecomAIBotAPIClient | None = None

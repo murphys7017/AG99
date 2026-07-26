@@ -110,6 +110,7 @@ class LinePlatformAdapter(Platform):
             description="LINE Messaging API 适配器",
             id=cast(str, self.config.get("id", "line")),
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
     async def run(self) -> None:

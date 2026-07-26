@@ -68,6 +68,7 @@ class SlackAdapter(Platform):
             description="适用于 Slack 的消息平台适配器，支持 Socket Mode 和 Webhook Mode。",
             id=cast(str, self.config.get("id")),
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
         # 初始化 Slack Web Client

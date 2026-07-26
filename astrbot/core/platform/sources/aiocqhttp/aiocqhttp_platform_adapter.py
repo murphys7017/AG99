@@ -51,6 +51,7 @@ class AiocqhttpAdapter(Platform):
             description="适用于 OneBot 标准的消息平台适配器，支持反向 WebSockets。",
             id=cast(str, self.config.get("id")),
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
         self.bot = CQHttp(

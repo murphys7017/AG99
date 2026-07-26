@@ -119,6 +119,7 @@ class MisskeyPlatformAdapter(Platform):
             id=self.config.get("id", "misskey"),
             default_config_tmpl=default_config,
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
     async def run(self) -> None:

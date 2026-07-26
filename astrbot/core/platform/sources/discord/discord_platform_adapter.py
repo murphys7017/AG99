@@ -119,6 +119,7 @@ class DiscordPlatformAdapter(Platform):
             id=cast(str, self.config.get("id")),
             default_config_tmpl=self.config,
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
     @override

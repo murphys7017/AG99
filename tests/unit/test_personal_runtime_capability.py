@@ -1,5 +1,20 @@
 from types import SimpleNamespace
 
+import pytest
+
+from astrbot.core.cron.events import CronMessageEvent
+from astrbot.core.interaction.observation import (
+    RuntimeObservation,
+    RuntimeObservationTarget,
+)
+from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
+from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
+from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
+from astrbot.core.interaction.turn_state import mark_interaction_turn_failed
+from astrbot.core.message.components import Plain
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.star.context import Context
 
@@ -34,6 +49,50 @@ def _metadata(*, support_personal_runtime: bool = False) -> PlatformMetadata:
     )
 
 
+class _ConversationManager:
+    async def get_curr_conversation_id(self, _umo: str):
+        return None
+
+
+class _PersonaManager:
+    async def resolve_selected_persona(self, **_kwargs):
+        return "default", {}, None, None
+
+
+class _RuntimeContext:
+    def __init__(self, metadata: PlatformMetadata) -> None:
+        self._platform = _Platform(metadata)
+        self.platform_manager = SimpleNamespace(platform_insts=[self._platform])
+        self.conversation_manager = _ConversationManager()
+        self.persona_manager = _PersonaManager()
+
+    def get_platform_inst(self, platform_id: str):
+        if platform_id == self._platform.meta().id:
+            return self._platform
+        return None
+
+
+def _runtime_event(
+    context: _RuntimeContext,
+    metadata: PlatformMetadata,
+) -> RuntimeObservationEvent:
+    observation = RuntimeObservation(
+        kind="personal_action",
+        source="test",
+        occurred_at=1.0,
+        target_session=RuntimeObservationTarget(
+            platform_id=metadata.id,
+            platform_name=metadata.name,
+            message_type=MessageType.FRIEND_MESSAGE,
+            session_id="target",
+            support_proactive_message=metadata.support_proactive_message,
+            support_personal_runtime=metadata.support_personal_runtime,
+        ),
+        payload={"visible_reply_material": "hello"},
+    )
+    return RuntimeObservationEvent(context=context, observation=observation)
+
+
 def test_personal_runtime_targets_require_explicit_adapter_support():
     context = _context_for_target(_metadata())
 
@@ -48,3 +107,111 @@ def test_personal_runtime_targets_accept_explicit_adapter_support():
 
     assert len(targets) == 1
     assert str(targets[0]) == "demo:FriendMessage:target"
+
+
+@pytest.mark.asyncio
+async def test_explicit_runtime_output_keeps_proactive_message_boundary():
+    metadata = _metadata()
+    context = _RuntimeContext(metadata)
+    manager = PersonalRuntimeManager()
+    event = _runtime_event(context, metadata)
+    event.set_extra("_personal_runtime_submission_kind", "explicit_proactive_output")
+    seen = {}
+
+    async def handler(runtime_event, turn):
+        seen["support_personal_runtime"] = (
+            runtime_event.platform_meta.support_personal_runtime
+        )
+        seen["support_proactive_message"] = turn.session.support_proactive_message
+        return "ok"
+
+    result = await manager.submit_runtime_observation_event(
+        event,
+        "default",
+        context,
+        {},
+        handler,
+    )
+
+    assert result == "ok"
+    assert seen == {
+        "support_personal_runtime": False,
+        "support_proactive_message": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_autonomous_expression_requires_personal_runtime_support():
+    metadata = _metadata()
+    context = _RuntimeContext(metadata)
+    manager = PersonalRuntimeManager()
+    event = _runtime_event(context, metadata)
+    event.set_extra("_personal_runtime_submission_kind", "personal_expression")
+
+    async def handler(_runtime_event, _turn):
+        return "unexpected"
+
+    with pytest.raises(RuntimeError, match="Personal Runtime output"):
+        await manager.submit_runtime_observation_event(
+            event,
+            "default",
+            context,
+            {},
+            handler,
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_autonomous_expression_does_not_consume_cooldown_or_quota():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _RuntimeContext(metadata)
+    manager = PersonalRuntimeManager()
+    event = _runtime_event(context, metadata)
+    event.set_extra("_personal_runtime_submission_kind", "personal_expression")
+    event.set_extra("_personal_action_id", "action-1")
+
+    async def handler(runtime_event, _turn):
+        mark_interaction_turn_failed(runtime_event)
+        raise RuntimeError("send failed")
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        await manager.submit_runtime_observation_event(
+            event,
+            "default",
+            context,
+            {},
+            handler,
+        )
+
+    snapshot = manager.snapshot_diagnostics()
+    assert len(snapshot.sessions) == 1
+    runtime = snapshot.sessions[0]
+    assert runtime.last_completion_feedback is not None
+    assert (
+        runtime.last_completion_feedback.delivery_status
+        is PersonalDeliveryStatus.FAILED
+    )
+    assert runtime.state.daily_proactive_outputs == 0
+    assert runtime.state.reply_cooldown_until is None
+
+
+@pytest.mark.asyncio
+async def test_cron_send_uses_context_send_message_compatibility_path():
+    calls = []
+
+    class CronContext:
+        async def send_message(self, session, message):
+            calls.append((session, message))
+            return True
+
+    session = MessageSession("demo", MessageType.FRIEND_MESSAGE, "target")
+    event = CronMessageEvent(
+        context=CronContext(),
+        session=session,
+        message="tick",
+    )
+    message = MessageChain([Plain("done")])
+
+    await event.send(message)
+
+    assert calls == [(session, message)]

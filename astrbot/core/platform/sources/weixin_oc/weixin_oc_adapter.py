@@ -144,6 +144,7 @@ class WeixinOCAdapter(Platform):
             description="个人微信",
             id=cast(str, self.config.get("id", "weixin_oc")),
             support_streaming_message=False,
+            support_personal_runtime=True,
         )
 
         self._shutdown_event = asyncio.Event()

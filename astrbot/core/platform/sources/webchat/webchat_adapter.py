@@ -78,6 +78,7 @@ class WebChatAdapter(Platform):
             description="webchat",
             id="webchat",
             support_proactive_message=True,
+            support_personal_runtime=True,
         )
         self._shutdown_event = asyncio.Event()
         self._webchat_queue_mgr = webchat_queue_mgr
