@@ -43,6 +43,8 @@ def extract_message_text(message: dict[str, Any] | None) -> str:
                 parts.append(str(item.get("text", "") or ""))
             elif item_type == "image_url":
                 parts.append("[image]")
+            elif isinstance(item_type, str) and item_type.strip():
+                parts.append("[attachment]")
         return _clean_text(
             _strip_system_reminder(" ".join(part for part in parts if part))
         )

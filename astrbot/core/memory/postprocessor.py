@@ -82,6 +82,7 @@ class MemoryPostProcessor:
             assistant_message=latest_turn["assistant_message"],
             message_timestamp=ctx.timestamp or datetime.now(UTC),
             source_refs=source_refs,
+            assistant_only=bool(latest_turn.get("assistant_only", False)),
         )
 
     async def run(self, ctx: PostProcessContext) -> None:

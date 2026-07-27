@@ -97,6 +97,20 @@ class MemoryService:
             req.source_refs,
         )
         turn = await self.turn_record_service.ingest_turn(req)
+        if req.assistant_only:
+            logger.debug(
+                "memory short-term and mid-long pipelines skipped for assistant-only "
+                "turn: turn_id=%s umo=%s",
+                turn.turn_id,
+                turn.umo,
+            )
+            logger.info(
+                "memory update finished: turn_id=%s umo=%s conversation_id=%s",
+                turn.turn_id,
+                turn.umo,
+                turn.conversation_id,
+            )
+            return turn
         conversation_history = _get_conversation_history(req.provider_request)
         await self.short_term_service.update_after_turn(
             turn,

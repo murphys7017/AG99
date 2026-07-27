@@ -66,6 +66,7 @@ class MemoryUpdateRequest:
     message_timestamp: datetime
     turn_id: str | None = None
     source_refs: list[SourceRef] = field(default_factory=list)
+    assistant_only: bool = False
 
 
 @dataclass(slots=True)

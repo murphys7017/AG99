@@ -101,6 +101,7 @@ def _memory_update_request(
     source_refs: list[str] | None = None,
     canonical_user_id: str | None = TEST_CANONICAL_USER_ID,
     platform_user_key: str | None = TEST_PLATFORM_USER_KEY,
+    assistant_only: bool = False,
 ) -> MemoryUpdateRequest:
     return MemoryUpdateRequest(
         umo=TEST_UMO,
@@ -114,6 +115,7 @@ def _memory_update_request(
         assistant_message=assistant_message,
         message_timestamp=message_timestamp,
         source_refs=list(source_refs or []),
+        assistant_only=assistant_only,
     )
 
 
@@ -344,6 +346,24 @@ def test_extract_turn_payloads_ignores_malformed_messages_without_crashing():
 
     assert len(payloads) == 1
     assert payloads[0]["assistant_message"]["content"] == "Here is the summary."
+
+
+def test_extract_turn_payloads_keeps_file_only_user_turn():
+    payloads = extract_turn_payloads(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "file", "file": {"name": "report.pdf"}},
+                ],
+            },
+            {"role": "assistant", "content": "I received the file."},
+        ]
+    )
+
+    assert len(payloads) == 1
+    assert payloads[0]["user_message"]["content"] == "[attachment]"
+    assert "assistant_only" not in payloads[0]
 
 
 @pytest.mark.asyncio
@@ -1522,54 +1542,39 @@ async def test_memory_service_update_and_snapshot_form_closed_loop(temp_dir: Pat
         ),
     ],
 )
-async def test_memory_service_classifies_assistant_only_by_empty_user_payload(
+async def test_memory_service_skips_state_updates_for_explicit_assistant_only_turn(
     user_message: dict[str, object],
     assistant_only: bool,
+    temp_dir: Path,
 ):
-    turn = TurnRecord(
-        turn_id="turn-1",
-        umo=TEST_UMO,
-        conversation_id="conv-1",
-        platform_id=TEST_PLATFORM_ID,
-        platform_user_key=TEST_PLATFORM_USER_KEY,
-        canonical_user_id=None,
-        session_id="session-1",
-        user_message=user_message,
-        assistant_message={"role": "assistant", "content": "hello"},
-        message_timestamp=datetime.now(UTC),
-    )
-    turn_record_service = MagicMock()
-    turn_record_service.ingest_turn = AsyncMock(return_value=turn)
-    short_term_service = MagicMock()
-    short_term_service.update_after_turn = AsyncMock()
+    store = MemoryStore(db_path=temp_dir / "memory.db")
     memory_service = MemoryService(
-        MagicMock(),
-        turn_record_service,
-        short_term_service,
-        MagicMock(),
+        store,
+        TurnRecordService(store),
+        _build_short_term_service(store, RecentConversationSource(store)),
+        MemorySnapshotBuilder(store),
     )
     req = _memory_update_request(
         user_message=user_message,
-        assistant_message=turn.assistant_message,
-        message_timestamp=turn.message_timestamp,
-        canonical_user_id=None,
+        assistant_message={"role": "assistant", "content": "hello"},
+        message_timestamp=datetime.now(UTC),
+        assistant_only=assistant_only,
     )
 
-    with patch("astrbot.core.memory.service.logger") as memory_logger:
-        await memory_service.update_from_postprocess(req)
+    try:
+        turn = await memory_service.update_from_postprocess(req)
+        persisted_turn = await store.get_turn_record(turn.turn_id)
+        snapshot = await memory_service.get_snapshot(TEST_UMO, "conv-1")
+    finally:
+        await store.close()
 
+    assert persisted_turn is not None
     if assistant_only:
-        memory_logger.warning.assert_not_called()
-        assert any(
-            "assistant-only turn" in str(call.args[0])
-            for call in memory_logger.debug.call_args_list
-        )
+        assert snapshot.topic_state is None
+        assert snapshot.short_term_memory is None
     else:
-        memory_logger.debug.assert_not_called()
-        assert any(
-            "missing canonical_user_id" in str(call.args[0])
-            for call in memory_logger.warning.call_args_list
-        )
+        assert snapshot.topic_state is not None
+        assert snapshot.short_term_memory is not None
 
 
 @pytest.mark.asyncio
@@ -5329,8 +5334,44 @@ async def test_memory_postprocessor_builds_request_from_conversation_history():
     assert req.canonical_user_id == TEST_CANONICAL_USER_ID
     assert req.user_message["content"] == "Then wire postprocess and snapshot."
     assert req.assistant_message["content"] == "That gives us a minimal closed loop."
+    assert req.assistant_only is False
     assert req.provider_request is not None
     assert isinstance(req.provider_request.get("conversation_history"), list)
+
+
+@pytest.mark.asyncio
+async def test_memory_postprocessor_marks_assistant_only_conversation_turn():
+    conversation = Conversation(
+        platform_id="test",
+        user_id="test:private:user",
+        cid="conv-1",
+        history=json.dumps(
+            [{"role": "assistant", "content": "I will check in later."}]
+        ),
+    )
+    event = MagicMock()
+    event.unified_msg_origin = TEST_UMO
+    event.get_platform_id.return_value = TEST_PLATFORM_ID
+    event.get_sender_id.return_value = "user-1"
+    event.get_sender_name.return_value = "tester"
+    event.session_id = "session-1"
+    memory_service = MagicMock()
+    memory_service.identity_resolver = MagicMock()
+    memory_service.identity_resolver.resolve_from_event = AsyncMock(
+        return_value=_memory_identity()
+    )
+    processor = MemoryPostProcessor(memory_service)
+    ctx = MagicMock()
+    ctx.event = event
+    ctx.conversation = conversation
+    ctx.provider_request = ProviderRequest(prompt="", session_id="session-1")
+    ctx.timestamp = datetime.now(UTC)
+
+    req = await processor.build_update_request(ctx)
+
+    assert req is not None
+    assert req.user_message == {}
+    assert req.assistant_only is True
 
 
 @pytest.mark.asyncio
