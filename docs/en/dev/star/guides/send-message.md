@@ -44,6 +44,12 @@ await self.context.send_message(
 )
 ```
 
+`send_message()` is an explicit compatibility API for content that the caller has
+already decided to deliver. It is not reconsidered by Personal Policy and is not
+rewritten or suppressed by autonomous-expression deduplication. Cron and plugin
+calls retain their exact-content behavior and the platform's
+`support_proactive_message` capability semantics.
+
 With this feature, you can store the `unified_msg_origin` and send messages when needed.
 
 For proactive plugin output without an explicit session, pass `None` to use the

@@ -426,6 +426,30 @@ Added in `v4.3.5`
 - `possibility_reply`: 主动回复的概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
 - `whitelist`: 主动回复的 ID 白名单。仅在此列表中的 ID 才会触发主动回复。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
 
+### `interaction_middleware`
+
+Interaction Middleware 与 Personal Runtime 的设置。后台自主表达默认关闭，必须同时开启
+`personal_policy_enabled` 并显式选择 `personal_policy_provider_id` 才会评估可行动的 Observation。
+Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Core 或工具。
+
+- `personal_heartbeat_enabled` / `personal_heartbeat_interval_seconds`：启用按观察目标独立计时的
+  Heartbeat。Heartbeat 只检查已有 retained batch；空 Inbox 不会生成材料、调用模型或发送消息。
+  间隔最小为 30 秒。
+- `personal_conversation_activity_enabled`：允许已配置观察范围内的非唤醒群聊消息形成受限的
+  `conversation_activity` 事实；它仍会先经过白名单和会话状态检查，不会作为普通消息进入插件、
+  Router 或 Core。
+- `personal_runtime_conversation_continuation_seconds`：Bot 成功回复后，同一发送者有 10 秒直接
+  续接窗口；其后的窗口内消息由 Router 判断 `persona`、`hybrid` 或 `silent`。设为 `0` 可关闭。
+- `personal_runtime_muted`、`personal_runtime_quiet_hours_*`、
+  `personal_runtime_reply_cooldown_seconds`、`personal_runtime_no_action_cooldown_seconds` 与
+  `personal_runtime_daily_proactive_output_limit`：控制静音、安静时段、重试节流和每日主动表达上限。
+  只有确认送达且带 Action ID 的自主表达会消耗主动输出额度。
+- `platform_settings.personal_runtime_observation_targets`：Personal Runtime 的观察范围，使用完整
+  UMO 列表；留空时回退“主动消息默认目标”。它只限定可观察的会话，不决定何时发送消息。
+
+`provider_ltm_settings.active_reply` 是既有群聊主动回复配置，与 Personal Runtime Policy 是独立
+功能，不应混用。
+
 ### `content_safety`
 
 内容安全设置。

@@ -426,6 +426,40 @@ Whether to record images in group chats and automatically generate text descript
 - `possibility_reply`: Probability of an active reply. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
 - `whitelist`: ID whitelist for active replies. Only IDs in this list will trigger active replies. Empty means no whitelist filter. You can use the `/sid` command to get the session ID on a platform.
 
+### `interaction_middleware`
+
+Settings for Interaction Middleware and Personal Runtime. Autonomous background
+expression is disabled by default. An actionable Observation is evaluated only
+when `personal_policy_enabled` is enabled and
+`personal_policy_provider_id` is explicitly selected. Policy can only decide
+`ignore`, `observe`, `express`, or `defer`; it cannot call Core or tools.
+
+- `personal_heartbeat_enabled` / `personal_heartbeat_interval_seconds`: Enable a
+  Heartbeat scheduled independently for each observation target. Heartbeat only
+  checks an existing retained batch; an empty Inbox creates no material, model
+  call, or outbound message. The minimum interval is 30 seconds.
+- `personal_conversation_activity_enabled`: Allow non-addressed messages from
+  configured observed groups to become restricted `conversation_activity` facts.
+  They still pass the whitelist and session-status checks, and do not enter the
+  normal plugin, Router, or Core path.
+- `personal_runtime_conversation_continuation_seconds`: After a successful Bot
+  reply, the same sender has a 10-second direct continuation window. Later
+  messages in this window are classified by Router as `persona`, `hybrid`, or
+  `silent`. Set this to `0` to disable the window.
+- `personal_runtime_muted`, `personal_runtime_quiet_hours_*`,
+  `personal_runtime_reply_cooldown_seconds`,
+  `personal_runtime_no_action_cooldown_seconds`, and
+  `personal_runtime_daily_proactive_output_limit`: Control mute, quiet hours,
+  retry throttling, and the daily autonomous-expression limit. Only confirmed,
+  Action-ID-bearing autonomous delivery consumes the output limit.
+- `platform_settings.personal_runtime_observation_targets`: The Personal Runtime
+  observation scope, expressed as a list of complete UMOs. An empty list falls
+  back to the Default Proactive Message Target. It restricts which sessions may
+  be observed; it does not decide when to send a message.
+
+`provider_ltm_settings.active_reply` is the existing group active-reply setting.
+It is separate from Personal Runtime Policy and they should not be conflated.
+
 ### `content_safety`
 
 Content safety settings.

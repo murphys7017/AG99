@@ -142,15 +142,15 @@ Skills、知识库或输出能力；`express` 只形成 `ActionIntent` 并交回
 Persona Expression 生成。`defer` 写入无动作截止时间并保留 batch；生命周期托管的 Wake Scheduler
 会在 defer、quiet hours 或冷却到期后重新评估。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
 重新评估。多目标 Heartbeat Source 已由现有 Core
-Lifecycle 托管：`platform_settings.personal_runtime_observation_targets` 留空时回退到默认主动目标；每个目标的开关和间隔读取其实际命中的 Runtime 配置，并维护独立 due time。配置关闭时不提交事实，启用后每个到期 target 调用
-`submit_observation()`；它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
+Lifecycle 托管：`platform_settings.personal_runtime_observation_targets` 留空时回退到默认主动目标；每个目标的开关和间隔读取其实际命中的 Runtime 配置，并维护独立 due time。配置关闭时不提交事实，启用后每个到期 target 只检查既有 retained batch；空 Inbox 不创建 Observation 材料、批次或唤醒任务。它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
 环境 Source 复用这份目标范围：配置目标中的非唤醒群聊文本通过官方白名单和会话状态检查后，
 仅提交不含原文的 `conversation_activity` fact，并在普通限流、插件、Router 和 Core 前结束原事件。
 插件可通过 `Context.register_runtime_observation_sensor(sensor)` 注册受限的事实 Source；返回的
 handle 只能向同一通用 Intake 提交带目标会话、类别、过期时间和结构化 payload 的 Observation。
 生命周期装配器负责把它交给既有 `PersonalRuntimeManager`，因此插件不会拿到 Runtime、EventBus、
 Provider、ToolSet 或平台直发能力。插件卸载时注册会按 module prefix 自动删除，旧 handle 随即失效。
-`Context.send_message()` 仍是已经决定发送的兼容 API，不是 Sensor。
+`Context.send_message()` 仍是已经决定发送的兼容 API，不是 Sensor 或 Personal Policy
+决策；它保持 `support_proactive_message` 的精确发送语义，不进入自主表达防重。
 主动输出兼容
 入口继续与平台消息共享 session runtime 锁，并在 admission 时校验目标发送能力。普通插件 `Context.send_message()` 的纯文本输出仍走已经决定发送
 的路径；同一 active turn 的 Core 工具输出作为 progress 进入现有 Output Controller，跨 session
@@ -172,7 +172,8 @@ Repository 恢复失败会降级为当前进程内状态，最终保存失败只
 Action 配置：`defer` 使用不动作冷却作为最小等待时间；`express` 只有在可见输出确认送达后才写入
 回复冷却和每日主动输出计数。
 
-Policy 对近期已表达且当前 batch 没有新事实的同一意图应返回 `ignore / observe`。只有携带
+Policy 对近期已表达且当前 batch 没有新事实的同一意图应返回 `ignore / observe`。Conversation 和
+Memory 可投影为 Policy 的受限语义上下文，但不能单独产生 batch、material revision 或唤醒权限。只有携带
 `PersonalActionIntent` 的自主 Persona 请求会启用上一条回复防重：Runtime 从真实投递回执保留不可逆
 规范化指纹，Persona 的 Conversation history 快照提供重启兜底；生成后若与上一条一致，则在 effect、
 TTS、平台投递和 Conversation 提交前以 `suppressed` 完成。抑制不会推进冷却或主动配额。显式

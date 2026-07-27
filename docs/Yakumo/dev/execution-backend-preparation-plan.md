@@ -124,9 +124,10 @@ Expression、Output Controller、assistant-only Conversation 提交和完整 lif
 不调用模型，hold batch 会返回 Inbox。
 
 本阶段已完成：持久状态接线、Gate settings、Personal Policy、多目标 Heartbeat Observation
-生产者、受控的 `express / defer` Action Coordinator，以及覆盖配置观察群聊目标的
-`conversation_activity` Source。仍未完成：其他 Runtime Sensor、插件和后台任务 identity，
-以及未来后台执行的权限和执行设计。
+生产者、受控的 `express / defer` Action Coordinator、受限 Plugin Runtime Sensor，以及覆盖配置
+观察群聊目标的 `conversation_activity` Source。Heartbeat 只能检查 retained batch，不能靠旧历史
+或空 Inbox 制造材料。仍未完成：更广泛的 Runtime Sensor、后台任务 identity，以及未来后台执行的
+权限和执行设计。
 
 实施内容：
 
@@ -237,6 +238,8 @@ AgentRunner 才能被发现。
 
 - 官方 Conversation 保存精确对话记录。
 - MemoryService 保存短期摘要、长期记忆、人格状态和关系状态。
+- assistant-only 主动表达只保留 `TurnRecord` 与 Conversation 语义历史；不会更新短期、长期或
+  PersonaState，也不会触发 consolidation。
 - Interaction 私有 Memory Store 已删除；ConversationHistoryCollector 与 MemoryCollector
   是当前唯一读取入口。
 - Persona、Router、Planner 和 Execution 通过 Prompt Projection 使用相同的历史与记忆
@@ -323,7 +326,8 @@ Phase 0 已确认的准备边界：
 - 建立 Deterministic Gate，从规范 batch 与 Runtime state 构建 features，执行 expiry、busy、
   mute、quiet hours、cooldown、budget 和 target capability 检查；只写稳定 diagnostics。
 - Observation 复用唯一 Persona 与 Output 路径，写入 assistant-only Conversation，并在
-  发送失败、取消和异常时保留正确终态；多目标 Heartbeat 只提交 Observation，不进入该输出路径。
+  发送失败、取消和异常时保留正确终态；多目标 Heartbeat 只重评 retained Observation batch，
+  空 Inbox 不创建材料或进入该输出路径。
 - 完成 Native/Third-party Runner 请求准备、Prompt、能力、Hook、session、输出和持久化
   差异审计，并确定其长期 owner。
 - 删除无生产调用者的 `handle_inbound()`、`core_queue` 和 `enqueue_core` 重投递双轨，
@@ -351,10 +355,12 @@ Phase 0 已确认的准备边界：
 - 通用 `Context.send_message()` 保留公开调用方式；纯文本主动消息现在经 Personal Runtime
   排队和 Output Controller 投递。同一 active turn 的 Core 工具消息明确作为 progress，
   跨 session 输出建立独立 proactive turn。纯媒体主动消息尚未形成可持久化语义材料，当前
-  仍保留平台直发。
+  仍保留平台直发。显式 Context、Cron 和插件发送保持精确投递兼容，不作为 Personal Policy
+  行动或自主表达去重对象。
 - 已经决定发送的 Observation 输出会形成 assistant-only Conversation、Prompt History 和
   Memory history projection；通用 Inbox facts 不写 Conversation。转换层使用空 user payload
-  表达 assistant-only，不伪造用户消息。
+  表达 assistant-only，不伪造用户消息；Memory 只保留该回合的 `TurnRecord`。真实附件或媒体
+  用户输入归一化为 `[attachment]`，不被误判为 assistant-only。
 - Interaction 物理发送现在会在全量投递失败时阻止 turn completion；分段部分成功时仍缺少
   结构化 delivery receipt，canonical history 暂时无法精确表达“仅部分内容送达”。
 - 可见输出完成后才同步提交 Conversation；当前有进程内锁和 `turn_id` 幂等，但没有持久化

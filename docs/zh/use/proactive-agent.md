@@ -6,6 +6,9 @@ AstrBot 引入了主动 Agent（Proactive Agent）系统，使 AstrBot 不仅能
 
 在 v4.14.0 引入，目前是**实验性功能**，未稳定。
 
+本页只描述显式的 FutureTask/Cron 调度。它与可选的 Personal Runtime 自主表达是两条独立路径：
+定时任务代表调用方已经决定执行和投递，不会被 Personal Policy 或自主表达防重重新裁决。
+
 ## 未来任务 (FutureTask)
 
 主 Agent 现在可以管理一个全局的 **Cron Job 列表**，为未来的自己设置任务。

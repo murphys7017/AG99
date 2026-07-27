@@ -6,6 +6,11 @@ AstrBot introduces a Proactive Agent system, enabling AstrBot to not only respon
 
 Introduced in v4.14.0, this is currently an **experimental feature** and not yet stable.
 
+This page documents explicit FutureTask/Cron scheduling only. It is separate from
+the optional Personal Runtime autonomous-expression path: a scheduled task is
+already an explicit execution and delivery decision, so Personal Policy and
+autonomous-expression deduplication do not reconsider it.
+
 ## Future Tasks (FutureTask)
 
 The Main Agent can now manage a global **Cron Job List**, setting tasks for its future self.

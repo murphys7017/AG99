@@ -510,7 +510,8 @@ Policy 不接收：
 - 只有 Gate 返回 `evaluate` 才能调用 Policy Provider。
 - Provider 未配置、不可用、超时、解析失败或 schema 不合法时统一 fail closed 为 `observe`。
 - Policy 调用与 Persona、Core 使用独立 provider 配置和预算。
-- Phase 3 只运行 shadow policy，不执行任何决策。
+- Phase 3 的初始验证只运行 shadow policy；当前实现已在同一 fail-closed 契约下开放受限
+  `express / defer`，不保留并行 shadow 执行路径。
 - diagnostics 不记录完整 Persona Prompt、Memory 正文或私密对话，只记录槽位摘要和原因码。
 
 ## 九、并发和取消模型
@@ -643,7 +644,8 @@ Policy 不接收：
 
 ### Phase 3：Shadow Personal Policy
 
-状态：已实现。默认关闭；当前只评估和记录，不执行 Action。
+状态：已实现并已完成 shadow 验证。Policy 仍默认关闭；显式启用后可执行受限的
+`ignore / observe / express / defer`，但不调用 Core 或工具。
 
 目标：验证小模型决策质量，不执行动作。
 
@@ -654,7 +656,8 @@ Policy 不接收：
 - 增加只读 Policy Prompt 收集适配器，兼容现有 Collector 接口但不构造用户消息。
 - 定义严格 PersonalPolicyDecision output contract。
 - 增加独立 provider、timeout、temperature 和每日调用预算配置。
-- shadow 模式记录 Gate features、Policy decision 和后续事实对照。
+- shadow 阶段记录 Gate features、Policy decision 和后续事实对照；该阶段完成后保留同一
+  fail-closed 契约，不保留第二条 shadow 执行路径。
 - Provider 必须显式选择，不继承 Persona 或 Core Provider；不支持协议级 tool-call 时不会发起
   模型请求。
 - Provider 请求开始前先持久化每日调用预算；调用期间新增 Observation 顺序进入下一批。
@@ -664,30 +667,30 @@ Policy 不接收：
 - Gate 拒绝时零模型调用。
 - Policy 不接收工具、Skills 或 effect schema。
 - schema 错误、超时和 provider 错误统一 fail closed。
-- shadow 模式不发送消息、不调用 Core、不修改 Router。
+- Policy 默认关闭时不发送消息、不调用 Core、不修改 Router。
 
 ### Phase 4：多目标 Heartbeat Express
 
 目标：让配置目标具备受控的主动人格表达能力。
 
-当前进度：Heartbeat Observation Source 已完成，仍处于 Shadow 阶段；ActionIntent、主动表达和
-主动输出计数尚未开放。
+当前进度：已完成。Heartbeat 只检查 retained batch；空 Inbox 不创建材料或唤醒任务。
+`ActionIntent`、受控主动表达和确认送达后的主动输出计数已开放，`execute` 仍禁止。
 
 前置条件：
 
 - 冷却、静音和每日预算已持久化。
-- shadow policy 日志稳定。
+- Policy 模型在严格 tool-call 契约下稳定。
 - 至少一个显式观察目标或默认主动目标可用并支持主动消息。
 
 工作：
 
-- 增加本地 Heartbeat Source；tick 只提交 Observation。
+- 增加本地 Heartbeat Source；tick 只检查 retained batch，不创建新材料。
 - `platform_settings.personal_runtime_observation_targets` 为空时回退 `proactive_message_target`；非空时每个目标独立创建 Observation。
 - quiet hours 使用显式 IANA timezone；未配置时使用主机时区。
 - 开放 `ignore / observe / express / defer`，继续禁止 `execute`。
 - `express` 经 ActionIntent、Persona Expression 和 Output Runtime 投递。
-- `defer` 只保留 batch 与 `not_before`，由后续 Heartbeat 或新观察重新评估，不建立第二套
-  定时任务系统。
+- `defer` 只保留 batch 与 `not_before`，由生命周期托管的 Wake Scheduler 或新观察重新评估，
+  不建立第二套定时任务系统。
 
 建议配置：
 
@@ -774,7 +777,7 @@ coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 
 | `interaction/personal_runtime.py` | 1-2 | Runtime 保留、state、Inbox、evaluation 所有权 | Prompt 拼装、人格文案 |
 | `interaction/observation.py`、`interaction/observation_inbox.py` | 2 | Observation / Batch / admission / Inbox 契约 | 平台发送、模型决策 |
 | 新的 Personal State 模块 | 1 | State、Feedback 类型 | Conversation / Memory |
-| 新的 Personal Policy 模块 | 2-3 | Gate、Features、Decision、shadow policy | Router、Planner、Tool loop |
+| 新的 Personal Policy 模块 | 2-3 | Gate、Features、Decision、fail-closed Policy | Router、Planner、Tool loop |
 | `interaction/turn_state.py` | 1 | 只提供 completion 事实读取 | 持续状态主存储 |
 | `interaction/middleware.py` | 1、4 | 复用 Persona / Output action 边界 | Observation Inbox、后台 Core 执行 |
 | `pipeline/process_stage/stage.py` | 5 | 官方过滤后的只读环境观察 tap | 新 Pipeline、wake 改写 |
@@ -803,7 +806,7 @@ coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 
 1. 同一 RuntimeKey 跨 turn 状态延续，不同 key 严格隔离。
 2. 高频 Observation 合并后只形成一个 batch evaluation。
 3. Gate 拒绝时没有 Provider、Persona、Core 或平台调用。
-4. shadow policy 永远不产生可见输出。
+4. Policy 未启用、Gate 拒绝或 Policy fail-closed 时永远不产生可见输出。
 5. 主动表达只在真实 delivered 后更新预算和 last expression。
 6. 平台消息、插件 Handler、明确唤醒和现有主动发送兼容行为不回归。
 
@@ -823,7 +826,7 @@ coalesce/correlation 标识和不可变结构化 payload。Lifecycle dispatcher 
 
 ## 十四、当前建议的下一批工作
 
-Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
+Phase 1A、Phase 1B、Phase 2A、Phase 2B、Phase 3 和 Phase 4 已完成：
 
 1. `PersonalState` 已由保留的 `PersonalSessionRuntime` 跨 turn 持有。
 2. 空闲 Runtime 已具有受限 TTL / LRU 生命周期、shutdown 和只读 diagnostics。
@@ -849,8 +852,8 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 
 多目标 Heartbeat Source 已接入现有 Core Lifecycle，默认关闭；启用后按
 `platform_settings.personal_runtime_observation_targets` 逐个重新验证，留空时兼容
-`platform_settings.proactive_message_target`，并为每个目标独立提交可过期、可合并的 Observation。Heartbeat 不直接
-发送消息；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过对应 Runtime 的 Persona
+`platform_settings.proactive_message_target`，并为每个目标独立检查 retained batch。Heartbeat 不直接
+发送消息，也不为空 Inbox 创建材料；只有 Gate 与显式启用的 Policy 形成 `express` ActionIntent 后，才通过对应 Runtime 的 Persona
 与 Output 链路表达。defer、cooldown 和 quiet-hours 的 retained batch 由生命周期托管 Wake Scheduler
 到期重评；下一步应使用真实运行数据审阅策略质量，再设计其他 Runtime Sensor。
 
@@ -858,7 +861,7 @@ Phase 1A、Phase 1B、Phase 2A、Phase 2B 和 Phase 3 已完成：
 
 以下问题不阻塞已完成阶段，但必须在对应阶段前确认：
 
-- 哪些模型在严格 tool-call 下能稳定满足 Policy schema，以及 shadow decision 的误触发率。
+- 哪些模型在严格 tool-call 下能稳定满足 Policy schema，以及 Policy decision 的误触发率。
 - quiet hours 默认关闭；启用后的 23:00-08:00 建议值仍需用真实使用数据验证。
 - Phase 5 哪些群聊和 Adapter 默认允许环境观察，默认应关闭。
 - Phase 6 Sensor payload 的公共版本化和权限模型。

@@ -43,6 +43,10 @@ await self.context.send_message(
 )
 ```
 
+`send_message()` 是调用方已经决定投递内容的显式兼容 API，不会交给 Personal Policy 再判断，
+也不会被自主表达的重复回复检查改写或抑制。Cron 和插件调用都保持原有的精确内容与
+`support_proactive_message` 平台能力语义。
+
 通过这个特性，你可以将 unified_msg_origin 存储起来，然后在需要的时候发送消息。
 
 如果插件产生的是没有明确会话的主动消息，可以传入 `None`，使用基础设置中的

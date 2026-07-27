@@ -7,7 +7,9 @@
 - Memory Service 在 Core Lifecycle 初始化，并按有效配置隔离实例。
 - `AFTER_TURN_COMPLETED` Postprocessor 已成为自动写入入口。
 - Interaction finalized material 与普通 Conversation 回合都可形成 `MemoryUpdateRequest`。
-- TurnRecord、TopicState、ShortTermMemory 已形成短期闭环。
+- 所有可接受回合保留 `TurnRecord`；assistant-only 主动表达保留精确历史，但不会更新
+  TopicState、ShortTermMemory、PersonaState 或触发 consolidation / promotion。
+- 真实用户回合（包括附件或媒体输入）形成 TopicState、ShortTermMemory 的短期闭环。
 - canonical identity 映射、SessionInsight、Experience 和长期记忆 promotion 已接入。
 - 长期记忆 Markdown、结构化索引、证据链接、向量同步状态和文档搜索已实现。
 - `MemorySnapshotBuilder` 可读取 topic、short-term、experience、long-term 和 persona state。
@@ -19,7 +21,7 @@
 
 - 自动 PersonaState 演进尚未形成与短期/长期链路同等完整的 service；默认注入也关闭。
 - consolidation 与长期 promotion 当前主要由回合写入阈值触发，独立后台调度还不是主链。
-- canonical identity 缺失时只保留回合与短期写入，中长期沉淀会明确停止。
+- canonical identity 缺失的用户回合只保留回合与短期写入，中长期沉淀会明确停止。
 - Memory analyzer 依赖配置的 Provider；分析失败按 Postprocessor 失败语义记录并跳过该次更新。
 - 向量检索、文档回表和 analyzer 调用仍需要持续关注延迟、超时和可观测性。
 - Context Catalog 的生命周期与脱敏字段尚未全部成为运行时强约束。

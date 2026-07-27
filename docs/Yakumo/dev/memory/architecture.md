@@ -10,8 +10,10 @@ Finalized Turn Material
   -> Postprocess(AFTER_TURN_COMPLETED)
   -> MemoryPostProcessor
   -> MemoryService.update_from_postprocess()
-  -> TurnRecord / Short-Term Update
-  -> optional Consolidation / Experience / Long-Term Promotion
+  -> TurnRecord
+  -> assistant-only: stop
+  -> user turn: Short-Term Update
+     -> optional Consolidation / Experience / Long-Term Promotion
 ```
 
 - Interaction 或普通 Pipeline 负责形成稳定回合材料。
@@ -26,16 +28,24 @@ Finalized Turn Material
 material；普通 Pipeline 则读取官方 Conversation 或当前 Provider 回合。没有稳定回合材料时
 跳过，不从物理发送顺序或媒体投递结果猜测对话内容。
 
-`MemoryService.update_from_postprocess()` 的当前顺序：
+`MemoryService.update_from_postprocess()` 先无条件保留可接受 finalized material 的
+`TurnRecord`，随后按回合类型分支：
 
-1. 写入 `TurnRecord`。
-2. 更新 `TopicState` 与 `ShortTermMemory`。
-3. 解析 canonical user identity。
-4. 达到阈值时运行 consolidation，产生 `SessionInsight` 与 `Experience`。
-5. 达到长期沉淀阈值时创建或更新 `LongTermMemory`，同步文档和向量索引状态。
+1. 所有回合写入 `TurnRecord`。
+2. `assistant_only=True` 时结束写入：该回合保留精确历史，但不更新 `TopicState`、
+   `ShortTermMemory`、`PersonaState`，也不运行 consolidation、Experience 或长期记忆
+   promotion。
+3. 普通用户回合更新 `TopicState` 与 `ShortTermMemory`，再解析 canonical user identity。
+4. 有 canonical identity 且达到阈值时，运行 consolidation，产生 `SessionInsight` 与
+   `Experience`。
+5. 达到长期沉淀阈值时，创建或更新 `LongTermMemory`，同步文档和向量索引状态。
 
-缺少 canonical user identity 时，回合和短期层仍可写入；中长期链路停止，不用平台身份做
-隐式 fallback。平台白名单关闭 Memory 写入时，Postprocessor 直接跳过该事件。
+assistant-only 是 Conversation 历史转换层的显式标记，不由文本是否为空推断。主动 Persona
+表达以空 `user_message` 形成该标记，因此可继续提供给 Conversation 和 Prompt 作为语义上下文，
+却不会把 Bot 自己的表达反馈成抽象记忆。真实的附件或媒体用户输入会归一化为
+`[attachment]`，仍按用户回合处理。缺少 canonical user identity 的用户回合仍可写入回合和
+短期层；中长期链路停止，不用平台身份做隐式 fallback。平台白名单关闭 Memory 写入时，
+Postprocessor 直接跳过该事件。
 
 ## 读取链路
 
@@ -92,6 +102,8 @@ Memory 配置已进入 AstrBot 统一配置，不存在 `data/memory/config.yaml
 ## 边界约束
 
 - Conversation 保存精确消息，Memory 保存抽象状态，两者不能互相替代。
+- Conversation 为后续语义理解保留 assistant-only 主动表达；这一可见历史不会自行产生
+  Memory 状态、Policy 材料或唤醒权限。
 - 静态 Persona 不由 Memory 改写；`PersonaState` 是独立动态状态。
 - Prompt 负责读取和可见范围，不负责 consolidation 或持久化。
 - Interaction finalized material 是 Interaction 回合的提交材料，不再另存私有记忆。

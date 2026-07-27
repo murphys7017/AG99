@@ -15,7 +15,13 @@
 | 核心交互方式 | 消息 → Agent → 回复 | 消息 → **轻量路由分类** → 按需调用 Persona / Core → 统一拟人化 → 回复 |
 | 快速回复 | 不支持 | 唯一拟人层可先产生即时表达，不必等待 Core |
 | 回复风格控制 | 仅靠 prompt | 拟人层统一管理表达方式 |
-| 记忆系统 | 会话历史 | 会话历史 + **长期记忆沉淀** |
+| 记忆系统 | 会话历史 | 会话历史 + 分层 Memory；assistant-only 主动表达不回灌抽象记忆 |
+| 跨 turn 运行时 | 平台消息与 FutureTask/Cron 各自处理 | `PersonalSessionRuntime` 按人格、会话和隐私范围复用状态、串行化 turn，并持久化冷却/预算控制字段 |
+| 后台观察 | 没有 Personal Runtime 的统一 Observation 控制层 | 多目标 Heartbeat、受控群聊环境事实和 Plugin Runtime Sensor 统一进入有界 Inbox |
+| 主动表达判定 | FutureTask/Cron 或插件已决定内容后直接投递 | `Observation → Gate → 可选 Personal Policy → ActionIntent → Persona → Output`；Policy 不调用 Core 或工具 |
+| 主动表达保护 | 常规平台发送语义 | 静音、安静时段、冷却、每日预算、真实投递回执和发送前重复表达抑制 |
+| 群聊连续对话 | 依赖既有唤醒与会话规则 | 同一发送者先有 10 秒直接续接，随后由 Router 在有限窗口内判断 `persona / hybrid / silent` |
+| 显式主动发送 | Cron、`Context.send_message()`、插件按调用内容发送 | 保持相同精确投递兼容，不伪装为 Policy 行动，也不受自主表达去重抑制 |
 | Prompt 组织 | 字符串拼接 | **结构化上下文**（collect → build → project → render → apply） |
 | Interaction 语义 | 分散在各处 | **Interaction Middleware** 统一接管 |
 | 前端展示 | 最终回复 | 临时回复 / 核心结果 / 最终表达 分阶段展示 |
@@ -68,10 +74,17 @@ Router 与 Core Planner 只共享事实源，不共享模型决策、Prompt 指�
 持续人格 Runtime 已具备独立的 Observation Intake：内部事实按会话人格解析到同一个
 RuntimeKey，在每个 Runtime 的有界 Inbox 中执行过期清理、显式合并和 1.5 秒聚合窗口，最后
 形成只读 `ObservationBatch`。确定性 Gate 随后只根据运行状态、quiet hours、冷却、预算和目标
-能力给出 `evaluate / hold / reject` 及稳定原因码；`hold` 会保留事实，整个阶段不构造平台消息、
-不进入 EventBus，也不调用模型或主动回复。已经决定发送的主动输出仍走单独的 Persona
-Expression 与 Output 路径。插件可以注册受限 Sensor 向同一 Intake 提交可过期的结构化事实；
-Sensor 不能提交用户文本、Prompt、工具调用或最终文案，仍需经过 Gate、Policy、Persona 和 Output。
+能力给出 `evaluate / hold / reject` 及稳定原因码；`reject / hold` 不调用模型，只有通过 Gate 且
+显式启用的 Personal Policy 才能形成受限的 `ignore / observe / express / defer` 决策。Heartbeat
+只重评已有 retained batch，空 Inbox、Conversation 和 Memory 历史都不会自行创造行动材料或唤醒
+Policy。已经决定发送的主动输出仍走单独的 Persona Expression 与 Output 路径。插件可以注册受限
+Sensor 向同一 Intake 提交可过期的结构化事实；Sensor 不能提交用户文本、Prompt、工具调用或最终文案，
+仍需经过 Gate、Policy、Persona 和 Output。
+
+确认送达的自主表达会保留 assistant-only Conversation 历史，供后续 Prompt 理解上下文；Memory
+只保留对应 `TurnRecord`，不会更新 TopicState、短期/长期记忆或 PersonaState。生成结果在 effect、
+TTS 和投递前会与上一条真实送达表达去重；命中时不写历史、冷却或主动配额。`Context.send_message()`、
+Cron 和插件显式发送则保持精确投递兼容，不作为 Policy 行动，也不受该去重抑制。
 
 ---
 
@@ -122,7 +135,7 @@ collect → build → target projection → render profile → prompt layout/tre
 | 即时表达 | 🟡 开发中 | 已复用统一 Persona Runtime，流式体验继续优化 |
 | 长期记忆 | 🟡 开发中 | 框架已搭，部分场景验证 |
 | Interaction Middleware | 🟡 开发中 | 主链路已通，部分边界场景仍需收口 |
-| 持续人格 Runtime | 🟡 开发中 | 状态持久化、Gate、Policy、单目标 Heartbeat、受控群聊环境观察与 express/defer Action 已接入；execute、更多 Sensor 与多目标注册尚未开放 |
+| 持续人格 Runtime | 🟡 开发中 | 状态持久化、Gate、Policy、多目标 Heartbeat、受控群聊环境观察、Plugin Runtime Sensor 与 express/defer Action 已接入；后台 execute 和更广泛的 Sensor 仍未开放 |
 | 结构化 Prompt | 🟡 开发中 | collect/build/project/profile/layout/tree/render/apply 已跑通，继续物理拆分默认 Layout 并统一工具与 Provider capability |
 | 上游兼容 | 🟢 稳定 | 安全修复、provider 稳定修复持续同步 |
 

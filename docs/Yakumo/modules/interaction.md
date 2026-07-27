@@ -66,8 +66,8 @@ session lock，目标必须明确支持主动消息；没有 `visible_reply_mate
 发送失败会使 turn 失败，不能把未投递内容写成成功历史。
 
 多目标 Heartbeat Source 已由 Core Lifecycle 托管；`platform_settings.personal_runtime_observation_targets`
-留空时兼容默认主动目标，它会为每个已配置且仍支持主动消息的目标独立提交可过期、可合并的
-`heartbeat` Observation，不构造消息或直接发送。群聊环境观察默认关闭；启用后，官方 Waking 阶段只让
+留空时兼容默认主动目标，它会为每个已配置且仍支持主动消息的目标独立检查 retained batch，不构造
+消息、不创建新材料或直接发送。空 Inbox 的 Heartbeat 被忽略。群聊环境观察默认关闭；启用后，官方 Waking 阶段只让
 配置群聊目标中的非唤醒文本继续通过白名单和会话状态检查，
 再转换为不含原文的 `conversation_activity` Observation，并在普通限流、插件、Router 和 Core 前
 终止该平台事件。Action Coordinator 已实现 `express / defer`。插件可以注册受限 Runtime Sensor，
@@ -77,8 +77,9 @@ Personal State Repository。
 主动输出上限已经接入用户配置；Gate 立即执行静音、全局时区安静时段和输出预算。`express` 的可见输出
 确认送达后才写回复冷却与主动输出计数，`defer` 写入无动作截止时间。因此 Inbox 可以由 Heartbeat 驱动，
 但只有显式启用 Policy、配置 Provider 且通过 Gate 才可能主动表达。插件调用
-`Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
-session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
+`Context.send_message()` 的纯文本主动输出是已经决定发送的兼容路径，经同一 session
+admission 和 Output Controller 发送；它不是 Observation 或 Personal Policy 行动，不会被
+自主表达防重改写或抑制。纯媒体主动消息暂时保留平台直发。
 
 Heartbeat 本身不算新事实，也不会让空 Inbox 留下待处理项。Runtime 将 revision 绑定到 Inbox 条目和
 关闭后的批次；只有新 Observation 或同一 Sensor payload 的实际变化才创建新材料。`reject`、`ignore`、
@@ -122,8 +123,9 @@ Inbox、Gate、Policy、Persona 和 Output 决定。插件 reload/unload 会清�
 提交会失败。
 
 assistant-only 内容已经进入官方 Conversation、Prompt history 和 Memory history。历史转换
-使用空 user payload 标识 assistant-only，不伪造用户消息；各目标 Renderer 再决定具体模型
-消息格式。
+使用空 user payload 标识 assistant-only，不伪造用户消息；Memory 只保留其 `TurnRecord`，不会更新
+TopicState、ShortTermMemory、PersonaState 或启动 consolidation / promotion。真实附件或媒体用户
+输入会归一化为 `[attachment]`，不属于 assistant-only；各目标 Renderer 再决定具体模型消息格式。
 
 目标链路：
 

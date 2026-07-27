@@ -78,6 +78,10 @@ Claude Code、OpenCode 等后端位于同一执行契约之后。
 一轮结束后形成 Finalized Turn Material，Conversation、Memory 和其他 Postprocessor 只消费
 这份稳定材料，不分别从 event extra、平台消息或可见文本中猜测本轮事实。
 
+当前实现将 assistant-only 主动表达保留为 Conversation 和 Prompt 可见的精确历史，并写入
+`TurnRecord`；它不会更新 TopicState、ShortTermMemory、PersonaState 或触发 consolidation /
+promotion。历史用于理解上下文，不构成后台 Policy 的唤醒权限。
+
 ## Prompt 数据边界
 
 Prompt 系统是所有模型调用的事实入口：
@@ -114,10 +118,13 @@ Renderer 只负责编译 Provider 输入。业务模块不得重新查询或拼�
 
 持续人格不等于持续调用大模型。心跳、主动表达、后台反思和环境观察必须经过预算、冷却、
 重要度和可见性判断；不同模型角色可使用独立 context lane，并记录 usage/cost ledger。
+Heartbeat 只是 retained Observation batch 的调度检查：空 Inbox 和旧 Conversation / Memory 历史
+都不能自行创建行动材料。
 
 ## 下一步
 
-1. 将 turn、mailbox、follow-up 和任务 owner 收口到 Personal Session Runtime。
+1. 持续审计 Personal Session Runtime 的 turn、mailbox、follow-up 和任务 owner，避免重新引入
+   私有队列或隐式唤醒路径。
 2. 将剩余可写状态收口到唯一 TurnState，extra 只保留官方兼容或只读诊断投影。
 3. 统一 Output Dispatcher 和主动消息入口。
 4. 固化 Context Snapshot 与 Capability Snapshot 的生命周期。
