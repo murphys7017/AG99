@@ -654,6 +654,7 @@ class BaseDatabase(abc.ABC):
         audience_key: str,
         privacy_scope: str,
         last_expression_at: float | None,
+        last_expression_fingerprint: str | None,
         reply_cooldown_until: float | None,
         no_action_cooldown_until: float | None,
         mute_until: float | None,

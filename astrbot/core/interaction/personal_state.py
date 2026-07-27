@@ -46,6 +46,7 @@ class PersonalStateSnapshot:
 @dataclass(frozen=True, slots=True)
 class PersonalPersistentState:
     last_expression_at: float | None
+    last_expression_fingerprint: str | None
     reply_cooldown_until: float | None
     no_action_cooldown_until: float | None
     mute_until: float | None
@@ -192,6 +193,7 @@ class PersonalState:
 
     def restore_persistent(self, state: PersonalPersistentState) -> None:
         self.last_expression_at = state.last_expression_at
+        self.last_expression_fingerprint = state.last_expression_fingerprint
         self.reply_cooldown_until = state.reply_cooldown_until
         self.no_action_cooldown_until = state.no_action_cooldown_until
         self.mute_until = state.mute_until
@@ -202,6 +204,7 @@ class PersonalState:
     def persistent_snapshot(self) -> PersonalPersistentState:
         return PersonalPersistentState(
             last_expression_at=self.last_expression_at,
+            last_expression_fingerprint=self.last_expression_fingerprint,
             reply_cooldown_until=self.reply_cooldown_until,
             no_action_cooldown_until=self.no_action_cooldown_until,
             mute_until=self.mute_until,

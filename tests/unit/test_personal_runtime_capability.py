@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from astrbot.core.cron.events import CronMessageEvent
+from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
 from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.observation import (
@@ -38,6 +39,7 @@ from astrbot.core.interaction.personal_policy import (
 )
 from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
 from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
+from astrbot.core.interaction.personal_state_repository import PersonalStateRepository
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
 from astrbot.core.interaction.turn_state import (
     InteractionFinalOutputStatus,
@@ -722,6 +724,93 @@ async def test_duplicate_autonomous_expression_is_suppressed_without_accounting(
     assert feedback.action_id == intent.action_id
     assert runtime.state.reply_cooldown_until == initial_cooldown
     assert runtime.state.daily_proactive_outputs == 0
+
+
+@pytest.mark.asyncio
+async def test_autonomous_expression_deduplicates_after_runtime_state_restore(tmp_path):
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _RecordingPlatform(metadata)
+    context = _RuntimeContext(metadata)
+    context._platform = platform
+    context.platform_manager = SimpleNamespace(platform_insts=[platform])
+    database = SQLiteDatabase(str(tmp_path / "personal-runtime.db"))
+    manager = None
+    restored_manager = None
+
+    try:
+        await database.initialize()
+        state_repository = PersonalStateRepository(database)
+        manager = PersonalRuntimeManager(state_repository=state_repository)
+        await _submit_direct_output(
+            manager=manager,
+            context=context,
+            event=_DirectEvent(metadata),
+        )
+
+        initial_runtime = manager.snapshot_diagnostics().sessions[0]
+        persisted_state = await state_repository.load(initial_runtime.key)
+        assert persisted_state is not None
+        assert persisted_state.last_expression_fingerprint == fingerprint_personal_expression(
+            "direct reply"
+        )
+        await manager.shutdown()
+
+        restored_manager = PersonalRuntimeManager(state_repository=state_repository)
+        event = _runtime_event(context, metadata)
+        intent = PersonalActionIntent(
+            batch_id="batch-restart-duplicate",
+            reply_intent="repeat the previous reply",
+            created_at=2.0,
+            target_observation=event.observation,
+            action_id="action-restart-duplicate",
+        )
+        event.set_extra("_personal_action_intent", intent)
+        event.set_extra("_personal_action_id", intent.action_id)
+        event.set_extra("_personal_runtime_submission_kind", "personal_expression")
+        middleware = InteractionMiddleware(
+            {"interaction_middleware": {"enabled": True}},
+            InteractionOutputController(),
+            context,
+        )
+
+        async def generate_expression(
+            _event,
+            _interaction_config,
+            *,
+            request,
+            fallback_on_error,
+        ):
+            assert request.avoid_previous_reply is True
+            assert fallback_on_error is False
+            return PersonaExpressionResult(spoken_reply=" direct REPLY!!! ")
+
+        middleware._generate_expression = generate_expression
+        result = await restored_manager.submit_runtime_observation_event(
+            event,
+            "default",
+            context,
+            {"interaction_middleware": {"enabled": True}},
+            middleware.handle_runtime_observation,
+        )
+
+        runtime = restored_manager.snapshot_diagnostics().sessions[0]
+        assert result is None
+        assert platform.sent == []
+        assert event.get_extra("_interaction_runtime_observation_skipped_reason") == (
+            "duplicate_previous_expression"
+        )
+        assert runtime.last_completion_feedback is not None
+        assert (
+            runtime.last_completion_feedback.delivery_status
+            is PersonalDeliveryStatus.SUPPRESSED
+        )
+        assert runtime.state.daily_proactive_outputs == 0
+    finally:
+        if restored_manager is not None:
+            await restored_manager.shutdown()
+        if manager is not None:
+            await manager.shutdown()
+        await database.engine.dispose()
 
 
 @pytest.mark.asyncio

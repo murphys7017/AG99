@@ -67,6 +67,7 @@ class SQLiteDatabase(BaseDatabase):
             await self._ensure_persona_custom_error_message_column(conn)
             await self._ensure_platform_message_history_checkpoint_column(conn)
             await self._ensure_chatui_project_workspace_columns(conn)
+            await self._ensure_personal_runtime_state_columns(conn)
             await conn.commit()
 
     async def _ensure_persona_folder_columns(self, conn) -> None:
@@ -148,6 +149,19 @@ class SQLiteDatabase(BaseDatabase):
                 text(
                     "ALTER TABLE chatui_projects "
                     "ADD COLUMN workspace_path VARCHAR(1024) DEFAULT NULL"
+                )
+            )
+
+    async def _ensure_personal_runtime_state_columns(self, conn) -> None:
+        """Ensure existing Personal Runtime state tables retain expression dedupe."""
+        result = await conn.execute(text("PRAGMA table_info(personal_runtime_states)"))
+        columns = {row[1] for row in result.fetchall()}
+
+        if "last_expression_fingerprint" not in columns:
+            await conn.execute(
+                text(
+                    "ALTER TABLE personal_runtime_states "
+                    "ADD COLUMN last_expression_fingerprint VARCHAR DEFAULT NULL"
                 )
             )
 
@@ -1401,6 +1415,7 @@ class SQLiteDatabase(BaseDatabase):
         audience_key,
         privacy_scope,
         last_expression_at,
+        last_expression_fingerprint,
         reply_cooldown_until,
         no_action_cooldown_until,
         mute_until,
@@ -1421,6 +1436,7 @@ class SQLiteDatabase(BaseDatabase):
                 state = result.scalar_one_or_none()
                 values = {
                     "last_expression_at": last_expression_at,
+                    "last_expression_fingerprint": last_expression_fingerprint,
                     "reply_cooldown_until": reply_cooldown_until,
                     "no_action_cooldown_until": no_action_cooldown_until,
                     "mute_until": mute_until,
