@@ -58,5 +58,6 @@ def test_router_exposes_silent_only_for_model_continuation_candidates():
     assert "silent" not in default_system_prompt
     assert "silent" not in default_request_prompt
     assert "- silent" in continuation_system_prompt
-    assert "否则选择 silent" in continuation_system_prompt
+    assert "未承接时选择 silent" in continuation_system_prompt
+    assert "只在上述承接前提成立时" in continuation_system_prompt
     assert "silent" in continuation_request_prompt

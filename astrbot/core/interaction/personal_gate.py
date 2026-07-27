@@ -23,6 +23,7 @@ class ObservationGateReason(str, Enum):
     FEATURE_DISABLED = "feature_disabled"
     OBSERVATION_EXPIRED = "observation_expired"
     MISSING_MATERIAL = "missing_material"
+    NO_MATERIAL_CHANGE = "no_material_change"
     RUNTIME_BUSY = "runtime_busy"
     MUTED = "muted"
     QUIET_HOURS = "quiet_hours"
@@ -302,6 +303,9 @@ class DeterministicObservationGate:
         elif len(batch.observations) < settings.minimum_observation_count:
             disposition = ObservationGateDisposition.REJECT
             reason = ObservationGateReason.MISSING_MATERIAL
+        elif state.last_expression_attempt_revision >= state.material_revision:
+            disposition = ObservationGateDisposition.REJECT
+            reason = ObservationGateReason.NO_MATERIAL_CHANGE
         elif not features.target_available:
             disposition = ObservationGateDisposition.REJECT
             reason = ObservationGateReason.TARGET_UNAVAILABLE

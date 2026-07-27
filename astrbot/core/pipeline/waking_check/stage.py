@@ -197,6 +197,12 @@ class WakingCheckStage(Stage):
             event.plugins_name = enabled_plugins_name
         logger.debug(f"enabled_plugins_name: {enabled_plugins_name}")
 
+        if event.get_extra("_personal_runtime_model_continuation", False):
+            # Router owns admission for this unaddressed continuation candidate.
+            event.set_extra("activated_handlers", [])
+            event.set_extra("handlers_parsed_params", {})
+            return
+
         for handler in star_handlers_registry.get_handlers_by_event_type(
             EventType.AdapterMessageEvent,
             plugins_name=event.plugins_name,

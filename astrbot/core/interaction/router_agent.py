@@ -41,9 +41,16 @@ def build_interaction_router_system_prompt(*, allow_silent: bool = False) -> str
         else ""
     )
     silent_rule = (
-        "这是一次待判断的群聊延续；只有当前输入确实在承接机器人最近回复时才选择 persona 或 hybrid，否则选择 silent。\n"
+        "这是一次待判断的群聊延续；先判断当前输入是否确实承接机器人最近回复。未承接时选择 silent；只有确认承接后，才在 persona 与 hybrid 之间选择。\n"
         if allow_silent
         else ""
+    )
+    continuation_rule = (
+        "在已经确认当前输入承接机器人最近回复的前提下，若它是省略、短确认或情绪表达，应结合最近一轮理解；只要没有新增明确执行意图，就选择 persona。\n"
+        "同样只在上述承接前提成立时，普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
+        if allow_silent
+        else "当前输入若是对最近一轮回复的承接、省略、短确认或情绪表达，应结合最近一轮理解；只要没有新增明确执行意图，就选择 persona。\n"
+        "普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
     )
     labels = "silent、persona 或 hybrid" if allow_silent else "persona 或 hybrid"
     return (
@@ -56,8 +63,7 @@ def build_interaction_router_system_prompt(*, allow_silent: bool = False) -> str
         "- hybrid：当前输入本身包含明确的执行、查询或处理意图，明确需要核心 Agent 参与；或当前输入明确继续当前说话者未完成的核心任务。\n"
         f"{silent_rule}"
         "聊天记录、memory、插件目录或其他说话者的任务不能单独成为选择 hybrid 的理由。\n"
-        "当前输入若是对最近一轮回复的承接、省略、短确认或情绪表达，应结合最近一轮理解；只要没有新增明确执行意图，就选择 persona。\n"
-        "普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
+        f"{continuation_rule}"
         "不要限制或枚举核心 Agent 的能力范围。\n"
         "不要推断具体插件协议、动作参数或输出 schema。\n"
         f"输出约束：不要生成用户回复，不要输出 JSON，只返回 {labels}。"

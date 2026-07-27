@@ -1,5 +1,6 @@
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -23,6 +24,13 @@ from astrbot.core.interaction.personal_gate import (
     ObservationGateReason,
     ObservationGateSettings,
 )
+from astrbot.core.interaction.personal_policy import (
+    PersonalPolicyAction,
+    PersonalPolicyDecision,
+    PersonalPolicyEvaluation,
+    PersonalPolicyEvaluationStatus,
+    PersonalPolicyReason,
+)
 from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
 from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
@@ -39,6 +47,8 @@ from astrbot.core.interaction.types import (
 )
 from astrbot.core.message.components import Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.pipeline.process_stage.stage import ProcessStage
+from astrbot.core.pipeline.waking_check.stage import WakingCheckStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_session import MessageSession
@@ -66,6 +76,24 @@ class _RecordingPlatform(_Platform):
         message_chain: MessageChain,
     ) -> None:
         self.sent.append((session, message_chain))
+
+
+class _MetadataRecordingPlatform(_RecordingPlatform):
+    def __init__(self, metadata: PlatformMetadata) -> None:
+        super().__init__(metadata)
+        self.sent_extras: list[dict | None] = []
+
+    async def send_by_session_with_extras(
+        self,
+        session: MessageSession,
+        message_chain: MessageChain,
+        *,
+        platform_extras: dict | None = None,
+    ) -> None:
+        self.sent_extras.append(
+            dict(platform_extras) if platform_extras is not None else None
+        )
+        await self.send_by_session(session, message_chain)
 
 
 class _FailingPlatform(_Platform):
@@ -722,7 +750,7 @@ async def test_failed_direct_reply_sets_neither_cooldown_nor_proactive_quota():
 @pytest.mark.asyncio
 async def test_personal_runtime_output_keeps_dual_tts_in_one_platform_send():
     metadata = _metadata(support_personal_runtime=True)
-    platform = _RecordingPlatform(metadata)
+    platform = _MetadataRecordingPlatform(metadata)
     context = _context_for_runtime(platform)
     manager = PersonalRuntimeManager()
     event = _runtime_event(context, metadata)
@@ -762,6 +790,25 @@ async def test_personal_runtime_output_keeps_dual_tts_in_one_platform_send():
 
     assert len(platform.sent) == 1
     assert [type(comp) for comp in platform.sent[0][1].chain] == [Record, Plain]
+    assert platform.sent_extras[0]["composite_message_id"] == "message-1"
+    assert platform.sent_extras[0]["tts_status"] == "succeeded"
+    assert platform.sent_extras[0]["output_segment"]["turn_id"] == "turn-1"
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_send_falls_back_to_legacy_platform():
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    event = _runtime_event(context, metadata)
+    message = MessageChain([Plain("reply")])
+
+    await event.send_message_with_extras(
+        message,
+        platform_extras={"composite_message_id": "message-1"},
+    )
+
+    assert platform.sent == [(event.session, message)]
 
 
 @pytest.mark.asyncio
@@ -798,3 +845,262 @@ async def test_cron_send_uses_context_send_message_compatibility_path():
     await event.send(message)
 
     assert platform.sent == [(session, message)]
+
+
+async def _wait_for_observation_evaluation(manager: PersonalRuntimeManager) -> None:
+    for _ in range(100):
+        snapshot = manager.snapshot_diagnostics()
+        if snapshot.sessions and not snapshot.sessions[0].observation_evaluation_active:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("Personal Runtime observation evaluation did not settle")
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_requires_new_material_after_expression_attempt():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _RuntimeContext(metadata)
+    manager = PersonalRuntimeManager(observation_debounce_seconds=0)
+    policy_batches: list[ObservationBatch] = []
+
+    async def evaluate_policy(**kwargs):
+        batch = kwargs["batch"]
+        policy_batches.append(batch)
+        return PersonalPolicyEvaluation(
+            batch_id=batch.batch_id,
+            status=PersonalPolicyEvaluationStatus.EVALUATED,
+            decision=PersonalPolicyDecision(
+                action=PersonalPolicyAction.EXPRESS,
+                reason_code=PersonalPolicyReason.SOCIAL_OPPORTUNITY,
+                reply_intent="say something useful",
+                importance=0.8,
+                defer_seconds=0,
+            ),
+            evaluated_at=batch.closed_at,
+            provider_id="test",
+            provider_call_started=False,
+        )
+
+    manager._personal_policy_agent.evaluate = evaluate_policy
+    manager.bind_personal_expression_handler(AsyncMock(return_value=True))
+    target = RuntimeObservationTarget(
+        platform_id=metadata.id,
+        platform_name=metadata.name,
+        message_type=MessageType.FRIEND_MESSAGE,
+        session_id="target",
+        support_proactive_message=True,
+        support_personal_runtime=True,
+    )
+
+    async def submit(kind: str, *, payload=None, coalesce_key=None) -> None:
+        await manager.submit_observation(
+            RuntimeObservation(
+                kind=kind,
+                source="test",
+                occurred_at=1.0 + len(policy_batches),
+                target_session=target,
+                coalesce_key=coalesce_key,
+                payload=payload or {},
+            ),
+            config_id="default",
+            plugin_context=context,
+            runtime_config={},
+        )
+        await _wait_for_observation_evaluation(manager)
+
+    try:
+        await submit("heartbeat", coalesce_key="heartbeat")
+        assert len(policy_batches) == 1
+        initial_state = manager.snapshot_diagnostics().sessions[0].state
+        assert initial_state.reply_cooldown_until is None
+        assert initial_state.daily_proactive_outputs == 0
+        assert initial_state.last_expression_attempt_revision == 0
+
+        await submit("heartbeat", coalesce_key="heartbeat")
+        assert len(policy_batches) == 1
+        assert (
+            manager.snapshot_diagnostics()
+            .sessions[0]
+            .last_observation_gate_result.reason_code
+            is ObservationGateReason.NO_MATERIAL_CHANGE
+        )
+
+        await submit("sensor_state", payload={"value": 1}, coalesce_key="state")
+        assert len(policy_batches) == 2
+
+        await submit("sensor_state", payload={"value": 1}, coalesce_key="state")
+        assert len(policy_batches) == 2
+
+        await submit("sensor_state", payload={"value": 2}, coalesce_key="state")
+        assert len(policy_batches) == 3
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_model_continuation_reaches_silent_router_before_handlers(
+    monkeypatch,
+):
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    runtime_config = {
+        "admins_id": [],
+        "wake_prefix": ["/"],
+        "plugin_set": ["*"],
+        "platform_settings": {},
+        "provider_settings": {"enable": True},
+        "interaction_middleware": {"enabled": True},
+    }
+    handler_lookup = Mock(side_effect=AssertionError("handler scan ran before Router"))
+    monkeypatch.setattr(
+        "astrbot.core.pipeline.waking_check.stage.star_handlers_registry.get_handlers_by_event_type",
+        handler_lookup,
+    )
+    waking = WakingCheckStage()
+    await waking.initialize(
+        SimpleNamespace(
+            astrbot_config=runtime_config,
+            astrbot_config_id="default",
+            personal_runtime_manager=SimpleNamespace(
+                classify_group_conversation_continuation=lambda *_args, **_kwargs: (
+                    "model"
+                )
+            ),
+        )
+    )
+
+    await waking.process(event)
+
+    assert event.get_extra("_personal_runtime_model_continuation") is True
+    assert event.get_extra("activated_handlers") == []
+    handler_lookup.assert_not_called()
+
+    plugin_context = SimpleNamespace(get_config=lambda **_kwargs: runtime_config)
+    runtime_context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        plugin_context,
+    )
+    middleware.router_agent.route = AsyncMock(
+        return_value=InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+    )
+    middleware._materialize_inbound_media = AsyncMock()
+    middleware._generate_and_emit_speculative_persona = AsyncMock()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
+        AsyncMock(),
+    )
+
+    class NeverAgent:
+        called = False
+
+        async def process(self, _event):
+            self.called = True
+            if False:
+                yield
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=runtime_context)
+    process.personal_runtime_manager = manager
+    process.agent_sub_stage = NeverAgent()
+    process.star_request_sub_stage = SimpleNamespace()
+
+    async for _ in process.process(event):
+        pass
+
+    middleware.router_agent.route.assert_awaited_once()
+    middleware._generate_and_emit_speculative_persona.assert_not_awaited()
+    assert process.agent_sub_stage.called is False
+    assert event.sent == []
+    assert event.is_stopped()
+    assert manager.snapshot_diagnostics().sessions[0].state.material_revision == 0
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_process_stage_direct_reply_starts_runtime_cooldown():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(metadata)
+    event.is_at_or_wake_command = True
+    event.set_extra("activated_handlers", [])
+    runtime_config = {
+        "provider_settings": {"enable": True},
+        "interaction_middleware": {
+            "enabled": True,
+            "personal_runtime_reply_cooldown_seconds": 45,
+        },
+    }
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    middleware.handle_pipeline_event = AsyncMock()
+
+    class ReplyAgent:
+        async def process(self, agent_event):
+            await agent_event.emit_output(
+                MessageChain([Plain("process reply")]),
+                mode="direct",
+            )
+            yield
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=context)
+    process.personal_runtime_manager = manager
+    process.agent_sub_stage = ReplyAgent()
+    process.star_request_sub_stage = SimpleNamespace()
+
+    async for _ in process.process(event):
+        pass
+
+    runtime = manager.snapshot_diagnostics().sessions[0]
+    feedback = runtime.last_completion_feedback
+    assert event.sent[0].get_plain_text() == "process reply"
+    assert feedback is not None
+    assert feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+    assert feedback.output_completed_at is not None
+    assert runtime.state.reply_cooldown_until == pytest.approx(
+        feedback.output_completed_at + 45
+    )
+    assert runtime.state.daily_proactive_outputs == 0
+    assert runtime.state.material_revision == 1
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_send_forwards_platform_extras():
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _MetadataRecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    event = _runtime_event(context, metadata)
+    message = MessageChain([Plain("reply")])
+    extras = {
+        "composite_message_id": "message-1",
+        "output_segment_id": "segment-1",
+    }
+
+    await event.send_message_with_extras(message, platform_extras=extras)
+
+    assert platform.sent == [(event.session, message)]
+    assert platform.sent_extras == [extras]

@@ -123,6 +123,11 @@ class FakePlatformAdapter(Platform):
         self.commit_event(message_event) # Submit the event to the event queue. Don't forget this!
 ```
 
+Adapters that can preserve framework delivery metadata during proactive sends may
+also override `send_by_session_with_extras(session, message_chain, *, platform_extras=None)`.
+Its default implementation falls back to `send_by_session()`, so existing adapters
+do not need to change.
+
 
 `fake_platform_event.py`:
 

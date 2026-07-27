@@ -59,7 +59,7 @@ from .turn_state import (
     InteractionTurnStatus,
     set_interaction_turn_persona_id,
 )
-from .types import InteractionAgentConfig
+from .types import InteractionAgentConfig, InteractionRouteMode
 
 _ACTIVE_PERSONAL_TURN: contextvars.ContextVar[PersonalTurnContext | None] = (
     contextvars.ContextVar("active_personal_turn", default=None)
@@ -451,6 +451,9 @@ class PersonalSessionRuntime:
         self._persistent_state_dirty = False
         self.last_completion_feedback: CompletionFeedback | None = None
         self.observation_inbox = ObservationInbox(max_pending=max_pending_observations)
+        self._coalesced_material_observations: dict[
+            tuple[str, str, str], RuntimeObservation
+        ] = {}
         self.observation_debounce_seconds = observation_debounce_seconds
         self.observation_gate_settings = (
             observation_gate_settings or ObservationGateSettings()
@@ -507,6 +510,7 @@ class PersonalSessionRuntime:
         turn: PersonalTurnContext,
     ) -> None:
         completed_at = feedback.output_completed_at or time.time()
+        self._record_model_continuation_material(turn)
         usage_day = (
             self.observation_gate_settings.local_datetime(completed_at)
             .date()
@@ -530,6 +534,17 @@ class PersonalSessionRuntime:
         if persistent_state_changed:
             self._persistent_state_dirty = True
             await self._persist_state()
+
+    def _record_model_continuation_material(self, turn: PersonalTurnContext) -> None:
+        event = turn.event
+        if not event.get_extra("_personal_runtime_model_continuation", False):
+            return
+        route = turn.state.route_decision
+        if route is None or route.route_mode is InteractionRouteMode.SILENT:
+            return
+        self.state.mark_turn_active(
+            user_activity_at=self._turn_user_activity_at(turn)
+        )
 
     def classify_group_conversation_continuation(
         self,
@@ -631,11 +646,25 @@ class PersonalSessionRuntime:
         self.state.record_observation(
             occurred_at=observation.occurred_at,
             pending_count=self.observation_inbox.pending_count,
+            material_changed=self._observation_changes_material(observation),
         )
         task_created = self._ensure_observation_evaluation_task(
             observation.observation_id
         )
         return replace(result, evaluation_task_created=task_created)
+
+    def _observation_changes_material(
+        self,
+        observation: RuntimeObservation,
+    ) -> bool:
+        if observation.kind == "heartbeat":
+            return False
+        identity = observation.coalesce_identity
+        if identity is None:
+            return True
+        previous = self._coalesced_material_observations.get(identity)
+        self._coalesced_material_observations[identity] = observation
+        return previous is None or previous.payload != observation.payload
 
     def _ensure_observation_evaluation_task(
         self,
@@ -858,6 +887,18 @@ class PersonalSessionRuntime:
         intent = plan.intent
         if intent is None:
             return None
+        attempted_revision = self.state.mark_expression_attempt(
+            material_revision=state_snapshot.material_revision,
+        )
+        logger.info(
+            "Personal Policy expression attempt: config_id=%s persona_id=%s "
+            "batch_id=%s action_id=%s material_revision=%s",
+            self.key.config_id,
+            self.key.persona_id,
+            batch.batch_id,
+            intent.action_id,
+            attempted_revision,
+        )
         handler = self._personal_action_handler
         if handler is None:
             logger.warning(
@@ -1006,19 +1047,11 @@ class PersonalSessionRuntime:
             if turn.actor is not None
             else None
         )
-        user_activity_at = None
-        if (
-            turn.input is not None
-            and turn.actor is not None
-            and (
-                turn.input.text.strip()
-                or turn.input.outline.strip()
-                or turn.input.components
-            )
-        ):
-            self_id = str(event.get_self_id() or "").strip()
-            if not self_id or turn.actor.actor_id != self_id:
-                user_activity_at = turn.input.created_at
+        user_activity_at = (
+            None
+            if event.get_extra("_personal_runtime_model_continuation", False)
+            else self._turn_user_activity_at(turn)
+        )
         self.touch()
         self.state.mark_turn_active(user_activity_at=user_activity_at)
         return TurnAdmission(
@@ -1031,6 +1064,23 @@ class PersonalSessionRuntime:
                 follow_up_activated,
             ),
         )
+
+    @staticmethod
+    def _turn_user_activity_at(turn: PersonalTurnContext) -> float | None:
+        if (
+            turn.input is None
+            or turn.actor is None
+            or not (
+                turn.input.text.strip()
+                or turn.input.outline.strip()
+                or turn.input.components
+            )
+        ):
+            return None
+        self_id = str(turn.event.get_self_id() or "").strip()
+        if self_id and turn.actor.actor_id == self_id:
+            return None
+        return turn.input.created_at
 
     def is_idle(self) -> bool:
         return (
@@ -1581,6 +1631,10 @@ class PersonalRuntimeManager:
                         "no_action_cooldown_until": item.state.no_action_cooldown_until,
                         "mute_until": item.state.mute_until,
                         "pending_observation_count": item.state.pending_observation_count,
+                        "material_revision": item.state.material_revision,
+                        "last_expression_attempt_revision": (
+                            item.state.last_expression_attempt_revision
+                        ),
                         "usage_day": item.state.usage_day,
                         "daily_policy_calls": item.state.daily_policy_calls,
                         "daily_proactive_outputs": item.state.daily_proactive_outputs,
