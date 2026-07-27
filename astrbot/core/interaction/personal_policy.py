@@ -495,7 +495,10 @@ class PersonalPolicyAgent:
         build_config = build_interaction_prompt_build_config(plugin_context, event)
         runtime_collector = RuntimeContextCollector(
             personal_state=_personal_state_payload(state, gate_result),
-            observation_batch=_observation_batch_payload(batch),
+            observation_batch=_observation_batch_payload(
+                batch,
+                evaluated_at=gate_result.evaluated_at,
+            ),
             observation_features=_observation_features_payload(gate_result),
             session_datetime=_session_datetime_payload(
                 gate_result.evaluated_at,
@@ -636,8 +639,12 @@ def _observation_features_payload(
     }
 
 
-def _observation_batch_payload(batch: ObservationBatch) -> dict[str, Any]:
-    return project_observation_batch(batch)
+def _observation_batch_payload(
+    batch: ObservationBatch,
+    *,
+    evaluated_at: float,
+) -> dict[str, Any]:
+    return project_observation_batch(batch, evaluated_at=evaluated_at)
 
 
 def _session_datetime_payload(

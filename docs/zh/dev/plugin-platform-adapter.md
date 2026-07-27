@@ -122,10 +122,6 @@ class FakePlatformAdapter(Platform):
         self.commit_event(message_event) # 提交事件到事件队列。不要忘记！
 ```
 
-如果适配器能够在主动发送时携带框架投递元数据，可以额外重写
-`send_by_session_with_extras(session, message_chain, *, platform_extras=None)`。
-默认实现会回退到 `send_by_session()`，因此现有适配器不需要修改。
-
 ## 为 Prompt 输入附加语义说明（可选）
 
 有些平台会额外提供“输入项的解释信息”，但这些解释不属于用户原始输入本身，例如：

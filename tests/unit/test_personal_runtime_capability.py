@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -11,7 +12,11 @@ from astrbot.core.interaction.observation import (
     RuntimeObservation,
     RuntimeObservationTarget,
 )
-from astrbot.core.interaction.observation_inbox import ObservationBatch
+from astrbot.core.interaction.observation_inbox import (
+    ObservationAdmissionStatus,
+    ObservationBatch,
+    ObservationMaterial,
+)
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.personal_action import PersonalActionIntent
 from astrbot.core.interaction.personal_expression_guard import (
@@ -76,24 +81,6 @@ class _RecordingPlatform(_Platform):
         message_chain: MessageChain,
     ) -> None:
         self.sent.append((session, message_chain))
-
-
-class _MetadataRecordingPlatform(_RecordingPlatform):
-    def __init__(self, metadata: PlatformMetadata) -> None:
-        super().__init__(metadata)
-        self.sent_extras: list[dict | None] = []
-
-    async def send_by_session_with_extras(
-        self,
-        session: MessageSession,
-        message_chain: MessageChain,
-        *,
-        platform_extras: dict | None = None,
-    ) -> None:
-        self.sent_extras.append(
-            dict(platform_extras) if platform_extras is not None else None
-        )
-        await self.send_by_session(session, message_chain)
 
 
 class _FailingPlatform(_Platform):
@@ -489,6 +476,12 @@ async def test_direct_reply_delivery_starts_gate_cooldown_without_proactive_quot
         opened_at=evaluated_at,
         closed_at=evaluated_at,
         observations=[observation],
+        material_by_observation_id={
+            observation.observation_id: ObservationMaterial(
+                revision=1,
+                occurred_at=observation.occurred_at,
+            ),
+        },
     )
     settings = ObservationGateSettings()
     features = ObservationFeatureBuilder.build(
@@ -750,7 +743,7 @@ async def test_failed_direct_reply_sets_neither_cooldown_nor_proactive_quota():
 @pytest.mark.asyncio
 async def test_personal_runtime_output_keeps_dual_tts_in_one_platform_send():
     metadata = _metadata(support_personal_runtime=True)
-    platform = _MetadataRecordingPlatform(metadata)
+    platform = _RecordingPlatform(metadata)
     context = _context_for_runtime(platform)
     manager = PersonalRuntimeManager()
     event = _runtime_event(context, metadata)
@@ -790,25 +783,6 @@ async def test_personal_runtime_output_keeps_dual_tts_in_one_platform_send():
 
     assert len(platform.sent) == 1
     assert [type(comp) for comp in platform.sent[0][1].chain] == [Record, Plain]
-    assert platform.sent_extras[0]["composite_message_id"] == "message-1"
-    assert platform.sent_extras[0]["tts_status"] == "succeeded"
-    assert platform.sent_extras[0]["output_segment"]["turn_id"] == "turn-1"
-
-
-@pytest.mark.asyncio
-async def test_runtime_observation_send_falls_back_to_legacy_platform():
-    metadata = _metadata(support_personal_runtime=True)
-    platform = _RecordingPlatform(metadata)
-    context = _context_for_runtime(platform)
-    event = _runtime_event(context, metadata)
-    message = MessageChain([Plain("reply")])
-
-    await event.send_message_with_extras(
-        message,
-        platform_extras={"composite_message_id": "message-1"},
-    )
-
-    assert platform.sent == [(event.session, message)]
 
 
 @pytest.mark.asyncio
@@ -857,7 +831,7 @@ async def _wait_for_observation_evaluation(manager: PersonalRuntimeManager) -> N
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_requires_new_material_after_expression_attempt():
+async def test_heartbeat_only_wakes_unsettled_material():
     metadata = _metadata(support_personal_runtime=True)
     context = _RuntimeContext(metadata)
     manager = PersonalRuntimeManager(observation_debounce_seconds=0)
@@ -892,8 +866,8 @@ async def test_heartbeat_requires_new_material_after_expression_attempt():
         support_personal_runtime=True,
     )
 
-    async def submit(kind: str, *, payload=None, coalesce_key=None) -> None:
-        await manager.submit_observation(
+    async def submit(kind: str, *, payload=None, coalesce_key=None):
+        result = await manager.submit_observation(
             RuntimeObservation(
                 kind=kind,
                 source="test",
@@ -907,32 +881,223 @@ async def test_heartbeat_requires_new_material_after_expression_attempt():
             runtime_config={},
         )
         await _wait_for_observation_evaluation(manager)
+        return result
 
     try:
-        await submit("heartbeat", coalesce_key="heartbeat")
-        assert len(policy_batches) == 1
+        result = await submit("heartbeat", coalesce_key="heartbeat")
+        assert result.status is ObservationAdmissionStatus.IGNORED
+        assert len(policy_batches) == 0
         initial_state = manager.snapshot_diagnostics().sessions[0].state
         assert initial_state.reply_cooldown_until is None
         assert initial_state.daily_proactive_outputs == 0
-        assert initial_state.last_expression_attempt_revision == 0
+        assert initial_state.material_revision == 0
+        assert initial_state.last_settled_material_revision == 0
 
-        await submit("heartbeat", coalesce_key="heartbeat")
+        await submit("sensor_state", payload={"value": 1}, coalesce_key="state")
+        assert len(policy_batches) == 1
+        first_batch = policy_batches[0]
+        state = manager.snapshot_diagnostics().sessions[0].state
+        assert first_batch.material_count == 1
+        assert state.last_settled_material_revision == first_batch.material_revision
+
+        result = await submit("heartbeat", coalesce_key="heartbeat")
+        assert result.status is ObservationAdmissionStatus.IGNORED
+        assert len(policy_batches) == 1
+
+        await submit("sensor_state", payload={"value": 1}, coalesce_key="state")
         assert len(policy_batches) == 1
         assert (
             manager.snapshot_diagnostics()
             .sessions[0]
             .last_observation_gate_result.reason_code
-            is ObservationGateReason.NO_MATERIAL_CHANGE
+            is ObservationGateReason.MISSING_MATERIAL
         )
 
-        await submit("sensor_state", payload={"value": 1}, coalesce_key="state")
-        assert len(policy_batches) == 2
-
-        await submit("sensor_state", payload={"value": 1}, coalesce_key="state")
-        assert len(policy_batches) == 2
-
         await submit("sensor_state", payload={"value": 2}, coalesce_key="state")
-        assert len(policy_batches) == 3
+        assert len(policy_batches) == 2
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_does_not_disturb_a_cooldown_held_batch():
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    manager = PersonalRuntimeManager(observation_debounce_seconds=0)
+    scheduled: list[tuple[object, float]] = []
+
+    class Scheduler:
+        def schedule(self, key, due_at):
+            scheduled.append((key, due_at))
+
+        def cancel(self, _key):
+            return None
+
+    manager.bind_observation_wake_scheduler(Scheduler())
+    event = _DirectEvent(metadata)
+    await _submit_direct_output(manager=manager, context=context, event=event)
+    target = RuntimeObservationTarget(
+        platform_id=metadata.id,
+        platform_name=metadata.name,
+        message_type=MessageType.FRIEND_MESSAGE,
+        session_id="target",
+        support_proactive_message=True,
+        support_personal_runtime=True,
+    )
+
+    async def submit(kind: str):
+        result = await manager.submit_observation(
+            RuntimeObservation(
+                kind=kind,
+                source="test",
+                occurred_at=time.time(),
+                target_session=target,
+                coalesce_key=kind,
+                payload={"value": kind},
+            ),
+            config_id="default",
+            plugin_context=context,
+            runtime_config={},
+        )
+        await _wait_for_observation_evaluation(manager)
+        return result
+
+    try:
+        await submit("sensor_state")
+        runtime = manager.snapshot_diagnostics().sessions[0]
+        held_wake_at = runtime.next_observation_wake_at
+        assert held_wake_at is not None
+        assert len(scheduled) == 1
+
+        result = await submit("heartbeat")
+        runtime = manager.snapshot_diagnostics().sessions[0]
+        assert result.status is ObservationAdmissionStatus.ADMITTED
+        assert runtime.next_observation_wake_at == held_wake_at
+        assert runtime.observation_evaluation_active is False
+        assert len(scheduled) == 1
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_rejected_material_is_settled_before_a_later_heartbeat():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _RuntimeContext(metadata)
+    manager = PersonalRuntimeManager(observation_debounce_seconds=0)
+    policy = AsyncMock()
+    manager._personal_policy_agent.evaluate = policy
+    target = RuntimeObservationTarget(
+        platform_id=metadata.id,
+        platform_name=metadata.name,
+        message_type=MessageType.FRIEND_MESSAGE,
+        session_id="target",
+        support_proactive_message=False,
+        support_personal_runtime=True,
+    )
+
+    async def submit(kind: str, payload=None):
+        result = await manager.submit_observation(
+            RuntimeObservation(
+                kind=kind,
+                source="test",
+                occurred_at=time.time(),
+                target_session=target,
+                coalesce_key=kind,
+                payload=payload or {},
+            ),
+            config_id="default",
+            plugin_context=context,
+            runtime_config={},
+        )
+        await _wait_for_observation_evaluation(manager)
+        return result
+
+    try:
+        await submit("sensor_state", {"value": 1})
+        runtime = manager.snapshot_diagnostics().sessions[0]
+        assert (
+            runtime.last_observation_gate_result.reason_code
+            is ObservationGateReason.TARGET_UNAVAILABLE
+        )
+        assert runtime.state.last_settled_material_revision == 1
+        assert policy.await_count == 0
+
+        result = await submit("heartbeat")
+        assert result.status is ObservationAdmissionStatus.IGNORED
+        assert policy.await_count == 0
+        assert manager.snapshot_diagnostics().sessions[0].state.pending_observation_count == 0
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_personal_action_settles_material_without_accounting():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _RuntimeContext(metadata)
+    manager = PersonalRuntimeManager(observation_debounce_seconds=0)
+    policy_calls = 0
+
+    async def evaluate_policy(**kwargs):
+        nonlocal policy_calls
+        policy_calls += 1
+        batch = kwargs["batch"]
+        return PersonalPolicyEvaluation(
+            batch_id=batch.batch_id,
+            status=PersonalPolicyEvaluationStatus.EVALUATED,
+            decision=PersonalPolicyDecision(
+                action=PersonalPolicyAction.EXPRESS,
+                reason_code=PersonalPolicyReason.SOCIAL_OPPORTUNITY,
+                reply_intent="say something useful",
+                importance=0.8,
+                defer_seconds=0,
+            ),
+            evaluated_at=batch.closed_at,
+            provider_id="test",
+            provider_call_started=False,
+        )
+
+    manager._personal_policy_agent.evaluate = evaluate_policy
+    manager.bind_personal_expression_handler(
+        AsyncMock(side_effect=RuntimeError("platform send failed"))
+    )
+    target = RuntimeObservationTarget(
+        platform_id=metadata.id,
+        platform_name=metadata.name,
+        message_type=MessageType.FRIEND_MESSAGE,
+        session_id="target",
+        support_proactive_message=True,
+        support_personal_runtime=True,
+    )
+
+    async def submit(kind: str, payload=None):
+        result = await manager.submit_observation(
+            RuntimeObservation(
+                kind=kind,
+                source="test",
+                occurred_at=time.time(),
+                target_session=target,
+                coalesce_key=kind,
+                payload=payload or {},
+            ),
+            config_id="default",
+            plugin_context=context,
+            runtime_config={},
+        )
+        await _wait_for_observation_evaluation(manager)
+        return result
+
+    try:
+        await submit("sensor_state", {"value": 1})
+        runtime = manager.snapshot_diagnostics().sessions[0]
+        assert policy_calls == 1
+        assert runtime.state.last_settled_material_revision == 1
+        assert runtime.state.reply_cooldown_until is None
+        assert runtime.state.daily_proactive_outputs == 0
+
+        result = await submit("heartbeat")
+        assert result.status is ObservationAdmissionStatus.IGNORED
+        assert policy_calls == 1
     finally:
         await manager.shutdown()
 
@@ -1030,6 +1195,77 @@ async def test_model_continuation_reaches_silent_router_before_handlers(
 
 
 @pytest.mark.asyncio
+async def test_model_continuation_scans_handlers_after_router_accepts(monkeypatch):
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    event.set_extra("_personal_runtime_model_continuation", True)
+    event.set_extra("activated_handlers", [])
+    event.is_at_or_wake_command = True
+    runtime_config = {
+        "provider_settings": {"enable": True},
+        "platform_settings": {},
+        "interaction_middleware": {"enabled": True},
+    }
+    runtime_context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    order: list[str] = []
+
+    async def route(*_args, **_kwargs):
+        order.append("router")
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.PERSONA)
+
+    async def discover(event, **_kwargs):
+        order.append("handlers")
+        event.set_extra("activated_handlers", [])
+        event.set_extra("handlers_parsed_params", {})
+        return False
+
+    async def finish_without_persona(_event):
+        order.append("pipeline")
+        event.stop_event()
+
+    middleware.router_agent.route = route
+    middleware.handle_pipeline_event = finish_without_persona
+    monkeypatch.setattr(
+        "astrbot.core.pipeline.process_stage.stage.discover_activated_handlers",
+        discover,
+    )
+
+    class NeverAgent:
+        async def process(self, _event):
+            raise AssertionError("model continuation should be handled before Core")
+            yield
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=runtime_context)
+    process.personal_runtime_manager = manager
+    process.agent_sub_stage = NeverAgent()
+    process.star_request_sub_stage = SimpleNamespace()
+
+    try:
+        async for _ in process.process(event):
+            pass
+        assert order == ["router", "handlers", "pipeline"]
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_process_stage_direct_reply_starts_runtime_cooldown():
     metadata = _metadata(support_personal_runtime=True)
     context = _context_for_runtime(_RecordingPlatform(metadata))
@@ -1084,23 +1320,5 @@ async def test_process_stage_direct_reply_starts_runtime_cooldown():
         feedback.output_completed_at + 45
     )
     assert runtime.state.daily_proactive_outputs == 0
-    assert runtime.state.material_revision == 1
+    assert runtime.state.material_revision == 0
     await manager.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_runtime_observation_send_forwards_platform_extras():
-    metadata = _metadata(support_personal_runtime=True)
-    platform = _MetadataRecordingPlatform(metadata)
-    context = _context_for_runtime(platform)
-    event = _runtime_event(context, metadata)
-    message = MessageChain([Plain("reply")])
-    extras = {
-        "composite_message_id": "message-1",
-        "output_segment_id": "segment-1",
-    }
-
-    await event.send_message_with_extras(message, platform_extras=extras)
-
-    assert platform.sent == [(event.session, message)]
-    assert platform.sent_extras == [extras]

@@ -14,7 +14,11 @@ _MAX_STRING_LENGTH = 1200
 _MAX_NESTING_DEPTH = 5
 
 
-def project_observation_batch(batch: ObservationBatch) -> dict[str, Any]:
+def project_observation_batch(
+    batch: ObservationBatch,
+    *,
+    evaluated_at: float | None = None,
+) -> dict[str, Any]:
     """Return the bounded fact view shared by Policy and Core Planner."""
     observations = batch.observations[-_MAX_OBSERVATIONS:]
     return {
@@ -23,6 +27,16 @@ def project_observation_batch(batch: ObservationBatch) -> dict[str, Any]:
         "closed_at": batch.closed_at,
         "source_counts": project_runtime_value(batch.source_counts),
         "observation_count": len(batch.observations),
+        "material_count": batch.material_count,
+        "material_revision": batch.material_revision,
+        "latest_material_occurred_at": batch.latest_material_occurred_at,
+        "material_age_seconds": (
+            max(0.0, evaluated_at - batch.latest_material_occurred_at)
+            if evaluated_at is not None and batch.latest_material_occurred_at is not None
+            else None
+        ),
+        "held_duration_seconds": batch.held_duration_seconds,
+        "release_reason": batch.release_reason,
         "projected_observation_count": len(observations),
         "truncated": len(observations) != len(batch.observations),
         "observations": [

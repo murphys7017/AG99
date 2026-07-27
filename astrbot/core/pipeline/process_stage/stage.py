@@ -5,12 +5,14 @@ from astrbot import logger
 from astrbot.core.interaction.personal_runtime import (
     PersonalRuntimeManager,
 )
+from astrbot.core.interaction.types import InteractionRouteMode
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.star_handler import StarHandlerMetadata
 
 from ..context import PipelineContext
 from ..stage import Stage, register_stage
+from ..waking_check.stage import discover_activated_handlers
 from .method.agent_request import AgentRequestSubStage
 from .method.star_request import StarRequestSubStage
 
@@ -72,6 +74,10 @@ class ProcessStage(Stage):
         """处理事件"""
         activated_handlers: list[StarHandlerMetadata] = event.get_extra(
             "activated_handlers",
+            [],
+        )
+        is_model_continuation = bool(
+            event.get_extra("_personal_runtime_model_continuation", False)
         )
         self._prepare_interaction_output(event)
         manager: PersonalRuntimeManager | None = getattr(
@@ -111,6 +117,32 @@ class ProcessStage(Stage):
             if manager is not None and submission is not None:
                 stack.enter_context(manager.activate_turn(admission.turn))
             try:
+                if is_model_continuation:
+                    middleware = self.ctx.interaction_middleware
+                    if middleware is None:
+                        event.stop_event()
+                        return
+                    route = await middleware.admit_model_continuation_candidate(event)
+                    if route.route_mode is InteractionRouteMode.SILENT:
+                        await middleware.handle_pipeline_event(event)
+                        return
+                    await discover_activated_handlers(
+                        event,
+                        config=self.config,
+                        disable_builtin_commands=bool(
+                            self.config.get("disable_builtin_commands", False)
+                        ),
+                        no_permission_reply=bool(
+                            self.config.get("platform_settings", {}).get(
+                                "no_permission_reply",
+                                True,
+                            )
+                        ),
+                    )
+                    if event.is_stopped():
+                        return
+                    activated_handlers = event.get_extra("activated_handlers", [])
+
                 # 有插件 Handler 被激活
                 if activated_handlers:
                     middleware = self.ctx.interaction_middleware

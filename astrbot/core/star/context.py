@@ -915,26 +915,12 @@ class Context:
         self,
         session: MessageSesion,
         message_chain: MessageChain,
-        *,
-        platform_extras: dict[str, Any] | None = None,
     ) -> bool:
         """Send through the platform adapter without re-entering Personal Runtime."""
 
         for platform in self.platform_manager.platform_insts:
             if platform.meta().id == session.platform_name:
-                send_with_extras = getattr(
-                    platform,
-                    "send_by_session_with_extras",
-                    None,
-                )
-                if callable(send_with_extras):
-                    await send_with_extras(
-                        session,
-                        message_chain,
-                        platform_extras=platform_extras,
-                    )
-                else:
-                    await platform.send_by_session(session, message_chain)
+                await platform.send_by_session(session, message_chain)
                 return True
         logger.warning(
             f"cannot find platform for session {str(session)}, message not sent"

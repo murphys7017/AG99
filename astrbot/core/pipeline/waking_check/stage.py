@@ -38,6 +38,98 @@ def build_unique_session_id(event: AstrMessageEvent) -> str | None:
     return builder(event) if builder else None
 
 
+async def discover_activated_handlers(
+    event: AstrMessageEvent,
+    *,
+    config: dict,
+    disable_builtin_commands: bool,
+    no_permission_reply: bool,
+) -> bool:
+    """Run the existing Handler discovery once after a message is admitted."""
+
+    activated_handlers = []
+    handlers_parsed_params = {}
+    enabled_plugins_name = config.get("plugin_set", ["*"])
+    event.plugins_name = None if enabled_plugins_name == ["*"] else enabled_plugins_name
+    logger.debug("enabled_plugins_name: %s", enabled_plugins_name)
+
+    handler_woke = False
+    for handler in star_handlers_registry.get_handlers_by_event_type(
+        EventType.AdapterMessageEvent,
+        plugins_name=event.plugins_name,
+    ):
+        if (
+            disable_builtin_commands
+            and handler.handler_module_path
+            == "astrbot.builtin_stars.builtin_commands.main"
+        ):
+            continue
+
+        passed = True
+        permission_not_pass = False
+        permission_filter_raise_error = False
+        if len(handler.event_filters) == 0:
+            continue
+
+        for filter in handler.event_filters:
+            try:
+                if isinstance(filter, PermissionTypeFilter):
+                    if not filter.filter(event, config):
+                        permission_not_pass = True
+                        permission_filter_raise_error = filter.raise_error
+                elif not filter.filter(event, config):
+                    passed = False
+                    break
+            except Exception as exc:
+                await event.send(
+                    MessageEventResult().message(
+                        f"插件 {star_map[handler.handler_module_path].name}: {exc}",
+                    ),
+                )
+                event.stop_event()
+                passed = False
+                break
+        if passed:
+            if permission_not_pass:
+                if not permission_filter_raise_error:
+                    continue
+                if no_permission_reply:
+                    await event.send(
+                        MessageChain().message(
+                            f"您(ID: {event.get_sender_id()})的权限不足以使用此指令。通过 /sid 获取 ID 并请管理员添加。",
+                        ),
+                    )
+                logger.info(
+                    "触发 %s 时, 用户(ID=%s) 权限不足。",
+                    star_map[handler.handler_module_path].name,
+                    event.get_sender_id(),
+                )
+                event.stop_event()
+                return True
+
+            handler_woke = True
+            event.is_wake = True
+            is_group_cmd_handler = any(
+                isinstance(item, CommandGroupFilter) for item in handler.event_filters
+            )
+            if not is_group_cmd_handler:
+                activated_handlers.append(handler)
+                if "parsed_params" in event.get_extra(default={}):
+                    handlers_parsed_params[handler.handler_full_name] = event.get_extra(
+                        "parsed_params"
+                    )
+
+        event._extras.pop("parsed_params", None)
+
+    activated_handlers = await SessionPluginManager.filter_handlers_by_session(
+        event,
+        activated_handlers,
+    )
+    event.set_extra("activated_handlers", activated_handlers)
+    event.set_extra("handlers_parsed_params", handlers_parsed_params)
+    return handler_woke
+
+
 @register_stage
 class WakingCheckStage(Stage):
     """检查是否需要唤醒。唤醒机器人有如下几点条件：
@@ -184,101 +276,23 @@ class WakingCheckStage(Stage):
                         continuation,
                     )
 
-        # 检查插件的 handler filter
-        activated_handlers = []
-        handlers_parsed_params = {}  # 注册了指令的 handler
-
-        # 将 plugins_name 设置到 event 中
-        enabled_plugins_name = self.ctx.astrbot_config.get("plugin_set", ["*"])
-        if enabled_plugins_name == ["*"]:
-            # 如果是 *，则表示所有插件都启用
-            event.plugins_name = None
-        else:
-            event.plugins_name = enabled_plugins_name
-        logger.debug(f"enabled_plugins_name: {enabled_plugins_name}")
-
         if event.get_extra("_personal_runtime_model_continuation", False):
             # Router owns admission for this unaddressed continuation candidate.
             event.set_extra("activated_handlers", [])
             event.set_extra("handlers_parsed_params", {})
             return
 
-        for handler in star_handlers_registry.get_handlers_by_event_type(
-            EventType.AdapterMessageEvent,
-            plugins_name=event.plugins_name,
-        ):
-            if (
-                self.disable_builtin_commands
-                and handler.handler_module_path
-                == "astrbot.builtin_stars.builtin_commands.main"
-            ):
-                continue
-
-            # filter 需满足 AND 逻辑关系
-            passed = True
-            permission_not_pass = False
-            permission_filter_raise_error = False
-            if len(handler.event_filters) == 0:
-                continue
-
-            for filter in handler.event_filters:
-                try:
-                    if isinstance(filter, PermissionTypeFilter):
-                        if not filter.filter(event, self.ctx.astrbot_config):
-                            permission_not_pass = True
-                            permission_filter_raise_error = filter.raise_error
-                    elif not filter.filter(event, self.ctx.astrbot_config):
-                        passed = False
-                        break
-                except Exception as e:
-                    await event.send(
-                        MessageEventResult().message(
-                            f"插件 {star_map[handler.handler_module_path].name}: {e}",
-                        ),
-                    )
-                    event.stop_event()
-                    passed = False
-                    break
-            if passed:
-                if permission_not_pass:
-                    if not permission_filter_raise_error:
-                        # 跳过
-                        continue
-                    if self.no_permission_reply:
-                        await event.send(
-                            MessageChain().message(
-                                f"您(ID: {event.get_sender_id()})的权限不足以使用此指令。通过 /sid 获取 ID 并请管理员添加。",
-                            ),
-                        )
-                    logger.info(
-                        f"触发 {star_map[handler.handler_module_path].name} 时, 用户(ID={event.get_sender_id()}) 权限不足。",
-                    )
-                    event.stop_event()
-                    return
-
-                is_wake = True
-                event.is_wake = True
-
-                is_group_cmd_handler = any(
-                    isinstance(f, CommandGroupFilter) for f in handler.event_filters
-                )
-                if not is_group_cmd_handler:
-                    activated_handlers.append(handler)
-                    if "parsed_params" in event.get_extra(default={}):
-                        handlers_parsed_params[handler.handler_full_name] = (
-                            event.get_extra("parsed_params")
-                        )
-
-            event._extras.pop("parsed_params", None)
-
-        # 根据会话配置过滤插件处理器
-        activated_handlers = await SessionPluginManager.filter_handlers_by_session(
-            event,
-            activated_handlers,
+        is_wake = (
+            await discover_activated_handlers(
+                event,
+                config=self.ctx.astrbot_config,
+                disable_builtin_commands=self.disable_builtin_commands,
+                no_permission_reply=self.no_permission_reply,
+            )
+            or is_wake
         )
-
-        event.set_extra("activated_handlers", activated_handlers)
-        event.set_extra("handlers_parsed_params", handlers_parsed_params)
+        if event.is_stopped():
+            return
 
         if not is_wake:
             if is_conversation_activity_capture_enabled(self.ctx.astrbot_config):

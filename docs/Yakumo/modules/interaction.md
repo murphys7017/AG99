@@ -80,12 +80,10 @@ Personal State Repository。
 `Context.send_message()` 的纯文本主动输出会建立 `proactive_output` Observation，经同一
 session admission 和 Output Controller 发送；纯媒体主动消息暂时保留平台直发。
 
-Heartbeat 本身不算新事实。Runtime 用 material revision 区分真实用户活动、新 Observation 和同一
-Sensor payload 的实际变化；Policy 一旦形成 `express` intent，就在投递前消费本次快照的 revision。
-因此平台失败不计冷却或配额，但也不会让下一次 Heartbeat 对同一事实重新生成。投递期间到达的新事实
-拥有更高 revision，仍会进入下一批。主动 Observation 通过可选的
-`Platform.send_by_session_with_extras()` 携带 Output Controller 元数据，旧 Adapter 自动回退到
-`send_by_session()`。
+Heartbeat 本身不算新事实，也不会让空 Inbox 留下待处理项。Runtime 将 revision 绑定到 Inbox 条目和
+关闭后的批次；只有新 Observation 或同一 Sensor payload 的实际变化才创建新材料。`reject`、`ignore`、
+`observe`、fail-closed 和 `express` 投递前都结算该批次，只有 `hold`/`defer` 保留它。因此平台失败不计
+冷却或配额，但同一材料也不会在下一次 Heartbeat 重新生成；投递期间到达的新事实仍进入下一批。
 
 ### Plugin Runtime Sensor
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import time
 import weakref
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
@@ -23,6 +25,7 @@ from .config import load_interaction_agent_config
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .observation_inbox import (
     ObservationAdmissionResult,
+    ObservationAdmissionStatus,
     ObservationBatch,
     ObservationInbox,
 )
@@ -59,7 +62,7 @@ from .turn_state import (
     InteractionTurnStatus,
     set_interaction_turn_persona_id,
 )
-from .types import InteractionAgentConfig, InteractionRouteMode
+from .types import InteractionAgentConfig
 
 _ACTIVE_PERSONAL_TURN: contextvars.ContextVar[PersonalTurnContext | None] = (
     contextvars.ContextVar("active_personal_turn", default=None)
@@ -69,6 +72,7 @@ DEFAULT_IDLE_RUNTIME_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_MAX_IDLE_RUNTIMES = 1024
 DEFAULT_MAX_PENDING_OBSERVATIONS = 64
 DEFAULT_OBSERVATION_DEBOUNCE_SECONDS = 1.5
+MAX_COALESCED_MATERIAL_FINGERPRINTS = 512
 GROUP_CONVERSATION_FAST_CONTINUATION_SECONDS = 10.0
 
 
@@ -94,6 +98,35 @@ class ObservationWakeScheduler(Protocol):
     def schedule(self, key: PersonalRuntimeKey, due_at: float) -> None: ...
 
     def cancel(self, key: PersonalRuntimeKey) -> None: ...
+
+
+def _stable_observation_payload_fingerprint(payload: Mapping[str, Any]) -> str:
+    """Fingerprint immutable Sensor payloads without retaining their contents."""
+
+    def normalize(value: Any) -> object:
+        if isinstance(value, Mapping):
+            return (
+                "mapping",
+                tuple(
+                    (str(key), normalize(item))
+                    for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+                ),
+            )
+        if isinstance(value, list | tuple):
+            return ("sequence", tuple(normalize(item) for item in value))
+        if isinstance(value, set | frozenset):
+            return (
+                "set",
+                tuple(sorted((normalize(item) for item in value), key=repr)),
+            )
+        if isinstance(value, bytes):
+            return ("bytes", value.hex())
+        return (type(value).__qualname__, repr(value))
+
+    return hashlib.blake2b(
+        repr(normalize(payload)).encode("utf-8"),
+        digest_size=16,
+    ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,9 +484,9 @@ class PersonalSessionRuntime:
         self._persistent_state_dirty = False
         self.last_completion_feedback: CompletionFeedback | None = None
         self.observation_inbox = ObservationInbox(max_pending=max_pending_observations)
-        self._coalesced_material_observations: dict[
-            tuple[str, str, str], RuntimeObservation
-        ] = {}
+        self._coalesced_material_fingerprints: OrderedDict[
+            tuple[str, str, str], str
+        ] = OrderedDict()
         self.observation_debounce_seconds = observation_debounce_seconds
         self.observation_gate_settings = (
             observation_gate_settings or ObservationGateSettings()
@@ -510,7 +543,6 @@ class PersonalSessionRuntime:
         turn: PersonalTurnContext,
     ) -> None:
         completed_at = feedback.output_completed_at or time.time()
-        self._record_model_continuation_material(turn)
         usage_day = (
             self.observation_gate_settings.local_datetime(completed_at)
             .date()
@@ -534,17 +566,6 @@ class PersonalSessionRuntime:
         if persistent_state_changed:
             self._persistent_state_dirty = True
             await self._persist_state()
-
-    def _record_model_continuation_material(self, turn: PersonalTurnContext) -> None:
-        event = turn.event
-        if not event.get_extra("_personal_runtime_model_continuation", False):
-            return
-        route = turn.state.route_decision
-        if route is None or route.route_mode is InteractionRouteMode.SILENT:
-            return
-        self.state.mark_turn_active(
-            user_activity_at=self._turn_user_activity_at(turn)
-        )
 
     def classify_group_conversation_continuation(
         self,
@@ -621,6 +642,8 @@ class PersonalSessionRuntime:
         self,
         scheduler: ObservationWakeScheduler | None,
     ) -> None:
+        if scheduler is self._observation_wake_scheduler:
+            return
         self._observation_wake_scheduler = scheduler
         if self.next_observation_wake_at is not None and scheduler is not None:
             scheduler.schedule(self.key, self.next_observation_wake_at)
@@ -631,40 +654,91 @@ class PersonalSessionRuntime:
         *,
         now: float,
     ) -> ObservationAdmissionResult:
+        if (
+            observation.kind == "heartbeat"
+            and self.observation_inbox.pending_material_count == 0
+        ):
+            return ObservationAdmissionResult(
+                status=ObservationAdmissionStatus.IGNORED,
+                observation_id=observation.observation_id,
+                runtime_key=self.key,
+                pending_count=self.observation_inbox.pending_count,
+                reason_codes=("heartbeat_without_material",),
+            )
+
+        material_revision = self._material_revision_for_observation(
+            observation,
+            now=now,
+        )
         result = self.observation_inbox.admit(
             observation,
             runtime_key=self.key,
             now=now,
+            material_revision=material_revision,
         )
+        self._settle_discarded_observation_material()
         self.state.set_pending_observation_count(self.observation_inbox.pending_count)
         if not result.admitted:
             return result
 
+        self._remember_observation_material(observation)
         self.idle_since = None
-        self._clear_observation_wake()
         self.touch(now=now)
         self.state.record_observation(
             occurred_at=observation.occurred_at,
             pending_count=self.observation_inbox.pending_count,
-            material_changed=self._observation_changes_material(observation),
         )
+        if observation.kind == "heartbeat":
+            return result
+
+        self._clear_observation_wake()
         task_created = self._ensure_observation_evaluation_task(
             observation.observation_id
         )
         return replace(result, evaluation_task_created=task_created)
 
-    def _observation_changes_material(
+    def _material_revision_for_observation(
         self,
         observation: RuntimeObservation,
-    ) -> bool:
+        *,
+        now: float,
+    ) -> int | None:
         if observation.kind == "heartbeat":
-            return False
+            return None
+        if observation.expires_at is not None and observation.expires_at <= now:
+            return None
         identity = observation.coalesce_identity
         if identity is None:
-            return True
-        previous = self._coalesced_material_observations.get(identity)
-        self._coalesced_material_observations[identity] = observation
-        return previous is None or previous.payload != observation.payload
+            return self.state.record_material_change()
+        fingerprint = _stable_observation_payload_fingerprint(observation.payload)
+        if self._coalesced_material_fingerprints.get(identity) == fingerprint:
+            return None
+        return self.state.record_material_change()
+
+    def _remember_observation_material(
+        self,
+        observation: RuntimeObservation,
+    ) -> None:
+        identity = observation.coalesce_identity
+        if identity is None or observation.kind == "heartbeat":
+            return
+        self._coalesced_material_fingerprints[identity] = (
+            _stable_observation_payload_fingerprint(observation.payload)
+        )
+        self._coalesced_material_fingerprints.move_to_end(identity)
+        while (
+            len(self._coalesced_material_fingerprints)
+            > MAX_COALESCED_MATERIAL_FINGERPRINTS
+        ):
+            self._coalesced_material_fingerprints.popitem(last=False)
+
+    def _settle_discarded_observation_material(self) -> None:
+        revision = self.observation_inbox.take_discarded_material_revision()
+        if revision:
+            self.state.settle_material_revision(revision)
+
+    def _settle_observation_batch(self, batch: ObservationBatch) -> int:
+        return self.state.settle_material_revision(batch.material_revision)
 
     def _ensure_observation_evaluation_task(
         self,
@@ -737,6 +811,7 @@ class PersonalSessionRuntime:
                 runtime_key=self.key,
                 closed_at=closed_at,
             )
+            self._settle_discarded_observation_material()
             self.state.set_pending_observation_count(
                 self.observation_inbox.pending_count
             )
@@ -760,7 +835,11 @@ class PersonalSessionRuntime:
                 self.last_observation_gate_result = gate_result
                 self.state.record_gate_result(gate_result.reason_code.value)
                 if gate_result.disposition is ObservationGateDisposition.HOLD:
-                    self.observation_inbox.restore(batch)
+                    self.observation_inbox.restore(
+                        batch,
+                        hold_reason=gate_result.reason_code.value,
+                    )
+                    self._settle_discarded_observation_material()
                     self.state.set_pending_observation_count(
                         self.observation_inbox.pending_count
                     )
@@ -774,6 +853,8 @@ class PersonalSessionRuntime:
                         gate_result=gate_result,
                         state_snapshot=state_snapshot,
                     )
+                else:
+                    self._settle_observation_batch(batch)
             self.touch(now=closed_at)
         finally:
             reschedule_requested = self._observation_reschedule_requested
@@ -813,6 +894,7 @@ class PersonalSessionRuntime:
         agent = self._personal_policy_agent
         plugin_context = self._plugin_context
         if agent is None or plugin_context is None:
+            self._settle_observation_batch(batch)
             return None
 
         async def record_provider_call() -> None:
@@ -823,18 +905,32 @@ class PersonalSessionRuntime:
             self._persistent_state_dirty = True
             await self._persist_state()
 
-        evaluation = await agent.evaluate(
-            runtime_key=self.key,
-            batch=batch,
-            gate_result=gate_result,
-            state=state_snapshot,
-            gate_settings=self.observation_gate_settings,
-            plugin_context=plugin_context,
-            runtime_config=self._runtime_config,
-            interaction_config=self._interaction_config,
-            on_provider_call_started=record_provider_call,
-        )
+        try:
+            evaluation = await agent.evaluate(
+                runtime_key=self.key,
+                batch=batch,
+                gate_result=gate_result,
+                state=state_snapshot,
+                gate_settings=self.observation_gate_settings,
+                plugin_context=plugin_context,
+                runtime_config=self._runtime_config,
+                interaction_config=self._interaction_config,
+                on_provider_call_started=record_provider_call,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._settle_observation_batch(batch)
+            logger.exception(
+                "Personal Policy evaluation failed: config_id=%s persona_id=%s "
+                "batch_id=%s",
+                self.key.config_id,
+                self.key.persona_id,
+                batch.batch_id,
+            )
+            return None
         if evaluation is None:
+            self._settle_observation_batch(batch)
             return None
         self.last_personal_policy_evaluation = evaluation
         self.state.record_policy_action(evaluation.decision.action.value)
@@ -861,7 +957,8 @@ class PersonalSessionRuntime:
             ),
         )
         if plan.defer_until is not None:
-            self.observation_inbox.restore(batch)
+            self.observation_inbox.restore(batch, hold_reason="defer")
+            self._settle_discarded_observation_material()
             self.state.set_pending_observation_count(self.observation_inbox.pending_count)
             if self.state.defer_actions_until(plan.defer_until):
                 self._persistent_state_dirty = True
@@ -886,18 +983,17 @@ class PersonalSessionRuntime:
             return plan.defer_until
         intent = plan.intent
         if intent is None:
+            self._settle_observation_batch(batch)
             return None
-        attempted_revision = self.state.mark_expression_attempt(
-            material_revision=state_snapshot.material_revision,
-        )
+        settled_revision = self._settle_observation_batch(batch)
         logger.info(
-            "Personal Policy expression attempt: config_id=%s persona_id=%s "
-            "batch_id=%s action_id=%s material_revision=%s",
+            "Personal Policy expression dispatch: config_id=%s persona_id=%s "
+            "batch_id=%s action_id=%s settled_material_revision=%s",
             self.key.config_id,
             self.key.persona_id,
             batch.batch_id,
             intent.action_id,
-            attempted_revision,
+            settled_revision,
         )
         handler = self._personal_action_handler
         if handler is None:
@@ -1632,8 +1728,8 @@ class PersonalRuntimeManager:
                         "mute_until": item.state.mute_until,
                         "pending_observation_count": item.state.pending_observation_count,
                         "material_revision": item.state.material_revision,
-                        "last_expression_attempt_revision": (
-                            item.state.last_expression_attempt_revision
+                        "last_settled_material_revision": (
+                            item.state.last_settled_material_revision
                         ),
                         "usage_day": item.state.usage_day,
                         "daily_policy_calls": item.state.daily_policy_calls,
@@ -1652,6 +1748,21 @@ class PersonalRuntimeManager:
                                 "closed_at": item.last_observation_batch.closed_at,
                                 "observation_count": len(
                                     item.last_observation_batch.observations
+                                ),
+                                "material_count": (
+                                    item.last_observation_batch.material_count
+                                ),
+                                "material_revision": (
+                                    item.last_observation_batch.material_revision
+                                ),
+                                "latest_material_occurred_at": (
+                                    item.last_observation_batch.latest_material_occurred_at
+                                ),
+                                "held_duration_seconds": (
+                                    item.last_observation_batch.held_duration_seconds
+                                ),
+                                "release_reason": (
+                                    item.last_observation_batch.release_reason
                                 ),
                                 "source_counts": dict(
                                     item.last_observation_batch.source_counts

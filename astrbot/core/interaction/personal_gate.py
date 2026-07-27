@@ -215,7 +215,10 @@ class ObservationFeatureBuilder:
             policy_budget_available=policy_budget_available,
             output_budget_available=output_budget_available,
             budget_available=(policy_budget_available and output_budget_available),
-            target_available=bool(latest_target.support_personal_runtime),
+            target_available=(
+                latest_target.support_proactive_message
+                and latest_target.support_personal_runtime
+            ),
         )
 
     @staticmethod
@@ -300,10 +303,10 @@ class DeterministicObservationGate:
         ):
             disposition = ObservationGateDisposition.REJECT
             reason = ObservationGateReason.OBSERVATION_EXPIRED
-        elif len(batch.observations) < settings.minimum_observation_count:
+        elif batch.material_count < settings.minimum_observation_count:
             disposition = ObservationGateDisposition.REJECT
             reason = ObservationGateReason.MISSING_MATERIAL
-        elif state.last_expression_attempt_revision >= state.material_revision:
+        elif batch.material_revision <= state.last_settled_material_revision:
             disposition = ObservationGateDisposition.REJECT
             reason = ObservationGateReason.NO_MATERIAL_CHANGE
         elif not features.target_available:

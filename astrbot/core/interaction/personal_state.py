@@ -35,7 +35,7 @@ class PersonalStateSnapshot:
     mute_until: float | None
     pending_observation_count: int
     material_revision: int
-    last_expression_attempt_revision: int
+    last_settled_material_revision: int
     usage_day: str | None
     daily_policy_calls: int
     daily_proactive_outputs: int
@@ -69,7 +69,7 @@ class PersonalState:
     mute_until: float | None = None
     pending_observation_count: int = 0
     material_revision: int = 0
-    last_expression_attempt_revision: int = -1
+    last_settled_material_revision: int = 0
     usage_day: str | None = None
     daily_policy_calls: int = 0
     daily_proactive_outputs: int = 0
@@ -88,7 +88,6 @@ class PersonalState:
                 user_activity_at,
                 self.last_user_activity_at or user_activity_at,
             )
-            self.record_material_change()
 
     def mark_idle(self, *, now: float) -> None:
         self.attention_state = PersonalAttentionState.IDLE
@@ -142,31 +141,24 @@ class PersonalState:
         *,
         occurred_at: float,
         pending_count: int,
-        material_changed: bool,
     ) -> None:
         self.last_observation_at = max(
             occurred_at,
             self.last_observation_at or occurred_at,
         )
         self.pending_observation_count = max(0, int(pending_count))
-        if material_changed:
-            self.record_material_change()
 
     def record_material_change(self) -> int:
         self.material_revision += 1
         return self.material_revision
 
-    def mark_expression_attempt(self, *, material_revision: int | None = None) -> int:
-        revision = (
-            self.material_revision
-            if material_revision is None
-            else min(self.material_revision, max(0, int(material_revision)))
-        )
-        self.last_expression_attempt_revision = max(
+    def settle_material_revision(self, material_revision: int) -> int:
+        revision = min(self.material_revision, max(0, int(material_revision)))
+        self.last_settled_material_revision = max(
+            self.last_settled_material_revision,
             revision,
-            self.last_expression_attempt_revision,
         )
-        return revision
+        return self.last_settled_material_revision
 
     def set_pending_observation_count(self, pending_count: int) -> None:
         self.pending_observation_count = max(0, int(pending_count))
@@ -200,8 +192,6 @@ class PersonalState:
 
     def restore_persistent(self, state: PersonalPersistentState) -> None:
         self.last_expression_at = state.last_expression_at
-        if state.last_expression_at is not None:
-            self.last_expression_attempt_revision = self.material_revision
         self.reply_cooldown_until = state.reply_cooldown_until
         self.no_action_cooldown_until = state.no_action_cooldown_until
         self.mute_until = state.mute_until
@@ -232,7 +222,7 @@ class PersonalState:
             mute_until=self.mute_until,
             pending_observation_count=self.pending_observation_count,
             material_revision=self.material_revision,
-            last_expression_attempt_revision=(self.last_expression_attempt_revision),
+            last_settled_material_revision=(self.last_settled_material_revision),
             usage_day=self.usage_day,
             daily_policy_calls=self.daily_policy_calls,
             daily_proactive_outputs=self.daily_proactive_outputs,

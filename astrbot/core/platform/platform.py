@@ -144,20 +144,6 @@ class Platform(abc.ABC):
             Metric.upload(msg_event_tick=1, adapter_name=self.meta().name)
         )
 
-    async def send_by_session_with_extras(
-        self,
-        session: MessageSesion,
-        message_chain: MessageChain,
-        *,
-        platform_extras: dict[str, Any] | None = None,
-    ) -> None:
-        """Send proactively while preserving optional framework delivery metadata.
-
-        Adapters that can carry richer delivery payloads may override this method.
-        Existing adapters remain compatible through ``send_by_session``.
-        """
-        await self.send_by_session(session, message_chain)
-
     def commit_event(self, event: AstrMessageEvent) -> None:
         """提交一个事件到事件队列。"""
         self._event_queue.put_nowait(event)

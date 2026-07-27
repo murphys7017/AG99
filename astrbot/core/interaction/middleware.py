@@ -359,6 +359,30 @@ class InteractionMiddleware:
         await self._handle_pipeline_turn(event)
         event.set_extra("_interaction_route_handled", True)
 
+    async def admit_model_continuation_candidate(
+        self,
+        event: AstrMessageEvent,
+    ) -> InteractionRouteDecision:
+        """Route an unaddressed continuation before exposing it to Handlers."""
+
+        if not event.get_extra("_personal_runtime_model_continuation", False):
+            raise ValueError("event is not a model continuation candidate")
+        runtime_config = self._get_runtime_config(event)
+        if not is_middleware_enabled(runtime_config):
+            return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+        self.prepare_pipeline_event(event)
+        interaction_config = load_interaction_agent_config(runtime_config)
+        route = await self._route_interaction(event, interaction_config)
+        self._record_route_diagnostics(event, route)
+        turn_state = ensure_interaction_turn_state(event)
+        self.attach_event_context(
+            event,
+            turn_id=turn_state.turn_id,
+            route_decision=route,
+        )
+        event.set_extra("_personal_runtime_model_continuation_router_admitted", True)
+        return route
+
     async def handle_runtime_observation(
         self,
         event: RuntimeObservationEvent,
@@ -760,26 +784,43 @@ class InteractionMiddleware:
                 ),
             )
 
-        router_task = turn_scope.create_task(
-            self._route_interaction(event, interaction_config),
-            role="router",
-            name=(
-                f"interaction_router_{event.get_platform_id()}_"
-                f"{event.get_extra('_turn_id')}"
-            ),
+        pre_admitted_route = (
+            ensure_interaction_turn_state(event).route_decision
+            if event.get_extra(
+                "_personal_runtime_model_continuation_router_admitted",
+                False,
+            )
+            else None
+        )
+        router_task = (
+            None
+            if pre_admitted_route is not None
+            else turn_scope.create_task(
+                self._route_interaction(event, interaction_config),
+                role="router",
+                name=(
+                    f"interaction_router_{event.get_platform_id()}_"
+                    f"{event.get_extra('_turn_id')}"
+                ),
+            )
         )
         persona_task = (
             None if defer_persona_until_route else start_persona_task()
         )
         try:
-            route = await router_task
+            route = (
+                pre_admitted_route
+                if pre_admitted_route is not None
+                else await router_task
+            )
         except asyncio.CancelledError:
             if persona_task is not None and not persona_task.done():
                 persona_task.cancel()
             if persona_task is not None:
                 await asyncio.gather(persona_task, return_exceptions=True)
             raise
-        self._record_route_diagnostics(event, route)
+        if router_task is not None:
+            self._record_route_diagnostics(event, route)
         self.attach_event_context(
             event,
             turn_id=str(event.get_extra("_turn_id", "") or ""),
