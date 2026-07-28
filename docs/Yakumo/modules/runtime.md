@@ -142,7 +142,7 @@ Skills、知识库或输出能力；`express` 只形成 `ActionIntent` 并交回
 Persona Expression 生成。`defer` 写入无动作截止时间并保留 batch；生命周期托管的 Wake Scheduler
 会在 defer、quiet hours 或冷却到期后重新评估。`hold` 会恢复 batch；busy hold 在当前 turn settle 后
 重新评估。多目标 Heartbeat Source 已由现有 Core
-Lifecycle 托管：`platform_settings.personal_runtime_observation_targets` 留空时回退到默认主动目标；每个目标的开关和间隔读取其实际命中的 Runtime 配置，并维护独立 due time。配置关闭时不提交事实，启用后每个到期 target 只检查既有 retained batch；空 Inbox 不创建 Observation 材料、批次或唤醒任务。它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
+Lifecycle 托管：`platform_settings.personal_runtime_observation_targets` 留空时回退到默认主动目标；全局 Source 汇总所有已加载配置文件中声明、且 UMO 实际路由回该配置的目标。每个目标的开关和间隔读取其实际命中的 Runtime 配置，并维护独立 due time。配置关闭时不提交事实，启用后每个到期 target 只检查既有 retained batch；空 Inbox 不创建 Observation 材料、批次或唤醒任务。它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
 环境 Source 复用这份目标范围：配置目标中的非唤醒群聊文本通过官方白名单和会话状态检查后，
 仅提交不含原文的 `conversation_activity` fact，并在普通限流、插件、Router 和 Core 前结束原事件。
 插件可通过 `Context.register_runtime_observation_sensor(sensor)` 注册受限的事实 Source；返回的
@@ -197,8 +197,8 @@ Turn lease 在关闭本轮 `TurnExecutionScope` 后、释放 session 锁前形�
 主动 Cron 使用它，显式 session 不会被覆盖。`platform_settings.personal_runtime_observation_targets`
 单独定义 Personal Runtime 的多目标观察范围；留空时才兼容使用默认主动目标。Heartbeat 仅为这些目标创建周期
 Observation，群聊环境 Source 只在显式开关开启时把这些群的非唤醒文本转为结构化
-`conversation_activity`。这份范围由 Context 的默认配置统一解析；群聊当前命中的配置只决定环境观察开关和
-该 Runtime 的 Policy 设置。二者都不直接创建 Action 或主动回复。
+`conversation_activity`。这份范围由 Context 跨已加载配置解析，并只保留 UMO 实际路由回声明配置的
+目标；群聊当前命中的配置决定环境观察开关和该 Runtime 的 Policy 设置。二者都不直接创建 Action 或主动回复。
 
 `/stat/personal-runtime` 是只读运行诊断入口。除已实体化 Runtime 的 batch、Gate、Policy 和投递
 终态外，它还列出已配置 Heartbeat 目标的开关、间隔、调度状态和下一次到期时间；不输出

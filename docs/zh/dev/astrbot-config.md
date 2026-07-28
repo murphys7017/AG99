@@ -481,7 +481,9 @@ Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Cor
   `personal_runtime_daily_proactive_output_limit`：控制静音、安静时段、重试节流和每日主动表达上限。
   只有确认送达且带 Action ID 的自主表达会消耗主动输出额度。
 - `platform_settings.personal_runtime_observation_targets`：Personal Runtime 的观察范围，使用完整
-  UMO 列表；留空时回退“主动消息默认目标”。它只限定可观察的会话，不决定何时发送消息。
+  UMO 列表；留空时回退“主动消息默认目标”。全局 Heartbeat 与群聊环境观察会汇总所有已加载
+  配置文件中声明、且其 UMO 实际路由回该配置的目标；具体开关、间隔和 Policy 仍由目标实际
+  命中的配置决定。它只限定可观察的会话，不决定何时发送消息。
 
 `provider_ltm_settings.active_reply` 仅控制群聊候选抽样；它与 Personal Runtime Policy 仍是独立
 功能，但候选回复与连续对话共用 Router 的静默门控。

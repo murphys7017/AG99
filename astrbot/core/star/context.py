@@ -635,32 +635,56 @@ class Context:
         self,
         umo: str | None = None,
     ) -> tuple[MessageSesion, ...]:
-        """Return configured proactive-capable targets for Personal Runtime sources."""
+        """Return configured Personal Runtime targets for a session or globally."""
         from astrbot.core.interaction.runtime_targets import (
             configured_runtime_observation_target_values,
         )
 
         targets: list[MessageSesion] = []
-        for target in configured_runtime_observation_target_values(
-            self.get_config(umo=umo)
-        ):
-            try:
-                session = MessageSesion.from_str(target)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Invalid Personal Runtime observation target %r",
-                    target,
+        seen: set[str] = set()
+        config_manager = getattr(self, "astrbot_config_mgr", None)
+        if umo:
+            configs = (self.get_config(umo=umo),)
+        else:
+            configs = tuple(getattr(config_manager, "confs", {}).values())
+            if not configs:
+                configs = (self.get_config(),)
+
+        for config in configs:
+            for target in configured_runtime_observation_target_values(config):
+                try:
+                    session = MessageSesion.from_str(target)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Invalid Personal Runtime observation target %r",
+                        target,
+                    )
+                    continue
+                resolved_target = str(session)
+                effective_config = (
+                    self.get_config(umo=resolved_target)
+                    if config_manager is not None
+                    else config
                 )
-                continue
-            platform = self.get_platform_inst(session.platform_id)
-            if platform is None or not supports_personal_runtime(platform.meta()):
-                logger.warning(
-                    "Personal Runtime observation target does not explicitly support "
-                    "Personal Runtime output: %s",
-                    target,
-                )
-                continue
-            targets.append(session)
+                if (
+                    resolved_target
+                    not in configured_runtime_observation_target_values(
+                        effective_config
+                    )
+                ):
+                    continue
+                platform = self.get_platform_inst(session.platform_id)
+                if platform is None or not supports_personal_runtime(platform.meta()):
+                    logger.warning(
+                        "Personal Runtime observation target does not explicitly support "
+                        "Personal Runtime output: %s",
+                        target,
+                    )
+                    continue
+                if resolved_target in seen:
+                    continue
+                seen.add(resolved_target)
+                targets.append(session)
         return tuple(targets)
 
     async def send_message(

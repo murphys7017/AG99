@@ -493,8 +493,11 @@ when `personal_policy_enabled` is enabled and
   Action-ID-bearing autonomous delivery consumes the output limit.
 - `platform_settings.personal_runtime_observation_targets`: The Personal Runtime
   observation scope, expressed as a list of complete UMOs. An empty list falls
-  back to the Default Proactive Message Target. It restricts which sessions may
-  be observed; it does not decide when to send a message.
+  back to the Default Proactive Message Target. Global Heartbeat and ambient
+  group observation aggregate targets declared by loaded config profiles only
+  when the target UMO resolves back to that profile; the target's effective
+  config still controls its enablement, interval, and Policy. It restricts
+  which sessions may be observed; it does not decide when to send a message.
 
 `provider_ltm_settings.active_reply` only controls group-candidate sampling. It remains
 separate from Personal Runtime Policy, while candidates and continuation use the same

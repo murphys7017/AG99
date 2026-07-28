@@ -254,6 +254,76 @@ def test_personal_runtime_targets_accept_explicit_adapter_support():
     assert str(targets[0]) == "demo:FriendMessage:target"
 
 
+def test_personal_runtime_targets_aggregate_effective_config_profiles():
+    default_config = {
+        "platform_settings": {
+            "personal_runtime_observation_targets": [
+                "default:FriendMessage:one",
+            ],
+        }
+    }
+    alice_config = {
+        "platform_settings": {
+            "personal_runtime_observation_targets": [
+                "alice:GroupMessage:two",
+            ],
+        }
+    }
+    unbound_config = {
+        "platform_settings": {
+            "personal_runtime_observation_targets": [
+                "unbound:FriendMessage:three",
+            ],
+        }
+    }
+
+    class _ConfigManager:
+        confs = {
+            "default": default_config,
+            "alice": alice_config,
+            "unbound": unbound_config,
+        }
+
+        @staticmethod
+        def get_conf(umo):
+            return (
+                alice_config
+                if str(umo).startswith("alice:")
+                else default_config
+            )
+
+    context = Context.__new__(Context)
+    context._config = default_config
+    context.astrbot_config_mgr = _ConfigManager()
+    context.platform_manager = SimpleNamespace(
+        platform_insts=[
+            _Platform(
+                PlatformMetadata(
+                    name=platform_id,
+                    description=platform_id,
+                    id=platform_id,
+                    support_proactive_message=True,
+                    support_personal_runtime=True,
+                )
+            )
+            for platform_id in ("default", "alice", "unbound")
+        ]
+    )
+
+    targets = context.get_runtime_observation_targets()
+
+    assert [str(target) for target in targets] == [
+        "default:FriendMessage:one",
+        "alice:GroupMessage:two",
+    ]
+    assert [
+        str(target)
+        for target in context.get_runtime_observation_targets(
+            umo="alice:GroupMessage:two"
+        )
+    ] == ["alice:GroupMessage:two"]
+
+
 def test_personal_expression_fingerprint_ignores_formatting_only_changes():
     expected = fingerprint_personal_expression("Direct reply")
 
