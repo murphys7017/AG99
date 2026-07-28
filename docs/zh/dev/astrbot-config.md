@@ -91,7 +91,13 @@ AstrBot 默认配置如下：
     "provider_ltm_settings": {
         "group_icl_enable": False,
         "group_message_max_cnt": 300,
+        "group_context_max_chars": 12000,
+        "group_context_record_max_chars": 1000,
         "image_caption": False,
+        "image_caption_provider_id": "",
+        "image_caption_prompt": "",
+        "image_caption_max_chars": 600,
+        "image_caption_cache_size": 256,
         "active_reply": {
             "enable": False,
             "method": "possibility_reply",
@@ -409,22 +415,45 @@ Added in `v4.3.5`
 
 是否启用群聊上下文感知。默认为 `false`。启用后，机器人会记录群聊中的对话内容，以便更好地理解群聊的上下文。
 
-上下文的内容会被放在对话的系统提示词中。
+记录会在官方白名单和会话状态检查通过后进行。上下文作为结构化的非可信群聊消息提供给
+Router、人格层和 Core，不会把群成员消息当作系统指令。
 
 #### `provider_ltm_settings.group_message_max_cnt`
 
-群聊消息的最大记录数量。默认为 `100`。超过此数量的消息将被丢弃。
+群聊消息的最大记录数量。默认为 `300`。超过此数量的消息将被丢弃。
+
+#### `provider_ltm_settings.group_context_max_chars`
+
+注入单次请求的群聊上下文总字符预算。默认为 `12000`。系统从最新消息向前保留，达到预算后停止。
+
+#### `provider_ltm_settings.group_context_record_max_chars`
+
+单条群聊消息的记录字符上限。默认为 `1000`。超长消息会在写入滚动上下文前截断。
 
 #### `provider_ltm_settings.image_caption`
 
-是否记录群聊中的图片，并自动使用图像描述模型生成图片的描述文本。默认为 `false`。此配置项依赖于 `provider_settings.default_image_caption_provider_id` 的配置。请谨慎使用，因为这可能会增加大量的 API 调用和 token 开销。
+是否记录群聊中的图片，并自动使用 `image_caption_provider_id` 指定的图像模型生成描述文本。图片消息会先以 `[Image]` 按接收顺序写入上下文，再在转述完成时更新同一条记录；下载、格式或模型调用失败时只保留该标记，不会把错误文本写入上下文。图片仅接受 `data:`、`base64://`、经公网 DNS 校验的 HTTP(S) 地址，以及 AstrBot 临时媒体目录内的本地文件；本地任意路径和 UNC 网络路径不会读取。转述下载与模型调用共用受限并发，待处理队列满时保留 `[Image]`。请谨慎使用，因为这可能会增加 API 调用和 token 开销。
+
+#### `provider_ltm_settings.image_caption_prompt`
+
+群聊图片转述使用的提示词。留空时回退到 `provider_settings.image_caption_prompt`。
+
+#### `provider_ltm_settings.image_caption_max_chars`
+
+写入群聊上下文前的图片转述最大字符数。默认为 `600`。
+
+#### `provider_ltm_settings.image_caption_cache_size`
+
+图片转述缓存数量。默认为 `256`；缓存键包含图片内容、转述模型和提示词，可避免重复图片重复调用模型。
 
 #### `provider_ltm_settings.active_reply`
 
-- `enable`: 是否启用主动回复。默认为 `false`。
+- `enable`: 是否启用群聊主动回复候选。默认为 `false`，且需要启用 Interaction Middleware。
 - `method`: 主动回复的方法。可选值为 `possibility_reply`。
-- `possibility_reply`: 主动回复的概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
-- `whitelist`: 主动回复的 ID 白名单。仅在此列表中的 ID 才会触发主动回复。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
+- `possibility_reply`: 候选抽样概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
+- `whitelist`: 候选白名单。仅在此列表中的 ID 才会形成候选。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
+
+候选不会直接调用 LLM。它们会先经过支持 `silent` 的 Router；Router 对未唤醒群聊默认静默，只有明确需要机器人加入时才会继续人格或 Core 流程。
 
 ### `interaction_middleware`
 
@@ -435,11 +464,18 @@ Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Cor
 - `personal_heartbeat_enabled` / `personal_heartbeat_interval_seconds`：启用按观察目标独立计时的
   Heartbeat。Heartbeat 只检查已有 retained batch；空 Inbox 不会生成材料、调用模型或发送消息。
   间隔最小为 30 秒。
+- `personal_idle_initiation_enabled` / `personal_idle_initiation_after_seconds`：显式启用基于
+  Heartbeat 调度的空闲主动发起。仅在该会话已有真实用户互动、达到空闲阈值，且自那次用户活动
+  尚未发起过空闲 Observation 时提交一次 `idle_initiation`；它不会伪造用户消息，也不会绕过
+  Policy、Persona、静音、安静时段、冷却或每日预算。用户发送新消息后会重新进入下一轮资格；
+  该去重状态会持久化，因此重启不会把同一段空闲重复当作新机会。默认关闭。
+  `/stat/personal-runtime` 的 `heartbeat.targets` 会显示 Heartbeat 和空闲发起最近一次提交的状态
+  与原因码，例如 `heartbeat_without_material`、`idle_initiation_not_due`。
 - `personal_conversation_activity_enabled`：允许已配置观察范围内的非唤醒群聊消息形成受限的
   `conversation_activity` 事实；它仍会先经过白名单和会话状态检查，不会作为普通消息进入插件、
   Router 或 Core。
-- `personal_runtime_conversation_continuation_seconds`：Bot 成功回复后，同一发送者有 10 秒直接
-  续接窗口；其后的窗口内消息由 Router 判断 `persona`、`hybrid` 或 `silent`。设为 `0` 可关闭。
+- `personal_runtime_conversation_continuation_seconds`：Bot 成功回复后，同一发送者在窗口内的未唤醒
+  消息由 Router 判断 `persona`、`hybrid` 或 `silent`。设为 `0` 可关闭。
 - `personal_runtime_muted`、`personal_runtime_quiet_hours_*`、
   `personal_runtime_reply_cooldown_seconds`、`personal_runtime_no_action_cooldown_seconds` 与
   `personal_runtime_daily_proactive_output_limit`：控制静音、安静时段、重试节流和每日主动表达上限。
@@ -447,8 +483,8 @@ Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Cor
 - `platform_settings.personal_runtime_observation_targets`：Personal Runtime 的观察范围，使用完整
   UMO 列表；留空时回退“主动消息默认目标”。它只限定可观察的会话，不决定何时发送消息。
 
-`provider_ltm_settings.active_reply` 是既有群聊主动回复配置，与 Personal Runtime Policy 是独立
-功能，不应混用。
+`provider_ltm_settings.active_reply` 仅控制群聊候选抽样；它与 Personal Runtime Policy 仍是独立
+功能，但候选回复与连续对话共用 Router 的静默门控。
 
 ### `content_safety`
 

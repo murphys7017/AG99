@@ -17,6 +17,10 @@ from .context_builder import (
     build_prompt_render_provider_request,
     get_or_build_interaction_context_material,
 )
+from .group_reply import (
+    GROUP_REPLY_CANDIDATE_KIND_EXTRA,
+    is_group_reply_candidate,
+)
 from .prompt_support import (
     build_interaction_prompt_build_config,
     build_model_context_messages,
@@ -34,34 +38,41 @@ class InteractionRouterError(RuntimeError):
         super().__init__(message or reason)
 
 
-def build_interaction_router_system_prompt(*, allow_silent: bool = False) -> str:
-    silent_candidate = (
-        "- silent：当前未显式唤醒的群聊输入不是对机器人最近回复的语义承接，或当前并不需要机器人加入。\n"
-        if allow_silent
+def build_interaction_router_system_prompt(
+    *,
+    allow_silent: bool = False,
+    group_candidate_kind: str | None = None,
+) -> str:
+    is_group_candidate = allow_silent or bool(group_candidate_kind)
+    candidate_context = (
+        "这是一次未显式唤醒的群聊延续候选。默认选择 silent；只有当前消息明确、直接地承接机器人最近一次回复，且机器人加入确有必要时，才选择 persona 或 hybrid。仅同一发送者、时间相近、短确认、情绪表达或语义不明都不足以回复。\n"
+        if group_candidate_kind == "continuation"
+        else "这是一次未显式唤醒的群聊主动候选。默认选择 silent；除非当前消息明确需要机器人加入且回复会为群聊增加直接价值，否则选择 silent。不要因为普通闲聊、提及模型、上下文或候选资格本身加入对话。\n"
+        if group_candidate_kind == "ambient"
         else ""
     )
-    silent_rule = (
-        "这是一次待判断的群聊延续；先判断当前输入是否确实承接机器人最近回复。未承接时选择 silent；只有确认承接后，才在 persona 与 hybrid 之间选择。\n"
-        if allow_silent
+    silent_candidate = (
+        "- silent：当前未显式唤醒的群聊输入不满足严格回复条件，或当前并不需要机器人加入。\n"
+        if is_group_candidate
         else ""
     )
     continuation_rule = (
-        "在已经确认当前输入承接机器人最近回复的前提下，若它是省略、短确认或情绪表达，应结合最近一轮理解；只要没有新增明确执行意图，就选择 persona。\n"
-        "同样只在上述承接前提成立时，普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
-        if allow_silent
+        "只有已满足严格回复条件时，省略、短确认或情绪表达才可结合最近一轮理解；没有新增明确执行意图时选择 persona。\n"
+        "只有已满足严格回复条件时，普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑和普通陈述才选择 persona；在 persona、hybrid 与 silent 之间不确定时选择 silent。\n"
+        if is_group_candidate
         else "当前输入若是对最近一轮回复的承接、省略、短确认或情绪表达，应结合最近一轮理解；只要没有新增明确执行意图，就选择 persona。\n"
         "普通寒暄、情绪回应、轻量吐槽、短确认、感叹、玩笑、普通陈述和无明确执行意图的短消息选择 persona；在 persona 与 hybrid 之间不确定时也选择 persona。\n"
     )
-    labels = "silent、persona 或 hybrid" if allow_silent else "persona 或 hybrid"
+    labels = "silent、persona 或 hybrid" if is_group_candidate else "persona 或 hybrid"
     return (
-        f"你是 Interaction Router，一个严格的{'三' if allow_silent else '二'}分类选择器。\n"
+        f"你是 Interaction Router，一个严格的{'三' if is_group_candidate else '二'}分类选择器。\n"
         "任务：从候选标签中选择一个。当前用户输入是首要依据；聊天记录、memory 和 router 上下文用于理解当前对话。\n"
         "router 上下文可能包含插件目录；插件目录只说明本地插件是什么、负责什么，不能单独成为选择 hybrid 的理由。\n"
         "候选标签：\n"
         f"{silent_candidate}"
         "- persona：统一拟人层可以直接完成回应，不需要核心 Agent。\n"
         "- hybrid：当前输入本身包含明确的执行、查询或处理意图，明确需要核心 Agent 参与；或当前输入明确继续当前说话者未完成的核心任务。\n"
-        f"{silent_rule}"
+        f"{candidate_context}"
         "聊天记录、memory、插件目录或其他说话者的任务不能单独成为选择 hybrid 的理由。\n"
         f"{continuation_rule}"
         "不要限制或枚举核心 Agent 的能力范围。\n"
@@ -70,8 +81,16 @@ def build_interaction_router_system_prompt(*, allow_silent: bool = False) -> str
     )
 
 
-def build_interaction_router_prompt(*, allow_silent: bool = False) -> str:
-    labels = "silent、persona 或 hybrid" if allow_silent else "persona 或 hybrid"
+def build_interaction_router_prompt(
+    *,
+    allow_silent: bool = False,
+    group_candidate_kind: str | None = None,
+) -> str:
+    labels = (
+        "silent、persona 或 hybrid"
+        if allow_silent or group_candidate_kind
+        else "persona 或 hybrid"
+    )
     return f"请只输出 {labels}。"
 
 
@@ -134,9 +153,7 @@ class InteractionRouterAgent:
             "_interaction_router_raw_output",
             _truncate_router_diagnostic(llm_resp.completion_text),
         )
-        allow_silent = bool(
-            event.get_extra("_personal_runtime_model_continuation", False)
-        )
+        allow_silent = is_group_reply_candidate(event)
         payload = extract_interaction_route_payload(llm_resp.completion_text)
         route = InteractionRouteDecision.from_mapping(payload)
         if route is None:
@@ -160,9 +177,10 @@ class InteractionRouterAgent:
         interaction_config: InteractionAgentConfig,
         provider: Provider,
     ):
-        allow_silent = bool(
-            event.get_extra("_personal_runtime_model_continuation", False)
-        )
+        allow_silent = is_group_reply_candidate(event)
+        candidate_kind = str(
+            event.get_extra(GROUP_REPLY_CANDIDATE_KIND_EXTRA, "") or ""
+        ).strip() or None
         build_config = build_interaction_prompt_build_config(plugin_context, event)
         material = await get_or_build_interaction_context_material(
             event=event,
@@ -180,10 +198,12 @@ class InteractionRouterAgent:
             profile=PromptRenderProfile(
                 name="interaction_router",
                 system_prompt=build_interaction_router_system_prompt(
-                    allow_silent=allow_silent
+                    allow_silent=allow_silent,
+                    group_candidate_kind=candidate_kind,
                 ),
                 request_prompt=build_interaction_router_prompt(
-                    allow_silent=allow_silent
+                    allow_silent=allow_silent,
+                    group_candidate_kind=candidate_kind,
                 ),
             ),
         )

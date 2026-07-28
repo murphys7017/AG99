@@ -1,8 +1,8 @@
 task:
   class: bugfix
   risk: high
-  phase: personal_runtime_expression_and_group_continuation_correctness
-  scope: Prevent repeated autonomous expression and replace unconditional post-turn group wake with a 10-second fast path plus existing-Router silent judgment without changing explicit Context, Cron, plugin sends, AG99Live, or test timing configuration
+  phase: group_context_provider_media_and_idle_initiation_repair
+  scope: Repair provider-boundary image materialization, move passive group-context capture behind whitelist and session checks, bound and structure group context records, route legacy group active-reply candidates through the existing silent-capable Router, and add explicitly enabled, restart-safe idle-initiation observations without modifying AG99Live
 context:
   confidence: high
   assumptions:
@@ -390,6 +390,9 @@ runtime:
       - InteractionTurnState lifecycle and completion ownership without private event-extra mirrors
       - same-actor group continuation through active, 10-second fast, and bounded existing-Router silent paths
       - Router-first model continuation candidates with Handler discovery only after Router accepts persona or hybrid
+      - structured group-context records preserved across every Prompt target projection and renderer boundary
+      - provider-boundary image materialization restricted to data URLs, verified public HTTP(S), and AstrBot temporary media; DNS answers are pinned for each untrusted download
+      - ordered group-image placeholders with bounded caption materialization and provider work
     non_goals:
       - built-in additional Runtime Sensors, per-Sensor schemas, and explicit background-execution permissions
       - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy

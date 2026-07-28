@@ -12,6 +12,10 @@ import astrbot.core.provider.sources.openai_source as openai_source_module
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.provider.sources.groq_source import ProviderGroq
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
+from astrbot.core.utils.image_materializer import (
+    ImageMaterializationError,
+    MaterializedImage,
+)
 
 
 class _ErrorWithBody(Exception):
@@ -280,93 +284,6 @@ def test_extract_error_text_candidates_truncates_long_response_text():
     assert max(len(candidate) for candidate in candidates) <= (
         ProviderOpenAIOfficial._ERROR_TEXT_CANDIDATE_MAX_CHARS
     )
-
-
-@pytest.mark.asyncio
-async def test_summarize_messages_counts_roles_images_and_preview():
-    provider = _make_provider()
-    try:
-        summary = provider._summarize_messages(
-            [
-                {"role": "system", "content": "system prompt"},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "hello"},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": "data:image/jpeg;base64,abcd"},
-                        },
-                    ],
-                },
-            ]
-        )
-
-        assert summary["message_count"] == 2
-        assert summary["image_count"] == 1
-        assert summary["roles"] == ["system", "user"]
-        assert "system prompt" in summary["text_preview"]
-        assert "hello" in summary["text_preview"]
-    finally:
-        await provider.terminate()
-
-
-@pytest.mark.asyncio
-async def test_summarize_completion_extracts_preview_reasoning_and_usage():
-    provider = _make_provider()
-    try:
-        completion = ChatCompletion.model_validate(
-            {
-                "id": "chatcmpl-summary",
-                "object": "chat.completion",
-                "created": 0,
-                "model": "gpt-4o-mini",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": "final answer",
-                            "reasoning_content": "chain of thought summary",
-                            "tool_calls": [
-                                {
-                                    "id": "call_1",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "demo",
-                                        "arguments": '{"x":1}',
-                                    },
-                                }
-                            ],
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": 8,
-                    "completion_tokens": 3,
-                    "total_tokens": 11,
-                },
-            }
-        )
-
-        summary = provider._summarize_completion(completion)
-
-        assert summary["id"] == "chatcmpl-summary"
-        assert summary["model"] == "gpt-4o-mini"
-        assert summary["choices"] == 1
-        assert summary["finish_reason"] == "stop"
-        assert summary["has_content"] is True
-        assert summary["content_preview"] == "final answer"
-        assert summary["reasoning_preview"] == "chain of thought summary"
-        assert summary["tool_call_count"] == 1
-        assert summary["usage"] == {
-            "input_other": 8,
-            "input_cached": 0,
-            "output": 3,
-        }
-    finally:
-        await provider.terminate()
 
 
 @pytest.mark.asyncio
@@ -741,20 +658,17 @@ async def test_handle_api_error_invalid_attachment_after_fallback_raises():
 async def test_prepare_chat_payload_materializes_context_http_image_urls(monkeypatch):
     provider = _make_provider()
     try:
+        image = MaterializedImage(b"quoted-image", "image/png", "quoted-image")
 
-        async def fake_download(url: str) -> str:
+        async def fake_materialize(url: str) -> MaterializedImage:
             assert url == "https://example.com/quoted.png"
-            return "/tmp/quoted.png"
-
-        def fake_encode(image_path: str, **_kwargs) -> str:
-            assert image_path == "/tmp/quoted.png"
-            return "data:image/png;base64,abcd"
+            return image
 
         monkeypatch.setattr(
-            "astrbot.core.provider.sources.openai_source.download_image_by_url",
-            fake_download,
+            openai_source_module,
+            "materialize_image_ref",
+            fake_materialize,
         )
-        monkeypatch.setattr(provider, "_encode_image_file_to_data_url", fake_encode)
 
         contexts = [
             {
@@ -784,7 +698,7 @@ async def test_prepare_chat_payload_materializes_context_http_image_urls(monkeyp
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": "data:image/png;base64,abcd",
+                    "url": image.to_data_url(),
                     "detail": "high",
                 },
             },
@@ -865,14 +779,20 @@ async def test_prepare_chat_payload_materializes_context_http_image_urls_with_de
     try:
         image_path = tmp_path / "quoted-image.png"
         PILImage.new("RGBA", (1, 1), (255, 0, 0, 255)).save(image_path)
+        image = MaterializedImage(
+            image_path.read_bytes(),
+            "image/png",
+            "quoted-image",
+        )
 
-        async def fake_download(url: str) -> str:
+        async def fake_materialize(url: str) -> MaterializedImage:
             assert url == "https://example.com/quoted.png"
-            return str(image_path)
+            return image
 
         monkeypatch.setattr(
-            "astrbot.core.provider.sources.openai_source.download_image_by_url",
-            fake_download,
+            openai_source_module,
+            "materialize_image_ref",
+            fake_materialize,
         )
 
         payloads, _ = await provider._prepare_chat_payload(
@@ -894,16 +814,25 @@ async def test_prepare_chat_payload_materializes_context_http_image_urls_with_de
         )
 
         image_payload = payloads["messages"][0]["content"][1]["image_url"]
-        assert image_payload["url"].startswith("data:image/png;base64,")
+        assert image_payload["url"] == image.to_data_url()
     finally:
         await provider.terminate()
 
 
 @pytest.mark.asyncio
-async def test_prepare_chat_payload_materializes_context_file_uri_image_urls(tmp_path):
+async def test_prepare_chat_payload_materializes_context_file_uri_image_urls(
+    monkeypatch,
+    tmp_path,
+):
     provider = _make_provider()
     try:
-        image_path = tmp_path / "quoted-image.png"
+        temp_root = tmp_path / "temp"
+        temp_root.mkdir()
+        monkeypatch.setattr(
+            "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+            lambda: str(temp_root),
+        )
+        image_path = temp_root / "quoted-image.png"
         PILImage.new("RGBA", (1, 1), (255, 0, 0, 255)).save(image_path)
 
         payloads, _ = await provider._prepare_chat_payload(
@@ -999,17 +928,26 @@ async def test_resolve_image_part_rejects_invalid_file_uri(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_image_ref_to_data_url_mode_controls_invalid_file_behavior(tmp_path):
+async def test_image_ref_to_data_url_mode_controls_invalid_file_behavior(
+    monkeypatch,
+    tmp_path,
+):
     provider = _make_provider()
     try:
-        invalid_file = tmp_path / "not-image.txt"
+        temp_root = tmp_path / "temp"
+        temp_root.mkdir()
+        monkeypatch.setattr(
+            "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+            lambda: str(temp_root),
+        )
+        invalid_file = temp_root / "not-image.txt"
         invalid_file.write_text("not an image")
 
         assert (
             await provider._image_ref_to_data_url(str(invalid_file), mode="safe")
             is None
         )
-        with pytest.raises(ValueError, match="Invalid image file"):
+        with pytest.raises(ImageMaterializationError, match="valid image"):
             await provider._image_ref_to_data_url(str(invalid_file), mode="strict")
     finally:
         await provider.terminate()
@@ -1111,24 +1049,36 @@ async def test_materialize_context_drops_unreadable_image_parts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_encode_image_bs64_missing_file_raises(tmp_path):
+async def test_encode_image_bs64_missing_file_raises(monkeypatch, tmp_path):
     provider = _make_provider()
     try:
-        missing_path = tmp_path / "missing-image.png"
-        with pytest.raises(FileNotFoundError):
+        temp_root = tmp_path / "temp"
+        temp_root.mkdir()
+        monkeypatch.setattr(
+            "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+            lambda: str(temp_root),
+        )
+        missing_path = temp_root / "missing-image.png"
+        with pytest.raises(ImageMaterializationError, match="could not resolve image file"):
             await provider.encode_image_bs64(str(missing_path))
     finally:
         await provider.terminate()
 
 
 @pytest.mark.asyncio
-async def test_encode_image_bs64_invalid_file_raises(tmp_path):
+async def test_encode_image_bs64_invalid_file_raises(monkeypatch, tmp_path):
     provider = _make_provider()
     try:
-        invalid_file = tmp_path / "not-image.txt"
+        temp_root = tmp_path / "temp"
+        temp_root.mkdir()
+        monkeypatch.setattr(
+            "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+            lambda: str(temp_root),
+        )
+        invalid_file = temp_root / "not-image.txt"
         invalid_file.write_text("not an image")
 
-        with pytest.raises(ValueError, match="Invalid image file"):
+        with pytest.raises(ImageMaterializationError, match="valid image"):
             await provider.encode_image_bs64(str(invalid_file))
     finally:
         await provider.terminate()
@@ -1138,18 +1088,30 @@ async def test_encode_image_bs64_invalid_file_raises(tmp_path):
 async def test_encode_image_bs64_supports_base64_scheme():
     provider = _make_provider()
     try:
-        image_data = await provider.encode_image_bs64("base64://abcd")
+        image_buffer = BytesIO()
+        PILImage.new("RGBA", (1, 1), (255, 0, 0, 255)).save(
+            image_buffer,
+            format="PNG",
+        )
+        image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+        image_data = await provider.encode_image_bs64(f"base64://{image_base64}")
 
-        assert image_data == "data:image/jpeg;base64,abcd"
+        assert image_data == f"data:image/png;base64,{image_base64}"
     finally:
         await provider.terminate()
 
 
 @pytest.mark.asyncio
-async def test_encode_image_bs64_supports_file_uri(tmp_path):
+async def test_encode_image_bs64_supports_file_uri(monkeypatch, tmp_path):
     provider = _make_provider()
     try:
-        image_path = tmp_path / "quoted-image.png"
+        temp_root = tmp_path / "temp"
+        temp_root.mkdir()
+        monkeypatch.setattr(
+            "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+            lambda: str(temp_root),
+        )
+        image_path = temp_root / "quoted-image.png"
         PILImage.new("RGBA", (1, 1), (255, 0, 0, 255)).save(image_path)
 
         image_data = await provider.encode_image_bs64(image_path.as_uri())
@@ -1163,9 +1125,16 @@ async def test_encode_image_bs64_supports_file_uri(tmp_path):
 async def test_resolve_image_part_supports_base64_scheme():
     provider = _make_provider()
     try:
-        assert await provider._resolve_image_part("base64://abcd") == {
+        image_buffer = BytesIO()
+        PILImage.new("RGBA", (1, 1), (255, 0, 0, 255)).save(
+            image_buffer,
+            format="PNG",
+        )
+        image_base64 = base64.b64encode(image_buffer.getvalue()).decode("ascii")
+
+        assert await provider._resolve_image_part(f"base64://{image_base64}") == {
             "type": "image_url",
-            "image_url": {"url": "data:image/jpeg;base64,abcd"},
+            "image_url": {"url": f"data:image/png;base64,{image_base64}"},
         }
     finally:
         await provider.terminate()
@@ -1194,14 +1163,21 @@ async def test_resolve_image_part_preserves_base64_png_mime_type():
 
 @pytest.mark.asyncio
 async def test_prepare_chat_payload_materializes_context_localhost_file_uri_image_urls(
+    monkeypatch,
     tmp_path,
 ):
     provider = _make_provider()
     try:
-        image_path = tmp_path / "quoted-image.png"
+        temp_root = tmp_path / "temp"
+        temp_root.mkdir()
+        monkeypatch.setattr(
+            "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+            lambda: str(temp_root),
+        )
+        image_path = temp_root / "quoted-image.png"
         PILImage.new("RGBA", (1, 1), (255, 0, 0, 255)).save(image_path)
 
-        localhost_uri = f"file://localhost{image_path.as_posix()}"
+        localhost_uri = f"file://localhost/{image_path.as_posix()}"
         payloads, _ = await provider._prepare_chat_payload(
             prompt=None,
             contexts=[
@@ -1227,24 +1203,20 @@ async def test_prepare_chat_payload_materializes_context_localhost_file_uri_imag
 
 
 @pytest.mark.asyncio
-async def test_prepare_chat_payload_keeps_original_context_image_when_materialization_fails(
+async def test_prepare_chat_payload_drops_context_image_when_materialization_fails(
     monkeypatch,
 ):
     provider = _make_provider()
     try:
 
-        async def fake_download(url: str) -> str:
+        async def fake_materialize(url: str) -> MaterializedImage:
             assert url == "https://example.com/expired.png"
-            return "/tmp/not-an-image"
+            raise ImageMaterializationError("expired")
 
         monkeypatch.setattr(
-            "astrbot.core.provider.sources.openai_source.download_image_by_url",
-            fake_download,
-        )
-        monkeypatch.setattr(
-            provider,
-            "_encode_image_file_to_data_url",
-            lambda _image_path, **_kwargs: None,
+            openai_source_module,
+            "materialize_image_ref",
+            fake_materialize,
         )
 
         payloads, _ = await provider._prepare_chat_payload(
@@ -1267,12 +1239,6 @@ async def test_prepare_chat_payload_keeps_original_context_image_when_materializ
 
         assert payloads["messages"][0]["content"] == [
             {"type": "text", "text": "look"},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": "https://example.com/expired.png",
-                },
-            },
         ]
     finally:
         await provider.terminate()

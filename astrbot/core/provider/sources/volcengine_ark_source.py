@@ -24,9 +24,8 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsResult
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.io import download_image_by_url
+from astrbot.core.utils.image_materializer import materialize_image_ref
 from astrbot.core.utils.network_utils import is_connection_error, log_connection_failure
-from astrbot.core.utils.path_util import file_uri_to_path
 
 from ..register import register_provider_adapter
 
@@ -370,20 +369,7 @@ class ProviderVolcengineArk(Provider):
         return payload
 
     async def _encode_image_to_data_url(self, image_url: str) -> str:
-        if image_url.startswith("data:"):
-            return image_url
-        if image_url.startswith("base64://"):
-            return image_url.replace("base64://", "data:image/jpeg;base64,", 1)
-        if image_url.startswith("http://") or image_url.startswith("https://"):
-            downloaded_path = await download_image_by_url(image_url)
-            return await self._encode_image_to_data_url(downloaded_path)
-        local_path = (
-            file_uri_to_path(image_url) if image_url.startswith("file:") else image_url
-        )
-        image_path = Path(local_path)
-        image_bytes = await asyncio.to_thread(image_path.read_bytes)
-        image_bs64 = base64.b64encode(image_bytes).decode("utf-8")
-        return f"data:image/jpeg;base64,{image_bs64}"
+        return (await materialize_image_ref(image_url)).to_data_url()
 
     async def _write_data_url_to_temp_file(self, data_url: str) -> str:
         match = re.match(
@@ -404,26 +390,8 @@ class ProviderVolcengineArk(Provider):
         return file_path.as_uri()
 
     async def _convert_image_to_file_uri(self, image_url: str) -> str:
-        if image_url.startswith("file://"):
-            return self._normalize_file_uri_for_ark(image_url)
-        if image_url.startswith("data:"):
-            file_uri = await self._write_data_url_to_temp_file(image_url)
-            return self._normalize_file_uri_for_ark(file_uri)
-        if image_url.startswith("base64://"):
-            file_uri = await self._write_data_url_to_temp_file(
-                image_url.replace("base64://", "data:image/jpeg;base64,", 1)
-            )
-            return self._normalize_file_uri_for_ark(file_uri)
-        if image_url.startswith("http://") or image_url.startswith("https://"):
-            downloaded_path = await download_image_by_url(image_url)
-            return await self._convert_image_to_file_uri(downloaded_path)
-
-        local_path = (
-            image_url.replace("file:///", "", 1)
-            if image_url.startswith("file:///")
-            else image_url
-        )
-        file_uri = Path(local_path).expanduser().resolve().as_uri()
+        data_url = await self._encode_image_to_data_url(image_url)
+        file_uri = await self._write_data_url_to_temp_file(data_url)
         return self._normalize_file_uri_for_ark(file_uri)
 
     @staticmethod

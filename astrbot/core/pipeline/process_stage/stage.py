@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack
 
 from astrbot import logger
+from astrbot.core.interaction.group_reply import is_group_reply_candidate
 from astrbot.core.interaction.personal_runtime import (
     PersonalRuntimeManager,
 )
@@ -76,9 +77,7 @@ class ProcessStage(Stage):
             "activated_handlers",
             [],
         )
-        is_model_continuation = bool(
-            event.get_extra("_personal_runtime_model_continuation", False)
-        )
+        is_group_candidate = is_group_reply_candidate(event)
         self._prepare_interaction_output(event)
         manager: PersonalRuntimeManager | None = getattr(
             self,
@@ -117,12 +116,12 @@ class ProcessStage(Stage):
             if manager is not None and submission is not None:
                 stack.enter_context(manager.activate_turn(admission.turn))
             try:
-                if is_model_continuation:
+                if is_group_candidate:
                     middleware = self.ctx.interaction_middleware
                     if middleware is None:
                         event.stop_event()
                         return
-                    route = await middleware.admit_model_continuation_candidate(event)
+                    route = await middleware.admit_group_reply_candidate(event)
                     if route.route_mode is InteractionRouteMode.SILENT:
                         await middleware.handle_pipeline_event(event)
                         return

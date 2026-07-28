@@ -1,12 +1,22 @@
 import builtins
+from io import BytesIO
+from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image
 
 import astrbot.core.provider.sources.anthropic_source as anthropic_source
 import astrbot.core.provider.sources.kimi_code_source as kimi_code_source
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.utils.image_materializer import MaterializedImage
+
+
+def _valid_png_bytes() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class _FakeAsyncAnthropic:
@@ -249,10 +259,11 @@ def _make_anthropic_provider_for_payload_tests() -> anthropic_source.ProviderAnt
     )
 
 
-def test_prepare_payload_merges_consecutive_tool_results_into_single_user_message():
+@pytest.mark.asyncio
+async def test_prepare_payload_merges_consecutive_tool_results_into_single_user_message():
     provider = _make_anthropic_provider_for_payload_tests()
 
-    _, new_messages = provider._prepare_payload(
+    _, new_messages = await provider._prepare_payload(
         [
             {
                 "role": "assistant",
@@ -297,14 +308,22 @@ def test_prepare_payload_merges_consecutive_tool_results_into_single_user_messag
     ]
 
 
-def test_prepare_payload_converts_local_file_image_url_to_anthropic_image(tmp_path):
+@pytest.mark.asyncio
+async def test_prepare_payload_converts_local_file_image_url_to_anthropic_image(
+    monkeypatch,
+    tmp_path,
+):
     provider = _make_anthropic_provider_for_payload_tests()
-    image_path = tmp_path / "sample.png"
-    image_path.write_bytes(
-        b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    monkeypatch.setattr(
+        "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+        lambda: str(temp_root),
     )
+    image_path = temp_root / "sample.png"
+    image_path.write_bytes(_valid_png_bytes())
 
-    _, new_messages = provider._prepare_payload(
+    _, new_messages = await provider._prepare_payload(
         [
             {
                 "role": "user",
@@ -327,10 +346,42 @@ def test_prepare_payload_converts_local_file_image_url_to_anthropic_image(tmp_pa
     assert image_block["source"]["data"]
 
 
-def test_prepare_payload_keeps_single_tool_result_as_single_user_message():
+@pytest.mark.asyncio
+async def test_prepare_payload_materializes_https_context_image(monkeypatch):
+    provider = _make_anthropic_provider_for_payload_tests()
+    image = MaterializedImage(b"image-data", "image/png", "image-sha")
+    materialize = AsyncMock(return_value=image)
+    monkeypatch.setattr(
+        anthropic_source,
+        "materialize_image_ref",
+        materialize,
+    )
+    _, messages = await provider._prepare_payload(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://multimedia.nt.qq.com.cn/download?file=qq"
+                        },
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert messages[0]["content"][1]["source"]["media_type"] == "image/png"
+    materialize.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_prepare_payload_keeps_single_tool_result_as_single_user_message():
     provider = _make_anthropic_provider_for_payload_tests()
 
-    _, new_messages = provider._prepare_payload(
+    _, new_messages = await provider._prepare_payload(
         [
             {
                 "role": "assistant",
@@ -363,10 +414,11 @@ def test_prepare_payload_keeps_single_tool_result_as_single_user_message():
     }
 
 
-def test_prepare_payload_does_not_merge_non_consecutive_tool_results():
+@pytest.mark.asyncio
+async def test_prepare_payload_does_not_merge_non_consecutive_tool_results():
     provider = _make_anthropic_provider_for_payload_tests()
 
-    _, new_messages = provider._prepare_payload(
+    _, new_messages = await provider._prepare_payload(
         [
             {
                 "role": "assistant",

@@ -7,6 +7,15 @@ from astrbot.core.interaction.conversation_activity_source import (
     is_conversation_activity_capture_enabled,
     resolve_conversation_activity_target,
 )
+from astrbot.core.interaction.group_context_capture import (
+    GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA,
+    is_group_context_capture_candidate,
+)
+from astrbot.core.interaction.group_reply import (
+    is_group_reply_candidate,
+    mark_group_reply_candidate,
+    select_legacy_active_reply_candidate,
+)
 from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -260,23 +269,32 @@ class WakingCheckStage(Stage):
                     runtime_config=self.ctx.astrbot_config,
                 )
                 if continuation is not None:
+                    capture_group_context = is_group_context_capture_candidate(
+                        event,
+                        self.ctx.astrbot_config,
+                    )
                     is_wake = True
                     event.is_wake = True
                     event.is_at_or_wake_command = True
                     if continuation == "model":
-                        event.set_extra(
-                            "_personal_runtime_model_continuation",
-                            True,
+                        mark_group_reply_candidate(
+                            event,
+                            kind="continuation",
                         )
+                        if capture_group_context:
+                            event.set_extra(
+                                GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA,
+                                True,
+                            )
                     logger.info(
-                        "Personal Runtime accepted group continuation: "
+                        "Personal Runtime selected group continuation candidate: "
                         "session_id=%s sender_id=%s mode=%s",
                         event.unified_msg_origin,
                         event.get_sender_id(),
                         continuation,
                     )
 
-        if event.get_extra("_personal_runtime_model_continuation", False):
+        if is_group_reply_candidate(event):
             # Router owns admission for this unaddressed continuation candidate.
             event.set_extra("activated_handlers", [])
             event.set_extra("handlers_parsed_params", {})
@@ -295,6 +313,37 @@ class WakingCheckStage(Stage):
             return
 
         if not is_wake:
+            capture_group_context = is_group_context_capture_candidate(
+                event,
+                self.ctx.astrbot_config,
+            )
+            if select_legacy_active_reply_candidate(event, self.ctx.astrbot_config):
+                mark_group_reply_candidate(event, kind="ambient")
+                event.is_wake = True
+                event.is_at_or_wake_command = True
+                if capture_group_context:
+                    event.set_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, True)
+                logger.info(
+                    "Legacy group active-reply setting selected Router candidate: "
+                    "session_id=%s sender_id=%s",
+                    event.unified_msg_origin,
+                    event.get_sender_id(),
+                )
+                return
+            if capture_group_context:
+                event.set_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, True)
+                if is_conversation_activity_capture_enabled(self.ctx.astrbot_config):
+                    target = resolve_conversation_activity_target(
+                        event,
+                        self.ctx.plugin_manager.context.get_runtime_observation_targets(),
+                    )
+                    if is_conversation_activity_candidate(
+                        event,
+                        self.ctx.astrbot_config,
+                        target,
+                    ):
+                        event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)
+                return
             if is_conversation_activity_capture_enabled(self.ctx.astrbot_config):
                 target = resolve_conversation_activity_target(
                     event,

@@ -22,6 +22,7 @@ from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
+from .group_reply import is_group_reply_candidate
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .observation_inbox import (
     ObservationAdmissionResult,
@@ -73,7 +74,6 @@ DEFAULT_MAX_IDLE_RUNTIMES = 1024
 DEFAULT_MAX_PENDING_OBSERVATIONS = 64
 DEFAULT_OBSERVATION_DEBOUNCE_SECONDS = 1.5
 MAX_COALESCED_MATERIAL_FINGERPRINTS = 512
-GROUP_CONVERSATION_FAST_CONTINUATION_SECONDS = 10.0
 
 
 class PendingTurnState(str, Enum):
@@ -563,7 +563,7 @@ class PersonalSessionRuntime:
             completed_at=completed_at,
         )
         self.last_completion_feedback = feedback
-        if persistent_state_changed:
+        if persistent_state_changed or self._persistent_state_dirty:
             self._persistent_state_dirty = True
             await self._persist_state()
 
@@ -586,11 +586,9 @@ class PersonalSessionRuntime:
             self.conversation_actor_id = None
             self.conversation_reply_completed_at = None
             return None
-        fast_seconds = min(
-            GROUP_CONVERSATION_FAST_CONTINUATION_SECONDS,
-            continuation_seconds,
-        )
-        return "fast" if now < completed_at + fast_seconds else "model"
+        # A delivered group reply only makes subsequent messages candidates.
+        # Router owns the unaddressed admission decision, including silence.
+        return "model"
 
     def _update_group_conversation_continuation(
         self,
@@ -696,6 +694,70 @@ class PersonalSessionRuntime:
             observation.observation_id
         )
         return replace(result, evaluation_task_created=task_created)
+
+    async def submit_idle_initiation(
+        self,
+        target_session: RuntimeObservationTarget,
+        *,
+        occurred_at: float,
+        minimum_idle_seconds: float,
+    ) -> ObservationAdmissionResult:
+        """Submit one configured idle fact for the current user-activity epoch."""
+        user_activity_at = self.state.last_user_activity_at
+        if user_activity_at is None:
+            return self._ignored_idle_initiation("idle_initiation_no_user_activity")
+        if occurred_at < user_activity_at + minimum_idle_seconds:
+            return self._ignored_idle_initiation("idle_initiation_not_due")
+        if (
+            self.state.last_idle_initiation_activity_at is not None
+            and self.state.last_idle_initiation_activity_at >= user_activity_at
+        ):
+            return self._ignored_idle_initiation("idle_initiation_already_submitted")
+
+        previous_idle_initiation_activity_at = (
+            self.state.last_idle_initiation_activity_at
+        )
+        self.state.claim_idle_initiation(user_activity_at=user_activity_at)
+        self._persistent_state_dirty = True
+        try:
+            await self._persist_state()
+        except Exception:
+            self.state.last_idle_initiation_activity_at = (
+                previous_idle_initiation_activity_at
+            )
+            self._persistent_state_dirty = True
+            logger.exception(
+                "Personal Runtime idle-initiation persistence failed: "
+                "config_id=%s persona_id=%s audience=%s",
+                self.key.config_id,
+                self.key.persona_id,
+                self.key.audience_key,
+            )
+            return self._ignored_idle_initiation(
+                "idle_initiation_persistence_failed"
+            )
+
+        observation = RuntimeObservation(
+            kind="idle_initiation",
+            source="personal_runtime.idle_initiation",
+            occurred_at=occurred_at,
+            target_session=target_session,
+            coalesce_key="idle_initiation",
+            payload={
+                "user_activity_at": user_activity_at,
+                "idle_seconds": max(0.0, occurred_at - user_activity_at),
+            },
+        )
+        return self.submit_observation(observation, now=occurred_at)
+
+    def _ignored_idle_initiation(self, reason_code: str) -> ObservationAdmissionResult:
+        return ObservationAdmissionResult(
+            status=ObservationAdmissionStatus.IGNORED,
+            observation_id="",
+            runtime_key=self.key,
+            pending_count=self.observation_inbox.pending_count,
+            reason_codes=(reason_code,),
+        )
 
     def _material_revision_for_observation(
         self,
@@ -1145,11 +1207,12 @@ class PersonalSessionRuntime:
         )
         user_activity_at = (
             None
-            if event.get_extra("_personal_runtime_model_continuation", False)
+            if is_group_reply_candidate(event)
             else self._turn_user_activity_at(turn)
         )
         self.touch()
-        self.state.mark_turn_active(user_activity_at=user_activity_at)
+        if self.state.mark_turn_active(user_activity_at=user_activity_at):
+            self._persistent_state_dirty = True
         return TurnAdmission(
             turn=turn,
             consumed_as_follow_up=False,
@@ -1266,7 +1329,7 @@ class PersonalRuntimeManager:
         *,
         config_id: str,
         runtime_config: Mapping[str, Any],
-    ) -> bool:
+    ) -> str | None:
         interaction_config = load_interaction_agent_config(runtime_config)
         if (
             not self._accepting
@@ -1339,6 +1402,36 @@ class PersonalRuntimeManager:
             runtime_config=runtime_config,
         )
         return runtime.submit_observation(observation, now=now)
+
+    async def submit_idle_initiation(
+        self,
+        target_session: RuntimeObservationTarget,
+        *,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: Mapping[str, Any],
+        occurred_at: float,
+        minimum_idle_seconds: float,
+    ) -> ObservationAdmissionResult:
+        """Submit a bounded idle fact without creating a platform event."""
+        self._ensure_accepting()
+        key = await self._resolve_observation_target_runtime_key(
+            target_session,
+            config_id=config_id,
+            plugin_context=plugin_context,
+            runtime_config=runtime_config,
+        )
+        self._evict_idle_sessions(now=occurred_at)
+        runtime = await self._get_or_create_runtime(
+            key,
+            plugin_context=plugin_context,
+            runtime_config=runtime_config,
+        )
+        return await runtime.submit_idle_initiation(
+            target_session,
+            occurred_at=occurred_at,
+            minimum_idle_seconds=minimum_idle_seconds,
+        )
 
     @asynccontextmanager
     async def submit_platform_event(
@@ -1997,7 +2090,21 @@ class PersonalRuntimeManager:
         plugin_context: Any,
         runtime_config: Mapping[str, Any],
     ) -> PersonalRuntimeKey:
-        target = observation.target_session
+        return await self._resolve_observation_target_runtime_key(
+            observation.target_session,
+            config_id=config_id,
+            plugin_context=plugin_context,
+            runtime_config=runtime_config,
+        )
+
+    async def _resolve_observation_target_runtime_key(
+        self,
+        target: RuntimeObservationTarget,
+        *,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: Mapping[str, Any],
+    ) -> PersonalRuntimeKey:
         conversation_persona_id = await resolve_conversation_persona_id(
             target.unified_msg_origin,
             plugin_context.conversation_manager,

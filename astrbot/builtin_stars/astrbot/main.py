@@ -1,12 +1,9 @@
 import copy
-import traceback
-from collections.abc import Iterable
 from sys import maxsize
 
 import astrbot.api.message_components as Comp
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Image, Plain
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.core import logger
 from astrbot.core.utils.session_waiter import (
@@ -18,13 +15,6 @@ from astrbot.core.utils.session_waiter import (
 )
 
 from .group_chat_context import GroupChatContext
-
-
-def _iter_message_components(event: AstrMessageEvent):
-    messages = getattr(getattr(event, "message_obj", None), "message", None)
-    if not isinstance(messages, Iterable) or isinstance(messages, (str, bytes)):
-        return ()
-    return tuple(messages)
 
 
 class Main(star.Star):
@@ -138,83 +128,11 @@ class Main(star.Star):
             logger.error("handle_empty_mention error: " + str(e))
 
     def ltm_enabled(self, event: AstrMessageEvent):
-        ltmse = self.context.get_config(umo=event.unified_msg_origin)[
-            "provider_ltm_settings"
-        ]
-        return ltmse["group_icl_enable"] or ltmse["active_reply"]["enable"]
-
-    @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
-    async def on_message(self, event: AstrMessageEvent):
-        """群聊记忆增强"""
-        message_components = _iter_message_components(event)
-        has_image_or_plain = False
-        for comp in message_components:
-            if isinstance(comp, Plain) or isinstance(comp, Image):
-                has_image_or_plain = True
-                break
-
-        if self.ltm_enabled(event) and self.group_chat_context and has_image_or_plain:
-            need_active = await self.group_chat_context.need_active_reply(event)
-
-            group_icl_enable = self.context.get_config(umo=event.unified_msg_origin)[
-                "provider_ltm_settings"
-            ]["group_icl_enable"]
-            if group_icl_enable:
-                """记录对话"""
-                try:
-                    await self.group_chat_context.handle_message(event)
-                except BaseException as e:
-                    logger.error(e)
-
-            if need_active:
-                """主动回复"""
-                provider = self.context.get_using_provider(event.unified_msg_origin)
-                if not provider:
-                    logger.error("未找到任何 LLM 提供商。请先配置。无法主动回复")
-                    return
-                try:
-                    conv = None
-                    session_curr_cid = await self.context.conversation_manager.get_curr_conversation_id(
-                        event.unified_msg_origin,
-                    )
-
-                    if not session_curr_cid:
-                        logger.error(
-                            "当前未处于对话状态，无法主动回复，请确保 平台设置->会话隔离(unique_session) 未开启，并使用 /new 创建一个会话。",
-                        )
-                        return
-
-                    conv = await self.context.conversation_manager.get_conversation(
-                        event.unified_msg_origin,
-                        session_curr_cid,
-                    )
-
-                    logger.debug(
-                        f"主动回复 - 会话 ID: {session_curr_cid}, 对话内容: {conv}"
-                    )
-                    logger.debug(f"主动回复 - 消息对象: {event.message_obj}")
-                    prompt = event.message_str
-                    image_urls = []
-                    for comp in message_components:
-                        if isinstance(comp, Image):
-                            try:
-                                image_urls.append(await comp.convert_to_file_path())
-                            except Exception:
-                                logger.exception("主动回复处理图片失败")
-
-                    if not conv:
-                        logger.error("未找到对话，无法主动回复")
-                        return
-
-                    yield event.request_llm(
-                        prompt=prompt,
-                        session_id=event.session_id,
-                        image_urls=image_urls,
-                        conversation=conv,
-                    )
-                except BaseException as e:
-                    logger.error(traceback.format_exc())
-                    logger.error(f"主动回复失败: {e}")
+        ltmse = self.context.get_config(umo=event.unified_msg_origin).get(
+            "provider_ltm_settings",
+            {},
+        )
+        return bool(ltmse.get("group_icl_enable", False))
 
     @filter.on_llm_request()
     async def preserve_group_context_for_external_agent(
@@ -249,5 +167,7 @@ class Main(star.Star):
                 )
                 if clean_session:
                     await self.group_chat_context.remove_session(event)
+                else:
+                    await self.group_chat_context.mark_reply_sent(event)
             except Exception as e:
                 logger.error(f"ltm: {e}")

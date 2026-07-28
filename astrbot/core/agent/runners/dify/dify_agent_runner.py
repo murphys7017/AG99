@@ -1,4 +1,3 @@
-import base64
 import os
 import sys
 import typing as T
@@ -17,6 +16,7 @@ from ...hooks import BaseAgentRunHooks
 from ...response import AgentResponseData
 from ...run_context import ContextWrapper, TContext
 from ..base import AgentResponse, AgentState, BaseAgentRunner
+from ..request_material import image_filename, materialize_runner_request
 from .dify_api_client import DifyAPIClient
 
 if sys.version_info >= (3, 12):
@@ -108,9 +108,9 @@ class DifyAgentRunner(BaseAgentRunner[TContext]):
 
     async def _execute_dify_request(self):
         """执行 Dify 请求的核心逻辑"""
-        prompt = self.req.prompt or ""
+        material = await materialize_runner_request(self.req)
+        prompt = material.prompt
         session_id = self.req.session_id or "unknown"
-        image_urls = self.req.image_urls or []
         system_prompt = self.req.system_prompt
 
         conversation_id = await sp.get_async(
@@ -123,15 +123,13 @@ class DifyAgentRunner(BaseAgentRunner[TContext]):
 
         # 处理图片上传
         files_payload = []
-        for image_url in image_urls:
-            # image_url is a base64 string
+        for index, image in enumerate(material.images, start=1):
             try:
-                image_data = base64.b64decode(image_url)
                 file_response = await self.api_client.file_upload(
-                    file_data=image_data,
+                    file_data=image.data,
                     user=session_id,
-                    mime_type="image/png",
-                    file_name="image.png",
+                    mime_type=image.mime_type,
+                    file_name=image_filename(image, index=index),
                 )
                 logger.debug(f"Dify 上传图片响应：{file_response}")
                 if "id" not in file_response:

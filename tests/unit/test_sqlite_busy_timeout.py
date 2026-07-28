@@ -60,7 +60,10 @@ async def test_main_sqlite_database_upgrades_personal_runtime_fingerprint_column
         async with db.get_db() as session:
             result = await session.execute(text("PRAGMA table_info(personal_runtime_states)"))
 
-        assert "last_expression_fingerprint" in {row[1] for row in result.fetchall()}
+        columns = {row[1] for row in result.fetchall()}
+        assert "last_expression_fingerprint" in columns
+        assert "last_user_activity_at" in columns
+        assert "last_idle_initiation_activity_at" in columns
     finally:
         await db.engine.dispose()
 

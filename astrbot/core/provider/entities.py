@@ -27,7 +27,11 @@ from astrbot.core.db.po import Conversation
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.io import download_file, download_image_by_url
+from astrbot.core.utils.image_materializer import (
+    ImageMaterializationError,
+    materialize_image_ref,
+)
+from astrbot.core.utils.io import download_file
 from astrbot.core.utils.path_util import file_uri_to_path
 
 
@@ -222,16 +226,10 @@ class ProviderRequest:
         # 3. 图片内容
         if self.image_urls:
             for image_url in self.image_urls:
-                if image_url.startswith("http"):
-                    image_path = await download_image_by_url(image_url)
-                    image_data = await self._encode_image_bs64(image_path)
-                elif image_url.startswith("file:"):
-                    image_path = file_uri_to_path(image_url)
-                    image_data = await self._encode_image_bs64(image_path)
-                else:
-                    image_data = await self._encode_image_bs64(image_url)
-                if not image_data:
-                    logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
+                try:
+                    image_data = (await materialize_image_ref(image_url)).to_data_url()
+                except ImageMaterializationError as exc:
+                    logger.warning("图片 %s 预处理失败，将忽略。错误: %s", image_url, exc)
                     continue
                 content_blocks.append(
                     {"type": "image_url", "image_url": {"url": image_data}},
@@ -295,12 +293,8 @@ class ProviderRequest:
         return {"role": "user", "content": content_blocks}
 
     async def _encode_image_bs64(self, image_url: str) -> str:
-        """将图片转换为 base64"""
-        if image_url.startswith("base64://"):
-            return image_url.replace("base64://", "data:image/jpeg;base64,")
-        with open(image_url, "rb") as f:
-            image_bs64 = base64.b64encode(f.read()).decode("utf-8")
-            return "data:image/jpeg;base64," + image_bs64
+        """Compatibility wrapper for callers that previously used this helper."""
+        return (await materialize_image_ref(image_url)).to_data_url()
 
     async def _encode_audio_bs64(
         self,

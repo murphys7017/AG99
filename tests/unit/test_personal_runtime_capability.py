@@ -8,6 +8,10 @@ import pytest
 from astrbot.core.cron.events import CronMessageEvent
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
+from astrbot.core.interaction.group_reply import (
+    GROUP_REPLY_CANDIDATE_EXTRA,
+    mark_group_reply_candidate,
+)
 from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.observation import (
     RuntimeObservation,
@@ -37,7 +41,11 @@ from astrbot.core.interaction.personal_policy import (
     PersonalPolicyEvaluationStatus,
     PersonalPolicyReason,
 )
-from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
+from astrbot.core.interaction.personal_runtime import (
+    PersonalRuntimeKey,
+    PersonalRuntimeManager,
+    PersonalSessionRuntime,
+)
 from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
 from astrbot.core.interaction.personal_state_repository import PersonalStateRepository
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
@@ -505,7 +513,7 @@ async def test_direct_reply_delivery_starts_gate_cooldown_without_proactive_quot
 
 
 @pytest.mark.asyncio
-async def test_group_follow_up_uses_fast_then_model_continuation(monkeypatch):
+async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
     metadata = _metadata(support_personal_runtime=True)
     context = _context_for_runtime(_RecordingPlatform(metadata))
     manager = PersonalRuntimeManager()
@@ -573,7 +581,7 @@ async def test_group_follow_up_uses_fast_then_model_continuation(monkeypatch):
         same_actor_follow_up,
         config_id="default",
         runtime_config=runtime_config,
-    ) == "fast"
+    ) == "model"
 
     monkeypatch.setattr(
         "astrbot.core.interaction.personal_runtime.time.time",
@@ -613,7 +621,7 @@ async def test_model_continuation_silent_route_starts_no_persona(
         message_type=MessageType.GROUP_MESSAGE,
         session_id="group-1",
     )
-    event.set_extra("_personal_runtime_model_continuation", True)
+    mark_group_reply_candidate(event, kind="continuation")
     runtime_config = {"interaction_middleware": {"enabled": True}}
     middleware = InteractionMiddleware(
         runtime_config,
@@ -1229,7 +1237,7 @@ async def test_model_continuation_reaches_silent_router_before_handlers(
 
     await waking.process(event)
 
-    assert event.get_extra("_personal_runtime_model_continuation") is True
+    assert event.get_extra(GROUP_REPLY_CANDIDATE_EXTRA) is True
     assert event.get_extra("activated_handlers") == []
     handler_lookup.assert_not_called()
 
@@ -1291,7 +1299,7 @@ async def test_model_continuation_scans_handlers_after_router_accepts(monkeypatc
         message_type=MessageType.GROUP_MESSAGE,
         session_id="group-1",
     )
-    event.set_extra("_personal_runtime_model_continuation", True)
+    mark_group_reply_candidate(event, kind="continuation")
     event.set_extra("activated_handlers", [])
     event.is_at_or_wake_command = True
     runtime_config = {
@@ -1350,6 +1358,171 @@ async def test_model_continuation_scans_handlers_after_router_accepts(monkeypatc
         async for _ in process.process(event):
             pass
         assert order == ["router", "handlers", "pipeline"]
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_idle_initiation_is_once_per_user_activity_and_stale_after_new_input():
+    key = PersonalRuntimeKey(
+        config_id="default",
+        persona_id="Alice",
+        audience_key="test:FriendMessage:target",
+        privacy_scope="direct",
+    )
+    runtime = PersonalSessionRuntime(
+        key,
+        observation_debounce_seconds=60.0,
+    )
+    target = RuntimeObservationTarget(
+        platform_id="test",
+        platform_name="test",
+        message_type=MessageType.FRIEND_MESSAGE,
+        session_id="target",
+        support_proactive_message=True,
+        support_personal_runtime=True,
+    )
+    occurred_at = time.time()
+    runtime.state.last_user_activity_at = occurred_at - 300.0
+    try:
+        first = await runtime.submit_idle_initiation(
+            target,
+            occurred_at=occurred_at,
+            minimum_idle_seconds=300.0,
+        )
+        assert first.admitted
+        assert runtime.state.last_idle_initiation_activity_at == occurred_at - 300.0
+
+        duplicate = await runtime.submit_idle_initiation(
+            target,
+            occurred_at=occurred_at + 100.0,
+            minimum_idle_seconds=300.0,
+        )
+        assert duplicate.status is ObservationAdmissionStatus.IGNORED
+        assert duplicate.reason_codes == ("idle_initiation_already_submitted",)
+
+        runtime.state.last_user_activity_at = occurred_at + 1.0
+        batch = runtime.observation_inbox.drain(
+            runtime_key=key,
+            closed_at=occurred_at + 1.0,
+        )
+        assert batch is not None
+        snapshot = runtime.state.snapshot()
+        features = ObservationFeatureBuilder.build(
+            batch,
+            state=snapshot,
+            runtime_busy=False,
+            settings=runtime.observation_gate_settings,
+            evaluated_at=occurred_at + 1.0,
+        )
+        gate = DeterministicObservationGate.evaluate(
+            batch,
+            state=snapshot,
+            features=features,
+            settings=runtime.observation_gate_settings,
+            evaluated_at=occurred_at + 1.0,
+        )
+        assert gate.reason_code is ObservationGateReason.STALE_IDLE_INITIATION
+
+        second = await runtime.submit_idle_initiation(
+            target,
+            occurred_at=occurred_at + 301.0,
+            minimum_idle_seconds=300.0,
+        )
+        assert second.admitted
+        assert runtime.state.last_idle_initiation_activity_at == occurred_at + 1.0
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_idle_initiation_retries_after_persistence_failure():
+    class Repository:
+        def __init__(self):
+            self.fail = True
+            self.saved_states = []
+
+        async def save(self, _key, state):
+            if self.fail:
+                raise RuntimeError("temporary database failure")
+            self.saved_states.append(state)
+
+    key = PersonalRuntimeKey(
+        config_id="default",
+        persona_id="Alice",
+        audience_key="test:FriendMessage:target",
+        privacy_scope="direct",
+    )
+    target = RuntimeObservationTarget(
+        platform_id="test",
+        platform_name="test",
+        message_type=MessageType.FRIEND_MESSAGE,
+        session_id="target",
+        support_proactive_message=True,
+        support_personal_runtime=True,
+    )
+    repository = Repository()
+    runtime = PersonalSessionRuntime(
+        key,
+        state_repository=repository,
+        observation_debounce_seconds=60.0,
+    )
+    occurred_at = time.time()
+    runtime.state.last_user_activity_at = occurred_at - 300.0
+    try:
+        failed = await runtime.submit_idle_initiation(
+            target,
+            occurred_at=occurred_at,
+            minimum_idle_seconds=300.0,
+        )
+        assert failed.reason_codes == ("idle_initiation_persistence_failed",)
+        assert runtime.state.last_idle_initiation_activity_at is None
+
+        repository.fail = False
+        retried = await runtime.submit_idle_initiation(
+            target,
+            occurred_at=occurred_at + 1.0,
+            minimum_idle_seconds=300.0,
+        )
+        assert retried.admitted
+        assert runtime.state.last_idle_initiation_activity_at == occurred_at - 300.0
+        assert len(repository.saved_states) == 1
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_user_activity_persists_without_a_visible_reply():
+    class Repository:
+        def __init__(self):
+            self.states = []
+
+        async def load(self, _key):
+            return None
+
+        async def save(self, _key, state):
+            self.states.append(state)
+
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    repository = Repository()
+    manager = PersonalRuntimeManager(state_repository=repository)
+    event = _DirectEvent(metadata)
+    runtime_config = {"interaction_middleware": {"enabled": True}}
+
+    try:
+        async with manager.submit_platform_event(
+            event,
+            "default",
+            context,
+            runtime_config,
+        ) as submission:
+            admission = await submission.admit(allow_follow_up=False)
+            assert admission.lease is not None
+            await admission.lease.release()
+
+        assert repository.states
+        assert repository.states[-1].last_user_activity_at is not None
     finally:
         await manager.shutdown()
 

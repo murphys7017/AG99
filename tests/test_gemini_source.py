@@ -1,10 +1,21 @@
 import base64
+from io import BytesIO
+from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image
 
+import astrbot.core.provider.sources.gemini_source as gemini_source
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.provider.sources.gemini_source import ProviderGoogleGenAI
+from astrbot.core.utils.image_materializer import MaterializedImage
+
+
+def _valid_png_bytes() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def test_gemini_empty_output_raises_empty_model_output_error():
@@ -32,9 +43,15 @@ def test_gemini_reasoning_only_output_is_allowed():
 
 
 @pytest.mark.asyncio
-async def test_gemini_encode_image_uses_detected_png_mime(tmp_path):
-    image_path = tmp_path / "sample.png"
-    image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+async def test_gemini_encode_image_uses_detected_png_mime(monkeypatch, tmp_path):
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    monkeypatch.setattr(
+        "astrbot.core.utils.image_materializer.get_astrbot_temp_path",
+        lambda: str(temp_root),
+    )
+    image_path = temp_root / "sample.png"
+    image_bytes = _valid_png_bytes()
     image_path.write_bytes(image_bytes)
     provider = object.__new__(ProviderGoogleGenAI)
 
@@ -45,11 +62,12 @@ async def test_gemini_encode_image_uses_detected_png_mime(tmp_path):
     )
 
 
-def test_prepare_conversation_preserves_tool_calls_with_assistant_text():
+@pytest.mark.asyncio
+async def test_prepare_conversation_preserves_tool_calls_with_assistant_text():
     provider = object.__new__(ProviderGoogleGenAI)
     provider.provider_config = {}
 
-    conversation = provider._prepare_conversation(
+    conversation = await provider._prepare_conversation(
         {
             "messages": [
                 {"role": "user", "content": "Hi"},
@@ -78,12 +96,45 @@ def test_prepare_conversation_preserves_tool_calls_with_assistant_text():
     assert parts[1].function_call.name == "weather"
 
 
-def test_prepare_conversation_skips_duplicate_empty_thought_part_when_tool_signature_exists():
+@pytest.mark.asyncio
+async def test_prepare_conversation_materializes_https_context_image(monkeypatch):
+    provider = object.__new__(ProviderGoogleGenAI)
+    provider.provider_config = {}
+    materialize = AsyncMock(
+        return_value=MaterializedImage(b"image-data", "image/png", "image-sha")
+    )
+    monkeypatch.setattr(gemini_source, "materialize_image_ref", materialize)
+
+    conversation = await provider._prepare_conversation(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://multimedia.nt.qq.com.cn/download?file=qq"
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert len(conversation[0].parts) == 2
+    materialize.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_prepare_conversation_skips_duplicate_empty_thought_part_when_tool_signature_exists():
     provider = object.__new__(ProviderGoogleGenAI)
     provider.provider_config = {}
     thought_signature = base64.b64encode(b"signature").decode("utf-8")
 
-    conversation = provider._prepare_conversation(
+    conversation = await provider._prepare_conversation(
         {
             "messages": [
                 {"role": "user", "content": "Hi"},

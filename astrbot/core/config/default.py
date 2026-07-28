@@ -239,6 +239,8 @@ DEFAULT_CONFIG = {
         "personal_heartbeat_enabled": False,
         "personal_conversation_activity_enabled": False,
         "personal_heartbeat_interval_seconds": 300.0,
+        "personal_idle_initiation_enabled": False,
+        "personal_idle_initiation_after_seconds": 1800.0,
         "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
@@ -259,9 +261,14 @@ DEFAULT_CONFIG = {
     "provider_ltm_settings": {
         "group_icl_enable": False,
         "group_message_max_cnt": 300,
+        "group_context_max_chars": 12000,
+        "group_context_record_max_chars": 1000,
         "image_caption": False,
         "image_caption_provider_id": "",
+        "image_caption_prompt": "",
         "image_caption_whitelist": [],
+        "image_caption_max_chars": 600,
+        "image_caption_cache_size": 256,
         "active_reply": {
             "enable": False,
             "method": "possibility_reply",
@@ -3011,6 +3018,12 @@ CONFIG_METADATA_2 = {
                     "group_message_max_cnt": {
                         "type": "int",
                     },
+                    "group_context_max_chars": {
+                        "type": "int",
+                    },
+                    "group_context_record_max_chars": {
+                        "type": "int",
+                    },
                     "image_caption": {
                         "type": "bool",
                     },
@@ -3023,6 +3036,12 @@ CONFIG_METADATA_2 = {
                     },
                     "image_caption_prompt": {
                         "type": "string",
+                    },
+                    "image_caption_max_chars": {
+                        "type": "int",
+                    },
+                    "image_caption_cache_size": {
+                        "type": "int",
                     },
                     "active_reply": {
                         "type": "object",
@@ -4265,6 +4284,16 @@ CONFIG_METADATA_3 = {
                         "description": "最大消息数量",
                         "type": "int",
                     },
+                    "provider_ltm_settings.group_context_max_chars": {
+                        "description": "上下文最大字符数",
+                        "type": "int",
+                        "hint": "从最新消息向前保留，达到总字符预算后停止；用于限制群聊上下文的 token 占用。",
+                    },
+                    "provider_ltm_settings.group_context_record_max_chars": {
+                        "description": "单条上下文最大字符数",
+                        "type": "int",
+                        "hint": "超长群消息会在记录时截断，避免单条消息挤占整个上下文。",
+                    },
                     "provider_ltm_settings.image_caption": {
                         "description": "自动理解图片",
                         "type": "bool",
@@ -4279,6 +4308,14 @@ CONFIG_METADATA_3 = {
                             "provider_ltm_settings.image_caption": True,
                         },
                     },
+                    "provider_ltm_settings.image_caption_prompt": {
+                        "description": "群聊图片转述提示词",
+                        "type": "string",
+                        "hint": "留空时回退到 provider_settings.image_caption_prompt。",
+                        "condition": {
+                            "provider_ltm_settings.image_caption": True,
+                        },
+                    },
                     "provider_ltm_settings.image_caption_whitelist": {
                         "description": "群聊图片预转述白名单",
                         "type": "list",
@@ -4288,9 +4325,26 @@ CONFIG_METADATA_3 = {
                             "provider_ltm_settings.image_caption": True,
                         },
                     },
+                    "provider_ltm_settings.image_caption_max_chars": {
+                        "description": "图片转述最大字符数",
+                        "type": "int",
+                        "hint": "过长的图片转述会截断后写入群聊上下文。",
+                        "condition": {
+                            "provider_ltm_settings.image_caption": True,
+                        },
+                    },
+                    "provider_ltm_settings.image_caption_cache_size": {
+                        "description": "图片转述缓存数量",
+                        "type": "int",
+                        "hint": "按图片内容、模型和提示词去重，避免重复图片重复调用模型。",
+                        "condition": {
+                            "provider_ltm_settings.image_caption": True,
+                        },
+                    },
                     "provider_ltm_settings.active_reply.enable": {
-                        "description": "主动回复",
+                        "description": "群聊主动回复候选",
                         "type": "bool",
+                        "hint": "仅抽样形成 Router 候选。Router 默认静默，必须启用交互中间件；该设置不再直接调用模型。",
                     },
                     "provider_ltm_settings.active_reply.method": {
                         "description": "主动回复方法",
@@ -4301,7 +4355,7 @@ CONFIG_METADATA_3 = {
                         },
                     },
                     "provider_ltm_settings.active_reply.possibility_reply": {
-                        "description": "回复概率",
+                        "description": "候选抽样概率",
                         "type": "float",
                         "hint": "0.0-1.0 之间的数值",
                         "slider": {"min": 0, "max": 1, "step": 0.05},
@@ -4468,6 +4522,22 @@ CONFIG_METADATA_3 = {
                             "interaction_middleware.personal_heartbeat_enabled": True,
                         },
                     },
+                    "interaction_middleware.personal_idle_initiation_enabled": {
+                        "description": "启用空闲主动发起",
+                        "type": "bool",
+                        "hint": "仅对已有真实用户互动且达到空闲阈值的会话提交一次受限 Observation；仍由 Policy、静音、安静时段、冷却和每日预算决定是否表达。",
+                        "condition": {
+                            "interaction_middleware.personal_heartbeat_enabled": True,
+                        },
+                    },
+                    "interaction_middleware.personal_idle_initiation_after_seconds": {
+                        "description": "空闲主动发起阈值秒数",
+                        "type": "float",
+                        "hint": "最小 30 秒。每次新的用户活动最多触发一次空闲 Observation；重启后保持该去重状态。",
+                        "condition": {
+                            "interaction_middleware.personal_idle_initiation_enabled": True,
+                        },
+                    },
                     "interaction_middleware.personal_conversation_activity_enabled": {
                         "description": "启用群聊环境观察",
                         "type": "bool",
@@ -4476,7 +4546,7 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.personal_runtime_conversation_continuation_seconds": {
                         "description": "群聊连续对话窗口秒数",
                         "type": "float",
-                        "hint": "机器人成功回复后，同一用户 10 秒内可直接续接；此后到窗口结束由现有 Router 判断 persona、hybrid 或 silent。设为 0 可关闭。",
+                        "hint": "机器人成功回复后，同一用户在窗口内的未唤醒消息由 Router 判断 persona、hybrid 或 silent。设为 0 可关闭。",
                     },
                     "interaction_middleware.personal_runtime_muted": {
                         "description": "静音主动人格",

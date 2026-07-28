@@ -91,7 +91,13 @@ The default AstrBot configuration is as follows:
     "provider_ltm_settings": {
         "group_icl_enable": False,
         "group_message_max_cnt": 300,
+        "group_context_max_chars": 12000,
+        "group_context_record_max_chars": 1000,
         "image_caption": False,
+        "image_caption_provider_id": "",
+        "image_caption_prompt": "",
+        "image_caption_max_chars": 600,
+        "image_caption_cache_size": 256,
         "active_reply": {
             "enable": False,
             "method": "possibility_reply",
@@ -409,22 +415,46 @@ General settings for group chat context awareness providers.
 
 Whether to enable group chat context awareness. Default is `false`. When enabled, the bot records group chat conversations to better understand context.
 
-The context content is placed in the conversation's system prompt.
+Capture happens only after the official whitelist and session-status checks. The
+messages are supplied as structured, untrusted group context to Router, Persona,
+and Core; group messages are never treated as system instructions.
 
 #### `provider_ltm_settings.group_message_max_cnt`
 
-Maximum number of group chat messages to record. Default is `100`. Messages exceeding this count are discarded.
+Maximum number of group chat messages to record. Default is `300`. Messages exceeding this count are discarded.
+
+#### `provider_ltm_settings.group_context_max_chars`
+
+Total character budget for group context in one request. Default is `12000`. The newest messages are retained first.
+
+#### `provider_ltm_settings.group_context_record_max_chars`
+
+Maximum stored characters for one group message. Default is `1000`; longer messages are truncated before storage.
 
 #### `provider_ltm_settings.image_caption`
 
-Whether to record images in group chats and automatically generate text descriptions using an image captioning model. Default is `false`. This depends on the `provider_settings.default_image_caption_provider_id` configuration. Use with caution as it can significantly increase API calls and token usage.
+Whether to record images in group chats and describe them with the provider selected by `image_caption_provider_id`. An image first enters group context as `[Image]` in receive order, then updates that same record when captioning completes. A download, format, or provider failure leaves only `[Image]`, never a long error response. Images accept `data:`, `base64://`, HTTP(S) URLs resolved to verified public addresses, and local files inside AstrBot's temporary media directory; arbitrary local paths and UNC network paths are not read. Downloads and provider calls share bounded concurrency, and a full pending queue leaves `[Image]` in context. This can significantly increase API calls and token usage.
+
+#### `provider_ltm_settings.image_caption_prompt`
+
+Prompt used for group image captioning. An empty value falls back to `provider_settings.image_caption_prompt`.
+
+#### `provider_ltm_settings.image_caption_max_chars`
+
+Maximum characters written to group context for a caption. Default is `600`.
+
+#### `provider_ltm_settings.image_caption_cache_size`
+
+Number of caption cache entries. Default is `256`; cache keys include the image bytes, provider, and prompt.
 
 #### `provider_ltm_settings.active_reply`
 
-- `enable`: Whether to enable active replies. Default is `false`.
+- `enable`: Whether to enable group active-reply candidates. Default is `false` and requires Interaction Middleware.
 - `method`: Method for active replies. Option is `possibility_reply`.
-- `possibility_reply`: Probability of an active reply. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
-- `whitelist`: ID whitelist for active replies. Only IDs in this list will trigger active replies. Empty means no whitelist filter. You can use the `/sid` command to get the session ID on a platform.
+- `possibility_reply`: Candidate sampling probability. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
+- `whitelist`: Candidate ID whitelist. Only listed IDs can form candidates. Empty means no whitelist filter. You can use `/sid` to get a platform session ID.
+
+Candidates never call an LLM directly. They first pass through the Router with `silent` available. Unaddressed group messages default to silence and continue only when the Bot has a clear reason to join.
 
 ### `interaction_middleware`
 
@@ -438,14 +468,23 @@ when `personal_policy_enabled` is enabled and
   Heartbeat scheduled independently for each observation target. Heartbeat only
   checks an existing retained batch; an empty Inbox creates no material, model
   call, or outbound message. The minimum interval is 30 seconds.
+- `personal_idle_initiation_enabled` / `personal_idle_initiation_after_seconds`:
+  Explicitly enable an idle-initiation observation scheduled by Heartbeat. It is
+  submitted once only after a session has real user activity and reaches the
+  configured idle threshold. It does not fabricate a user message or bypass
+  Policy, Persona, mute, quiet hours, cooldown, or daily budgets. A new user
+  message starts a new eligibility epoch, and the dedupe state persists across
+  restarts. It is disabled by default. `/stat/personal-runtime` exposes the
+  latest Heartbeat and idle-initiation status/reason codes, such as
+  `heartbeat_without_material` and `idle_initiation_not_due`.
 - `personal_conversation_activity_enabled`: Allow non-addressed messages from
   configured observed groups to become restricted `conversation_activity` facts.
   They still pass the whitelist and session-status checks, and do not enter the
   normal plugin, Router, or Core path.
 - `personal_runtime_conversation_continuation_seconds`: After a successful Bot
-  reply, the same sender has a 10-second direct continuation window. Later
-  messages in this window are classified by Router as `persona`, `hybrid`, or
-  `silent`. Set this to `0` to disable the window.
+  reply, unaddressed messages from the same sender within this window are
+  classified by Router as `persona`, `hybrid`, or `silent`. Set this to `0` to
+  disable the window.
 - `personal_runtime_muted`, `personal_runtime_quiet_hours_*`,
   `personal_runtime_reply_cooldown_seconds`,
   `personal_runtime_no_action_cooldown_seconds`, and
@@ -457,8 +496,9 @@ when `personal_policy_enabled` is enabled and
   back to the Default Proactive Message Target. It restricts which sessions may
   be observed; it does not decide when to send a message.
 
-`provider_ltm_settings.active_reply` is the existing group active-reply setting.
-It is separate from Personal Runtime Policy and they should not be conflated.
+`provider_ltm_settings.active_reply` only controls group-candidate sampling. It remains
+separate from Personal Runtime Policy, while candidates and continuation use the same
+Router silence gate.
 
 ### `content_safety`
 

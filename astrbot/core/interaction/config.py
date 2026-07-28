@@ -167,6 +167,19 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 300.0,
             ),
         ),
+        personal_idle_initiation_enabled=bool(
+            interaction_config.get("personal_idle_initiation_enabled", False)
+        ),
+        personal_idle_initiation_after_seconds=max(
+            30.0,
+            _float_or_default(
+                interaction_config.get(
+                    "personal_idle_initiation_after_seconds",
+                    1800.0,
+                ),
+                1800.0,
+            ),
+        ),
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
         stream_observation_enabled=bool(
             interaction_config.get("stream_observation_enabled", True)

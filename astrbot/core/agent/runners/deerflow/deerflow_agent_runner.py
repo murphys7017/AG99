@@ -21,6 +21,7 @@ from ...hooks import BaseAgentRunHooks
 from ...response import AgentResponseData
 from ...run_context import ContextWrapper, TContext
 from ..base import AgentResponse, AgentState, BaseAgentRunner
+from ..request_material import materialize_runner_request
 from .constants import DEERFLOW_SESSION_PREFIX, DEERFLOW_THREAD_ID_KEY
 from .deerflow_api_client import DeerFlowAPIClient
 from .deerflow_content_mapper import (
@@ -626,9 +627,10 @@ class DeerFlowAgentRunner(BaseAgentRunner[TContext]):
         )
 
     async def _execute_deerflow_request(self):
-        prompt = self.req.prompt or ""
+        material = await materialize_runner_request(self.req)
+        prompt = material.prompt
         session_id = self.req.session_id or f"{DEERFLOW_SESSION_PREFIX}-{uuid4()}"
-        image_urls = self.req.image_urls or []
+        image_urls = [image.to_data_url() for image in material.images]
         system_prompt = self.req.system_prompt
 
         thread_id = await self._ensure_thread_id(session_id)

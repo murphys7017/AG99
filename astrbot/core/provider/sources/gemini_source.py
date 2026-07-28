@@ -24,10 +24,13 @@ from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse, TokenUsage
 from astrbot.core.provider.func_tool_manager import ToolSet
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.io import download_file, download_image_by_url
+from astrbot.core.utils.image_materializer import (
+    ImageMaterializationError,
+    materialize_image_ref,
+)
+from astrbot.core.utils.io import download_file
 from astrbot.core.utils.media_utils import ensure_wav
 from astrbot.core.utils.network_utils import is_connection_error, log_connection_failure
-from astrbot.core.utils.path_util import file_uri_to_path
 
 from ..register import register_provider_adapter
 
@@ -320,7 +323,7 @@ class ProviderGoogleGenAI(Provider):
             ),
         )
 
-    def _prepare_conversation(self, payloads: dict) -> list[types.Content]:
+    async def _prepare_conversation(self, payloads: dict) -> list[types.Content]:
         """准备 Gemini SDK 的 Content 列表"""
 
         def create_text_part(text: str) -> types.Part:
@@ -329,11 +332,10 @@ class ProviderGoogleGenAI(Provider):
                 logger.warning("文本内容为空，已添加空格占位")
             return types.Part.from_text(text=content_a)
 
-        def process_image_url(image_url_dict: dict) -> types.Part:
+        async def process_image_url(image_url_dict: dict) -> types.Part:
             url = image_url_dict["url"]
-            mime_type = url.split(":")[1].split(";")[0]
-            image_bytes = base64.b64decode(url.split(",", 1)[1])
-            return types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            image = await materialize_image_ref(url)
+            return types.Part.from_bytes(data=image.data, mime_type=image.mime_type)
 
         def process_audio_url(audio_url_dict: dict) -> types.Part:
             url = audio_url_dict["url"]
@@ -364,18 +366,22 @@ class ProviderGoogleGenAI(Provider):
 
             if role == "user":
                 if isinstance(content, list):
-                    parts = [
-                        (
-                            types.Part.from_text(text=item["text"] or " ")
-                            if item["type"] == "text"
-                            else (
-                                process_image_url(item["image_url"])
-                                if item["type"] == "image_url"
-                                else process_audio_url(item["audio_url"])
-                            )
-                        )
-                        for item in content
-                    ]
+                    parts = []
+                    for item in content:
+                        if item["type"] == "text":
+                            parts.append(types.Part.from_text(text=item["text"] or " "))
+                        elif item["type"] == "image_url":
+                            try:
+                                parts.append(
+                                    await process_image_url(item["image_url"])
+                                )
+                            except ImageMaterializationError as exc:
+                                logger.warning(
+                                    "Failed to materialize Gemini context image: %s",
+                                    exc,
+                                )
+                        else:
+                            parts.append(process_audio_url(item["audio_url"]))
                 else:
                     parts = [create_text_part(content)]
                 append_or_extend(gemini_contents, parts, types.UserContent)
@@ -626,7 +632,7 @@ class ProviderGoogleGenAI(Provider):
         if self.provider_config.get("gm_resp_image_modal", False):
             modalities.append("IMAGE")
 
-        conversation = self._prepare_conversation(payloads)
+        conversation = await self._prepare_conversation(payloads)
         temperature = payloads.get("temperature", 0.7)
 
         result: types.GenerateContentResponse | None = None
@@ -709,7 +715,7 @@ class ProviderGoogleGenAI(Provider):
             None,
         )
         model = payloads.get("model", self.get_model())
-        conversation = self._prepare_conversation(payloads)
+        conversation = await self._prepare_conversation(payloads)
 
         result = None
         while True:
@@ -995,16 +1001,10 @@ class ProviderGoogleGenAI(Provider):
         """组装上下文。"""
 
         async def resolve_image_part(image_url: str) -> dict | None:
-            if image_url.startswith("http"):
-                image_path = await download_image_by_url(image_url)
-                image_data = await self.encode_image_bs64(image_path)
-            elif image_url.startswith("file:"):
-                image_path = file_uri_to_path(image_url)
-                image_data = await self.encode_image_bs64(image_path)
-            else:
-                image_data = await self.encode_image_bs64(image_url)
-            if not image_data:
-                logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
+            try:
+                image_data = (await materialize_image_ref(image_url)).to_data_url()
+            except ImageMaterializationError as exc:
+                logger.warning("图片 %s 预处理失败，将忽略。错误: %s", image_url, exc)
                 return None
             return {
                 "type": "image_url",
@@ -1107,31 +1107,8 @@ class ProviderGoogleGenAI(Provider):
         return {"role": "user", "content": content_blocks}
 
     async def encode_image_bs64(self, image_url: str) -> str:
-        """将图片转换为 base64"""
-        if image_url.startswith("data:"):
-            return image_url
-        if image_url.startswith("base64://"):
-            raw_base64 = image_url.removeprefix("base64://")
-            image_bytes = base64.b64decode(raw_base64)
-            mime_type = self._detect_image_mime_type(image_bytes)
-            return f"data:{mime_type};base64,{raw_base64}"
-        with open(image_url, "rb") as f:
-            image_bytes = f.read()
-        mime_type = self._detect_image_mime_type(image_bytes)
-        image_bs64 = base64.b64encode(image_bytes).decode("utf-8")
-        return f"data:{mime_type};base64,{image_bs64}"
-
-    @staticmethod
-    def _detect_image_mime_type(image_bytes: bytes) -> str:
-        if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
-            return "image/png"
-        if image_bytes[:2] == b"\xff\xd8":
-            return "image/jpeg"
-        if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
-            return "image/gif"
-        if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
-            return "image/webp"
-        return "image/jpeg"
+        """Convert a verified image reference to a provider-neutral data URL."""
+        return (await materialize_image_ref(image_url)).to_data_url()
 
     async def _close_httpx_client(self, client: httpx.AsyncClient | None) -> None:
         """Safely close an httpx.AsyncClient, swallowing errors for idempotency."""

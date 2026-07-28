@@ -1,7 +1,6 @@
 import base64
 import json
 from collections.abc import AsyncGenerator
-from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
@@ -22,13 +21,15 @@ from astrbot.core.provider.output_contract_tools import (
     build_single_tool_set_from_compiled_contract,
     build_single_tool_set_from_contract,
 )
-from astrbot.core.utils.io import download_image_by_url
+from astrbot.core.utils.image_materializer import (
+    ImageMaterializationError,
+    materialize_image_ref,
+)
 from astrbot.core.utils.network_utils import (
     create_proxy_client,
     is_connection_error,
     log_connection_failure,
 )
-from astrbot.core.utils.path_util import file_uri_to_path
 
 from ..register import register_provider_adapter
 
@@ -198,7 +199,7 @@ class ProviderAnthropic(Provider):
                 "type": "enabled",
             }
 
-    def _prepare_payload(self, messages: list[dict]):
+    async def _prepare_payload(self, messages: list[dict]):
         """准备 Anthropic API 的请求 payload
 
         Args:
@@ -303,7 +304,7 @@ class ProviderAnthropic(Provider):
                             # Convert OpenAI image_url format to Anthropic image format
                             image_url_data = part.get("image_url", {})
                             url = image_url_data.get("url", "")
-                            image_block = self._convert_context_image_url(url)
+                            image_block = await self._convert_context_image_url(url)
                             if image_block is not None:
                                 converted_content.append(image_block)
                         elif part.get("type") == "audio_url":
@@ -436,22 +437,11 @@ class ProviderAnthropic(Provider):
             sanitized
         )
 
-    def _convert_context_image_url(self, url: str) -> dict | None:
+    async def _convert_context_image_url(self, url: str) -> dict | None:
         """Convert an OpenAI image_url context block to Anthropic base64 format."""
         try:
-            if url.startswith("data:") and ";base64," in url:
-                _, base64_data = url.split(",", 1)
-                image_bytes = base64.b64decode(base64_data)
-            else:
-                image_path = self._resolve_local_image_path(url)
-                if image_path is None:
-                    logger.warning(
-                        "Unsupported image URL format for Anthropic contexts: %s...",
-                        url[:50],
-                    )
-                    return None
-                image_bytes = image_path.read_bytes()
-        except (OSError, ValueError, TypeError) as exc:
+            image = await materialize_image_ref(url)
+        except ImageMaterializationError as exc:
             logger.warning(
                 "Failed to load Anthropic context image: url=%s error=%s",
                 url[:80],
@@ -463,20 +453,10 @@ class ProviderAnthropic(Provider):
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": self._detect_image_mime_type(image_bytes),
-                "data": base64.b64encode(image_bytes).decode("utf-8"),
+                "media_type": image.mime_type,
+                "data": base64.b64encode(image.data).decode("ascii"),
             },
         }
-
-    @staticmethod
-    def _resolve_local_image_path(url: str) -> Path | None:
-        if url.startswith("file:"):
-            path = Path(file_uri_to_path(url))
-        elif "://" not in url:
-            path = Path(url)
-        else:
-            return None
-        return path if path.is_file() else None
 
     def _extract_usage(self, usage: Usage | None) -> TokenUsage:
         if usage is None:
@@ -793,7 +773,7 @@ class ProviderAnthropic(Provider):
                 for tool_call_result in tool_calls_result:
                     context_query.extend(tool_call_result.to_openai_messages())
 
-        system_prompt, new_messages = self._prepare_payload(context_query)
+        system_prompt, new_messages = await self._prepare_payload(context_query)
 
         model = model or self.get_model()
 
@@ -872,7 +852,7 @@ class ProviderAnthropic(Provider):
                 for tool_call_result in tool_calls_result:
                     context_query.extend(tool_call_result.to_openai_messages())
 
-        system_prompt, new_messages = self._prepare_payload(context_query)
+        system_prompt, new_messages = await self._prepare_payload(context_query)
 
         model = model or self.get_model()
 
@@ -901,18 +881,6 @@ class ProviderAnthropic(Provider):
         async for llm_response in self._query_stream(payloads, func_tool):
             yield llm_response
 
-    def _detect_image_mime_type(self, data: bytes) -> str:
-        """根据图片二进制数据的 magic bytes 检测 MIME 类型"""
-        if data[:8] == b"\x89PNG\r\n\x1a\n":
-            return "image/png"
-        if data[:2] == b"\xff\xd8":
-            return "image/jpeg"
-        if data[:6] in (b"GIF87a", b"GIF89a"):
-            return "image/gif"
-        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-            return "image/webp"
-        return "image/jpeg"
-
     async def assemble_context(
         self,
         text: str,
@@ -923,36 +891,7 @@ class ProviderAnthropic(Provider):
         """组装上下文，支持文本和图片"""
 
         async def resolve_image_url(image_url: str) -> dict | None:
-            if image_url.startswith("data:") and ";base64," in image_url:
-                image_data = image_url
-                _, base64_data = image_url.split(",", 1)
-                image_bytes = base64.b64decode(base64_data)
-                mime_type = self._detect_image_mime_type(image_bytes)
-            elif image_url.startswith("http"):
-                image_path = await download_image_by_url(image_url)
-                image_data, mime_type = await self.encode_image_bs64(image_path)
-            elif image_url.startswith("file:"):
-                image_path = file_uri_to_path(image_url)
-                image_data, mime_type = await self.encode_image_bs64(image_path)
-            else:
-                image_data, mime_type = await self.encode_image_bs64(image_url)
-
-            if not image_data:
-                logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
-                return None
-
-            return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": mime_type,
-                    "data": (
-                        image_data.split("base64,")[1]
-                        if "base64," in image_data
-                        else image_data
-                    ),
-                },
-            }
+            return await self._convert_context_image_url(image_url)
 
         content = []
 
@@ -1005,23 +944,6 @@ class ProviderAnthropic(Provider):
 
         # 否则返回多模态格式
         return {"role": "user", "content": content}
-
-    async def encode_image_bs64(self, image_url: str) -> tuple[str, str]:
-        """将图片转换为 base64，同时检测实际 MIME 类型"""
-        if image_url.startswith("base64://"):
-            raw_base64 = image_url.replace("base64://", "")
-            try:
-                image_bytes = base64.b64decode(raw_base64)
-                mime_type = self._detect_image_mime_type(image_bytes)
-            except Exception:
-                mime_type = "image/jpeg"
-            return f"data:{mime_type};base64,{raw_base64}", mime_type
-        with open(image_url, "rb") as f:
-            image_bytes = f.read()
-            mime_type = self._detect_image_mime_type(image_bytes)
-            image_bs64 = base64.b64encode(image_bytes).decode("utf-8")
-            return f"data:{mime_type};base64,{image_bs64}", mime_type
-        return "", "image/jpeg"
 
     def get_current_key(self) -> str:
         return self.chosen_api_key

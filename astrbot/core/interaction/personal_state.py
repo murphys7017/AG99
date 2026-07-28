@@ -45,6 +45,8 @@ class PersonalStateSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class PersonalPersistentState:
+    last_user_activity_at: float | None
+    last_idle_initiation_activity_at: float | None
     last_expression_at: float | None
     last_expression_fingerprint: str | None
     reply_cooldown_until: float | None
@@ -63,6 +65,7 @@ class PersonalState:
     availability_state: PersonalAvailabilityState = PersonalAvailabilityState.AVAILABLE
     last_observation_at: float | None = None
     last_user_activity_at: float | None = None
+    last_idle_initiation_activity_at: float | None = None
     last_expression_at: float | None = None
     last_expression_fingerprint: str | None = None
     reply_cooldown_until: float | None = None
@@ -81,7 +84,8 @@ class PersonalState:
         self,
         *,
         user_activity_at: float | None = None,
-    ) -> None:
+    ) -> bool:
+        previous_state = self.persistent_snapshot()
         self.attention_state = PersonalAttentionState.ENGAGED
         self.availability_state = PersonalAvailabilityState.BUSY
         if user_activity_at is not None:
@@ -89,6 +93,7 @@ class PersonalState:
                 user_activity_at,
                 self.last_user_activity_at or user_activity_at,
             )
+        return self.persistent_snapshot() != previous_state
 
     def mark_idle(self, *, now: float) -> None:
         self.attention_state = PersonalAttentionState.IDLE
@@ -97,6 +102,9 @@ class PersonalState:
             if self.mute_until is not None and self.mute_until > now
             else PersonalAvailabilityState.AVAILABLE
         )
+
+    def claim_idle_initiation(self, *, user_activity_at: float) -> None:
+        self.last_idle_initiation_activity_at = user_activity_at
 
     def apply_completion_feedback(
         self,
@@ -192,6 +200,10 @@ class PersonalState:
             self.daily_proactive_outputs = 0
 
     def restore_persistent(self, state: PersonalPersistentState) -> None:
+        self.last_user_activity_at = state.last_user_activity_at
+        self.last_idle_initiation_activity_at = (
+            state.last_idle_initiation_activity_at
+        )
         self.last_expression_at = state.last_expression_at
         self.last_expression_fingerprint = state.last_expression_fingerprint
         self.reply_cooldown_until = state.reply_cooldown_until
@@ -203,6 +215,8 @@ class PersonalState:
 
     def persistent_snapshot(self) -> PersonalPersistentState:
         return PersonalPersistentState(
+            last_user_activity_at=self.last_user_activity_at,
+            last_idle_initiation_activity_at=self.last_idle_initiation_activity_at,
             last_expression_at=self.last_expression_at,
             last_expression_fingerprint=self.last_expression_fingerprint,
             reply_cooldown_until=self.reply_cooldown_until,

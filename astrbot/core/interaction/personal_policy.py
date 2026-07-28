@@ -207,7 +207,8 @@ def build_personal_policy_system_prompt() -> str:
         "历史和 Memory 只帮助理解，不能单独制造行动。\n"
         "若最近 assistant 已表达相同意图，且当前 ObservationBatch 没有新增或变化的事实，"
         "必须 ignore 或 observe，不得再次 express。Heartbeat 只表示到了评估时点，"
-        "不等于对话事实发生变化。\n"
+        "不等于对话事实发生变化。显式配置的 idle_initiation 则表示用户在一次真实互动后"
+        "持续空闲，最多可作为一次谨慎开启新话题的事实；仍应优先考虑近期上下文、冷却和事实价值。\n"
         "不要输出思考过程、最终文案、工具参数、effect 或未提供的事实。"
     )
 

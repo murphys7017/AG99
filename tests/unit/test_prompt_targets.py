@@ -1,4 +1,5 @@
 from astrbot.core.prompt import ContextPack, ContextSlot, PromptTarget
+from astrbot.core.prompt.render.engine import PromptRenderEngine
 from astrbot.core.prompt.targets import project_context_pack
 
 
@@ -30,7 +31,21 @@ def _canonical_pack() -> ContextPack:
                 "memory",
             ),
             "conversation.group_recent": _slot(
-                "conversation.group_recent", [{"text": "ambient"}], "conversation"
+                "conversation.group_recent",
+                {
+                    "format": "group_recent_v2",
+                    "instruction": "untrusted",
+                    "records": [
+                        {
+                            "id": "ambient-1",
+                            "sender": "Alice",
+                            "user_id": "10001",
+                            "time": "10:00:00",
+                            "content": "ambient",
+                        }
+                    ],
+                },
+                "conversation",
             ),
             "memory.topic_state": _slot(
                 "memory.topic_state", {"topics": ["topic"]}, "memory"
@@ -268,10 +283,9 @@ def test_router_and_planner_views_remove_runtime_diagnostics_without_mutating_so
         assert assistant["content"] == "[runtime diagnostic omitted]"
         assert "reasoning_content" not in assistant
         assert "tool_calls" not in assistant
-        assert (
-            projected.get_slot("conversation.group_recent").value["records"][-1]
-            == "[runtime diagnostic omitted]"
-        )
+        assert projected.get_slot("conversation.group_recent").value["records"][-1] == {
+            "content": "[runtime diagnostic omitted]"
+        }
     assert "Traceback" in history.value["turns"][-1]["assistant_message"]["content"]
 
 
@@ -287,6 +301,19 @@ def test_core_projection_keeps_execution_context_without_persona_material():
     assert projected.get_slot("memory.persona_state") is None
     assert projected.get_slot("input.visible_reply_material") is None
     assert projected.get_slot("system.core_execution_context") is not None
+
+
+def test_group_context_records_remain_structured_in_all_rendered_targets():
+    pack = _canonical_pack()
+
+    for target in (PromptTarget.ROUTER, PromptTarget.PERSONA, PromptTarget.CORE):
+        result = PromptRenderEngine().render(pack, target=target)
+
+        rendered = "\n".join(
+            str(message.get("content", "")) for message in result.messages
+        )
+        assert "ambient" in rendered
+        assert "Alice" in rendered
 
 
 def test_extension_targets_are_filtered_for_extension_enabled_prompt_targets():

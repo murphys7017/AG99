@@ -29,6 +29,10 @@ class PersonalStateRepository:
         if record is None:
             return None
         return PersonalPersistentState(
+            last_user_activity_at=record.last_user_activity_at,
+            last_idle_initiation_activity_at=(
+                record.last_idle_initiation_activity_at
+            ),
             last_expression_at=record.last_expression_at,
             last_expression_fingerprint=record.last_expression_fingerprint,
             reply_cooldown_until=record.reply_cooldown_until,
@@ -49,6 +53,10 @@ class PersonalStateRepository:
             persona_id=key.persona_id,
             audience_key=key.audience_key,
             privacy_scope=key.privacy_scope,
+            last_user_activity_at=state.last_user_activity_at,
+            last_idle_initiation_activity_at=(
+                state.last_idle_initiation_activity_at
+            ),
             last_expression_at=state.last_expression_at,
             last_expression_fingerprint=state.last_expression_fingerprint,
             reply_cooldown_until=state.reply_cooldown_until,

@@ -610,12 +610,30 @@ class BasePromptRenderer:
             group_recent_slot.value,
             dict,
         ):
-            if self._add_text_tag(
-                resolve_node("context/group_recent"),
-                "recent_messages",
-                self._clean_text(group_recent_slot.value.get("text")),
-                meta=self._slot_meta(group_recent_slot),
-            ):
+            payload = group_recent_slot.value
+            records = self._coerce_list(payload.get("records"))
+            if records:
+                group_ref = self._add_parent_tag(
+                    resolve_node("context/group_recent"),
+                    "group_conversation",
+                    meta=self._slot_meta(
+                        group_recent_slot,
+                        {"format": payload.get("format")},
+                    ),
+                )
+                self._add_text_tag(
+                    group_ref,
+                    "instruction",
+                    self._clean_text(payload.get("instruction")),
+                )
+                self._render_record_list(
+                    group_ref,
+                    parent_tag="messages",
+                    item_tag="message",
+                    items=records,
+                    body_keys=("sender", "user_id", "time", "content"),
+                    meta={},
+                )
                 rendered_slot_names.append(group_recent_slot.name)
 
         explicit_slot = self._find_slot(slots, "conversation.explicit_contexts")

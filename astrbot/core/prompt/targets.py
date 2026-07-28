@@ -191,6 +191,22 @@ def _project_slot(
         if projected is None:
             return None
 
+    if projected.name == "conversation.group_recent":
+        _project_group_recent(
+            projected,
+            max_records=(
+                8
+                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
+                else 12
+            ),
+            max_record_chars=(
+                800
+                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
+                else 1200
+            ),
+        )
+        return projected
+
     if target not in {
         PromptTarget.ROUTER,
         PromptTarget.CORE_PLANNER,
@@ -212,20 +228,6 @@ def _project_slot(
             projected,
             history_turns,
             max_message_chars=max_message_chars,
-        )
-    elif projected.name == "conversation.group_recent":
-        _project_group_recent(
-            projected,
-            max_records=(
-                8
-                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
-                else 12
-            ),
-            max_record_chars=(
-                800
-                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
-                else 1200
-            ),
         )
     return projected
 
@@ -345,16 +347,66 @@ def _project_group_recent(
         return
     selected = records[-max(0, max_records) :]
     safe_records = [
-        _sanitize_context_text(str(record), max_chars=max_record_chars)
+        _sanitize_group_record(record, max_content_chars=max_record_chars)
         for record in selected
     ]
     slot.value["records"] = safe_records
     slot.value["text"] = (
         "Recent group messages; sender identities remain distinct:\n"
-        + "\n".join(safe_records)
+        + "\n".join(_format_projected_group_record(record) for record in safe_records)
     )
     slot.meta["target_truncated"] = len(selected) != len(records)
     slot.meta["record_count"] = len(safe_records)
+
+
+def _sanitize_group_record(
+    value: Any,
+    *,
+    max_content_chars: int,
+) -> dict[str, Any]:
+    """Keep the renderer's structured group-record contract intact.
+
+    Earlier collectors supplied plain strings.  Keep those records usable by
+    lifting them into the current shape instead of allowing a target projection
+    to turn structured records into opaque strings.
+    """
+    if not isinstance(value, dict):
+        return {
+            "content": _sanitize_context_text(
+                str(value or ""),
+                max_chars=max_content_chars,
+            )
+        }
+
+    record: dict[str, Any] = {}
+    for key, max_chars in (
+        ("id", 128),
+        ("sender", 256),
+        ("user_id", 128),
+        ("time", 128),
+    ):
+        raw_value = value.get(key)
+        if raw_value is None:
+            continue
+        record[key] = _sanitize_context_text(str(raw_value), max_chars=max_chars)
+
+    sequence = value.get("sequence")
+    if isinstance(sequence, int) and not isinstance(sequence, bool):
+        record["sequence"] = sequence
+    record["content"] = _sanitize_context_content(
+        value.get("content"),
+        max_chars=max_content_chars,
+    )
+    return record
+
+
+def _format_projected_group_record(record: dict[str, Any]) -> str:
+    sender = str(record.get("sender") or "Unknown")
+    user_id = record.get("user_id")
+    if user_id:
+        sender += f" (user_id={user_id})"
+    occurred_at = str(record.get("time") or "unknown-time")
+    return f"[{sender}/{occurred_at}]: {record.get('content', '')}"
 
 
 def _sanitize_context_content(value: Any, *, max_chars: int) -> str:

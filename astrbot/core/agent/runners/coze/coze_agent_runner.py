@@ -1,4 +1,3 @@
-import base64
 import json
 import sys
 import typing as T
@@ -11,12 +10,17 @@ from astrbot.core.provider.entities import (
     LLMResponse,
     ProviderRequest,
 )
+from astrbot.core.utils.image_materializer import (
+    MaterializedImage,
+    materialize_image_ref,
+)
 
 from ...hooks import BaseAgentRunHooks
 from ...message import is_checkpoint_message
 from ...response import AgentResponseData
 from ...run_context import ContextWrapper, TContext
 from ..base import AgentResponse, AgentState, BaseAgentRunner
+from ..request_material import materialize_runner_request
 from .coze_api_client import CozeAPIClient
 
 if sys.version_info >= (3, 12):
@@ -116,9 +120,9 @@ class CozeAgentRunner(BaseAgentRunner[TContext]):
 
     async def _execute_coze_request(self):
         """执行 Coze 请求的核心逻辑"""
-        prompt = self.req.prompt or ""
+        material = await materialize_runner_request(self.req)
+        prompt = material.prompt
         session_id = self.req.session_id or "unknown"
-        image_urls = self.req.image_urls or []
         contexts = self.req.contexts or []
         system_prompt = self.req.system_prompt
 
@@ -202,18 +206,19 @@ class CozeAgentRunner(BaseAgentRunner[TContext]):
                         )
 
         # 构建当前消息
-        if prompt or image_urls:
-            if image_urls:
+        if prompt or material.images:
+            if material.images:
                 # 多模态
                 object_string_content = []
                 if prompt:
                     object_string_content.append({"type": "text", "text": prompt})
 
-                for url in image_urls:
-                    # the url is a base64 string
+                for image in material.images:
                     try:
-                        image_data = base64.b64decode(url)
-                        file_id = await self.api_client.upload_file(image_data)
+                        file_id = await self._upload_materialized_image(
+                            image,
+                            session_id,
+                        )
                         object_string_content.append(
                             {
                                 "type": "image",
@@ -221,7 +226,7 @@ class CozeAgentRunner(BaseAgentRunner[TContext]):
                             }
                         )
                     except Exception as e:
-                        logger.warning(f"处理图片失败 {url}: {e}")
+                        logger.warning(f"处理图片失败: {e}")
                         continue
 
                 if object_string_content:
@@ -331,11 +336,17 @@ class CozeAgentRunner(BaseAgentRunner[TContext]):
         image_url: str,
         session_id: str | None = None,
     ) -> str:
-        """下载图片并上传到 Coze，返回 file_id"""
-        import hashlib
+        """Materialize a context image and upload it to Coze."""
+        image = await materialize_image_ref(image_url)
+        return await self._upload_materialized_image(image, session_id)
 
-        # 计算哈希实现缓存
-        cache_key = hashlib.md5(image_url.encode("utf-8")).hexdigest()
+    async def _upload_materialized_image(
+        self,
+        image: MaterializedImage,
+        session_id: str | None = None,
+    ) -> str:
+        """Upload one verified image and cache the resulting Coze file id."""
+        cache_key = image.sha256
 
         if session_id:
             if session_id not in self.file_id_cache:
@@ -347,8 +358,7 @@ class CozeAgentRunner(BaseAgentRunner[TContext]):
                 return file_id
 
         try:
-            image_data = await self.api_client.download_image(image_url)
-            file_id = await self.api_client.upload_file(image_data)
+            file_id = await self.api_client.upload_file(image.data)
 
             if session_id:
                 self.file_id_cache[session_id][cache_key] = file_id
@@ -357,7 +367,7 @@ class CozeAgentRunner(BaseAgentRunner[TContext]):
             return file_id
 
         except Exception as e:
-            logger.error(f"处理图片失败 {image_url}: {e!s}")
+            logger.error(f"处理图片失败: {e!s}")
             raise Exception(f"处理图片失败: {e!s}")
 
     @override

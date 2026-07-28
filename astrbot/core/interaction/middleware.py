@@ -28,6 +28,7 @@ from .expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
 )
+from .group_reply import is_group_reply_candidate
 from .lifecycle import dispatch_interaction_lifecycle
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
@@ -359,14 +360,14 @@ class InteractionMiddleware:
         await self._handle_pipeline_turn(event)
         event.set_extra("_interaction_route_handled", True)
 
-    async def admit_model_continuation_candidate(
+    async def admit_group_reply_candidate(
         self,
         event: AstrMessageEvent,
     ) -> InteractionRouteDecision:
-        """Route an unaddressed continuation before exposing it to Handlers."""
+        """Route an unaddressed group candidate before exposing it to Handlers."""
 
-        if not event.get_extra("_personal_runtime_model_continuation", False):
-            raise ValueError("event is not a model continuation candidate")
+        if not is_group_reply_candidate(event):
+            raise ValueError("event is not a group reply candidate")
         runtime_config = self._get_runtime_config(event)
         if not is_middleware_enabled(runtime_config):
             return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
@@ -380,7 +381,7 @@ class InteractionMiddleware:
             turn_id=turn_state.turn_id,
             route_decision=route,
         )
-        event.set_extra("_personal_runtime_model_continuation_router_admitted", True)
+        event.set_extra("_interaction_group_reply_candidate_router_admitted", True)
         return route
 
     async def handle_runtime_observation(
@@ -767,9 +768,7 @@ class InteractionMiddleware:
             InteractionSpeculativePersonaStatus.PENDING,
         )
         turn_scope = ensure_interaction_turn_state(event).execution_scope
-        defer_persona_until_route = bool(
-            event.get_extra("_personal_runtime_model_continuation", False)
-        )
+        defer_persona_until_route = is_group_reply_candidate(event)
 
         def start_persona_task() -> asyncio.Task:
             return turn_scope.create_task(
@@ -787,7 +786,7 @@ class InteractionMiddleware:
         pre_admitted_route = (
             ensure_interaction_turn_state(event).route_decision
             if event.get_extra(
-                "_personal_runtime_model_continuation_router_admitted",
+                "_interaction_group_reply_candidate_router_admitted",
                 False,
             )
             else None
@@ -1207,7 +1206,7 @@ class InteractionMiddleware:
     ) -> InteractionRouteDecision:
         fallback_mode = (
             InteractionRouteMode.SILENT
-            if event.get_extra("_personal_runtime_model_continuation", False)
+            if is_group_reply_candidate(event)
             else InteractionRouteMode.HYBRID
         )
         if self.plugin_context is None:

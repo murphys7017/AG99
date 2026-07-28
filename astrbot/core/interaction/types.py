@@ -168,6 +168,8 @@ class InteractionAgentConfig:
     personal_heartbeat_enabled: bool = False
     personal_conversation_activity_enabled: bool = False
     personal_heartbeat_interval_seconds: float = 300.0
+    personal_idle_initiation_enabled: bool = False
+    personal_idle_initiation_after_seconds: float = 1800.0
     memory_window_size: int = 8
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200

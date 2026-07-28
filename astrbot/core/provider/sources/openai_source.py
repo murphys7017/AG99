@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import binascii
 import copy
 import inspect
 import json
@@ -8,7 +7,6 @@ import random
 import re
 import uuid
 from collections.abc import AsyncGenerator
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -21,8 +19,6 @@ from openai.lib.streaming.chat._completions import ChatCompletionStreamState
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion_usage import CompletionUsage
-from PIL import Image as PILImage
-from PIL import UnidentifiedImageError
 
 import astrbot.core.message.components as Comp
 from astrbot import logger
@@ -44,7 +40,11 @@ from astrbot.core.provider.output_contract_tools import (
     build_single_tool_set_from_contract,
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.io import download_file, download_image_by_url
+from astrbot.core.utils.image_materializer import (
+    ImageMaterializationError,
+    materialize_image_ref,
+)
+from astrbot.core.utils.io import download_file
 from astrbot.core.utils.media_utils import ensure_wav
 from astrbot.core.utils.network_utils import (
     create_proxy_client,
@@ -64,15 +64,6 @@ from ..register import register_provider_adapter
 )
 class ProviderOpenAIOfficial(Provider):
     _ERROR_TEXT_CANDIDATE_MAX_CHARS = 4096
-    _IMAGE_FORMAT_MIME_TYPES: dict[str, str] = {
-        "JPEG": "image/jpeg",
-        "PNG": "image/png",
-        "GIF": "image/gif",
-        "WEBP": "image/webp",
-        "BMP": "image/bmp",
-        "TIFF": "image/tiff",
-        "AVIF": "image/avif",
-    }
 
     def supports_output_contract_strategy(self, strategy: str) -> bool:
         return strategy in {"prompt_only", "protocol_tool_call"}
@@ -238,69 +229,6 @@ class ProviderOpenAIOfficial(Provider):
             return True
         return False
 
-    @classmethod
-    def _encode_image_file_to_data_url(
-        cls,
-        image_path: str,
-        *,
-        mode: Literal["safe", "strict"],
-    ) -> str | None:
-        try:
-            image_bytes = Path(image_path).read_bytes()
-        except OSError:
-            if mode == "strict":
-                raise
-            return None
-
-        image_format = cls._detect_image_format(image_bytes)
-        if image_format is None:
-            if mode == "strict":
-                raise ValueError(f"Invalid image file: {image_path}")
-            return None
-
-        mime_type = cls._image_format_to_mime_type(image_format)
-        image_bs64 = base64.b64encode(image_bytes).decode("utf-8")
-        return f"data:{mime_type};base64,{image_bs64}"
-
-    @staticmethod
-    def _detect_image_format(image_bytes: bytes) -> str | None:
-        """返回 Pillow 校验后的图片格式，非法图片返回 None。"""
-        try:
-            with PILImage.open(BytesIO(image_bytes)) as image:
-                image.verify()
-                return str(image.format or "").upper()
-        except (OSError, UnidentifiedImageError):
-            return None
-
-    @classmethod
-    def _image_format_to_mime_type(cls, image_format: str | None) -> str:
-        """将 Pillow 图片格式映射为 data URL 使用的 MIME 类型。
-
-        未识别格式保持历史 JPEG 兜底，兼容传入任意 `base64://` 内容的旧调用方。
-        """
-        return cls._IMAGE_FORMAT_MIME_TYPES.get(
-            str(image_format or "").upper(), "image/jpeg"
-        )
-
-    @staticmethod
-    def _base64_image_ref_to_data_url(image_ref: str) -> str:
-        """将 `base64://` 图片引用转换为带真实 MIME 的 data URL。
-
-        平台适配器可能通过 `base64://` 传入 PNG/GIF/WebP 等图片字节，
-        但不会额外携带 MIME 元数据。发送 OpenAI 请求前先识别真实格式，
-        避免把 PNG 等图片错误声明为 JPEG。
-        """
-        raw_base64 = image_ref.removeprefix("base64://")
-        mime_type = "image/jpeg"
-        try:
-            image_bytes = base64.b64decode(raw_base64)
-        except (binascii.Error, ValueError):
-            pass
-        else:
-            image_format = ProviderOpenAIOfficial._detect_image_format(image_bytes)
-            mime_type = ProviderOpenAIOfficial._image_format_to_mime_type(image_format)
-        return f"data:{mime_type};base64,{raw_base64}"
-
     @staticmethod
     def _file_uri_to_path(file_uri: str) -> str:
         return file_uri_to_path(file_uri)
@@ -311,20 +239,12 @@ class ProviderOpenAIOfficial(Provider):
         *,
         mode: Literal["safe", "strict"] = "safe",
     ) -> str | None:
-        if image_ref.startswith("base64://"):
-            return self._base64_image_ref_to_data_url(image_ref)
-
-        if image_ref.startswith("http"):
-            image_path = await download_image_by_url(image_ref)
-        elif image_ref.startswith("file://"):
-            image_path = self._file_uri_to_path(image_ref)
-        else:
-            image_path = image_ref
-
-        return self._encode_image_file_to_data_url(
-            image_path,
-            mode=mode,
-        )
+        try:
+            return (await materialize_image_ref(image_ref)).to_data_url()
+        except ImageMaterializationError:
+            if mode == "strict":
+                raise
+            return None
 
     async def _resolve_image_part(
         self,
@@ -332,14 +252,11 @@ class ProviderOpenAIOfficial(Provider):
         *,
         image_detail: str | None = None,
     ) -> dict | None:
-        if image_url.startswith("data:"):
-            image_payload = {"url": image_url}
-        else:
-            image_data = await self._image_ref_to_data_url(image_url, mode="safe")
-            if not image_data:
-                logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
-                return None
-            image_payload = {"url": image_data}
+        image_data = await self._image_ref_to_data_url(image_url, mode="safe")
+        if not image_data:
+            logger.warning(f"图片 {image_url} 得到的结果为空，将忽略。")
+            return None
+        image_payload = {"url": image_data}
 
         if image_detail:
             image_payload["detail"] = image_detail
