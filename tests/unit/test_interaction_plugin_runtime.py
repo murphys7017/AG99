@@ -13,7 +13,8 @@ from astrbot.core.interaction.plugin_runtime import (
     tool_supports_runtime_target,
 )
 from astrbot.core.pipeline.context_utils import call_event_hook
-from astrbot.core.star.star import StarMetadata, star_map
+from astrbot.core.star.base import Star
+from astrbot.core.star.star import StarMetadata, star_map, star_registry
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
 
@@ -156,3 +157,70 @@ def test_plugin_tool_runtime_target_defaults_to_persona_in_interaction_turn(
     assert not tool_supports_runtime_target(
         legacy_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
     )
+
+
+def test_plugin_declaration_sets_default_target_but_config_overrides_it(monkeypatch):
+    plugin_module = "test_plugins.work_tools"
+    monkeypatch.setitem(
+        star_map,
+        plugin_module,
+        StarMetadata(
+            name="work tools",
+            root_dir_name="work_tools",
+            interaction_runtime_target="core",
+        ),
+    )
+    tool = FunctionTool(
+        name="work_tool",
+        description="A work execution tool.",
+        parameters={"type": "object", "properties": {}},
+        handler_module_path=plugin_module,
+    )
+
+    class Event:
+        def __init__(self, target=None):
+            self._extras = {
+                "_interaction_enabled": True,
+                "_astrbot_config": {
+                    "interaction_middleware": {
+                        "plugin_runtime_targets": (
+                            {"work_tools": target} if target else {}
+                        )
+                    }
+                },
+            }
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+    declared_core_event = Event()
+    assert tool_supports_runtime_target(
+        declared_core_event, tool, PLUGIN_RUNTIME_TARGET_CORE
+    )
+
+    overridden_event = Event("personal_expression")
+    assert tool_supports_runtime_target(
+        overridden_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
+    )
+    assert not tool_supports_runtime_target(
+        overridden_event, tool, PLUGIN_RUNTIME_TARGET_CORE
+    )
+
+
+def test_star_runtime_target_declaration_is_registered():
+    plugin_module = "test_plugins.declared_runtime_target"
+    declared_plugin = type(
+        "DeclaredRuntimeTargetPlugin",
+        (Star,),
+        {
+            "__module__": plugin_module,
+            "interaction_runtime_target": "core",
+        },
+    )
+
+    try:
+        assert star_map[declared_plugin.__module__].interaction_runtime_target == "core"
+    finally:
+        metadata = star_map.pop(plugin_module, None)
+        if metadata in star_registry:
+            star_registry.remove(metadata)

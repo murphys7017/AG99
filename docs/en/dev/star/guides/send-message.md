@@ -15,6 +15,19 @@ async def helloworld(self, event: AstrMessageEvent):
     yield event.image_result("https://example.com/image.jpg") # Send an image from URL, must start with http or https
 ```
 
+### Persona Tool Output
+
+Outside a Persona Expression tool invocation, `event.send()`, `emit_output()`,
+`emit_progress()`, and streaming output keep their normal delivery behavior. When
+a plugin-owned LLM Tool runs inside Persona Expression, those legacy output paths
+are captured as model-visible tool material instead of being delivered immediately.
+The final Persona Expression remains the only owner of the user-visible reply.
+
+This applies to text strings, `MessageChain` values, `MessageEventResult` values,
+and streaming chains. Output produced by a background task created by the tool is
+outside that tool invocation and is not captured. Use normal explicit output APIs
+for work that must continue after the tool returns.
+
 ## Active Messages
 
 Active messages refer to the bot proactively pushing messages. Some platforms may not support active message sending.

@@ -33,7 +33,14 @@ Personal Runtime 在缺省配置下启用。已有配置若明确写了
 
 在 Interaction turn 中，已注册插件的 LLM 生命周期钩子与 LLM 工具默认属于
 `personal_expression`。这符合人格、娱乐、关系、提示词增强和 Persona 工具的默认定位；
-Core 只承载被明确指定为工作执行的插件。按插件目录名配置：
+Core 只承载被明确指定为工作执行的插件。插件可在类中声明默认目标：
+
+```python
+class MyWorkPlugin(Star):
+    interaction_runtime_target = "core"
+```
+
+也可按插件目录名在配置中覆盖：
 
 ```jsonc
 "interaction_middleware": {
@@ -45,8 +52,10 @@ Core 只承载被明确指定为工作执行的插件。按插件目录名配置
 }
 ```
 
-未配置的插件与无效值都按 `personal_expression` 处理。推荐使用插件目录名；为兼容已加载
-插件，运行时也会识别其模块路径和元数据名称。`core` 是唯一会使插件进入 Core 的值。
+运行目标优先级为：`interaction_middleware.plugin_runtime_targets` 配置、插件类或旧
+`register_star(..., interaction_runtime_target=...)` 声明、最后是 `personal_expression` 默认值。
+无效值按默认值处理。推荐使用插件目录名；为兼容已加载插件，运行时也会识别其模块路径和
+元数据名称。`core` 是唯一会使插件进入 Core 的值。
 
 此设置的边界如下：
 
@@ -56,7 +65,12 @@ Core 只承载被明确指定为工作执行的插件。按插件目录名配置
   中运行。它们可以终止事件，从而阻止后续 Persona 或 Core，但不会被当作 Persona 插件迁移。
 - 人格表达会提供 `OnWaitingLLMRequest`、`OnLLMRequest`、`OnAgentBegin`、Persona 工具的
   `OnUsingLLMTool` / `OnLLMToolRespond`、`OnLLMResponse` 与 `OnAgentDone`。请求钩子读取的是
-  人格分支私有的 `ProviderRequest`，不会覆盖 Core 共享请求。
+  人格分支私有的 `ProviderRequest`，不会覆盖 Core 共享请求；钩子收到的仍是同一个
+  `AstrMessageEvent`，以兼容既有类型检查与 event extras 用法。
+- Persona 工具调用中，旧插件返回的 `MessageEventResult` / `CommandResult`，以及
+  `event.send()`、`emit_output()`、`emit_progress()` 和流式发送，都会收集为模型可见的工具材料。
+  最终 Persona Expression 是唯一可见回复的 owner；工具另开后台 task 后的输出不属于该次工具
+  调用，仍按普通发送路径处理。
 - `hybrid` 路径先完成 Planner；Planner 决定执行时直接进入 Core，不会提前执行 Persona
   插件的工具、效果或 LLM 生命周期副作用。
 - 人格 Provider 回退时会按备用 Provider 重新绑定结构化输出协议，但不会重复调用
@@ -445,7 +459,7 @@ interaction middleware 对插件主要暴露两个阶段接口：
 
 这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Router 或 Planner 的模型决策重新注入 Prompt。
 
-跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在路由后的最终请求上触发：未配置为 `core` 的插件在 Persona Expression 请求上触发，显式 `core` 插件在 Core 请求上触发；它不参与 Router、Planner 或 Persona 内部工具阶段的模型调用。同一目标也控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 以及插件拥有的 LLM Tool；Persona 内部工具回路仅在实际执行插件工具时触发后两个工具生命周期钩子。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
+跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在路由后的最终请求上触发：默认或最终解析为 `personal_expression` 的插件在 Persona Expression 请求上触发，最终解析为 `core` 的插件在 Core 请求上触发；运行目标优先级为配置覆盖、类或旧装饰器声明、Persona 默认值。它不参与 Router、Planner 或 Persona 内部工具阶段的模型调用。同一目标也控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 以及插件拥有的 LLM Tool；Persona 内部工具回路仅在实际执行插件工具时触发后两个工具生命周期钩子。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
 
 ### Prompt Contributor
 

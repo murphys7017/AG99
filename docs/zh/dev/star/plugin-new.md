@@ -13,6 +13,7 @@ outline: deep
 
 > [!NOTE]
 > Yakumo fork 额外提供 [Persona Effect](./guides/persona-effects) 和 [Prompt Extension](./guides/prompt-extensions)。前者扩展 Persona 的结构化表现输出，后者向统一 Prompt 管线贡献模型可见事实；两者都不是 LLM Tool。
+> Interaction turn 中，普通插件的 LLM 钩子与插件拥有的工具默认增强 Persona Expression。工作执行型插件可在 `Star` 类上声明 `interaction_runtime_target = "core"`；`interaction_middleware.plugin_runtime_targets` 配置会覆盖该声明。
 
 ## 环境准备
 

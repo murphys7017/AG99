@@ -839,13 +839,14 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
         )
     )
     observed_hooks = []
+    observed_events = []
     hooked_request = None
 
     async def call_hook(event, hook_type, *args, **kwargs):
-        del event
         nonlocal hooked_request
         assert kwargs["execution_surface"] == "personal_expression"
         observed_hooks.append(hook_type.name)
+        observed_events.append(event)
         if hook_type.name == "OnLLMRequestEvent":
             request = args[0]
             hooked_request = request
@@ -864,8 +865,9 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
         call_hook,
     )
 
+    original_event = Event()
     result = await agent.generate_expression(
-        Event(),
+        original_event,
         plugin_context,
         InteractionAgentConfig(expression_provider_id="persona"),
         PersonaExpressionRequest(),
@@ -882,6 +884,8 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
     assert provider.calls[0]["output_contract"] is contract
     assert provider.calls[0]["compiled_output_contract"] is compiled
     assert result.spoken_reply == "插件修饰后的回复"
+    assert observed_events == [original_event] * len(observed_hooks)
+    assert original_event.get_extra("provider_request") is None
 
 
 @pytest.mark.asyncio

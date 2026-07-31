@@ -11,6 +11,7 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 
 > [!NOTE]
 > The Yakumo fork also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
+> In an Interaction turn, normal plugin LLM hooks and plugin-owned tools enhance Persona Expression by default. Work-execution plugins can declare `interaction_runtime_target = "core"` on their `Star` class; `interaction_middleware.plugin_runtime_targets` overrides that declaration.
 
 ## Environment Setup
 

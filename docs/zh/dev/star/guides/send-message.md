@@ -15,6 +15,17 @@ async def helloworld(self, event: AstrMessageEvent):
     yield event.image_result("https://example.com/image.jpg") # 发送 URL 图片，务必以 http 或 https 开头
 ```
 
+### Persona 工具输出
+
+在 Persona Expression 工具调用之外，`event.send()`、`emit_output()`、
+`emit_progress()` 和流式输出保持原有投递行为。插件拥有的 LLM Tool 在
+Persona Expression 内运行时，这些旧式输出路径会被收集为模型可见的工具材料，
+不会立刻发送到平台；最终 Persona Expression 仍是唯一的用户可见回复 owner。
+
+该规则覆盖文本字符串、`MessageChain`、`MessageEventResult` 和流式消息链。
+工具自行创建的后台 task 不属于本次工具调用，因此其输出不会被收集；需要在工具
+返回后继续执行的工作应使用常规的显式输出 API。
+
 ## 主动消息
 
 主动消息指的是机器人主动推送消息。某些平台可能不支持主动消息发送。

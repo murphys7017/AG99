@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -5,9 +6,11 @@ import mcp
 import pytest
 
 from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.agent.tool import TOOL_TARGET_PERSONAL_EXPRESSION, FunctionTool
+from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.message.components import Image
+from astrbot.core.message.message_event_result import MessageEventResult
 
 
 class _DummyEvent:
@@ -18,6 +21,105 @@ class _DummyEvent:
 
     def get_extra(self, _key: str):
         return None
+
+
+@pytest.mark.asyncio
+async def test_persona_tool_captures_legacy_message_result_without_sending():
+    class Event:
+        def __init__(self):
+            self._result = None
+            self._force_stopped = False
+            self.sent = []
+
+        def set_result(self, result):
+            self._result = result
+
+        def get_result(self):
+            return self._result
+
+        def clear_result(self):
+            self._result = None
+
+        async def send(self, message):
+            capture = get_active_tool_output_capture()
+            if capture is not None:
+                capture.capture(message)
+                return
+            self.sent.append(message)
+
+    async def legacy_tool(event):
+        await event.send("tool progress")
+        return MessageEventResult().message("tool fact")
+
+    event = Event()
+    tool = FunctionTool(
+        name="legacy_tool",
+        description="Returns legacy tool material.",
+        parameters={"type": "object", "properties": {}},
+        handler=legacy_tool,
+    )
+    run_context = ContextWrapper(
+        context=SimpleNamespace(event=event),
+        tool_execution_surface=TOOL_TARGET_PERSONAL_EXPRESSION,
+    )
+
+    results = [
+        result
+        async for result in FunctionToolExecutor._execute_local(tool, run_context)
+    ]
+
+    assert event.sent == []
+    assert event.get_result() is None
+    assert len(results) == 1
+    assert results[0].content[0].text == "tool progress\n\ntool fact"
+
+
+@pytest.mark.asyncio
+async def test_persona_tool_timeout_clears_legacy_event_state():
+    class Event:
+        def __init__(self):
+            self._result = None
+            self._force_stopped = False
+
+        def set_result(self, result):
+            self._result = result
+
+        def get_result(self):
+            return self._result
+
+        def clear_result(self):
+            self._result = None
+
+        def stop_event(self):
+            self._force_stopped = True
+            self.set_result(MessageEventResult().message("partial"))
+
+    async def slow_legacy_tool(event):
+        event.stop_event()
+        await asyncio.sleep(1)
+
+    event = Event()
+    tool = FunctionTool(
+        name="slow_legacy_tool",
+        description="Leaves legacy event state before timing out.",
+        parameters={"type": "object", "properties": {}},
+        handler=slow_legacy_tool,
+    )
+    run_context = ContextWrapper(
+        context=SimpleNamespace(event=event),
+        tool_execution_surface=TOOL_TARGET_PERSONAL_EXPRESSION,
+    )
+
+    with pytest.raises(Exception, match="execution timeout"):
+        async for _ in FunctionToolExecutor._execute_local(
+            tool,
+            run_context,
+            tool_call_timeout=0.01,
+        ):
+            pass
+
+    assert event.get_result() is None
+    assert event._force_stopped is False
 
 
 class _DummyTool:

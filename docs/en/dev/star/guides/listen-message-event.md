@@ -335,17 +335,19 @@ You can obtain the `ProviderRequest` object and modify it.
 The ProviderRequest object contains all information about the LLM request, including the request text, system prompt, etc.
 
 With Interaction Middleware enabled, an unconfigured plugin receives this hook on
-the final Persona Expression request for the user-visible reply. Only a plugin
-explicitly configured as `core` in `interaction_middleware.plugin_runtime_targets`
-receives it on a Core request. The same target rule applies to
+the final Persona Expression request for the user-visible reply. Resolution order is
+`interaction_middleware.plugin_runtime_targets`, the plugin class's optional
+`interaction_runtime_target` declaration, then the Persona default. Only a plugin
+resolved as `core` receives it on a Core request. The same target rule applies to
 `on_waiting_llm_request`, `on_agent_begin`, `on_llm_response`, `on_agent_done`,
 `on_using_llm_tool`, `on_llm_tool_respond`, and plugin-owned LLM Tools. Router,
 Core Planner do not emit these plugin hooks. Internal Persona tool calls do not emit
 request or Agent lifecycle hooks, but executing a plugin tool still emits
 `on_using_llm_tool` and `on_llm_tool_respond`. The Persona request is branch-local,
 so its mutation does not overwrite the Core request
-for the same event. Ordinary Pipeline handlers, such as keyword and command handlers,
-are unchanged and may still stop the event.
+for the same event, while the event itself remains the original `AstrMessageEvent`.
+Ordinary Pipeline handlers, such as keyword and command handlers, are unchanged and
+may still stop the event.
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent
@@ -494,6 +496,12 @@ async def on_agent_begin(self, event: AstrMessageEvent, run_context: ContextWrap
 When the Agent is about to call an LLM tool, the `on_using_llm_tool` hook is triggered.
 
 You can obtain the `FunctionTool` object and tool call arguments.
+
+When a plugin tool runs inside Persona Expression, legacy visible output is tool
+material instead of an immediate platform reply: `MessageEventResult`,
+`CommandResult`, `event.send()`, `emit_output()`, `emit_progress()`, and streaming
+output are returned to the model, and the final Persona Expression owns the visible
+reply. Output from a background task created by the tool is not captured.
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent

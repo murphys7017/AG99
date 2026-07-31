@@ -94,6 +94,32 @@ class MyPlugin(Star):
 4. 具体的处理函数 `Handler` 在插件类中定义，如这里的 `helloworld` 函数。
 5. 请务必使用 `from astrbot.api import logger` 来获取日志对象，而不是使用 `logging` 模块。
 
+在 Interaction Middleware 启用时，插件的 LLM 生命周期钩子与插件拥有的 LLM Tool 默认运行在
+Persona Expression，用于人格、娱乐和提示词增强。工作执行型插件可以在 `Star` 子类中声明：
+
+```python
+class MyWorkPlugin(Star):
+    interaction_runtime_target = "core"
+```
+
+也可以在旧式装饰器中声明相同默认值：
+
+```python
+@register_star(
+    name="工作插件",
+    author="AstrBot",
+    desc="执行工作型任务",
+    version="1.0.0",
+    interaction_runtime_target="core",
+)
+class MyWorkPlugin(Star):
+    pass
+```
+
+配置文件中的 `interaction_middleware.plugin_runtime_targets` 优先级更高，完整顺序为
+“配置覆盖 > 类或装饰器声明 > Persona Expression 默认值”；关键词、命令等 Pipeline Handler
+不受此设置影响，仍保持原有的终止语义。
+
 > [!TIP]
 >
 > `Handler` 一定需要在插件类中注册，前两个参数必须为 `self` 和 `event`。如果文件行数过长，可以将服务写在外部，然后在 `Handler` 中调用。
@@ -485,7 +511,7 @@ async def on_astrbot_loaded(self):
 
 ProviderRequest 对象包含了 LLM 请求的所有信息，包括请求的文本、系统提示等。
 
-启用 Interaction Middleware 时，插件默认在 Persona Expression 的最终用户可见表达请求上收到此钩子；只有在 `interaction_middleware.plugin_runtime_targets` 中显式配置为 `core` 的插件，才会在 Core 请求上收到它。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 和插件注册的 LLM Tool。Router 和 Core Planner 不会触发这些插件钩子；Persona 内部工具回路不会触发请求或 Agent 生命周期钩子，但实际执行插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
+启用 Interaction Middleware 时，插件默认在 Persona Expression 的最终用户可见表达请求上收到此钩子。运行目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 和插件注册的 LLM Tool。Router 和 Core Planner 不会触发这些插件钩子；Persona 内部工具回路不会触发请求或 Agent 生命周期钩子，但实际执行插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent

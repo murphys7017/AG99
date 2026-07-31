@@ -472,10 +472,13 @@ when `personal_policy_enabled` is enabled and
   session's configured chat provider; an explicit ID takes precedence.
 - `plugin_runtime_targets`: Plugin execution-target map. Use the plugin directory
   name as the key when possible, with a value of `core` or `personal_expression`.
-  In an Interaction turn, an unconfigured plugin defaults to Persona Expression;
-  only an explicit `core` plugin participates in Core LLM lifecycle hooks and
-  tools. Keyword, command, and `AdapterMessageEvent` handlers remain in the
-  official Pipeline and are not migrated by this setting. Example:
+  This configuration overrides a plugin class's optional
+  `interaction_runtime_target` declaration; an unconfigured and undeclared
+  plugin defaults to Persona Expression. Only a resolved `core` plugin
+  participates in Core LLM lifecycle hooks and tools. Keyword, command, and
+  `AdapterMessageEvent` handlers remain in the official Pipeline and are not
+  migrated by this setting. A plugin can declare its default in code with
+  `interaction_runtime_target = "core"`. Example:
 
   ```jsonc
   "interaction_middleware": {

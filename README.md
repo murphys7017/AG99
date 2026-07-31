@@ -122,7 +122,7 @@ collect → build → target projection → render profile → prompt layout/tre
 
 边界上，Collector 只提供事实，Render Profile 只提供目标局部指令，Layout 只负责语义落位，Renderer 只负责 provider 格式。Prompt 系统不做路由判断、不写 memory、不执行工具、不发送消息，也不理解 Motion、Live2D 等插件语义。实际可执行工具仍由 Main Agent 装配到 `func_tool`，不能仅靠 Prompt 中的 tool schema 注册。
 
-插件需要贡献模型可见事实时使用 Prompt Extension Collector。Interaction turn 中，插件的 `on_llm_request` 与 LLM 工具默认属于 Persona Expression；只有 `interaction_middleware.plugin_runtime_targets` 显式配置为 `core` 的插件才进入 Core。关键词、命令等 Pipeline Handler 不迁移，仍可终止事件。完整配置与验证见 [Interaction Module](./docs/Yakumo/modules/interaction.md#插件运行目标)。
+插件需要贡献模型可见事实时使用 Prompt Extension Collector。Interaction turn 中，插件的 `on_llm_request` 与 LLM 工具默认属于 Persona Expression；运行目标按“配置文件覆盖 > 插件类 `interaction_runtime_target` 声明 > Persona 默认值”解析，只有最终为 `core` 的工作型插件才进入 Core。Persona 工具里的旧式 `event.send()`、`MessageEventResult` 和流式输出会作为工具材料交给最终人格表达，不会抢先发送第二条可见消息。关键词、命令等 Pipeline Handler 不迁移，仍可终止事件。完整配置与验证见 [Interaction Module](./docs/Yakumo/modules/interaction.md#插件运行目标)。
 
 ---
 

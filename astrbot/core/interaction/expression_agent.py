@@ -4,7 +4,8 @@ import asyncio
 import copy
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
@@ -28,6 +29,7 @@ from astrbot.core.interaction.plugin_runtime import (
 from astrbot.core.memory.history_source import extract_message_text
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.context_collect import resolve_toolset_for_target
 from astrbot.core.prompt.render import (
@@ -107,26 +109,31 @@ class InteractionExpressionError(RuntimeError):
         super().__init__(message or reason)
 
 
-class _PersonaHookEventView:
-    """Expose a branch-local ProviderRequest without mutating the shared event."""
+_MISSING_PROVIDER_REQUEST = object()
 
-    def __init__(self, event, provider_request: ProviderRequest) -> None:
-        self._event = event
-        self._provider_request = provider_request
 
-    def get_extra(self, key: str, default=None):
-        if key == "provider_request":
-            return self._provider_request
-        return self._event.get_extra(key, default)
+@contextmanager
+def _bind_persona_provider_request(event, provider_request: ProviderRequest) -> Iterator[None]:
+    """Expose a branch-local request through the real plugin event.
 
-    def set_extra(self, key: str, value) -> None:
-        if key == "provider_request":
-            self._provider_request = value
+    Existing plugins may validate the concrete ``AstrMessageEvent`` type. Keep
+    that public contract intact while restoring the event's previous request as
+    soon as the Persona lifecycle boundary exits.
+    """
+
+    previous = event.get_extra("provider_request", _MISSING_PROVIDER_REQUEST)
+    event.set_extra("provider_request", provider_request)
+    try:
+        yield
+    finally:
+        if previous is not _MISSING_PROVIDER_REQUEST:
+            event.set_extra("provider_request", previous)
             return
-        self._event.set_extra(key, value)
-
-    def __getattr__(self, name: str):
-        return getattr(self._event, name)
+        extras = getattr(event, "_extras", None)
+        if isinstance(extras, dict):
+            extras.pop("provider_request", None)
+        else:
+            event.set_extra("provider_request", None)
 
 
 @dataclass(slots=True)
@@ -135,7 +142,6 @@ class _PreparedPersonaExpression:
     render_result: Any
     provider_request: ProviderRequest
     rendered_provider_request: ProviderRequest
-    hook_event: _PersonaHookEventView
     run_context: ContextWrapper[Any]
     tool_material: str | None = None
     stopped: bool = False
@@ -144,8 +150,9 @@ class _PreparedPersonaExpression:
 class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
     """Expose official tool hooks for the Persona-only tool loop."""
 
-    def __init__(self, event) -> None:
+    def __init__(self, event, provider_request: ProviderRequest) -> None:
         self._event = event
+        self._provider_request = provider_request
 
     async def on_tool_start(
         self,
@@ -154,13 +161,14 @@ class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
         tool_args: dict | None,
     ) -> None:
         del run_context
-        await call_event_hook(
-            self._event,
-            EventType.OnUsingLLMToolEvent,
-            tool,
-            tool_args,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        )
+        with _bind_persona_provider_request(self._event, self._provider_request):
+            await call_event_hook(
+                self._event,
+                EventType.OnUsingLLMToolEvent,
+                tool,
+                tool_args,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            )
 
     async def on_tool_end(
         self,
@@ -171,29 +179,34 @@ class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
     ) -> None:
         del run_context
         self._event.clear_result()
-        await call_event_hook(
-            self._event,
-            EventType.OnLLMToolRespondEvent,
-            tool,
-            tool_args,
-            tool_result,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        )
+        with _bind_persona_provider_request(self._event, self._provider_request):
+            await call_event_hook(
+                self._event,
+                EventType.OnLLMToolRespondEvent,
+                tool,
+                tool_args,
+                tool_result,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            )
 
 
 def _build_persona_hook_run_context(
     plugin_context: Context,
     event,
-    hook_event: _PersonaHookEventView,
 ) -> ContextWrapper[AstrAgentContext]:
-    """Keep the public Agent hook context type while exposing branch-local extras."""
-    del event
-    # AstrAgentContext validates AstrMessageEvent strictly, while this branch
-    # deliberately exposes a proxy for its isolated ProviderRequest. Build the
-    # official public context shape without validating the proxy as an event.
+    """Build the official public hook context with the concrete event."""
+
+    if isinstance(plugin_context, Context) and isinstance(event, AstrMessageEvent):
+        return ContextWrapper(
+            context=AstrAgentContext(context=plugin_context, event=event),
+        )
+
+    # Unit-level integrations use deliberately small event/context doubles.
+    # Keep their public shape while always preserving the original event rather
+    # than substituting a proxy object.
     agent_context = object.__new__(AstrAgentContext)
     object.__setattr__(agent_context, "context", plugin_context)
-    object.__setattr__(agent_context, "event", hook_event)
+    object.__setattr__(agent_context, "event", event)
     object.__setattr__(agent_context, "extra", {})
     return ContextWrapper(context=agent_context)
 
@@ -661,13 +674,13 @@ class InteractionExpressionAgent:
         # Preserve the first official lifecycle boundary before any Persona-only
         # tool work starts. Legacy plugins commonly use this hook for per-turn
         # state and must not be silently skipped by the Persona path.
-        waiting_hook_event = _PersonaHookEventView(event, provider_request)
-        if await call_event_hook(
-            waiting_hook_event,
-            EventType.OnWaitingLLMRequestEvent,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        ):
-            return PersonaExpressionResult()
+        with _bind_persona_provider_request(event, provider_request):
+            if await call_event_hook(
+                event,
+                EventType.OnWaitingLLMRequestEvent,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            ):
+                return PersonaExpressionResult()
 
         toolset = ToolSet()
         if req.allow_plugin_tools and self._provider_supports_tool_calls(provider):
@@ -678,8 +691,6 @@ class InteractionExpressionAgent:
             )
             provider_request.func_tool = toolset
 
-        tool_hook_event = _PersonaHookEventView(event, provider_request)
-
         tool_material: str | None = None
         if req.allow_plugin_tools and isinstance(provider_request.func_tool, ToolSet):
             toolset = provider_request.func_tool
@@ -687,7 +698,6 @@ class InteractionExpressionAgent:
                 try:
                     tool_result = await self._run_persona_tool_loop(
                         event,
-                        tool_hook_event,
                         plugin_context,
                         interaction_config,
                         provider,
@@ -742,37 +752,36 @@ class InteractionExpressionAgent:
         compiled_output_contract = render_result.compiled_output_contract
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
-        hook_event = _PersonaHookEventView(event, provider_request)
         run_context = _build_persona_hook_run_context(
             plugin_context,
             event,
-            hook_event,
         )
         prepared = _PreparedPersonaExpression(
             req=req,
             render_result=render_result,
             provider_request=provider_request,
             rendered_provider_request=copy.deepcopy(provider_request),
-            hook_event=hook_event,
             run_context=run_context,
             tool_material=tool_material,
         )
-        if await call_event_hook(
-            hook_event,
-            EventType.OnLLMRequestEvent,
-            provider_request,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        ):
-            return PersonaExpressionResult()
+        with _bind_persona_provider_request(event, provider_request):
+            if await call_event_hook(
+                event,
+                EventType.OnLLMRequestEvent,
+                provider_request,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            ):
+                return PersonaExpressionResult()
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
-        if await call_event_hook(
-            hook_event,
-            EventType.OnAgentBeginEvent,
-            run_context,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        ):
-            return PersonaExpressionResult()
+        with _bind_persona_provider_request(event, provider_request):
+            if await call_event_hook(
+                event,
+                EventType.OnAgentBeginEvent,
+                run_context,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            ):
+                return PersonaExpressionResult()
         return await self._complete_persona_expression(
             event,
             interaction_config,
@@ -815,17 +824,14 @@ class InteractionExpressionAgent:
         provider_request.provider = provider
         provider_request.output_contract = render_result.output_contract
         provider_request.compiled_output_contract = render_result.compiled_output_contract
-        hook_event = _PersonaHookEventView(event, provider_request)
         return _PreparedPersonaExpression(
             req=previous.req,
             render_result=render_result,
             provider_request=provider_request,
             rendered_provider_request=copy.deepcopy(provider_request),
-            hook_event=hook_event,
             run_context=_build_persona_hook_run_context(
                 plugin_context,
                 event,
-                hook_event,
             ),
             tool_material=previous.tool_material,
         )
@@ -993,19 +999,20 @@ class InteractionExpressionAgent:
             id=llm_resp.id,
             usage=llm_resp.usage,
         )
-        response_stopped = await call_event_hook(
-            prepared.hook_event,
-            EventType.OnLLMResponseEvent,
-            response_for_hooks,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        )
-        agent_done_stopped = await call_event_hook(
-            prepared.hook_event,
-            EventType.OnAgentDoneEvent,
-            prepared.run_context,
-            response_for_hooks,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        )
+        with _bind_persona_provider_request(event, provider_request):
+            response_stopped = await call_event_hook(
+                event,
+                EventType.OnLLMResponseEvent,
+                response_for_hooks,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            )
+            agent_done_stopped = await call_event_hook(
+                event,
+                EventType.OnAgentDoneEvent,
+                prepared.run_context,
+                response_for_hooks,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            )
         if response_stopped or agent_done_stopped:
             return PersonaExpressionResult()
         result.spoken_reply = str(response_for_hooks.completion_text or "")
@@ -1047,7 +1054,6 @@ class InteractionExpressionAgent:
     async def _run_persona_tool_loop(
         self,
         event,
-        hook_event,
         plugin_context: Context,
         interaction_config: InteractionAgentConfig,
         provider: Provider,
@@ -1091,16 +1097,13 @@ class InteractionExpressionAgent:
                         f"{build_persona_tool_loop_instruction()}"
                     ).strip(),
                     tools=toolset,
-                    # The official ToolLoopAgent validates its event as an
-                    # AstrMessageEvent. Keep that execution path on the real
-                    # event while lifecycle hooks retain the branch-local
-                    # ProviderRequest through the proxy.
-                    agent_hooks=_PersonaExpressionToolHooks(hook_event),
+                    agent_hooks=_PersonaExpressionToolHooks(event, provider_request),
                     max_steps=8,
                     tool_call_timeout=max(
                         1,
                         int(interaction_config.expression_timeout),
                     ),
+                    tool_execution_surface=TOOL_TARGET_PERSONAL_EXPRESSION,
                 ),
                 timeout=interaction_config.expression_timeout,
             )

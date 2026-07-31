@@ -11,6 +11,7 @@ def register_star(
     desc: str,
     version: str,
     repo: str | None = None,
+    interaction_runtime_target: str | None = None,
 ):
     """注册一个插件(Star)。
 
@@ -24,6 +25,8 @@ def register_star(
         desc: 插件的简述。
         version: 版本号。
         repo: 仓库地址。如果没有填写仓库地址，将无法更新这个插件。
+        interaction_runtime_target: Interaction 默认执行面，可为 ``core`` 或
+            ``personal_expression``。配置文件可覆盖该声明。
 
     如果需要为插件填写帮助信息，请使用如下格式：
 
@@ -45,6 +48,9 @@ def register_star(
         )
 
     def decorator(cls):
+        declared_target = interaction_runtime_target
+        if declared_target is None:
+            declared_target = getattr(cls, "interaction_runtime_target", None)
         if not star_map.get(cls.__module__):
             metadata = StarMetadata(
                 name=name,
@@ -52,6 +58,7 @@ def register_star(
                 desc=desc,
                 version=version,
                 repo=repo,
+                interaction_runtime_target=declared_target,
             )
             star_map[cls.__module__] = metadata
         else:
@@ -60,6 +67,8 @@ def register_star(
             star_map[cls.__module__].desc = desc
             star_map[cls.__module__].version = version
             star_map[cls.__module__].repo = repo
+            if declared_target is not None:
+                star_map[cls.__module__].interaction_runtime_target = declared_target
 
         return cls
 

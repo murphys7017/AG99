@@ -466,9 +466,11 @@ Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Cor
 - `expression_provider_id`、`router_provider_id` 与 `planner_provider_id`：可选的分阶段模型覆盖。
   留空时复用当前会话已配置的聊天模型；显式填写 ID 时优先使用该模型。
 - `plugin_runtime_targets`：插件运行目标映射。键推荐使用插件目录名，值为 `core` 或
-  `personal_expression`。Interaction turn 中未配置插件默认在 Persona Expression 运行；只有显式
-  `core` 的插件会进入 Core 的 LLM 生命周期与工具执行。普通关键词、命令和
-  `AdapterMessageEvent` Handler 仍在官方 Pipeline 中运行，不受此项迁移。示例：
+  `personal_expression`。该配置会覆盖插件类可选的 `interaction_runtime_target` 声明；既未配置
+  也未声明的插件默认在 Persona Expression 运行。最终为 `core` 的插件才会进入 Core 的 LLM
+  生命周期与工具执行。普通关键词、命令和 `AdapterMessageEvent` Handler 仍在官方 Pipeline 中
+  运行，不受此项迁移。插件可在代码中声明
+  `interaction_runtime_target = "core"`。示例：
 
   ```jsonc
   "interaction_middleware": {

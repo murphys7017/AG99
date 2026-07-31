@@ -10,6 +10,7 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.agent.tool import ToolSet
+from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
 from astrbot.core.db.po import Conversation
 from astrbot.core.message.components import (
     At,
@@ -320,6 +321,10 @@ class AstrMessageEvent(abc.ABC):
         method. Platforms with richer client payloads can override this and use
         ``platform_extras`` without leaking adapter details into callers.
         """
+        capture = get_active_tool_output_capture()
+        if capture is not None:
+            capture.capture(message)
+            return
         send = self.get_extra("_interaction_original_send")
         previous_has_send_oper = self._has_send_oper
         if callable(send):
@@ -343,6 +348,10 @@ class AstrMessageEvent(abc.ABC):
         use_fallback: bool = False,
     ) -> None:
         """Send middleware-controlled streaming output through the platform."""
+        capture = get_active_tool_output_capture()
+        if capture is not None:
+            await capture.capture_stream(generator)
+            return
         send_streaming = self.get_extra("_interaction_original_send_streaming")
         if callable(send_streaming):
             await send_streaming(generator, use_fallback=use_fallback)
@@ -570,6 +579,10 @@ class AstrMessageEvent(abc.ABC):
         This helper does **not** perform persona rewriting itself — it only
         dispatches to the right Output Runtime entry.
         """
+        capture = get_active_tool_output_capture()
+        if capture is not None:
+            capture.capture(message)
+            return
         controller = self.get_extra("_interaction_output_controller")
         if controller is not None:
             await controller.capture_plugin_output(
@@ -593,6 +606,10 @@ class AstrMessageEvent(abc.ABC):
         expected to provide the final reply. Without the interaction middleware,
         this falls back to the platform's regular send behavior.
         """
+        capture = get_active_tool_output_capture()
+        if capture is not None:
+            capture.capture(message)
+            return
         controller = self.get_extra("_interaction_output_controller")
         if controller is not None:
             await controller.capture_plugin_output(

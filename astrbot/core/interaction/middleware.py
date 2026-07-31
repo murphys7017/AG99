@@ -5,6 +5,7 @@ from types import MethodType
 from typing import Any
 
 from astrbot import logger
+from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
 from astrbot.core.message.components import File, Image, Plain, Record, Reply, Video
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -276,6 +277,10 @@ class InteractionMiddleware:
             wrapped_event: AstrMessageEvent,
             message: MessageChain | None,
         ) -> None:
+            capture = get_active_tool_output_capture()
+            if capture is not None:
+                capture.capture(message)
+                return
             previous_has_send_oper = wrapped_event._has_send_oper
             origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
             if origin == OutputOrigin.CORE.value:
@@ -302,6 +307,10 @@ class InteractionMiddleware:
             generator: AsyncGenerator[MessageChain, None],
             use_fallback: bool = False,
         ) -> None:
+            capture = get_active_tool_output_capture()
+            if capture is not None:
+                await capture.capture_stream(generator)
+                return
             origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
             if origin == OutputOrigin.CORE.value:
                 await output_controller.capture_streaming(

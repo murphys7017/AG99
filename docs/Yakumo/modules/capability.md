@@ -20,6 +20,19 @@
 
 - 这是 Capability Platform 和 Agent Platform 的关键边界文件
 
+### 插件运行目标
+
+Interaction turn 中，插件的 LLM 生命周期和插件拥有的 LLM Tool 默认属于
+`personal_expression`，适合人格、娱乐和关系增强。插件可在 `Star` 类或
+`register_star(..., interaction_runtime_target=...)` 中声明 `core`；会话配置
+`interaction_middleware.plugin_runtime_targets` 可覆盖该声明。只有最终解析为
+`core` 的插件进入工作执行面，关键词、命令和其他 `AdapterMessageEvent`
+Handler 仍由官方 Pipeline 负责。
+
+`Context.tool_loop_agent(..., tool_execution_surface=...)` 把执行面显式传给
+工具循环。Persona 面的旧式事件输出会变成模型可见的工具材料，Core 面保留官方
+直接输出语义。
+
 ### `astrbot/core/star/star_manager.py`
 
 职责：

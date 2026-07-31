@@ -62,8 +62,11 @@ def _resolve_plugin_target(
 ) -> PluginRuntimeTarget:
     metadata = _metadata_for_module(module_path)
     configured_target = _configured_target(event, metadata, module_path)
-    if configured_target == PLUGIN_RUNTIME_TARGET_CORE:
-        return PLUGIN_RUNTIME_TARGET_CORE
+    if configured_target is not None:
+        return configured_target
+    declared_target = _declared_target(metadata)
+    if declared_target is not None:
+        return declared_target
     return PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
 
 
@@ -88,6 +91,19 @@ def _configured_target(event, metadata, module_path: str | None) -> str | None:
                 PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
             }:
                 return normalized
+    return None
+
+
+def _declared_target(metadata) -> PluginRuntimeTarget | None:
+    declared = getattr(metadata, "interaction_runtime_target", None)
+    if not isinstance(declared, str):
+        return None
+    normalized = declared.strip().lower()
+    if normalized in {
+        PLUGIN_RUNTIME_TARGET_CORE,
+        PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    }:
+        return normalized
     return None
 
 

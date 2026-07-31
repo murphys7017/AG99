@@ -45,6 +45,9 @@ class StarMetadata:
     """插件的模块对象"""
     root_dir_name: str | None = None
     """插件的目录名称"""
+
+    interaction_runtime_target: str | None = None
+    """Optional default Interaction execution surface declared by the plugin."""
     reserved: bool = False
     """是否是 AstrBot 的保留插件"""
 

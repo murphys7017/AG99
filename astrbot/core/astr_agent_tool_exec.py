@@ -16,10 +16,15 @@ from astrbot.core.agent.message import Message
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import (
     TOOL_TARGET_CORE,
+    TOOL_TARGET_PERSONAL_EXPRESSION,
     FunctionTool,
     ToolSet,
 )
 from astrbot.core.agent.tool_executor import BaseFunctionToolExecutor
+from astrbot.core.agent.tool_output_capture import (
+    ToolOutputCapture,
+    activate_tool_output_capture,
+)
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_main_agent_resources import (
     BACKGROUND_TASK_RESULT_WOKE_SYSTEM_PROMPT,
@@ -680,52 +685,132 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         if awaitable is None:
             raise ValueError("Tool must have a valid handler or override 'run' method.")
 
+        is_persona_expression = (
+            run_context.tool_execution_surface == TOOL_TARGET_PERSONAL_EXPRESSION
+        )
+        output_capture = ToolOutputCapture() if is_persona_expression else None
+        original_force_stopped = getattr(event, "_force_stopped", None)
         wrapper = call_local_llm_tool(
             context=run_context,
             handler=awaitable,
             method_name=method_name,
             **tool_args,
         )
-        while True:
-            try:
-                resp = await asyncio.wait_for(
-                    anext(wrapper),
-                    timeout=tool_call_timeout or run_context.tool_call_timeout,
-                )
-                if resp is not None:
-                    if isinstance(resp, mcp.types.CallToolResult):
-                        yield resp
-                    else:
-                        text_content = mcp.types.TextContent(
-                            type="text",
-                            text=str(resp),
+        try:
+            while True:
+                try:
+                    if output_capture is None:
+                        resp = await asyncio.wait_for(
+                            anext(wrapper),
+                            timeout=tool_call_timeout or run_context.tool_call_timeout,
                         )
-                        yield mcp.types.CallToolResult(content=[text_content])
-                else:
-                    # NOTE: Tool 在这里直接请求发送消息给用户
-                    # TODO: 是否需要判断 event.get_result() 是否为空?
-                    # 如果为空,则说明没有发送消息给用户,并且返回值为空,将返回一个特殊的 TextContent,其内容如"工具没有返回内容"
-                    if res := run_context.context.event.get_result():
-                        if res.chain:
-                            try:
-                                await event.send(
-                                    MessageChain(
-                                        chain=res.chain,
-                                        type="tool_direct_result",
+                    else:
+                        # Legacy plugins may call event.send() or return a
+                        # MessageEventResult. In Persona, both are tool material,
+                        # never a second visible reply.
+                        with activate_tool_output_capture(output_capture):
+                            # Keep execution in this task so the task-local capture
+                            # remains active for legacy event output. Child tasks
+                            # intentionally do not inherit the capture.
+                            async with asyncio.timeout(
+                                tool_call_timeout or run_context.tool_call_timeout
+                            ):
+                                resp = await anext(wrapper)
+
+                    if output_capture is not None:
+                        result = event.get_result()
+                        if result is not None and result.chain:
+                            output_capture.capture(
+                                MessageChain(
+                                    chain=list(result.chain),
+                                    type="tool_legacy_result",
+                                )
+                            )
+                        event.clear_result()
+                        if hasattr(event, "_force_stopped"):
+                            event._force_stopped = original_force_stopped
+                        captured_result = cls._captured_output_to_tool_result(
+                            output_capture.drain()
+                        )
+                        if captured_result is not None:
+                            yield captured_result
+
+                    if resp is not None:
+                        if isinstance(resp, mcp.types.CallToolResult):
+                            yield resp
+                        else:
+                            text_content = mcp.types.TextContent(
+                                type="text",
+                                text=str(resp),
+                            )
+                            yield mcp.types.CallToolResult(content=[text_content])
+                    elif output_capture is None:
+                        # NOTE: Tool 在这里直接请求发送消息给用户
+                        # TODO: 是否需要判断 event.get_result() 是否为空?
+                        # 如果为空,则说明没有发送消息给用户,并且返回值为空,将返回一个特殊的 TextContent,其内容如"工具没有返回内容"
+                        if res := run_context.context.event.get_result():
+                            if res.chain:
+                                try:
+                                    await event.send(
+                                        MessageChain(
+                                            chain=res.chain,
+                                            type="tool_direct_result",
+                                        )
                                     )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Tool 直接发送消息失败: {e}",
+                                        exc_info=True,
+                                    )
+                        yield None
+                    elif captured_result is None:
+                        yield mcp.types.CallToolResult(
+                            content=[
+                                mcp.types.TextContent(
+                                    type="text",
+                                    text="Tool completed without return material.",
                                 )
-                            except Exception as e:
-                                logger.error(
-                                    f"Tool 直接发送消息失败: {e}",
-                                    exc_info=True,
-                                )
-                    yield None
-            except asyncio.TimeoutError:
-                raise Exception(
-                    f"tool {tool.name} execution timeout after {tool_call_timeout or run_context.tool_call_timeout} seconds.",
+                            ]
+                        )
+                except asyncio.TimeoutError:
+                    raise Exception(
+                        f"tool {tool.name} execution timeout after {tool_call_timeout or run_context.tool_call_timeout} seconds.",
+                    )
+                except StopAsyncIteration:
+                    break
+        finally:
+            if output_capture is not None:
+                event.clear_result()
+                if hasattr(event, "_force_stopped"):
+                    event._force_stopped = original_force_stopped
+
+    @staticmethod
+    def _captured_output_to_tool_result(
+        messages: list[MessageChain],
+    ) -> mcp.types.CallToolResult | None:
+        if not messages:
+            return None
+        material: list[str] = []
+        for message in messages:
+            text = message.get_plain_text().strip()
+            component_types = [
+                type(component).__name__
+                for component in message.chain
+                if type(component).__name__ != "Plain"
+            ]
+            if text:
+                material.append(text)
+            if component_types:
+                material.append(
+                    "[Legacy tool returned message components: "
+                    + ", ".join(component_types)
+                    + "]"
                 )
-            except StopAsyncIteration:
-                break
+        if not material:
+            material.append("[Legacy tool returned an empty message chain.]")
+        return mcp.types.CallToolResult(
+            content=[mcp.types.TextContent(type="text", text="\n\n".join(material))]
+        )
 
     @classmethod
     async def _execute_mcp(

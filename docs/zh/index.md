@@ -30,5 +30,5 @@ features:
     details: 支持 OpenAI、Anthropic、Gemini 等多种大模型接入，内置知识库和 Agent 智能体
   - icon: 🎭
     title: Persona Runtime
-    details: Yakumo fork 提供统一拟人表达与按事件启用的 Persona Effect 插件协议
+    details: Yakumo fork 提供统一拟人表达；普通插件 LLM 钩子和工具默认增强该表达
 ---

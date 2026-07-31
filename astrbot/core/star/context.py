@@ -12,7 +12,7 @@ from deprecated import deprecated
 from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.message import ContentPart, Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
-from astrbot.core.agent.tool import ToolSet
+from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.conversation_mgr import ConversationManager
@@ -320,6 +320,7 @@ class Context:
         model: str | None = None,
         max_steps: int = 30,
         tool_call_timeout: int = 120,
+        tool_execution_surface: str = TOOL_TARGET_CORE,
         **kwargs: Any,
     ) -> LLMResponse:
         """Run an agent loop that allows the LLM to call tools iteratively until a final answer is produced.
@@ -338,6 +339,7 @@ class Context:
             contexts: context messages for the LLM
             model: Optional per-request model override
             max_steps: Maximum number of tool calls before stopping the loop
+            tool_execution_surface: Execution surface for tool output semantics
             **kwargs: Additional keyword arguments. The kwargs will not be passed to the LLM directly for now, but can include:
                 stream: bool - whether to stream the LLM response
                 agent_hooks: BaseAgentRunHooks[AstrAgentContext] - hooks to run during agent execution
@@ -413,6 +415,7 @@ class Context:
             run_context=AgentContextWrapper(
                 context=agent_context,
                 tool_call_timeout=tool_call_timeout,
+                tool_execution_surface=tool_execution_surface,
             ),
             tool_executor=tool_executor,
             agent_hooks=agent_hooks,

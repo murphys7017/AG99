@@ -21,6 +21,8 @@ class Star(CommandParserMixin, PluginKVStoreMixin):
     author: str
     name: str
     context: Context
+    interaction_runtime_target: str | None = None
+    """Optional default Interaction target: ``core`` or ``personal_expression``."""
 
     def __init__(self, context: Context, config: dict | None = None) -> None:
         self.context = context
@@ -41,12 +43,18 @@ class Star(CommandParserMixin, PluginKVStoreMixin):
             metadata = StarMetadata(
                 star_cls_type=cls,
                 module_path=cls.__module__,
+                interaction_runtime_target=getattr(
+                    cls, "interaction_runtime_target", None
+                ),
             )
             star_map[cls.__module__] = metadata
             star_registry.append(metadata)
         else:
             star_map[cls.__module__].star_cls_type = cls
             star_map[cls.__module__].module_path = cls.__module__
+            star_map[cls.__module__].interaction_runtime_target = getattr(
+                cls, "interaction_runtime_target", None
+            )
 
     async def text_to_image(self, text: str, return_url=True) -> str:
         """将文本转换为图片"""
