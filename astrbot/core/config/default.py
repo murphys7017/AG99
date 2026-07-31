@@ -212,7 +212,8 @@ DEFAULT_CONFIG = {
         "agents": [],
     },
     "interaction_middleware": {
-        "enabled": False,
+        "enabled": True,
+        "plugin_runtime_targets": {},
         "memory_window_size": 8,
         "expression_provider_id": "",
         "expression_temperature": 0.6,
@@ -4387,6 +4388,11 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.enabled": {
                         "description": "启用交互中间件",
                         "type": "bool",
+                    },
+                    "interaction_middleware.plugin_runtime_targets": {
+                        "description": "插件运行目标",
+                        "type": "object",
+                        "hint": "默认在人格表达中运行；仅在此处配置为 core 的插件参与工作执行。键使用插件目录名。",
                     },
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",

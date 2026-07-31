@@ -44,21 +44,20 @@ Interaction Middleware 建立本轮交互并整理输入
     ↓
 Prompt Collectors 构建本轮唯一的 ContextPack
     ↓
-Router 与 Persona Runtime 并发启动
-    ├── Persona Runtime → 尽快生成并提交拟人表达
-    └── Router → 当前只返回 persona / hybrid
-         ├── persona → 不启动 Core，保留 Persona 表达
-         └── hybrid → 独立 Core Planner 再判断执行层是否必要
-                      ├── not_required → 不启动 Core，保留 Persona 表达
-                      └── execute → 立即执行 Core，不等待 Persona
-                                   Core 的中间材料与最终结果回到同一个 Persona Runtime
+Router → persona / hybrid /（有界群聊续接候选）silent
+    ├── silent → 零输出完成
+    ├── persona → Persona Runtime → Output
+    └── hybrid → 独立 Core Planner 再判断执行层是否必要
+                 ├── not_required → Persona Runtime → Output
+                 └── execute → Core 执行
+                              Core 的结果回到同一个 Persona Runtime → Output
     ↓
 Output Runtime 负责文本、流式与 TTS 等输出物化和平台发送
     ↓
 Finalized Turn Material → Postprocess / Memory
 ```
 
-“快速拟人回复”不是第二套回复生成器，只是 Persona Runtime 在 Core 完成前的一次调用。Core 结果、插件提交的待表达材料和流式插话也复用同一个入口。Motion、Live2D 等具体表现能力由插件通过通用 effect 契约扩展；插件可以按当前事件决定是否向 Persona 暴露 effect，核心交互流程只校验和传递 effect，不理解具体动作含义。
+Persona Runtime 不是第二套回复生成器：普通 Persona 对话与 Core 的最终结果都通过同一个表达入口。Motion、Live2D 等具体表现能力由插件通过通用 effect 契约扩展；插件可以按当前事件决定是否向 Persona 暴露 effect，核心交互流程只校验和传递 effect，不理解具体动作含义。
 
 **事实统一、视图分离** — Prompt 层只采集一次规范事实，Router、Core Planner、Persona 和 Core 从同一个 ContextPack 投影各自视图：
 
@@ -93,7 +92,7 @@ Cron 和插件显式发送则保持精确投递兼容，不作为 Policy 行动�
 这是本 fork 的核心架构之一，一个通用的交互中间件：
 
 - **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
-- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；Router 与 Persona 并发消费各自投影，hybrid 再由独立 Core Planner 复核是否执行
+- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；Router 先完成路由，hybrid 再由独立 Core Planner 复核是否执行，只有不委托 Core 的路径启动 Persona
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
 - **流式例外收口**：插件显式选择 `persona` 输出时，流文本先完整收集再执行一次 Persona 表达，避免原文流与改写文案同时发送；`direct` 流保持原有低延迟发送
@@ -123,7 +122,7 @@ collect → build → target projection → render profile → prompt layout/tre
 
 边界上，Collector 只提供事实，Render Profile 只提供目标局部指令，Layout 只负责语义落位，Renderer 只负责 provider 格式。Prompt 系统不做路由判断、不写 memory、不执行工具、不发送消息，也不理解 Motion、Live2D 等插件语义。实际可执行工具仍由 Main Agent 装配到 `func_tool`，不能仅靠 Prompt 中的 tool schema 注册。
 
-插件需要贡献模型可见事实时使用 Prompt Extension Collector；`on_llm_request` 只保留为统一渲染之后的 Core 低层请求钩子。完整边界见 [Prompt Module](./docs/Yakumo/modules/prompt.md)。
+插件需要贡献模型可见事实时使用 Prompt Extension Collector。Interaction turn 中，插件的 `on_llm_request` 与 LLM 工具默认属于 Persona Expression；只有 `interaction_middleware.plugin_runtime_targets` 显式配置为 `core` 的插件才进入 Core。关键词、命令等 Pipeline Handler 不迁移，仍可终止事件。完整配置与验证见 [Interaction Module](./docs/Yakumo/modules/interaction.md#插件运行目标)。
 
 ---
 

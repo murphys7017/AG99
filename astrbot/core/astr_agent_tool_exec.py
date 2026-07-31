@@ -18,7 +18,6 @@ from astrbot.core.agent.tool import (
     TOOL_TARGET_CORE,
     FunctionTool,
     ToolSet,
-    tool_supports_target,
 )
 from astrbot.core.agent.tool_executor import BaseFunctionToolExecutor
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -26,6 +25,7 @@ from astrbot.core.astr_main_agent_resources import (
     BACKGROUND_TASK_RESULT_WOKE_SYSTEM_PROMPT,
 )
 from astrbot.core.cron.events import CronMessageEvent
+from astrbot.core.interaction.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import (
     CommandResult,
@@ -286,7 +286,11 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                     continue
                 if (
                     registered_tool.active
-                    and tool_supports_target(registered_tool, TOOL_TARGET_CORE)
+                    and tool_supports_runtime_target(
+                        event,
+                        registered_tool,
+                        TOOL_TARGET_CORE,
+                    )
                 ):
                     toolset.add_tool(registered_tool)
             for runtime_tool in runtime_computer_tools.values():
@@ -299,17 +303,23 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         toolset = ToolSet()
         for tool_name_or_obj in tools:
             if isinstance(tool_name_or_obj, str):
-                registered_tool = llm_tools.get_func(
-                    tool_name_or_obj,
-                    target=TOOL_TARGET_CORE,
-                )
-                if registered_tool and registered_tool.active:
+                registered_tool = llm_tools.get_func(tool_name_or_obj)
+                if (
+                    registered_tool
+                    and registered_tool.active
+                    and tool_supports_runtime_target(
+                        event,
+                        registered_tool,
+                        TOOL_TARGET_CORE,
+                    )
+                ):
                     toolset.add_tool(registered_tool)
                     continue
                 runtime_tool = runtime_computer_tools.get(tool_name_or_obj)
                 if runtime_tool:
                     toolset.add_tool(runtime_tool)
-            elif isinstance(tool_name_or_obj, FunctionTool) and tool_supports_target(
+            elif isinstance(tool_name_or_obj, FunctionTool) and tool_supports_runtime_target(
+                event,
                 tool_name_or_obj,
                 TOOL_TARGET_CORE,
             ):

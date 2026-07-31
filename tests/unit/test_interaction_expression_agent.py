@@ -2,6 +2,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.interaction.collectors import PersonaVisibleReplyCollector
 from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.expression_agent import (
@@ -614,6 +616,8 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
         },
     )()
     event = Event()
+    event.plugins_name = []
+    event.is_stopped = lambda: False
     agent = InteractionExpressionAgent()
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.Provider",
@@ -701,6 +705,8 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
 
         def __init__(self):
             self._extras = {}
+            self.plugins_name = []
+            self._stopped = False
 
         def get_extra(self, key, default=None):
             return self._extras.get(key, default)
@@ -710,6 +716,9 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
 
         def get_platform_id(self):
             return "webchat"
+
+        def is_stopped(self):
+            return self._stopped
 
     provider = Provider()
     provider.provider_config = {"id": "persona", "type": "test"}
@@ -757,3 +766,363 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
     assert "必须只输出一个 JSON object" not in provider.calls[0]["prompt"]
     assert provider.calls[0]["prompt"] == "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
     assert provider.calls[0]["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+async def test_persona_expression_reuses_official_request_and_response_hooks(
+    monkeypatch,
+):
+    class Provider:
+        provider_config = {"id": "persona", "type": "test"}
+
+        def __init__(self):
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(
+                role="assistant",
+                completion_text="",
+                tools_call_name=["persona_expression"],
+                tools_call_args=[{"spoken_reply": "初始回复", "effect_calls": []}],
+            )
+
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        plugins_name = []
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+        def is_stopped(self):
+            return False
+
+    provider = Provider()
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "get_provider_by_id": lambda self, provider_id: provider,
+            "get_config": lambda self, **kwargs: {},
+        },
+    )()
+    contract = build_persona_expression_output_contract_for_effects([])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="protocol_tool_call",
+        tool_name="persona_expression",
+        tool_schema=contract.schema,
+    )
+    agent = InteractionExpressionAgent()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.Provider",
+        Provider,
+    )
+    agent._prepare_render_result = AsyncMock(
+        return_value=RenderResult(
+            system_prompt="persona",
+            request_prompt="reply naturally",
+            messages=[{"role": "user", "content": "hello"}],
+            output_contract=contract,
+            compiled_output_contract=compiled,
+            metadata={"persona_effect_specs": []},
+        )
+    )
+    observed_hooks = []
+    hooked_request = None
+
+    async def call_hook(event, hook_type, *args, **kwargs):
+        del event
+        nonlocal hooked_request
+        assert kwargs["execution_surface"] == "personal_expression"
+        observed_hooks.append(hook_type.name)
+        if hook_type.name == "OnLLMRequestEvent":
+            request = args[0]
+            hooked_request = request
+            request.system_prompt += "\nplugin context"
+            request.output_contract = None
+            request.compiled_output_contract = None
+        elif hook_type.name == "OnAgentBeginEvent":
+            assert isinstance(args[0].context, AstrAgentContext)
+            assert args[0].context.event.get_extra("provider_request") is hooked_request
+        elif hook_type.name == "OnLLMResponseEvent":
+            args[0].completion_text = "插件修饰后的回复"
+        return False
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.call_event_hook",
+        call_hook,
+    )
+
+    result = await agent.generate_expression(
+        Event(),
+        plugin_context,
+        InteractionAgentConfig(expression_provider_id="persona"),
+        PersonaExpressionRequest(),
+    )
+
+    assert observed_hooks == [
+        "OnWaitingLLMRequestEvent",
+        "OnLLMRequestEvent",
+        "OnAgentBeginEvent",
+        "OnLLMResponseEvent",
+        "OnAgentDoneEvent",
+    ]
+    assert provider.calls[0]["system_prompt"] == "persona\nplugin context"
+    assert provider.calls[0]["output_contract"] is contract
+    assert provider.calls[0]["compiled_output_contract"] is compiled
+    assert result.spoken_reply == "插件修饰后的回复"
+
+
+@pytest.mark.asyncio
+async def test_persona_expression_dispatches_official_tool_hooks_once(
+    monkeypatch,
+):
+    class Provider:
+        provider_config = {
+            "id": "persona",
+            "type": "test",
+            "modalities": ["text", "tool_use"],
+        }
+
+        async def text_chat(self, **kwargs):
+            self.final_request = kwargs
+            return LLMResponse(
+                role="assistant",
+                completion_text="",
+                tools_call_name=["persona_expression"],
+                tools_call_args=[{"spoken_reply": "完成了", "effect_calls": []}],
+            )
+
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        plugins_name = []
+
+        def __init__(self):
+            self._extras = {}
+            self.cleared_result_count = 0
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+        def is_stopped(self):
+            return False
+
+        def clear_result(self):
+            self.cleared_result_count += 1
+
+    tool = FunctionTool(
+        name="read_context",
+        description="Read additional context.",
+        parameters={"type": "object", "properties": {}},
+    )
+    tools = ToolSet([tool])
+    provider = Provider()
+    tool_loop_calls = []
+
+    class PluginContext:
+        def get_provider_by_id(self, provider_id):
+            return provider
+
+        def get_config(self, **kwargs):
+            return {}
+
+        async def tool_loop_agent(self, **kwargs):
+            tool_loop_calls.append(kwargs)
+            hooks = kwargs["agent_hooks"]
+            await hooks.on_tool_start(None, tool, {})
+            await hooks.on_tool_end(None, tool, {}, None)
+            return LLMResponse(role="assistant", completion_text="工具事实")
+
+    contract = build_persona_expression_output_contract_for_effects([])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="protocol_tool_call",
+        tool_name="persona_expression",
+        tool_schema=contract.schema,
+    )
+    agent = InteractionExpressionAgent()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.Provider",
+        Provider,
+    )
+    agent._prepare_render_result = AsyncMock(
+        return_value=RenderResult(
+            system_prompt="persona",
+            request_prompt="reply naturally",
+            messages=[{"role": "user", "content": "hello"}],
+            output_contract=contract,
+            compiled_output_contract=compiled,
+            metadata={"persona_effect_specs": []},
+        )
+    )
+    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
+    observed_hooks = []
+
+    async def call_hook(event, hook_type, *args, **kwargs):
+        del event, args
+        assert kwargs["execution_surface"] == "personal_expression"
+        observed_hooks.append(hook_type.name)
+        return False
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.call_event_hook",
+        call_hook,
+    )
+    event = Event()
+
+    result = await agent.generate_expression(
+        event,
+        PluginContext(),
+        InteractionAgentConfig(expression_provider_id="persona"),
+        PersonaExpressionRequest(allow_plugin_tools=True),
+    )
+
+    assert observed_hooks == [
+        "OnWaitingLLMRequestEvent",
+        "OnUsingLLMToolEvent",
+        "OnLLMToolRespondEvent",
+        "OnLLMRequestEvent",
+        "OnAgentBeginEvent",
+        "OnLLMResponseEvent",
+        "OnAgentDoneEvent",
+    ]
+    assert tool_loop_calls[0]["tools"] is tools
+    assert tool_loop_calls[0]["event"] is event
+    assert event.cleared_result_count == 1
+    assert agent._prepare_render_result.await_count == 2
+    final_request = agent._prepare_render_result.await_args_list[-1].kwargs["req"]
+    assert final_request.source_text == "工具事实"
+    assert final_request.preserve_facts is True
+    assert final_request.allow_plugin_tools is False
+    assert result.spoken_reply == "完成了"
+
+
+@pytest.mark.asyncio
+async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeypatch):
+    class Provider:
+        def __init__(self, provider_id, *, fails=False):
+            self.provider_config = {"id": provider_id, "type": "test"}
+            self.fails = fails
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            if self.fails:
+                raise RuntimeError("primary unavailable")
+            return LLMResponse(
+                role="assistant",
+                completion_text="",
+                tools_call_name=["persona_expression"],
+                tools_call_args=[{"spoken_reply": "由回退模型完成", "effect_calls": []}],
+            )
+
+    class Event:
+        session_id = "session-1"
+        unified_msg_origin = "webchat:friend:session-1"
+        plugins_name = []
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+        def is_stopped(self):
+            return False
+
+    primary = Provider("primary", fails=True)
+    fallback = Provider("fallback")
+    plugin_context = type(
+        "PluginContext",
+        (),
+        {
+            "get_provider_by_id": lambda self, provider_id: primary,
+            "get_config": lambda self, **kwargs: {},
+        },
+    )()
+    contract = build_persona_expression_output_contract_for_effects([])
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="protocol_tool_call",
+        tool_name="persona_expression",
+        tool_schema=contract.schema,
+    )
+    agent = InteractionExpressionAgent()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.Provider",
+        Provider,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.resolve_fallback_chat_providers",
+        lambda *args: [fallback],
+    )
+    agent._prepare_render_result = AsyncMock(
+        return_value=RenderResult(
+            system_prompt="persona",
+            request_prompt="reply naturally",
+            messages=[{"role": "user", "content": "hello"}],
+            output_contract=contract,
+            compiled_output_contract=compiled,
+            metadata={"persona_effect_specs": []},
+        )
+    )
+    hooks = []
+    response_provider_ids = []
+
+    async def call_hook(event, hook_type, *args, **kwargs):
+        if hook_type.name == "OnLLMRequestEvent":
+            args[0].system_prompt += "\nplugin context"
+        if hook_type.name == "OnLLMResponseEvent":
+            response_provider_ids.append(
+                event.get_extra("provider_request").provider.provider_config["id"]
+            )
+        hooks.append((hook_type.name, kwargs["execution_surface"]))
+        return False
+
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.call_event_hook",
+        call_hook,
+    )
+
+    result = await agent.generate_expression(
+        Event(),
+        plugin_context,
+        InteractionAgentConfig(expression_provider_id="primary"),
+        PersonaExpressionRequest(),
+    )
+
+    assert result.spoken_reply == "由回退模型完成"
+    assert agent._prepare_render_result.await_count == 2
+    assert fallback.calls[0]["system_prompt"] == "persona\nplugin context"
+    assert response_provider_ids == ["fallback"]
+    assert hooks == [
+        ("OnWaitingLLMRequestEvent", "personal_expression"),
+        ("OnLLMRequestEvent", "personal_expression"),
+        ("OnAgentBeginEvent", "personal_expression"),
+        ("OnLLMResponseEvent", "personal_expression"),
+        ("OnAgentDoneEvent", "personal_expression"),
+    ]

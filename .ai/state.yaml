@@ -1,8 +1,8 @@
 task:
-  class: bugfix
+  class: feature
   risk: high
-  phase: group_context_provider_media_and_idle_initiation_repair
-  scope: Repair provider-boundary image materialization, move passive group-context capture behind whitelist and session checks, bound and structure group context records, route legacy group active-reply candidates through the existing silent-capable Router, and add explicitly enabled, restart-safe idle-initiation observations without modifying AG99Live
+  phase: persona_first_plugin_mounting_implementation
+  scope: Implement a backwards-compatible, persona-first plugin mounting base. Personality, entertainment, relationship, prompt-context, effect, and persona-tool contributions default to Personal Expression; Core is reserved for plugins explicitly configured as task-planning or work-execution contributions. External I/O alone does not determine the mount. Preserve official Pipeline lifecycle semantics without migrating marketplace plugin source.
 context:
   confidence: high
   assumptions:
@@ -23,7 +23,7 @@ context:
     - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline, every delivered visible reply writes reply cooldown, and only delivered ActionIntent output writes proactive usage.
     - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
     - PersonalHeartbeatSource is lifecycle-owned and applies one independent due time per configured Runtime observation target. An empty target list falls back to the legacy default proactive-message target; Heartbeat only submits expiring/coalescing facts and never creates an event, acquires a turn lease, or invokes Persona, Core, or Output.
-    - Context resolves the single global Runtime observation target registry from the default configuration. ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in one of those group targets; the event-matched configuration only controls its feature flag and Runtime/Policy settings. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
+    - Context resolves the global Runtime observation target registry across loaded configuration profiles, retaining only targets whose UMO resolves back to an effective profile that declares them. ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in one of those group targets; the event-matched configuration controls its feature flag and Runtime/Policy settings. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
     - Plugin Runtime Sensors register stable plugin_id/source_id ownership in Context and receive only a restricted submit handle; Context resolves the target, Lifecycle dispatches to existing PersonalRuntimeManager.submit_observation, and plugin unload removes registrations so stale handles cannot submit.
     - Plugin Sensor payloads are immutable structured facts with a finite expiry. They reject known message/reply/prompt fields and cannot supply events, ProviderRequest, ToolSet, platform connections, or visible reply material.
     - Explicit persona-mode plugin streams buffer semantic text and run through one final Persona output; direct-mode plugin streams retain real-time compatibility delivery.
@@ -74,8 +74,13 @@ context:
     - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
     - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
     - Personal Runtime is the control layer; InteractionPersonaRuntime is the Personal Expression facade and owns the expression-scoped plugin tool loop, not the general Core executor.
-    - Tools are Core-only by default. Plugin authors may explicitly mount an individual tool to personal_expression or both execution targets through tool_targets; Personal Runtime remains a control layer and never owns a ToolSet.
-    - Official and new plugins are future Personal Runtime defaults, but current Prompt Extension, Tool, LLM Hook, Agent Hook, and Subagent behavior remains Native-Core-owned until a reviewed mapping exists.
+    - Personal Runtime is a control layer and never a plugin mount target. Plugin placement is defined per contribution rather than by the legacy API that happens to invoke it.
+    - Persona-facing prompt/context, relationship, entertainment, effect, and tool contributions, including compatible legacy personality enhancements, default to Personal Expression. Tool calls are not synonymous with Core: the existing Personal Expression tool loop may invoke plugin-owned external I/O when that capability serves the current interaction. Core is reserved for contributions explicitly declared as task planning or independent work execution.
+    - PersonaEffect is not an executable Persona Tool. It extends the final persona_expression structured-output contract with validated declarative effect_calls; its protocol-level tool-call encoding exists only to enforce output shape. Effects run after expression through output handling, never enter the Persona ToolSet or tool loop, and are Persona-only.
+    - Interaction model IDs are optional per-stage overrides. Empty expression, Router, and Planner IDs resolve to the event's currently selected official chat provider, while explicit IDs retain precedence.
+    - Terminal plugin Handlers are Pipeline-level response owners, not Persona mounts. A keyword/command Handler that returns a terminal reply may stop the event and prevent Persona or Core from starting; its output can be delivered directly or explicitly persona-rewritten, but that delivery choice does not transfer reply ownership to Persona. A Handler that yields ProviderRequest retains the existing Core-delegation path.
+    - Legacy LLM lifecycle hooks are target-aware. Persona-targeted waiting, request, Agent, tool, and response hooks run once on the final Persona Expression lifecycle; internal Persona Tool Loop calls expose only tool hooks. Core-targeted hooks retain their existing Core lifecycle.
+    - Official Pipeline handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible. Persona-facing legacy request hooks receive a branch-local ProviderRequest view, so they may modify Persona material without replacing shared Core event extras or its strict output contract.
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
     - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
@@ -130,6 +135,9 @@ context:
     - TTS state is read-only and text-free; plugins observe requested/generating/succeeded/failed but cannot rewrite synthesis input through the lifecycle hook.
     - Logical output segment IDs and physical visible-message IDs are separate identities; physical splitting never infers logical ownership from send order.
     - The rich non-streaming platform boundary is send_message_with_extras; the replaced send_interaction_message name and dual delivery callbacks are removed rather than retained as compatibility wrappers.
+  known_issues:
+    - AG99live Remote Operator currently registers the same execution-routing prompt through both a generic Prompt Extension Collector and an Interaction Prompt Contributor. The latter defaults to the Persona target, so the Core-only JSON execution protocol can leak into Personal Expression. Split the contribution into planner/Core capability and Core protocol material; do not register it for Persona.
+    - The MiniMax Coding Plan MCP server fails before initialization because its resolved MCP SDK does not provide mcp.server.fastmcp. The MCP connection-test log also prints the configured API key. Pin a compatible server dependency set, rotate the exposed key, and redact environment secrets from MCP diagnostics.
   unresolved_questions:
     - Provider renderer family, output-contract support, and executable tool capability are not yet represented by one validated capability contract.
     - DeepSeek first-turn marker state now reads canonical official conversation history, but its applied flag remains event-scoped rather than conversation-scoped.
@@ -142,7 +150,7 @@ architecture:
     - Interaction Turn State allocates logical output-segment IDs independently from physical visible-message IDs; TTS dual output and segmented delivery preserve the logical ID without a positional ID queue.
     - ProcessStage -> InteractionMiddleware.handle_pipeline_event is now the only production Interaction inbound boundary; Middleware marks Core delegation but never reinserts events into the official queue.
     - Conversational Router decisions currently expose persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
-    - Router and Persona Expression start concurrently after input materialization; the dormant silent state is not a prerequisite for Persona generation.
+    - Router and, when needed, Core Planner resolve before Persona Expression starts. This prevents Persona-targeted plugin effects and tools from running for work delegated to Core; silent routes never start Persona Expression.
     - Router, Persona, and Planner share one turn-local Context Material single-flight; cancelling one waiter does not cancel collection needed by another branch.
     - Current interaction Turn State stores a pure InteractionRouteDecision; immediate replies and effect calls travel only with the PersonaExpressionResult that produced them.
     - Core final output is returned to Middleware through core_reply_handler, rendered by the single Persona Runtime, then delivered as an explicit prepared result by Output Controller.

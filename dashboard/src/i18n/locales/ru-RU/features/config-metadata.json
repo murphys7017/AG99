@@ -1041,6 +1041,10 @@
                 "enabled": {
                     "description": "Включить Interaction Middleware"
                 },
+                "plugin_runtime_targets": {
+                    "description": "Цели выполнения плагинов",
+                    "hint": "По умолчанию плагины работают в Persona Expression. Укажите имя каталога плагина как core только для рабочих задач."
+                },
                 "memory_window_size": {
                     "description": "Размер окна памяти",
                     "hint": "Количество ходов interaction memory, читаемых при построении контекста middleware."
@@ -1129,6 +1133,14 @@
                 "personal_heartbeat_interval_seconds": {
                     "description": "Интервал heartbeat Persona (сек)",
                     "hint": "Минимум 30 секунд; сначала используется только цель проактивных сообщений по умолчанию."
+                },
+                "personal_idle_initiation_enabled": {
+                    "description": "Включить инициативу при простое",
+                    "hint": "После реальной активности пользователя и достижения порога простоя отправляется только одно ограниченное Observation; Policy, отключение, тихие часы, паузы и бюджеты по-прежнему решают, выражаться ли."
+                },
+                "personal_idle_initiation_after_seconds": {
+                    "description": "Порог инициативы при простое (сек)",
+                    "hint": "Минимум 30 секунд. Каждый новый период активности пользователя может вызвать не более одного idle Observation, а состояние дедупликации сохраняется после перезапуска."
                 },
                 "personal_conversation_activity_enabled": {
                     "description": "Включить фоновую активность группы",

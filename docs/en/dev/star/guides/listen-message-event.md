@@ -334,6 +334,17 @@ You can obtain the `ProviderRequest` object and modify it.
 
 The ProviderRequest object contains all information about the LLM request, including the request text, system prompt, etc.
 
+With Interaction Middleware enabled, an unconfigured plugin receives this hook on
+the final Persona Expression request for the user-visible reply. Only a plugin
+explicitly configured as `core` in `interaction_middleware.plugin_runtime_targets`
+receives it on a Core request. The same target rule applies to
+`on_waiting_llm_request`, `on_agent_begin`, `on_llm_response`, `on_agent_done`,
+`on_using_llm_tool`, `on_llm_tool_respond`, and plugin-owned LLM Tools. Router,
+Core Planner, and internal Persona tool calls do not emit these plugin hooks. The
+Persona request is branch-local, so its mutation does not overwrite the Core request
+for the same event. Ordinary Pipeline handlers, such as keyword and command handlers,
+are unchanged and may still stop the event.
+
 ```python
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest

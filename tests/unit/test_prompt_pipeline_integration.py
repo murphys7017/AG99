@@ -627,10 +627,10 @@ async def test_internal_history_save_uses_prompt_scaffold_free_user_message():
         "content": "Look <here> & now\n\n[Image Attachment] current image",
     }
 
-    def _get_extra(key):
+    def _get_extra(key, default=None):
         if key == ama.CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY:
             return save_message
-        return None
+        return default
 
     event.get_extra.side_effect = _get_extra
 
@@ -710,7 +710,8 @@ async def test_internal_agent_preserves_post_render_on_llm_request_hook():
 
     observed_hooks: list[EventType] = []
 
-    async def _call_hook(_event, hook_type, *args):
+    async def _call_hook(_event, hook_type, *args, **kwargs):
+        assert kwargs["execution_surface"] == "core"
         observed_hooks.append(hook_type)
         if hook_type is EventType.OnWaitingLLMRequestEvent:
             return False
@@ -840,13 +841,16 @@ def test_prompt_pipeline_replaces_pre_render_request_with_group_context_extensio
         extra_user_content_parts=[TextPart(text="legacy group injection")],
     )
 
-    ama._apply_prompt_pipeline(
+    render_result = PromptRenderEngine(
+        default_renderer=BasePromptRenderer()
+    ).render(
         event=event,
         plugin_context=context,
         config=config,
         provider_request=request,
-        prompt_context_pack=pack,
+        pack=pack,
     )
+    apply_render_result_to_request(render_result, request)
 
     serialized_request = json.dumps(
         {

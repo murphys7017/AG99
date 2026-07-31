@@ -1042,6 +1042,10 @@
         "enabled": {
           "description": "启用交互中间件"
         },
+        "plugin_runtime_targets": {
+          "description": "插件运行目标",
+          "hint": "插件默认在人格表达中运行；只有工作执行插件才按目录名配置为 core。"
+        },
         "memory_window_size": {
           "description": "记忆窗口轮数",
           "hint": "构建中间件上下文时读取的 interaction memory 轮数。"
@@ -1130,6 +1134,14 @@
         "personal_heartbeat_interval_seconds": {
           "description": "人格心跳间隔秒数",
           "hint": "最小 30 秒；初期只作用于主动消息默认目标。"
+        },
+        "personal_idle_initiation_enabled": {
+          "description": "启用空闲主动发起",
+          "hint": "仅在会话已有真实用户互动且达到空闲阈值后提交一次受限 Observation；是否表达仍由 Policy、静音、安静时段、冷却和预算决定。"
+        },
+        "personal_idle_initiation_after_seconds": {
+          "description": "空闲主动发起阈值秒数",
+          "hint": "最小 30 秒。每次新的用户活动最多触发一次空闲 Observation，且重启后保留去重状态。"
         },
         "personal_conversation_activity_enabled": {
           "description": "启用群聊环境观察",

@@ -12,7 +12,8 @@
 
 1. 官方 EventBus、Pipeline、权限过滤、平台 Adapter 和插件 Handler 继续作为唯一入站基础设施。
 2. Personal Runtime 是持续控制层，不建立第二套 EventBus、消息队列、Conversation 或 Memory。
-3. 普通、明确面向 Bot 的用户消息继续走现有 Router 与 Persona Expression 并发链路。
+3. 普通、明确面向 Bot 的用户消息先完成 Router，再进入 Persona Expression，或在 `hybrid`
+   路径经 Planner 委托 Core 后回到统一 Persona Expression。
 4. Personal Policy 只处理 Heartbeat、环境活动、计划任务、执行反馈和插件 Sensor 等内部
    Observation，不取代当前 Router。
 5. Router 只判断普通入站消息是否需要 Core 候选路径；Personal Policy 与 Router 不共享模型
@@ -109,9 +110,11 @@ flowchart TD
 ```text
 official EventBus / Pipeline
   -> Personal Runtime admission
-  -> Router || Persona Expression
-  -> optional Core Planner / Execution Backend
-  -> Persona Expression
+  -> Router
+      -> persona -> Persona Expression
+      -> hybrid -> Core Planner
+          -> execute -> Execution Backend -> Persona Expression
+          -> not_required -> Persona Expression
   -> Output Runtime
 ```
 

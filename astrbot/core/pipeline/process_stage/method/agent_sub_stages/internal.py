@@ -30,6 +30,7 @@ from astrbot.core.execution import (
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
+from astrbot.core.interaction.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
@@ -205,7 +206,11 @@ class InternalAgentSubStage(Stage):
                 await event.send_typing()
             except Exception:
                 logger.warning("send_typing failed", exc_info=True)
-            if await call_event_hook(event, EventType.OnWaitingLLMRequestEvent):
+            if await call_event_hook(
+                event,
+                EventType.OnWaitingLLMRequestEvent,
+                execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
+            ):
                 return
 
             runner_registered = False
@@ -254,7 +259,12 @@ class InternalAgentSubStage(Stage):
                     and not event.platform_meta.support_streaming_message
                 )
 
-                if await call_event_hook(event, EventType.OnLLMRequestEvent, req):
+                if await call_event_hook(
+                    event,
+                    EventType.OnLLMRequestEvent,
+                    req,
+                    execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
+                ):
                     if reset_coro:
                         reset_coro.close()
                     return

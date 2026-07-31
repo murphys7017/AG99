@@ -457,9 +457,27 @@ Router、人格层和 Core，不会把群成员消息当作系统指令。
 
 ### `interaction_middleware`
 
-Interaction Middleware 与 Personal Runtime 的设置。后台自主表达默认关闭，必须同时开启
+Interaction Middleware 与 Personal Runtime 的设置。`enabled` 默认是 `true`；已有配置若明确写了
+`false`，该显式关闭值仍然优先。后台自主表达仍默认关闭，必须同时开启
 `personal_policy_enabled` 并显式选择 `personal_policy_provider_id` 才会评估可行动的 Observation。
 Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Core 或工具。
+
+- `enabled`：是否启用 Interaction Middleware。省略时启用；设为 `false` 可保留原有 Core-only 行为。
+- `expression_provider_id`、`router_provider_id` 与 `planner_provider_id`：可选的分阶段模型覆盖。
+  留空时复用当前会话已配置的聊天模型；显式填写 ID 时优先使用该模型。
+- `plugin_runtime_targets`：插件运行目标映射。键推荐使用插件目录名，值为 `core` 或
+  `personal_expression`。Interaction turn 中未配置插件默认在 Persona Expression 运行；只有显式
+  `core` 的插件会进入 Core 的 LLM 生命周期与工具执行。普通关键词、命令和
+  `AdapterMessageEvent` Handler 仍在官方 Pipeline 中运行，不受此项迁移。示例：
+
+  ```jsonc
+  "interaction_middleware": {
+    "enabled": true,
+    "plugin_runtime_targets": {
+      "astrbot_plugin_self_code": "core"
+    }
+  }
+  ```
 
 - `personal_heartbeat_enabled` / `personal_heartbeat_interval_seconds`：启用按观察目标独立计时的
   Heartbeat。Heartbeat 只检查已有 retained batch；空 Inbox 不会生成材料、调用模型或发送消息。

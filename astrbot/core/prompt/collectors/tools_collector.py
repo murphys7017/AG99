@@ -13,8 +13,8 @@ from astrbot.core.agent.tool import (
     FunctionTool,
     ToolSet,
     normalize_tool_targets,
-    tool_supports_target,
 )
+from astrbot.core.interaction.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
@@ -84,6 +84,7 @@ class ToolsCollector(ContextCollectorInterface):
             provider_request,
         )
         toolset, selection_mode = self._build_persona_toolset(
+            event,
             plugin_context,
             persona,
             provider_request,
@@ -118,6 +119,7 @@ class ToolsCollector(ContextCollectorInterface):
 
     def _build_persona_toolset(
         self,
+        event: AstrMessageEvent,
         plugin_context: Context,
         persona: dict | None,
         provider_request: ProviderRequest | None,
@@ -131,7 +133,7 @@ class ToolsCollector(ContextCollectorInterface):
                 if (
                     isinstance(tool, FunctionTool)
                     and getattr(tool, "active", True)
-                    and tool_supports_target(tool, self.target)
+                    and tool_supports_runtime_target(event, tool, self.target)
                 ):
                     active_toolset.add_tool(tool)
             return active_toolset, "provider_request"
@@ -141,13 +143,13 @@ class ToolsCollector(ContextCollectorInterface):
             return ToolSet(), "none"
 
         if (persona and persona.get("tools") is None) or not persona:
-            full_toolset = tool_manager.get_tool_set_for_target(self.target)
-            if not isinstance(full_toolset, ToolSet):
-                return ToolSet(), "unavailable"
-
             active_toolset = ToolSet()
-            for tool in full_toolset:
-                if getattr(tool, "active", True):
+            for tool in tool_manager.func_list:
+                if getattr(tool, "active", True) and tool_supports_runtime_target(
+                    event,
+                    tool,
+                    self.target,
+                ):
                     active_toolset.add_tool(tool)
             return active_toolset, "all"
 
@@ -157,8 +159,12 @@ class ToolsCollector(ContextCollectorInterface):
             return persona_toolset, "none"
 
         for tool_name in allowed_tools:
-            tool = tool_manager.get_func(tool_name, target=self.target)
-            if tool is not None and getattr(tool, "active", True):
+            tool = tool_manager.get_func(tool_name)
+            if (
+                tool is not None
+                and getattr(tool, "active", True)
+                and tool_supports_runtime_target(event, tool, self.target)
+            ):
                 persona_toolset.add_tool(tool)
         return persona_toolset, "whitelist"
 

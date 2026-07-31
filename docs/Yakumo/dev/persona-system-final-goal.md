@@ -15,9 +15,11 @@ Yakumo 要把 AstrBot 从一次消息触发一次回复的 Bot Runtime，演进�
 Platform Adapter
   -> official EventBus / Pipeline / Plugin Handler
   -> Personal Runtime
-       -> Router || Persona Expression
-       -> optional Core Planner / Execution Backend
-  -> Persona Expression
+       -> Router
+           -> persona -> Persona Expression
+           -> hybrid -> Core Planner
+               -> execute -> Execution Backend -> Persona Expression
+               -> not_required -> Persona Expression
   -> Output Runtime
   -> Finalized Turn Material
   -> Postprocess / Conversation / Memory
@@ -31,9 +33,9 @@ Personal Runtime 是控制层，负责：
 
 - 以有效 persona、audience 和 privacy scope 识别持续运行实例。
 - 管理 turn、mailbox、并发、follow-up、取消和完成权。
-- 并发启动 Router 与即时 Persona Expression。
-- 根据 Router 和 Planner 结果决定是否进入执行层。
-- 仲裁即时表达、执行结果和插件输出，避免重复完成同一 turn。
+- 先完成 Router，再按结果进入 Persona，或在 `hybrid` 路径继续 Core Planner 与执行层。
+- 将 Core 结果重新交给 Persona Expression 形成用户可见表达。
+- 仲裁 Persona、执行结果和插件输出，避免重复完成同一 turn。
 
 它不拥有 Persona、Memory、Provider 或平台数据本体，只持有一轮运行所需的引用与快照。
 

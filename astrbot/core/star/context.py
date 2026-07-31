@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from deprecated import deprecated
 
 from astrbot.core.agent.hooks import BaseAgentRunHooks
-from astrbot.core.agent.message import Message
+from astrbot.core.agent.message import ContentPart, Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
@@ -313,9 +313,11 @@ class Context:
         prompt: str | None = None,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
+        extra_user_content_parts: list[ContentPart] | None = None,
         tools: ToolSet | None = None,
         system_prompt: str | None = None,
         contexts: list[Message] | None = None,
+        model: str | None = None,
         max_steps: int = 30,
         tool_call_timeout: int = 120,
         **kwargs: Any,
@@ -330,9 +332,11 @@ class Context:
             prompt: The prompt to send to the LLM, if `contexts` and `prompt` are both provided, `prompt` will be appended as the last user message
             image_urls: List of image URLs to include in the prompt, if `contexts` and `prompt` are both provided, `image_urls` will be appended to the last user message
             audio_urls: List of audio URLs or local paths to include in the prompt, if `contexts` and `prompt` are both provided, `audio_urls` will be appended to the last user message
+            extra_user_content_parts: Additional content blocks attached to the prompt user message
             tools: ToolSet of tools available to the LLM
             system_prompt: System prompt to guide the LLM's behavior, if provided, it will always insert as the first system message in the context
             contexts: context messages for the LLM
+            model: Optional per-request model override
             max_steps: Maximum number of tool calls before stopping the loop
             **kwargs: Additional keyword arguments. The kwargs will not be passed to the LLM directly for now, but can include:
                 stream: bool - whether to stream the LLM response
@@ -374,9 +378,11 @@ class Context:
             prompt=prompt,
             image_urls=image_urls or [],
             audio_urls=audio_urls or [],
+            extra_user_content_parts=extra_user_content_parts or [],
             func_tool=tools,
             contexts=context_,
             system_prompt=system_prompt or "",
+            model=model,
         )
         if agent_context is None:
             agent_context = AstrAgentContext(

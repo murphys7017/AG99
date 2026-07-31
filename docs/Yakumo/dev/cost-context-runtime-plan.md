@@ -200,8 +200,11 @@ Context lane 表示一条有稳定上下文策略的模型调用通道。
 ```text
 official EventBus / Pipeline
   -> Personal Runtime turn admission
-  -> Router || Persona Expression
-  -> optional Planner / Execution
+  -> Router
+      -> persona -> Persona Expression
+      -> hybrid -> Planner
+          -> execute -> Execution -> Persona Expression
+          -> not_required -> Persona Expression
   -> unified Output Runtime
 ```
 

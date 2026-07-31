@@ -14,7 +14,6 @@ from astrbot.core.agent.message import AudioURLPart, ImageURLPart
 from astrbot.core.agent.tool import (
     TOOL_TARGET_CORE,
     ToolSet,
-    tool_supports_target,
 )
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
@@ -31,6 +30,7 @@ from astrbot.core.interaction.core_bridge import (
     ensure_interaction_core_execution_prompt,
     get_core_task_spec,
 )
+from astrbot.core.interaction.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
@@ -518,21 +518,33 @@ async def _prepare_persona_tools_and_subagents(
 
     # inject toolset in the persona
     if (persona and persona.get("tools") is None) or not persona:
-        persona_toolset = tmgr.get_tool_set_for_target(TOOL_TARGET_CORE)
-        for tool in list(persona_toolset):
-            if not tool.active:
-                persona_toolset.remove_tool(tool.name)
+        persona_toolset = ToolSet()
+        for tool in tmgr.func_list:
+            if tool.active and tool_supports_runtime_target(
+                event,
+                tool,
+                TOOL_TARGET_CORE,
+            ):
+                persona_toolset.add_tool(tool)
     else:
         persona_toolset = ToolSet()
         if persona["tools"]:
             for tool_name in persona["tools"]:
-                tool = tmgr.get_func(tool_name, target=TOOL_TARGET_CORE)
-                if tool and tool.active:
+                tool = tmgr.get_func(tool_name)
+                if (
+                    tool
+                    and tool.active
+                    and tool_supports_runtime_target(
+                        event,
+                        tool,
+                        TOOL_TARGET_CORE,
+                    )
+                ):
                     persona_toolset.add_tool(tool)
     if req.func_tool:
         core_toolset = ToolSet()
         for tool in req.func_tool:
-            if tool_supports_target(tool, TOOL_TARGET_CORE):
+            if tool_supports_runtime_target(event, tool, TOOL_TARGET_CORE):
                 core_toolset.add_tool(tool)
         req.func_tool = core_toolset
     if not req.func_tool:

@@ -19,7 +19,7 @@ def _int_or_default(value: Any, default: int) -> int:
 
 def is_middleware_enabled(config: Any) -> bool:
     interaction_config = config.get("interaction_middleware", {})
-    return bool(interaction_config.get("enabled", False))
+    return bool(interaction_config.get("enabled", True))
 
 
 def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
@@ -37,7 +37,7 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         interaction_config.get("personal_runtime_quiet_hours_enabled", False)
     )
     return InteractionAgentConfig(
-        enabled=bool(interaction_config.get("enabled", False)),
+        enabled=bool(interaction_config.get("enabled", True)),
         expression_provider_id=expression_provider_id,
         expression_temperature=_float_or_default(
             interaction_config.get("expression_temperature", 0.6),

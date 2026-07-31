@@ -7,7 +7,7 @@
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
 - 对启用平台，输入先经过官方 EventBus、Pipeline、权限和插件处理，再在核心 Agent 开始前进入 middleware。
-- Prompt 层先收集一份规范 `ContextPack`；middleware 并发启动轻量 Router 与 Persona Expression，再在 `hybrid` 路径调用独立 Core Planner。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
+- Prompt 层先收集一份规范 `ContextPack`；middleware 先完成轻量 Router，并仅在 `hybrid` 路径调用独立 Core Planner。Planner 允许 Core 后才进入 Persona Expression。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
 - 对 interaction turn，用户可见输出由 `InteractionOutputController` 统一 materialize、发送、记录。
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
@@ -24,6 +24,59 @@
 - provider、tools、skills、subagent 仍应通过 gateway / capability registry 接入。
 
 middleware 的职责是组合这些服务，并在一个 interaction turn 内形成可观测、可扩展、可回滚的执行现场。
+
+## 插件运行目标
+
+Personal Runtime 在缺省配置下启用。已有配置若明确写了
+`interaction_middleware.enabled: false`，该显式关闭值仍然优先，升级后需要改为
+`true` 或移除该字段才能启用。
+
+在 Interaction turn 中，已注册插件的 LLM 生命周期钩子与 LLM 工具默认属于
+`personal_expression`。这符合人格、娱乐、关系、提示词增强和 Persona 工具的默认定位；
+Core 只承载被明确指定为工作执行的插件。按插件目录名配置：
+
+```jsonc
+"interaction_middleware": {
+  "enabled": true,
+  "plugin_runtime_targets": {
+    "astrbot_plugin_self_code": "core",
+    "astrbot_plugin_persona_game": "personal_expression"
+  }
+}
+```
+
+未配置的插件与无效值都按 `personal_expression` 处理。推荐使用插件目录名；为兼容已加载
+插件，运行时也会识别其模块路径和元数据名称。`core` 是唯一会使插件进入 Core 的值。
+
+此设置的边界如下：
+
+- 只路由插件拥有的 LLM 生命周期钩子和 LLM 工具。内置工具与 MCP 工具继续遵守自身的
+  `execution_targets`。
+- 普通 Pipeline Handler，包括关键词、命令和 `AdapterMessageEvent`，仍在官方 Pipeline
+  中运行。它们可以终止事件，从而阻止后续 Persona 或 Core，但不会被当作 Persona 插件迁移。
+- 人格表达会提供 `OnWaitingLLMRequest`、`OnLLMRequest`、`OnAgentBegin`、Persona 工具的
+  `OnUsingLLMTool` / `OnLLMToolRespond`、`OnLLMResponse` 与 `OnAgentDone`。请求钩子读取的是
+  人格分支私有的 `ProviderRequest`，不会覆盖 Core 共享请求。
+- `hybrid` 路径先完成 Planner；Planner 决定执行时直接进入 Core，不会提前执行 Persona
+  插件的工具、效果或 LLM 生命周期副作用。
+- 人格 Provider 回退时会按备用 Provider 重新绑定结构化输出协议，但不会重复调用
+  `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。
+
+### 验证步骤
+
+1. 重启 AstrBot，使 `interaction_middleware` 新配置生效。
+2. 对未配置目标的已有插件发送普通对话，确认其 LLM 钩子只出现在 Persona Expression 日志中。
+3. 将一个工作型插件的目录名配置为 `core`，发送会被 Router/Planner 委托的工作请求，确认它只在
+   Core 请求、Agent 和工具阶段出现。
+4. 发送该插件的关键词或命令，确认其 Pipeline Handler 仍可直接终止事件，不会先进入 Persona。
+5. 可运行下列聚焦回归测试；其中涵盖默认启用、默认 Persona / 显式 Core 隔离、钩子顺序、工具阶段与
+   Provider 回退的请求绑定：
+
+   ```powershell
+   .venv\Scripts\python.exe -m pytest `
+     tests/unit/test_interaction_expression_agent.py `
+     tests/unit/test_interaction_plugin_runtime.py -q
+   ```
 
 ## Runtime Observation 边界
 
@@ -133,9 +186,9 @@ TopicState、ShortTermMemory、PersonaState 或启动 consolidation / promotion�
 Input Runtime / Observation
   -> Interaction Middleware / Persona Runtime Shell
       -> Effective Persona Resolver
-      -> Fast Route Classifier || Speculative Persona Expression
-      -> persona completion / Core Planner
-      -> Core Agent / Tools / Capabilities
+      -> Fast Route Classifier
+      -> Core Planner for hybrid routes
+      -> Core Agent / Tools / Capabilities, or Persona Expression
       -> Output Gateway
           -> Text / Streaming
           -> Voice / TTS
@@ -157,13 +210,13 @@ Input Runtime / Observation
 - Prompt Collectors：一次收集本轮输入、人格、session、官方对话历史、统一 Memory、执行能力和插件贡献，生成规范 `ContextPack`
 - Router：普通显式唤醒只输出 `persona` / `hybrid`；仅 Personal Runtime 标记的有界群聊模型续接候选开放 `silent`。它不承担用户可见回复、task planning 或 effect 输出，读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
-- Router/Persona 协同：普通消息并发启动二者；群聊模型续接候选先等待 Router，`silent` 零输出完成，`persona / hybrid` 才启动 Persona，Router 失败也按 `silent` 完成。Persona 在输出前从 `pending` 原子进入 `committed`；Core 最终结果先提交时可以抑制尚未 committed 的即时表达
+- Router/Persona 协同：Router 先决定 `persona` / `hybrid` /（仅有界群聊模型续接候选可用的）`silent`。`silent` 零输出完成；`hybrid` 继续由 Planner 判断是否委托 Core，只有不委托 Core 的路径才启动 Persona。Router 失败按 `silent` 完成。
 - Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
   `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
   lease 释放前统一完成或取消
-- Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不等待 Persona。Planner 只生成 CoreTaskSpec，不向即时 Persona 注入 task summary；若 Core 最终结果先提交，尚未 committed 的即时回复会被抑制
-- Core 协同提示：Core 只被告知本轮存在独立的 Persona 快速回复分支，并直接执行、返回实质结果材料；Persona 的内部状态和已发送文本不暴露给 Core
-- Context/失败协同：Router、Persona 和 Planner 通过 turn-local single-flight 共享一次 Context Material 构建；单个分支取消不会取消其他分支仍需要的构建。Planner 失败禁止 Core，但已经 emitted 的 Persona 回合仍会正常 finalized
+- Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不启动 Persona；Planner 只生成 CoreTaskSpec，Core 最终结果仍由统一 Persona 输出层表达。
+- Core 协同提示：Core 只接收执行任务与能力事实，并直接执行、返回实质结果材料；未启动的 Persona 不向 Core 暴露内部状态或预发送文本。
+- Context/失败协同：Router、Planner 和后续 Persona 通过 turn-local single-flight 共享一次 Context Material 构建。Planner 失败禁止 Core，并改走 Persona-only 的失败恢复路径。
 - PERSONA / HYBRID 编排；`silent` 只用于有界群聊模型续接候选
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义
@@ -392,7 +445,7 @@ interaction middleware 对插件主要暴露两个阶段接口：
 
 这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Router 或 Planner 的模型决策重新注入 Prompt。
 
-跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 只覆盖统一 Prompt Apply 后的 Core 请求，不保证参与 Router、Planner 或 Persona 的轻量调用。Prompt 各层完整边界见 `modules/prompt.md`。
+跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在路由后的最终请求上触发：未配置为 `core` 的插件在 Persona Expression 请求上触发，显式 `core` 插件在 Core 请求上触发；它不参与 Router、Planner 或 Persona 内部工具阶段的模型调用。同一目标也控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 以及插件拥有的 LLM Tool。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
 
 ### Prompt Contributor
 

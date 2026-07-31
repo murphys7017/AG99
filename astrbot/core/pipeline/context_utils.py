@@ -3,6 +3,7 @@ import traceback
 import typing as T
 
 from astrbot import logger
+from astrbot.core.interaction.plugin_runtime import plugin_supports_runtime_target
 from astrbot.core.message.message_event_result import CommandResult, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.star import star_map
@@ -76,6 +77,7 @@ async def call_event_hook(
     event: AstrMessageEvent,
     hook_type: EventType,
     *args,
+    execution_surface: str | None = None,
     **kwargs,
 ) -> bool:
     """调用事件钩子函数
@@ -90,18 +92,28 @@ async def call_event_hook(
         plugins_name=event.plugins_name,
     )
     for handler in handlers:
+        if execution_surface is not None and not plugin_supports_runtime_target(
+            event,
+            handler.handler_module_path,
+            execution_surface,
+        ):
+            continue
         try:
             assert inspect.iscoroutinefunction(handler.handler)
+            plugin = star_map.get(handler.handler_module_path)
+            plugin_name = plugin.name if plugin is not None else handler.handler_module_path
             logger.debug(
-                f"hook({hook_type.name}) -> {star_map[handler.handler_module_path].name} - {handler.handler_name}",
+                f"hook({hook_type.name}) -> {plugin_name} - {handler.handler_name}",
             )
             await handler.handler(event, *args, **kwargs)
         except BaseException:
             logger.error(traceback.format_exc())
 
         if event.is_stopped():
+            plugin = star_map.get(handler.handler_module_path)
+            plugin_name = plugin.name if plugin is not None else handler.handler_module_path
             logger.info(
-                f"{star_map[handler.handler_module_path].name} - {handler.handler_name} 终止了事件传播。",
+                f"{plugin_name} - {handler.handler_name} 终止了事件传播。",
             )
             return True
 

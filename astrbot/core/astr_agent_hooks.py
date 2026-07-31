@@ -6,6 +6,7 @@ from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.interaction.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
@@ -20,6 +21,7 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
             run_context.context.event,
             EventType.OnAgentBeginEvent,
             run_context,
+            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
 
     async def on_agent_done(self, run_context, llm_response) -> None:
@@ -34,12 +36,14 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
             run_context.context.event,
             EventType.OnLLMResponseEvent,
             llm_response,
+            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
         await call_event_hook(
             run_context.context.event,
             EventType.OnAgentDoneEvent,
             run_context,
             llm_response,
+            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
         if run_context.context.event.is_stopped():
             return
@@ -62,6 +66,7 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
             EventType.OnUsingLLMToolEvent,
             tool,
             tool_args,
+            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
 
     async def on_tool_end(
@@ -78,6 +83,7 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
             tool,
             tool_args,
             tool_result,
+            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
 
 

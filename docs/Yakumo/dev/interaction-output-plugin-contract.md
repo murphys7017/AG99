@@ -84,7 +84,7 @@ input
 Interaction route decision 只选择本轮对话的处理路径；用户可见表达与 effect 不属于 route：
 
 - `persona`: 统一 Persona Expression 直接生成最终回复。
-- `hybrid`: Persona Expression 生成委派确认，Core 生成主结果；目标态由二者并发执行并通过同一 Output Arbiter 仲裁。
+- `hybrid`: 先由 Core Planner 判断是否执行。`execute` 时 Core 生成主结果并交回统一 Persona Expression；`not_required` 时直接进入 Persona Expression。两条路径不并发生成即时人格回复。
 
 直播音频和协议命令使用独立 Core bypass，不进入对话 Router，也不创建伪造的 route decision。
 

@@ -136,7 +136,7 @@ Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从�
 
 ### 官方钩子
 
-官方 `on_llm_request` 保留为 Core/Main Agent 的低层请求钩子，执行顺序在统一 Prompt Apply 之后。它适合修改最终请求参数或兼容旧插件，不是给 Router、Planner 或 Persona 贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
+官方 `on_llm_request` 是最终路由分支的低层请求钩子，执行顺序在该分支的统一 Prompt Apply 之后。非 Interaction 流程保持 Core 行为；Interaction turn 中，未配置插件默认在 Persona Expression 运行，只有 `interaction_middleware.plugin_runtime_targets` 显式设为 `core` 的插件才进入 Core。该目标规则同样适用于完整插件 LLM 生命周期和插件拥有的 LLM Tool。它适合修改最终请求参数或兼容旧插件，不是给 Router、Planner 或 Persona 内部工具调用贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
 
 需要贡献模型可见事实的插件应使用 `PromptExtensionCollectorInterface`。插件开发接口见中英文 Prompt Extension 指南。
 

@@ -458,11 +458,33 @@ Candidates never call an LLM directly. They first pass through the Router with `
 
 ### `interaction_middleware`
 
-Settings for Interaction Middleware and Personal Runtime. Autonomous background
-expression is disabled by default. An actionable Observation is evaluated only
+Settings for Interaction Middleware and Personal Runtime. `enabled` defaults to
+`true`; an existing explicit `false` still takes precedence. Autonomous background
+expression remains disabled by default. An actionable Observation is evaluated only
 when `personal_policy_enabled` is enabled and
 `personal_policy_provider_id` is explicitly selected. Policy can only decide
 `ignore`, `observe`, `express`, or `defer`; it cannot call Core or tools.
+
+- `enabled`: Enable Interaction Middleware. Omit it to use the default; set it to
+  `false` to retain Core-only behavior.
+- `expression_provider_id`, `router_provider_id`, and `planner_provider_id`:
+  Optional per-stage model overrides. Leave a field empty to reuse the current
+  session's configured chat provider; an explicit ID takes precedence.
+- `plugin_runtime_targets`: Plugin execution-target map. Use the plugin directory
+  name as the key when possible, with a value of `core` or `personal_expression`.
+  In an Interaction turn, an unconfigured plugin defaults to Persona Expression;
+  only an explicit `core` plugin participates in Core LLM lifecycle hooks and
+  tools. Keyword, command, and `AdapterMessageEvent` handlers remain in the
+  official Pipeline and are not migrated by this setting. Example:
+
+  ```jsonc
+  "interaction_middleware": {
+    "enabled": true,
+    "plugin_runtime_targets": {
+      "astrbot_plugin_self_code": "core"
+    }
+  }
+  ```
 
 - `personal_heartbeat_enabled` / `personal_heartbeat_interval_seconds`: Enable a
   Heartbeat scheduled independently for each observation target. Heartbeat only

@@ -485,6 +485,8 @@ async def on_astrbot_loaded(self):
 
 ProviderRequest 对象包含了 LLM 请求的所有信息，包括请求的文本、系统提示等。
 
+启用 Interaction Middleware 时，插件默认在 Persona Expression 的最终用户可见表达请求上收到此钩子；只有在 `interaction_middleware.plugin_runtime_targets` 中显式配置为 `core` 的插件，才会在 Core 请求上收到它。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 和插件注册的 LLM Tool。Router、Core Planner 和 Persona 内部工具阶段不会触发这些插件钩子。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
+
 ```python
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest

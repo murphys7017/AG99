@@ -1040,6 +1040,10 @@
         "enabled": {
           "description": "Enable Interaction Middleware"
         },
+        "plugin_runtime_targets": {
+          "description": "Plugin Runtime Targets",
+          "hint": "Plugins run in Persona Expression by default. Configure a plugin directory name as core only for work execution."
+        },
         "memory_window_size": {
           "description": "Memory Window Size",
           "hint": "Number of interaction memory turns read when building middleware context."
@@ -1128,6 +1132,14 @@
         "personal_heartbeat_interval_seconds": {
           "description": "Persona Heartbeat Interval Seconds",
           "hint": "Minimum 30 seconds; initially applies only to the default proactive message target."
+        },
+        "personal_idle_initiation_enabled": {
+          "description": "Enable Idle Initiation",
+          "hint": "Submit one restricted Observation only after real user activity reaches the idle threshold; Policy, mute, quiet hours, cooldowns, and budgets still decide whether to express."
+        },
+        "personal_idle_initiation_after_seconds": {
+          "description": "Idle Initiation Threshold Seconds",
+          "hint": "Minimum 30 seconds. Each new user activity period can trigger at most one idle Observation, and the dedupe state survives restarts."
         },
         "personal_conversation_activity_enabled": {
           "description": "Enable Ambient Group Activity",

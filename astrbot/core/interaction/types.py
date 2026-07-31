@@ -141,7 +141,7 @@ class InteractionRouteDecision:
 
 @dataclass(slots=True)
 class InteractionAgentConfig:
-    enabled: bool = False
+    enabled: bool = True
     expression_provider_id: str = ""
     expression_temperature: float = 0.6
     expression_timeout: float = 8.0

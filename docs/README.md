@@ -19,7 +19,7 @@
 
 Persona Effect 是 Persona 输出协议，不是 Agent Tool。Router 仍只返回固定分类词，不注册工具，也不接收 effect schema。
 
-Prompt Extension 用于在统一 Prompt 管线中贡献模型可见事实。它不是 LLM Tool；`on_llm_request` 则是统一 Prompt Apply 后的 Core 低层请求钩子，不应当作 Router、Planner、Persona 的事实入口。
+Prompt Extension 用于在统一 Prompt 管线中贡献模型可见事实。它不是 LLM Tool。Interaction turn 中，插件的 `on_llm_request` 和 LLM 工具默认在 Persona Expression 的最终请求上运行；只有被 `interaction_middleware.plugin_runtime_targets` 显式配置为 `core` 的插件进入 Core。它们都不是 Router、Planner 或内部 Persona 工具调用的事实入口，跨目标事实仍应使用 Prompt Extension。
 
 `docs/Yakumo` 下的 `dev/*`、`target-state.md` 和早期中文详解文档包含历史设计记录，可能落后于当前代码。判断本 fork 与上游差异时，优先看 `README.md`、`docs/Yakumo/current-state.md` 和 `docs/Yakumo/modules/*`。
 

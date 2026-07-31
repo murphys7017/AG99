@@ -25,6 +25,7 @@ from .prompt_support import (
     build_interaction_prompt_build_config,
     build_model_context_messages,
 )
+from .provider_resolution import resolve_interaction_chat_provider
 from .types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
@@ -119,12 +120,14 @@ class InteractionRouterAgent:
         plugin_context: Context,
         interaction_config: InteractionAgentConfig,
     ) -> InteractionRouteDecision:
-        provider = plugin_context.get_provider_by_id(
-            interaction_config.router_provider_id
+        provider, provider_id = await resolve_interaction_chat_provider(
+            event,
+            plugin_context,
+            interaction_config.router_provider_id,
         )
         if not isinstance(provider, Provider):
             message = (
-                f"provider unavailable: provider_id={interaction_config.router_provider_id}"
+                f"provider unavailable: provider_id={provider_id}"
             )
             raise InteractionRouterError("provider_unavailable", message)
         # Context material uses turn-local single-flight; target rendering stays branch-local.

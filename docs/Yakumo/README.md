@@ -17,7 +17,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - `Core Planner` 只准备执行意图；Native、Claude Code、OpenCode 等执行后台位于统一执行边界之后。
 - `effect_calls` 是插件扩展协议，AstrBot 不理解 Motion、Live2D 等插件领域语义。
 
-普通显式唤醒消息仍并发启动 Router 与 Persona Expression，Router 只返回 `persona` 或 `hybrid`。同一群聊发送者在 Bot 成功回复后的前 10 秒可直接续接；此后到配置窗口结束的未唤醒消息才会向同一个 Router 开放 `silent`，并先等待路由决定，避免 Persona 在静默决定前抢发。
+普通消息先完成 Router；Router 返回 `persona`、`hybrid`，并且只对有界群聊续接候选开放 `silent`。`hybrid` 再经 Core Planner 判断是否执行，只有未委托 Core 的路径直接启动 Persona；Core 的最终结果仍经同一个 Persona Expression 输出。同一群聊发送者在 Bot 成功回复后的前 10 秒可直接续接；此后到配置窗口结束的未唤醒消息才会向 Router 开放 `silent`。
 
 ## 当前稳定边界
 
@@ -27,6 +27,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - `PersonalSessionRuntime` 现在按 RuntimeKey 在进程内跨 turn 保留控制状态；空闲实例受 24 小时 TTL 和 1024 条 LRU 上限约束。窄化的 Personal State Repository 只持久化最近表达、冷却、静音和每日用量，重启后按同一 RuntimeKey 恢复；Inbox、active turn、attention 和模型临时状态仍只存在于进程内。每个 Runtime 还持有最多 64 条 Observation 的有界 Inbox、唯一固定聚合窗口 task、确定性 Gate 和最后一次 Personal Policy 结果。Turn 结束时根据真实物理投递回执形成 Completion Feedback；所有已送达可见回复都会推进最近表达时间并启动自主表达冷却，只有携带 `ActionIntent.action_id` 的已送达输出才消耗每日主动输出配额，失败发送两者都不更新。
 - 通用 Runtime Observation 通过 `submit_observation()` 合并为只读 `ObservationBatch`，再由 Gate 生成 `evaluate / hold / reject` 及稳定原因码。`evaluate` 仅在显式启用时调用独立 Personal Policy Provider，并以严格 tool-call 契约形成 decision；Provider、超时或解析失败统一记录为 fail-closed `observe`。`express` 先形成内部 `ActionIntent`，再通过独立的 `RuntimeObservationEvent` 兼容路径复用 Persona Expression、Output Controller 与 assistant-only 历史；Policy 对无新事实且近期已表达的同一意图不得再次 `express`，自主 Persona 生成还会在 effect、TTS 和投递前与上一条真实送达表达做规范化指纹比较，重复时以 `suppressed` 结束且不写 Conversation、冷却或主动配额。`defer`、冷却和 quiet-hours 的 held batch 由生命周期托管的 Wake Scheduler 到期后重新评估。Heartbeat 只是对 retained batch 的到期检查，不创造材料，也不唤醒空 Inbox；Conversation 或 Memory 历史只提供语义上下文，从不单独授予 Policy 唤醒权限。普通 Intake 不直接进入 Persona、Core 或 Output；Policy 不调用 Core 或工具。
 - Persona target 不接收 `extension.capability`；执行能力契约保留在 Core lane。显式支持 Personal Runtime 的 Observation 输出会把同一逻辑 TTS segment 的 Record 与双输出文本作为一个物理消息链发送，避免一个自主表达被 Adapter 拆成多个 proactive turn。
+- Interaction turn 中的插件 LLM 生命周期和插件拥有的工具默认挂载到 Persona Expression；`interaction_middleware.plugin_runtime_targets` 中显式配置为 `core` 的插件才进入 Core。Pipeline Handler 保持原有位置和终止事件语义，不被迁移为 Persona 插件。
 
 ## 当前主链
 
@@ -37,9 +38,11 @@ Platform Adapter
   -> Personal Runtime turn admission / session lease
   -> official Plugin Handlers
   -> TurnExecutionScope
-  -> Router || Persona Expression
-  -> persona: Output
-  -> hybrid: Core Planner -> CoreExecutionSpec -> Native Core Executor -> Persona Expression -> Output
+  -> Router
+  -> persona: Persona Expression -> Output
+  -> hybrid: Core Planner -> not_required: Persona Expression -> Output
+                         -> execute: CoreExecutionSpec -> Native Core Executor
+                                     -> Persona Expression -> Output
 ```
 
 Prompt 使用唯一数据流：

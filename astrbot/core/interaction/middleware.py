@@ -767,22 +767,6 @@ class InteractionMiddleware:
             event,
             InteractionSpeculativePersonaStatus.PENDING,
         )
-        turn_scope = ensure_interaction_turn_state(event).execution_scope
-        defer_persona_until_route = is_group_reply_candidate(event)
-
-        def start_persona_task() -> asyncio.Task:
-            return turn_scope.create_task(
-                self._generate_and_emit_speculative_persona(
-                    event,
-                    interaction_config,
-                ),
-                role="speculative_persona",
-                name=(
-                    f"interaction_speculative_persona_{event.get_platform_id()}_"
-                    f"{event.get_extra('_turn_id')}"
-                ),
-            )
-
         pre_admitted_route = (
             ensure_interaction_turn_state(event).route_decision
             if event.get_extra(
@@ -791,34 +775,10 @@ class InteractionMiddleware:
             )
             else None
         )
-        router_task = (
-            None
-            if pre_admitted_route is not None
-            else turn_scope.create_task(
-                self._route_interaction(event, interaction_config),
-                role="router",
-                name=(
-                    f"interaction_router_{event.get_platform_id()}_"
-                    f"{event.get_extra('_turn_id')}"
-                ),
-            )
-        )
-        persona_task = (
-            None if defer_persona_until_route else start_persona_task()
-        )
-        try:
-            route = (
-                pre_admitted_route
-                if pre_admitted_route is not None
-                else await router_task
-            )
-        except asyncio.CancelledError:
-            if persona_task is not None and not persona_task.done():
-                persona_task.cancel()
-            if persona_task is not None:
-                await asyncio.gather(persona_task, return_exceptions=True)
-            raise
-        if router_task is not None:
+        if pre_admitted_route is not None:
+            route = pre_admitted_route
+        else:
+            route = await self._route_interaction(event, interaction_config)
             self._record_route_diagnostics(event, route)
         self.attach_event_context(
             event,
@@ -826,22 +786,12 @@ class InteractionMiddleware:
             route_decision=route,
         )
         if route.route_mode == InteractionRouteMode.SILENT:
-            if persona_task is None:
-                self._set_speculative_persona_status(
-                    event,
-                    InteractionSpeculativePersonaStatus.SUPPRESSED,
-                )
-                expression = None
-            else:
-                expression = await self._suppress_or_await_speculative_persona(
-                    event,
-                    persona_task,
-                )
-            await self._complete_silent_or_committed_persona_turn(event, expression)
+            self._set_speculative_persona_status(
+                event,
+                InteractionSpeculativePersonaStatus.SUPPRESSED,
+            )
+            await self._complete_silent_or_committed_persona_turn(event, None)
             return
-
-        if persona_task is None:
-            persona_task = start_persona_task()
 
         planning_decision = None
         if route.route_mode == InteractionRouteMode.HYBRID:
@@ -850,35 +800,14 @@ class InteractionMiddleware:
                     event,
                     interaction_config,
                 )
-            except asyncio.CancelledError:
-                if not persona_task.done():
-                    persona_task.cancel()
-                await asyncio.gather(persona_task, return_exceptions=True)
-                raise
             except Exception:
-                result = await asyncio.gather(
-                    persona_task,
-                    return_exceptions=True,
+                expression = await self._generate_and_emit_persona(
+                    event,
+                    interaction_config,
                 )
-                expression = result[0]
-                turn_state = ensure_interaction_turn_state(event)
-                if (
-                    isinstance(expression, PersonaExpressionResult)
-                    and turn_state.speculative_persona_status
-                    is InteractionSpeculativePersonaStatus.EMITTED
-                ):
-                    if (
-                        turn_state.failures
-                        and turn_state.failures[-1].stage == "core_planner"
-                    ):
-                        turn_state.failures[-1].user_visible_action = "persona_only"
-                    event.set_extra(
-                        "_interaction_core_planner_recovered_via_persona",
-                        True,
-                    )
-                    await self._complete_persona_only_turn(event, expression)
-                    return
-                raise
+                event.set_extra("_interaction_core_planner_recovered_via_persona", True)
+                await self._complete_persona_only_turn(event, expression)
+                return
 
         if (
             planning_decision is not None
@@ -888,10 +817,13 @@ class InteractionMiddleware:
             self._forward_to_core(event)
             return
 
-        expression = await persona_task
+        expression = await self._generate_and_emit_persona(
+            event,
+            interaction_config,
+        )
         await self._complete_persona_only_turn(event, expression)
 
-    async def _generate_and_emit_speculative_persona(
+    async def _generate_and_emit_persona(
         self,
         event: AstrMessageEvent,
         interaction_config,
