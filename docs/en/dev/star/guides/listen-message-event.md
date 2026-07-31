@@ -340,8 +340,10 @@ explicitly configured as `core` in `interaction_middleware.plugin_runtime_target
 receives it on a Core request. The same target rule applies to
 `on_waiting_llm_request`, `on_agent_begin`, `on_llm_response`, `on_agent_done`,
 `on_using_llm_tool`, `on_llm_tool_respond`, and plugin-owned LLM Tools. Router,
-Core Planner, and internal Persona tool calls do not emit these plugin hooks. The
-Persona request is branch-local, so its mutation does not overwrite the Core request
+Core Planner do not emit these plugin hooks. Internal Persona tool calls do not emit
+request or Agent lifecycle hooks, but executing a plugin tool still emits
+`on_using_llm_tool` and `on_llm_tool_respond`. The Persona request is branch-local,
+so its mutation does not overwrite the Core request
 for the same event. Ordinary Pipeline handlers, such as keyword and command handlers,
 are unchanged and may still stop the event.
 

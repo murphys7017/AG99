@@ -120,7 +120,7 @@ A failing plugin collector is logged and skipped so one plugin cannot break core
 | LLM Tool | Register executable capability; plugin tools default to Persona and explicit `core` plugins enter Core |
 | `on_llm_request` | Modify the final routed Persona or Core low-level request, based on plugin target |
 
-The same runtime target applies to a plugin's full LLM lifecycle and its owned LLM Tools: in an Interaction turn they default to Persona, and only an explicit `core` plugin enters Core. Non-Interaction flows retain the official Core behavior. `on_llm_request` does not run for Router, Core Planner, or internal Persona tool calls. Facts needed by those targets must use Prompt Extensions with explicit targets; do not make per-turn dynamic facts depend on a low-level request hook.
+The same runtime target applies to a plugin's full LLM lifecycle and its owned LLM Tools: in an Interaction turn they default to Persona, and only an explicit `core` plugin enters Core. Non-Interaction flows retain the official Core behavior. `on_llm_request` does not run for Router, Core Planner, or internal Persona tool calls; actual Persona tool execution still emits `on_using_llm_tool` and `on_llm_tool_respond`. Facts needed by those targets must use Prompt Extensions with explicit targets; do not make per-turn dynamic facts depend on a low-level request hook.
 
 ## Safety Rules
 

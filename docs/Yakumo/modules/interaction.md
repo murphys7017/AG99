@@ -445,7 +445,7 @@ interaction middleware 对插件主要暴露两个阶段接口：
 
 这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Router 或 Planner 的模型决策重新注入 Prompt。
 
-跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在路由后的最终请求上触发：未配置为 `core` 的插件在 Persona Expression 请求上触发，显式 `core` 插件在 Core 请求上触发；它不参与 Router、Planner 或 Persona 内部工具阶段的模型调用。同一目标也控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 以及插件拥有的 LLM Tool。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
+跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在路由后的最终请求上触发：未配置为 `core` 的插件在 Persona Expression 请求上触发，显式 `core` 插件在 Core 请求上触发；它不参与 Router、Planner 或 Persona 内部工具阶段的模型调用。同一目标也控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 以及插件拥有的 LLM Tool；Persona 内部工具回路仅在实际执行插件工具时触发后两个工具生命周期钩子。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
 
 ### Prompt Contributor
 
