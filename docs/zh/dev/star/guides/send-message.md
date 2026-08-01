@@ -22,9 +22,14 @@ async def helloworld(self, event: AstrMessageEvent):
 Persona Expression 内运行时，这些旧式输出路径会被收集为模型可见的工具材料，
 不会立刻发送到平台；最终 Persona Expression 仍是唯一的用户可见回复 owner。
 
-该规则覆盖文本字符串、`MessageChain`、`MessageEventResult` 和流式消息链。
-工具自行创建的后台 task 不属于本次工具调用，因此其输出不会被收集；需要在工具
-返回后继续执行的工作应使用常规的显式输出 API。
+该规则覆盖文本字符串、`MessageChain`、`MessageEventResult` 和发往当前会话的
+`Context.send_message()`；其中的图片、文件、语音等富媒体会随最终 Persona
+回复一并投递，而非被降级为组件名称。显式跨会话发送保持原有投递目标。工具自行创建的后台 task 不属于本次工具调用，
+因此其输出不会被收集；需要在工具返回后继续执行的工作应使用常规的显式输出 API。
+
+返回 `MessageEventResult.set_async_stream(...)` 的旧式工具流在 Persona Expression
+内暂不支持。框架会安全关闭该流，并向工具循环返回明确的兼容性提示，而不会静默丢弃。
+请改为返回非流式结果，或在 `plugin_runtime_targets` 中将该插件显式配置为 `core`。
 
 ## 主动消息
 
@@ -53,6 +58,10 @@ await self.context.send_message(
     finalize=False,
 )
 ```
+
+若调用发生在 Persona Expression 工具内部且目标为当前会话，`Context.send_message()`
+会被视为工具输出，随最终人格回复投递，不会抢占该 turn 的最终输出所有权；显式跨会话
+发送则保持原有投递目标。
 
 `send_message()` 是调用方已经决定投递内容的显式兼容 API，不会交给 Personal Policy 再判断，
 也不会被自主表达的重复回复检查改写或抑制。Cron 和插件调用都保持原有的精确内容与

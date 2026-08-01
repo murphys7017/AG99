@@ -23,12 +23,18 @@ class ToolOutputCapture:
 
     messages: list[MessageChain] = field(default_factory=list)
     owner_task: asyncio.Task | None = None
+    session_origin: str | None = None
 
     def capture(self, message: MessageChain | str | None) -> None:
         if isinstance(message, str):
             message = MessageChain(chain=[Plain(message)])
         if message is not None:
             self.messages.append(message.derive(list(message.chain)))
+
+    def targets_current_session(self, session: object) -> bool:
+        """Return whether an explicit Context target is this tool's session."""
+
+        return bool(self.session_origin and str(session) == self.session_origin)
 
     async def capture_stream(
         self,
@@ -43,8 +49,37 @@ class ToolOutputCapture:
         return messages
 
 
+@dataclass(slots=True)
+class PersonaToolOutputAttachments:
+    """Collect rich tool output for one Persona expression task."""
+
+    messages: list[MessageChain] = field(default_factory=list)
+    owner_task: asyncio.Task | None = None
+
+    def capture(self, messages: list[MessageChain]) -> None:
+        for message in messages:
+            components = [
+                component
+                for component in message.chain
+                if not isinstance(component, Plain)
+            ]
+            if components:
+                self.messages.append(message.derive(components))
+
+    def drain(self) -> list[MessageChain]:
+        messages = self.messages
+        self.messages = []
+        return messages
+
+
 _active_tool_output_capture: ContextVar[ToolOutputCapture | None] = ContextVar(
     "astrbot_active_tool_output_capture",
+    default=None,
+)
+_active_persona_tool_output_attachments: ContextVar[
+    PersonaToolOutputAttachments | None
+] = ContextVar(
+    "astrbot_active_persona_tool_output_attachments",
     default=None,
 )
 
@@ -53,6 +88,24 @@ def get_active_tool_output_capture() -> ToolOutputCapture | None:
     """Return the capture active for the current tool task, if any."""
 
     capture = _active_tool_output_capture.get()
+    if capture is None or capture.owner_task is not asyncio.current_task():
+        return None
+    return capture
+
+
+def record_persona_tool_output_attachments(messages: list[MessageChain]) -> None:
+    """Keep non-text legacy tool output for the active Persona transaction."""
+
+    capture = get_active_persona_tool_output_attachments()
+    if capture is not None:
+        capture.capture(messages)
+
+
+def get_active_persona_tool_output_attachments(
+) -> PersonaToolOutputAttachments | None:
+    """Return the rich-output capture active for the current expression task."""
+
+    capture = _active_persona_tool_output_attachments.get()
     if capture is None or capture.owner_task is not asyncio.current_task():
         return None
     return capture
@@ -68,4 +121,19 @@ def activate_tool_output_capture(capture: ToolOutputCapture) -> Iterator[None]:
         yield
     finally:
         _active_tool_output_capture.reset(token)
+        capture.owner_task = None
+
+
+@contextmanager
+def activate_persona_tool_output_attachments(
+    capture: PersonaToolOutputAttachments,
+) -> Iterator[None]:
+    """Scope rich tool attachments to one Persona expression task."""
+
+    capture.owner_task = asyncio.current_task()
+    token = _active_persona_tool_output_attachments.set(capture)
+    try:
+        yield
+    finally:
+        _active_persona_tool_output_attachments.reset(token)
         capture.owner_task = None

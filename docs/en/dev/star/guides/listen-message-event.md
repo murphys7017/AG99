@@ -334,8 +334,10 @@ You can obtain the `ProviderRequest` object and modify it.
 
 The ProviderRequest object contains all information about the LLM request, including the request text, system prompt, etc.
 
-With Interaction Middleware enabled, an unconfigured plugin receives this hook on
-the final Persona Expression request for the user-visible reply. Resolution order is
+With Interaction Middleware enabled, an unconfigured plugin receives this hook once
+on Persona Expression's pre-tool preparation request. Its `ProviderRequest` changes
+are retained for the final user-visible expression, so the hook can add context or
+remove Persona tools before the model sees them. Resolution order is
 `interaction_middleware.plugin_runtime_targets`, the plugin class's optional
 `interaction_runtime_target` declaration, then the Persona default. Only a plugin
 resolved as `core` receives it on a Core request. The same target rule applies to
@@ -499,9 +501,12 @@ You can obtain the `FunctionTool` object and tool call arguments.
 
 When a plugin tool runs inside Persona Expression, legacy visible output is tool
 material instead of an immediate platform reply: `MessageEventResult`,
-`CommandResult`, `event.send()`, `emit_output()`, `emit_progress()`, and streaming
-output are returned to the model, and the final Persona Expression owns the visible
-reply. Output from a background task created by the tool is not captured.
+`CommandResult`, `event.send()`, `emit_output()`, `emit_progress()`, and
+`Context.send_message()` targeting the current session are captured, while rich media
+is delivered with the final Persona reply. Explicit cross-session sends retain their
+original delivery target. A returned `MessageEventResult.set_async_stream(...)` is explicitly
+unsupported: it is closed and reported to the tool loop rather than silently lost.
+Output from a background task created by the tool is not captured.
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent

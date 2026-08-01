@@ -24,6 +24,7 @@ from astrbot.core.agent.tool_executor import BaseFunctionToolExecutor
 from astrbot.core.agent.tool_output_capture import (
     ToolOutputCapture,
     activate_tool_output_capture,
+    record_persona_tool_output_attachments,
 )
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_main_agent_resources import (
@@ -688,7 +689,13 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         is_persona_expression = (
             run_context.tool_execution_surface == TOOL_TARGET_PERSONAL_EXPRESSION
         )
-        output_capture = ToolOutputCapture() if is_persona_expression else None
+        output_capture = (
+            ToolOutputCapture(
+                session_origin=str(getattr(event, "unified_msg_origin", "") or "")
+            )
+            if is_persona_expression
+            else None
+        )
         original_force_stopped = getattr(event, "_force_stopped", None)
         wrapper = call_local_llm_tool(
             context=run_context,
@@ -719,6 +726,17 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
 
                     if output_capture is not None:
                         result = event.get_result()
+                        unsupported_stream_material = None
+                        if result is not None and result.async_stream is not None:
+                            await cls._discard_unsupported_persona_stream(
+                                result.async_stream,
+                                tool.name,
+                            )
+                            unsupported_stream_material = (
+                                "Legacy streaming MessageEventResult is unsupported in "
+                                "Persona Expression tools. Use a non-streaming result or "
+                                "configure this plugin for core."
+                            )
                         if result is not None and result.chain:
                             output_capture.capture(
                                 MessageChain(
@@ -729,11 +747,22 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                         event.clear_result()
                         if hasattr(event, "_force_stopped"):
                             event._force_stopped = original_force_stopped
+                        captured_messages = output_capture.drain()
+                        record_persona_tool_output_attachments(captured_messages)
                         captured_result = cls._captured_output_to_tool_result(
-                            output_capture.drain()
+                            captured_messages
                         )
                         if captured_result is not None:
                             yield captured_result
+                        if unsupported_stream_material is not None:
+                            yield mcp.types.CallToolResult(
+                                content=[
+                                    mcp.types.TextContent(
+                                        type="text",
+                                        text=unsupported_stream_material,
+                                    )
+                                ]
+                            )
 
                     if resp is not None:
                         if isinstance(resp, mcp.types.CallToolResult):
@@ -763,7 +792,10 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                                         exc_info=True,
                                     )
                         yield None
-                    elif captured_result is None:
+                    elif (
+                        captured_result is None
+                        and unsupported_stream_material is None
+                    ):
                         yield mcp.types.CallToolResult(
                             content=[
                                 mcp.types.TextContent(
@@ -783,6 +815,28 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 event.clear_result()
                 if hasattr(event, "_force_stopped"):
                     event._force_stopped = original_force_stopped
+
+    @staticmethod
+    async def _discard_unsupported_persona_stream(stream, tool_name: str) -> None:
+        """Close legacy returned streams without opening a second reply path."""
+
+        close = getattr(stream, "aclose", None)
+        if not callable(close):
+            logger.warning(
+                "Persona Expression tool returned an unsupported stream without aclose: %s",
+                tool_name,
+            )
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to close unsupported Persona Expression tool stream: tool=%s error=%s",
+                tool_name,
+                exc,
+            )
 
     @staticmethod
     def _captured_output_to_tool_result(

@@ -600,9 +600,12 @@ def register_llm_tool(
 
     可接受的参数类型有：string, number, object, array, boolean。
 
-    ``tool_targets`` 控制工具可用的执行面，默认仅 ``("core",)``。
-    可选值为 ``"core"`` 和 ``"personal_expression"``；两者同时声明时，
-    两个执行面都可以调用该工具。
+    ``tool_targets`` 声明工具本身允许的执行面，默认仅 ``("core",)``。
+    可选值为 ``"core"`` 和 ``"personal_expression"``。在 Interaction
+    turn 中，插件归属优先由 ``plugin_runtime_targets`` 配置或插件元数据决定；
+    因而旧插件即使保留默认目标，也会按 Persona-first 规则进入
+    ``personal_expression``，除非显式配置为 ``core``。非插件工具继续严格遵守
+    ``tool_targets``。
 
     返回值：
         - 返回 str：结果会被加入下一次 LLM 请求的 prompt 中，用于让 LLM 总结工具返回的结果

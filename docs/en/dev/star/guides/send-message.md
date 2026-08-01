@@ -24,9 +24,18 @@ are captured as model-visible tool material instead of being delivered immediate
 The final Persona Expression remains the only owner of the user-visible reply.
 
 This applies to text strings, `MessageChain` values, `MessageEventResult` values,
-and streaming chains. Output produced by a background task created by the tool is
-outside that tool invocation and is not captured. Use normal explicit output APIs
-for work that must continue after the tool returns.
+and `Context.send_message()` when it targets the current session. Rich components
+such as images, files, and records are delivered with the final Persona reply rather
+than reduced to component names. Explicit cross-session `Context.send_message()`
+calls retain their original delivery target. Output produced by a background task created by the tool is outside that tool
+invocation and is not captured. Use normal explicit output APIs for work that must
+continue after the tool returns.
+
+Legacy tools returning `MessageEventResult.set_async_stream(...)` are not supported
+inside Persona Expression yet. AstrBot safely closes that returned stream and gives
+the tool loop a deterministic compatibility notice instead of silently dropping it.
+Return a non-streaming result or explicitly configure that plugin for `core` in
+`plugin_runtime_targets`.
 
 ## Active Messages
 
@@ -43,6 +52,11 @@ async def helloworld(self, event: AstrMessageEvent):
     message_chain = MessageChain().message("Hello!").file_image("path/to/image.jpg")
     await self.context.send_message(event.unified_msg_origin, message_chain)
 ```
+
+When it is called inside a Persona Expression tool for the current session,
+`Context.send_message()` is captured as tool output and delivered with the final
+Persona reply; it cannot take ownership of the turn's final output. Explicit
+cross-session sends retain their original delivery target.
 
 `send_message()` treats the message as the final output of the proactive turn by
 default. When it is called inside the current active turn for tool or task

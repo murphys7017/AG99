@@ -22,6 +22,10 @@ from astrbot.core.agent.tool import (
     FunctionTool,
     ToolSet,
 )
+from astrbot.core.agent.tool_output_capture import (
+    PersonaToolOutputAttachments,
+    activate_persona_tool_output_attachments,
+)
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.interaction.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
@@ -542,6 +546,24 @@ class InteractionExpressionAgent:
         req: PersonaExpressionRequest,
     ) -> PersonaExpressionResult:
         """统一 Persona 表达入口，返回结构化 PersonaExpressionResult。"""
+        attachment_capture = PersonaToolOutputAttachments()
+        with activate_persona_tool_output_attachments(attachment_capture):
+            return await self._generate_expression_with_attachments(
+                event,
+                plugin_context,
+                interaction_config,
+                req,
+                attachment_capture,
+            )
+
+    async def _generate_expression_with_attachments(
+        self,
+        event,
+        plugin_context: Context,
+        interaction_config: InteractionAgentConfig,
+        req: PersonaExpressionRequest,
+        attachment_capture: PersonaToolOutputAttachments,
+    ) -> PersonaExpressionResult:
         provider, provider_id = await resolve_interaction_chat_provider(
             event,
             plugin_context,
@@ -599,7 +621,7 @@ class InteractionExpressionAgent:
                     primary_error,
                 )
             try:
-                return await self._generate_expression_with_provider(
+                result = await self._generate_expression_with_provider(
                     event,
                     plugin_context,
                     interaction_config,
@@ -607,6 +629,8 @@ class InteractionExpressionAgent:
                     req=candidate_request,
                     prepared=prepared,
                 )
+                result.metadata["persona_tool_attachments"] = attachment_capture.drain()
+                return result
             except InteractionExpressionError as exc:
                 last_error = exc
                 if isinstance(exc.prepared, _PreparedPersonaExpression):
@@ -691,6 +715,27 @@ class InteractionExpressionAgent:
             )
             provider_request.func_tool = toolset
 
+        output_contract = render_result.output_contract
+        compiled_output_contract = render_result.compiled_output_contract
+        provider_request.output_contract = output_contract
+        provider_request.compiled_output_contract = compiled_output_contract
+        rendered_provider_request = copy.deepcopy(provider_request)
+
+        # This is the pre-tool preparation boundary. Legacy plugins may amend
+        # ProviderRequest.func_tool here, so running the hook later would make
+        # their changes invisible to the Persona tool loop.
+        with _bind_persona_provider_request(event, provider_request):
+            if await call_event_hook(
+                event,
+                EventType.OnLLMRequestEvent,
+                provider_request,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            ):
+                return PersonaExpressionResult()
+        hooked_provider_request = copy.deepcopy(provider_request)
+        provider_request.output_contract = output_contract
+        provider_request.compiled_output_contract = compiled_output_contract
+
         tool_material: str | None = None
         if req.allow_plugin_tools and isinstance(provider_request.func_tool, ToolSet):
             toolset = provider_request.func_tool
@@ -705,20 +750,16 @@ class InteractionExpressionAgent:
                         toolset,
                     )
                 except InteractionExpressionError as exc:
-                    raise InteractionExpressionError(
-                        exc.reason,
-                        str(exc),
-                        tool_material=_build_tool_loop_failure_material(exc),
-                    ) from exc
-                tool_material = (tool_result.completion_text or "").strip()
-                if tool_result.role == "err":
-                    raise InteractionExpressionError(
-                        "tool_loop_error",
-                        tool_material or "persona plugin tool loop failed",
-                        tool_material=_build_tool_loop_failure_material(
+                    # Tool work may already have happened. Convert its failure
+                    # into final-expression material instead of restarting the
+                    # whole Persona flow on a fallback provider.
+                    tool_material = _build_tool_loop_failure_material(exc)
+                else:
+                    tool_material = (tool_result.completion_text or "").strip()
+                    if tool_result.role == "err":
+                        tool_material = _build_tool_loop_failure_material(
                             tool_material or "provider returned an error response"
-                        ),
-                    )
+                        )
 
         if tool_material:
             req = replace(
@@ -747,6 +788,17 @@ class InteractionExpressionAgent:
             provider_request = build_prompt_render_provider_request(event, provider)
             provider_request.session_id = event.session_id
             apply_render_result_to_request(render_result, provider_request)
+            output_contract = render_result.output_contract
+            compiled_output_contract = render_result.compiled_output_contract
+            provider_request.output_contract = output_contract
+            provider_request.compiled_output_contract = compiled_output_contract
+            rerendered_provider_request = copy.deepcopy(provider_request)
+            self._apply_request_hook_mutations(
+                rendered_provider_request,
+                previous_request=hooked_provider_request,
+                next_request=provider_request,
+            )
+            rendered_provider_request = rerendered_provider_request
 
         output_contract = render_result.output_contract
         compiled_output_contract = render_result.compiled_output_contract
@@ -760,20 +812,10 @@ class InteractionExpressionAgent:
             req=req,
             render_result=render_result,
             provider_request=provider_request,
-            rendered_provider_request=copy.deepcopy(provider_request),
+            rendered_provider_request=rendered_provider_request,
             run_context=run_context,
             tool_material=tool_material,
         )
-        with _bind_persona_provider_request(event, provider_request):
-            if await call_event_hook(
-                event,
-                EventType.OnLLMRequestEvent,
-                provider_request,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-            ):
-                return PersonaExpressionResult()
-        provider_request.output_contract = output_contract
-        provider_request.compiled_output_contract = compiled_output_contract
         with _bind_persona_provider_request(event, provider_request):
             if await call_event_hook(
                 event,
@@ -820,7 +862,12 @@ class InteractionExpressionAgent:
         provider_request = build_prompt_render_provider_request(event, provider)
         provider_request.session_id = event.session_id
         apply_render_result_to_request(render_result, provider_request)
-        self._apply_request_hook_mutations(previous, provider_request)
+        rendered_provider_request = copy.deepcopy(provider_request)
+        self._apply_request_hook_mutations(
+            previous.rendered_provider_request,
+            previous_request=previous.provider_request,
+            next_request=provider_request,
+        )
         provider_request.provider = provider
         provider_request.output_contract = render_result.output_contract
         provider_request.compiled_output_contract = render_result.compiled_output_contract
@@ -828,7 +875,7 @@ class InteractionExpressionAgent:
             req=previous.req,
             render_result=render_result,
             provider_request=provider_request,
-            rendered_provider_request=copy.deepcopy(provider_request),
+            rendered_provider_request=rendered_provider_request,
             run_context=_build_persona_hook_run_context(
                 plugin_context,
                 event,
@@ -838,18 +885,53 @@ class InteractionExpressionAgent:
 
     @staticmethod
     def _apply_request_hook_mutations(
-        previous: _PreparedPersonaExpression,
-        fallback_request: ProviderRequest,
+        rendered_request: ProviderRequest,
+        *,
+        previous_request: ProviderRequest,
+        next_request: ProviderRequest,
     ) -> None:
         """Carry official request-hook mutations across provider-specific rendering."""
         for field_info in fields(ProviderRequest):
             name = field_info.name
-            if name in {"output_contract", "compiled_output_contract"}:
+            if name in {
+                "output_contract",
+                "compiled_output_contract",
+                # The final Persona expression deliberately does not re-enter
+                # the tool loop after tool material has been collected.
+                "func_tool",
+            }:
                 continue
-            before_hook = getattr(previous.rendered_provider_request, name)
-            after_hook = getattr(previous.provider_request, name)
+            before_hook = getattr(rendered_request, name)
+            after_hook = getattr(previous_request, name)
             if after_hook != before_hook:
-                setattr(fallback_request, name, copy.deepcopy(after_hook))
+                next_value = getattr(next_request, name)
+                if name == "prompt":
+                    setattr(
+                        next_request,
+                        name,
+                        _merge_request_prompt_mutation(
+                            before_hook,
+                            after_hook,
+                            next_value,
+                        ),
+                    )
+                elif name in {
+                    "contexts",
+                    "extra_user_content_parts",
+                    "image_urls",
+                    "audio_urls",
+                }:
+                    setattr(
+                        next_request,
+                        name,
+                        _merge_request_collection_mutation(
+                            before_hook,
+                            after_hook,
+                            next_value,
+                        ),
+                    )
+                else:
+                    setattr(next_request, name, copy.deepcopy(after_hook))
 
     async def _complete_persona_expression(
         self,
@@ -1355,3 +1437,59 @@ def _build_tool_loop_failure_material(error: object) -> str:
     return "Personal Expression 插件工具处理失败。可确认的错误原因：" + (
         message or "未知错误"
     )
+
+
+def _merge_request_prompt_mutation(
+    rendered_value: object,
+    hooked_value: object,
+    rerendered_value: object,
+) -> object:
+    """Retain a hook's prompt change without dropping dynamic tool material."""
+
+    if not all(isinstance(value, str) for value in (
+        rendered_value,
+        hooked_value,
+        rerendered_value,
+    )):
+        return copy.deepcopy(hooked_value)
+    if rendered_value and rendered_value in hooked_value:
+        return hooked_value.replace(rendered_value, rerendered_value, 1)
+    if rerendered_value:
+        return (
+            f"{hooked_value}\n\n{rerendered_value}"
+            if hooked_value
+            else rerendered_value
+        )
+    return hooked_value
+
+
+def _merge_request_collection_mutation(
+    rendered_value: object,
+    hooked_value: object,
+    rerendered_value: object,
+) -> object:
+    """Keep hook-owned collection entries and the rerendered dynamic entries."""
+
+    if not all(isinstance(value, list) for value in (
+        rendered_value,
+        hooked_value,
+        rerendered_value,
+    )):
+        return copy.deepcopy(hooked_value)
+
+    merged = copy.deepcopy(hooked_value)
+    rendered_items = [_request_mutation_key(value) for value in rendered_value]
+    merged_items = [_request_mutation_key(value) for value in merged]
+    for value in rerendered_value:
+        key = _request_mutation_key(value)
+        if key not in rendered_items and key not in merged_items:
+            merged.append(copy.deepcopy(value))
+            merged_items.append(key)
+    return merged
+
+
+def _request_mutation_key(value: object) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(value)

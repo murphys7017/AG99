@@ -178,6 +178,7 @@ class InteractionMiddleware:
                 source_text=core_result_text,
                 immediate_reply=immediate_reply or "",
                 preserve_facts=True,
+                allow_plugin_tools=True,
             ),
         )
         if result.effect_calls:

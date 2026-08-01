@@ -64,13 +64,17 @@ class MyWorkPlugin(Star):
 - 普通 Pipeline Handler，包括关键词、命令和 `AdapterMessageEvent`，仍在官方 Pipeline
   中运行。它们可以终止事件，从而阻止后续 Persona 或 Core，但不会被当作 Persona 插件迁移。
 - 人格表达会提供 `OnWaitingLLMRequest`、`OnLLMRequest`、`OnAgentBegin`、Persona 工具的
-  `OnUsingLLMTool` / `OnLLMToolRespond`、`OnLLMResponse` 与 `OnAgentDone`。请求钩子读取的是
-  人格分支私有的 `ProviderRequest`，不会覆盖 Core 共享请求；钩子收到的仍是同一个
+  `OnUsingLLMTool` / `OnLLMToolRespond`、`OnLLMResponse` 与 `OnAgentDone`。`OnLLMRequest` 在
+  Persona 工具循环前只运行一次，其非协议修改会保留到最终表达；请求钩子读取的是人格分支私有的
+  `ProviderRequest`，不会覆盖 Core 共享请求；钩子收到的仍是同一个
   `AstrMessageEvent`，以兼容既有类型检查与 event extras 用法。
 - Persona 工具调用中，旧插件返回的 `MessageEventResult` / `CommandResult`，以及
-  `event.send()`、`emit_output()`、`emit_progress()` 和流式发送，都会收集为模型可见的工具材料。
-  最终 Persona Expression 是唯一可见回复的 owner；工具另开后台 task 后的输出不属于该次工具
-  调用，仍按普通发送路径处理。
+  `event.send()`、`emit_output()`、`emit_progress()` 和发往当前会话的 `Context.send_message()`，
+  都会收集为模型可见的工具材料，富媒体随最终 Persona Expression 投递。显式跨会话
+  `Context.send_message()` 保留原有投递目标。直接流式发送保持捕获语义，但返回的
+  `MessageEventResult.set_async_stream(...)` 明确不支持并会给工具循环返回提示。最终 Persona
+  Expression 是唯一可见回复的 owner；工具另开后台 task 后的输出不属于该次工具调用，仍按普通
+  发送路径处理。
 - `hybrid` 路径先完成 Planner；Planner 决定执行时直接进入 Core，不会提前执行 Persona
   插件的工具、效果或 LLM 生命周期副作用。
 - 人格 Provider 回退时会按备用 Provider 重新绑定结构化输出协议，但不会重复调用

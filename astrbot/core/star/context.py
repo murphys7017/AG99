@@ -13,6 +13,7 @@ from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.message import ContentPart, Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
+from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.conversation_mgr import ConversationManager
@@ -720,6 +721,8 @@ class Context:
             当 session 为字符串时，会尝试解析为 MessageSession 对象。(类名为MessageSesion是因为历史遗留拼写错误)
             qq_official(QQ 官方 API 平台) 不支持此方法。
         """
+        capture = get_active_tool_output_capture()
+
         if session is None:
             session = self.get_proactive_message_target()
             if session is None:
@@ -732,6 +735,14 @@ class Context:
                 session = MessageSesion.from_str(session)
             except BaseException as e:
                 raise ValueError("不合法的 session 字符串: " + str(e))
+
+        if capture is not None and capture.targets_current_session(session):
+            # A legacy Persona tool may use Context.send_message for the current
+            # event. Keep that output inside the tool result so it cannot seize
+            # ownership of the final Persona reply. Explicit cross-session sends
+            # must retain their original delivery target.
+            capture.capture(message_chain)
+            return True
 
         if (
             self._proactive_message_dispatcher is not None

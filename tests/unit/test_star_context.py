@@ -1,5 +1,13 @@
+import pytest
+
 from astrbot.core.agent.tool import FunctionTool
-from astrbot.core.star.context import _resolve_tool_handler_module_path
+from astrbot.core.agent.tool_output_capture import (
+    ToolOutputCapture,
+    activate_tool_output_capture,
+)
+from astrbot.core.message.components import Plain
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.star.context import Context, _resolve_tool_handler_module_path
 from astrbot.core.star.star import StarMetadata, star_registry
 
 
@@ -63,3 +71,45 @@ def test_resolve_tool_handler_module_path_handles_empty_module():
     tool = _make_tool(None)
 
     assert _resolve_tool_handler_module_path(tool) == ""
+
+
+@pytest.mark.asyncio
+async def test_context_send_message_is_captured_inside_persona_tool_execution():
+    context = object.__new__(Context)
+    capture = ToolOutputCapture(session_origin="webchat:FriendMessage:session-1")
+
+    with activate_tool_output_capture(capture):
+        sent = await context.send_message(
+            "webchat:FriendMessage:session-1",
+            MessageChain([Plain("legacy tool output")]),
+        )
+
+    assert sent is True
+    assert [message.get_plain_text() for message in capture.drain()] == [
+        "legacy tool output"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_context_send_message_keeps_cross_session_target_inside_persona_tool():
+    context = object.__new__(Context)
+    dispatched = []
+    context._proactive_message_dispatcher = None
+
+    async def send_direct(session, message):
+        dispatched.append((session, message))
+        return True
+
+    context._send_message_direct = send_direct
+    capture = ToolOutputCapture(session_origin="webchat:FriendMessage:current")
+
+    with activate_tool_output_capture(capture):
+        sent = await context.send_message(
+            "webchat:FriendMessage:other",
+            MessageChain([Plain("cross-session output")]),
+        )
+
+    assert sent is True
+    assert capture.drain() == []
+    assert len(dispatched) == 1
+    assert str(dispatched[0][0]) == "webchat:FriendMessage:other"

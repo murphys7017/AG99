@@ -1,8 +1,8 @@
 task:
   class: feature
   risk: high
-  phase: persona_first_plugin_mounting_implementation
-  scope: Implement a backwards-compatible, persona-first plugin mounting base. Personality, entertainment, relationship, prompt-context, effect, and persona-tool contributions default to Personal Expression; Core is reserved for plugins explicitly configured as task-planning or work-execution contributions. External I/O alone does not determine the mount. Preserve official Pipeline lifecycle semantics without migrating marketplace plugin source.
+  phase: persona_first_plugin_compatibility_hardening
+  scope: Implement and harden a backwards-compatible, persona-first plugin mounting base. Personality, entertainment, relationship, prompt-context, effect, and persona-tool contributions default to Personal Expression; Core is reserved for plugins explicitly configured as task-planning or work-execution contributions. External I/O alone does not determine the mount. Preserve official Pipeline lifecycle semantics without migrating marketplace plugin source, including legacy tool hooks, Context.send_message output, rich media, and an explicit non-streaming Persona-tool boundary.
 context:
   confidence: high
   assumptions:

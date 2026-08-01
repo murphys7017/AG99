@@ -257,7 +257,12 @@ class InteractionOutputController:
         try:
             with temporary_output_origin(event, OutputOrigin.CORE.value):
                 await self.capture_message_chain(
-                    MessageChain([Plain(reply)]),
+                    MessageChain(
+                        [
+                            Plain(reply),
+                            *self._persona_tool_attachment_components(result),
+                        ]
+                    ),
                     event,
                     prepared_expression=result,
                 )
@@ -295,7 +300,10 @@ class InteractionOutputController:
             )
             merged = merge_result_contributions(contributions)
             if merged.final_text_override is not None:
-                message = message.derive([Plain(merged.final_text_override)])
+                message = self._replace_message_text_preserving_components(
+                    message,
+                    merged.final_text_override,
+                )
                 semantic_text = message.get_plain_text()
                 set_interaction_turn_immediate_reply(event, semantic_text)
             (
@@ -1293,6 +1301,7 @@ class InteractionOutputController:
                 source_text=core_result_text,
                 immediate_reply=immediate_reply or "",
                 preserve_facts=True,
+                allow_plugin_tools=True,
             ),
         )
         if result.effect_calls:
@@ -1309,7 +1318,12 @@ class InteractionOutputController:
         event: AstrMessageEvent,
     ) -> None:
         core_result_text = source_message.get_plain_text()
-        final_message = source_message.derive([Plain(result.spoken_reply)])
+        final_message = source_message.derive(
+            [
+                Plain(result.spoken_reply),
+                *self._persona_tool_attachment_components(result),
+            ]
+        )
 
         contributions = await self._collect_result_contributions(
             event,
@@ -1324,7 +1338,12 @@ class InteractionOutputController:
         )
         merged = merge_result_contributions(contributions)
         if merged.final_text_override is not None:
-            final_message = source_message.derive([Plain(merged.final_text_override)])
+            final_message = source_message.derive(
+                [
+                    Plain(merged.final_text_override),
+                    *self._persona_tool_attachment_components(result),
+                ]
+            )
 
         final_message = await self._apply_pipeline_pre_output_compatibility(
             event,
@@ -1374,6 +1393,39 @@ class InteractionOutputController:
         )
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
+
+    @staticmethod
+    def _persona_tool_attachment_components(
+        result: PersonaExpressionResult,
+    ) -> list[Any]:
+        attachments = result.metadata.get("persona_tool_attachments", [])
+        if not isinstance(attachments, list):
+            return []
+        return [
+            component
+            for message in attachments
+            if isinstance(message, MessageChain)
+            for component in message.chain
+            if not isinstance(component, Plain)
+        ]
+
+    @staticmethod
+    def _replace_message_text_preserving_components(
+        message: MessageChain,
+        text: str,
+    ) -> MessageChain:
+        """Apply a text override without discarding tool-provided rich output."""
+
+        return message.derive(
+            [
+                Plain(text),
+                *(
+                    component
+                    for component in message.chain
+                    if not isinstance(component, Plain)
+                ),
+            ]
+        )
 
     @staticmethod
     async def _apply_pipeline_pre_output_compatibility(

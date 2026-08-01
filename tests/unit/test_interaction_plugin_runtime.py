@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -7,11 +8,17 @@ from astrbot.core.interaction.config import (
     is_middleware_enabled,
     load_interaction_agent_config,
 )
+from astrbot.core.interaction.contributors import InteractionResultContribution
+from astrbot.core.interaction.expression_agent import PersonaExpressionResult
+from astrbot.core.interaction.middleware import InteractionMiddleware
+from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_CORE,
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
     tool_supports_runtime_target,
 )
+from astrbot.core.message.components import Image, Plain
+from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.star.base import Star
 from astrbot.core.star.star import StarMetadata, star_map, star_registry
@@ -157,6 +164,83 @@ def test_plugin_tool_runtime_target_defaults_to_persona_in_interaction_turn(
     assert not tool_supports_runtime_target(
         legacy_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
     )
+
+
+@pytest.mark.asyncio
+async def test_core_result_always_returns_through_persona_plugin_tools():
+    class Event:
+        def get_extra(self, _key, default=None):
+            return default
+
+        def set_extra(self, _key, _value):
+            pass
+
+    middleware = object.__new__(InteractionMiddleware)
+    rendered_requests = []
+
+    async def render_visible_reply(_event, request):
+        rendered_requests.append(request)
+        return PersonaExpressionResult(spoken_reply="人格化后的执行结果")
+
+    middleware._render_visible_reply_via_persona = render_visible_reply
+    middleware.output_controller = SimpleNamespace(
+        deliver_prepared_core_reply=AsyncMock(),
+    )
+    event = Event()
+    source_message = MessageChain([Plain("Core execution completed")])
+
+    await middleware._handle_core_reply_via_persona(source_message, event)
+
+    assert rendered_requests[0].allow_plugin_tools is True
+    middleware.output_controller.deliver_prepared_core_reply.assert_awaited_once_with(
+        source_message,
+        PersonaExpressionResult(spoken_reply="人格化后的执行结果"),
+        event,
+    )
+
+
+@pytest.mark.asyncio
+async def test_immediate_text_override_keeps_persona_tool_rich_output():
+    class Event:
+        def __init__(self):
+            self._extras = {"_interaction_emitting_immediate_reply": True}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    controller = object.__new__(InteractionOutputController)
+    delivered = []
+    controller._collect_result_contributions = AsyncMock(
+        return_value=[
+            InteractionResultContribution(
+                plugin_id="reply_override",
+                final_text_override="rewritten reply",
+            )
+        ]
+    )
+    controller._next_output_segment_id = lambda _event, _kind: "segment-1"
+    controller.materialize_immediate_interaction_outbound_message = AsyncMock(
+        side_effect=lambda _event, message, **_kwargs: (message, {})
+    )
+    controller._deliver_visible_message = AsyncMock(
+        side_effect=lambda _event, message, **_kwargs: delivered.append(message) or []
+    )
+    controller.build_platform_output_base_extras = (
+        lambda _event, **_kwargs: {}
+    )
+    controller._record_visible_output = Mock()
+
+    await controller.capture_message_chain(
+        MessageChain([Plain("original reply"), Image("attachment.png")]),
+        Event(),
+    )
+
+    assert len(delivered) == 1
+    assert delivered[0].get_plain_text() == "rewritten reply"
+    assert [type(component) for component in delivered[0].chain] == [Plain, Image]
 
 
 def test_plugin_declaration_sets_default_target_but_config_overrides_it(monkeypatch):

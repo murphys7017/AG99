@@ -7,7 +7,11 @@ import pytest
 
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import TOOL_TARGET_PERSONAL_EXPRESSION, FunctionTool
-from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
+from astrbot.core.agent.tool_output_capture import (
+    PersonaToolOutputAttachments,
+    activate_persona_tool_output_attachments,
+    get_active_tool_output_capture,
+)
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageEventResult
@@ -72,6 +76,119 @@ async def test_persona_tool_captures_legacy_message_result_without_sending():
     assert event.get_result() is None
     assert len(results) == 1
     assert results[0].content[0].text == "tool progress\n\ntool fact"
+
+
+@pytest.mark.asyncio
+async def test_persona_tool_preserves_legacy_rich_media_for_final_expression():
+    class Event:
+        def __init__(self):
+            self._result = None
+            self._force_stopped = False
+            self._extras = {}
+
+        def set_result(self, result):
+            self._result = result
+
+        def get_result(self):
+            return self._result
+
+        def clear_result(self):
+            self._result = None
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    async def legacy_tool(event):
+        return MessageEventResult(
+            chain=[Image.fromURL("https://example.com/tool-image.png")]
+        )
+
+    event = Event()
+    tool = FunctionTool(
+        name="legacy_image_tool",
+        description="Returns a legacy image.",
+        parameters={"type": "object", "properties": {}},
+        handler=legacy_tool,
+    )
+    run_context = ContextWrapper(
+        context=SimpleNamespace(event=event),
+        tool_execution_surface=TOOL_TARGET_PERSONAL_EXPRESSION,
+    )
+
+    attachment_capture = PersonaToolOutputAttachments()
+    with activate_persona_tool_output_attachments(attachment_capture):
+        results = [
+            result
+            async for result in FunctionToolExecutor._execute_local(tool, run_context)
+        ]
+
+    assert results[0].content[0].text == (
+        "[Legacy tool returned message components: Image]"
+    )
+    attachments = attachment_capture.drain()
+    assert len(attachments) == 1
+    assert isinstance(attachments[0].chain[0], Image)
+    assert attachments[0].chain[0].file == "https://example.com/tool-image.png"
+
+
+@pytest.mark.asyncio
+async def test_persona_tool_rejects_legacy_returned_stream_explicitly():
+    class Event:
+        def __init__(self):
+            self._result = None
+            self._force_stopped = False
+            self._extras = {}
+
+        def set_result(self, result):
+            self._result = result
+
+        def get_result(self):
+            return self._result
+
+        def clear_result(self):
+            self._result = None
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    class Stream:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = Stream()
+
+    async def legacy_tool(_event):
+        return MessageEventResult().set_async_stream(stream)
+
+    event = Event()
+    tool = FunctionTool(
+        name="legacy_stream_tool",
+        description="Returns a legacy stream.",
+        parameters={"type": "object", "properties": {}},
+        handler=legacy_tool,
+    )
+    run_context = ContextWrapper(
+        context=SimpleNamespace(event=event),
+        tool_execution_surface=TOOL_TARGET_PERSONAL_EXPRESSION,
+    )
+
+    results = [
+        result
+        async for result in FunctionToolExecutor._execute_local(tool, run_context)
+    ]
+
+    assert stream.closed is True
+    assert results[0].content[0].text.startswith(
+        "Legacy streaming MessageEventResult is unsupported"
+    )
 
 
 @pytest.mark.asyncio

@@ -277,7 +277,7 @@ async def on_waiting_llm(self, event: AstrMessageEvent):
 
 ProviderRequest 对象包含了 LLM 请求的所有信息，包括请求的文本、系统提示等。
 
-启用 Interaction Middleware 时，插件默认在 Persona Expression 的最终用户可见表达请求上收到此钩子。运行目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类可选的 `interaction_runtime_target` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 和插件注册的 LLM Tool。Router 和 Core Planner 不会触发这些插件钩子；Persona 内部工具回路不会触发请求或 Agent 生命周期钩子，但实际执行插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；事件对象本身仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
+启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的修改会保留到最终用户可见表达，因而可用于增删 Persona 工具或补充上下文。运行目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类可选的 `interaction_runtime_target` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 和插件注册的 LLM Tool。Router 和 Core Planner 不会触发这些插件钩子；Persona 内部工具回路不会触发请求或 Agent 生命周期钩子，但实际执行插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；事件对象本身仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent
