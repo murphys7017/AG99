@@ -55,6 +55,20 @@ Current local upstream-sync commits:
 - `f17452d45` Absorb v4.27 stability updates.
 - `79b9628c6` Absorb v4.27 compatibility guards.
 - `5d5320d2b` Absorb v4.27 scheduler and provider updates.
+- `1fd4bbbc4` Align Bailian rerank protocol.
+
+## 2026-08-02 v4.27.0 Bailian rerank follow-up
+
+Reviewed upstream baseline: `upstream/master` at `9bb294d8c` (`v4.27.0`)
+
+Absorbed by local rewrite:
+
+- `3f9aa7478`: Bailian Rerank now identifies compatible endpoints by parsed URL path suffix, supports both `/compatible-api/v1/reranks` and `/compatible-mode/v1/reranks`, and uses the legacy `input/parameters` payload for `qwen3-rerank` when the endpoint is not compatible. The `instruct` parameter is retained for that model.
+
+Validation:
+
+- Bailian payload and endpoint-boundary tests: 3 passed.
+- Focused Ruff, `py_compile`, and whitespace checks passed.
 
 ## 2026-08-02 v4.27.0 scheduler, provider, and response guard follow-up
 
