@@ -4393,18 +4393,18 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                     },
                     "interaction_middleware.plugin_runtime_targets": {
-                        "description": "插件 LLM 生命周期目标",
+                        "description": "插件对话钩子生效链路",
                         "type": "object",
                         "items": {},
                         "_special": "plugin_runtime_target_map",
-                        "hint": "控制插件 LLM Hook 的运行面，默认在人格表达中运行。键使用插件目录名。",
+                        "hint": "只控制插件对模型请求、响应等环节的增强（LLM 生命周期 Hook），不影响命令、消息 Handler、事件监听器或模型可调用工具；配置优先于插件声明，未声明时默认在人格表达链路生效。",
                     },
                     "interaction_middleware.plugin_tool_targets": {
-                        "description": "插件工具运行目标",
+                        "description": "插件工具调用生效链路",
                         "type": "object",
                         "items": {},
                         "_special": "plugin_tool_target_map",
-                        "hint": "插件工具默认在 Core；可按插件目录名或 插件目录名.工具名 配置为 personal_expression。",
+                        "hint": "只控制插件提供给模型调用的工具（FunctionTool）出现在核心还是人格表达链路；配置优先于工具声明，未声明时默认只在核心生效，插件.工具 精确项优先。",
                     },
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",

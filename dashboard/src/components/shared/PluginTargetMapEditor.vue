@@ -2,7 +2,7 @@
   <div class="target-map-summary">
     <div class="target-map-chips">
       <span v-if="summaryEntries.length === 0" class="text-medium-emphasis">
-        {{ tm('runtimeTargetEditor.empty') }}
+        {{ emptyText }}
       </span>
       <v-chip
         v-for="([scope, target]) in summaryEntries.slice(0, maxSummaryItems)"
@@ -38,7 +38,7 @@
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
         <div v-if="draftEntries.length === 0" class="text-medium-emphasis py-4 text-center">
-          {{ tm('runtimeTargetEditor.empty') }}
+          {{ emptyText }}
         </div>
 
         <v-row
@@ -142,6 +142,11 @@ const targetOptions = computed(() => [
   { title: tm('runtimeTargetEditor.targetCore'), value: 'core' },
   { title: tm('runtimeTargetEditor.targetPersona'), value: 'personal_expression' }
 ])
+const emptyText = computed(() => tm(
+  props.mode === 'tool'
+    ? 'runtimeTargetEditor.toolEmpty'
+    : 'runtimeTargetEditor.pluginEmpty'
+))
 const dialogTitle = computed(() => tm(
   props.mode === 'tool'
     ? 'runtimeTargetEditor.toolDialogTitle'
