@@ -162,7 +162,7 @@ def test_local_file_system_component_preserves_python_ripgrep_before_314(monkeyp
         return ["技能内容\n"]
 
     monkeypatch.setattr(local_booter.sys, "version_info", (3, 13))
-    monkeypatch.setattr(local_booter, "search", fake_search)
+    monkeypatch.setattr(local_booter, "search", fake_search, raising=False)
     monkeypatch.setattr(
         local_booter.subprocess,
         "run",
