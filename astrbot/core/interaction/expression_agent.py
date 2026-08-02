@@ -31,6 +31,7 @@ from astrbot.core.interaction.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
 )
 from astrbot.core.memory.history_source import extract_message_text
+from astrbot.core.message.components import Plain
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -105,10 +106,12 @@ class InteractionExpressionError(RuntimeError):
         message: str | None = None,
         *,
         tool_material: str | None = None,
+        tool_execution_count: int = 0,
         prepared: Any | None = None,
     ) -> None:
         self.reason = reason
         self.tool_material = tool_material
+        self.tool_execution_count = tool_execution_count
         self.prepared = prepared
         super().__init__(message or reason)
 
@@ -157,6 +160,7 @@ class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
     def __init__(self, event, provider_request: ProviderRequest) -> None:
         self._event = event
         self._provider_request = provider_request
+        self.tool_execution_count = 0
 
     async def on_tool_start(
         self,
@@ -165,6 +169,7 @@ class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
         tool_args: dict | None,
     ) -> None:
         del run_context
+        self.tool_execution_count += 1
         with _bind_persona_provider_request(self._event, self._provider_request):
             await call_event_hook(
                 self._event,
@@ -257,11 +262,18 @@ def build_persona_runtime_system_prompt() -> str:
 
 def build_persona_tool_loop_instruction() -> str:
     return (
-        "你现在处于 Personal Expression 的工具处理阶段。\n"
-        "只在当前请求确实需要时调用提供的插件工具；工具返回后继续整理事实。\n"
-        "这一阶段的输出是交给后续人格表达阶段的内部材料，不是直接发送给用户的最终回复。\n"
-        "完成工具调用后，用简洁文本总结已经获得的结果；不需要工具时直接给出简洁的内部判断。\n"
+        "你是 Personal Expression 的内部插件工具 Agent。\n"
+        "当前阶段只负责判断并调用本次提供的插件工具，不负责生成用户可见回复。\n"
+        "只在当前请求确实需要时调用工具；工具返回后用简洁文本整理已获得的事实。\n"
+        "不需要工具时不要调用任何工具，直接输出 no_tool。\n"
         "不要调用 Core 工具、Skill、知识库或未提供的工具。"
+    )
+
+
+def build_persona_tool_loop_prompt() -> str:
+    return (
+        "检查当前用户输入是否需要调用已提供的 Personal Expression 插件工具。"
+        "需要时完成工具调用并总结结果；不需要时只输出 no_tool。"
     )
 
 
@@ -719,7 +731,7 @@ class InteractionExpressionAgent:
         compiled_output_contract = render_result.compiled_output_contract
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
-        rendered_provider_request = copy.deepcopy(provider_request)
+        rendered_provider_request = _snapshot_provider_request(provider_request)
 
         # This is the pre-tool preparation boundary. Legacy plugins may amend
         # ProviderRequest.func_tool here, so running the hook later would make
@@ -732,7 +744,7 @@ class InteractionExpressionAgent:
                 execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
             ):
                 return PersonaExpressionResult()
-        hooked_provider_request = copy.deepcopy(provider_request)
+        hooked_provider_request = _snapshot_provider_request(provider_request)
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
 
@@ -741,7 +753,10 @@ class InteractionExpressionAgent:
             toolset = provider_request.func_tool
             if toolset:
                 try:
-                    tool_result = await self._run_persona_tool_loop(
+                    (
+                        tool_result,
+                        tool_execution_count,
+                    ) = await self._run_persona_tool_loop(
                         event,
                         plugin_context,
                         interaction_config,
@@ -753,13 +768,25 @@ class InteractionExpressionAgent:
                     # Tool work may already have happened. Convert its failure
                     # into final-expression material instead of restarting the
                     # whole Persona flow on a fallback provider.
-                    tool_material = _build_tool_loop_failure_material(exc)
+                    if exc.tool_execution_count > 0:
+                        tool_material = _build_tool_loop_failure_material(exc)
                 else:
-                    tool_material = (tool_result.completion_text or "").strip()
-                    if tool_result.role == "err":
-                        tool_material = _build_tool_loop_failure_material(
-                            tool_material or "provider returned an error response"
+                    if tool_execution_count <= 0:
+                        logger.info(
+                            "DIAG expression.tool_loop_complete: platform_id=%s session_id=%s tool_executions=0 material_discarded=True",
+                            event.get_platform_id(),
+                            event.session_id,
                         )
+                    else:
+                        tool_material = (tool_result.completion_text or "").strip()
+                        if tool_result.role == "err":
+                            tool_material = _build_tool_loop_failure_material(
+                                tool_material or "provider returned an error response"
+                            )
+                        elif not tool_material:
+                            tool_material = _build_tool_loop_failure_material(
+                                "provider returned empty material after tool execution"
+                            )
 
         if tool_material:
             req = replace(
@@ -792,7 +819,7 @@ class InteractionExpressionAgent:
             compiled_output_contract = render_result.compiled_output_contract
             provider_request.output_contract = output_contract
             provider_request.compiled_output_contract = compiled_output_contract
-            rerendered_provider_request = copy.deepcopy(provider_request)
+            rerendered_provider_request = _snapshot_provider_request(provider_request)
             self._apply_request_hook_mutations(
                 rendered_provider_request,
                 previous_request=hooked_provider_request,
@@ -862,7 +889,7 @@ class InteractionExpressionAgent:
         provider_request = build_prompt_render_provider_request(event, provider)
         provider_request.session_id = event.session_id
         apply_render_result_to_request(render_result, provider_request)
-        rendered_provider_request = copy.deepcopy(provider_request)
+        rendered_provider_request = _snapshot_provider_request(provider_request)
         self._apply_request_hook_mutations(
             previous.rendered_provider_request,
             previous_request=previous.provider_request,
@@ -931,7 +958,11 @@ class InteractionExpressionAgent:
                         ),
                     )
                 else:
-                    setattr(next_request, name, copy.deepcopy(after_hook))
+                    setattr(
+                        next_request,
+                        name,
+                        _clone_request_mutation_value(after_hook),
+                    )
 
     async def _complete_persona_expression(
         self,
@@ -1066,10 +1097,20 @@ class InteractionExpressionAgent:
                 exc.tool_material = tool_material
             exc.prepared = prepared
             raise
+        hook_result_chain = (
+            llm_resp.result_chain.derive(
+                [
+                    component
+                    for component in llm_resp.result_chain.chain
+                    if not isinstance(component, Plain)
+                ]
+            )
+            if llm_resp.result_chain is not None
+            else None
+        )
         response_for_hooks = LLMResponse(
             role=llm_resp.role,
-            completion_text=result.spoken_reply,
-            result_chain=llm_resp.result_chain,
+            result_chain=hook_result_chain,
             tools_call_args=list(llm_resp.tools_call_args),
             tools_call_name=list(llm_resp.tools_call_name),
             tools_call_ids=list(llm_resp.tools_call_ids),
@@ -1081,6 +1122,9 @@ class InteractionExpressionAgent:
             id=llm_resp.id,
             usage=llm_resp.usage,
         )
+        # Protocol tool-call responses often carry an empty MessageChain. Keep
+        # the parsed Persona reply authoritative for both legacy response APIs.
+        response_for_hooks.completion_text = result.spoken_reply
         with _bind_persona_provider_request(event, provider_request):
             response_stopped = await call_event_hook(
                 event,
@@ -1141,7 +1185,7 @@ class InteractionExpressionAgent:
         provider: Provider,
         provider_request: ProviderRequest,
         toolset: ToolSet,
-    ):
+    ) -> tuple[LLMResponse, int]:
         provider_config = getattr(provider, "provider_config", {})
         provider_id = (
             str(provider_config.get("id", "")).strip()
@@ -1158,28 +1202,27 @@ class InteractionExpressionAgent:
             )
 
         logger.info(
-            "DIAG expression.tool_loop: platform_id=%s session_id=%s tool_names=%s",
+            "DIAG expression.tool_loop: platform_id=%s session_id=%s tool_count=%s tool_names=%s",
             event.get_platform_id(),
             event.session_id,
+            len(toolset),
             toolset.names(),
         )
+        tool_hooks = _PersonaExpressionToolHooks(event, provider_request)
         try:
-            return await asyncio.wait_for(
+            response = await asyncio.wait_for(
                 plugin_context.tool_loop_agent(
                     event=event,
                     chat_provider_id=provider_id,
-                    prompt=provider_request.prompt,
+                    prompt=build_persona_tool_loop_prompt(),
                     image_urls=provider_request.image_urls,
                     audio_urls=provider_request.audio_urls,
                     extra_user_content_parts=provider_request.extra_user_content_parts,
                     model=provider_request.model,
                     contexts=build_model_context_messages(provider_request.contexts),
-                    system_prompt=(
-                        f"{provider_request.system_prompt or ''}\n\n"
-                        f"{build_persona_tool_loop_instruction()}"
-                    ).strip(),
+                    system_prompt=build_persona_tool_loop_instruction(),
                     tools=toolset,
-                    agent_hooks=_PersonaExpressionToolHooks(event, provider_request),
+                    agent_hooks=tool_hooks,
                     max_steps=8,
                     tool_call_timeout=max(
                         1,
@@ -1189,14 +1232,23 @@ class InteractionExpressionAgent:
                 ),
                 timeout=interaction_config.expression_timeout,
             )
+            return response, tool_hooks.tool_execution_count
         except asyncio.TimeoutError:
-            raise InteractionExpressionError("tool_loop_timeout") from None
-        except InteractionExpressionError:
+            raise InteractionExpressionError(
+                "tool_loop_timeout",
+                tool_execution_count=tool_hooks.tool_execution_count,
+            ) from None
+        except InteractionExpressionError as exc:
+            exc.tool_execution_count = max(
+                exc.tool_execution_count,
+                tool_hooks.tool_execution_count,
+            )
             raise
         except Exception as exc:  # noqa: BLE001
             raise InteractionExpressionError(
                 "tool_loop_error",
                 str(exc),
+                tool_execution_count=tool_hooks.tool_execution_count,
             ) from exc
 
     @staticmethod
@@ -1280,6 +1332,7 @@ class InteractionExpressionAgent:
             ),
             input_text_suffix=reasoning_marker,
             hidden_slot_names=hidden_slot_names,
+            history_turns=interaction_config.persona_history_window_size,
         )
         prompt_slot_sizes = {
             str(name): _serialized_size(slot.value)
@@ -1451,7 +1504,7 @@ def _merge_request_prompt_mutation(
         hooked_value,
         rerendered_value,
     )):
-        return copy.deepcopy(hooked_value)
+        return _clone_request_mutation_value(hooked_value)
     if rendered_value and rendered_value in hooked_value:
         return hooked_value.replace(rendered_value, rerendered_value, 1)
     if rerendered_value:
@@ -1475,17 +1528,48 @@ def _merge_request_collection_mutation(
         hooked_value,
         rerendered_value,
     )):
-        return copy.deepcopy(hooked_value)
+        return _clone_request_mutation_value(hooked_value)
 
-    merged = copy.deepcopy(hooked_value)
+    merged = _clone_request_mutation_value(hooked_value)
     rendered_items = [_request_mutation_key(value) for value in rendered_value]
     merged_items = [_request_mutation_key(value) for value in merged]
     for value in rerendered_value:
         key = _request_mutation_key(value)
         if key not in rendered_items and key not in merged_items:
-            merged.append(copy.deepcopy(value))
+            merged.append(_clone_request_mutation_value(value))
             merged_items.append(key)
     return merged
+
+
+def _snapshot_provider_request(request: ProviderRequest) -> ProviderRequest:
+    """Snapshot hook-visible data without copying live execution handles."""
+
+    snapshot = copy.copy(request)
+    for field_info in fields(ProviderRequest):
+        name = field_info.name
+        setattr(
+            snapshot,
+            name,
+            _clone_request_mutation_value(getattr(request, name)),
+        )
+    return snapshot
+
+
+def _clone_request_mutation_value(value: object) -> Any:
+    """Clone plain containers while retaining opaque plugin/runtime objects."""
+
+    if isinstance(value, dict):
+        return {
+            key: _clone_request_mutation_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_clone_request_mutation_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_request_mutation_value(item) for item in value)
+    if isinstance(value, set):
+        return {_clone_request_mutation_value(item) for item in value}
+    return value
 
 
 def _request_mutation_key(value: object) -> str:

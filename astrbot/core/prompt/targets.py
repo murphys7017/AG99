@@ -95,6 +95,7 @@ def project_context_pack(
     target: PromptTarget | str,
     *,
     router_history_turns: int = 4,
+    history_turns: int | None = None,
 ) -> ContextPack:
     """Build an isolated target view without mutating the canonical pack."""
 
@@ -111,6 +112,7 @@ def project_context_pack(
             slot,
             resolved_target,
             router_history_turns=router_history_turns,
+            history_turns=history_turns,
         )
         if projected_slot is not None:
             projected.add_slot(projected_slot)
@@ -180,6 +182,7 @@ def _project_slot(
     target: PromptTarget,
     *,
     router_history_turns: int,
+    history_turns: int | None,
 ) -> ContextSlot | None:
     projected = deepcopy(slot)
     if projected.name == "capability.plugin_directory":
@@ -207,26 +210,30 @@ def _project_slot(
         )
         return projected
 
-    if target not in {
+    bounded_history_targets = {
         PromptTarget.ROUTER,
         PromptTarget.CORE_PLANNER,
         PromptTarget.PERSONAL_POLICY,
-    }:
+    }
+    if target not in bounded_history_targets and history_turns is None:
         return projected
 
     if projected.name == "conversation.history":
-        if target is PromptTarget.ROUTER:
-            history_turns = router_history_turns
+        if history_turns is not None:
+            selected_history_turns = history_turns
+            max_message_chars = 1800
+        elif target is PromptTarget.ROUTER:
+            selected_history_turns = router_history_turns
             max_message_chars = 1000
         elif target is PromptTarget.PERSONAL_POLICY:
-            history_turns = max(router_history_turns, 6)
+            selected_history_turns = max(router_history_turns, 6)
             max_message_chars = 1200
         else:
-            history_turns = max(router_history_turns, 8)
+            selected_history_turns = max(router_history_turns, 8)
             max_message_chars = 1800
         _project_history(
             projected,
-            history_turns,
+            selected_history_turns,
             max_message_chars=max_message_chars,
         )
     return projected

@@ -55,7 +55,11 @@ class PromptRenderEngine:
         profile: PromptRenderProfile | None = None,
     ) -> RenderResult:
         target_pack = (
-            project_context_pack(pack, target)
+            project_context_pack(
+                pack,
+                target,
+                history_turns=profile.history_turns if profile is not None else None,
+            )
             if target is not None
             else filter_llm_exposed_context_pack(pack)
         )

@@ -133,6 +133,22 @@ def test_persona_projection_keeps_history_and_hides_core_capabilities():
     assert projected.get_slot("system.core_execution_context") is None
 
 
+def test_persona_projection_applies_target_local_history_window():
+    source = _canonical_pack()
+
+    projected = project_context_pack(
+        source,
+        PromptTarget.PERSONA,
+        history_turns=2,
+    )
+
+    assert projected.get_slot("conversation.history").value["turns"] == [
+        {"id": 3},
+        {"id": 4},
+    ]
+    assert source.get_slot("conversation.history").value["turn_count"] == 5
+
+
 def test_persona_projection_drops_execution_capability_extensions():
     pack = ContextPack(
         slots={

@@ -1301,7 +1301,7 @@ class InteractionOutputController:
                 source_text=core_result_text,
                 immediate_reply=immediate_reply or "",
                 preserve_facts=True,
-                allow_plugin_tools=True,
+                allow_plugin_tools=False,
             ),
         )
         if result.effect_calls:

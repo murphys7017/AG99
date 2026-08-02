@@ -56,6 +56,7 @@ class PromptRenderProfile:
     output_contract: OutputContract | None = None
     input_text_suffix: str = ""
     hidden_slot_names: frozenset[str] = frozenset()
+    history_turns: int | None = None
 
 
 @dataclass

@@ -171,6 +171,7 @@ class InteractionAgentConfig:
     personal_idle_initiation_enabled: bool = False
     personal_idle_initiation_after_seconds: float = 1800.0
     memory_window_size: int = 8
+    persona_history_window_size: int = 16
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200
     stream_interjection_enabled: bool = True

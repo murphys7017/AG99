@@ -17,6 +17,11 @@ from astrbot.core.interaction.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
     tool_supports_runtime_target,
 )
+from astrbot.core.interaction.turn_state import ensure_interaction_turn_state
+from astrbot.core.interaction.types import (
+    InteractionRouteDecision,
+    InteractionRouteMode,
+)
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.context_utils import call_event_hook
@@ -27,7 +32,9 @@ from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
 def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
     assert is_middleware_enabled({}) is True
-    assert load_interaction_agent_config({}).enabled is True
+    default_config = load_interaction_agent_config({})
+    assert default_config.enabled is True
+    assert default_config.persona_history_window_size == 16
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
 
 
@@ -167,7 +174,7 @@ def test_plugin_tool_runtime_target_defaults_to_persona_in_interaction_turn(
 
 
 @pytest.mark.asyncio
-async def test_core_result_always_returns_through_persona_plugin_tools():
+async def test_core_result_returns_through_persona_without_reopening_plugin_tools():
     class Event:
         def get_extra(self, _key, default=None):
             return default
@@ -191,12 +198,48 @@ async def test_core_result_always_returns_through_persona_plugin_tools():
 
     await middleware._handle_core_reply_via_persona(source_message, event)
 
-    assert rendered_requests[0].allow_plugin_tools is True
+    assert rendered_requests[0].allow_plugin_tools is False
     middleware.output_controller.deliver_prepared_core_reply.assert_awaited_once_with(
         source_message,
         PersonaExpressionResult(spoken_reply="人格化后的执行结果"),
         event,
     )
+
+
+@pytest.mark.asyncio
+async def test_persona_route_does_not_open_function_tools():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    middleware = object.__new__(InteractionMiddleware)
+    middleware.plugin_context = object()
+    requests = []
+
+    async def generate_expression(_event, _config, *, request):
+        requests.append(request)
+        return PersonaExpressionResult()
+
+    middleware._generate_expression = generate_expression
+    middleware._apply_immediate_expression_policy = (
+        lambda _event, _route, expression, **_kwargs: expression
+    )
+    event = Event()
+    turn_state = ensure_interaction_turn_state(event)
+    turn_state.route_decision = InteractionRouteDecision(
+        route_mode=InteractionRouteMode.PERSONA,
+    )
+
+    result = await middleware._generate_and_emit_persona(event, object())
+
+    assert result is None
+    assert requests[0].allow_plugin_tools is False
 
 
 @pytest.mark.asyncio

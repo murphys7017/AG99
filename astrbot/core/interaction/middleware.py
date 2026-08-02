@@ -178,7 +178,7 @@ class InteractionMiddleware:
                 source_text=core_result_text,
                 immediate_reply=immediate_reply or "",
                 preserve_facts=True,
-                allow_plugin_tools=True,
+                allow_plugin_tools=False,
             ),
         )
         if result.effect_calls:
@@ -852,7 +852,7 @@ class InteractionMiddleware:
         expression = await self._generate_expression(
             event,
             interaction_config,
-            request=PersonaExpressionRequest(allow_plugin_tools=True),
+            request=PersonaExpressionRequest(allow_plugin_tools=False),
         )
         turn_state = ensure_interaction_turn_state(event)
         route = turn_state.route_decision

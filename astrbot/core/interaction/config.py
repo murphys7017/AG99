@@ -181,6 +181,13 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
             ),
         ),
         memory_window_size=int(interaction_config.get("memory_window_size", 8) or 8),
+        persona_history_window_size=max(
+            1,
+            _int_or_default(
+                interaction_config.get("persona_history_window_size", 16),
+                16,
+            ),
+        ),
         stream_observation_enabled=bool(
             interaction_config.get("stream_observation_enabled", True)
         ),
