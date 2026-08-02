@@ -30,7 +30,6 @@ from astrbot.core.execution import (
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
-from astrbot.core.interaction.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
@@ -43,6 +42,7 @@ from astrbot.core.persona_error_reply import (
 )
 from astrbot.core.pipeline.stage import Stage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.provider.entities import (
     LLMResponse,
     ProviderRequest,

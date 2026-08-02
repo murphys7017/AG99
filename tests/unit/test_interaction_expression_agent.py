@@ -26,7 +26,11 @@ from astrbot.core.interaction.types import InteractionAgentConfig
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
-from astrbot.core.prompt.render import PromptRenderEngine, PromptRenderProfile
+from astrbot.core.prompt.render import (
+    PROMPT_APPLY_RESULT_EXTRA_KEY,
+    PromptRenderEngine,
+    PromptRenderProfile,
+)
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
 
@@ -853,6 +857,11 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
         assert kwargs["execution_surface"] == "personal_expression"
         observed_hooks.append(hook_type.name)
         observed_events.append(event)
+        if hook_type.name in {
+            "OnWaitingLLMRequestEvent",
+            "OnLLMRequestEvent",
+        }:
+            assert event.get_extra(PROMPT_APPLY_RESULT_EXTRA_KEY) is not None
         if hook_type.name == "OnLLMRequestEvent":
             request = args[0]
             hooked_request = request
@@ -894,6 +903,7 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
     assert result.spoken_reply == "插件修饰后的回复"
     assert observed_events == [original_event] * len(observed_hooks)
     assert original_event.get_extra("provider_request") is None
+    assert original_event.get_extra(PROMPT_APPLY_RESULT_EXTRA_KEY) is None
 
 
 @pytest.mark.asyncio

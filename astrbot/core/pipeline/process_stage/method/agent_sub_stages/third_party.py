@@ -21,7 +21,6 @@ from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
 )
-from astrbot.core.interaction.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import Image, Record
 from astrbot.core.message.message_event_result import (
@@ -34,6 +33,7 @@ from astrbot.core.persona_error_reply import (
     resolve_persona_custom_error_message,
     set_persona_custom_error_message_on_event,
 )
+from astrbot.core.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 
 if TYPE_CHECKING:
     from astrbot.core.agent.runners.base import BaseAgentRunner

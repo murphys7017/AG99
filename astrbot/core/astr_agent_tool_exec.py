@@ -31,7 +31,6 @@ from astrbot.core.astr_main_agent_resources import (
     BACKGROUND_TASK_RESULT_WOKE_SYSTEM_PROMPT,
 )
 from astrbot.core.cron.events import CronMessageEvent
-from astrbot.core.interaction.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import (
     CommandResult,
@@ -39,6 +38,7 @@ from astrbot.core.message.message_event_result import (
     MessageEventResult,
 )
 from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.provider.entites import ProviderRequest
 from astrbot.core.provider.register import llm_tools
 from astrbot.core.tools.computer_tools import (

@@ -963,13 +963,13 @@ class InteractionMiddleware:
                 user_visible_action="none",
             )
             raise RuntimeError("Interaction persona expression missing reply")
+        reply = get_interaction_turn_immediate_reply(event)
+        self._materialize_persona_reply_turn(
+            event,
+            reply=reply or expression.spoken_reply,
+        )
         completed = await self._complete_visible_turn_or_record_failure(event)
         if completed:
-            reply = get_interaction_turn_immediate_reply(event)
-            self._materialize_persona_reply_turn(
-                event,
-                reply=reply or expression.spoken_reply,
-            )
             await self._finalize_turn(event)
         event.stop_event()
 
@@ -1385,6 +1385,14 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> bool:
         try:
+            controller = event.get_extra("_interaction_output_controller")
+            complete_visible_delivery = getattr(
+                type(controller),
+                "complete_visible_delivery",
+                None,
+            )
+            if callable(complete_visible_delivery):
+                return await complete_visible_delivery(controller, event)
             await event.complete_visible_turn()
             return True
         except Exception as exc:  # noqa: BLE001

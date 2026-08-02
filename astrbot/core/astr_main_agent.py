@@ -30,7 +30,6 @@ from astrbot.core.interaction.core_bridge import (
     ensure_interaction_core_execution_prompt,
     get_core_task_spec,
 )
-from astrbot.core.interaction.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
@@ -38,6 +37,7 @@ from astrbot.core.persona_error_reply import (
     set_persona_custom_error_message_on_event,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors.core_execution_history_collector import (
     CoreExecutionHistoryCollector,

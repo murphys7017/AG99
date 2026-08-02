@@ -25,6 +25,7 @@ from astrbot.core.interaction.types import (
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.star.base import Star
 from astrbot.core.star.star import StarMetadata, star_map, star_registry
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
@@ -240,6 +241,134 @@ async def test_persona_route_does_not_open_function_tools():
 
     assert result is None
     assert requests[0].allow_plugin_tools is False
+
+
+@pytest.mark.asyncio
+async def test_interaction_visible_delivery_runs_official_after_send_boundary(
+    monkeypatch,
+):
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def get_platform_id(self):
+            return "webchat"
+
+    event = Event()
+    controller = object.__new__(InteractionOutputController)
+    controller.capture_visible_completion = AsyncMock()
+    controller._schedule_after_message_sent_postprocess = Mock()
+    controller.flush_deferred_turn_finalization = AsyncMock()
+    controller.cancel_deferred_turn_finalization = AsyncMock()
+    hook = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "astrbot.core.interaction.output_controller.call_event_hook",
+        hook,
+    )
+
+    completed = await controller.complete_visible_delivery(event)
+
+    assert completed is True
+    hook.assert_awaited_once_with(event, EventType.OnAfterMessageSentEvent)
+    controller.capture_visible_completion.assert_awaited_once_with(event)
+    controller._schedule_after_message_sent_postprocess.assert_called_once_with(event)
+    controller.flush_deferred_turn_finalization.assert_awaited_once_with(event)
+    controller.cancel_deferred_turn_finalization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persona_completion_delegates_to_interaction_delivery_boundary():
+    class Controller:
+        def __init__(self):
+            self.complete = AsyncMock(return_value=True)
+
+        async def complete_visible_delivery(self, event):
+            return await self.complete(event)
+
+    class Event:
+        def __init__(self, controller):
+            self.controller = controller
+            self.complete_visible_turn = AsyncMock()
+
+        def get_extra(self, key, default=None):
+            if key == "_interaction_output_controller":
+                return self.controller
+            return default
+
+    controller = Controller()
+    event = Event(controller)
+    middleware = object.__new__(InteractionMiddleware)
+
+    completed = await middleware._complete_visible_turn_or_record_failure(event)
+
+    assert completed is True
+    controller.complete.assert_awaited_once_with(event)
+    event.complete_visible_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persona_materializes_turn_before_delivery_completion():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+            self.stop_event = Mock()
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    order = []
+    middleware = object.__new__(InteractionMiddleware)
+    middleware._materialize_persona_reply_turn = Mock(
+        side_effect=lambda *_args, **_kwargs: order.append("materialize")
+    )
+    middleware._complete_visible_turn_or_record_failure = AsyncMock(
+        side_effect=lambda _event: order.append("complete") or True
+    )
+    middleware._finalize_turn = AsyncMock(
+        side_effect=lambda _event: order.append("finalize")
+    )
+    event = Event()
+
+    await middleware._complete_persona_only_turn(
+        event,
+        PersonaExpressionResult(spoken_reply="persona reply"),
+    )
+
+    assert order == ["materialize", "complete", "finalize"]
+    event.stop_event.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_respond_stage_delegates_interaction_completion_once():
+    class Controller:
+        def __init__(self):
+            self.complete = AsyncMock(return_value=True)
+
+        async def complete_visible_delivery(self, event):
+            return await self.complete(event)
+
+    class Event:
+        def __init__(self, controller):
+            self.controller = controller
+
+        def get_extra(self, key, default=None):
+            if key == "_interaction_output_controller":
+                return self.controller
+            return default
+
+    controller = Controller()
+    event = Event(controller)
+
+    completed = await RespondStage()._dispatch_after_message_sent(event)
+
+    assert completed is True
+    controller.complete.assert_awaited_once_with(event)
 
 
 @pytest.mark.asyncio

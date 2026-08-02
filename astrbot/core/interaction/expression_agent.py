@@ -27,17 +27,18 @@ from astrbot.core.agent.tool_output_capture import (
     activate_persona_tool_output_attachments,
 )
 from astrbot.core.astr_agent_context import AstrAgentContext
-from astrbot.core.interaction.plugin_runtime import (
-    PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-)
 from astrbot.core.memory.history_source import extract_message_text
 from astrbot.core.message.components import Plain
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_runtime import (
+    PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+)
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.context_collect import resolve_toolset_for_target
 from astrbot.core.prompt.render import (
+    PROMPT_APPLY_RESULT_EXTRA_KEY,
     PromptRenderEngine,
     PromptRenderProfile,
     PromptTarget,
@@ -117,6 +118,7 @@ class InteractionExpressionError(RuntimeError):
 
 
 _MISSING_PROVIDER_REQUEST = object()
+_MISSING_PROMPT_APPLY_RESULT = object()
 
 
 @contextmanager
@@ -141,6 +143,28 @@ def _bind_persona_provider_request(event, provider_request: ProviderRequest) -> 
             extras.pop("provider_request", None)
         else:
             event.set_extra("provider_request", None)
+
+
+@contextmanager
+def _bind_persona_prompt_apply_result(event, apply_result: object) -> Iterator[None]:
+    """Expose the current Persona render application only to its plugin hooks."""
+
+    previous = event.get_extra(
+        PROMPT_APPLY_RESULT_EXTRA_KEY,
+        _MISSING_PROMPT_APPLY_RESULT,
+    )
+    event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, apply_result)
+    try:
+        yield
+    finally:
+        if previous is not _MISSING_PROMPT_APPLY_RESULT:
+            event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, previous)
+            return
+        extras = getattr(event, "_extras", None)
+        if isinstance(extras, dict):
+            extras.pop(PROMPT_APPLY_RESULT_EXTRA_KEY, None)
+        else:
+            event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, None)
 
 
 @dataclass(slots=True)
@@ -705,12 +729,18 @@ class InteractionExpressionAgent:
 
         provider_request = build_prompt_render_provider_request(event, provider)
         provider_request.session_id = event.session_id
-        apply_render_result_to_request(render_result, provider_request)
+        prompt_apply_result = apply_render_result_to_request(
+            render_result,
+            provider_request,
+        )
 
         # Preserve the first official lifecycle boundary before any Persona-only
         # tool work starts. Legacy plugins commonly use this hook for per-turn
         # state and must not be silently skipped by the Persona path.
-        with _bind_persona_provider_request(event, provider_request):
+        with (
+            _bind_persona_provider_request(event, provider_request),
+            _bind_persona_prompt_apply_result(event, prompt_apply_result),
+        ):
             if await call_event_hook(
                 event,
                 EventType.OnWaitingLLMRequestEvent,
@@ -736,7 +766,10 @@ class InteractionExpressionAgent:
         # This is the pre-tool preparation boundary. Legacy plugins may amend
         # ProviderRequest.func_tool here, so running the hook later would make
         # their changes invisible to the Persona tool loop.
-        with _bind_persona_provider_request(event, provider_request):
+        with (
+            _bind_persona_provider_request(event, provider_request),
+            _bind_persona_prompt_apply_result(event, prompt_apply_result),
+        ):
             if await call_event_hook(
                 event,
                 EventType.OnLLMRequestEvent,

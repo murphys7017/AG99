@@ -14,8 +14,8 @@ from astrbot.core.agent.tool import (
     ToolSet,
     normalize_tool_targets,
 )
-from astrbot.core.interaction.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 

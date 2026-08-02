@@ -3,9 +3,9 @@ import traceback
 import typing as T
 
 from astrbot import logger
-from astrbot.core.interaction.plugin_runtime import plugin_supports_runtime_target
 from astrbot.core.message.message_event_result import CommandResult, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_runtime import plugin_supports_runtime_target
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 

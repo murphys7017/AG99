@@ -6,8 +6,8 @@ from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.astr_agent_context import AstrAgentContext
-from astrbot.core.interaction.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.star.star_handler import EventType

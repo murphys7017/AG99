@@ -30,6 +30,15 @@ class RespondStage(Stage):
         self.platform_settings: dict = self.config.get("platform_settings", {})
 
     async def _dispatch_after_message_sent(self, event: AstrMessageEvent) -> bool:
+        controller = event.get_extra("_interaction_output_controller")
+        complete_visible_delivery = getattr(
+            type(controller),
+            "complete_visible_delivery",
+            None,
+        )
+        if callable(complete_visible_delivery):
+            return await complete_visible_delivery(controller, event)
+
         if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
             await self._cancel_interaction_turn_finalization(
                 event,

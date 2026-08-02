@@ -77,6 +77,7 @@ context:
     - Personal Runtime is a control layer and never a plugin mount target. Plugin placement is defined per contribution rather than by the legacy API that happens to invoke it.
     - Persona-facing prompt/context, relationship, entertainment, effect, and tool contributions, including compatible legacy personality enhancements, default to Personal Expression. Tool calls are not synonymous with Core: the existing Personal Expression tool loop may invoke plugin-owned external I/O when that capability serves the current interaction. Core is reserved for contributions explicitly declared as task planning or independent work execution.
     - The main Persona flow runs plugin handlers, Prompt contributions, LLM lifecycle hooks, response processing, and declarative effects without entering a FunctionTool loop. Tool-requiring work is routed to Core; final persona_expression remains the structured response protocol rather than an executable plugin tool. The lower-level opt-in Persona tool-loop API remains for compatibility but is not enabled by Router or Core-result expression.
+    - Persona request hooks receive the branch-local PromptApplyResult while the rendered ProviderRequest is bound, so canonical Prompt extensions are not reinjected by legacy request bridges and the marker cannot leak into a later Core branch.
     - PersonaEffect is not an executable Persona Tool. It extends the final persona_expression structured-output contract with validated declarative effect_calls; its protocol-level tool-call encoding exists only to enforce output shape. Effects run after expression through output handling, never enter the Persona ToolSet or tool loop, and are Persona-only.
     - Interaction model IDs are optional per-stage overrides. Empty expression, Router, and Planner IDs resolve to the event's currently selected official chat provider, while explicit IDs retain precedence.
     - Terminal plugin Handlers are Pipeline-level response owners, not Persona mounts. A keyword/command Handler that returns a terminal reply may stop the event and prevent Persona or Core from starting; its output can be delivered directly or explicitly persona-rewritten, but that delivery choice does not transfer reply ownership to Persona. A Handler that yields ProviderRequest retains the existing Core-delegation path.
@@ -85,7 +86,7 @@ context:
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
     - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
-    - RespondStage-driven Interaction results finalize only after OnAfterMessageSent and visible completion; direct event.send paths retain their existing semantics.
+    - RespondStage-driven and direct Persona Interaction replies share one Output Controller-owned OnAfterMessageSent, visible-completion, postprocess, and deferred-finalization boundary; Persona materializes its final turn before entering that boundary. Direct non-Interaction event.send paths retain their existing semantics.
     - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed only for bounded group model-continuation candidates, which await Router before Persona and fail closed to silent.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
@@ -185,6 +186,7 @@ architecture:
     - Command APIs expose normalized per-config wake prefixes for dashboard command suggestions.
     - Plugin APIs expose `marketplace_name` so local plugin entries can match marketplace names that differ only by underscore/hyphen normalization.
     - Builtin group chat context uses one structured prompt-extension exit on the canonical Core path; an Apply-marker-protected `on_llm_request` bridge preserves group context for official agent runners outside ContextPack without duplicating Core injection.
+    - Plugin execution-surface routing policy is owned by a lightweight Core module so Prompt collectors can filter tool inventories without importing the eager Interaction package; the previous Interaction module remains a compatibility re-export.
     - LLM context compression now uses round-based token-ratio recent preservation and compression-provider modality sanitization; it remains a runner-level request/messages optimization and does not own Yakumo memory storage or retrieval.
     - Memory snapshot reads accept an explicit current-event identity override; legacy callers without an identity retain latest-turn fallback behavior.
     - Session prompt metadata marks the current speaker and distinguishes group multi-user scope from private single-user scope.
@@ -207,6 +209,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - Persona after-send and Prompt apply-marker repair: the full affected Prompt, Group Context, Interaction, and Personal Runtime suite passed 151 tests, including cold-import and completion-order regressions. Ruff, compileall, YAML parse, and git diff checks passed.
     - Autonomous Personal Runtime Gate configuration: public config/Gate smoke covered mute, cross-midnight quiet hours, and proactive output budget; Ruff, py_compile, and three locale JSON parses passed; no test file was added.
     - Autonomous Personal Runtime Phase 4 persistence prerequisite: dedicated SQLite repository create/update/reload smoke, Ruff, py_compile, Core Lifecycle import, and git diff checks passed; no test file was added.
     - Autonomous Personal Runtime Phase 1B: delivered/failed/cancelled/suppressed completion feedback smoke, interaction package import, Ruff, py_compile, YAML parse, VitePress build, and git diff checks passed; no implementation-detail test files were added.
