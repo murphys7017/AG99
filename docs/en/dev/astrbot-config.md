@@ -470,21 +470,29 @@ when `personal_policy_enabled` is enabled and
 - `expression_provider_id`, `router_provider_id`, and `planner_provider_id`:
   Optional per-stage model overrides. Leave a field empty to reuse the current
   session's configured chat provider; an explicit ID takes precedence.
-- `plugin_runtime_targets`: Plugin execution-target map. Use the plugin directory
+- `plugin_runtime_targets`: Plugin LLM lifecycle-target map. Use the plugin directory
   name as the key when possible, with a value of `core` or `personal_expression`.
   This configuration overrides a plugin class's optional
   `interaction_runtime_target` declaration; an unconfigured and undeclared
-  plugin defaults to Persona Expression. Only a resolved `core` plugin
-  participates in Core LLM lifecycle hooks and tools. Keyword, command, and
+  plugin defaults to Persona Expression. Keyword, command, and
   `AdapterMessageEvent` handlers remain in the official Pipeline and are not
   migrated by this setting. A plugin can declare its default in code with
   `interaction_runtime_target = "core"`. Example:
+- `plugin_tool_targets`: Plugin tool-target map. Executable tools default to Core
+  and can opt into `personal_expression` with their own `tool_targets` declaration.
+  This user configuration has highest precedence. Use a plugin directory name to
+  override all of its tools, or `plugin_directory.tool_name` for one exact tool;
+  an exact entry wins.
 
   ```jsonc
   "interaction_middleware": {
     "enabled": true,
     "plugin_runtime_targets": {
       "astrbot_plugin_self_code": "core"
+    },
+    "plugin_tool_targets": {
+      "astrbot_plugin_game": "personal_expression",
+      "astrbot_plugin_memory.read_memory_detail": "personal_expression"
     }
   }
   ```

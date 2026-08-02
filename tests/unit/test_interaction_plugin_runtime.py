@@ -120,7 +120,7 @@ async def test_llm_hook_dispatch_uses_configured_plugin_runtime_target(monkeypat
     assert calls == ["core"]
 
 
-def test_plugin_tool_runtime_target_defaults_to_persona_in_interaction_turn(
+def test_plugin_tool_runtime_target_defaults_to_core_in_interaction_turn(
     monkeypatch,
 ):
     plugin_module = "test_plugins.persona_tools"
@@ -137,12 +137,12 @@ def test_plugin_tool_runtime_target_defaults_to_persona_in_interaction_turn(
     )
 
     class Event:
-        def __init__(self, *, interaction_enabled, targets=None):
+        def __init__(self, *, interaction_enabled, tool_targets=None):
             self._extras = {
                 "_interaction_enabled": interaction_enabled,
                 "_astrbot_config": {
                     "interaction_middleware": {
-                        "plugin_runtime_targets": targets or {},
+                        "plugin_tool_targets": tool_targets or {},
                     }
                 },
             }
@@ -151,21 +151,40 @@ def test_plugin_tool_runtime_target_defaults_to_persona_in_interaction_turn(
             return self._extras.get(key, default)
 
     interaction_event = Event(interaction_enabled=True)
-    assert tool_supports_runtime_target(
+    assert not tool_supports_runtime_target(
         interaction_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
     )
+    assert tool_supports_runtime_target(interaction_event, tool, PLUGIN_RUNTIME_TARGET_CORE)
+
+    declared_persona_tool = FunctionTool(
+        name="declared_persona_tool",
+        description="A plugin tool explicitly declared for Persona.",
+        parameters={"type": "object", "properties": {}},
+        handler_module_path=plugin_module,
+        execution_targets={PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION},
+    )
+    assert tool_supports_runtime_target(
+        interaction_event,
+        declared_persona_tool,
+        PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    )
     assert not tool_supports_runtime_target(
-        interaction_event, tool, PLUGIN_RUNTIME_TARGET_CORE
+        interaction_event,
+        declared_persona_tool,
+        PLUGIN_RUNTIME_TARGET_CORE,
     )
 
-    core_event = Event(
+    persona_event = Event(
         interaction_enabled=True,
-        targets={"persona_tools": "core"},
+        tool_targets={
+            "persona_tools": "core",
+            "persona_tools.persona_tool": "personal_expression",
+        },
     )
-    assert not tool_supports_runtime_target(
-        core_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
+    assert tool_supports_runtime_target(
+        persona_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
     )
-    assert tool_supports_runtime_target(core_event, tool, PLUGIN_RUNTIME_TARGET_CORE)
+    assert not tool_supports_runtime_target(persona_event, tool, PLUGIN_RUNTIME_TARGET_CORE)
 
     legacy_event = Event(interaction_enabled=False)
     assert tool_supports_runtime_target(legacy_event, tool, PLUGIN_RUNTIME_TARGET_CORE)
@@ -208,7 +227,7 @@ async def test_core_result_returns_through_persona_without_reopening_plugin_tool
 
 
 @pytest.mark.asyncio
-async def test_persona_route_does_not_open_function_tools():
+async def test_persona_route_allows_explicitly_targeted_function_tools():
     class Event:
         def __init__(self):
             self._extras = {}
@@ -240,7 +259,7 @@ async def test_persona_route_does_not_open_function_tools():
     result = await middleware._generate_and_emit_persona(event, object())
 
     assert result is None
-    assert requests[0].allow_plugin_tools is False
+    assert requests[0].allow_plugin_tools is True
 
 
 @pytest.mark.asyncio
@@ -415,7 +434,7 @@ async def test_immediate_text_override_keeps_persona_tool_rich_output():
     assert [type(component) for component in delivered[0].chain] == [Plain, Image]
 
 
-def test_plugin_declaration_sets_default_target_but_config_overrides_it(monkeypatch):
+def test_plugin_lifecycle_target_does_not_override_tool_target(monkeypatch):
     plugin_module = "test_plugins.work_tools"
     monkeypatch.setitem(
         star_map,
@@ -454,12 +473,16 @@ def test_plugin_declaration_sets_default_target_but_config_overrides_it(monkeypa
         declared_core_event, tool, PLUGIN_RUNTIME_TARGET_CORE
     )
 
-    overridden_event = Event("personal_expression")
-    assert tool_supports_runtime_target(
-        overridden_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
-    )
+    lifecycle_overridden_event = Event("personal_expression")
     assert not tool_supports_runtime_target(
-        overridden_event, tool, PLUGIN_RUNTIME_TARGET_CORE
+        lifecycle_overridden_event,
+        tool,
+        PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    )
+    assert tool_supports_runtime_target(
+        lifecycle_overridden_event,
+        tool,
+        PLUGIN_RUNTIME_TARGET_CORE,
     )
 
 

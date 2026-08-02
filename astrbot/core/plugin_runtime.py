@@ -14,6 +14,7 @@ PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION: PluginRuntimeTarget = (
     "personal_expression"
 )
 PLUGIN_RUNTIME_TARGETS_CONFIG_KEY = "plugin_runtime_targets"
+PLUGIN_TOOL_TARGETS_CONFIG_KEY = "plugin_tool_targets"
 
 
 def plugin_supports_runtime_target(
@@ -34,18 +35,26 @@ def plugin_supports_runtime_target(
 
 
 def tool_supports_runtime_target(event, tool: object, target: str) -> bool:
-    """Apply plugin runtime routing before a tool's declared capabilities.
+    """Resolve a tool independently from its plugin's LLM lifecycle target.
 
-    Plugin-owned tools follow their plugin's configured execution surface.
-    Built-in and MCP tools have no plugin owner and continue to use their
-    explicit ``execution_targets`` declaration.
+    Function tools remain Core-only by default. A plugin can opt a tool into
+    Persona through its own ``execution_targets`` declaration, while users can
+    override a plugin or one named tool through ``plugin_tool_targets``.
     """
     if not _is_personal_runtime_turn(event):
         return tool_supports_target(tool, target)
 
     module_path = _tool_module_path(tool)
-    if _metadata_for_module(module_path) is not None:
-        return plugin_supports_runtime_target(event, module_path, target)
+    metadata = _metadata_for_module(module_path)
+    if metadata is not None:
+        configured_target = _configured_tool_target(
+            event,
+            metadata,
+            module_path,
+            str(getattr(tool, "name", "") or "").strip(),
+        )
+        if configured_target is not None:
+            return configured_target == target
     return tool_supports_target(tool, target)
 
 
@@ -69,6 +78,44 @@ def _resolve_plugin_target(
 
 
 def _configured_target(event, metadata, module_path: str | None) -> str | None:
+    configured_targets = _configured_target_map(
+        event,
+        PLUGIN_RUNTIME_TARGETS_CONFIG_KEY,
+    )
+    if configured_targets is None:
+        return None
+
+    return _target_for_keys(
+        configured_targets,
+        _plugin_config_keys(metadata, module_path),
+    )
+
+
+def _configured_tool_target(
+    event,
+    metadata,
+    module_path: str | None,
+    tool_name: str,
+) -> PluginRuntimeTarget | None:
+    configured_targets = _configured_target_map(
+        event,
+        PLUGIN_TOOL_TARGETS_CONFIG_KEY,
+    )
+    if configured_targets is None:
+        return None
+
+    plugin_keys = _plugin_config_keys(metadata, module_path)
+    if tool_name:
+        exact_target = _target_for_keys(
+            configured_targets,
+            tuple(f"{key}.{tool_name}" for key in plugin_keys),
+        )
+        if exact_target is not None:
+            return exact_target
+    return _target_for_keys(configured_targets, plugin_keys)
+
+
+def _configured_target_map(event, config_key: str) -> dict | None:
     get_extra = getattr(event, "get_extra", None)
     config = get_extra("_astrbot_config", {}) if get_extra else {}
     if not isinstance(config, dict):
@@ -76,11 +123,17 @@ def _configured_target(event, metadata, module_path: str | None) -> str | None:
     interaction_config = config.get("interaction_middleware", {})
     if not isinstance(interaction_config, dict):
         return None
-    configured_targets = interaction_config.get(PLUGIN_RUNTIME_TARGETS_CONFIG_KEY)
+    configured_targets = interaction_config.get(config_key)
     if not isinstance(configured_targets, dict):
         return None
+    return configured_targets
 
-    for key in _plugin_config_keys(metadata, module_path):
+
+def _target_for_keys(
+    configured_targets: dict,
+    keys: tuple[str, ...],
+) -> PluginRuntimeTarget | None:
+    for key in keys:
         value = configured_targets.get(key)
         if isinstance(value, str):
             normalized = value.strip().lower()

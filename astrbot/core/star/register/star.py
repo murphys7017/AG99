@@ -25,8 +25,9 @@ def register_star(
         desc: 插件的简述。
         version: 版本号。
         repo: 仓库地址。如果没有填写仓库地址，将无法更新这个插件。
-        interaction_runtime_target: Interaction 默认执行面，可为 ``core`` 或
-            ``personal_expression``。配置文件可覆盖该声明。
+        interaction_runtime_target: Interaction LLM 生命周期默认执行面，可为
+            ``core`` 或 ``personal_expression``。配置文件可覆盖该声明；工具目标
+            由 ``tool_targets`` 独立声明。
 
     如果需要为插件填写帮助信息，请使用如下格式：
 

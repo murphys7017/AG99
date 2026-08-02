@@ -66,7 +66,6 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
             EventType.OnUsingLLMToolEvent,
             tool,
             tool_args,
-            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
 
     async def on_tool_end(
@@ -83,7 +82,6 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
             tool,
             tool_args,
             tool_result,
-            execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
         )
 
 

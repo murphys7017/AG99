@@ -214,6 +214,7 @@ DEFAULT_CONFIG = {
     "interaction_middleware": {
         "enabled": True,
         "plugin_runtime_targets": {},
+        "plugin_tool_targets": {},
         "memory_window_size": 8,
         "persona_history_window_size": 16,
         "expression_provider_id": "",
@@ -4392,9 +4393,14 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                     },
                     "interaction_middleware.plugin_runtime_targets": {
-                        "description": "插件运行目标",
+                        "description": "插件 LLM 生命周期目标",
                         "type": "object",
-                        "hint": "默认在人格表达中运行；仅在此处配置为 core 的插件参与工作执行。键使用插件目录名。",
+                        "hint": "控制插件 LLM Hook 的运行面，默认在人格表达中运行。键使用插件目录名。",
+                    },
+                    "interaction_middleware.plugin_tool_targets": {
+                        "description": "插件工具运行目标",
+                        "type": "object",
+                        "hint": "插件工具默认在 Core；可按插件目录名或 插件目录名.工具名 配置为 personal_expression。",
                     },
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",

@@ -29,7 +29,7 @@ Main Agent 仍拥有运行时能力装配，Prompt 系统只描述模型输入�
 
 `CoreCapabilitySnapshot` 已记录本轮实际工具对象以及 Prompt 中的 tool schema、skills 和 knowledge；后面三者在形成快照时与 Prompt 构建侧分离，只有 Native `ToolSet` 作为明确的实时执行句柄保留。`RenderResult.tool_schema` 仍不会自动注册到 `func_tool`。两者尚未统一为一个可序列化能力契约，新代码不能把渲染 schema 当作可执行工具注册表。
 
-在非 Interaction 流程中，官方 `on_llm_request` 仍在 Core 的统一 Prompt Apply 后运行。Interaction turn 中，插件运行目标依次由 `interaction_middleware.plugin_runtime_targets`、插件类 `interaction_runtime_target` 声明和 Persona 默认值决定；只有最终为 `core` 的插件才在最终 Core 请求上运行。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done` 和插件拥有的 LLM Tool 生命周期。Persona 工具的旧式事件输出会转换为模型可见工具材料，最终人格表达仍是唯一用户可见回复。它们都不是 Router、Planner 或 Persona 内部工具调用的事实扩展入口。
+在非 Interaction 流程中，官方 `on_llm_request` 仍在 Core 的统一 Prompt Apply 后运行。Interaction turn 中，插件 LLM 生命周期目标依次由 `interaction_middleware.plugin_runtime_targets`、插件类 `interaction_runtime_target` 声明和 Persona 默认值决定；只有最终为 `core` 的插件才在最终 Core 请求上运行。插件拥有的 LLM Tool 独立遵守 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值；`on_using_llm_tool` 与 `on_llm_tool_respond` 保持全局工具观察语义，不受请求生命周期目标过滤。Persona 工具的旧式事件输出会转换为模型可见工具材料，最终人格表达仍是唯一用户可见回复。它们都不是 Router、Planner 或 Persona 内部工具调用的事实扩展入口。
 
 ## 执行连续性
 

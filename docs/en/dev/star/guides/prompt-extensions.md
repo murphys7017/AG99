@@ -117,10 +117,10 @@ A failing plugin collector is logged and skipped so one plugin cannot break core
 |---|---|
 | Prompt Extension Collector | Contribute model-visible facts through the unified pipeline |
 | Persona Effect | Add structured presentation capabilities to Persona output |
-| LLM Tool | Register executable capability; plugin tools default to Persona and resolved `core` plugins enter Core |
+| LLM Tool | Register executable capability; plugin tools default to Core and enter Persona only through an explicit declaration or user override |
 | `on_llm_request` | Modify the pre-tool Persona request once, or the routed Core low-level request, based on plugin target |
 
-The same runtime target applies to a plugin's full LLM lifecycle and its owned LLM Tools. In an Interaction turn, resolution is configuration override, class or legacy decorator declaration, then the Persona default; only a resolved `core` plugin enters Core. Non-Interaction flows retain the official Core behavior. Persona `on_llm_request` runs once before its tool loop, and its non-contract mutations are retained for the final expression; it does not run for Router, Core Planner, or internal Persona tool calls. Actual Persona tool execution still emits `on_using_llm_tool` and `on_llm_tool_respond`. Facts needed by those targets must use Prompt Extensions with explicit targets; do not make per-turn dynamic facts depend on a low-level request hook.
+Plugin LLM lifecycle and LLM Tool targets resolve independently. Lifecycle order is the `plugin_runtime_targets` override, class or legacy decorator declaration, then the Persona default. Tool order is the user `plugin_tool_targets` override, the tool's `tool_targets` declaration, then the Core default. Non-Interaction flows retain the official Core behavior. Persona `on_llm_request` runs once before its optional tool loop, and its non-contract mutations are retained for the final expression; it does not run for Router, Core Planner, or internal Persona tool calls. Actual Persona tool execution still emits `on_using_llm_tool` and `on_llm_tool_respond`. Facts needed by those targets must use Prompt Extensions with explicit targets; do not make per-turn dynamic facts depend on a low-level request hook.
 
 ## Safety Rules
 

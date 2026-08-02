@@ -29,7 +29,7 @@ Persona Expression 内运行时，这些旧式输出路径会被收集为模型�
 
 返回 `MessageEventResult.set_async_stream(...)` 的旧式工具流在 Persona Expression
 内暂不支持。框架会安全关闭该流，并向工具循环返回明确的兼容性提示，而不会静默丢弃。
-请改为返回非流式结果，或在 `plugin_runtime_targets` 中将该插件显式配置为 `core`。
+请改为返回非流式结果，或在 `plugin_tool_targets` 中将该插件工具显式配置为 `core`。
 
 ## 主动消息
 

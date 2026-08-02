@@ -962,6 +962,7 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
         description="Read additional context.",
         parameters={"type": "object", "properties": {}},
         handler=RuntimeBoundHandler(),
+        execution_targets={"personal_expression"},
     )
     tools = ToolSet([tool])
     provider = Provider()
@@ -1008,7 +1009,10 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
 
     async def call_hook(event, hook_type, *args, **kwargs):
         del event
-        assert kwargs["execution_surface"] == "personal_expression"
+        if hook_type.name in {"OnUsingLLMToolEvent", "OnLLMToolRespondEvent"}:
+            assert "execution_surface" not in kwargs
+        else:
+            assert kwargs["execution_surface"] == "personal_expression"
         observed_hooks.append(hook_type.name)
         if hook_type.name == "OnLLMRequestEvent":
             assert args[0].func_tool is tools
@@ -1051,7 +1055,7 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
 
 
 @pytest.mark.asyncio
-async def test_persona_request_hook_can_remove_tools_before_the_tool_loop(monkeypatch):
+async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkeypatch):
     class Provider:
         provider_config = {"id": "persona", "type": "test"}
 
@@ -1087,6 +1091,12 @@ async def test_persona_request_hook_can_remove_tools_before_the_tool_loop(monkey
         name="legacy_tool",
         description="A removable Persona tool.",
         parameters={"type": "object", "properties": {}},
+        execution_targets={"personal_expression"},
+    )
+    core_tool = FunctionTool(
+        name="core_tool",
+        description="A Core-only tool injected by a request hook.",
+        parameters={"type": "object", "properties": {}},
     )
     tools = ToolSet([tool])
     contract = build_persona_expression_output_contract_for_effects([])
@@ -1112,7 +1122,7 @@ async def test_persona_request_hook_can_remove_tools_before_the_tool_loop(monkey
 
     async def call_hook(_event, hook_type, *args, **_kwargs):
         if hook_type.name == "OnLLMRequestEvent":
-            args[0].func_tool = ToolSet()
+            args[0].func_tool = ToolSet([core_tool])
         return False
 
     monkeypatch.setattr(
@@ -1198,6 +1208,7 @@ async def test_persona_tool_stage_discards_plain_output_when_no_tool_executed(
                     name="optional_tool",
                     description="Optional Persona tool.",
                     parameters={"type": "object", "properties": {}},
+                    execution_targets={"personal_expression"},
                 )
             ]
         )
@@ -1280,6 +1291,7 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
         name="legacy_tool",
         description="Can fail after side effects.",
         parameters={"type": "object", "properties": {}},
+        execution_targets={"personal_expression"},
     )
     tools = ToolSet([tool])
     contract = build_persona_expression_output_contract_for_effects([])
@@ -1382,6 +1394,7 @@ async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
         name="legacy_tool",
         description="Returns a fact.",
         parameters={"type": "object", "properties": {}},
+        execution_targets={"personal_expression"},
     )
     tools = ToolSet([tool])
     contract = build_persona_expression_output_contract_for_effects([])

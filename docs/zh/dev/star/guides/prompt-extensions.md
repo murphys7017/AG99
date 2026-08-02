@@ -124,10 +124,10 @@ PromptExtension(
 |---|---|
 | Prompt Extension Collector | 在统一管线中贡献模型可见事实 |
 | Persona Effect | 给 Persona 输出契约增加结构化表现能力，不是输入事实 |
-| LLM Tool | 注册可执行能力；插件工具默认进入 Persona，最终解析为 `core` 的插件进入 Core |
+| LLM Tool | 注册可执行能力；插件工具默认进入 Core，只有工具声明或用户配置明确允许时进入 Persona |
 | `on_llm_request` | 修改路由后的最终 Persona 或 Core 低层请求，取决于插件运行目标 |
 
-插件的 LLM 生命周期和插件拥有的 LLM Tool 使用同一运行目标：Interaction turn 中按“配置覆盖 > 类或旧装饰器声明 > Persona 默认值”解析，只有最终为 `core` 的插件进入 Core；非 Interaction 流程保持官方 Core 行为。`on_llm_request` 不覆盖 Router、Core Planner 或 Persona 内部工具回路；实际执行 Persona 插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。需要这些目标读取的信息必须进入 Prompt Extension，并声明 targets；不要把每轮动态事实依赖在低层请求钩子上。
+插件 LLM 生命周期与 LLM Tool 独立解析：生命周期按“`plugin_runtime_targets` 配置覆盖 > 类或旧装饰器声明 > Persona 默认值”，工具按“`plugin_tool_targets` 用户覆盖 > 工具 `tool_targets` 声明 > Core 默认值”。非 Interaction 流程保持官方 Core 行为。`on_llm_request` 不覆盖 Router、Core Planner 或 Persona 内部工具回路；实际执行 Persona 插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。需要这些目标读取的信息必须进入 Prompt Extension，并声明 targets；不要把每轮动态事实依赖在低层请求钩子上。
 
 ## 安全约束
 

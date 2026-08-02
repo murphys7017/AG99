@@ -34,6 +34,7 @@ from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    tool_supports_runtime_target,
 )
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.context_collect import resolve_toolset_for_target
@@ -200,7 +201,6 @@ class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
                 EventType.OnUsingLLMToolEvent,
                 tool,
                 tool_args,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
             )
 
     async def on_tool_end(
@@ -219,7 +219,6 @@ class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
                 tool,
                 tool_args,
                 tool_result,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
             )
 
 
@@ -783,7 +782,21 @@ class InteractionExpressionAgent:
 
         tool_material: str | None = None
         if req.allow_plugin_tools and isinstance(provider_request.func_tool, ToolSet):
-            toolset = provider_request.func_tool
+            filtered_tools = [
+                tool
+                for tool in provider_request.func_tool
+                if tool_supports_runtime_target(
+                    event,
+                    tool,
+                    TOOL_TARGET_PERSONAL_EXPRESSION,
+                )
+            ]
+            toolset = (
+                provider_request.func_tool
+                if len(filtered_tools) == len(provider_request.func_tool)
+                else ToolSet(filtered_tools)
+            )
+            provider_request.func_tool = toolset
             if toolset:
                 try:
                     (

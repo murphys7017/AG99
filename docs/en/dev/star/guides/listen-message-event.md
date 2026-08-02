@@ -336,16 +336,17 @@ The ProviderRequest object contains all information about the LLM request, inclu
 
 With Interaction Middleware enabled, an unconfigured plugin receives this hook once
 on Persona Expression's pre-tool preparation request. Its `ProviderRequest` changes
-are retained for the final user-visible expression, so the hook can add context or
-remove Persona tools before the model sees them. Resolution order is
+other than tool assignment are retained for the final user-visible expression. The
+hook can remove tools before the model sees them, but newly added tools must still
+pass Persona target authorization. Lifecycle resolution order is
 `interaction_middleware.plugin_runtime_targets`, the plugin class's optional
 `interaction_runtime_target` declaration, then the Persona default. Only a plugin
-resolved as `core` receives it on a Core request. The same target rule applies to
-`on_waiting_llm_request`, `on_agent_begin`, `on_llm_response`, `on_agent_done`,
-`on_using_llm_tool`, `on_llm_tool_respond`, and plugin-owned LLM Tools. Router,
-Core Planner do not emit these plugin hooks. Internal Persona tool calls do not emit
-request or Agent lifecycle hooks, but executing a plugin tool still emits
-`on_using_llm_tool` and `on_llm_tool_respond`. The Persona request is branch-local,
+resolved as `core` receives it on a Core request. Plugin-owned LLM Tools resolve
+independently through the user `plugin_tool_targets` override, their `tool_targets`
+declaration, then the Core default. Router and Core Planner do not emit request or
+Agent lifecycle hooks. `on_using_llm_tool` and `on_llm_tool_respond` retain their
+official global observer semantics and run when a tool actually executes in Core or
+Persona. The Persona request is branch-local,
 so its mutation does not overwrite the Core request
 for the same event, while the event itself remains the original `AstrMessageEvent`.
 Ordinary Pipeline handlers, such as keyword and command handlers, are unchanged and

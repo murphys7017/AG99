@@ -94,8 +94,8 @@ class MyPlugin(Star):
 4. 具体的处理函数 `Handler` 在插件类中定义，如这里的 `helloworld` 函数。
 5. 请务必使用 `from astrbot.api import logger` 来获取日志对象，而不是使用 `logging` 模块。
 
-在 Interaction Middleware 启用时，插件的 LLM 生命周期钩子与插件拥有的 LLM Tool 默认运行在
-Persona Expression，用于人格、娱乐和提示词增强。工作执行型插件可以在 `Star` 子类中声明：
+在 Interaction Middleware 启用时，插件的 LLM 生命周期钩子默认运行在 Persona Expression，
+用于人格、娱乐和提示词增强。工作执行型插件可以在 `Star` 子类中声明：
 
 ```python
 class MyWorkPlugin(Star):
@@ -119,6 +119,10 @@ class MyWorkPlugin(Star):
 配置文件中的 `interaction_middleware.plugin_runtime_targets` 优先级更高，完整顺序为
 “配置覆盖 > 类或装饰器声明 > Persona Expression 默认值”；关键词、命令等 Pipeline Handler
 不受此设置影响，仍保持原有的终止语义。
+
+插件拥有的 LLM Tool 不跟随这个生命周期目标：工具默认进入 Core，可通过装饰器的
+`tool_targets={"personal_expression"}` 显式声明 Persona；用户还可用
+`interaction_middleware.plugin_tool_targets` 按插件目录名或 `插件目录名.工具名` 覆盖。
 
 > [!TIP]
 >
@@ -511,7 +515,7 @@ async def on_astrbot_loaded(self):
 
 ProviderRequest 对象包含了 LLM 请求的所有信息，包括请求的文本、系统提示等。
 
-启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的修改会保留到最终用户可见表达，因而可用于增删 Persona 工具或补充上下文。运行目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。相同目标规则适用于 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_using_llm_tool`、`on_llm_tool_respond` 和插件注册的 LLM Tool。Router 和 Core Planner 不会触发这些插件钩子；Persona 内部工具回路不会触发请求或 Agent 生命周期钩子，但实际执行插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
+启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的非工具修改会保留到最终用户可见表达。生命周期目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。插件 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析；请求钩子可以移除工具，但新增工具仍必须通过 Persona 目标授权过滤。Router 和 Core Planner 不会触发请求或 Agent 生命周期钩子；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent

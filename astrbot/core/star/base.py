@@ -22,7 +22,7 @@ class Star(CommandParserMixin, PluginKVStoreMixin):
     name: str
     context: Context
     interaction_runtime_target: str | None = None
-    """Optional default Interaction target: ``core`` or ``personal_expression``."""
+    """Optional Interaction LLM lifecycle target: ``core`` or ``personal_expression``."""
 
     def __init__(self, context: Context, config: dict | None = None) -> None:
         self.context = context

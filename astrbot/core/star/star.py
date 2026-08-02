@@ -47,7 +47,7 @@ class StarMetadata:
     """插件的目录名称"""
 
     interaction_runtime_target: str | None = None
-    """Optional default Interaction execution surface declared by the plugin."""
+    """Optional default Interaction LLM lifecycle surface declared by the plugin."""
     reserved: bool = False
     """是否是 AstrBot 的保留插件"""
 

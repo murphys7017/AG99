@@ -35,7 +35,7 @@ Legacy tools returning `MessageEventResult.set_async_stream(...)` are not suppor
 inside Persona Expression yet. AstrBot safely closes that returned stream and gives
 the tool loop a deterministic compatibility notice instead of silently dropping it.
 Return a non-streaming result or explicitly configure that plugin for `core` in
-`plugin_runtime_targets`.
+`plugin_tool_targets`.
 
 ## Active Messages
 
