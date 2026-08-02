@@ -51,6 +51,41 @@ Current local upstream-sync commits:
 - `2c2d1431c` Update the default MiMo TTS model.
 - `85e4eca83` Shorten WebChat media paths.
 - `f3712f5e0` Absorb selected v4.27 compatibility updates.
+- `994d1658d` Harden plugin reload lifecycle.
+- `f17452d45` Absorb v4.27 stability updates.
+
+## 2026-08-02 v4.27.0 plugin lifecycle and stability follow-up
+
+Reviewed upstream baseline: `upstream/master` at `9bb294d8c` (`v4.27.0`)
+
+Absorbed by local rewrite:
+
+- Plugin lifecycle:
+  - `1ca3715c5`: repeated plugin loads bind event handlers and LLM tools idempotently instead of stacking `functools.partial` wrappers. Local activation state is also recomputed on every load, disabled loads clear stale plugin classes, and plugin-tool activation follows the plugin and per-tool configuration.
+  - `2b21a6f63`: plugin reload detects already-loaded native extension modules and leaves them in place instead of attempting an unsafe `.pyd` / `.so` reload.
+  - `c1a7b34ec`: plugin search no longer matches repository URLs.
+- Stability and correctness:
+  - `5e68ee767`: message outlines join component summaries without adding a trailing separator.
+  - `7c2a2e9d8`: quoted-message depth and forward-fetch settings preserve explicit zero values; disabling forward fetch no longer emits a limit warning.
+  - `d1ae378e2`: fresh FAISS indexes reject zero or negative embedding dimensions with an actionable provider-configuration error.
+  - `fcce0105e`: dashboard statistics sample AstrBot process CPU in a worker thread and normalize it by logical CPU count instead of blocking the event loop with system-wide sampling.
+  - `2035dbd07`: each rate-limited event captures its timestamp after acquiring the per-session lock, preventing queued events from using stale times.
+
+Already equivalent locally:
+
+- `1fcfffcc6`: local plugin uploads already send raw `FormData` directly to the Quart `/api/plugin/install-upload` route, so the upstream proxy-parser fix is not needed in this dashboard architecture.
+
+Local compatibility decisions:
+
+- The unrelated image-style changes bundled with the upstream handler-binding work were not included in the lifecycle fix.
+- The fork-owned `TTSState` lifecycle, event API, delivery metadata, and Personal Runtime grouping remain unchanged.
+
+Validation for this follow-up:
+
+- Plugin lifecycle tests: 6 passed; native-extension reload guard: 1 passed.
+- Stability tests for message outlines, quoted messages, FAISS, and concurrent rate limiting: 122 passed.
+- Dashboard `/api/stat/get` process CPU test: 1 passed.
+- Dashboard typecheck, focused Ruff, `py_compile`, and whitespace checks passed.
 
 ## 2026-08-02 v4.27.0 TTS and compatibility follow-up
 
