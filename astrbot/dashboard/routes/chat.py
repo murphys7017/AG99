@@ -25,7 +25,7 @@ from astrbot.core.platform.sources.webchat.message_parts_helper import (
 from astrbot.core.platform.sources.webchat.webchat_queue_mgr import webchat_queue_mgr
 from astrbot.core.utils.active_event_registry import active_event_registry
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-from astrbot.core.utils.datetime_utils import to_utc_isoformat
+from astrbot.core.utils.datetime_utils import generate_timestamp_id, to_utc_isoformat
 
 from .route import Response, Route, RouteContext
 
@@ -35,11 +35,11 @@ SSE_HEARTBEAT = ": heartbeat\n\n"
 
 def _sanitize_upload_filename(filename: str | None) -> str:
     if not filename:
-        return f"{uuid.uuid4()!s}"
+        return generate_timestamp_id()
     normalized = filename.replace("\\", "/")
     name = PurePosixPath(normalized).name.replace("\x00", "").strip()
     if name in ("", ".", ".."):
-        return f"{uuid.uuid4()!s}"
+        return generate_timestamp_id()
     return name
 
 
