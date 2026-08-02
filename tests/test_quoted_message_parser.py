@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from astrbot.core.message.components import Image, Plain, Reply
+from astrbot.core.utils.quoted_message.settings import SETTINGS
 from astrbot.core.utils.quoted_message_parser import (
     extract_quoted_message_images,
     extract_quoted_message_text,
@@ -492,3 +493,27 @@ async def test_extract_quoted_message_nested_forward_id_is_resolved():
 
     images = await extract_quoted_message_images(event)
     assert images == [nested_image]
+
+
+@pytest.mark.asyncio
+async def test_extract_quoted_message_zero_forward_fetch_skips_forward_messages():
+    reply = Reply(id="330", chain=[Plain(text="[Forward Message]")], message_str="")
+    event = _make_event(
+        reply,
+        responses={
+            ("get_msg", "330"): {
+                "data": {
+                    "message": [
+                        {"type": "text", "data": {"text": "parent"}},
+                        {"type": "forward", "data": {"id": "fwd_1"}},
+                    ]
+                }
+            }
+        },
+    )
+    settings = SETTINGS.with_overrides({"max_forward_fetch": 0})
+
+    text = await extract_quoted_message_text(event, settings=settings)
+
+    assert text == "parent"
+    assert settings.max_forward_fetch == 0

@@ -204,7 +204,8 @@ class StatRoute(Route):
 
             stat_dict = stat.__dict__
 
-            cpu_percent = psutil.cpu_percent(interval=0.5)
+            process_cpu = await asyncio.to_thread(psutil.Process().cpu_percent, 0.5)
+            cpu_percent = process_cpu / (psutil.cpu_count() or 1)
             thread_count = threading.active_count()
 
             # 获取插件信息

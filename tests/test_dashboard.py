@@ -885,7 +885,14 @@ async def test_logout_clears_cookie_for_plugin_page(
 
 
 @pytest.mark.asyncio
-async def test_get_stat(app: Quart, authenticated_header: dict):
+async def test_get_stat(app: Quart, authenticated_header: dict, monkeypatch):
+    process = SimpleNamespace(
+        cpu_percent=lambda _interval: 40.0,
+        memory_info=lambda: SimpleNamespace(rss=256 << 20),
+    )
+    monkeypatch.setattr("astrbot.dashboard.routes.stat.psutil.Process", lambda: process)
+    monkeypatch.setattr("astrbot.dashboard.routes.stat.psutil.cpu_count", lambda: 4)
+
     test_client = app.test_client()
     response = await test_client.get("/api/stat/get")
     assert response.status_code == 401
@@ -893,6 +900,7 @@ async def test_get_stat(app: Quart, authenticated_header: dict):
     assert response.status_code == 200
     data = await response.get_json()
     assert data["status"] == "ok" and "platform" in data["data"]
+    assert data["data"]["cpu_percent"] == 10.0
 
 
 @pytest.mark.asyncio

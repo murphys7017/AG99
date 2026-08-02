@@ -256,8 +256,7 @@ class TestGetMessageOutline:
             session_id="session123",
         )
         outline = event.get_message_outline()
-        assert "Look at this" in outline
-        assert "[图片]" in outline
+        assert outline == "Look at this [图片]"
 
     def test_outline_with_at(self, platform_meta, astrbot_message):
         """Test outline with At component."""
