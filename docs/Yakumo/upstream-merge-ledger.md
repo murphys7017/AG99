@@ -5,16 +5,16 @@ Keep appending to it when reviewing future upstream updates, so old merge decisi
 
 ## Dynamic Sync Board
 
-Last updated: 2026-07-06
+Last updated: 2026-08-02
 
 Last recorded comparison baseline:
 
 - Local side: the active Yakumo working branch at review time; local `master` is also a fork branch and is not treated as the official baseline.
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `25cbd41e0` (`feat: add sanitation for malformed tool call names in ToolLoopAgentRunner (#9144)`)
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-07-06; upstream currently includes releases through `v4.26.4` and follow-up commits through `25cbd41e0`.
+- Last local upstream snapshot checked: `upstream/master` at `9bb294d8c` (`v4.27.0`).
+- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-08-02; `upstream/master` and tag `v4.27.0` both point to `9bb294d8c`.
 - Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
-- Patch-equivalence estimate from `git cherry`: many upstream commits still appear unabsorbed because this fork rewrites patches; the 2026-06-11 v4.25.5 small batch below records the current topic decisions.
+- The refreshed range contains 133 upstream commits after the previous `25cbd41e0` review baseline. Only the topics recorded below have been reviewed in this pass; the remaining commits still require topic review.
 
 Important interpretation:
 
@@ -47,6 +47,45 @@ Current local upstream-sync commits:
 - `d39001dcd` Absorb small runtime compatibility fixes.
 - `d98dd7f71` Add web search API key failover.
 - `0e9a08277` Absorb upstream runtime reliability fixes.
+- `d437802f6` Sync TTS provider media handling.
+- `2c2d1431c` Update the default MiMo TTS model.
+- `85e4eca83` Shorten WebChat media paths.
+- `f3712f5e0` Absorb selected v4.27 compatibility updates.
+
+## 2026-08-02 v4.27.0 TTS and compatibility follow-up
+
+Reviewed upstream baseline: `upstream/master` at `9bb294d8c` (`v4.27.0`)
+
+Absorbed by local rewrite:
+
+- TTS and outbound media:
+  - `7f1b6997e`: FishAudio exposes the `s2-pro` default and sends the selected model through the required HTTP header.
+  - `2b90b9467`: MiMo TTS now defaults to `mimo-v2.5-tts` in both provider metadata and the provider fallback constant.
+  - `4851b5050`: TTS, media conversion, WebChat attachment, upload fallback, and Live Chat WAV paths use compact timestamp IDs. UUIDs remain in place for logical message, request, conversation, task, and checkpoint identities.
+  - `2be0b2054`: functionally present before this pass. Simulated streaming TTS, ordinary Pipeline TTS, and QQ Official outbound records do not register generated outbound audio for event-final cleanup. Inbound normalization files remain event-owned and are still cleaned after processing.
+- Compatibility and correctness:
+  - `3504ecb6f`: plugin config schemas and plugin i18n JSON accept an optional UTF-8 BOM, with explicit schema decode errors.
+  - `d5620d94d`: inbound content safety checks include text extracted from Reply components while explicit outbound `check_text`, including an empty string, remains isolated from inbound content.
+  - `11a5672ef`: concurrent embedding batches are reassembled by batch index, preserving input order when requests finish out of order.
+  - `e36e161ab`: OpenAI-compatible responses with choices nested under `data` are validated and parsed before reporting empty model output.
+
+Local compatibility decisions:
+
+- The fork-owned `TTSState` lifecycle and output-segment protocol remains in place for now. This pass does not remove its event API, delivery metadata, or Personal Runtime grouping behavior.
+- The workspace-tool prompt wording bundled into `4851b5050` is not part of the path-length fix and remains pending separate Prompt-architecture review.
+- The remaining upstream commits after `25cbd41e0` are not implicitly classified as absorbed by this section.
+
+Validation for this follow-up:
+
+- TTS/provider and media tests: 37 passed.
+- MiMo provider tests after the default-model update: 29 passed.
+- WebChat path tests: 15 passed.
+- Plugin BOM, quoted-content safety, embedding order, and nested OpenAI response checks: 14 passed.
+- Focused Ruff, `py_compile`, and whitespace checks passed for every committed batch.
+
+Known validation note:
+
+- Directly importing a Pipeline stage before Interaction package initialization still exposes an existing package import cycle in this fork. The content-safety test uses the established application bootstrap order; resolving that package boundary is outside this compatibility batch.
 
 ## 2026-07-06 KB CRUD contract and pagination follow-up
 
