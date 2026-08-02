@@ -9,6 +9,9 @@ from astrbot.core.provider.sources.elevenlabs_tts_source import (
     ElevenLabsTTSAPIError,
     ProviderElevenLabsTTSAPI,
 )
+from astrbot.core.provider.sources.fishaudio_tts_api_source import (
+    ProviderFishAudioTTSAPI,
+)
 from astrbot.core.provider.sources.mimo_api_common import (
     MiMoAPIError,
     _validate_wav_payload,
@@ -85,6 +88,21 @@ def _make_elevenlabs_tts_provider(
         provider_config=provider_config,
         provider_settings={},
     )
+
+
+def test_fishaudio_tts_sends_configured_model_header():
+    provider = ProviderFishAudioTTSAPI(
+        provider_config={
+            "id": "test-fishaudio-tts",
+            "type": "fishaudio_tts_api",
+            "api_key": "test-key",
+            "model": "s2-pro",
+        },
+        provider_settings={},
+    )
+
+    assert provider.get_model() == "s2-pro"
+    assert provider.headers["model"] == "s2-pro"
 
 
 def test_mimo_tts_user_prompt_returns_seed_text():
