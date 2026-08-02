@@ -430,6 +430,21 @@ def test_mimo_stt_default_model_is_v25_asr():
         asyncio.run(provider.terminate())
 
 
+def test_mimo_tts_default_model_is_v25_tts():
+    provider = ProviderMiMoTTSAPI(
+        provider_config={
+            "id": "test-mimo-tts",
+            "type": "mimo_tts_api",
+            "api_key": "test-key",
+        },
+        provider_settings={},
+    )
+    try:
+        assert provider.model_name == "mimo-v2.5-tts"
+    finally:
+        asyncio.run(provider.terminate())
+
+
 @pytest.mark.asyncio
 async def test_mimo_stt_multimodal_model_payload_includes_transcription_prompts(
     monkeypatch,
