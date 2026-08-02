@@ -3,6 +3,7 @@ import json
 import ntpath
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -1868,3 +1869,25 @@ async def test_install_adds_aliyun_trusted_host_only_for_aliyun_index(monkeypatc
     assert "https://mirrors.aliyun.com/simple" in recorded_args
     trusted_host_index = recorded_args.index("--trusted-host")
     assert recorded_args[trusted_host_index + 1] == "mirrors.aliyun.com"
+
+
+def test_prefer_module_skips_loaded_c_extension(monkeypatch):
+    modules = {
+        "pikepdf": SimpleNamespace(__file__="/site-packages/pikepdf/__init__.py"),
+        "pikepdf._core": SimpleNamespace(
+            __file__="/site-packages/pikepdf/_core.pyd"
+        ),
+    }
+    monkeypatch.setattr(
+        pip_installer_module,
+        "sys",
+        SimpleNamespace(modules=modules),
+    )
+
+    assert (
+        pip_installer_module._prefer_module_from_site_packages(
+            "pikepdf",
+            "/plugin/site-packages",
+        )
+        is False
+    )

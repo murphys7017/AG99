@@ -619,10 +619,30 @@ def _is_module_loaded_from_site_packages(
         return False
 
 
+def _has_loaded_c_extension(module_name: str) -> bool:
+    """Return whether a loaded module subtree contains a native extension."""
+    for key in list(sys.modules.keys()):
+        if not (key == module_name or key.startswith(f"{module_name}.")):
+            continue
+        module = sys.modules.get(key)
+        if module is None:
+            continue
+        module_file = getattr(module, "__file__", "") or ""
+        if os.path.splitext(module_file)[1].lower() in (".pyd", ".so"):
+            return True
+    return False
+
+
 def _prefer_module_from_site_packages(
     module_name: str, site_packages_path: str
 ) -> bool:
     with _SITE_PACKAGES_IMPORT_LOCK:
+        if _has_loaded_c_extension(module_name):
+            logger.debug(
+                "Skipping prefer for %s: C extension detected in submodules",
+                module_name,
+            )
+            return False
         base_path = os.path.join(site_packages_path, *module_name.split("."))
         package_init = os.path.join(base_path, "__init__.py")
         module_file = f"{base_path}.py"
