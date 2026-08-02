@@ -53,6 +53,29 @@ Current local upstream-sync commits:
 - `f3712f5e0` Absorb selected v4.27 compatibility updates.
 - `994d1658d` Harden plugin reload lifecycle.
 - `f17452d45` Absorb v4.27 stability updates.
+- `79b9628c6` Absorb v4.27 compatibility guards.
+
+## 2026-08-02 v4.27.0 runtime, search, and platform guard follow-up
+
+Reviewed upstream baseline: `upstream/master` at `9bb294d8c` (`v4.27.0`)
+
+Absorbed by local rewrite:
+
+- `09a265ba1`: Python 3.14 and newer use the system `rg` executable for local file search because `python-ripgrep` is incompatible. The dependency is constrained to Python versions before 3.14; earlier versions retain the existing wrapper behavior.
+- `d14989497`: BM25 is imported only when sparse retrieval must fall back from available FTS5 search, so normal module import and FTS5-only retrieval do not require it.
+- `fb02c7273`: Tavily sends either explicit start/end dates or a relative `time_range`, never both; explicitly supplied dates are trimmed and take precedence.
+- `8162d8437`: QQ Official streaming copies each yielded component into an owned send buffer, so mutation/reuse of the yielded `MessageChain` cannot erase leading characters.
+
+Already equivalent locally:
+
+- `3ca4c099e`: Discord slash-command validation already uses the correct `\w` character class rather than a double-escaped literal.
+- `94a74e2ef`: the local FAISS storage import is already lazy, preserving startup when FAISS is unavailable or expensive to load.
+
+Validation for this follow-up:
+
+- Local filesystem, sparse retrieval, Tavily date-filter, QQ Official buffer, and existing QQ split tests: 19 passed.
+- Full Web Search tool suite: 27 passed.
+- Focused Ruff, `py_compile`, `uv lock --check`, and whitespace checks passed.
 
 ## 2026-08-02 v4.27.0 plugin lifecycle and stability follow-up
 
