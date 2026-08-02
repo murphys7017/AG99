@@ -54,6 +54,22 @@ Current local upstream-sync commits:
 - `994d1658d` Harden plugin reload lifecycle.
 - `f17452d45` Absorb v4.27 stability updates.
 - `79b9628c6` Absorb v4.27 compatibility guards.
+- `5d5320d2b` Absorb v4.27 scheduler and provider updates.
+
+## 2026-08-02 v4.27.0 scheduler, provider, and response guard follow-up
+
+Reviewed upstream baseline: `upstream/master` at `9bb294d8c` (`v4.27.0`)
+
+Absorbed by local rewrite:
+
+- `80f3fd6de`: Cron scheduler startup now tracks database synchronization separately from scheduler state, so a job scheduled before `start()` cannot suppress the initial persistent-job load; shutdown resets both states for the next lifecycle.
+- `d0e5e68c5`: NVIDIA's `minimaxai/minimax-m3` requests receive `max_tokens=8192` only when neither the normal payload nor custom extra body already provides a value. The override is applied to both streaming and non-streaming OpenAI-compatible requests.
+- `12f2f5a09`: an invalid response-cleanup regex is logged and disabled for subsequent segments instead of aborting response decoration.
+
+Validation for this follow-up:
+
+- Cron manager and OpenAI provider suites: 98 passed.
+- Focused Ruff, `py_compile`, and whitespace checks passed.
 
 ## 2026-08-02 v4.27.0 runtime, search, and platform guard follow-up
 
