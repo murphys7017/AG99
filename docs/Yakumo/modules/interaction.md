@@ -66,6 +66,10 @@ class MyWorkPlugin(Star):
 `插件目录名.工具名` 精确覆盖一个工具；精确项优先。只有明确解析为 `personal_expression` 的工具
 才会进入 Persona 工具循环，普通 Persona 对话不会因为 Core 工具产生额外模型调用。
 
+WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这两个目标映射。编辑器会列出已安装插件和
+插件工具，也允许手工输入兼容的插件模块路径；目标值通过固定选项限制为 `core` 或
+`personal_expression`。
+
 此设置的边界如下：
 
 - `plugin_runtime_targets` 只路由插件拥有的 LLM 生命周期钩子；`plugin_tool_targets` 只覆盖

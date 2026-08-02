@@ -1043,12 +1043,20 @@
           "description": "启用交互中间件"
         },
         "plugin_runtime_targets": {
-          "description": "插件运行目标",
-          "hint": "插件默认在人格表达中运行；只有工作执行插件才按目录名配置为 core。"
+          "description": "插件 LLM 生命周期目标",
+          "hint": "插件生命周期默认在人格表达中运行；可按插件配置为 Core 或 Persona Expression。"
+        },
+        "plugin_tool_targets": {
+          "description": "插件工具运行目标",
+          "hint": "插件工具默认在 Core；可按插件或具体工具明确配置为 Core 或 Persona Expression。"
         },
         "memory_window_size": {
           "description": "记忆窗口轮数",
           "hint": "构建中间件上下文时读取的 interaction memory 轮数。"
+        },
+        "persona_history_window_size": {
+          "description": "Persona 历史窗口轮数",
+          "hint": "Persona 表达保留的近期对话轮数，不影响 Router、Memory 或 Core。"
         }
       }
     },

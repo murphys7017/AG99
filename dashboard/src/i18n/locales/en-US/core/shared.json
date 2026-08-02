@@ -32,6 +32,27 @@
     "selectedPluginsLabel": "Selected Plugins:",
     "allPluginsLabel": "All Plugins"
   },
+  "runtimeTargetEditor": {
+    "empty": "No overrides; default routing applies",
+    "configure": "Configure Targets",
+    "pluginDialogTitle": "Configure Plugin Lifecycle Targets",
+    "toolDialogTitle": "Configure Plugin Tool Targets",
+    "pluginHelp": "Plugin LLM lifecycle hooks default to Persona Expression. Only plugins explicitly assigned to Core join work-execution requests.",
+    "toolHelp": "Plugin tools default to Core. Override a whole plugin or use plugin.tool to select Persona Expression for one tool. Exact entries take precedence.",
+    "pluginScopeLabel": "Plugin",
+    "toolScopeLabel": "Plugin or plugin.tool",
+    "targetLabel": "Runtime Target",
+    "targetCore": "Core",
+    "targetPersona": "Persona Expression",
+    "add": "Add Override",
+    "remove": "Remove Override",
+    "cancel": "Cancel",
+    "save": "Apply",
+    "scopeRequired": "Select or enter a plugin scope",
+    "scopeDuplicate": "Each scope can only be configured once",
+    "targetInvalid": "Select a valid runtime target",
+    "loadFailed": "The complete plugin or tool list could not be loaded. You can still enter a configuration key manually."
+  },
   "providerSelector": {
     "notSelected": "Not selected",
     "buttonText": "Select Provider...",

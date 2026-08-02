@@ -45,6 +45,12 @@
     <template v-else-if="itemMeta?._special === 'select_plugin_set'">
       <PluginSetSelector :model-value="modelValue" @update:model-value="emitUpdate" />
     </template>
+    <template v-else-if="itemMeta?._special === 'plugin_runtime_target_map'">
+      <PluginTargetMapEditor :model-value="modelValue" mode="plugin" @update:model-value="emitUpdate" />
+    </template>
+    <template v-else-if="itemMeta?._special === 'plugin_tool_target_map'">
+      <PluginTargetMapEditor :model-value="modelValue" mode="tool" @update:model-value="emitUpdate" />
+    </template>
     <template v-else-if="itemMeta?._special === 'select_session'">
       <SessionSelector :model-value="modelValue" @update:model-value="emitUpdate" />
     </template>
@@ -250,6 +256,7 @@ import ProviderSelector from './ProviderSelector.vue'
 import PersonaSelector from './PersonaSelector.vue'
 import KnowledgeBaseSelector from './KnowledgeBaseSelector.vue'
 import PluginSetSelector from './PluginSetSelector.vue'
+import PluginTargetMapEditor from './PluginTargetMapEditor.vue'
 import SessionSelector from './SessionSelector.vue'
 import T2ITemplateEditor from './T2ITemplateEditor.vue'
 import { computed, ref } from 'vue'

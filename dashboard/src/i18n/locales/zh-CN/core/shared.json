@@ -32,6 +32,27 @@
     "selectedPluginsLabel": "已选择的插件：",
     "allPluginsLabel": "所有插件"
   },
+  "runtimeTargetEditor": {
+    "empty": "没有目标覆盖，使用默认规则",
+    "configure": "配置目标",
+    "pluginDialogTitle": "配置插件生命周期目标",
+    "toolDialogTitle": "配置插件工具目标",
+    "pluginHelp": "插件 LLM 生命周期默认属于 Persona Expression。只有明确配置为 Core 的插件才进入工作执行请求。",
+    "toolHelp": "插件工具默认属于 Core。可以覆盖整个插件，也可以用 插件.工具 精确选择 Persona Expression。精确项优先。",
+    "pluginScopeLabel": "插件",
+    "toolScopeLabel": "插件或插件.工具",
+    "targetLabel": "运行目标",
+    "targetCore": "Core",
+    "targetPersona": "Persona Expression",
+    "add": "添加覆盖",
+    "remove": "删除覆盖",
+    "cancel": "取消",
+    "save": "应用",
+    "scopeRequired": "必须选择或输入插件范围",
+    "scopeDuplicate": "同一个范围只能配置一次",
+    "targetInvalid": "请选择有效的运行目标",
+    "loadFailed": "未能加载完整的插件或工具列表，仍可手动输入配置键。"
+  },
   "providerSelector": {
     "notSelected": "未选择",
     "buttonText": "选择提供商...",

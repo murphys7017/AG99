@@ -4395,11 +4395,15 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.plugin_runtime_targets": {
                         "description": "插件 LLM 生命周期目标",
                         "type": "object",
+                        "items": {},
+                        "_special": "plugin_runtime_target_map",
                         "hint": "控制插件 LLM Hook 的运行面，默认在人格表达中运行。键使用插件目录名。",
                     },
                     "interaction_middleware.plugin_tool_targets": {
                         "description": "插件工具运行目标",
                         "type": "object",
+                        "items": {},
+                        "_special": "plugin_tool_target_map",
                         "hint": "插件工具默认在 Core；可按插件目录名或 插件目录名.工具名 配置为 personal_expression。",
                     },
                     "interaction_middleware.memory_window_size": {

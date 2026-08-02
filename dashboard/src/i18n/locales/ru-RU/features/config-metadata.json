@@ -1042,12 +1042,20 @@
                     "description": "Включить Interaction Middleware"
                 },
                 "plugin_runtime_targets": {
-                    "description": "Цели выполнения плагинов",
-                    "hint": "По умолчанию плагины работают в Persona Expression. Укажите имя каталога плагина как core только для рабочих задач."
+                    "description": "Цели жизненного цикла LLM плагинов",
+                    "hint": "По умолчанию хуки жизненного цикла плагинов работают в Persona Expression. Здесь можно выбрать Core или Persona Expression."
+                },
+                "plugin_tool_targets": {
+                    "description": "Цели инструментов плагинов",
+                    "hint": "По умолчанию инструменты плагинов работают в Core. Здесь можно переопределить цель для плагина или отдельного инструмента."
                 },
                 "memory_window_size": {
                     "description": "Размер окна памяти",
                     "hint": "Количество ходов interaction memory, читаемых при построении контекста middleware."
+                },
+                "persona_history_window_size": {
+                    "description": "Размер истории Persona",
+                    "hint": "Количество недавних ходов для выражения Persona. Окна Router, Memory и Core не изменяются."
                 }
             }
         },

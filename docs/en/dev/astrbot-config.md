@@ -465,6 +465,10 @@ when `personal_policy_enabled` is enabled and
 `personal_policy_provider_id` is explicitly selected. Policy can only decide
 `ignore`, `observe`, `express`, or `defer`; it cannot call Core or tools.
 
+The Dashboard exposes the lifecycle and tool target maps under **Config Files →
+Interaction Middleware → General**. Its structured editor suggests installed plugins
+and plugin tools while still allowing compatible module-path keys to be entered manually.
+
 - `enabled`: Enable Interaction Middleware. Omit it to use the default; set it to
   `false` to retain Core-only behavior.
 - `expression_provider_id`, `router_provider_id`, and `planner_provider_id`:

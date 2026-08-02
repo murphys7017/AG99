@@ -32,6 +32,27 @@
         "selectedPluginsLabel": "Выбранные плагины:",
         "allPluginsLabel": "Все плагины"
     },
+    "runtimeTargetEditor": {
+        "empty": "Переопределений нет; используются правила по умолчанию",
+        "configure": "Настроить цели",
+        "pluginDialogTitle": "Цели жизненного цикла плагинов",
+        "toolDialogTitle": "Цели инструментов плагинов",
+        "pluginHelp": "По умолчанию хуки жизненного цикла LLM работают в Persona Expression. Только явно выбранные плагины направляются в Core.",
+        "toolHelp": "По умолчанию инструменты плагинов работают в Core. Можно переопределить весь плагин или отдельный инструмент через plugin.tool.",
+        "pluginScopeLabel": "Плагин",
+        "toolScopeLabel": "Плагин или plugin.tool",
+        "targetLabel": "Цель выполнения",
+        "targetCore": "Core",
+        "targetPersona": "Persona Expression",
+        "add": "Добавить",
+        "remove": "Удалить",
+        "cancel": "Отмена",
+        "save": "Применить",
+        "scopeRequired": "Выберите или введите плагин",
+        "scopeDuplicate": "Каждая область может быть настроена только один раз",
+        "targetInvalid": "Выберите допустимую цель",
+        "loadFailed": "Не удалось загрузить полный список плагинов или инструментов. Ключ можно ввести вручную."
+    },
     "providerSelector": {
         "notSelected": "Не выбрано",
         "buttonText": "Выбрать провайдера...",

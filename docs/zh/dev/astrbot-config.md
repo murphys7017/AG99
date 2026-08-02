@@ -462,6 +462,9 @@ Interaction Middleware 与 Personal Runtime 的设置。`enabled` 默认是 `tru
 `personal_policy_enabled` 并显式选择 `personal_policy_provider_id` 才会评估可行动的 Observation。
 Policy 只决定 `ignore`、`observe`、`express` 或 `defer`，不会调用 Core 或工具。
 
+Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑插件生命周期和工具目标映射。结构化
+编辑器会提供已安装插件和插件工具建议，同时保留手工输入兼容模块路径的能力。
+
 - `enabled`：是否启用 Interaction Middleware。省略时启用；设为 `false` 可保留原有 Core-only 行为。
 - `expression_provider_id`、`router_provider_id` 与 `planner_provider_id`：可选的分阶段模型覆盖。
   留空时复用当前会话已配置的聊天模型；显式填写 ID 时优先使用该模型。

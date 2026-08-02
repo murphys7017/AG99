@@ -1041,12 +1041,20 @@
           "description": "Enable Interaction Middleware"
         },
         "plugin_runtime_targets": {
-          "description": "Plugin Runtime Targets",
-          "hint": "Plugins run in Persona Expression by default. Configure a plugin directory name as core only for work execution."
+          "description": "Plugin LLM Lifecycle Targets",
+          "hint": "Plugin lifecycle hooks run in Persona Expression by default. Override a plugin to Core or Persona Expression here."
+        },
+        "plugin_tool_targets": {
+          "description": "Plugin Tool Targets",
+          "hint": "Plugin tools default to Core. Override a whole plugin or one named tool to Core or Persona Expression here."
         },
         "memory_window_size": {
           "description": "Memory Window Size",
           "hint": "Number of interaction memory turns read when building middleware context."
+        },
+        "persona_history_window_size": {
+          "description": "Persona History Window Size",
+          "hint": "Recent turns retained for Persona expression. Router, Memory, and Core windows are unaffected."
         }
       }
     },
