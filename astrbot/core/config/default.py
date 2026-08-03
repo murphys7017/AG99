@@ -216,7 +216,7 @@ DEFAULT_CONFIG = {
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
-        "persona_history_window_size": 16,
+        "persona_history_window_size": 50,
         "expression_provider_id": "",
         "expression_temperature": 0.6,
         "expression_timeout": 8.0,
