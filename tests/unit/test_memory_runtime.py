@@ -366,6 +366,30 @@ def test_extract_turn_payloads_keeps_file_only_user_turn():
     assert "assistant_only" not in payloads[0]
 
 
+def test_extract_turn_payloads_limit_keeps_recent_semantic_turns():
+    payloads = extract_turn_payloads(
+        [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "one"},
+            {"role": "user", "content": "second"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call-1", "type": "function"}],
+            },
+            {"role": "tool", "content": "tool result"},
+            {"role": "assistant", "content": "two"},
+            {"role": "user", "content": "third"},
+            {"role": "assistant", "content": "three"},
+        ],
+        limit=2,
+    )
+
+    assert [
+        turn["user_message"]["content"] for turn in payloads
+    ] == ["second", "third"]
+
+
 @pytest.mark.asyncio
 async def test_turn_record_service_builds_and_persists_turn(temp_dir: Path):
     store = MemoryStore(db_path=temp_dir / "memory.db")

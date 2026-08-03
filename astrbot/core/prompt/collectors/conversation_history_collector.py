@@ -182,7 +182,7 @@ class ConversationHistoryCollector(ContextCollectorInterface):
     ) -> dict[str, Any] | None:
         try:
             messages = parse_conversation_history(raw_history)
-            turns = extract_turn_payloads(messages)
+            turns = extract_turn_payloads(messages, limit=self.recent_turn_limit)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to collect conversation history from %s: %s",
@@ -211,14 +211,19 @@ class ConversationHistoryCollector(ContextCollectorInterface):
             return raw_conversation_id
         return None
 
-    @staticmethod
     def _resolve_memory_turn_limit(
+        self,
         config: MainAgentBuildConfig,
         memory_config,
     ) -> int:
         max_context_length = getattr(config, "max_context_length", -1)
-        if isinstance(max_context_length, int) and max_context_length >= 0:
-            return max_context_length
+        limits = [
+            limit
+            for limit in (max_context_length, self.recent_turn_limit)
+            if isinstance(limit, int) and limit >= 0
+        ]
+        if limits:
+            return min(limits)
         return max(0, int(memory_config.short_term.recent_turns_window))
 
     @staticmethod

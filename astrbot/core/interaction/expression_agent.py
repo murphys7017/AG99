@@ -52,6 +52,7 @@ from astrbot.core.provider.modalities import (
     log_context_sanitize_stats,
     sanitize_contexts_by_modalities,
 )
+from astrbot.core.provider.request_media import normalize_provider_request_images
 from astrbot.core.star.context import Context
 from astrbot.core.star.star_handler import EventType
 
@@ -798,6 +799,8 @@ class InteractionExpressionAgent:
             )
             provider_request.func_tool = toolset
             if toolset:
+                await normalize_provider_request_images(provider_request)
+                hooked_provider_request = _snapshot_provider_request(provider_request)
                 try:
                     (
                         tool_result,
@@ -1029,6 +1032,17 @@ class InteractionExpressionAgent:
         provider_config = getattr(provider, "provider_config", {})
         if not isinstance(provider_config, dict):
             provider_config = {}
+        image_stats = await normalize_provider_request_images(provider_request)
+        if image_stats.changed:
+            logger.debug(
+                "Persona ProviderRequest images normalized: platform_id=%s "
+                "session_id=%s discovered=%s normalized=%s dropped=%s",
+                event.get_platform_id(),
+                event.session_id,
+                image_stats.discovered,
+                image_stats.normalized,
+                image_stats.dropped,
+            )
         logger.info(
             "DIAG expression.contract: platform_id=%s session_id=%s phase=%s provider_type=%s model=%s renderer=%s contract_mode=%s strategy=%s degraded=%s tool_name=%s",
             event.get_platform_id(),

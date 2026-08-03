@@ -97,11 +97,15 @@ async def build_interaction_context_pack(
     event,
     plugin_context: Context,
     config,
+    *,
+    recent_history_turn_limit: int = 50,
 ) -> ContextPack:
     builder = PromptContextBuilder(event, plugin_context, config)
     base_pack = await builder.build(
         provider_request=event.get_extra("provider_request"),
-        collectors=interaction_base_collectors(),
+        collectors=interaction_base_collectors(
+            recent_history_turn_limit=recent_history_turn_limit,
+        ),
         include_prompt_extensions=True,
         scope="interaction_base",
     )
@@ -209,6 +213,11 @@ async def _build_interaction_context_material(
         event,
         plugin_context,
         build_config,
+        recent_history_turn_limit=max(
+            8,
+            interaction_config.memory_window_size,
+            interaction_config.persona_history_window_size,
+        ),
     )
     capability_payload = extract_core_capability_payload(prompt_context_pack)
     material = InteractionContextMaterial(

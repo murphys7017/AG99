@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from collections.abc import Iterable
 from typing import Any
 
@@ -55,8 +56,13 @@ def extract_message_text(message: dict[str, Any] | None) -> str:
     return ""
 
 
-def extract_turn_payloads(messages: Iterable[dict[str, Any]]) -> list[JsonDict]:
-    payloads: list[JsonDict] = []
+def extract_turn_payloads(
+    messages: Iterable[dict[str, Any]],
+    *,
+    limit: int | None = None,
+) -> list[JsonDict]:
+    payloads: list[JsonDict] | deque[JsonDict]
+    payloads = deque(maxlen=max(0, limit)) if limit is not None else []
     pending_user: dict[str, Any] | None = None
     candidate_assistant: dict[str, Any] | None = None
 
@@ -116,7 +122,7 @@ def extract_turn_payloads(messages: Iterable[dict[str, Any]]) -> list[JsonDict]:
 
     _finalize_pending_turn(payloads, pending_user, candidate_assistant)
 
-    return payloads
+    return list(payloads)
 
 
 def parse_conversation_history(
@@ -210,7 +216,7 @@ def _is_intermediate_assistant(
 
 
 def _finalize_pending_turn(
-    payloads: list[JsonDict],
+    payloads: list[JsonDict] | deque[JsonDict],
     pending_user: dict[str, Any] | None,
     candidate_assistant: dict[str, Any] | None,
 ) -> None:

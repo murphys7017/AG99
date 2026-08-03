@@ -87,11 +87,11 @@ context:
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
     - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
     - RespondStage-driven and direct Persona Interaction replies share one Output Controller-owned OnAfterMessageSent, visible-completion, postprocess, and deferred-finalization boundary; Persona materializes its final turn before entering that boundary. Direct non-Interaction event.send paths retain their existing semantics.
-    - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed for bounded group model-continuation candidates and explicit plugin-submitted group reply candidates, which await Router before Persona and fail closed to silent. Legacy plugins that do not use the opt-in candidate API preserve existing wake behavior.
+    - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed for bounded group model-continuation candidates and explicit plugin-submitted group reply candidates, which await Router before Persona and fail closed to silent. Candidate metadata is a low-level event contract and never mutates explicit wake fields; legacy plugins that do not use the opt-in candidate API preserve existing wake behavior.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
     - Interaction uses an explicit base collector profile before routing; the Core overlay adds only execution-specific collectors and never recollects shared session, memory, or explicit provider context.
-    - Persona keeps an independent 50-turn recent-history projection by default; Router and canonical Interaction context remain bounded by the separate 8-turn memory window, and Core history ownership is unchanged.
+    - Persona keeps an independent 50-turn recent-history projection by default. The pre-route Interaction pack collects only the largest Router/Planner/Persona window, while delegated Core explicitly recollects and replaces conversation.history under its existing history rules.
     - Router and Core Planner model decisions are never inserted into the canonical ContextPack or supplied to each other.
     - Planner output is internal execution material; every user-visible acknowledgement, result, and failure remains owned by the unified Persona Expression layer.
     - Protocol commands and live audio continue to bypass conversational Router and Core Planner.
@@ -210,6 +210,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - "2026-08-03 post-review root remediation: cold Prompt/API/DeepSeek imports passed; 104 provider/media/memory/group tests, 5 Router-candidate tests, 47 Persona/plugin-expression tests, 17 Prompt projection tests, and 82 Prompt collector tests passed. Affected Ruff, compileall, YAML parse, and git diff checks passed."
     - Persona after-send and Prompt apply-marker repair: the full affected Prompt, Group Context, Interaction, and Personal Runtime suite passed 151 tests, including cold-import and completion-order regressions. Ruff, compileall, YAML parse, and git diff checks passed.
     - Autonomous Personal Runtime Gate configuration: public config/Gate smoke covered mute, cross-midnight quiet hours, and proactive output budget; Ruff, py_compile, and three locale JSON parses passed; no test file was added.
     - Autonomous Personal Runtime Phase 4 persistence prerequisite: dedicated SQLite repository create/update/reload smoke, Ruff, py_compile, Core Lifecycle import, and git diff checks passed; no test file was added.

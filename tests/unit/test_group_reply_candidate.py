@@ -79,8 +79,8 @@ def test_plugin_can_request_router_admission_without_direct_reply_ownership():
     assert request_group_reply_candidate(event)
     assert is_group_reply_candidate(event)
     assert event.get_extra("_interaction_group_reply_candidate_kind") == "plugin"
-    assert event.is_wake is True
-    assert event.is_at_or_wake_command is True
+    assert event.is_wake is False
+    assert event.is_at_or_wake_command is False
 
 
 def test_plugin_reply_candidate_rejects_private_messages():

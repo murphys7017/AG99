@@ -11,14 +11,6 @@ from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.agent import Agent
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.tool import FunctionTool, ToolSet
-from astrbot.core.astr_main_agent_resources import (
-    CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
-    LIVE_MODE_SYSTEM_PROMPT,
-    LLM_SAFETY_MODE_SYSTEM_PROMPT,
-    SANDBOX_MODE_PROMPT,
-    TOOL_CALL_PROMPT,
-    TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
-)
 from astrbot.core.memory.config import MemoryConfig
 from astrbot.core.memory.snapshot_builder import MemorySnapshotReadOptions
 from astrbot.core.memory.types import (
@@ -65,6 +57,14 @@ from astrbot.core.prompt.interfaces import (
 )
 from astrbot.core.prompt.render import (
     PROMPT_RENDER_RESULT_EXTRA_KEY,
+)
+from astrbot.core.prompt.resources import (
+    CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
+    LIVE_MODE_SYSTEM_PROMPT,
+    LLM_SAFETY_MODE_SYSTEM_PROMPT,
+    SANDBOX_MODE_PROMPT,
+    TOOL_CALL_PROMPT,
+    TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
 )
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillInfo
@@ -1353,6 +1353,7 @@ async def test_collect_context_pack_default_collectors_include_session_collector
         "PolicyCollector",
         "MemoryCollector",
         "ConversationHistoryCollector",
+        "CoreExecutionHistoryCollector",
         "ExplicitContextCollector",
         "SkillsCollector",
         "ToolsCollector",
@@ -1456,9 +1457,9 @@ async def test_collect_context_pack_collects_full_tool_call_instruction():
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
-    context.get_llm_tool_manager.return_value.get_full_tool_set.return_value = ToolSet(
-        [_make_tool("search_docs", description="Search docs.")]
-    )
+    context.get_llm_tool_manager.return_value.func_list = [
+        _make_tool("search_docs", description="Search docs.")
+    ]
 
     pack = await collect_context_pack(
         event=event,
@@ -2421,9 +2422,7 @@ async def test_collect_context_pack_collects_tools_inventory_from_full_toolset()
         description="Disabled tool.",
         active=False,
     )
-    context.get_llm_tool_manager.return_value.get_full_tool_set.return_value = ToolSet(
-        [search_tool, inactive_tool]
-    )
+    context.get_llm_tool_manager.return_value.func_list = [search_tool, inactive_tool]
 
     pack = await collect_context_pack(
         event=event,
@@ -2432,7 +2431,6 @@ async def test_collect_context_pack_collects_tools_inventory_from_full_toolset()
         collectors=[ToolsCollector()],
     )
 
-    context.get_llm_tool_manager.return_value.get_full_tool_set.assert_called_once_with()
     tools_slot = pack.get_slot("capability.tools_schema")
     assert tools_slot is not None
     assert tools_slot.value == {
@@ -2452,9 +2450,10 @@ async def test_collect_context_pack_collects_tools_inventory_from_full_toolset()
                     },
                     "required": ["query"],
                 },
-                "active": True,
-                "handler_module_path": "tests.prompt_tools",
-                "schema": {
+                    "active": True,
+                    "handler_module_path": "tests.prompt_tools",
+                    "execution_targets": ["core"],
+                    "schema": {
                     "type": "function",
                     "function": {
                         "name": "search_docs",
@@ -2550,9 +2549,7 @@ async def test_collect_context_pack_tools_fail_open_when_tool_manager_raises():
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
-    context.get_llm_tool_manager.return_value.get_full_tool_set.side_effect = (
-        RuntimeError("tools boom")
-    )
+    context.get_llm_tool_manager.side_effect = RuntimeError("tools boom")
 
     pack = await collect_context_pack(
         event=event,

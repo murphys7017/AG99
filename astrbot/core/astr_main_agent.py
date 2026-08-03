@@ -39,6 +39,9 @@ from astrbot.core.persona_error_reply import (
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.collectors.conversation_history_collector import (
+    ConversationHistoryCollector,
+)
 from astrbot.core.prompt.collectors.core_execution_history_collector import (
     CoreExecutionHistoryCollector,
 )
@@ -310,6 +313,7 @@ def _build_interaction_core_collectors():
     return [
         SystemCollector(),
         CoreTaskCollector(),
+        ConversationHistoryCollector(),
         CoreExecutionHistoryCollector(),
         PolicyCollector(),
         SkillsCollector(),
@@ -1157,6 +1161,11 @@ async def build_main_agent(
         provider_request=req,
         include_prompt_extensions=base_context_pack is None,
         base=base_context_pack,
+        replace_slots=(
+            ("conversation.history",)
+            if interaction_core and base_context_pack is not None
+            else ()
+        ),
         scope="core",
     )
     if context_material is not None:

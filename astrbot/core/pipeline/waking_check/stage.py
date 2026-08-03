@@ -274,8 +274,6 @@ class WakingCheckStage(Stage):
                         self.ctx.astrbot_config,
                     )
                     is_wake = True
-                    event.is_wake = True
-                    event.is_at_or_wake_command = True
                     if continuation == "model":
                         mark_group_reply_candidate(
                             event,
@@ -286,6 +284,9 @@ class WakingCheckStage(Stage):
                                 GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA,
                                 True,
                             )
+                    else:
+                        event.is_wake = True
+                        event.is_at_or_wake_command = True
                     logger.info(
                         "Personal Runtime selected group continuation candidate: "
                         "session_id=%s sender_id=%s mode=%s",
@@ -319,8 +320,6 @@ class WakingCheckStage(Stage):
             )
             if select_legacy_active_reply_candidate(event, self.ctx.astrbot_config):
                 mark_group_reply_candidate(event, kind="ambient")
-                event.is_wake = True
-                event.is_at_or_wake_command = True
                 if capture_group_context:
                     event.set_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, True)
                 logger.info(

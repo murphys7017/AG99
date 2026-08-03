@@ -78,6 +78,7 @@ class ProcessStage(Stage):
             [],
         )
         is_group_candidate = is_group_reply_candidate(event)
+        group_candidate_admitted = False
         self._prepare_interaction_output(event)
         manager: PersonalRuntimeManager | None = getattr(
             self,
@@ -125,6 +126,7 @@ class ProcessStage(Stage):
                     if route.route_mode is InteractionRouteMode.SILENT:
                         await middleware.handle_pipeline_event(event)
                         return
+                    group_candidate_admitted = True
                     await discover_activated_handlers(
                         event,
                         config=self.config,
@@ -201,6 +203,7 @@ class ProcessStage(Stage):
                         if not event.is_stopped():
                             event.stop_event()
                         return
+                    group_candidate_admitted = True
 
                 # 调用 LLM 相关请求
                 if not self.ctx.astrbot_config["provider_settings"].get(
@@ -211,7 +214,10 @@ class ProcessStage(Stage):
 
                 if (
                     not event._has_send_oper
-                    and event.is_at_or_wake_command
+                    and (
+                        event.is_at_or_wake_command
+                        or group_candidate_admitted
+                    )
                     and not event.call_llm
                 ):
                     # 是否有过发送操作 and 是否是被 @ 或者通过唤醒前缀

@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 
 import astrbot.core.provider.entities as provider_entities
+import astrbot.core.provider.request_media as request_media
 import astrbot.core.utils.image_materializer as image_materializer
 from astrbot.core.agent.message import ImageURLPart, TextPart
 from astrbot.core.agent.runners.request_material import (
@@ -13,6 +14,7 @@ from astrbot.core.agent.runners.request_material import (
     materialize_runner_request,
 )
 from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.provider.request_media import normalize_provider_request_images
 from astrbot.core.utils.image_materializer import (
     ImageMaterializationError,
     MaterializedImage,
@@ -112,6 +114,52 @@ async def test_provider_request_drops_invalid_images_without_dropping_text(monke
 
     assert message["role"] == "user"
     assert message["content"] == [{"type": "text", "text": "keep this text"}]
+
+
+@pytest.mark.asyncio
+async def test_normalize_provider_request_images_revalidates_plugin_mutations(
+    monkeypatch,
+):
+    materialized = MaterializedImage(PNG_BYTES, "image/png", "image-sha")
+
+    async def materialize(reference):
+        if reference == "https://valid/image":
+            return materialized
+        raise ImageMaterializationError("invalid image")
+
+    monkeypatch.setattr(request_media, "materialize_image_ref", materialize)
+    request = ProviderRequest(
+        image_urls=[" https://valid/image ", "https://invalid/image"],
+        extra_user_content_parts=[
+            ImageURLPart(
+                image_url=ImageURLPart.ImageURL(url="https://valid/image")
+            ),
+        ],
+        contexts=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "keep"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://invalid/image"},
+                    },
+                ],
+            }
+        ],
+    )
+
+    stats = await normalize_provider_request_images(request)
+
+    assert stats.discovered == 2
+    assert stats.normalized == 1
+    assert stats.dropped == 1
+    assert request.image_urls == [materialized.to_data_url()]
+    assert request.extra_user_content_parts[0].image_url.url == materialized.to_data_url()
+    assert request.contexts[0]["content"] == [
+        {"type": "text", "text": "keep"},
+        {"type": "text", "text": "[Image]"},
+    ]
 
 
 @pytest.mark.asyncio

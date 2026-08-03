@@ -75,7 +75,7 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
         custom_extra_body = self.provider_config.get("custom_extra_body", {})
         if isinstance(custom_extra_body, dict):
             extra_body.update(custom_extra_body)
-        self._apply_provider_specific_extra_body_overrides(extra_body)
+        self._apply_provider_specific_request_overrides(payloads, extra_body)
 
         if "tool_choice" in payloads:
             extra_body.pop("tool_choice", None)

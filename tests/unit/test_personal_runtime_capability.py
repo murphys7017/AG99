@@ -1372,7 +1372,6 @@ async def test_model_continuation_scans_handlers_after_router_accepts(monkeypatc
     )
     mark_group_reply_candidate(event, kind="continuation")
     event.set_extra("activated_handlers", [])
-    event.is_at_or_wake_command = True
     runtime_config = {
         "provider_settings": {"enable": True},
         "platform_settings": {},
@@ -1466,6 +1465,8 @@ async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypa
     class CandidateHandlerStage:
         async def process(self, handler_event):
             assert request_group_reply_candidate(handler_event)
+            assert handler_event.is_wake is False
+            assert handler_event.is_at_or_wake_command is False
             if False:
                 yield
 

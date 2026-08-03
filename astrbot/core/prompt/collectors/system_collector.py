@@ -326,6 +326,7 @@ class SystemCollector(ContextCollectorInterface):
             provider_request,
         )
         toolset, _ = tools_collector._build_persona_toolset(
+            event,
             plugin_context,
             persona,
             provider_request,
