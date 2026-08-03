@@ -182,6 +182,26 @@ class ProcessStage(Stage):
                     if delegated_to_core:
                         return
 
+                # A Handler may decide asynchronously that an otherwise passive
+                # group message is worth evaluating. The plugin proposes; Router
+                # still owns reply admission and may fail closed to silence.
+                if (
+                    not is_group_candidate
+                    and not event.is_stopped()
+                    and not event._has_send_oper
+                    and is_group_reply_candidate(event)
+                ):
+                    middleware = self.ctx.interaction_middleware
+                    if middleware is None:
+                        event.stop_event()
+                        return
+                    route = await middleware.admit_group_reply_candidate(event)
+                    if route.route_mode is InteractionRouteMode.SILENT:
+                        await middleware.handle_pipeline_event(event)
+                        if not event.is_stopped():
+                            event.stop_event()
+                        return
+
                 # 调用 LLM 相关请求
                 if not self.ctx.astrbot_config["provider_settings"].get(
                     "enable",

@@ -1,3 +1,4 @@
+from astrbot.core.interaction.group_reply import request_group_reply_candidate
 from astrbot.core.message.message_event_result import (
     CommandResult,
     EventResultType,
@@ -16,4 +17,5 @@ __all__ = [
     "MessageEventResult",
     "ResultContentType",
     "TTSState",
+    "request_group_reply_candidate",
 ]

@@ -45,13 +45,12 @@ def build_interaction_router_system_prompt(
     group_candidate_kind: str | None = None,
 ) -> str:
     is_group_candidate = allow_silent or bool(group_candidate_kind)
-    candidate_context = (
-        "这是一次未显式唤醒的群聊延续候选。默认选择 silent；只有当前消息明确、直接地承接机器人最近一次回复，且机器人加入确有必要时，才选择 persona 或 hybrid。仅同一发送者、时间相近、短确认、情绪表达或语义不明都不足以回复。\n"
-        if group_candidate_kind == "continuation"
-        else "这是一次未显式唤醒的群聊主动候选。默认选择 silent；除非当前消息明确需要机器人加入且回复会为群聊增加直接价值，否则选择 silent。不要因为普通闲聊、提及模型、上下文或候选资格本身加入对话。\n"
-        if group_candidate_kind == "ambient"
-        else ""
-    )
+    candidate_contexts = {
+        "continuation": "这是一次未显式唤醒的群聊延续候选。默认选择 silent；只有当前消息明确、直接地承接机器人最近一次回复，且机器人加入确有必要时，才选择 persona 或 hybrid。仅同一发送者、时间相近、短确认、情绪表达或语义不明都不足以回复。\n",
+        "ambient": "这是一次未显式唤醒的群聊主动候选。默认选择 silent；除非当前消息明确需要机器人加入且回复会为群聊增加直接价值，否则选择 silent。不要因为普通闲聊、提及模型、上下文或候选资格本身加入对话。\n",
+        "plugin": "这是一次由插件提交的群聊回复候选。插件判断只表示消息值得评估，不表示必须回复。重复呼唤、低信息试探、机器人之间疑似循环或无需机器人参与的消息选择 silent；只有当前消息明确需要机器人回应且回复有直接价值时，才选择 persona 或 hybrid。\n",
+    }
+    candidate_context = candidate_contexts.get(group_candidate_kind or "", "")
     silent_candidate = (
         "- silent：当前未显式唤醒的群聊输入不满足严格回复条件，或当前并不需要机器人加入。\n"
         if is_group_candidate

@@ -45,7 +45,7 @@ def test_extract_route_payload_rejects_legacy_self_reply_mode():
     assert extract_interaction_route_payload("self_reply") is None
 
 
-def test_router_exposes_silent_only_for_model_continuation_candidates():
+def test_router_exposes_silent_only_for_group_reply_candidates():
     default_system_prompt = build_interaction_router_system_prompt()
     default_request_prompt = build_interaction_router_prompt()
     continuation_system_prompt = build_interaction_router_system_prompt(
@@ -62,3 +62,14 @@ def test_router_exposes_silent_only_for_model_continuation_candidates():
         continuation_system_prompt
     )
     assert "silent" in continuation_request_prompt
+
+
+def test_router_treats_plugin_reply_requests_as_silence_capable_candidates():
+    system_prompt = build_interaction_router_system_prompt(
+        group_candidate_kind="plugin"
+    )
+    request_prompt = build_interaction_router_prompt(group_candidate_kind="plugin")
+
+    assert "插件判断只表示消息值得评估，不表示必须回复" in system_prompt
+    assert "重复呼唤" in system_prompt
+    assert "silent" in request_prompt

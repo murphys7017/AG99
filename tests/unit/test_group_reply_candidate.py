@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from astrbot.api.event import request_group_reply_candidate
 from astrbot.core.interaction.group_context_capture import (
     GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA,
 )
@@ -70,6 +71,26 @@ def test_legacy_active_reply_requires_interaction_middleware():
     config["interaction_middleware"]["enabled"] = False
 
     assert not select_legacy_active_reply_candidate(event, config, random_value=0.0)
+
+
+def test_plugin_can_request_router_admission_without_direct_reply_ownership():
+    event = make_event()
+
+    assert request_group_reply_candidate(event)
+    assert is_group_reply_candidate(event)
+    assert event.get_extra("_interaction_group_reply_candidate_kind") == "plugin"
+    assert event.is_wake is True
+    assert event.is_at_or_wake_command is True
+
+
+def test_plugin_reply_candidate_rejects_private_messages():
+    event = make_event()
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+
+    assert not request_group_reply_candidate(event)
+    assert not is_group_reply_candidate(event)
+    assert event.is_wake is False
+    assert event.is_at_or_wake_command is False
 
 
 @pytest.mark.asyncio

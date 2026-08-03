@@ -643,3 +643,17 @@ async def check_ok(self, event: AstrMessageEvent):
 When event propagation is stopped, all subsequent steps will not be executed.
 
 Assuming there's a plugin A, after A terminates event propagation, all subsequent operations will not be executed, such as executing other plugins' handlers or requesting the LLM.
+
+## Submitting a group reply candidate
+
+When Interaction Middleware is enabled, a group listener that only decides a message is worth evaluating, rather than requiring a reply, should use the public candidate API instead of mutating internal wake fields:
+
+```python
+from astrbot.api.event import AstrMessageEvent, request_group_reply_candidate
+
+async def consider_group_message(self, event: AstrMessageEvent):
+    if self.should_consider(event):
+        request_group_reply_candidate(event)
+```
+
+The function returns `True` only for group messages. After plugin Handlers finish, Router makes the final choice among `silent`, `persona`, and `hybrid`. Candidate status grants no reply ownership and does not call an LLM directly. Existing plugins that do not use this API retain their previous wake behavior.

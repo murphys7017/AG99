@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from astrbot.api.event import request_group_reply_candidate
 from astrbot.core.cron.events import CronMessageEvent
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
@@ -1430,6 +1431,72 @@ async def test_model_continuation_scans_handlers_after_router_accepts(monkeypatc
         assert order == ["router", "handlers", "pipeline"]
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypatch):
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    event.set_extra("activated_handlers", [object()])
+    runtime_config = {
+        "provider_settings": {"enable": True},
+        "platform_settings": {},
+        "interaction_middleware": {"enabled": True},
+    }
+    plugin_context = SimpleNamespace(get_config=lambda **_kwargs: runtime_config)
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        plugin_context,
+    )
+    middleware.router_agent.route = AsyncMock(
+        return_value=InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+    )
+    middleware._materialize_inbound_media = AsyncMock()
+    middleware._generate_and_emit_speculative_persona = AsyncMock()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
+        AsyncMock(),
+    )
+
+    class CandidateHandlerStage:
+        async def process(self, handler_event):
+            assert request_group_reply_candidate(handler_event)
+            if False:
+                yield
+
+    class NeverAgent:
+        called = False
+
+        async def process(self, _event):
+            self.called = True
+            if False:
+                yield
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=plugin_context)
+    process.personal_runtime_manager = None
+    process.agent_sub_stage = NeverAgent()
+    process.star_request_sub_stage = CandidateHandlerStage()
+
+    async for _ in process.process(event):
+        pass
+
+    middleware.router_agent.route.assert_awaited_once()
+    middleware._generate_and_emit_speculative_persona.assert_not_awaited()
+    assert process.agent_sub_stage.called is False
+    assert event.sent == []
+    assert event.is_stopped()
 
 
 @pytest.mark.asyncio

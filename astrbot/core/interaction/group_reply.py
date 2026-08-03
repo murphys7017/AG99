@@ -23,6 +23,21 @@ def mark_group_reply_candidate(event: Any, *, kind: str) -> None:
     event.set_extra(GROUP_REPLY_CANDIDATE_KIND_EXTRA, kind)
 
 
+def request_group_reply_candidate(event: Any) -> bool:
+    """Submit a plugin-owned group message for Router reply admission.
+
+    This grants neither reply ownership nor a direct LLM call. The Router keeps
+    the final choice between silence, Persona, and Core delegation.
+    """
+    if event.get_message_type() is not MessageType.GROUP_MESSAGE:
+        return False
+    if not is_group_reply_candidate(event):
+        mark_group_reply_candidate(event, kind="plugin")
+    event.is_wake = True
+    event.is_at_or_wake_command = True
+    return True
+
+
 def select_legacy_active_reply_candidate(
     event: Any,
     config: Mapping[str, object],
@@ -89,5 +104,6 @@ __all__ = [
     "GROUP_REPLY_CANDIDATE_KIND_EXTRA",
     "is_group_reply_candidate",
     "mark_group_reply_candidate",
+    "request_group_reply_candidate",
     "select_legacy_active_reply_candidate",
 ]

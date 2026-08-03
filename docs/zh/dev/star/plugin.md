@@ -904,6 +904,20 @@ async def check_ok(self, event: AstrMessageEvent):
 
 假设有一个插件 A，A 终止事件传播之后所有后续操作都不会执行，比如执行其它插件的 handler、请求 LLM。
 
+### 提交群聊回复候选
+
+启用 Interaction Middleware 时，监听群聊的插件如果只判断“这条消息值得评估”，而不是要求机器人必须回复，应使用公开候选接口，不要直接修改事件的内部唤醒字段：
+
+```python
+from astrbot.api.event import AstrMessageEvent, request_group_reply_candidate
+
+async def consider_group_message(self, event: AstrMessageEvent):
+    if self.should_consider(event):
+        request_group_reply_candidate(event)
+```
+
+该接口仅对群消息返回 `True`。插件 Handler 完成后，Router 会在 `silent`、`persona` 和 `hybrid` 中做最终选择；候选资格不授予插件回复所有权，也不会直接调用 LLM。未调用此接口的旧插件保持原有唤醒行为。
+
 ### 插件配置
 
 > 大于等于 v3.4.15
