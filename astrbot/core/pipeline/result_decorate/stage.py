@@ -2,22 +2,15 @@ import random
 import re
 import time
 import traceback
-from collections.abc import AsyncGenerator
 
 from astrbot.core import file_token_service, html_renderer, logger
 from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.message.components import At, Image, Json, Node, Plain, Record, Reply
-from astrbot.core.message.message_event_result import (
-    MessageChain,
-    MessageEventResult,
-    ResultContentType,
-)
-from astrbot.core.pipeline.content_safety_check.stage import ContentSafetyCheckStage
+from astrbot.core.message.message_event_result import ResultContentType
+from astrbot.core.output_lifecycle import PreOutputProcessor
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.star.session_llm_manager import SessionServiceManager
-from astrbot.core.star.star import star_map
-from astrbot.core.star.star_handler import EventType, star_handlers_registry
 from astrbot.core.voice import (
     VoiceServiceError,
     build_tts_delivery_metadata,
@@ -25,13 +18,14 @@ from astrbot.core.voice import (
 )
 
 from ..context import PipelineContext
-from ..stage import Stage, register_stage, registered_stages
+from ..stage import Stage, register_stage
 
 
 @register_stage
 class ResultDecorateStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
+        self.pre_output_processor = ctx.pre_output_processor or PreOutputProcessor()
         self.reply_prefix = ctx.astrbot_config["platform_settings"]["reply_prefix"]
         self.reply_with_mention = ctx.astrbot_config["platform_settings"][
             "reply_with_mention"
@@ -97,17 +91,6 @@ class ResultDecorateStage(Stage):
             "segmented_reply"
         ]["content_cleanup_rule"]
 
-        # exception
-        self.content_safe_check_reply = ctx.astrbot_config["content_safety"][
-            "also_use_in_response"
-        ]
-        self.content_safe_check_stage = None
-        if self.content_safe_check_reply:
-            for stage_cls in registered_stages:
-                if stage_cls.__name__ == "ContentSafetyCheckStage":
-                    self.content_safe_check_stage = stage_cls()
-                    await self.content_safe_check_stage.initialize(ctx)
-
         provider_cfg = ctx.astrbot_config.get("provider_settings", {})
         self.show_reasoning = provider_cfg.get("display_reasoning_text", False)
 
@@ -136,7 +119,7 @@ class ResultDecorateStage(Stage):
     async def process(
         self,
         event: AstrMessageEvent,
-    ) -> None | AsyncGenerator[None, None]:
+    ) -> None:
         result = event.get_result()
         if result is None or not result.chain:
             return
@@ -147,62 +130,23 @@ class ResultDecorateStage(Stage):
         is_stream = result.result_content_type == ResultContentType.STREAMING_FINISH
 
         if self._is_interaction_turn(event) and result.is_model_result():
-            event.set_extra(
-                "_interaction_pipeline_pre_output_callback",
-                self._run_interaction_pre_output,
-            )
             logger.debug(
-                "Interaction model result defers response safety and decorating hooks until final Persona expression."
+                "Interaction model result defers response safety and decorating hooks to the shared pre-output processor."
             )
             return
 
-        # 回复时检查内容安全
         if (
-            self.content_safe_check_reply
-            and self.content_safe_check_stage
-            and result.is_llm_result()
-            and not is_stream  # 流式输出不检查内容安全
+            result.is_llm_result()
+            and not is_stream
+            and not self.pre_output_processor.response_is_safe(event, result)
         ):
-            text = ""
-            for comp in result.chain:
-                if isinstance(comp, Plain):
-                    text += comp.text
+            return
 
-            if isinstance(self.content_safe_check_stage, ContentSafetyCheckStage):
-                async for _ in self.content_safe_check_stage.process(
-                    event,
-                    check_text=text,
-                ):
-                    yield
-
-        # 发送消息前事件钩子
-        handlers = star_handlers_registry.get_handlers_by_event_type(
-            EventType.OnDecoratingResultEvent,
-            plugins_name=event.plugins_name,
-        )
-        for handler in handlers:
-            try:
-                logger.debug(
-                    f"hook(on_decorating_result) -> {star_map[handler.handler_module_path].name} - {handler.handler_name}",
-                )
-                if is_stream:
-                    logger.warning(
-                        "启用流式输出时，依赖发送消息前事件钩子的插件可能无法正常工作",
-                    )
-                await handler.handler(event)
-
-                if (result := event.get_result()) is None or not result.chain:
-                    logger.debug(
-                        f"hook(on_decorating_result) -> {star_map[handler.handler_module_path].name} - {handler.handler_name} 将消息结果清空。",
-                    )
-            except BaseException:
-                logger.error(traceback.format_exc())
-
-            if event.is_stopped():
-                logger.info(
-                    f"{star_map[handler.handler_module_path].name} - {handler.handler_name} 终止了事件传播。",
-                )
-                return
+        if await self.pre_output_processor.run_decorating_hooks(
+            event,
+            is_stream=is_stream,
+        ):
+            return
 
         if self._is_interaction_turn(event):
             logger.debug(
@@ -484,57 +428,3 @@ class ResultDecorateStage(Stage):
         return bool(event.get_extra("_interaction_enabled")) and (
             get_interaction_turn_state(event) is not None
         )
-
-    async def _run_interaction_pre_output(
-        self,
-        event: AstrMessageEvent,
-        message: MessageChain,
-        result_content_type: ResultContentType,
-    ) -> MessageChain | None:
-        result = MessageEventResult(
-            chain=list(message.chain),
-            result_content_type=result_content_type,
-        )
-        result.use_t2i_ = message.use_t2i_
-        result.use_markdown_ = message.use_markdown_
-        result.type = message.type
-        event.set_result(result)
-
-        if (
-            self.content_safe_check_reply
-            and isinstance(self.content_safe_check_stage, ContentSafetyCheckStage)
-            and result.is_llm_result()
-        ):
-            text = "".join(
-                comp.text for comp in result.chain if isinstance(comp, Plain)
-            )
-            async for _ in self.content_safe_check_stage.process(
-                event,
-                check_text=text,
-            ):
-                pass
-        if event.is_stopped():
-            return None
-
-        handlers = star_handlers_registry.get_handlers_by_event_type(
-            EventType.OnDecoratingResultEvent,
-            plugins_name=event.plugins_name,
-        )
-        for handler in handlers:
-            try:
-                logger.debug(
-                    f"hook(on_decorating_result) -> {star_map[handler.handler_module_path].name} - {handler.handler_name}",
-                )
-                await handler.handler(event)
-            except BaseException:
-                logger.error(traceback.format_exc())
-            if event.is_stopped():
-                logger.info(
-                    f"{star_map[handler.handler_module_path].name} - {handler.handler_name} 终止了事件传播。",
-                )
-                return None
-
-        decorated = event.get_result()
-        if decorated is None or not decorated.chain:
-            return None
-        return decorated.derive(list(decorated.chain))

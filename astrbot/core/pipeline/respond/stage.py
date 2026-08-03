@@ -1,6 +1,4 @@
-import asyncio
 from collections.abc import AsyncGenerator
-from copy import copy
 
 from astrbot.core import logger
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -12,13 +10,10 @@ from astrbot.core.interaction.turn_state import (
 from astrbot.core.message.components import ComponentType
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
+from astrbot.core.output_lifecycle import TurnDeliveryCoordinator
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
-from astrbot.core.postprocess.types import PostProcessTrigger
-from astrbot.core.provider.entities import ProviderRequest
-from astrbot.core.star.star_handler import EventType
 
-from ..context import PipelineContext, call_event_hook
+from ..context import PipelineContext
 from ..stage import Stage, register_stage
 
 
@@ -28,6 +23,9 @@ class RespondStage(Stage):
         self.ctx = ctx
         self.config = ctx.astrbot_config
         self.platform_settings: dict = self.config.get("platform_settings", {})
+        self.delivery_coordinator = (
+            ctx.turn_delivery_coordinator or TurnDeliveryCoordinator()
+        )
 
     async def _dispatch_after_message_sent(self, event: AstrMessageEvent) -> bool:
         controller = event.get_extra("_interaction_output_controller")
@@ -39,41 +37,11 @@ class RespondStage(Stage):
         if callable(complete_visible_delivery):
             return await complete_visible_delivery(controller, event)
 
-        if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
-            await self._cancel_interaction_turn_finalization(
-                event,
-                reason="after_message_sent_hook_stopped",
-            )
-            return False
-
-        await self._complete_visible_turn(event)
-        self._schedule_after_message_sent_postprocess(event)
-        await self._flush_interaction_turn_finalization(event)
-        return True
-
-    @staticmethod
-    async def _complete_visible_turn(event: AstrMessageEvent) -> None:
-        await event.complete_visible_turn()
-
-    @staticmethod
-    async def _flush_interaction_turn_finalization(
-        event: AstrMessageEvent,
-    ) -> None:
-        controller = event.get_extra("_interaction_output_controller")
-        flush = getattr(type(controller), "flush_deferred_turn_finalization", None)
-        if callable(flush):
-            await flush(controller, event)
-
-    @staticmethod
-    async def _cancel_interaction_turn_finalization(
-        event: AstrMessageEvent,
-        *,
-        reason: str,
-    ) -> None:
-        controller = event.get_extra("_interaction_output_controller")
-        cancel = getattr(type(controller), "cancel_deferred_turn_finalization", None)
-        if callable(cancel):
-            await cancel(controller, event, reason=reason)
+        return await self.delivery_coordinator.complete_visible_delivery(
+            event,
+            plugin_context=self.ctx.plugin_manager.context,
+            is_interaction_turn=self._is_interaction_turn(event),
+        )
 
     @staticmethod
     async def _send_with_origin_and_extras(
@@ -139,113 +107,11 @@ class RespondStage(Stage):
             for comp in result.chain
         )
 
-    def _schedule_after_message_sent_postprocess(
-        self,
-        event: AstrMessageEvent,
-    ) -> None:
-        self._schedule_postprocess(
-            event,
-            trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
-            task_name=f"postprocess_after_message_sent_{event.get_platform_id()}",
-        )
-        if self._is_interaction_turn(event):
-            return
-        self._schedule_postprocess(
-            event,
-            trigger=PostProcessTrigger.AFTER_TURN_COMPLETED,
-            task_name=f"postprocess_after_turn_completed_{event.get_platform_id()}",
-        )
-
     @staticmethod
     def _is_interaction_turn(event: AstrMessageEvent) -> bool:
         return bool(event.get_extra("_interaction_enabled")) and (
             get_interaction_turn_state(event) is not None
         )
-
-    def _schedule_postprocess(
-        self,
-        event: AstrMessageEvent,
-        *,
-        trigger: PostProcessTrigger,
-        task_name: str,
-    ) -> None:
-        provider_request = self._snapshot_provider_request(
-            event.get_extra("provider_request")
-        )
-        conversation = (
-            provider_request.conversation
-            if getattr(provider_request, "conversation", None) is not None
-            else event.get_extra("conversation")
-        )
-        task = get_postprocess_manager().schedule(
-            dispatch_postprocess(
-                event=event,
-                trigger=trigger,
-                plugin_context=self.ctx.plugin_manager.context,
-                provider_request=provider_request,
-                conversation=copy(conversation) if conversation is not None else None,
-                turn_id=str(event.get_extra("_turn_id", "") or ""),
-                visible_outputs=[
-                    dict(item)
-                    for item in event.get_extra("_visible_turn_outputs", [])
-                    if isinstance(item, dict)
-                ],
-                turn_material=(
-                    dict(material)
-                    if isinstance(
-                        material := event.get_extra(
-                            "_interaction_finalized_turn_material"
-                        ),
-                        dict,
-                    )
-                    else None
-                ),
-            ),
-            name=task_name,
-        )
-        if task is not None:
-            task.add_done_callback(
-                lambda done_task: self._log_postprocess_failure(trigger, done_task)
-            )
-
-    @staticmethod
-    def _snapshot_provider_request(
-        provider_request: ProviderRequest | None,
-    ) -> ProviderRequest | None:
-        if not isinstance(provider_request, ProviderRequest):
-            return None
-        snapshot = copy(provider_request)
-        snapshot.image_urls = list(provider_request.image_urls or [])
-        snapshot.audio_urls = list(provider_request.audio_urls or [])
-        snapshot.extra_user_content_parts = list(
-            provider_request.extra_user_content_parts or []
-        )
-        snapshot.contexts = [
-            dict(item) if isinstance(item, dict) else item
-            for item in (provider_request.contexts or [])
-        ]
-        if isinstance(provider_request.tool_calls_result, list):
-            snapshot.tool_calls_result = list(provider_request.tool_calls_result)
-        if provider_request.conversation is not None:
-            snapshot.conversation = copy(provider_request.conversation)
-        return snapshot
-
-    @staticmethod
-    def _log_postprocess_failure(
-        trigger: PostProcessTrigger,
-        task: asyncio.Task,
-    ) -> None:
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            logger.debug("postprocess(%s): background task cancelled", trigger.value)
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "postprocess(%s): background task failed: %s",
-                trigger.value,
-                exc,
-                exc_info=True,
-            )
 
     async def process(
         self,

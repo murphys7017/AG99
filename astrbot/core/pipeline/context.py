@@ -10,6 +10,10 @@ from .context_utils import call_event_hook, call_handler
 if TYPE_CHECKING:
     from astrbot.core.interaction.middleware import InteractionMiddleware
     from astrbot.core.interaction.personal_runtime import PersonalRuntimeManager
+    from astrbot.core.output_lifecycle import (
+        PreOutputProcessor,
+        TurnDeliveryCoordinator,
+    )
     from astrbot.core.star import PluginManager
 
 
@@ -22,5 +26,7 @@ class PipelineContext:
     astrbot_config_id: str
     interaction_middleware: InteractionMiddleware | None = None
     personal_runtime_manager: PersonalRuntimeManager | None = None
+    pre_output_processor: PreOutputProcessor | None = None
+    turn_delivery_coordinator: TurnDeliveryCoordinator | None = None
     call_handler = call_handler
     call_event_hook = call_event_hook

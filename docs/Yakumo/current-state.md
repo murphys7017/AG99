@@ -89,6 +89,11 @@
   visible output snapshot 复用 utterance 的 `message_id` / `delivered_message_ids`
 - PERSONA / HYBRID 主链路由 Personal Runtime 持有 admission、session lease 和 turn task scope；middleware 负责本轮编排。`silent` 只在群聊模型续接候选上开放
 - interaction outbound phase 已迁入 `InteractionOutputController`
+- 响应安全与旧 `OnDecoratingResultEvent` 已收口到共享 `PreOutputProcessor`；
+  普通 Pipeline 与 Interaction Core final 复用同一个安全评估器和装饰钩子实现，后者不再
+  通过 `event.extra` 保存绑定回调
+- `OnAfterMessageSentEvent`、visible completion 和 after-send postprocess 已收口到共享
+  `TurnDeliveryCoordinator`；`RespondStage` 与 `InteractionOutputController` 仅保留各自的发送/兼容外观
 - core 旧流程与 middleware 新流程共享 voice service
 - interaction 内部主链路开发期 fail-fast，不依赖 fallback 证明正确性
 - **新增** `output_modes.py`：定义 `PluginOutputMode`、`OutputOrigin`、`temporary_output_origin` 等输出身份模型

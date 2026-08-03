@@ -187,7 +187,7 @@ flowchart LR
         direction TB
         RD{"Interaction Turn?"}
         NORMAL_DECORATE["ResultDecorateStage<br/>内容安全 / 插件装饰 Hook / 前缀 / 分段 / TTS / t2i / @ / 引用"]
-        INTERACTION_DECORATE["Interaction ResultDecorate 兼容阶段<br/>插件普通结果：立即运行安全/Hook<br/>Core 非流式：登记回调，最终 Persona 文本形成后运行<br/>Core 流式：保持现有直接流路径"]
+        INTERACTION_DECORATE["Interaction ResultDecorate 兼容阶段<br/>插件普通结果：立即运行共享 PreOutputProcessor<br/>Core 非流式：最终 Persona 文本形成后进入同一处理器<br/>Core 流式：保持现有直接流路径"]
         NORMAL_RESP["RespondStage（普通路径）<br/>流式去重 / send_message_to_user 去重 / deliver_message_chain"]
         INTERACTION_RESP["RespondStage（Interaction 路径）<br/>标记 CORE origin 或保留 PLUGIN origin"]
         ORIGIN{"输出来源"}
@@ -260,7 +260,7 @@ flowchart LR
         AFTER_SENT{"OnAfterMessageSent hook 终止后续?"}
         VISIBLE_COMPLETE["complete_visible_turn"]
         NORMAL_POST["非 Interaction：后台调度 AFTER_MESSAGE_SENT<br/>+ AFTER_TURN_COMPLETED"]
-        INTERACTION_AFTER["Interaction：RespondStage 只调度 AFTER_MESSAGE_SENT<br/>Turn 完成由 Middleware 持有"]
+        INTERACTION_AFTER["Interaction：TurnDeliveryCoordinator 调度 AFTER_MESSAGE_SENT<br/>Turn 完成由 Middleware 持有"]
         TURN_RELEASE["ProcessStage finally<br/>关闭 TurnExecutionScope<br/>生成一次 CompletionFeedback<br/>释放 Turn lease"]
         RUNTIME_STATE["PersonalSessionRuntime.state<br/>进程内控制状态与 diagnostics"]
         RUNTIME_REPOSITORY["PersonalStateRepository / personal_runtime_states<br/>仅最近表达、冷却、静音、每日用量"]

@@ -1,8 +1,8 @@
 task:
-  class: feature
+  class: refactor
   risk: high
-  phase: persona_first_plugin_compatibility_hardening
-  scope: Implement and harden a backwards-compatible, persona-first plugin mounting base. Personality, entertainment, relationship, prompt-context, effect, and persona-tool contributions default to Personal Expression; Core is reserved for plugins explicitly configured as task-planning or work-execution contributions. External I/O alone does not determine the mount. Preserve official Pipeline lifecycle semantics without migrating marketplace plugin source, including legacy tool hooks, Context.send_message output, rich media, and an explicit non-streaming Persona-tool boundary.
+  phase: output_lifecycle_consolidation
+  scope: Consolidate response safety, legacy output hooks, visible completion, and postprocess scheduling behind lifecycle-owned services while preserving official Pipeline and marketplace plugin behavior. Remove hidden event-extra callbacks and duplicate RespondStage or InteractionOutputController implementations without redesigning streaming delivery.
 context:
   confidence: high
   assumptions:
@@ -85,8 +85,8 @@ context:
     - Official Pipeline handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible. Persona-facing legacy request hooks receive a branch-local ProviderRequest view, so they may modify Persona material without replacing shared Core event extras or its strict output contract. Mutation snapshots recursively clone plain containers but retain opaque ToolSet, plugin, Provider, Conversation, and other live runtime handles by reference.
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
-    - Interaction pipeline results must preserve official response-safety and OnDecoratingResult hooks without reapplying ordinary TTS/t2i/prefix/segmentation decoration.
-    - RespondStage-driven and direct Persona Interaction replies share one Output Controller-owned OnAfterMessageSent, visible-completion, postprocess, and deferred-finalization boundary; Persona materializes its final turn before entering that boundary. Direct non-Interaction event.send paths retain their existing semantics.
+    - Interaction pipeline results preserve official response-safety and OnDecoratingResult hooks through one shared PreOutputProcessor without reapplying ordinary TTS/t2i/prefix/segmentation decoration; the former event-extra callback bridge is removed.
+    - RespondStage-driven and direct Persona Interaction replies share one TurnDeliveryCoordinator-owned OnAfterMessageSent, visible-completion, postprocess, and deferred-finalization boundary. InteractionOutputController remains a compatibility facade, while direct non-Interaction event.send paths retain their existing semantics.
     - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed for bounded group model-continuation candidates and explicit plugin-submitted group reply candidates, which await Router before Persona and fail closed to silent. Candidate metadata is a low-level event contract and never mutates explicit wake fields; legacy plugins that do not use the opt-in candidate API preserve existing wake behavior.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
@@ -210,6 +210,8 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - "2026-08-03 output lifecycle review remediation: ordinary Pipeline and Interaction now share one response-safety evaluator, selector replacement is bounded per config ID, and after-send stop propagation has observable coverage. 94 focused lifecycle, Interaction, content-safety, Prompt, delivery, expression, and Personal Runtime tests passed; affected Ruff, py_compile, cold imports, YAML parse, VitePress production build, and git diff checks passed. A separate 98-test selection including the full Core lifecycle suite had 97 pass and one pre-existing test fixture failure because a MagicMock asyncio.Task belongs to a different event loop; core stop code is outside this diff."
+    - "2026-08-03 output lifecycle consolidation: 169 focused output, Interaction, Personal Runtime, content-safety, plugin-compatibility, event, and lifecycle tests passed. Cold imports, affected Ruff and py_compile, YAML parse, VitePress production build, and git diff checks passed."
     - "2026-08-03 post-review root remediation: cold Prompt/API/DeepSeek imports passed; 104 provider/media/memory/group tests, 5 Router-candidate tests, 47 Persona/plugin-expression tests, 17 Prompt projection tests, and 82 Prompt collector tests passed. Affected Ruff, compileall, YAML parse, and git diff checks passed."
     - Persona after-send and Prompt apply-marker repair: the full affected Prompt, Group Context, Interaction, and Personal Runtime suite passed 151 tests, including cold-import and completion-order regressions. Ruff, compileall, YAML parse, and git diff checks passed.
     - Autonomous Personal Runtime Gate configuration: public config/Gate smoke covered mute, cross-midnight quiet hours, and proactive output budget; Ruff, py_compile, and three locale JSON parses passed; no test file was added.
@@ -378,50 +380,19 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: personal_runtime_expression_and_group_continuation_correctness
+    phase: output_lifecycle_consolidation
     scope:
-      - Policy novelty guidance for Heartbeat batches without new or changed facts
-      - deterministic material-revision Gate before repeated Heartbeat Policy calls
-      - changed-payload detection for coalesced Runtime Sensor facts
-      - autonomous Persona instruction to avoid the latest assistant reply
-      - deterministic pre-delivery fingerprint suppression limited to PersonalActionIntent output
-      - suppressed duplicate completion without effects, TTS, Conversation, cooldown, or proactive quota
-      - explicit Context, Cron, and plugin proactive-send compatibility preserved
-      - delivery-confirmed reply cooldown with proactive quota limited to delivered ActionIntent output
-      - one physical proactive turn for dual-output TTS components sharing a logical segment ID
-      - Output Controller grouping for dual-output TTS while retaining the legacy send_by_session adapter contract
-      - Persona projection exclusion of execution capability prompt extensions
-      - strict Personal Policy field guidance and invalid matching tool-call diagnostics
-      - assistant-only memory identity skip classification by empty user payload
-      - dedicated persistent Personal Runtime control-state repository by full RuntimeKey
-      - restart-safe last expression fingerprint, cooldown, mute, and daily usage fields
-      - mute, quiet-hours, cooldown-duration, policy budget, and output budget configuration
-      - Gate enforcement before any Personal Policy Provider request
-      - lifecycle-owned, default-disabled, multi-target Heartbeat Observation submission with per-target due times
-      - controlled express ActionIntent through existing RuntimeObservationEvent, Persona, and Output boundaries
-      - defer no-action deadlines persisted by PersonalState
-      - default-disabled ambient group conversation_activity Observation through the official Waking, whitelist, and session-status stages
-      - plugin-owned Runtime Observation Sensor registration, structured fact submission, and unload cleanup through Context and Lifecycle
-      - lifecycle-owned postprocess task admission, cancellation, and restart-safe reopening
-      - shutdown sequencing that settles Personal Runtime and postprocess work before their dependencies
-      - per-event EventBus preparation failure isolation
-      - independently owned CoreExecutionSpec ContextPack, TaskSpec, execution-history, and serializable capability snapshots
-      - removal of the unused Interaction Prompt ContextPack extra mirror
-      - InteractionTurnState ownership of Core delegation without a parallel event-extra marker
-      - removal of unused Interaction Prompt render and context-snapshot event extras
-      - InteractionStreamState ownership without duplicate fields or unread event-extra mirrors
-      - InteractionTurnState lifecycle and completion ownership without private event-extra mirrors
-      - same-actor group continuation through active, 10-second fast, and bounded existing-Router silent paths
-      - Router-first model continuation candidates with Handler discovery only after Router accepts persona or hybrid
-      - structured group-context records preserved across every Prompt target projection and renderer boundary
-      - provider-boundary image materialization restricted to data URLs, verified public HTTP(S), and AstrBot temporary media; DNS answers are pinned for each untrusted download
-      - ordered group-image placeholders with bounded caption materialization and provider work
-      - ProcessStage active-turn activation is scoped to generator advancement and close, never across an outward async-generator yield
-      - PipelineScheduler deterministically closes stage generators and reactivates the bound Personal turn while downstream plugin hooks execute
+      - one shared PreOutputProcessor response-safety evaluator for ordinary Pipeline and Interaction output
+      - bounded per-config replacement of cached response-safety selectors
+      - shared PreOutputProcessor ownership of legacy decorating hooks
+      - shared TurnDeliveryCoordinator ownership of after-send hooks, visible completion, and postprocess scheduling
+      - removal of the interaction pipeline pre-output callback stored in event.extra
+      - RespondStage retained as a compatibility delivery adapter rather than a second lifecycle implementation
+      - observable lifecycle regression coverage, including after-send stop propagation
     non_goals:
-      - built-in additional Runtime Sensors, per-Sensor schemas, and explicit background-execution permissions
-      - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy
-      - synthetic platform or user messages
+      - streaming delivery redesign or expanded streaming support
+      - marketplace plugin source migration or public hook signature changes
+      - Persona and Core Agent lifecycle unification, media-boundary consolidation, or broad event-extra removal
     confirmed_gaps:
       - a backend-neutral progress, cancellation, and background-execution permission contract remains absent
       - no built-in additional Runtime Sensor or per-Sensor schema exists yet

@@ -5,7 +5,6 @@ import random
 import time
 import traceback
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from copy import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,14 +13,10 @@ from astrbot.core import file_token_service, html_renderer
 from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
-from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.output_lifecycle import PreOutputProcessor, TurnDeliveryCoordinator
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
-from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
-from astrbot.core.postprocess.types import PostProcessTrigger
-from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.session_llm_manager import SessionServiceManager
-from astrbot.core.star.star_handler import EventType
 from astrbot.core.voice import (
     TTSState,
     VoiceServiceError,
@@ -140,6 +135,8 @@ class InteractionOutputController:
             Callable[[AstrMessageEvent, str, dict[str, Any] | None], Awaitable[None]]
             | None
         ) = None,
+        pre_output_processor: PreOutputProcessor | None = None,
+        delivery_coordinator: TurnDeliveryCoordinator | None = None,
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
@@ -148,6 +145,8 @@ class InteractionOutputController:
         self.visible_reply_renderer = visible_reply_renderer
         self.core_reply_handler = core_reply_handler
         self.lifecycle_callback = lifecycle_callback
+        self.pre_output_processor = pre_output_processor or PreOutputProcessor()
+        self.delivery_coordinator = delivery_coordinator or TurnDeliveryCoordinator()
         self._refresh_outbound_materialization_config()
 
     def _refresh_outbound_materialization_config(
@@ -669,109 +668,14 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
     ) -> bool:
-        """Run the official after-send boundary for an Interaction reply.
-
-        RespondStage and the direct Persona path both deliver through this
-        controller, but only one of them owns a given visible reply. Keeping
-        the boundary here ensures legacy after-message hooks observe both
-        paths with the same completion and postprocess ordering.
-        """
-        if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
-            await self.cancel_deferred_turn_finalization(
-                event,
-                reason="after_message_sent_hook_stopped",
-            )
-            return False
-
-        await self.capture_visible_completion(event)
-        self._schedule_after_message_sent_postprocess(event)
-        await self.flush_deferred_turn_finalization(event)
-        return True
-
-    def _schedule_after_message_sent_postprocess(
-        self,
-        event: AstrMessageEvent,
-    ) -> None:
-        provider_request = self._snapshot_provider_request(
-            event.get_extra("provider_request")
+        return await self.delivery_coordinator.complete_visible_delivery(
+            event,
+            plugin_context=self.plugin_context,
+            complete_visible_turn=self.capture_visible_completion,
+            cancel_deferred_turn_finalization=self.cancel_deferred_turn_finalization,
+            flush_deferred_turn_finalization=self.flush_deferred_turn_finalization,
+            is_interaction_turn=True,
         )
-        conversation = (
-            provider_request.conversation
-            if getattr(provider_request, "conversation", None) is not None
-            else event.get_extra("conversation")
-        )
-        task = get_postprocess_manager().schedule(
-            dispatch_postprocess(
-                event=event,
-                trigger=PostProcessTrigger.AFTER_MESSAGE_SENT,
-                plugin_context=self.plugin_context,
-                provider_request=provider_request,
-                conversation=copy(conversation) if conversation is not None else None,
-                turn_id=str(event.get_extra("_turn_id", "") or ""),
-                visible_outputs=[
-                    dict(item)
-                    for item in event.get_extra("_visible_turn_outputs", [])
-                    if isinstance(item, dict)
-                ],
-                turn_material=(
-                    dict(material)
-                    if isinstance(
-                        material := event.get_extra(
-                            "_interaction_finalized_turn_material"
-                        ),
-                        dict,
-                    )
-                    else None
-                ),
-            ),
-            name=f"postprocess_after_message_sent_{event.get_platform_id()}",
-        )
-        if task is not None:
-            task.add_done_callback(
-                lambda done_task: self._log_postprocess_failure(
-                    PostProcessTrigger.AFTER_MESSAGE_SENT,
-                    done_task,
-                )
-            )
-
-    @staticmethod
-    def _snapshot_provider_request(
-        provider_request: ProviderRequest | None,
-    ) -> ProviderRequest | None:
-        if not isinstance(provider_request, ProviderRequest):
-            return None
-        snapshot = copy(provider_request)
-        snapshot.image_urls = list(provider_request.image_urls or [])
-        snapshot.audio_urls = list(provider_request.audio_urls or [])
-        snapshot.extra_user_content_parts = list(
-            provider_request.extra_user_content_parts or []
-        )
-        snapshot.contexts = [
-            dict(item) if isinstance(item, dict) else item
-            for item in (provider_request.contexts or [])
-        ]
-        if isinstance(provider_request.tool_calls_result, list):
-            snapshot.tool_calls_result = list(provider_request.tool_calls_result)
-        if provider_request.conversation is not None:
-            snapshot.conversation = copy(provider_request.conversation)
-        return snapshot
-
-    @staticmethod
-    def _log_postprocess_failure(
-        trigger: PostProcessTrigger,
-        task: asyncio.Task,
-    ) -> None:
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            logger.debug("postprocess(%s): background task cancelled", trigger.value)
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "postprocess(%s): background task failed: %s",
-                trigger.value,
-                exc,
-                exc_info=True,
-            )
 
     async def flush_deferred_turn_finalization(
         self,
@@ -1459,9 +1363,17 @@ class InteractionOutputController:
                 ]
             )
 
-        final_message = await self._apply_pipeline_pre_output_compatibility(
+        source_result = event.get_result()
+        result_content_type = (
+            source_result.result_content_type
+            if source_result is not None
+            and source_result.result_content_type is not None
+            else ResultContentType.LLM_RESULT
+        )
+        final_message = await self.pre_output_processor.prepare_interaction_message(
             event,
             final_message,
+            result_content_type,
         )
         if final_message is None:
             event.set_extra("_interaction_pipeline_output_suppressed", True)
@@ -1540,23 +1452,6 @@ class InteractionOutputController:
                 ),
             ]
         )
-
-    @staticmethod
-    async def _apply_pipeline_pre_output_compatibility(
-        event: AstrMessageEvent,
-        message: MessageChain,
-    ) -> MessageChain | None:
-        callback = event.get_extra("_interaction_pipeline_pre_output_callback")
-        if not callable(callback):
-            return message
-        event.set_extra("_interaction_pipeline_pre_output_callback", None)
-        result = event.get_result()
-        result_content_type = (
-            result.result_content_type
-            if result is not None and result.result_content_type is not None
-            else ResultContentType.LLM_RESULT
-        )
-        return await callback(event, message, result_content_type)
 
     @staticmethod
     def _is_core_final_model_result(event: AstrMessageEvent) -> bool:

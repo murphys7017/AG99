@@ -263,42 +263,6 @@ async def test_persona_route_allows_explicitly_targeted_function_tools():
 
 
 @pytest.mark.asyncio
-async def test_interaction_visible_delivery_runs_official_after_send_boundary(
-    monkeypatch,
-):
-    class Event:
-        def __init__(self):
-            self._extras = {}
-
-        def get_extra(self, key, default=None):
-            return self._extras.get(key, default)
-
-        def get_platform_id(self):
-            return "webchat"
-
-    event = Event()
-    controller = object.__new__(InteractionOutputController)
-    controller.capture_visible_completion = AsyncMock()
-    controller._schedule_after_message_sent_postprocess = Mock()
-    controller.flush_deferred_turn_finalization = AsyncMock()
-    controller.cancel_deferred_turn_finalization = AsyncMock()
-    hook = AsyncMock(return_value=False)
-    monkeypatch.setattr(
-        "astrbot.core.interaction.output_controller.call_event_hook",
-        hook,
-    )
-
-    completed = await controller.complete_visible_delivery(event)
-
-    assert completed is True
-    hook.assert_awaited_once_with(event, EventType.OnAfterMessageSentEvent)
-    controller.capture_visible_completion.assert_awaited_once_with(event)
-    controller._schedule_after_message_sent_postprocess.assert_called_once_with(event)
-    controller.flush_deferred_turn_finalization.assert_awaited_once_with(event)
-    controller.cancel_deferred_turn_finalization.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_persona_completion_delegates_to_interaction_delivery_boundary():
     class Controller:
         def __init__(self):

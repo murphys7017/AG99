@@ -40,6 +40,7 @@ from astrbot.core.memory import (
     reset_memory_postprocessor,
     shutdown_memory_service,
 )
+from astrbot.core.output_lifecycle import PreOutputProcessor, TurnDeliveryCoordinator
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.pipeline.scheduler import PipelineContext, PipelineScheduler
 from astrbot.core.platform.manager import PlatformManager
@@ -91,6 +92,8 @@ class AstrBotCoreLifecycle:
             self.personal_runtime_wake_scheduler
         )
         self.core_execution_ledger = CoreExecutionLedger(db)
+        self.pre_output_processor = PreOutputProcessor()
+        self.turn_delivery_coordinator = TurnDeliveryCoordinator()
         self._default_chat_provider_warning_emitted = False
         self._lifecycle_service_tasks: set[asyncio.Task] = set()
         self._shutdown_lock = asyncio.Lock()
@@ -227,6 +230,8 @@ class AstrBotCoreLifecycle:
         self.event_queue = Queue()
         self.interaction_output_controller = InteractionOutputController(
             platform_settings=self.astrbot_config.get("platform_settings", {}),
+            pre_output_processor=self.pre_output_processor,
+            delivery_coordinator=self.turn_delivery_coordinator,
         )
         self.interaction_middleware = InteractionMiddleware(
             self.astrbot_config,
@@ -580,11 +585,13 @@ class AstrBotCoreLifecycle:
         for conf_id, ab_config in self.astrbot_config_mgr.confs.items():
             scheduler = PipelineScheduler(
                 PipelineContext(
-                    ab_config,
-                    self.plugin_manager,
-                    conf_id,
-                    self.interaction_middleware,
-                    self.personal_runtime_manager,
+                    astrbot_config=ab_config,
+                    plugin_manager=self.plugin_manager,
+                    astrbot_config_id=conf_id,
+                    interaction_middleware=self.interaction_middleware,
+                    personal_runtime_manager=self.personal_runtime_manager,
+                    pre_output_processor=self.pre_output_processor,
+                    turn_delivery_coordinator=self.turn_delivery_coordinator,
                 ),
             )
             await scheduler.initialize()
@@ -603,11 +610,13 @@ class AstrBotCoreLifecycle:
             raise ValueError(f"配置文件 {conf_id} 不存在")
         scheduler = PipelineScheduler(
             PipelineContext(
-                ab_config,
-                self.plugin_manager,
-                conf_id,
-                self.interaction_middleware,
-                self.personal_runtime_manager,
+                astrbot_config=ab_config,
+                plugin_manager=self.plugin_manager,
+                astrbot_config_id=conf_id,
+                interaction_middleware=self.interaction_middleware,
+                personal_runtime_manager=self.personal_runtime_manager,
+                pre_output_processor=self.pre_output_processor,
+                turn_delivery_coordinator=self.turn_delivery_coordinator,
             ),
         )
         await scheduler.initialize()
