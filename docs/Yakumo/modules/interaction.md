@@ -64,7 +64,9 @@ class MyWorkPlugin(Star):
 可执行工具独立遵守：`interaction_middleware.plugin_tool_targets` 用户配置、工具自身
 `tool_targets` 声明、最后是 `core` 默认值。配置键可以使用插件目录名覆盖整个插件，也可以使用
 `插件目录名.工具名` 精确覆盖一个工具；精确项优先。只有明确解析为 `personal_expression` 的工具
-才会进入 Persona 工具循环，普通 Persona 对话不会因为 Core 工具产生额外模型调用。
+才会进入 Persona Agent 循环，普通 Persona 对话不会因为 Core 工具产生额外模型调用。Persona
+即使没有业务工具，也使用同一个 Agent 循环生成 terminal `persona_expression`，不存在单独的
+“是否调用工具”预判请求。
 
 WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这两个目标映射。编辑器会列出已安装插件和
 插件工具，也允许手工输入兼容的插件模块路径；目标值通过固定选项限制为 `core` 或
@@ -78,10 +80,15 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
   中运行。它们可以终止事件，从而阻止后续 Persona 或 Core，但不会被当作 Persona 插件迁移。
 - 人格表达会向 Persona 生命周期插件提供 `OnWaitingLLMRequest`、`OnLLMRequest`、
   `OnAgentBegin`、`OnLLMResponse` 与 `OnAgentDone`；明确授权的 Persona 工具实际执行时还会触发
-  全局 `OnUsingLLMTool` / `OnLLMToolRespond`。`OnLLMRequest` 在
-  Persona 工具循环前只运行一次，其非协议修改会保留到最终表达；请求钩子读取的是人格分支私有的
+  全局 `OnUsingLLMTool` / `OnLLMToolRespond`。固定顺序为 Waiting、LLMRequest、AgentBegin、
+  实际业务工具 Hook、LLMResponse、AgentDone。`OnLLMRequest` 在 Persona Agent 启动前只运行一次，
+  其非协议修改会在同一个 Agent context 中保留到最终表达；请求钩子读取的是人格分支私有的
   `ProviderRequest`，不会覆盖 Core 共享请求；钩子收到的仍是同一个
   `AstrMessageEvent`，以兼容既有类型检查与 event extras 用法。
+- Persona Provider 同时看到明确授权的业务工具与 terminal `persona_expression`。业务工具结果直接
+  追加到同一 Agent context，再由下一轮模型输出 `persona_expression`；terminal 协议本身不进入
+  `FunctionToolExecutor`，也不触发工具观察 Hook。模型同时返回 terminal 与业务工具时会直接终止，
+  不执行混合调用中的副作用。
 - Persona 工具调用中，旧插件返回的 `MessageEventResult` / `CommandResult`，以及
   `event.send()`、`emit_output()`、`emit_progress()` 和发往当前会话的 `Context.send_message()`，
   都会收集为模型可见的工具材料，富媒体随最终 Persona Expression 投递。显式跨会话
@@ -92,7 +99,8 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
 - `hybrid` 路径先完成 Planner；Planner 决定执行时直接进入 Core，不会提前执行 Persona
   插件的工具、效果或 LLM 生命周期副作用。
 - 人格 Provider 回退时会按备用 Provider 重新绑定结构化输出协议，但不会重复调用
-  `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。
+  `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`，并保持同一个公开 Agent context。
+  一旦业务工具已经开始执行，本次 Persona run 不再切换 Provider，避免重放副作用。
 
 ### 验证步骤
 

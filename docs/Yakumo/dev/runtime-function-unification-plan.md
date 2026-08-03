@@ -2,9 +2,9 @@
 
 ## 文档状态
 
-- 状态：待实施；Phase 0 调查与边界确认已完成，下一步只执行 Phase 1。
+- 状态：Phase 1 实现与自动化兼容验收已完成；等待私聊真实日志 smoke 后关闭本阶段。
 - 更新日期：2026-08-03。
-- 代码基线：`45e0422fb`（`refactor: consolidate output lifecycle`）。
+- 实施基线：`ef389bce0`（`docs: plan runtime function unification`）。
 - 日志基线：`data/logs/astrbot.log` 与 `data/logs/astrbot.trace.log` 的 2026-08-03 样本。
 - 任务类型：架构重构与性能修复。
 - 实施风险：高。涉及 Persona、插件生命周期、Agent 工具循环、ProviderRequest、
@@ -87,9 +87,9 @@ Router
 
 ## 四、当前问题地图
 
-### 4.1 Persona 工具执行被拆成两次模型任务
+### 4.1 Persona 工具执行曾被拆成两次模型任务
 
-当前 `InteractionExpressionAgent` 在检测到 Persona 可见工具后调用
+Phase 1 之前，`InteractionExpressionAgent` 在检测到 Persona 可见工具后调用
 `_run_persona_tool_loop()`。这个内部 Agent 只判断和执行插件工具，不负责生成最终可见回复；
 即使返回 `no_tool`，后面仍然会再次调用 Provider 生成 `persona_expression`。
 
@@ -116,12 +116,11 @@ Collector、System Collector、ExpressionAgent 和 Agent Runner 分别读取、�
 2. Collector 通过其他 Collector 的私有方法获取 Persona 和工具，签名变化容易造成回归。
 3. fallback 或插件 Hook 修改请求后，需要用字段差异、快照或重放恢复状态。
 
-### 4.3 Persona 手工维护 Agent 生命周期
+### 4.3 Persona 生命周期仍需后续统一
 
-Persona 目前单独编排 Waiting、LLMRequest、AgentBegin、LLMResponse、AgentDone，并自行处理
-Provider fallback、工具材料、附件和最终结构化输出。官方 Core Agent Runner 又拥有另一套
-工具循环和状态转换。两套实现越接近，未来越容易在 Hook 顺序、ProviderRequest 字段、工具
-结果或异常语义上漂移。
+Phase 1 已让 Persona 业务工具执行复用官方 `ToolLoopAgentRunner`，删除了独立预判 Agent；
+Waiting、LLMRequest、AgentBegin、LLMResponse、AgentDone 与 Provider fallback 仍由 Persona
+入口编排。Phase 3 继续统一请求和生命周期 owner，但不得恢复双工具循环。
 
 ### 4.4 上下文预算按调用点分散
 
@@ -269,7 +268,7 @@ group message
 
 ### Phase 1：统一 Persona 工具执行
 
-状态：下一阶段，只允许实施本阶段。
+状态：实现完成，自动化兼容验收通过；等待私聊 `815049548` 真实日志 smoke。
 
 目标：删除独立的 Persona 工具预判模型调用，让业务工具与终止
 `persona_expression` 在一次标准 Agent 循环中协作。
@@ -326,6 +325,21 @@ group message
 3. 使用私聊 `815049548` 的简单短消息进行日志 smoke test，确认
    `tool_executions=0` 时不存在独立预判请求。
 4. 对比修改前后模型调用数、Prompt 大小、总耗时和 Hook 记录。
+
+实现结果：
+
+1. Persona 业务工具与 terminal `persona_expression` 由同一个 `ToolLoopAgentRunner` 驱动。
+2. `persona_expression` 只作为 Provider 可见的协议工具，不进入 `FunctionToolExecutor`，与业务
+   工具混合返回时也不会执行任何副作用。
+3. 无工具或工具未使用时只产生一次 Persona Provider 调用；实际业务工具结果直接留在同一
+   Agent context 中驱动下一轮 terminal 输出。
+4. 请求 Hook 每个 Persona run 只运行一次；fallback 保留同一个公开 Agent context，并且在任何
+   业务工具开始执行后禁止切换 Provider 重放。
+5. OpenAI 与 Anthropic Provider 会合并业务工具和输出契约工具，不再用 terminal schema 覆盖
+   原工具集合。
+6. 自动化只保留基础边界：无工具/工具未使用的单次 Persona 调用、单个业务工具续接、terminal
+   不进入执行器、Hook 顺序和工具执行后的 fallback 抑制。Provider 工具合并与混合异常响应由
+   实现审阅负责，不再为内部组合分支复制测试。真实私聊耗时与调用数仍待运行日志确认。
 
 回滚或停止条件：
 
@@ -627,9 +641,9 @@ re-read this plan
 ## 十二、进度清单
 
 - [x] Phase 0：记录基线、冻结目标配置与兼容边界。
-- [ ] Phase 1：统一 Persona 工具执行，删除独立工具预判模型调用。
+- [x] Phase 1：统一 Persona 工具执行，删除独立工具预判模型调用。
 - [ ] Phase 1 验收：私聊 `815049548` 无工具样本只产生一次 Persona Provider 调用。
-- [ ] Phase 1 验收：Persona 单工具、工具失败、附件、fallback 和 Hook 兼容通过。
+- [x] Phase 1 验收：Persona 单工具、工具失败、附件、fallback 和 Hook 自动化兼容通过。
 - [ ] Phase 2：建立每 target 唯一 CapabilitySnapshot。
 - [ ] Phase 2 验收：Prompt schema 与 Runner 工具完全一致。
 - [ ] Phase 3：统一 ProviderRequest 与 Agent lifecycle。

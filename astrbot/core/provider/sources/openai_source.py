@@ -38,6 +38,7 @@ from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsRes
 from astrbot.core.provider.output_contract_tools import (
     build_single_tool_set_from_compiled_contract,
     build_single_tool_set_from_contract,
+    merge_output_contract_tool_set,
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.image_materializer import (
@@ -76,10 +77,13 @@ class ProviderOpenAIOfficial(Provider):
         tool_choice: Literal["auto", "required"],
     ) -> tuple[ToolSet | None, Literal["auto", "required"]]:
         if isinstance(compiled_output_contract, CompiledOutputContract):
-            func_tool = build_single_tool_set_from_compiled_contract(
-                compiled_output_contract,
-                description="Return structured output.",
-            ) or func_tool
+            func_tool = merge_output_contract_tool_set(
+                func_tool,
+                build_single_tool_set_from_compiled_contract(
+                    compiled_output_contract,
+                    description="Return structured output.",
+                ),
+            )
             if compiled_output_contract.strategy == "protocol_tool_call":
                 tool_choice = "required"
             return func_tool, tool_choice
@@ -96,10 +100,13 @@ class ProviderOpenAIOfficial(Provider):
                 allow_text_fallback=output_contract.allow_text_fallback,
             )
         if normalized_contract.mode == "tool_call":
-            func_tool = build_single_tool_set_from_contract(
-                normalized_contract,
-                description="Return structured output.",
-            ) or func_tool
+            func_tool = merge_output_contract_tool_set(
+                func_tool,
+                build_single_tool_set_from_contract(
+                    normalized_contract,
+                    description="Return structured output.",
+                ),
+            )
             if normalized_contract.strict:
                 tool_choice = "required"
         return func_tool, tool_choice

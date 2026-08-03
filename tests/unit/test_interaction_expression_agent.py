@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -16,8 +15,6 @@ from astrbot.core.interaction.expression_agent import (
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     build_persona_runtime_system_prompt,
-    build_persona_tool_loop_instruction,
-    build_persona_tool_loop_prompt,
     extract_persona_expression_result,
     resolve_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
@@ -33,6 +30,10 @@ from astrbot.core.prompt.render import (
 )
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.provider.entities import LLMResponse
+
+
+def _provider_context_text(call: dict) -> str:
+    return "\n".join(str(message) for message in call.get("contexts", []))
 
 
 def test_persona_expression_empty_result_without_effects_is_rejected():
@@ -681,20 +682,13 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     ]
     assert provider.calls[0]["output_contract"] is contract
     assert provider.calls[0]["compiled_output_contract"] is compiled
-    assert provider.calls[0]["tool_choice"] == "required"
-    assert provider.calls[0]["contexts"] == [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "hello"},
-                {"type": "text", "text": "[Image]"},
-            ],
-        }
-    ]
+    assert provider.calls[0]["temperature"] == 0.6
+    assert "hello" in _provider_context_text(provider.calls[0])
+    assert len(provider.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_prompt(
+async def test_persona_expression_keeps_prompt_only_contract(
     monkeypatch,
 ):
     class Provider:
@@ -772,9 +766,7 @@ async def test_persona_expression_keeps_prompt_only_contract_in_rendered_system_
     )
 
     assert result.spoken_reply == "嗯。"
-    assert "必须只输出一个 JSON object" not in provider.calls[0]["prompt"]
-    assert provider.calls[0]["prompt"] == "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
-    assert provider.calls[0]["tool_choice"] == "required"
+    assert provider.calls[0]["compiled_output_contract"] is compiled
 
 
 @pytest.mark.asyncio
@@ -897,7 +889,9 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
         "OnLLMResponseEvent",
         "OnAgentDoneEvent",
     ]
-    assert provider.calls[0]["system_prompt"] == "persona\nplugin context"
+    context_text = _provider_context_text(provider.calls[0])
+    assert "persona" in context_text
+    assert "plugin context" in context_text
     assert provider.calls[0]["output_contract"] is contract
     assert provider.calls[0]["compiled_output_contract"] is compiled
     assert result.spoken_reply == "插件修饰后的回复"
@@ -917,8 +911,19 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
             "modalities": ["text", "tool_use"],
         }
 
+        def __init__(self):
+            self.calls = []
+
         async def text_chat(self, **kwargs):
-            self.final_request = kwargs
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="",
+                    tools_call_name=["read_context"],
+                    tools_call_args=[{}],
+                    tools_call_ids=["call-read-context"],
+                )
             return LLMResponse(
                 role="assistant",
                 completion_text="",
@@ -933,7 +938,8 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
 
         def __init__(self):
             self._extras = {}
-            self.cleared_result_count = 0
+            self._result = None
+            self._force_stopped = False
 
         def get_extra(self, key, default=None):
             return self._extras.get(key, default)
@@ -948,39 +954,29 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
             return False
 
         def clear_result(self):
-            self.cleared_result_count += 1
+            self._result = None
 
-    class RuntimeBoundHandler:
-        def __init__(self):
-            self.pending = asyncio.get_running_loop().create_future()
+        def get_result(self):
+            return self._result
 
-        async def __call__(self, _event):
-            return "unused"
+    async def read_context(_event):
+        return "工具事实"
 
     tool = FunctionTool(
         name="read_context",
         description="Read additional context.",
         parameters={"type": "object", "properties": {}},
-        handler=RuntimeBoundHandler(),
+        handler=read_context,
         execution_targets={"personal_expression"},
     )
     tools = ToolSet([tool])
     provider = Provider()
-    tool_loop_calls = []
-
     class PluginContext:
         def get_provider_by_id(self, provider_id):
             return provider
 
         def get_config(self, **kwargs):
             return {}
-
-        async def tool_loop_agent(self, **kwargs):
-            tool_loop_calls.append(kwargs)
-            hooks = kwargs["agent_hooks"]
-            await hooks.on_tool_start(None, tool, {})
-            await hooks.on_tool_end(None, tool, {}, None)
-            return LLMResponse(role="assistant", completion_text="工具事实")
 
     contract = build_persona_expression_output_contract_for_effects([])
     compiled = CompiledOutputContract(
@@ -1014,8 +1010,6 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
         else:
             assert kwargs["execution_surface"] == "personal_expression"
         observed_hooks.append(hook_type.name)
-        if hook_type.name == "OnLLMRequestEvent":
-            assert args[0].func_tool is tools
         return False
 
     monkeypatch.setattr(
@@ -1034,23 +1028,14 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
     assert observed_hooks == [
         "OnWaitingLLMRequestEvent",
         "OnLLMRequestEvent",
+        "OnAgentBeginEvent",
         "OnUsingLLMToolEvent",
         "OnLLMToolRespondEvent",
-        "OnAgentBeginEvent",
         "OnLLMResponseEvent",
         "OnAgentDoneEvent",
     ]
-    assert tool_loop_calls[0]["tools"] is tools
-    assert tool_loop_calls[0]["event"] is event
-    assert tool_loop_calls[0]["prompt"] == build_persona_tool_loop_prompt()
-    assert tool_loop_calls[0]["system_prompt"] == build_persona_tool_loop_instruction()
-    assert "persona_expression" not in tool_loop_calls[0]["system_prompt"]
-    assert event.cleared_result_count == 1
-    assert agent._prepare_render_result.await_count == 2
-    final_request = agent._prepare_render_result.await_args_list[-1].kwargs["req"]
-    assert final_request.source_text == "工具事实"
-    assert final_request.preserve_facts is True
-    assert final_request.allow_plugin_tools is False
+    assert len(provider.calls) == 2
+    assert "工具事实" in _provider_context_text(provider.calls[1])
     assert result.spoken_reply == "完成了"
 
 
@@ -1059,7 +1044,11 @@ async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkey
     class Provider:
         provider_config = {"id": "persona", "type": "test"}
 
-        async def text_chat(self, **_kwargs):
+        def __init__(self):
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
             return LLMResponse(
                 role="assistant",
                 completion_text="",
@@ -1118,7 +1107,6 @@ async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkey
         )
     )
     agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
-    agent._run_persona_tool_loop = AsyncMock()
 
     async def call_hook(_event, hook_type, *args, **_kwargs):
         if hook_type.name == "OnLLMRequestEvent":
@@ -1129,9 +1117,10 @@ async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkey
         "astrbot.core.interaction.expression_agent.call_event_hook",
         call_hook,
     )
+    provider = Provider()
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.resolve_interaction_chat_provider",
-        AsyncMock(return_value=(Provider(), "persona")),
+        AsyncMock(return_value=(provider, "persona")),
     )
 
     result = await agent.generate_expression(
@@ -1144,12 +1133,12 @@ async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkey
         PersonaExpressionRequest(allow_plugin_tools=True),
     )
 
-    agent._run_persona_tool_loop.assert_not_awaited()
+    assert provider.calls[0]["func_tool"] is None
     assert result.spoken_reply == "无需工具"
 
 
 @pytest.mark.asyncio
-async def test_persona_tool_stage_discards_plain_output_when_no_tool_executed(
+async def test_persona_tools_available_but_unused_need_one_model_call(
     monkeypatch,
 ):
     class Provider:
@@ -1159,7 +1148,11 @@ async def test_persona_tool_stage_discards_plain_output_when_no_tool_executed(
             "modalities": ["text", "tool_use"],
         }
 
-        async def text_chat(self, **_kwargs):
+        def __init__(self):
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
             return LLMResponse(
                 role="assistant",
                 completion_text="",
@@ -1213,19 +1206,14 @@ async def test_persona_tool_stage_discards_plain_output_when_no_tool_executed(
             ]
         )
     )
-    agent._run_persona_tool_loop = AsyncMock(
-        return_value=(
-            LLMResponse(role="assistant", completion_text="请提供输出契约"),
-            0,
-        )
-    )
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.call_event_hook",
         AsyncMock(return_value=False),
     )
+    provider = Provider()
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.resolve_interaction_chat_provider",
-        AsyncMock(return_value=(Provider(), "persona")),
+        AsyncMock(return_value=(provider, "persona")),
     )
 
     result = await agent.generate_expression(
@@ -1238,32 +1226,43 @@ async def test_persona_tool_stage_discards_plain_output_when_no_tool_executed(
         PersonaExpressionRequest(allow_plugin_tools=True),
     )
 
-    assert agent._prepare_render_result.await_count == 1
+    assert len(provider.calls) == 1
     assert result.spoken_reply == "直接人格回复"
 
 
 @pytest.mark.asyncio
 async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
     class Provider:
-        def __init__(self, provider_id, *, fails=False):
+        def __init__(self, provider_id, *, fallback=False):
             self.provider_config = {
                 "id": provider_id,
                 "type": "test",
                 "modalities": ["text", "tool_use"],
             }
-            self.fails = fails
+            self.fallback = fallback
             self.calls = []
 
         async def text_chat(self, **kwargs):
             self.calls.append(kwargs)
-            if self.fails:
+            if self.fallback:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="",
+                    tools_call_name=["persona_expression"],
+                    tools_call_args=[
+                        {"spoken_reply": "不应回退", "effect_calls": []}
+                    ],
+                )
+            if len(self.calls) == 1:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="",
+                    tools_call_name=["legacy_tool"],
+                    tools_call_args=[{}],
+                    tools_call_ids=["call-legacy-tool"],
+                )
+            else:
                 raise RuntimeError("primary unavailable")
-            return LLMResponse(
-                role="assistant",
-                completion_text="",
-                tools_call_name=["persona_expression"],
-                tools_call_args=[{"spoken_reply": "工具暂时不可用。", "effect_calls": []}],
-            )
 
     class Event:
         session_id = "session-1"
@@ -1272,6 +1271,8 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
 
         def __init__(self):
             self._extras = {}
+            self._result = None
+            self._force_stopped = False
 
         def get_extra(self, key, default=None):
             return self._extras.get(key, default)
@@ -1285,12 +1286,26 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
         def is_stopped(self):
             return False
 
-    primary = Provider("primary", fails=True)
-    fallback = Provider("fallback")
+        def get_result(self):
+            return self._result
+
+        def clear_result(self):
+            self._result = None
+
+    execution_count = 0
+
+    async def legacy_tool(_event):
+        nonlocal execution_count
+        execution_count += 1
+        return "side effect completed"
+
+    primary = Provider("primary")
+    fallback = Provider("fallback", fallback=True)
     tool = FunctionTool(
         name="legacy_tool",
         description="Can fail after side effects.",
         parameters={"type": "object", "properties": {}},
+        handler=legacy_tool,
         execution_targets={"personal_expression"},
     )
     tools = ToolSet([tool])
@@ -1313,13 +1328,6 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
         )
     )
     agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
-    agent._run_persona_tool_loop = AsyncMock(
-        side_effect=InteractionExpressionError(
-            "tool_loop_error",
-            "side effect failed",
-            tool_execution_count=1,
-        )
-    )
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.resolve_interaction_chat_provider",
         AsyncMock(return_value=(primary, "primary")),
@@ -1329,25 +1337,23 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
         lambda *args: [fallback],
     )
 
-    result = await agent.generate_expression(
-        Event(),
-        SimpleNamespace(
-            get_provider_by_id=lambda _provider_id: primary,
-            get_config=lambda **_kwargs: {},
-        ),
-        InteractionAgentConfig(expression_provider_id="primary"),
-        PersonaExpressionRequest(allow_plugin_tools=True),
-    )
+    with pytest.raises(InteractionExpressionError):
+        await agent.generate_expression(
+            Event(),
+            SimpleNamespace(
+                get_provider_by_id=lambda _provider_id: primary,
+                get_config=lambda **_kwargs: {},
+            ),
+            InteractionAgentConfig(expression_provider_id="primary"),
+            PersonaExpressionRequest(allow_plugin_tools=True),
+        )
 
-    agent._run_persona_tool_loop.assert_awaited_once()
-    assert agent._prepare_render_result.await_count == 3
-    assert len(primary.calls) == 1
-    assert len(fallback.calls) == 1
-    assert result.spoken_reply == "工具暂时不可用。"
+    assert execution_count == 1
+    assert fallback.calls == []
 
 
 @pytest.mark.asyncio
-async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
+async def test_persona_request_hook_context_mutation_survives_business_tool_loop(
     monkeypatch,
 ):
     class Provider:
@@ -1362,6 +1368,14 @@ async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
 
         async def text_chat(self, **kwargs):
             self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="",
+                    tools_call_name=["legacy_tool"],
+                    tools_call_args=[{}],
+                    tools_call_ids=["call-legacy-tool"],
+                )
             return LLMResponse(
                 role="assistant",
                 completion_text="",
@@ -1376,6 +1390,8 @@ async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
 
         def __init__(self):
             self._extras = {}
+            self._result = None
+            self._force_stopped = False
 
         def get_extra(self, key, default=None):
             return self._extras.get(key, default)
@@ -1389,11 +1405,21 @@ async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
         def is_stopped(self):
             return False
 
+        def get_result(self):
+            return self._result
+
+        def clear_result(self):
+            self._result = None
+
+    async def legacy_tool(_event):
+        return "工具结果"
+
     provider = Provider()
     tool = FunctionTool(
         name="legacy_tool",
         description="Returns a fact.",
         parameters={"type": "object", "properties": {}},
+        handler=legacy_tool,
         execution_targets={"personal_expression"},
     )
     tools = ToolSet([tool])
@@ -1406,32 +1432,16 @@ async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
     )
     agent = InteractionExpressionAgent()
     agent._prepare_render_result = AsyncMock(
-        side_effect=[
-            RenderResult(
-                system_prompt="persona",
-                request_prompt="initial prompt",
-                messages=[{"role": "user", "content": "initial context"}],
-                output_contract=contract,
-                compiled_output_contract=compiled,
-                metadata={"persona_effect_specs": []},
-            ),
-            RenderResult(
-                system_prompt="persona",
-                request_prompt="tool material prompt",
-                messages=[{"role": "user", "content": "tool material"}],
-                output_contract=contract,
-                compiled_output_contract=compiled,
-                metadata={"persona_effect_specs": []},
-            ),
-        ]
-    )
-    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
-    agent._run_persona_tool_loop = AsyncMock(
-        return_value=(
-            LLMResponse(role="assistant", completion_text="工具结果"),
-            1,
+        return_value=RenderResult(
+            system_prompt="persona",
+            request_prompt="initial prompt",
+            messages=[{"role": "user", "content": "initial context"}],
+            output_contract=contract,
+            compiled_output_contract=compiled,
+            metadata={"persona_effect_specs": []},
         )
     )
+    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
 
     async def call_hook(_event, hook_type, *args, **_kwargs):
         if hook_type.name == "OnLLMRequestEvent":
@@ -1460,10 +1470,9 @@ async def test_persona_request_hook_keeps_tool_material_after_context_mutation(
         PersonaExpressionRequest(allow_plugin_tools=True),
     )
 
-    contexts = provider.calls[0]["contexts"]
-    assert provider.calls[0]["prompt"] == "tool material prompt"
-    assert {"role": "system", "content": "plugin context"} in contexts
-    assert {"role": "user", "content": "tool material"} in contexts
+    assert len(provider.calls) == 2
+    assert "plugin context" in _provider_context_text(provider.calls[1])
+    assert "工具结果" in _provider_context_text(provider.calls[1])
 
 
 @pytest.mark.asyncio
@@ -1567,8 +1576,9 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
     )
 
     assert result.spoken_reply == "由回退模型完成"
-    assert agent._prepare_render_result.await_count == 2
-    assert fallback.calls[0]["system_prompt"] == "persona\nplugin context"
+    fallback_context = _provider_context_text(fallback.calls[0])
+    assert "persona" in fallback_context
+    assert "plugin context" in fallback_context
     assert response_provider_ids == ["fallback"]
     assert hooks == [
         ("OnWaitingLLMRequestEvent", "personal_expression"),

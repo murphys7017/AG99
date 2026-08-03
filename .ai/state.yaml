@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: output_lifecycle_consolidation
-  scope: Consolidate response safety, legacy output hooks, visible completion, and postprocess scheduling behind lifecycle-owned services while preserving official Pipeline and marketplace plugin behavior. Remove hidden event-extra callbacks and duplicate RespondStage or InteractionOutputController implementations without redesigning streaming delivery.
+  phase: persona_tool_execution_unification
+  scope: Unify authorized Persona business tools and the terminal persona_expression contract in one shared ToolLoopAgentRunner while preserving plugin target configuration, official Pipeline behavior, group admission, history windows, timeout policy, and non-streaming output ownership.
 context:
   confidence: high
   assumptions:
@@ -73,15 +73,15 @@ context:
     - Execution Backend decoupling is deliberately last; current work first replaces transitional structures before execution preparation.
     - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
     - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
-    - Personal Runtime is the control layer; InteractionPersonaRuntime is the Personal Expression facade and owns the expression-scoped plugin tool loop, not the general Core executor.
+    - Personal Runtime is the control layer; InteractionPersonaRuntime is the Personal Expression facade and delegates expression-scoped plugin tool execution to the shared ToolLoopAgentRunner rather than owning a second tool loop.
     - Personal Runtime is a control layer and never a plugin mount target. Plugin placement is defined per contribution rather than by the legacy API that happens to invoke it.
     - Persona-facing prompt/context, relationship, entertainment, effect, and LLM lifecycle contributions default to Personal Expression. Executable FunctionTools independently default to Core; a tool declaration or user plugin_tool_targets override must explicitly opt a tool into Personal Expression.
-    - The normal Persona flow resolves only explicitly authorized Persona tools and enters its tool loop only when that inventory is non-empty. Core-result rewriting and runtime-observation expression never reopen tools. Final persona_expression remains the structured response protocol rather than an executable plugin tool.
+    - The normal Persona flow resolves only explicitly authorized Persona tools and always enters one shared Agent loop, even when the business-tool inventory is empty. Core-result rewriting and runtime-observation expression still expose no business tools. Final persona_expression remains a terminal structured-response protocol and is never executed as a plugin tool.
     - Persona request hooks receive the branch-local PromptApplyResult while the rendered ProviderRequest is bound, so canonical Prompt extensions are not reinjected by legacy request bridges and the marker cannot leak into a later Core branch.
     - PersonaEffect is not an executable Persona Tool. It extends the final persona_expression structured-output contract with validated declarative effect_calls; its protocol-level tool-call encoding exists only to enforce output shape. Effects run after expression through output handling, never enter the Persona ToolSet or tool loop, and are Persona-only.
     - Interaction model IDs are optional per-stage overrides. Empty expression, Router, and Planner IDs resolve to the event's currently selected official chat provider, while explicit IDs retain precedence.
     - Terminal plugin Handlers are Pipeline-level response owners, not Persona mounts. A keyword/command Handler that returns a terminal reply may stop the event and prevent Persona or Core from starting; its output can be delivered directly or explicitly persona-rewritten, but that delivery choice does not transfer reply ownership to Persona. A Handler that yields ProviderRequest retains the existing Core-delegation path.
-    - Legacy LLM lifecycle hooks are target-aware. Persona-targeted request hooks run once at the pre-tool preparation boundary and their non-contract mutations carry into final expression; Agent and response hooks run on final Persona Expression, while internal Persona Tool Loop calls expose only tool hooks. Core-targeted hooks retain their existing Core lifecycle.
+    - Legacy LLM lifecycle hooks are target-aware. One Persona run preserves Waiting, LLMRequest, AgentBegin, actual business-tool hooks, LLMResponse, and AgentDone in that order. Request hooks run once before the shared Agent loop, fallback retains the same public Agent context, and no separate internal tool-preflight lifecycle exists. Core-targeted hooks retain their existing Core lifecycle.
     - Official Pipeline handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible. Persona-facing legacy request hooks receive a branch-local ProviderRequest view, so they may modify Persona material without replacing shared Core event extras or its strict output contract. Mutation snapshots recursively clone plain containers but retain opaque ToolSet, plugin, Provider, Conversation, and other live runtime handles by reference.
     - This preparation phase does not create ExecutionBackend, Capability Gateway, remote protocols, or Subagent Service abstractions.
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
@@ -210,6 +210,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - "2026-08-03 Persona tool execution unification: 7 focused public-boundary tests passed for one-call Persona output, unused tools, one business-tool continuation, terminal non-execution, Hook compatibility, compiled output binding, and no fallback after tool execution. Duplicated provider-private tests, mixed edge-case tests, and assertions over private render counts or temporary object layout were removed; affected-file Ruff, py_compile, YAML parse, and git diff checks passed."
     - "2026-08-03 output lifecycle review remediation: ordinary Pipeline and Interaction now share one response-safety evaluator, selector replacement is bounded per config ID, and after-send stop propagation has observable coverage. 94 focused lifecycle, Interaction, content-safety, Prompt, delivery, expression, and Personal Runtime tests passed; affected Ruff, py_compile, cold imports, YAML parse, VitePress production build, and git diff checks passed. A separate 98-test selection including the full Core lifecycle suite had 97 pass and one pre-existing test fixture failure because a MagicMock asyncio.Task belongs to a different event loop; core stop code is outside this diff."
     - "2026-08-03 output lifecycle consolidation: 169 focused output, Interaction, Personal Runtime, content-safety, plugin-compatibility, event, and lifecycle tests passed. Cold imports, affected Ruff and py_compile, YAML parse, VitePress production build, and git diff checks passed."
     - "2026-08-03 post-review root remediation: cold Prompt/API/DeepSeek imports passed; 104 provider/media/memory/group tests, 5 Router-candidate tests, 47 Persona/plugin-expression tests, 17 Prompt projection tests, and 82 Prompt collector tests passed. Affected Ruff, compileall, YAML parse, and git diff checks passed."
@@ -376,23 +377,23 @@ verification:
     - The expanded log-review test run retained the existing background Metric/aiosqlite event-loop-close thread warning; the new direct-reply acceptance case passes alone without that warning.
     - Expanded Prompt renderer collection remains blocked by an existing stale test import: tests/unit/test_prompt_tree_renderer.py imports COMPUTER_USE_DISABLED_SKILLS_PROMPT from astrbot.core.astr_main_agent_resources after that symbol moved to prompt resources; the other 117 relevant tests passed.
     - Expanded Core tool-path collection including tests/unit/test_prompt_context_collect.py remains blocked by an existing stale import of CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT from astrbot.core.astr_main_agent_resources; the remaining 83 Core tool execution, manager, loop, and conflict-resolution tests passed.
-  validation_gap: "Batch-owned material freshness is deterministic within one process, while the final delivered-expression fingerprint persists by RuntimeKey. Sensor payload fingerprints and batch revisions are intentionally process-local, so a restarted Runtime may treat a later Sensor report as fresh; persisted cooldown and daily limits remain enforced. Conditional Router continuation timing, zero-output silent behavior, and fail-closed errors are acceptance-tested, while real-group semantic classification quality still requires operator observation. Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain operator-configured capabilities rather than general defaults. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and broader policy-quality data remain absent. Targeted Pyright remains unavailable."
+  validation_gap: "Batch-owned material freshness is deterministic within one process, while the final delivered-expression fingerprint persists by RuntimeKey. Sensor payload fingerprints and batch revisions are intentionally process-local, so a restarted Runtime may treat a later Sensor report as fresh; persisted cooldown and daily limits remain enforced. Conditional Router continuation timing, zero-output silent behavior, and fail-closed errors are acceptance-tested, while real-group semantic classification quality still requires operator observation. Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain operator-configured capabilities rather than general defaults. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and broader policy-quality data remain absent. Phase 1 Persona tool execution still requires a real private-chat 815049548 log smoke to confirm one Persona provider call and warm-path latency. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: output_lifecycle_consolidation
+    phase: persona_tool_execution_unification
     scope:
-      - one shared PreOutputProcessor response-safety evaluator for ordinary Pipeline and Interaction output
-      - bounded per-config replacement of cached response-safety selectors
-      - shared PreOutputProcessor ownership of legacy decorating hooks
-      - shared TurnDeliveryCoordinator ownership of after-send hooks, visible completion, and postprocess scheduling
-      - removal of the interaction pipeline pre-output callback stored in event.extra
-      - RespondStage retained as a compatibility delivery adapter rather than a second lifecycle implementation
-      - observable lifecycle regression coverage, including after-send stop propagation
+      - one shared ToolLoopAgentRunner for authorized Persona business tools and terminal persona_expression
+      - removal of the separate Persona tool-preflight model request and no_tool material rerendering
+      - protocol-level terminal tool handling outside FunctionToolExecutor
+      - OpenAI and Anthropic merging of executable tools with output-contract tools
+      - one Persona request-hook and public Agent lifecycle per run
+      - fallback suppression after business-tool execution and stable Agent context identity across zero-side-effect fallback
     non_goals:
       - streaming delivery redesign or expanded streaming support
-      - marketplace plugin source migration or public hook signature changes
-      - Persona and Core Agent lifecycle unification, media-boundary consolidation, or broad event-extra removal
+      - plugin runtime/tool target policy or default changes
+      - group admission, Router mode, history-window, timeout, retry, or queue-policy changes
+      - full Persona/Core lifecycle executor unification, capability snapshot migration, media-boundary consolidation, or broad event-extra removal
     confirmed_gaps:
       - a backend-neutral progress, cancellation, and background-execution permission contract remains absent
       - no built-in additional Runtime Sensor or per-Sensor schema exists yet

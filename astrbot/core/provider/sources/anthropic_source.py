@@ -20,6 +20,7 @@ from astrbot.core.provider.func_tool_manager import ToolSet
 from astrbot.core.provider.output_contract_tools import (
     build_single_tool_set_from_compiled_contract,
     build_single_tool_set_from_contract,
+    merge_output_contract_tool_set,
 )
 from astrbot.core.utils.image_materializer import (
     ImageMaterializationError,
@@ -51,10 +52,13 @@ class ProviderAnthropic(Provider):
         tool_choice: Literal["auto", "any", "tool", "none", "required"] | dict[str, str],
     ) -> tuple[ToolSet | None, Literal["auto", "any", "tool", "none", "required"] | dict[str, str]]:
         if isinstance(compiled_output_contract, CompiledOutputContract):
-            func_tool = build_single_tool_set_from_compiled_contract(
-                compiled_output_contract,
-                description="Return structured output.",
-            ) or func_tool
+            func_tool = merge_output_contract_tool_set(
+                func_tool,
+                build_single_tool_set_from_compiled_contract(
+                    compiled_output_contract,
+                    description="Return structured output.",
+                ),
+            )
             if compiled_output_contract.strategy == "protocol_tool_call":
                 tool_choice = "required"
             return func_tool, tool_choice
@@ -71,10 +75,13 @@ class ProviderAnthropic(Provider):
                 allow_text_fallback=output_contract.allow_text_fallback,
             )
         if normalized_contract.mode == "tool_call":
-            func_tool = build_single_tool_set_from_contract(
-                normalized_contract,
-                description="Return structured output.",
-            ) or func_tool
+            func_tool = merge_output_contract_tool_set(
+                func_tool,
+                build_single_tool_set_from_contract(
+                    normalized_contract,
+                    description="Return structured output.",
+                ),
+            )
             if normalized_contract.strict:
                 tool_choice = "required"
         return func_tool, tool_choice

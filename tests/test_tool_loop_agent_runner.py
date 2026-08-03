@@ -1485,6 +1485,42 @@ async def test_tool_loop_passes_compiled_output_contract_to_provider():
 
 
 @pytest.mark.asyncio
+async def test_terminal_tool_finishes_without_executing_it():
+    class TerminalProvider(MockProvider):
+        async def text_chat(self, **_kwargs) -> LLMResponse:
+            return LLMResponse(
+                role="assistant",
+                completion_text="",
+                tools_call_name=["persona_expression"],
+                tools_call_args=[{"spoken_reply": "done", "effect_calls": []}],
+                tools_call_ids=["call-terminal"],
+            )
+
+    class RejectingExecutor:
+        @classmethod
+        def execute(cls, *_args, **_kwargs):
+            raise AssertionError("terminal tools must not enter the executor")
+
+    provider = TerminalProvider()
+    runner = ToolLoopAgentRunner()
+    hooks = MockHooks()
+    await runner.reset(
+        provider=provider,
+        request=ProviderRequest(prompt="run", contexts=[]),
+        run_context=ContextWrapper(context=None),
+        tool_executor=cast(Any, RejectingExecutor()),
+        agent_hooks=hooks,
+        terminal_tool_names={"persona_expression"},
+    )
+
+    async for _ in runner.step_until_done(2):
+        pass
+
+    assert runner.done()
+    assert runner.get_final_llm_resp().tools_call_name == ["persona_expression"]
+
+
+@pytest.mark.asyncio
 async def test_follow_up_accepted_when_active_and_not_stopping(
     runner, mock_provider, provider_request, mock_tool_executor, mock_hooks
 ):

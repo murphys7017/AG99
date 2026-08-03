@@ -50,6 +50,25 @@ def build_single_tool_set_from_compiled_contract(
     return tool_set
 
 
+def merge_output_contract_tool_set(
+    func_tool: ToolSet | None,
+    contract_tool_set: ToolSet | None,
+) -> ToolSet | None:
+    """Combine executable tools with a protocol-level output tool.
+
+    The returned ToolSet is detached from the executable inventory. A name
+    collision is resolved in favor of the output contract so a plugin cannot
+    replace a terminal protocol schema with an executable handler.
+    """
+    if contract_tool_set is None or contract_tool_set.empty():
+        return func_tool
+
+    merged = ToolSet(list(func_tool.tools) if func_tool is not None else [])
+    for tool in contract_tool_set:
+        merged.add_tool(tool)
+    return merged
+
+
 def _build_tool_parameters_from_contract(contract: OutputContract) -> dict[str, Any]:
     schema = contract.schema if isinstance(contract.schema, dict) else None
     return _normalize_tool_schema(schema)
@@ -73,4 +92,5 @@ def _normalize_tool_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
 __all__ = [
     "build_single_tool_set_from_compiled_contract",
     "build_single_tool_set_from_contract",
+    "merge_output_contract_tool_set",
 ]

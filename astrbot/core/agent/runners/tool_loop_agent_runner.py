@@ -179,10 +179,6 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
 
     async def _complete_with_assistant_response(self, llm_resp: LLMResponse) -> None:
         """Finalize the current step as a plain assistant response with no tool calls."""
-        self.final_llm_resp = llm_resp
-        self._transition_state(AgentState.DONE)
-        self.stats.end_time = time.time()
-
         parts = []
         if llm_resp.reasoning_content is not None or llm_resp.reasoning_signature:
             parts.append(
@@ -196,6 +192,32 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         if len(parts) == 0:
             logger.warning("LLM returned empty assistant message with no tool calls.")
         self.run_context.messages.append(Message(role="assistant", content=parts))
+
+        await self._finish_run(llm_resp)
+
+    async def _complete_with_terminal_tool_response(
+        self,
+        llm_resp: LLMResponse,
+    ) -> None:
+        """Finalize without executing a protocol-level terminal tool call."""
+        non_terminal_tools = [
+            name
+            for name in llm_resp.tools_call_name
+            if name not in self.terminal_tool_names
+        ]
+        if non_terminal_tools:
+            logger.warning(
+                "LLM returned terminal and executable tools together; "
+                "finishing without executing side effects: terminal=%s ignored=%s",
+                sorted(self.terminal_tool_names),
+                non_terminal_tools,
+            )
+        await self._finish_run(llm_resp)
+
+    async def _finish_run(self, llm_resp: LLMResponse) -> None:
+        self.final_llm_resp = llm_resp
+        self._transition_state(AgentState.DONE)
+        self.stats.end_time = time.time()
 
         try:
             await self.agent_hooks.on_agent_done(self.run_context, llm_resp)
@@ -229,6 +251,8 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         fallback_providers: list[Provider] | None = None,
         tool_result_overflow_dir: str | None = None,
         read_tool: FunctionTool | None = None,
+        terminal_tool_names: set[str] | frozenset[str] | None = None,
+        provider_kwargs: dict[str, T.Any] | None = None,
         **kwargs: T.Any,
     ) -> None:
         self.req = request
@@ -243,6 +267,12 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         self.custom_compressor = custom_compressor
         self.tool_result_overflow_dir = tool_result_overflow_dir
         self.read_tool = read_tool
+        self.terminal_tool_names = frozenset(
+            str(name).strip()
+            for name in terminal_tool_names or ()
+            if str(name).strip()
+        )
+        self.provider_kwargs = dict(provider_kwargs or {})
         self._tool_result_token_counter = EstimateTokenCounter()
         # we will do compress when:
         # 1. before requesting LLM
@@ -464,6 +494,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
     ) -> T.AsyncGenerator[LLMResponse, None]:
         """Yields chunks *and* a final LLMResponse."""
         payload = {
+            **self.provider_kwargs,
             "contexts": self._sanitize_contexts_for_provider(self.run_context.messages),
             "func_tool": self._func_tool_for_provider(),
             "session_id": self.req.session_id,
@@ -794,7 +825,12 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             )
             return
 
-        if not llm_resp.tools_call_name:
+        has_terminal_tool_call = any(
+            name in self.terminal_tool_names for name in llm_resp.tools_call_name
+        )
+        if has_terminal_tool_call:
+            await self._complete_with_terminal_tool_response(llm_resp)
+        elif not llm_resp.tools_call_name:
             await self._complete_with_assistant_response(llm_resp)
 
         # 返回 LLM 结果
@@ -821,7 +857,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             )
 
         # 如果有工具调用，还需处理工具调用
-        if llm_resp.tools_call_name:
+        if llm_resp.tools_call_name and not has_terminal_tool_call:
             if self.tool_schema_mode == "skills_like":
                 requery_resp, _ = await self._resolve_tool_exec(llm_resp)
                 if not requery_resp.tools_call_name:
