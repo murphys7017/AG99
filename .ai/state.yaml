@@ -360,6 +360,7 @@ verification:
     - "Core-default plugin tool targeting: plugin LLM lifecycle targets remain Persona-first while executable tools resolve independently through user override, tool declaration, then Core default; 39 Persona/plugin-runtime and 83 Core tool-path tests passed, including request-hook injection filtering. Affected Ruff, py_compile, YAML/default-config parse, git diff check, and VitePress production build passed."
     - "Plugin target WebUI: the Interaction configuration page now uses a dedicated lifecycle/tool target map editor with installed-plugin and plugin-tool suggestions, manual compatibility keys, duplicate/target validation, and complete zh-CN/en-US/ru-RU metadata; focused config metadata tests, dashboard typecheck/production build, JSON parse, Ruff, py_compile, and diff checks passed."
     - "Plugin-submitted group reply admission: the public candidate API, Handler-settlement Router gate, silent fail-closed path, plugin-specific Router guidance, and 50-turn Persona default passed 56 focused Interaction/Runtime/config tests; AngelHeart capability fallback and 42 plugin tests passed, with affected Ruff, API import, compile/structure, JSON/YAML, VitePress build, and diff checks passing."
+    - "Personal turn ContextVar lifecycle: cross-Task ProcessStage closure and scheduler-owned downstream plugin scope passed 54 Personal Runtime, group-reply, plugin-runtime, and smoke tests; affected Ruff, py_compile, and diff checks passed."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -415,6 +416,8 @@ runtime:
       - structured group-context records preserved across every Prompt target projection and renderer boundary
       - provider-boundary image materialization restricted to data URLs, verified public HTTP(S), and AstrBot temporary media; DNS answers are pinned for each untrusted download
       - ordered group-image placeholders with bounded caption materialization and provider work
+      - ProcessStage active-turn activation is scoped to generator advancement and close, never across an outward async-generator yield
+      - PipelineScheduler deterministically closes stage generators and reactivates the bound Personal turn while downstream plugin hooks execute
     non_goals:
       - built-in additional Runtime Sensors, per-Sensor schemas, and explicit background-execution permissions
       - EventBus, normal input Pipeline, Router, plugin Handler, or direct ToolSet execution from Policy

@@ -450,6 +450,7 @@ class PersonalTurnLease:
                 finally:
                     self.runtime.active_turn_id = None
                     self.runtime.active_actor_id = None
+                    self.runtime._active_turn_context = None
                     self.runtime.touch()
                     self.reservation.transition(PendingTurnState.SETTLED)
                     self.runtime.turn_lock.release()
@@ -471,6 +472,7 @@ class PersonalSessionRuntime:
         self.turn_lock = asyncio.Lock()
         self.active_turn_id: str | None = None
         self.active_actor_id: str | None = None
+        self._active_turn_context: PersonalTurnContext | None = None
         self.conversation_actor_id: str | None = None
         self.conversation_reply_completed_at: float | None = None
         self.bound_turn_count = 0
@@ -1205,6 +1207,7 @@ class PersonalSessionRuntime:
             if turn.actor is not None
             else None
         )
+        self._active_turn_context = turn
         user_activity_at = (
             None
             if is_group_reply_candidate(event)
@@ -1643,6 +1646,16 @@ class PersonalRuntimeManager:
             yield
         finally:
             _ACTIVE_PERSONAL_TURN.reset(token)
+
+    @contextmanager
+    def activate_event_turn(self, event: Any):
+        runtime = self._event_sessions.get(event)
+        turn = runtime._active_turn_context if runtime is not None else None
+        if turn is None or turn.state.execution_scope.closed:
+            yield
+            return
+        with self.activate_turn(turn):
+            yield
 
     def _reserve(
         self,

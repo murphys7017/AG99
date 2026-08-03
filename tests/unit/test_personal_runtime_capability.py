@@ -64,6 +64,7 @@ from astrbot.core.interaction.types import (
 from astrbot.core.message.components import Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.process_stage.stage import ProcessStage
+from astrbot.core.pipeline.scheduler import PipelineScheduler
 from astrbot.core.pipeline.waking_check.stage import WakingCheckStage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
@@ -1722,3 +1723,141 @@ async def test_process_stage_direct_reply_starts_runtime_cooldown():
     assert runtime.state.daily_proactive_outputs == 0
     assert runtime.state.material_revision == 0
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_process_stage_can_close_from_another_task():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(metadata)
+    event.is_at_or_wake_command = True
+    event.set_extra("activated_handlers", [])
+    runtime_config = {
+        "provider_settings": {"enable": True},
+        "interaction_middleware": {"enabled": True},
+    }
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    middleware.handle_pipeline_event = AsyncMock()
+    agent_closed = asyncio.Event()
+
+    class YieldingAgent:
+        async def process(self, _event):
+            try:
+                yield
+            finally:
+                agent_closed.set()
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=context)
+    process.personal_runtime_manager = manager
+    process.agent_sub_stage = YieldingAgent()
+    process.star_request_sub_stage = SimpleNamespace()
+    generator = process.process(event)
+
+    try:
+        await anext(generator)
+        assert manager.snapshot_diagnostics().sessions[0].active_turn_id is not None
+
+        await asyncio.create_task(generator.aclose())
+
+        assert agent_closed.is_set()
+        assert manager.snapshot_diagnostics().sessions[0].active_turn_id is None
+    finally:
+        await generator.aclose()
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_scheduler_preserves_active_turn_for_downstream_stages():
+    metadata = _metadata(support_personal_runtime=True)
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(metadata)
+    event.is_at_or_wake_command = True
+    event.set_extra("activated_handlers", [])
+    runtime_config = {
+        "provider_settings": {"enable": True},
+        "interaction_middleware": {"enabled": True},
+    }
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    middleware.handle_pipeline_event = AsyncMock()
+    middleware.handle_active_turn_output = AsyncMock()
+    session = MessageSession("demo", MessageType.FRIEND_MESSAGE, "target")
+    message = MessageChain([Plain("downstream")])
+
+    async def dispatcher(target, chain, finalize):
+        return await manager.dispatch_proactive_message(
+            context=context,
+            middleware=middleware,
+            config_id="default",
+            runtime_config=runtime_config,
+            session=target,
+            message=chain,
+            finalize=finalize,
+        )
+
+    context.set_proactive_message_dispatcher(dispatcher)
+    agent_closed = asyncio.Event()
+
+    class YieldingAgent:
+        async def process(self, _event):
+            try:
+                yield
+            finally:
+                agent_closed.set()
+
+    class DownstreamStage:
+        def __init__(self):
+            self.called = False
+
+        async def process(self, _event):
+            if self.called:
+                return
+            self.called = True
+            assert await context.send_message(session, message)
+            _event.stop_event()
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=context)
+    process.personal_runtime_manager = manager
+    process.agent_sub_stage = YieldingAgent()
+    process.star_request_sub_stage = SimpleNamespace()
+    scheduler = PipelineScheduler.__new__(PipelineScheduler)
+    scheduler.ctx = SimpleNamespace(personal_runtime_manager=manager)
+    scheduler.stages = [process, DownstreamStage()]
+
+    try:
+        await asyncio.wait_for(scheduler._process_stages(event), timeout=2)
+
+        middleware.handle_active_turn_output.assert_awaited_once()
+        call = middleware.handle_active_turn_output.await_args
+        assert call.args[0].event is event
+        assert call.args[1] is message
+        assert call.kwargs == {"finalize": True}
+        assert agent_closed.is_set()
+        assert platform.sent == []
+        assert manager.snapshot_diagnostics().sessions[0].active_turn_id is None
+    finally:
+        await manager.shutdown()
