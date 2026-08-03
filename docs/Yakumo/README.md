@@ -87,6 +87,7 @@ Collector 负责收集事实，Projection 决定 Router、Planner、Personal Pol
 - `target-state.md`
 - `dev/persona-system-final-goal.md`
 - `dev/autonomous-persona-runtime-initial-plan.md`
+- `dev/runtime-function-unification-plan.md`
 - `dev/execution-backend-preparation-plan.md`
 - `prompt-development-plan.md`
 - `dev/cost-context-runtime-plan.md`
@@ -108,7 +109,8 @@ Memory 子系统：
 7. `dev/runtime-dependency-structure.mmd`
 8. `target-state.md`
 9. `dev/autonomous-persona-runtime-initial-plan.md`
-10. `dev/execution-backend-preparation-plan.md`
+10. `dev/runtime-function-unification-plan.md`
+11. `dev/execution-backend-preparation-plan.md`
 
 ## 维护规则
 
