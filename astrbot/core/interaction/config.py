@@ -38,6 +38,13 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     )
     return InteractionAgentConfig(
         enabled=bool(interaction_config.get("enabled", True)),
+        turn_timeout=max(
+            1.0,
+            _float_or_default(
+                interaction_config.get("turn_timeout", 120.0),
+                120.0,
+            ),
+        ),
         expression_provider_id=expression_provider_id,
         expression_temperature=_float_or_default(
             interaction_config.get("expression_temperature", 0.6),

@@ -32,6 +32,7 @@ from astrbot.core.agent_lifecycle import (
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.memory.history_source import extract_message_text
 from astrbot.core.message.components import Plain
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
@@ -72,7 +73,11 @@ from .prompt_support import (
     build_interaction_prompt_build_config,
 )
 from .provider_resolution import resolve_interaction_chat_provider
-from .turn_state import get_interaction_turn_state, set_interaction_turn_persona_id
+from .turn_state import (
+    get_interaction_turn_deadline,
+    get_interaction_turn_state,
+    set_interaction_turn_persona_id,
+)
 from .types import InteractionAgentConfig
 
 
@@ -467,6 +472,37 @@ class InteractionExpressionAgent:
             )
 
     async def _generate_expression_with_attachments(
+        self,
+        event,
+        plugin_context: Context,
+        interaction_config: InteractionAgentConfig,
+        req: PersonaExpressionRequest,
+        attachment_capture: PersonaToolOutputAttachments,
+    ) -> PersonaExpressionResult:
+        deadline = get_interaction_turn_deadline(event)
+        try:
+            timeout_context = (
+                deadline.enforce(
+                    "persona_expression",
+                    interaction_config.expression_timeout,
+                )
+                if deadline is not None
+                else asyncio.timeout(interaction_config.expression_timeout)
+            )
+            async with timeout_context:
+                return await self._generate_expression_with_provider_candidates(
+                    event,
+                    plugin_context,
+                    interaction_config,
+                    req,
+                    attachment_capture,
+                )
+        except TurnDeadlineExceeded:
+            raise
+        except TimeoutError:
+            raise InteractionExpressionError("timeout") from None
+
+    async def _generate_expression_with_provider_candidates(
         self,
         event,
         plugin_context: Context,
@@ -930,11 +966,13 @@ class InteractionExpressionAgent:
             provider_kwargs={
                 "temperature": interaction_config.expression_temperature,
             },
+            deadline=get_interaction_turn_deadline(event),
         )
         try:
-            async with asyncio.timeout(interaction_config.expression_timeout):
-                async for _ in runner.step_until_done(8):
-                    pass
+            async for _ in runner.step_until_done(8):
+                pass
+        except TurnDeadlineExceeded:
+            raise
         except TimeoutError:
             raise InteractionExpressionError(
                 "timeout",

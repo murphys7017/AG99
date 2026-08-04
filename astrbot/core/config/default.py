@@ -213,6 +213,7 @@ DEFAULT_CONFIG = {
     },
     "interaction_middleware": {
         "enabled": True,
+        "turn_timeout": 120.0,
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
@@ -4391,6 +4392,11 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.enabled": {
                         "description": "启用交互中间件",
                         "type": "bool",
+                    },
+                    "interaction_middleware.turn_timeout": {
+                        "description": "单轮总超时秒数",
+                        "type": "float",
+                        "hint": "从进入 Personal Runtime 排队开始计时，Router、Planner、Persona、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
                     },
                     "interaction_middleware.plugin_runtime_targets": {
                         "description": "插件对话钩子生效链路",

@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from astrbot.core.deadline import TurnDeadlineBudget
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import ProviderRequest
 
+from .config import load_interaction_agent_config
 from .observation import RuntimeObservation
 from .runtime_event import RuntimeObservationEvent
 from .turn_state import InteractionTurnState, ensure_interaction_turn_state
@@ -98,6 +100,10 @@ class PlatformTurnContextFactory:
             event,
             turn_id=existing_turn_id or uuid.uuid4().hex,
         )
+        if state.deadline is None:
+            state.deadline = TurnDeadlineBudget.start(
+                load_interaction_agent_config(runtime_config).turn_timeout
+            )
         session_data = TurnSession(
             platform_id=event.get_platform_id(),
             platform_name=event.get_platform_name(),

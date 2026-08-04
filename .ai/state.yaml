@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: provider_request_lifecycle_unification
-  scope: Unify Persona, Native Core, and third-party Agent plugin lifecycle ownership around one final ProviderRequest; freeze post-Hook capabilities without copying live handlers; preserve existing plugin target and fallback side-effect semantics.
+  phase: turn_deadline_unification
+  scope: Give each Personal Runtime turn one monotonic execution deadline spanning runtime binding, session queueing, Router, Planner, Persona, Core, Provider recovery and fallback, tools, and observation handling, followed by cancellation cleanup and existing Output Controller failure delivery without changing plugin target policy.
 context:
   confidence: high
   assumptions:
@@ -81,6 +81,12 @@ context:
     - Persona, Native Core, and third-party Agent execution share AgentRequestLifecycle as the production Hook owner; astr_agent_hooks.py remains compatibility-only and is not referenced by the production Main Agent.
     - A Persona fallback retains the same post-Hook ProviderRequest and public Agent context, changes only the Provider binding and executable ToolSet binding, rejects an incompatible strict terminal contract, and never replays Hook or completed business-tool side effects.
     - Core OnLLMRequest mutations are deterministically reauthorized into one effective CapabilitySnapshot that is written back to ProviderRequest, MainAgentBuildResult, CoreExecutionSpec, capability schema, and diagnostics.
+    - One TurnDeadlineBudget starts at Personal Runtime reservation and is the sole timeout allocation owner for runtime binding, follow-up admission, session queueing, Router, Planner, Persona, Core, Provider calls and fallback, tool execution, Runtime Observation, and completion feedback.
+    - Configured Router, Planner, and Persona limits can only shorten their stage; turn_limited is decided when a stage budget is allocated so scheduler precision cannot misclassify total-deadline expiry.
+    - OpenAI-compatible SDK retries are disabled; the adapter retries only after classified state-changing recovery, allows one transient network retry, and never retries a stream after output has started.
+    - Required protocol tools are never removed by OpenAI-compatible recovery. An unsupported required tool call fails outward so the existing Provider fallback can preserve the request contract.
+    - A follow-up that remains unresolved when its new turn admission expires is withdrawn from the old Agent before timeout delivery, preventing delayed double consumption.
+    - Deadline cancellation awaits turn-owned tasks and pending tool-result tasks before releasing the session lock. Failure delivery reuses InteractionOutputController and never starts another model request.
     - PersonaEffect is not an executable Persona Tool. It extends the final persona_expression structured-output contract with validated declarative effect_calls; its protocol-level tool-call encoding exists only to enforce output shape. Effects run after expression through output handling, never enter the Persona ToolSet or tool loop, and are Persona-only.
     - Interaction model IDs are optional per-stage overrides. Empty expression, Router, and Planner IDs resolve to the event's currently selected official chat provider, while explicit IDs retain precedence.
     - Terminal plugin Handlers are Pipeline-level response owners, not Persona mounts. A keyword/command Handler that returns a terminal reply may stop the event and prevent Persona or Core from starting; its output can be delivered directly or explicitly persona-rewritten, but that delivery choice does not transfer reply ownership to Persona. A Handler that yields ProviderRequest retains the existing Core-delegation path.
@@ -151,6 +157,7 @@ context:
 architecture:
   stability: review_required
   boundary_changes:
+    - TurnDeadlineBudget is the canonical per-turn timing boundary. ProcessStage owns platform-turn enforcement and timeout failure delivery, PersonalRuntime owns binding/queue/lease cleanup, and ToolLoopAgentRunner owns deadline-bound Provider and tool cancellation.
     - Voice Service is the sole owner of TTS request IDs and generation terminal states; ordinary Pipeline and Interaction only project the returned state onto output components.
     - Message components carry non-serialized delivery metadata through the existing message-chain splitter, and every physical send receives one metadata mapping through send_message_with_extras.
     - Interaction Turn State allocates logical output-segment IDs independently from physical visible-message IDs; TTS dual output and segmented delivery preserve the logical ID without a positional ID queue.
@@ -213,6 +220,9 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - "2026-08-04 Phase 5 commit review remediation: deadline scopes now distinguish their own cancellation from provider/plugin TimeoutError, unresolved follow-ups are withdrawn from the old Agent on admission failure, and required protocol tools cannot be removed by OpenAI-compatible recovery. OpenAI Provider 63 tests and follow-up 9 tests passed; affected Ruff, py_compile, git diff checks, deadline classification, and follow-up withdrawal smoke passed."
+    - "2026-08-04 Phase 3/4 closure review: post-OnLLMRequest Core capability binding is centralized for Native and third-party runners, Native Agent context processing reuses the projected Core history limit including the 64-turn fallback, and ToolLoopAgentRunner resolves its file-read overflow helper from the final post-Hook request instead of a cached pre-Hook handler. Focused Persona/plugin/Prompt/ToolRunner suites passed 170 tests; affected Ruff, py_compile, and git diff checks passed. Real Provider quality, token, and latency logs remain operator validation."
+    - "2026-08-04 turn deadline unification: OpenAI Provider, shared Tool Runner, Router, Planner, Persona, Output Lifecycle, plugin runtime, and Personal Runtime suites passed 196 tests; affected Ruff and py_compile passed; monotonic total-deadline cancellation and configured stage-timeout classification smoke passed. Final-output cancellation releases its reservation, queue cancellation cannot leak the session lock, and deadline diagnostics are emitted from the common submission-settle boundary. Initial OpenAI run had 9 environment-only tmp_path permission errors and passed fully after using a workspace temp directory. Real Provider long-turn and same-session queue latency remain pending runtime-log validation."
     - "2026-08-03 Persona tool execution unification: 7 focused public-boundary tests passed for one-call Persona output, unused tools, one business-tool continuation, terminal non-execution, Hook compatibility, compiled output binding, and no fallback after tool execution. Duplicated provider-private tests, mixed edge-case tests, and assertions over private render counts or temporary object layout were removed; affected-file Ruff, py_compile, YAML parse, and git diff checks passed."
     - "2026-08-03 output lifecycle review remediation: ordinary Pipeline and Interaction now share one response-safety evaluator, selector replacement is bounded per config ID, and after-send stop propagation has observable coverage. 94 focused lifecycle, Interaction, content-safety, Prompt, delivery, expression, and Personal Runtime tests passed; affected Ruff, py_compile, cold imports, YAML parse, VitePress production build, and git diff checks passed. A separate 98-test selection including the full Core lifecycle suite had 97 pass and one pre-existing test fixture failure because a MagicMock asyncio.Task belongs to a different event loop; core stop code is outside this diff."
     - "2026-08-03 output lifecycle consolidation: 169 focused output, Interaction, Personal Runtime, content-safety, plugin-compatibility, event, and lifecycle tests passed. Cold imports, affected Ruff and py_compile, YAML parse, VitePress production build, and git diff checks passed."
@@ -383,30 +393,31 @@ verification:
     - The expanded log-review test run retained the existing background Metric/aiosqlite event-loop-close thread warning; the new direct-reply acceptance case passes alone without that warning.
     - Expanded Prompt renderer collection remains blocked by an existing stale test import: tests/unit/test_prompt_tree_renderer.py imports COMPUTER_USE_DISABLED_SKILLS_PROMPT from astrbot.core.astr_main_agent_resources after that symbol moved to prompt resources; the other 117 relevant tests passed.
     - Expanded Core tool-path collection including tests/unit/test_prompt_context_collect.py remains blocked by an existing stale import of CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT from astrbot.core.astr_main_agent_resources; the remaining 83 Core tool execution, manager, loop, and conflict-resolution tests passed.
+    - Phase 5 VitePress validation could not start in the managed Windows sandbox because the docs resolver was denied while reading parent directories for docs/.vitepress/config.mjs; source validation, YAML parsing, Ruff, py_compile, and focused tests remain available.
   validation_gap: "Batch-owned material freshness is deterministic within one process, while the final delivered-expression fingerprint persists by RuntimeKey. Sensor payload fingerprints and batch revisions are intentionally process-local, so a restarted Runtime may treat a later Sensor report as fresh; persisted cooldown and daily limits remain enforced. Conditional Router continuation timing, zero-output silent behavior, and fail-closed errors are acceptance-tested, while real-group semantic classification quality still requires operator observation. Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain operator-configured capabilities rather than general defaults. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and broader policy-quality data remain absent. Phase 1 Persona tool execution still requires a real private-chat 815049548 log smoke to confirm one Persona provider call and warm-path latency. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: provider_request_lifecycle_unification
+    phase: turn_deadline_unification
     scope:
-      - one AgentRequestLifecycle owner for Persona, Native Core, and third-party Runner plugin Hooks
-      - one post-Hook effective CapabilitySnapshot across request, build result, CoreExecutionSpec, and diagnostics
-      - one frozen Persona ProviderRequest across fallback attempts without Hook or tool-side-effect replay
-      - stable lifecycle IDs for runtime trace correlation
+      - one monotonic TurnDeadlineBudget from reservation through queue and execution
+      - remaining-budget enforcement across Router, Planner, Persona, Core, Provider fallback, and tools
+      - classified OpenAI-compatible recovery without SDK or deterministic blind retries
+      - cancellation-safe tool tasks, final-output reservations, and session-lock handoff
+      - one deadline diagnostic snapshot at the submission settle boundary
     non_goals:
       - streaming delivery redesign or expanded streaming support
-      - timeout, retry, fallback, or queue-policy changes from Phase 5
+      - group admission or reply-frequency policy changes from Phase 6
       - capability target-policy changes or Prompt-layer tool-schema dropping
       - media-boundary consolidation or broad event-extra removal
     confirmed_gaps:
+      - real Provider long-turn and same-session queue logs must confirm wall-clock behavior under local models and plugins
+      - third-party plugin tools must cooperate with Python task cancellation; the runtime cannot forcibly stop external side effects
+      - unconsumed third-party streaming remains intentionally lower priority and lacks full deadline diagnostics
       - a backend-neutral progress, cancellation, and background-execution permission contract remains absent
-      - no built-in additional Runtime Sensor or per-Sensor schema exists yet
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract
-      - real private and group replay must confirm that the 64-turn Core fallback preserves task evidence while reducing prompt latency
-      - real private-chat replay must confirm one lifecycle ID per branch, no duplicate Hook calls, and acceptable Qwen-to-MiniMax frozen-request fallback quality
-      - an unconsumed third-party streaming response may still close before the Runner emits its completion Hook; streaming remains intentionally lower priority
       - proactive media-only output still uses the raw platform sink because it has no canonical semantic material
       - PersonalTurnContext exists but the main Interaction path still coordinates through 117 literal event-extra keys
     dependency_review:

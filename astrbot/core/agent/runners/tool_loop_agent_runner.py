@@ -29,6 +29,10 @@ from astrbot import logger
 from astrbot.core.agent.message import ImageURLPart, TextPart, ThinkPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.agent.tool_image_cache import tool_image_cache
+from astrbot.core.deadline import (
+    TurnDeadlineBudget,
+    TurnDeadlineExceeded,
+)
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import (
@@ -253,6 +257,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         read_tool: FunctionTool | None = None,
         terminal_tool_names: set[str] | frozenset[str] | None = None,
         provider_kwargs: dict[str, T.Any] | None = None,
+        deadline: TurnDeadlineBudget | None = None,
         **kwargs: T.Any,
     ) -> None:
         self.req = request
@@ -265,14 +270,19 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         self.truncate_turns = truncate_turns
         self.custom_token_counter = custom_token_counter
         self.custom_compressor = custom_compressor
-        self.tool_result_overflow_dir = tool_result_overflow_dir
+        if read_tool is None and request.func_tool is not None:
+            read_tool = request.func_tool.get_tool("astrbot_file_read_tool")
         self.read_tool = read_tool
+        self.tool_result_overflow_dir = (
+            tool_result_overflow_dir if self.read_tool is not None else None
+        )
         self.terminal_tool_names = frozenset(
             str(name).strip()
             for name in terminal_tool_names or ()
             if str(name).strip()
         )
         self.provider_kwargs = dict(provider_kwargs or {})
+        self.deadline = deadline
         self._tool_result_token_counter = EstimateTokenCounter()
         # we will do compress when:
         # 1. before requesting LLM
@@ -490,7 +500,9 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         return preview
 
     async def _iter_llm_responses(
-        self, *, include_model: bool = True
+        self,
+        *,
+        include_model: bool = True,
     ) -> T.AsyncGenerator[LLMResponse, None]:
         """Yields chunks *and* a final LLMResponse."""
         payload = {
@@ -507,11 +519,38 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             # For primary provider we keep explicit model selection if provided.
             payload["model"] = self.req.model
         if self.streaming:
-            stream = self.provider.text_chat_stream(**payload)
-            async for resp in stream:  # type: ignore
+            async for resp in self._iter_provider_text_chat_stream(**payload):
                 yield resp
         else:
-            yield await self.provider.text_chat(**payload)
+            yield await self._call_provider_text_chat(**payload)
+
+    async def _call_provider_text_chat(self, **payload: T.Any) -> LLMResponse:
+        if self.deadline is None:
+            return await self.provider.text_chat(**payload)
+
+        async with self.deadline.enforce("provider_request"):
+            return await self.provider.text_chat(**payload)
+
+    async def _iter_provider_text_chat_stream(
+        self,
+        **payload: T.Any,
+    ) -> T.AsyncGenerator[LLMResponse, None]:
+        if self.deadline is None:
+            async for response in self.provider.text_chat_stream(**payload):
+                yield response
+            return
+
+        stream = self.provider.text_chat_stream(**payload)
+        try:
+            while True:
+                try:
+                    async with self.deadline.enforce("provider_request"):
+                        response = await anext(stream)
+                except StopAsyncIteration:
+                    return
+                yield response
+        finally:
+            await self._close_executor(stream)
 
     async def _iter_llm_responses_with_fallback(
         self,
@@ -588,6 +627,12 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                                     self.EMPTY_OUTPUT_RETRY_ATTEMPTS,
                                 )
                             raise
+            except TurnDeadlineExceeded:
+                raise
+            except TimeoutError as exc:
+                if self.deadline is not None and self.deadline.expired():
+                    raise TurnDeadlineExceeded("provider_request") from exc
+                last_exception = exc
             except Exception as exc:  # noqa: BLE001
                 last_exception = exc
                 logger.warning(
@@ -659,6 +704,16 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         self._follow_up_seq += 1
         self._pending_follow_ups.append(ticket)
         return ticket
+
+    def cancel_follow_up(self, ticket: FollowUpTicket) -> bool:
+        """Withdraw a follow-up that has not yet entered an Agent turn."""
+        for index, pending in enumerate(self._pending_follow_ups):
+            if pending is not ticket:
+                continue
+            del self._pending_follow_ups[index]
+            ticket.resolved.set()
+            return True
+        return False
 
     def _resolve_unconsumed_follow_ups(self) -> None:
         if not self._pending_follow_ups:
@@ -1127,7 +1182,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                 )
 
                 _final_resp: CallToolResult | None = None
-                async for resp in self._iter_tool_executor_results(executor):  # type: ignore
+                async for resp in self._iter_tool_results_with_deadline(executor):  # type: ignore
                     if isinstance(resp, CallToolResult):
                         res = resp
                         _final_resp = resp
@@ -1242,6 +1297,8 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                     )
                 except Exception as e:
                     logger.error(f"Error in on_tool_end hook: {e}", exc_info=True)
+            except TurnDeadlineExceeded:
+                raise
             except Exception as e:
                 if isinstance(e, _ToolExecutionInterrupted):
                     raise
@@ -1338,7 +1395,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             )
             if param_subset.tools and tool_names:
                 contexts = self._build_tool_requery_context(tool_names)
-                requery_resp = await self.provider.text_chat(
+                requery_resp = await self._call_provider_text_chat(
                     contexts=self._sanitize_contexts_for_provider(contexts),
                     func_tool=param_subset,
                     model=self.req.model,
@@ -1365,7 +1422,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                         tool_names,
                         extra_instruction=self.SKILLS_LIKE_REQUERY_REPAIR_INSTRUCTION,
                     )
-                    repair_resp = await self.provider.text_chat(
+                    repair_resp = await self._call_provider_text_chat(
                         contexts=self._sanitize_contexts_for_provider(repair_contexts),
                         func_tool=param_subset,
                         model=self.req.model,
@@ -1444,6 +1501,29 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         with suppress(asyncio.CancelledError, RuntimeError, StopAsyncIteration):
             await close_executor()
 
+    async def _iter_tool_results_with_deadline(
+        self,
+        executor: AsyncIterator[ToolExecutorResultT],
+    ) -> T.AsyncGenerator[ToolExecutorResultT, None]:
+        results = self._iter_tool_executor_results(executor)
+        try:
+            while True:
+                try:
+                    if self.deadline is None:
+                        result = await anext(results)
+                    else:
+                        async with self.deadline.enforce(
+                            "tool_execution",
+                            self.run_context.tool_call_timeout,
+                        ):
+                            result = await anext(results)
+                except StopAsyncIteration:
+                    return
+                yield result
+        finally:
+            await results.aclose()
+            await self._close_executor(executor)
+
     async def _iter_tool_executor_results(
         self,
         executor: AsyncIterator[ToolExecutorResultT],
@@ -1479,6 +1559,15 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                     yield next_result_task.result()
                 except StopAsyncIteration:
                     return
+            except asyncio.CancelledError:
+                if not next_result_task.done():
+                    next_result_task.cancel()
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await next_result_task
+                elif not next_result_task.cancelled():
+                    next_result_task.exception()
+                await self._close_executor(executor)
+                raise
             finally:
                 if not abort_task.done():
                     abort_task.cancel()

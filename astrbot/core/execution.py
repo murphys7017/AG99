@@ -4,10 +4,11 @@ import json
 import math
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from astrbot.core.capabilities import CapabilitySnapshot
+from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
+from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.prompt.render.request_adapter import (
@@ -15,6 +16,9 @@ from astrbot.core.prompt.render.request_adapter import (
     ProviderRequestAdapter,
 )
 from astrbot.core.provider.entities import ProviderRequest
+
+if TYPE_CHECKING:
+    from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 CORE_EXECUTION_SPEC_EXTRA_KEY = "_core_execution_spec"
 
@@ -210,6 +214,42 @@ def bind_effective_core_capabilities(
     )
 
 
+def bind_effective_core_request(
+    *,
+    event: AstrMessageEvent,
+    provider_request: ProviderRequest,
+    persona_id: str | None = None,
+    execution_spec: CoreExecutionSpec | None = None,
+    prompt_apply_result: PromptApplyResult | None = None,
+) -> tuple[CapabilitySnapshot, CoreExecutionSpec | None]:
+    """Authorize the post-Hook Core request and synchronize all Core views.
+
+    ``OnLLMRequest`` is allowed to replace the request-owned tool set.  The
+    resulting capability snapshot must be applied to the live request and,
+    when present, to the provider-neutral execution spec as one operation.
+    """
+    candidate_tools = provider_request.func_tool
+    effective = CapabilityResolver().resolve_explicit_toolset(
+        event=event,
+        target=TOOL_TARGET_CORE,
+        toolset=candidate_tools if isinstance(candidate_tools, ToolSet) else ToolSet(),
+        persona_id=persona_id,
+        selection_mode="request_hook",
+    )
+    provider_request.func_tool = effective.to_toolset()
+
+    if prompt_apply_result is not None:
+        prompt_apply_result.tool_schema_count = len(effective.tools)
+
+    if execution_spec is not None:
+        execution_spec = bind_effective_core_capabilities(
+            execution_spec,
+            effective,
+        )
+
+    return effective, execution_spec
+
+
 def _slot_value(pack: ContextPack, name: str) -> Any:
     slot = pack.get_slot(name)
     return slot.value if slot is not None else None
@@ -221,5 +261,6 @@ __all__ = [
     "CoreExecutionSpec",
     "NativeExecutionAdapter",
     "NativeExecutionInput",
+    "bind_effective_core_request",
     "bind_effective_core_capabilities",
 ]

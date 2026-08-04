@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from astrbot import logger
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.prompt.render import (
     PromptRenderEngine,
@@ -22,7 +23,10 @@ from .prompt_support import (
     build_model_context_messages,
 )
 from .provider_resolution import resolve_interaction_chat_provider
-from .turn_state import get_interaction_turn_state
+from .turn_state import (
+    get_interaction_turn_deadline,
+    get_interaction_turn_state,
+)
 from .types import CorePlanningDecision, InteractionAgentConfig
 
 
@@ -157,9 +161,18 @@ class CorePlannerAgent:
             CompiledOutputContract,
         ):
             raise CorePlannerError("unsupported_output_contract")
+        deadline = get_interaction_turn_deadline(event)
         try:
-            response = await asyncio.wait_for(
-                provider.text_chat(
+            timeout_context = (
+                deadline.enforce(
+                    "core_planner",
+                    interaction_config.planner_timeout,
+                )
+                if deadline is not None
+                else asyncio.timeout(interaction_config.planner_timeout)
+            )
+            async with timeout_context:
+                response = await provider.text_chat(
                     prompt=render_result.request_prompt or "",
                     contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
@@ -167,10 +180,10 @@ class CorePlannerAgent:
                     tool_choice="required",
                     output_contract=contract,
                     compiled_output_contract=compiled,
-                ),
-                timeout=interaction_config.planner_timeout,
-            )
-        except asyncio.TimeoutError:
+                )
+        except TurnDeadlineExceeded:
+            raise
+        except TimeoutError:
             raise CorePlannerError("timeout") from None
         except Exception as exc:
             raise CorePlannerError("model_error", str(exc)) from exc

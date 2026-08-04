@@ -16,12 +16,11 @@ from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
     DeerFlowAgentRunner,
 )
 from astrbot.core.agent.runners.dify.dify_agent_runner import DifyAgentRunner
-from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
 from astrbot.core.agent_lifecycle import (
     AgentRequestLifecycle,
     AgentRequestLifecycleHooks,
 )
-from astrbot.core.capabilities import CapabilityResolver
+from astrbot.core.execution import bind_effective_core_request
 from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
@@ -366,13 +365,10 @@ class ThirdPartyAgentSubStage(Stage):
         )
         if await request_lifecycle.dispatch_request():
             return
-        effective_capabilities = CapabilityResolver().resolve_explicit_toolset(
+        bind_effective_core_request(
             event=event,
-            target=TOOL_TARGET_CORE,
-            toolset=req.func_tool if isinstance(req.func_tool, ToolSet) else ToolSet(),
-            selection_mode="request_hook",
+            provider_request=req,
         )
-        req.func_tool = effective_capabilities.to_toolset()
 
         if self.runner_type == "dify":
             runner = DifyAgentRunner[AstrAgentContext]()

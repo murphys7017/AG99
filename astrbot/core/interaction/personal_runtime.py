@@ -7,12 +7,13 @@ import time
 import weakref
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Protocol
 
 from astrbot import logger
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.persona_error_reply import (
     resolve_conversation_persona_id,
     resolve_event_conversation_persona_id,
@@ -23,6 +24,7 @@ from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
 from .group_reply import is_group_reply_candidate
+from .lifecycle import dispatch_interaction_lifecycle
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .observation_inbox import (
     ObservationAdmissionResult,
@@ -60,7 +62,10 @@ from .turn_context import (
 )
 from .turn_state import (
     InteractionFinalOutputStatus,
+    InteractionLifecycleStage,
     InteractionTurnStatus,
+    mark_interaction_turn_failed,
+    record_interaction_turn_failure,
     set_interaction_turn_persona_id,
 )
 from .types import InteractionAgentConfig
@@ -249,6 +254,7 @@ class PendingTurnReservation:
 
 @dataclass(slots=True)
 class _FollowUpCapture:
+    runner: Any
     ticket: Any
     order_seq: int
     monitor_task: asyncio.Task[None]
@@ -271,10 +277,11 @@ class _FollowUpCoordinator:
 
     def try_capture(self, event: Any) -> _FollowUpCapture | None:
         sender_id = event.get_sender_id()
-        if not sender_id or self.active_runner is None:
+        runner = self.active_runner
+        if not sender_id or runner is None:
             return None
         runner_event = getattr(
-            getattr(self.active_runner.run_context, "context", None),
+            getattr(runner.run_context, "context", None),
             "event",
             None,
         )
@@ -286,7 +293,7 @@ class _FollowUpCoordinator:
         message_text = (event.get_message_str() or "").strip()
         if not message_text:
             message_text = event.get_message_outline().strip()
-        ticket = self.active_runner.follow_up(message_text=message_text)
+        ticket = runner.follow_up(message_text=message_text)
         if ticket is None:
             return None
 
@@ -298,6 +305,7 @@ class _FollowUpCoordinator:
             name=f"personal_runtime_follow_up_{order_seq}",
         )
         return _FollowUpCapture(
+            runner=runner,
             ticket=ticket,
             order_seq=order_seq,
             monitor_task=monitor_task,
@@ -318,6 +326,18 @@ class _FollowUpCoordinator:
         activated: bool,
         consumed_marked: bool,
     ) -> None:
+        if not activated and not consumed_marked:
+            cancel_follow_up = getattr(capture.runner, "cancel_follow_up", None)
+            if callable(cancel_follow_up):
+                try:
+                    cancel_follow_up(capture.ticket)
+                except Exception:
+                    logger.warning(
+                        "Failed to withdraw unresolved Personal Runtime follow-up: "
+                        "order_seq=%s",
+                        capture.order_seq,
+                        exc_info=True,
+                    )
         if not capture.monitor_task.done():
             capture.monitor_task.cancel()
             try:
@@ -436,11 +456,33 @@ class PersonalTurnLease:
             try:
                 await self.reservation.turn.state.execution_scope.close()
             finally:
+                deadline = self.reservation.turn.state.deadline
                 try:
-                    feedback = _build_completion_feedback(self.reservation.turn)
-                    await self.runtime.apply_completion_feedback(
-                        feedback,
-                        turn=self.reservation.turn,
+                    if deadline is not None and deadline.expired():
+                        logger.debug(
+                            "Skipping Personal Runtime completion feedback after "
+                            "turn deadline: turn_id=%s",
+                            self.reservation.turn.turn_id,
+                        )
+                    else:
+                        feedback_context = (
+                            deadline.enforce("completion_feedback")
+                            if deadline is not None
+                            else nullcontext(None)
+                        )
+                        async with feedback_context:
+                            feedback = _build_completion_feedback(
+                                self.reservation.turn
+                            )
+                            await self.runtime.apply_completion_feedback(
+                                feedback,
+                                turn=self.reservation.turn,
+                            )
+                except TurnDeadlineExceeded:
+                    logger.warning(
+                        "Personal Runtime completion feedback reached turn deadline: "
+                        "turn_id=%s",
+                        self.reservation.turn.turn_id,
                     )
                 except Exception:
                     logger.exception(
@@ -1174,22 +1216,73 @@ class PersonalSessionRuntime:
         turn = reservation.turn
         event = turn.event
         capture = self.follow_ups.try_capture(event) if allow_follow_up else None
+        deadline = turn.state.deadline
+        queue_context = (
+            deadline.enforce("session_queue")
+            if deadline is not None
+            else nullcontext(None)
+        )
         follow_up_activated = False
+        lock_acquired = False
         try:
-            if capture is not None:
-                consumed, follow_up_activated = await self.follow_ups.prepare(capture)
-                if consumed:
-                    await self.follow_ups.finalize(
-                        capture,
-                        activated=False,
-                        consumed_marked=True,
+            async with queue_context:
+                if capture is not None:
+                    consumed, follow_up_activated = await self.follow_ups.prepare(
+                        capture
                     )
-                    reservation.transition(PendingTurnState.SETTLED)
-                    return TurnAdmission(turn=turn, consumed_as_follow_up=True)
+                    if consumed:
+                        await self.follow_ups.finalize(
+                            capture,
+                            activated=False,
+                            consumed_marked=True,
+                        )
+                        reservation.transition(PendingTurnState.SETTLED)
+                        return TurnAdmission(
+                            turn=turn,
+                            consumed_as_follow_up=True,
+                        )
 
-            reservation.transition(PendingTurnState.QUEUED)
-            await self.turn_lock.acquire()
+                reservation.transition(PendingTurnState.QUEUED)
+                await self.turn_lock.acquire()
+                lock_acquired = True
+
+            reservation.transition(PendingTurnState.ACTIVE)
+            turn.previous_expression_fingerprint = (
+                self.state.last_expression_fingerprint
+            )
+            self.active_turn_id = turn.turn_id
+            self.active_actor_id = (
+                str(turn.actor.actor_id or "").strip() or None
+                if turn.actor is not None
+                else None
+            )
+            self._active_turn_context = turn
+            user_activity_at = (
+                None
+                if is_group_reply_candidate(event)
+                else self._turn_user_activity_at(turn)
+            )
+            self.touch()
+            if self.state.mark_turn_active(user_activity_at=user_activity_at):
+                self._persistent_state_dirty = True
+            admission = TurnAdmission(
+                turn=turn,
+                consumed_as_follow_up=False,
+                lease=PersonalTurnLease(
+                    self,
+                    reservation,
+                    capture,
+                    follow_up_activated,
+                ),
+            )
+            lock_acquired = False
+            return admission
         except BaseException:
+            if lock_acquired:
+                self.active_turn_id = None
+                self.active_actor_id = None
+                self._active_turn_context = None
+                self.turn_lock.release()
             if capture is not None:
                 await self.follow_ups.finalize(
                     capture,
@@ -1197,35 +1290,6 @@ class PersonalSessionRuntime:
                     consumed_marked=False,
                 )
             raise
-        reservation.transition(PendingTurnState.ACTIVE)
-        turn.previous_expression_fingerprint = (
-            self.state.last_expression_fingerprint
-        )
-        self.active_turn_id = turn.turn_id
-        self.active_actor_id = (
-            str(turn.actor.actor_id or "").strip() or None
-            if turn.actor is not None
-            else None
-        )
-        self._active_turn_context = turn
-        user_activity_at = (
-            None
-            if is_group_reply_candidate(event)
-            else self._turn_user_activity_at(turn)
-        )
-        self.touch()
-        if self.state.mark_turn_active(user_activity_at=user_activity_at):
-            self._persistent_state_dirty = True
-        return TurnAdmission(
-            turn=turn,
-            consumed_as_follow_up=False,
-            lease=PersonalTurnLease(
-                self,
-                reservation,
-                capture,
-                follow_up_activated,
-            ),
-        )
 
     @staticmethod
     def _turn_user_activity_at(turn: PersonalTurnContext) -> float | None:
@@ -1508,23 +1572,48 @@ class PersonalRuntimeManager:
         if event.get_extra("_personal_runtime_submission_kind") is None:
             event.set_extra("_personal_runtime_submission_kind", "observation")
         try:
-            if bound_runtime is None:
-                admission = await submission.admit()
-            else:
-                if self._sessions.get(bound_runtime.key) is not bound_runtime:
-                    raise RuntimeError("Bound runtime is no longer active")
-                self._bind_to_runtime(reservation, bound_runtime)
-                admission = await self._admit(
-                    reservation,
-                    allow_follow_up=False,
+            try:
+                if bound_runtime is None:
+                    admission = await submission.admit()
+                else:
+                    if self._sessions.get(bound_runtime.key) is not bound_runtime:
+                        raise RuntimeError("Bound runtime is no longer active")
+                    self._bind_to_runtime(reservation, bound_runtime)
+                    admission = await self._admit(
+                        reservation,
+                        allow_follow_up=False,
+                    )
+            except TurnDeadlineExceeded as exc:
+                record_interaction_turn_failure(
+                    event,
+                    stage=exc.stage,
+                    reason=exc.reason,
+                    exception=exc,
+                    user_visible_action="none",
                 )
+                mark_interaction_turn_failed(event)
+                await dispatch_interaction_lifecycle(
+                    event,
+                    plugin_context,
+                    InteractionLifecycleStage.FAILED,
+                    metadata={
+                        "source": "runtime_observation_admission",
+                        "reason": exc.reason,
+                    },
+                )
+                raise
             if admission.consumed_as_follow_up or admission.lease is None:
                 raise RuntimeError(
                     "Runtime observation admission did not acquire a lease"
                 )
             try:
-                with self.activate_turn(admission.turn):
-                    return await handler(event, admission.turn)
+                deadline = admission.turn.state.deadline
+                if deadline is None:
+                    with self.activate_turn(admission.turn):
+                        return await handler(event, admission.turn)
+                async with deadline.enforce("turn_execution"):
+                    with self.activate_turn(admission.turn):
+                        return await handler(event, admission.turn)
             finally:
                 await admission.lease.release()
         finally:
@@ -1745,7 +1834,12 @@ class PersonalRuntimeManager:
         *,
         allow_follow_up: bool,
     ) -> TurnAdmission:
-        await self._bind(reservation)
+        deadline = reservation.turn.state.deadline
+        if deadline is None:
+            await self._bind(reservation)
+        else:
+            async with deadline.enforce("runtime_binding"):
+                await self._bind(reservation)
         return await self._admit(
             reservation,
             allow_follow_up=allow_follow_up,
@@ -1767,8 +1861,37 @@ class PersonalRuntimeManager:
         if runtime is not None:
             runtime.follow_ups.unregister(runner)
 
+    @staticmethod
+    def _record_deadline_diagnostics(reservation: PendingTurnReservation) -> None:
+        turn = reservation.turn
+        deadline = turn.state.deadline
+        if deadline is None:
+            return
+        snapshot = deadline.snapshot()
+        try:
+            turn.event.trace.record("interaction_deadline", **snapshot)
+        except Exception:
+            logger.debug(
+                "Failed to record interaction deadline trace: turn_id=%s",
+                turn.turn_id,
+                exc_info=True,
+            )
+        logger.info(
+            "DIAG interaction.deadline: turn_id=%s session_id=%s "
+            "total_seconds=%.3f elapsed_seconds=%.3f remaining_seconds=%.3f "
+            "expired=%s stages=%s",
+            turn.turn_id,
+            turn.session.session_id,
+            snapshot["total_seconds"],
+            snapshot["elapsed_seconds"],
+            snapshot["remaining_seconds"],
+            snapshot["expired"],
+            snapshot["stages"],
+        )
+
     def _settle(self, reservation: PendingTurnReservation) -> None:
         event = reservation.turn.event
+        self._record_deadline_diagnostics(reservation)
         reservation.transition(PendingTurnState.SETTLED)
         runtime = self._event_sessions.pop(event, None)
         if runtime is None:

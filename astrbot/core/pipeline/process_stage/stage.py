@@ -2,13 +2,23 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, aclosing
 
 from astrbot import logger
+from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
 from astrbot.core.interaction.group_reply import is_group_reply_candidate
 from astrbot.core.interaction.personal_runtime import (
     PersonalRuntimeManager,
     PlatformEventSubmission,
 )
 from astrbot.core.interaction.turn_context import PersonalTurnContext
+from astrbot.core.interaction.turn_state import (
+    has_interaction_turn_final_output_claimed,
+    is_interaction_turn_completed,
+    mark_interaction_turn_failed,
+    record_interaction_turn_failure,
+)
 from astrbot.core.interaction.types import InteractionRouteMode
+from astrbot.core.persona_error_reply import (
+    extract_persona_custom_error_message_from_event,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.star_handler import StarHandlerMetadata
@@ -18,6 +28,8 @@ from ..stage import Stage, register_stage
 from ..waking_check.stage import discover_activated_handlers
 from .method.agent_request import AgentRequestSubStage
 from .method.star_request import StarRequestSubStage
+
+TURN_DEADLINE_FALLBACK_TEXT = "模型服务暂时不可用，请稍后再试。"
 
 
 @register_stage
@@ -213,6 +225,70 @@ class ProcessStage(Stage):
             with manager.activate_turn(turn):
                 await source.aclose()
 
+    @staticmethod
+    async def _iterate_with_deadline(
+        source: AsyncGenerator[None, None],
+        deadline: TurnDeadlineBudget,
+        event: AstrMessageEvent,
+    ) -> AsyncGenerator[None, None]:
+        """Enforce execution time only while advancing the stage generator."""
+        try:
+            while True:
+                try:
+                    if has_interaction_turn_final_output_claimed(event):
+                        item = await anext(source)
+                    else:
+                        async with deadline.enforce("turn_execution"):
+                            item = await anext(source)
+                except StopAsyncIteration:
+                    return
+                yield item
+        finally:
+            await source.aclose()
+
+    async def _handle_deadline_expiry(
+        self,
+        event: AstrMessageEvent,
+        *,
+        stage: str,
+        error: BaseException,
+    ) -> None:
+        record_interaction_turn_failure(
+            event,
+            stage=stage,
+            reason="turn_deadline_exhausted",
+            exception=error,
+            user_visible_action="fallback_error_reply",
+        )
+        middleware = self.ctx.interaction_middleware
+        output_controller = (
+            middleware.output_controller if middleware is not None else None
+        )
+        delivered = False
+        if output_controller is not None:
+            reply = (
+                extract_persona_custom_error_message_from_event(event)
+                or TURN_DEADLINE_FALLBACK_TEXT
+            )
+            try:
+                delivered = await output_controller.emit_failure_reply(reply, event)
+            except Exception:
+                logger.exception(
+                    "Interaction deadline fallback delivery failed: turn_id=%s",
+                    event.get_extra("_turn_id"),
+                )
+        if not delivered and not is_interaction_turn_completed(event):
+            mark_interaction_turn_failed(event)
+        event.stop_event()
+        logger.warning(
+            "Interaction turn deadline exhausted: platform_id=%s session_id=%s "
+            "turn_id=%s stage=%s",
+            event.get_platform_id(),
+            event.session_id,
+            event.get_extra("_turn_id"),
+            stage,
+        )
+
     async def process(
         self,
         event: AstrMessageEvent,
@@ -247,9 +323,17 @@ class ProcessStage(Stage):
             lease = None
             turn = None
             if submission is not None:
-                admission = await submission.admit(
-                    allow_follow_up=not bool(activated_handlers),
-                )
+                try:
+                    admission = await submission.admit(
+                        allow_follow_up=not bool(activated_handlers),
+                    )
+                except TurnDeadlineExceeded as exc:
+                    await self._handle_deadline_expiry(
+                        event,
+                        stage=exc.stage,
+                        error=exc,
+                    )
+                    return
                 if admission.consumed_as_follow_up:
                     event.set_extra("_personal_runtime_follow_up_consumed", True)
                     logger.info(
@@ -267,19 +351,32 @@ class ProcessStage(Stage):
                 submission=submission,
             )
             try:
-                if manager is not None and turn is not None:
-                    active_source = self._iterate_with_active_turn(
+                iteration_source = (
+                    self._iterate_with_active_turn(
                         source,
                         manager,
                         turn,
                     )
-                    async with aclosing(active_source):
-                        async for item in active_source:
+                    if manager is not None and turn is not None
+                    else source
+                )
+                deadline = turn.state.deadline if turn is not None else None
+                if deadline is not None:
+                    iteration_source = self._iterate_with_deadline(
+                        iteration_source,
+                        deadline,
+                        event,
+                    )
+                try:
+                    async with aclosing(iteration_source):
+                        async for item in iteration_source:
                             yield item
-                else:
-                    async with aclosing(source):
-                        async for item in source:
-                            yield item
+                except TurnDeadlineExceeded as exc:
+                    await self._handle_deadline_expiry(
+                        event,
+                        stage=exc.stage,
+                        error=exc,
+                    )
             finally:
                 if lease is not None:
                     if manager is not None and turn is not None:

@@ -9,7 +9,9 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from PIL import Image as PILImage
 
 import astrbot.core.provider.sources.openai_source as openai_source_module
+from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.exceptions import EmptyModelOutputError
+from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.provider.sources.groq_source import ProviderGroq
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 from astrbot.core.utils.image_materializer import (
@@ -43,6 +45,21 @@ def _make_provider(overrides: dict | None = None) -> ProviderOpenAIOfficial:
         provider_config=provider_config,
         provider_settings={},
     )
+
+
+def _make_recovery_state(
+    provider: ProviderOpenAIOfficial,
+    payloads: dict,
+    *,
+    image_fallback_used: bool = False,
+):
+    state = provider._create_chat_recovery_state(
+        payloads,
+        payloads["messages"],
+        None,
+    )
+    state.image_fallback_used = image_fallback_used
+    return state
 
 
 def _make_groq_provider(overrides: dict | None = None) -> ProviderGroq:
@@ -140,20 +157,13 @@ async def test_handle_api_error_content_moderated_removes_images():
                 }
             ]
         }
-        context_query = payloads["messages"]
 
-        success, *_rest = await provider._handle_api_error(
+        state = await provider._handle_api_error(
             Exception("Content is moderated [WKE=file:content-moderated]"),
-            payloads=payloads,
-            context_query=context_query,
-            func_tool=None,
-            chosen_key="test-key",
-            available_api_keys=["test-key"],
-            retry_cnt=0,
-            max_retries=10,
+            _make_recovery_state(provider, payloads),
         )
 
-        assert success is False
+        assert state.image_fallback_used is True
         updated_context = payloads["messages"]
         assert isinstance(updated_context, list)
         assert updated_context[0]["content"] == [{"type": "text", "text": "hello"}]
@@ -179,20 +189,13 @@ async def test_handle_api_error_model_not_vlm_removes_images_and_retries_text_on
                 }
             ]
         }
-        context_query = payloads["messages"]
 
-        success, *_rest = await provider._handle_api_error(
+        state = await provider._handle_api_error(
             Exception("The model is not a VLM and cannot process images"),
-            payloads=payloads,
-            context_query=context_query,
-            func_tool=None,
-            chosen_key="test-key",
-            available_api_keys=["test-key"],
-            retry_cnt=0,
-            max_retries=10,
+            _make_recovery_state(provider, payloads),
         )
 
-        assert success is False
+        assert state.image_fallback_used is True
         updated_context = payloads["messages"]
         assert isinstance(updated_context, list)
         assert updated_context[0]["content"] == [{"type": "text", "text": "hello"}]
@@ -218,19 +221,15 @@ async def test_handle_api_error_model_not_vlm_after_fallback_raises():
                 }
             ]
         }
-        context_query = payloads["messages"]
 
         with pytest.raises(Exception, match="not a VLM"):
             await provider._handle_api_error(
                 Exception("The model is not a VLM and cannot process images"),
-                payloads=payloads,
-                context_query=context_query,
-                func_tool=None,
-                chosen_key="test-key",
-                available_api_keys=["test-key"],
-                retry_cnt=1,
-                max_retries=10,
-                image_fallback_used=True,
+                _make_recovery_state(
+                    provider,
+                    payloads,
+                    image_fallback_used=True,
+                ),
             )
     finally:
         await provider.terminate()
@@ -254,23 +253,16 @@ async def test_handle_api_error_content_moderated_with_unserializable_body():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = _ErrorWithBody(
             "upstream error",
             {"error": {"message": "blocked"}, "raw": object()},
         )
 
-        success, *_rest = await provider._handle_api_error(
+        state = await provider._handle_api_error(
             err,
-            payloads=payloads,
-            context_query=context_query,
-            func_tool=None,
-            chosen_key="test-key",
-            available_api_keys=["test-key"],
-            retry_cnt=0,
-            max_retries=10,
+            _make_recovery_state(provider, payloads),
         )
-        assert success is False
+        assert state.image_fallback_used is True
         assert payloads["messages"][0]["content"] == [{"type": "text", "text": "hello"}]
     finally:
         await provider.terminate()
@@ -355,19 +347,12 @@ async def test_handle_api_error_content_moderated_without_images_raises():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = Exception("Content is moderated [WKE=file:content-moderated]")
 
         with pytest.raises(Exception, match="content-moderated"):
             await provider._handle_api_error(
                 err,
-                payloads=payloads,
-                context_query=context_query,
-                func_tool=None,
-                chosen_key="test-key",
-                available_api_keys=["test-key"],
-                retry_cnt=0,
-                max_retries=10,
+                _make_recovery_state(provider, payloads),
             )
     finally:
         await provider.terminate()
@@ -393,23 +378,16 @@ async def test_handle_api_error_content_moderated_detects_structured_body():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = _ErrorWithBody(
             "upstream error",
             {"error": {"code": "content_moderated", "message": "blocked"}},
         )
 
-        success, *_rest = await provider._handle_api_error(
+        state = await provider._handle_api_error(
             err,
-            payloads=payloads,
-            context_query=context_query,
-            func_tool=None,
-            chosen_key="test-key",
-            available_api_keys=["test-key"],
-            retry_cnt=0,
-            max_retries=10,
+            _make_recovery_state(provider, payloads),
         )
-        assert success is False
+        assert state.image_fallback_used is True
         assert payloads["messages"][0]["content"] == [{"type": "text", "text": "hello"}]
     finally:
         await provider.terminate()
@@ -435,20 +413,13 @@ async def test_handle_api_error_content_moderated_supports_custom_patterns():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = Exception("upstream: blocked_by_policy_code_123")
 
-        success, *_rest = await provider._handle_api_error(
+        state = await provider._handle_api_error(
             err,
-            payloads=payloads,
-            context_query=context_query,
-            func_tool=None,
-            chosen_key="test-key",
-            available_api_keys=["test-key"],
-            retry_cnt=0,
-            max_retries=10,
+            _make_recovery_state(provider, payloads),
         )
-        assert success is False
+        assert state.image_fallback_used is True
         assert payloads["messages"][0]["content"] == [{"type": "text", "text": "hello"}]
     finally:
         await provider.terminate()
@@ -472,19 +443,12 @@ async def test_handle_api_error_content_moderated_without_patterns_raises():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = Exception("Content is moderated [WKE=file:content-moderated]")
 
         with pytest.raises(Exception, match="content-moderated"):
             await provider._handle_api_error(
                 err,
-                payloads=payloads,
-                context_query=context_query,
-                func_tool=None,
-                chosen_key="test-key",
-                available_api_keys=["test-key"],
-                retry_cnt=0,
-                max_retries=10,
+                _make_recovery_state(provider, payloads),
             )
     finally:
         await provider.terminate()
@@ -508,18 +472,11 @@ async def test_handle_api_error_unknown_image_error_raises():
                 }
             ]
         }
-        context_query = payloads["messages"]
 
         with pytest.raises(Exception, match="unknown provider image upload error"):
             await provider._handle_api_error(
                 Exception("some unknown provider image upload error"),
-                payloads=payloads,
-                context_query=context_query,
-                func_tool=None,
-                chosen_key="test-key",
-                available_api_keys=["test-key"],
-                retry_cnt=0,
-                max_retries=10,
+                _make_recovery_state(provider, payloads),
             )
     finally:
         await provider.terminate()
@@ -543,7 +500,6 @@ async def test_handle_api_error_invalid_attachment_removes_images_and_retries_te
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = _ErrorWithBody(
             "upstream error",
             {
@@ -554,18 +510,12 @@ async def test_handle_api_error_invalid_attachment_removes_images_and_retries_te
             },
         )
 
-        success, *_rest = await provider._handle_api_error(
+        state = await provider._handle_api_error(
             err,
-            payloads=payloads,
-            context_query=context_query,
-            func_tool=None,
-            chosen_key="test-key",
-            available_api_keys=["test-key"],
-            retry_cnt=0,
-            max_retries=10,
+            _make_recovery_state(provider, payloads),
         )
 
-        assert success is False
+        assert state.image_fallback_used is True
         assert payloads["messages"][0]["content"] == [{"type": "text", "text": "hello"}]
     finally:
         await provider.terminate()
@@ -583,7 +533,6 @@ async def test_handle_api_error_invalid_attachment_without_images_raises():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = _ErrorWithBody(
             "upstream error",
             {
@@ -597,13 +546,7 @@ async def test_handle_api_error_invalid_attachment_without_images_raises():
         with pytest.raises(_ErrorWithBody, match="upstream error"):
             await provider._handle_api_error(
                 err,
-                payloads=payloads,
-                context_query=context_query,
-                func_tool=None,
-                chosen_key="test-key",
-                available_api_keys=["test-key"],
-                retry_cnt=0,
-                max_retries=10,
+                _make_recovery_state(provider, payloads),
             )
     finally:
         await provider.terminate()
@@ -627,7 +570,6 @@ async def test_handle_api_error_invalid_attachment_after_fallback_raises():
                 }
             ]
         }
-        context_query = payloads["messages"]
         err = _ErrorWithBody(
             "upstream error",
             {
@@ -641,17 +583,80 @@ async def test_handle_api_error_invalid_attachment_after_fallback_raises():
         with pytest.raises(_ErrorWithBody, match="upstream error"):
             await provider._handle_api_error(
                 err,
-                payloads=payloads,
-                context_query=context_query,
-                func_tool=None,
-                chosen_key="test-key",
-                available_api_keys=["test-key"],
-                retry_cnt=1,
-                max_retries=10,
-                image_fallback_used=True,
+                _make_recovery_state(
+                    provider,
+                    payloads,
+                    image_fallback_used=True,
+                ),
             )
     finally:
         await provider.terminate()
+
+
+@pytest.mark.asyncio
+async def test_text_chat_returns_success_on_last_recovery_attempt(monkeypatch):
+    provider = _make_provider()
+    provider._MAX_RECOVERY_ATTEMPTS = 2
+    expected = LLMResponse(role="assistant", completion_text="recovered")
+    call_count = 0
+
+    async def fake_query(payloads, tools):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise Exception("maximum context length exceeded")
+        assert payloads["messages"] == []
+        assert tools is None
+        return expected
+
+    monkeypatch.setattr(provider, "_query", fake_query)
+    try:
+        result = await provider.text_chat(
+            contexts=[
+                {"role": "user", "content": "old request"},
+                {"role": "assistant", "content": "old response"},
+            ],
+        )
+    finally:
+        await provider.terminate()
+
+    assert result is expected
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_text_chat_preserves_required_tools_on_unsupported_provider(monkeypatch):
+    provider = _make_provider()
+    call_count = 0
+    tools = ToolSet(
+        tools=[
+            FunctionTool(
+                name="required_tool",
+                description="Required protocol tool.",
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+    )
+
+    async def fake_query(payloads, func_tool):
+        nonlocal call_count
+        call_count += 1
+        assert payloads["tool_choice"] == "required"
+        assert func_tool is tools
+        raise Exception("Function calling is not enabled")
+
+    monkeypatch.setattr(provider, "_query", fake_query)
+    try:
+        with pytest.raises(Exception, match="Function calling is not enabled"):
+            await provider.text_chat(
+                contexts=[{"role": "user", "content": "hello"}],
+                func_tool=tools,
+                tool_choice="required",
+            )
+    finally:
+        await provider.terminate()
+
+    assert call_count == 1
 
 
 @pytest.mark.asyncio

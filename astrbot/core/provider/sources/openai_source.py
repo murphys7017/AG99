@@ -7,6 +7,7 @@ import random
 import re
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -58,6 +59,19 @@ from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 from ..register import register_provider_adapter
 
 
+@dataclass(slots=True)
+class _ChatRecoveryState:
+    payloads: dict
+    context_query: list
+    func_tool: ToolSet | None
+    chosen_key: str
+    available_api_keys: list[str]
+    image_fallback_used: bool = False
+    transient_retry_count: int = 0
+    last_recovery_reason: str | None = None
+    tool_use_required: bool = False
+
+
 @register_provider_adapter(
     "openai_chat_completion",
     "OpenAI API Chat Completion 提供商适配器",
@@ -65,6 +79,7 @@ from ..register import register_provider_adapter
 )
 class ProviderOpenAIOfficial(Provider):
     _ERROR_TEXT_CANDIDATE_MAX_CHARS = 4096
+    _MAX_RECOVERY_ATTEMPTS = 10
 
     def supports_output_contract_strategy(self, strategy: str) -> bool:
         return strategy in {"prompt_only", "protocol_tool_call"}
@@ -413,30 +428,18 @@ class ProviderOpenAIOfficial(Provider):
 
     async def _fallback_to_text_only_and_retry(
         self,
-        payloads: dict,
-        context_query: list,
-        chosen_key: str,
-        available_api_keys: list[str],
-        func_tool: ToolSet | None,
+        state: _ChatRecoveryState,
         reason: str,
-        *,
-        image_fallback_used: bool = False,
-    ) -> tuple:
+    ) -> None:
         logger.warning(
             "检测到图片请求失败（%s），已移除图片并重试（保留文本内容）。",
             reason,
         )
-        new_contexts = await self._remove_image_from_context(context_query)
-        payloads["messages"] = new_contexts
-        return (
-            False,
-            chosen_key,
-            available_api_keys,
-            payloads,
-            new_contexts,
-            func_tool,
-            image_fallback_used,
+        state.context_query = await self._remove_image_from_context(
+            state.context_query
         )
+        state.payloads["messages"] = state.context_query
+        state.image_fallback_used = True
 
     def _create_http_client(self, provider_config: dict) -> httpx.AsyncClient:
         """创建带代理的 HTTP 客户端，使用 SDK 的 httpx 模块"""
@@ -473,6 +476,7 @@ class ProviderOpenAIOfficial(Provider):
                 api_version=provider_config.get("api_version", None),
                 default_headers=self.custom_headers,
                 base_url=provider_config.get("api_base", ""),
+                max_retries=0,
                 timeout=self.timeout,
                 http_client=self._create_http_client(provider_config),
             )
@@ -482,6 +486,7 @@ class ProviderOpenAIOfficial(Provider):
                 api_key=self.chosen_api_key,
                 base_url=provider_config.get("api_base", None),
                 default_headers=self.custom_headers,
+                max_retries=0,
                 timeout=self.timeout,
                 http_client=self._create_http_client(provider_config),
             )
@@ -608,6 +613,7 @@ class ProviderOpenAIOfficial(Provider):
         payloads["messages"] = final_messages
 
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
+        payloads = dict(payloads)
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
@@ -661,6 +667,7 @@ class ProviderOpenAIOfficial(Provider):
         tools: ToolSet | None,
     ) -> AsyncGenerator[LLMResponse, None]:
         """流式查询API，逐步返回结果"""
+        payloads = dict(payloads)
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
@@ -1126,89 +1133,62 @@ class ProviderOpenAIOfficial(Provider):
     async def _handle_api_error(
         self,
         e: Exception,
-        payloads: dict,
-        context_query: list,
-        func_tool: ToolSet | None,
-        chosen_key: str,
-        available_api_keys: list[str],
-        retry_cnt: int,
-        max_retries: int,
-        image_fallback_used: bool = False,
-    ) -> tuple:
+        state: _ChatRecoveryState,
+    ) -> _ChatRecoveryState:
         """处理API错误并尝试恢复"""
         if "429" in str(e):
+            if state.chosen_key in state.available_api_keys:
+                state.available_api_keys.remove(state.chosen_key)
+            if not state.available_api_keys:
+                raise e
             logger.warning(
-                f"API 调用过于频繁，尝试使用其他 Key 重试。当前 Key: {chosen_key[:12]}",
+                "API 调用过于频繁，尝试使用其他 Key 重试。当前 Key: %s",
+                state.chosen_key[:12],
             )
-            # 最后一次不等待
-            if retry_cnt < max_retries - 1:
-                await asyncio.sleep(1)
-            if chosen_key in available_api_keys:
-                available_api_keys.remove(chosen_key)
-            if len(available_api_keys) > 0:
-                chosen_key = random.choice(available_api_keys)
-                return (
-                    False,
-                    chosen_key,
-                    available_api_keys,
-                    payloads,
-                    context_query,
-                    func_tool,
-                    image_fallback_used,
-                )
-            raise e
+            await asyncio.sleep(1)
+            state.last_recovery_reason = "api_key_rotation"
+            state.chosen_key = random.choice(state.available_api_keys)
+            return state
         if "maximum context length" in str(e) or "context length" in str(e).lower():
             logger.warning(
-                f"上下文长度超过限制。尝试弹出最早的记录然后重试。当前记录条数: {len(context_query)}",
+                "上下文长度超过限制。尝试弹出最早的记录然后重试。当前记录条数: %s",
+                len(state.context_query),
             )
-            await self.pop_record(context_query)
-            payloads["messages"] = context_query
-            return (
-                False,
-                chosen_key,
-                available_api_keys,
-                payloads,
-                context_query,
-                func_tool,
-                image_fallback_used,
-            )
+            previous_count = len(state.context_query)
+            await self.pop_record(state.context_query)
+            if len(state.context_query) >= previous_count:
+                raise e
+            state.payloads["messages"] = state.context_query
+            state.last_recovery_reason = "context_truncated"
+            return state
         if "The model is not a VLM" in str(e):  # siliconcloud
-            if image_fallback_used or not self._context_contains_image(context_query):
+            if state.image_fallback_used or not self._context_contains_image(
+                state.context_query
+            ):
                 raise e
             # 尝试删除所有 image
-            return await self._fallback_to_text_only_and_retry(
-                payloads,
-                context_query,
-                chosen_key,
-                available_api_keys,
-                func_tool,
-                "model_not_vlm",
-                image_fallback_used=True,
-            )
+            await self._fallback_to_text_only_and_retry(state, "model_not_vlm")
+            state.last_recovery_reason = "model_not_vlm"
+            return state
         if self._is_content_moderated_upload_error(e):
-            if image_fallback_used or not self._context_contains_image(context_query):
+            if state.image_fallback_used or not self._context_contains_image(
+                state.context_query
+            ):
                 raise e
-            return await self._fallback_to_text_only_and_retry(
-                payloads,
-                context_query,
-                chosen_key,
-                available_api_keys,
-                func_tool,
+            await self._fallback_to_text_only_and_retry(
+                state,
                 "image_content_moderated",
-                image_fallback_used=True,
             )
+            state.last_recovery_reason = "image_content_moderated"
+            return state
         if self._is_invalid_attachment_error(e):
-            if image_fallback_used or not self._context_contains_image(context_query):
+            if state.image_fallback_used or not self._context_contains_image(
+                state.context_query
+            ):
                 raise e
-            return await self._fallback_to_text_only_and_retry(
-                payloads,
-                context_query,
-                chosen_key,
-                available_api_keys,
-                func_tool,
-                "invalid_attachment",
-                image_fallback_used=True,
-            )
+            await self._fallback_to_text_only_and_retry(state, "invalid_attachment")
+            state.last_recovery_reason = "invalid_attachment"
+            return state
 
         if (
             "Function calling is not enabled" in str(e)
@@ -1216,26 +1196,70 @@ class ProviderOpenAIOfficial(Provider):
             or ("function" in str(e).lower() and "support" in str(e).lower())
         ):
             # openai, ollama, gemini openai, siliconcloud 的错误提示与 code 不统一，只能通过字符串匹配
+            if state.tool_use_required:
+                raise e
+            if state.func_tool is None and "tools" not in state.payloads:
+                raise e
             logger.warning(
                 f"{self.get_model()} 不支持函数工具调用，已自动去除，不影响使用。如需永久关闭，可前往 WebUI 中关闭工具调用。",
             )
-            payloads.pop("tools", None)
-            return (
-                False,
-                chosen_key,
-                available_api_keys,
-                payloads,
-                context_query,
-                None,
-                image_fallback_used,
-            )
+            state.payloads.pop("tools", None)
+            state.payloads.pop("tool_choice", None)
+            state.func_tool = None
+            state.last_recovery_reason = "unsupported_tools_removed"
+            return state
         # logger.error(f"发生了错误。Provider 配置如下: {self.provider_config}")
 
         if is_connection_error(e):
             proxy = self.provider_config.get("proxy", "")
             log_connection_failure("OpenAI", e, proxy)
+            if state.transient_retry_count >= 1:
+                raise e
+            state.transient_retry_count += 1
+            state.last_recovery_reason = "transient_network_error"
+            return state
 
         raise e
+
+    def _create_chat_recovery_state(
+        self,
+        payloads: dict,
+        context_query: list,
+        func_tool: ToolSet | None,
+        *,
+        tool_use_required: bool = False,
+    ) -> _ChatRecoveryState:
+        available_api_keys = self.api_keys.copy()
+        return _ChatRecoveryState(
+            payloads=payloads,
+            context_query=context_query,
+            func_tool=func_tool,
+            chosen_key=random.choice(available_api_keys),
+            available_api_keys=available_api_keys,
+            tool_use_required=tool_use_required,
+        )
+
+    async def _recover_chat_request(
+        self,
+        error: Exception,
+        state: _ChatRecoveryState,
+        *,
+        attempt: int,
+    ) -> None:
+        if attempt >= self._MAX_RECOVERY_ATTEMPTS:
+            logger.error(
+                "API 调用在 %s 次尝试后仍然失败。",
+                self._MAX_RECOVERY_ATTEMPTS,
+            )
+            raise error
+        await self._handle_api_error(error, state)
+        logger.warning(
+            "API 调用失败，恢复类型=%s，准备进行第 %s/%s 次调用: %s",
+            state.last_recovery_reason,
+            attempt + 1,
+            self._MAX_RECOVERY_ATTEMPTS,
+            type(error).__name__,
+        )
 
     async def text_chat(
         self,
@@ -1278,50 +1302,23 @@ class ProviderOpenAIOfficial(Provider):
         if func_tool and not func_tool.empty():
             payloads["tool_choice"] = tool_choice
 
-        llm_response = None
-        max_retries = 10
-        available_api_keys = self.api_keys.copy()
-        chosen_key = random.choice(available_api_keys)
-        image_fallback_used = False
-
-        last_exception = None
-        retry_cnt = 0
-        for retry_cnt in range(max_retries):
+        state = self._create_chat_recovery_state(
+            payloads,
+            context_query,
+            func_tool,
+            tool_use_required=payloads.get("tool_choice") == "required",
+        )
+        for attempt in range(1, self._MAX_RECOVERY_ATTEMPTS + 1):
             try:
-                self.client.api_key = chosen_key
-                llm_response = await self._query(payloads, func_tool)
-                break
+                self.client.api_key = state.chosen_key
+                return await self._query(state.payloads, state.func_tool)
             except Exception as e:
-                logger.error(f"API 调用失败，重试 {e} 次仍然失败。")
-                last_exception = e
-                (
-                    success,
-                    chosen_key,
-                    available_api_keys,
-                    payloads,
-                    context_query,
-                    func_tool,
-                    image_fallback_used,
-                ) = await self._handle_api_error(
+                await self._recover_chat_request(
                     e,
-                    payloads,
-                    context_query,
-                    func_tool,
-                    chosen_key,
-                    available_api_keys,
-                    retry_cnt,
-                    max_retries,
-                    image_fallback_used=image_fallback_used,
+                    state,
+                    attempt=attempt,
                 )
-                if success:
-                    break
-
-        if retry_cnt == max_retries - 1 or llm_response is None:
-            logger.error(f"API 调用失败，重试 {max_retries} 次仍然失败。")
-            if last_exception is None:
-                raise Exception("未知错误")
-            raise last_exception
-        return llm_response
+        raise RuntimeError("OpenAI recovery loop exited unexpectedly")
 
     async def text_chat_stream(
         self,
@@ -1363,48 +1360,32 @@ class ProviderOpenAIOfficial(Provider):
         if func_tool and not func_tool.empty():
             payloads["tool_choice"] = tool_choice
 
-        max_retries = 10
-        available_api_keys = self.api_keys.copy()
-        chosen_key = random.choice(available_api_keys)
-        image_fallback_used = False
-
-        last_exception = None
-        retry_cnt = 0
-        for retry_cnt in range(max_retries):
+        state = self._create_chat_recovery_state(
+            payloads,
+            context_query,
+            func_tool,
+            tool_use_required=payloads.get("tool_choice") == "required",
+        )
+        for attempt in range(1, self._MAX_RECOVERY_ATTEMPTS + 1):
+            stream_started = False
             try:
-                self.client.api_key = chosen_key
-                async for response in self._query_stream(payloads, func_tool):
+                self.client.api_key = state.chosen_key
+                async for response in self._query_stream(
+                    state.payloads,
+                    state.func_tool,
+                ):
+                    stream_started = True
                     yield response
-                break
+                return
             except Exception as e:
-                last_exception = e
-                (
-                    success,
-                    chosen_key,
-                    available_api_keys,
-                    payloads,
-                    context_query,
-                    func_tool,
-                    image_fallback_used,
-                ) = await self._handle_api_error(
+                if stream_started:
+                    raise
+                await self._recover_chat_request(
                     e,
-                    payloads,
-                    context_query,
-                    func_tool,
-                    chosen_key,
-                    available_api_keys,
-                    retry_cnt,
-                    max_retries,
-                    image_fallback_used=image_fallback_used,
+                    state,
+                    attempt=attempt,
                 )
-                if success:
-                    break
-
-        if retry_cnt == max_retries - 1:
-            logger.error(f"API 调用失败，重试 {max_retries} 次仍然失败。")
-            if last_exception is None:
-                raise Exception("未知错误")
-            raise last_exception
+        raise RuntimeError("OpenAI streaming recovery loop exited unexpectedly")
 
     async def _remove_image_from_context(self, contexts: list):
         """从上下文中删除所有带有 image 的记录"""

@@ -249,6 +249,32 @@ class InteractionOutputController:
         value = self._get_config_value("provider_tts_settings", {}, event=event)
         return value if isinstance(value, dict) else {}
 
+    async def emit_failure_reply(
+        self,
+        reply: str,
+        event: AstrMessageEvent,
+    ) -> bool:
+        if not await reserve_interaction_turn_final_output(event):
+            return False
+        try:
+            await self.emit_immediate_spoken_reply(
+                PersonaExpressionResult(spoken_reply=reply),
+                event,
+            )
+            self._materialize_finalized_turn(event)
+            await self._persist_interaction_turn(event)
+        except BaseException:
+            await finish_interaction_turn_final_output(
+                event,
+                InteractionFinalOutputStatus.FAILED,
+            )
+            raise
+        await finish_interaction_turn_final_output(
+            event,
+            InteractionFinalOutputStatus.DELIVERED,
+        )
+        return True
+
     async def emit_immediate_spoken_reply(
         self,
         result: PersonaExpressionResult,
@@ -355,7 +381,7 @@ class InteractionOutputController:
             try:
                 self._materialize_finalized_turn(event)
                 await self._persist_interaction_turn(event)
-            except Exception:
+            except BaseException:
                 await finish_interaction_turn_final_output(
                     event,
                     InteractionFinalOutputStatus.FAILED,
@@ -411,7 +437,7 @@ class InteractionOutputController:
                 await self.core_reply_handler(full_message, event)
             else:
                 await self._deliver_core_reply(full_message, event)
-        except Exception:
+        except BaseException:
             await finish_interaction_turn_final_output(
                 event,
                 InteractionFinalOutputStatus.FAILED,

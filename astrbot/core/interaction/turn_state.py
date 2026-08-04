@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from astrbot.core.deadline import TurnDeadlineBudget
 from astrbot.core.prompt.context_types import ContextPack
 
 from .types import CorePlanningDecision, CoreTaskSpec, InteractionRouteDecision
@@ -200,6 +201,7 @@ class TurnExecutionScope:
 @dataclass(slots=True)
 class InteractionTurnState:
     turn_id: str
+    deadline: TurnDeadlineBudget | None = None
     persona_id: str = ""
     personal_runtime_key: PersonalRuntimeKey | None = None
     runtime_config_id: str = ""
@@ -316,6 +318,11 @@ def get_interaction_turn_state(event) -> InteractionTurnState | None:
     if isinstance(state, InteractionTurnState):
         return state
     return None
+
+
+def get_interaction_turn_deadline(event) -> TurnDeadlineBudget | None:
+    state = get_interaction_turn_state(event)
+    return state.deadline if state is not None else None
 
 
 def ensure_interaction_turn_state(

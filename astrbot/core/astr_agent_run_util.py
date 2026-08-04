@@ -8,6 +8,7 @@ from astrbot.core import logger
 from astrbot.core.agent.message import Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.message.components import BaseMessageComponent, Json, Plain
 from astrbot.core.message.message_event_result import (
@@ -308,6 +309,8 @@ async def run_agent(
 
                 break
 
+        except TurnDeadlineExceeded:
+            raise
         except Exception as e:
             if "stop_watcher" in locals() and not stop_watcher.done():
                 stop_watcher.cancel()

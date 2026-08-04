@@ -25,6 +25,25 @@
 
 middleware 的职责是组合这些服务，并在一个 interaction turn 内形成可观测、可扩展、可回滚的执行现场。
 
+## Turn 总预算
+
+每个 Personal Runtime turn 在 reservation 时启动一个基于单调时钟的
+`TurnDeadlineBudget`。配置项 `interaction_middleware.turn_timeout` 默认是 120 秒：
+
+```jsonc
+"interaction_middleware": {
+  "enabled": true,
+  "turn_timeout": 120.0
+}
+```
+
+Runtime binding、follow-up 判定、session queue、Router、Planner、Persona、Core、Provider
+请求和 fallback、工具循环、Runtime Observation 与 completion feedback 都消费这一个剩余
+预算。Router、Planner、Persona 的原有阶段超时仍保留，但只会取“阶段上限”和“turn 剩余时间”
+中的较小值。总时限耗尽记录 `turn_deadline_exhausted`，取消并等待 turn-owned 子任务，
+然后通过 Output Controller 交付 Persona 自定义错误文案或统一降级文案。每轮结束的
+`DIAG interaction.deadline` 会列出 stage 分配、耗时、状态和 `turn_limited`。
+
 ## 插件运行目标
 
 Personal Runtime 在缺省配置下启用。已有配置若明确写了
@@ -45,6 +64,7 @@ class MyWorkPlugin(Star):
 ```jsonc
 "interaction_middleware": {
   "enabled": true,
+  "turn_timeout": 120.0,
   "plugin_runtime_targets": {
     "astrbot_plugin_self_code": "core",
     "astrbot_plugin_persona_game": "personal_expression"
@@ -103,6 +123,11 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
   `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。备用 Provider 无法满足严格 terminal
   tool contract 时会明确失败。一旦业务工具已经开始执行，本次 Persona run 不再切换 Provider，
   避免重放副作用。
+- Core 的 `OnLLMRequest` 可以替换请求工具集；Hook 返回后由 `bind_effective_core_request()`
+  统一重新授权并同步 Native `ProviderRequest`、`CoreExecutionSpec` 和工具预算诊断，第三方 Runner
+  复用同一请求边界。Core Prompt projection 与 Native 工具循环使用同一个历史轮数预算；
+  `max_context_length=-1` 时两层都受 64 轮安全上限约束。Native Runner 的文件读取辅助能力也从
+  Hook 后的最终请求解析，不保留 Hook 前的工具 handler。
 
 ### 验证步骤
 
@@ -255,7 +280,9 @@ Input Runtime / Observation
 - Router/Persona 协同：Router 先决定 `persona` / `hybrid` /（仅有界群聊模型续接候选可用的）`silent`。`silent` 零输出完成；`hybrid` 继续由 Planner 判断是否委托 Core，只有不委托 Core 的路径才启动 Persona。Router 失败按 `silent` 完成。
 - Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
   `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
-  lease 释放前统一完成或取消
+  lease 释放前统一完成或取消；`TurnDeadlineBudget.enforce()` 统一约束 binding、queue、
+  Router、Planner、Persona、Core、Provider 和工具执行，超时取消会等待工具结果 task 清理，
+  不允许后台继续写状态
 - Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不启动 Persona；Planner 只生成 CoreTaskSpec，Core 最终结果仍由统一 Persona 输出层表达。
 - Core 协同提示：Core 只接收执行任务与能力事实，并直接执行、返回实质结果材料；未启动的 Persona 不向 Core 暴露内部状态或预发送文本。
 - Context/失败协同：Router、Planner 和后续 Persona 通过 turn-local single-flight 共享一次 Context Material 构建。Planner 失败禁止 Core，并改走 Persona-only 的失败恢复路径。

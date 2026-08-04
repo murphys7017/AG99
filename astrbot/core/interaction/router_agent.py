@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from astrbot import logger
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.prompt.render import (
     PromptRenderEngine,
     PromptRenderProfile,
@@ -26,6 +27,7 @@ from .prompt_support import (
     build_model_context_messages,
 )
 from .provider_resolution import resolve_interaction_chat_provider
+from .turn_state import get_interaction_turn_deadline
 from .types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
@@ -136,17 +138,23 @@ class InteractionRouterAgent:
             interaction_config,
             provider,
         )
+        deadline = get_interaction_turn_deadline(event)
         try:
-            llm_resp = await asyncio.wait_for(
-                provider.text_chat(
+            timeout_context = (
+                deadline.enforce("router", interaction_config.router_timeout)
+                if deadline is not None
+                else asyncio.timeout(interaction_config.router_timeout)
+            )
+            async with timeout_context:
+                llm_resp = await provider.text_chat(
                     prompt=render_result.request_prompt or "",
                     contexts=build_model_context_messages(render_result.messages),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.router_temperature,
-                ),
-                timeout=interaction_config.router_timeout,
-            )
-        except asyncio.TimeoutError:
+                )
+        except TurnDeadlineExceeded:
+            raise
+        except TimeoutError:
             raise InteractionRouterError("timeout") from None
         except Exception as exc:  # noqa: BLE001
             raise InteractionRouterError("model_error", str(exc)) from exc

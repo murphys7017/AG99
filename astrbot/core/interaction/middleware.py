@@ -6,6 +6,7 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.message.components import File, Image, Plain, Record, Reply, Video
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -172,15 +173,35 @@ class InteractionMiddleware:
         core_result_text = message.get_plain_text()
         turn_state = get_interaction_turn_state(event)
         immediate_reply = turn_state.immediate_reply if turn_state is not None else None
-        result = await self._render_visible_reply_via_persona(
-            event,
-            PersonaExpressionRequest(
-                source_text=core_result_text,
-                immediate_reply=immediate_reply or "",
-                preserve_facts=True,
-                allow_plugin_tools=False,
-            ),
-        )
+        try:
+            result = await self._render_visible_reply_via_persona(
+                event,
+                PersonaExpressionRequest(
+                    source_text=core_result_text,
+                    immediate_reply=immediate_reply or "",
+                    preserve_facts=True,
+                    allow_plugin_tools=False,
+                ),
+            )
+        except TurnDeadlineExceeded as exc:
+            record_interaction_turn_failure(
+                event,
+                stage=exc.stage,
+                reason=exc.reason,
+                exception=exc,
+                user_visible_action="deliver_core_result_without_persona",
+            )
+            logger.warning(
+                "Core result Persona rendering reached turn deadline; delivering "
+                "the existing Core result without another model call: turn_id=%s",
+                event.get_extra("_turn_id"),
+            )
+            result = PersonaExpressionResult(
+                spoken_reply=(
+                    core_result_text
+                    or LOCAL_FAST_EXPRESSION_FALLBACK_RESULT.spoken_reply
+                )
+            )
         if result.effect_calls:
             event.set_extra(
                 "_interaction_final_response_effect_calls",
@@ -463,6 +484,25 @@ class InteractionMiddleware:
             await self._complete_persona_only_turn(event, expression)
             event.set_extra("_interaction_runtime_observation_handled", True)
             return expression
+        except TurnDeadlineExceeded as exc:
+            record_interaction_turn_failure(
+                event,
+                stage=exc.stage,
+                reason=exc.reason,
+                exception=exc,
+                user_visible_action="none",
+            )
+            mark_interaction_turn_failed(event)
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.FAILED,
+                metadata={
+                    "source": "runtime_observation",
+                    "reason": exc.reason,
+                },
+            )
+            raise
         except asyncio.CancelledError:
             mark_interaction_turn_cancelled(event)
             await dispatch_interaction_lifecycle(
@@ -573,7 +613,7 @@ class InteractionMiddleware:
                 mode="direct",
                 finalize=True,
             )
-        except Exception:
+        except BaseException:
             await finish_interaction_turn_final_output(
                 event,
                 InteractionFinalOutputStatus.FAILED,
@@ -610,7 +650,7 @@ class InteractionMiddleware:
                 mode="direct",
                 finalize=True,
             )
-        except Exception:
+        except BaseException:
             await finish_interaction_turn_final_output(
                 turn.event,
                 InteractionFinalOutputStatus.FAILED,
@@ -718,6 +758,8 @@ class InteractionMiddleware:
                 event,
                 interaction_config,
             )
+        except TurnDeadlineExceeded:
+            raise
         except asyncio.CancelledError:
             mark_interaction_turn_cancelled(event)
             await dispatch_interaction_lifecycle(
@@ -810,6 +852,8 @@ class InteractionMiddleware:
                     event,
                     interaction_config,
                 )
+            except TurnDeadlineExceeded:
+                raise
             except Exception:
                 expression = await self._generate_and_emit_persona(
                     event,
@@ -1113,6 +1157,8 @@ class InteractionMiddleware:
                 interaction_config=interaction_config,
                 request=request or PersonaExpressionRequest(),
             )
+        except TurnDeadlineExceeded:
+            raise
         except InteractionExpressionError as exc:
             reason = exc.reason
             error: Exception = exc
@@ -1165,6 +1211,8 @@ class InteractionMiddleware:
                 self.plugin_context,
                 interaction_config,
             )
+        except TurnDeadlineExceeded:
+            raise
         except InteractionRouterError as exc:
             reason = exc.reason
             error: Exception = exc

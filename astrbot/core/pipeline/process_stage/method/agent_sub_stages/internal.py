@@ -16,7 +16,6 @@ from astrbot.core.agent.message import (
     dump_messages_with_checkpoints,
 )
 from astrbot.core.agent.response import AgentStats
-from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
 from astrbot.core.agent_lifecycle import AgentRequestLifecycle
 from astrbot.core.astr_main_agent import (
     CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY,
@@ -25,12 +24,12 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildResult,
     build_main_agent,
 )
-from astrbot.core.capabilities import CapabilityResolver
 from astrbot.core.db.po import CoreExecutionRecord as CoreExecutionLedgerRecord
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreExecutionSpec,
-    bind_effective_core_capabilities,
+    bind_effective_core_request,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -275,32 +274,23 @@ class InternalAgentSubStage(Stage):
                         reset_coro.close()
                     return
 
-                effective_capabilities = CapabilityResolver().resolve_explicit_toolset(
+                effective_capabilities, effective_execution_spec = bind_effective_core_request(
                     event=event,
-                    target=TOOL_TARGET_CORE,
-                    toolset=req.func_tool if isinstance(req.func_tool, ToolSet) else ToolSet(),
+                    provider_request=req,
                     persona_id=(
                         build_result.capabilities.persona_id
                         if build_result.capabilities is not None
                         else None
                     ),
-                    selection_mode="request_hook",
+                    execution_spec=build_result.execution_spec,
+                    prompt_apply_result=request_lifecycle.prompt_apply_result,
                 )
-                req.func_tool = effective_capabilities.to_toolset()
                 build_result.capabilities = effective_capabilities
-                prompt_apply_result = request_lifecycle.prompt_apply_result
-                if hasattr(prompt_apply_result, "tool_schema_count"):
-                    prompt_apply_result.tool_schema_count = len(
-                        effective_capabilities.tools
-                    )
-                if build_result.execution_spec is not None:
-                    build_result.execution_spec = bind_effective_core_capabilities(
-                        build_result.execution_spec,
-                        effective_capabilities,
-                    )
+                build_result.execution_spec = effective_execution_spec
+                if effective_execution_spec is not None:
                     event.set_extra(
                         CORE_EXECUTION_SPEC_EXTRA_KEY,
-                        build_result.execution_spec,
+                        effective_execution_spec,
                     )
 
                 # apply reset
@@ -464,6 +454,8 @@ class InternalAgentSubStage(Stage):
                     if runtime_manager is not None:
                         runtime_manager.unregister_active_runner(event, agent_runner)
 
+        except TurnDeadlineExceeded:
+            raise
         except Exception as e:
             logger.error(f"Error occurred while processing agent: {e}")
             await self._save_failed_interaction_core_state(

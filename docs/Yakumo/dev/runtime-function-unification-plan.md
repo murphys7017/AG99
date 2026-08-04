@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：Phase 1、Phase 2 与 Phase 3 底层 owner 迁移已完成；真实 Provider 日志 smoke
-  与延迟验收仍待运行确认。
+- 状态：Phase 1 至 Phase 5 底层 owner 迁移已完成；真实 Provider 日志 smoke、长请求
+  deadline 与后续消息队头延迟仍待运行确认。
 - 更新日期：2026-08-04。
 - 实施基线：`ef389bce0`（`docs: plan runtime function unification`）。
 - 日志基线：`data/logs/astrbot.log` 与 `data/logs/astrbot.trace.log` 的 2026-08-03 样本。
@@ -450,6 +450,12 @@ group message
    placement、priority 和 render mode，不深拷贝实时工具句柄。
 6. 每次 Persona/Core run 记录稳定 lifecycle ID。旧 `astr_agent_hooks.py` 暂作为外部导入兼容面
    保留，但生产 Main Agent 已不再引用；退出策略留给兼容清理阶段，不能重新成为第二条主链。
+7. Hook 后 Core 工具重授权由 `bind_effective_core_request()` 单点负责。Native Core 与第三方
+   Runner 不再分别同步 `ProviderRequest`、Prompt 工具计数和 `CoreExecutionSpec`，避免兼容入口
+   随后出现不同的有效工具事实。
+8. `ToolLoopAgentRunner` 是文件读取辅助能力的唯一解析 owner，从实际执行的最终
+   `ProviderRequest.func_tool` 解析工具；Native Core 和 `Context.tool_loop_agent()` 只提供落盘
+   目录，不再缓存或传递请求形成阶段的 `FunctionTool` handler。
 
 当前验证：Persona、插件目标、Prompt integration 和 Main Agent 公共边界共 76 项中 74 项通过；
 两项既有 Windows 视频 URI 断言仍期望去掉根路径斜杠，与本阶段无关。聚焦 Ruff、`py_compile`、
@@ -463,7 +469,7 @@ YAML、`git diff --check`、VitePress 构建和“不复制 Future 且保留 slo
 
 ### Phase 4：统一上下文事实与目标预算
 
-状态：已实现，等待真实运行验证（2026-08-04）。Phase 3 仍独立待办，本阶段不再被其阻塞。
+状态：已实现，等待真实运行验证（2026-08-04）。
 
 目标：历史事实只提取一次，各 target 在投影阶段应用独立、可观测且有限的预算。
 
@@ -499,19 +505,24 @@ YAML、`git diff --check`、VitePress 构建和“不复制 Future 且保留 slo
    标记 `enforced=false`，不在 Prompt 层粗暴裁剪，避免模型 schema 与 Runner 执行句柄错位。
 6. 未显式指定 Prompt target 的旧 Core 兼容路径同样应用 Core 预算，但保留其原有 slot 可见性，
    不借本阶段改变旧 Core 的人格兼容行为。
+7. Native Agent 工具循环的 `ContextManager` 复用同一个 Core 历史轮数预算；显式配置继续生效，
+   `max_context_length=-1` 时首个 Provider 请求和后续工具轮次都使用 64 轮安全上限，不再只约束
+   Prompt projection 后的第一次调用。
 
 验收标准：529 条历史样本不再原样进入 Core；Persona 仍能获得 50 轮；日志可看到每类材料
 原始量、保留量、估算 token 和截断原因；回复质量回放无明显断层。
 
-当前验证：公开投影边界、旧 Core 兼容渲染路径、collector 事实完整性、Ruff 和 `py_compile`
-已通过；回复质量与真实 Provider token/时延变化由运行验证确认。
+当前验证：公开投影边界、旧 Core 兼容渲染路径、collector 事实完整性、共享工具循环、Ruff 和
+`py_compile` 已通过；2026-08-04 的步骤三/四复核共通过 170 项聚焦用例。回复质量与真实
+Provider token/时延变化仍由运行验证确认。
 
 回滚或停止条件：截断导致 Core 丢失当前任务必要证据。应调整 CoreExecutionSpec 的任务材料与
 对话历史分层，而不是恢复无界历史。
 
 ### Phase 5：统一超时、重试、fallback 与队头阻塞
 
-状态：等待 Phase 4。
+状态：底层 owner 迁移完成，自动化边界验证通过；等待真实 Provider 长请求和同 session
+后续消息日志验收（2026-08-04）。
 
 目标：一次 turn 使用一个单调递减 deadline；子阶段只能消费剩余预算，不能各自重新获得完整
 超时。
@@ -534,6 +545,40 @@ YAML、`git diff --check`、VitePress 构建和“不复制 Future 且保留 slo
 5. 明确同 session 新消息的 absorb、cancel、queue 策略，避免一个慢 Core 请求让后续短消息等待
    数分钟。
 6. 超时结果形成可表达的失败材料，并由 Persona 如实收口。
+
+实施结果：
+
+1. 新增 `TurnDeadlineBudget`，在 turn reservation 时以单调时钟启动；Runtime binding、
+   follow-up 判定、session queue、Router、Planner、Persona、Core、Provider、工具循环、
+   fallback、Runtime Observation 和 completion feedback 共用同一剩余预算。
+2. `TurnDeadlineBudget.enforce()` 是子阶段超时分配与分类的唯一 owner。配置阶段上限只会缩短
+   当前阶段，绝不会延长 turn；预算分配时显式记录 `turn_limited`，避免截止点调度精度造成
+   “总时限”与“阶段超时”误分类。
+3. `ToolLoopAgentRunner` 的主请求、fallback、skills-like 参数重询和修复重询统一经过同一
+   Provider 调用边界；外层取消会取消并等待正在执行的工具结果 task，不再留下后台工具任务。
+   新消息尝试作为 follow-up 进入旧 Agent、但在 session admission 截止前仍未被消费时，会先从
+   旧 Agent 的待处理队列撤回，再按本轮超时收口，避免同一消息在超时回复后又被旧 Core 消费。
+4. OpenAI-compatible SDK 的隐式重试关闭，Adapter 成为唯一恢复 owner。只有换 Key、裁剪
+   上下文、移除不兼容图片/工具或一次明确瞬态网络错误等会改变状态的恢复才再次调用；最后
+   一次恢复成功不再被误判为失败，流式输出开始后不再重放请求。显式 `tool_choice=required`
+   或协议级 terminal tool contract 不允许通过“删除工具”恢复，必须保留契约并交给外层 fallback。
+5. turn 超时会形成稳定 `turn_deadline_exhausted` failure，并通过既有 Output Controller 的
+   final-output 事务发送 Persona 自定义错误文案或统一降级文案；不会为了错误表达再调用模型。
+   若最终输出已经被认领则不重复发送，正常输出或兜底输出在取消时都会把 reservation 收口为
+   `failed`，不会遗留 `reserved` 状态。
+6. lease 释放时先取消并等待 turn-owned tasks；预算耗尽后跳过非关键 completion feedback，
+   及时释放 session lock。未被 follow-up 吸收的新消息继续按 session 排队，但排队本身也消费
+   自己的 turn deadline，不再无限等待前一条慢请求。执行 deadline 只在推进业务生成器时生效，
+   不跨越最终 Result/Respond 交付暂停点；最终输出被认领后只允许既有交付与清理完成。
+
+当前验证：OpenAI Provider、共享 Tool Runner、Router、Planner、Persona、Output Lifecycle、插件
+Runtime 与 Personal Runtime 的 196 项基础测试通过；Ruff、`py_compile`、`git diff --check`
+以及总时限/阶段时限分类 smoke 通过。最终输出事务会在取消时释放 reservation，deadline
+诊断由所有 submission 共用的 settle 边界生成。提交前复核额外通过 OpenAI Provider 63 项、
+follow-up 9 项，以及内部 `TimeoutError` 保真、真实 turn deadline 和未消费 follow-up 撤回 smoke。
+真实日志仍
+需确认：慢 Core turn 不超过配置总预算加交付与清理时间、后续短消息在自己的预算内结束、取消
+中的第三方插件工具能够响应 Python task cancellation，以及 deadline 诊断的阶段耗时符合现场。
 
 验收标准：任何 turn 的实际耗时不超过配置 deadline 加少量清理时间；120 秒 Provider 超时不再
 被放大为约 361 秒；后续消息不再出现约 450 秒的不可解释队头等待；每次重试有错误分类和剩余
@@ -714,11 +759,11 @@ re-read this plan
 - [x] Phase 1 验收：Persona 单工具、工具失败、附件、fallback 和 Hook 自动化兼容通过。
 - [x] Phase 2：建立每 target 唯一 CapabilitySnapshot。
 - [ ] Phase 2 最终验收：跨渲染后 Hook 的 Prompt schema 与 Runner 工具完全一致。
-- [ ] Phase 3：统一 ProviderRequest 与 Agent lifecycle。
-- [ ] Phase 3 验收：无活对象 deepcopy、无 Hook 或副作用重放。
-- [ ] Phase 4：统一上下文事实与 target 预算。
+- [x] Phase 3：统一 ProviderRequest 与 Agent lifecycle。
+- [x] Phase 3 验收：无活对象 deepcopy、无 Hook 或副作用重放。
+- [x] Phase 4：统一上下文事实与 target 预算。
 - [ ] Phase 4 验收：Core 529 条历史样本被稳定限界，Persona 保持 50 轮。
-- [ ] Phase 5：统一 deadline、重试、fallback 和 session 队列。
+- [x] Phase 5：统一 deadline、重试、fallback 和 session 队列。
 - [ ] Phase 5 验收：长请求与后续短消息都受可解释总预算约束。
 - [ ] Phase 6：统一群聊候选与准入。
 - [ ] Phase 6 验收：两个目标群的未回复与回复原因可由统一决策解释。

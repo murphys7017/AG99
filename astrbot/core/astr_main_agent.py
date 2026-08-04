@@ -33,7 +33,10 @@ from astrbot.core.interaction.core_bridge import (
     ensure_interaction_core_execution_prompt,
     get_core_task_spec,
 )
-from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
+from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_deadline,
+    is_interaction_turn_core_delegated,
+)
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -62,6 +65,7 @@ from astrbot.core.prompt.render import (
     PromptTarget,
     RenderResult,
 )
+from astrbot.core.prompt.target_budget import resolve_target_budget
 from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.provider.register import llm_tools
@@ -1197,17 +1201,14 @@ async def build_main_agent(
         llm_compress_keep_recent_ratio=config.llm_compress_keep_recent_ratio,
         llm_compress_provider=_get_compress_provider(config, plugin_context),
         truncate_turns=config.dequeue_context_length,
-        enforce_max_turns=config.max_context_length,
+        enforce_max_turns=resolve_target_budget(
+            PromptTarget.CORE.value,
+            config=config,
+        ).history_turns,
         tool_schema_mode=config.tool_schema_mode,
         fallback_providers=fallback_providers,
-        tool_result_overflow_dir=(
-            get_astrbot_system_tmp_path()
-            if req.func_tool and req.func_tool.get_tool("astrbot_file_read_tool")
-            else None
-        ),
-        read_tool=(
-            req.func_tool.get_tool("astrbot_file_read_tool") if req.func_tool else None
-        ),
+        deadline=get_interaction_turn_deadline(event),
+        tool_result_overflow_dir=get_astrbot_system_tmp_path(),
     )
 
     if apply_reset:
