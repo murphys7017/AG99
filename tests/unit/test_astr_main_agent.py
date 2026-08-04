@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from astrbot.core import astr_main_agent as ama
-from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.conversation_mgr import Conversation
@@ -504,95 +503,6 @@ class TestBuiltinToolInjection:
         tool_mgr.get_builtin_tool.assert_called_once_with(module.FutureTaskTool)
         assert req.func_tool is not None
         assert req.func_tool.get_tool("future_task") is future_task_tool
-
-
-
-
-
-
-
-
-class TestPluginToolFix:
-    """Tests for _plugin_tool_fix function."""
-
-    def test_plugin_tool_fix_none_plugins(self, mock_event):
-        """Test plugin tool fix when no plugins specified."""
-        module = ama
-        req = ProviderRequest(func_tool=ToolSet())
-        mock_event.plugins_name = None
-
-        module._plugin_tool_fix(mock_event, req)
-
-        assert req.func_tool is not None
-
-    def test_plugin_tool_fix_filters_by_plugin(self, mock_event):
-        """Test plugin tool fix filters tools by enabled plugins."""
-        module = ama
-        mcp_tool = MagicMock(spec=MCPTool)
-        mcp_tool.name = "mcp_tool"
-
-        plugin_tool = MagicMock()
-        plugin_tool.name = "plugin_tool"
-        plugin_tool.handler_module_path = "test_plugin"
-        plugin_tool.active = True
-
-        tool_set = ToolSet()
-        tool_set.add_tool(mcp_tool)
-        tool_set.add_tool(plugin_tool)
-
-        req = ProviderRequest(func_tool=tool_set)
-        mock_event.plugins_name = ["test_plugin"]
-
-        with patch("astrbot.core.astr_main_agent.star_map") as mock_star_map:
-            mock_plugin = MagicMock()
-            mock_plugin.name = "test_plugin"
-            mock_plugin.reserved = False
-            mock_star_map.get.return_value = mock_plugin
-
-            module._plugin_tool_fix(mock_event, req)
-
-        assert "mcp_tool" in req.func_tool.names()
-        assert "plugin_tool" in req.func_tool.names()
-
-    def test_plugin_tool_fix_mcp_preserved(self, mock_event):
-        """Test that MCP tools are always preserved."""
-        module = ama
-        mcp_tool = MagicMock(spec=MCPTool)
-        mcp_tool.name = "mcp_tool"
-        mcp_tool.active = True
-
-        tool_set = ToolSet()
-        tool_set.add_tool(mcp_tool)
-
-        req = ProviderRequest(func_tool=tool_set)
-        mock_event.plugins_name = ["other_plugin"]
-
-        with patch("astrbot.core.astr_main_agent.star_map"):
-            module._plugin_tool_fix(mock_event, req)
-
-        assert "mcp_tool" in req.func_tool.names()
-
-    def test_plugin_tool_fix_preserves_tools_without_plugin_origin(self, mock_event):
-        """Tools without handler_module_path should not be filtered out."""
-        module = ama
-        handoff_tool = FunctionTool(
-            name="transfer_to_demo_agent",
-            description="Delegate to demo agent",
-            parameters={"type": "object", "properties": {}},
-            handler_module_path=None,
-            active=True,
-        )
-
-        tool_set = ToolSet()
-        tool_set.add_tool(handoff_tool)
-
-        req = ProviderRequest(func_tool=tool_set)
-        mock_event.plugins_name = ["other_plugin"]
-
-        with patch("astrbot.core.astr_main_agent.star_map"):
-            module._plugin_tool_fix(mock_event, req)
-
-        assert "transfer_to_demo_agent" in req.func_tool.names()
 
 
 class TestBuildMainAgent:
@@ -1406,8 +1316,6 @@ class TestHandleWebchat:
 
         mock_logger.exception.assert_called_once()
         mock_db.update_platform_session.assert_not_called()
-
-
 
 
 class TestApplySandboxTools:

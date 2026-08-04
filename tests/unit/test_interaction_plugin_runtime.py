@@ -3,7 +3,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.capabilities import (
+    CAPABILITY_REASON_PLUGIN_NOT_SELECTED,
+    CAPABILITY_REASON_SUBAGENT_CORE_ONLY,
+    CapabilityResolver,
+    CapabilitySnapshot,
+)
 from astrbot.core.interaction.config import (
     is_middleware_enabled,
     load_interaction_agent_config,
@@ -190,6 +197,114 @@ def test_plugin_tool_runtime_target_defaults_to_core_in_interaction_turn(
     assert tool_supports_runtime_target(legacy_event, tool, PLUGIN_RUNTIME_TARGET_CORE)
     assert not tool_supports_runtime_target(
         legacy_event, tool, PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
+    )
+
+
+def test_capability_snapshot_derives_detached_schema_from_execution_handles():
+    tool = FunctionTool(
+        name="persona_lookup",
+        description="Look up persona-facing data.",
+        parameters={"type": "object", "properties": {}},
+        execution_targets={PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION},
+    )
+    snapshot = CapabilitySnapshot(
+        target=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+        persona_id="persona-a",
+        selection_mode="test",
+        tools=(tool,),
+    )
+
+    serialized = snapshot.serialized_tools()
+    serialized[0]["name"] = "mutated"
+
+    assert snapshot.names() == ["persona_lookup"]
+    assert snapshot.serialized_tools()[0]["name"] == "persona_lookup"
+
+
+@pytest.mark.asyncio
+async def test_capability_resolver_applies_exact_override_and_rejects_persona_subagent(
+    monkeypatch,
+):
+    plugin_module = "test_plugins.capability_tools"
+    unselected_plugin_module = "test_plugins.unselected_tools"
+    monkeypatch.setitem(
+        star_map,
+        plugin_module,
+        StarMetadata(name="capability tools", root_dir_name="capability_tools"),
+    )
+    monkeypatch.setitem(
+        star_map,
+        unselected_plugin_module,
+        StarMetadata(name="unselected tools", root_dir_name="unselected_tools"),
+    )
+    plugin_tool = FunctionTool(
+        name="persona_lookup",
+        description="Look up persona-facing data.",
+        parameters={"type": "object", "properties": {}},
+        handler_module_path=f"{plugin_module}.services",
+    )
+    unselected_tool = FunctionTool(
+        name="hidden_lookup",
+        description="A tool from a plugin disabled for this session.",
+        parameters={"type": "object", "properties": {}},
+        handler_module_path=f"{unselected_plugin_module}.services",
+        execution_targets={PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION},
+    )
+    handoff_tool = HandoffTool(
+        agent=SimpleNamespace(name="worker"),
+        execution_targets={PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION},
+    )
+
+    class Event:
+        unified_msg_origin = "test:FriendMessage:user"
+        plugins_name = ["capability tools"]
+
+        def __init__(self):
+            self._extras = {
+                "_interaction_enabled": True,
+                "_astrbot_config": {
+                    "interaction_middleware": {
+                        "plugin_tool_targets": {
+                            "capability_tools": "core",
+                            "capability_tools.persona_lookup": "personal_expression",
+                        }
+                    }
+                },
+            }
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def get_platform_name(self):
+            return "test"
+
+    context = SimpleNamespace(
+        persona_manager=SimpleNamespace(
+            resolve_selected_persona=AsyncMock(
+                return_value=("persona-a", None, None, False)
+            )
+        ),
+        get_llm_tool_manager=lambda: SimpleNamespace(
+            func_list=[plugin_tool, unselected_tool, handoff_tool]
+        ),
+    )
+    snapshot = await CapabilityResolver().resolve(
+        event=Event(),
+        plugin_context=context,
+        config=SimpleNamespace(provider_settings={}),
+        target=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    )
+
+    assert snapshot.names() == ["persona_lookup"]
+    assert any(
+        decision.tool_name == unselected_tool.name
+        and decision.reason == CAPABILITY_REASON_PLUGIN_NOT_SELECTED
+        for decision in snapshot.decisions
+    )
+    assert any(
+        decision.tool_name == handoff_tool.name
+        and decision.reason == CAPABILITY_REASON_SUBAGENT_CORE_ONLY
+        for decision in snapshot.decisions
     )
 
 

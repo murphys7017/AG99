@@ -2,8 +2,9 @@
 
 ## 文档状态
 
-- 状态：Phase 1 实现与自动化兼容验收已完成；等待私聊真实日志 smoke 后关闭本阶段。
-- 更新日期：2026-08-03。
+- 状态：Phase 1 实现完成、真实日志 smoke 延后；Phase 2 底层 owner 迁移已完成，
+  最终跨 Hook 一致性验收等待 Phase 3。
+- 更新日期：2026-08-04。
 - 实施基线：`ef389bce0`（`docs: plan runtime function unification`）。
 - 日志基线：`data/logs/astrbot.log` 与 `data/logs/astrbot.trace.log` 的 2026-08-03 样本。
 - 任务类型：架构重构与性能修复。
@@ -60,6 +61,7 @@ Router
 | D-008 | 旧插件不需要为了本次统一修改代码；兼容边界由 AstrBot Runtime 承担。 |
 | D-009 | 一次只迁移一个 owner；新 owner 接管后删除旧路径，不长期保留双主链。 |
 | D-010 | 流式输出当前为低优先级，不得阻塞本计划的非流式主链收口。 |
+| D-011 | `HandoffTool`/subagent 委派只属于 Core；Persona 可调用授权业务工具，但永不暴露 subagent。 |
 
 ## 三、目标与非目标
 
@@ -353,7 +355,8 @@ group message
 
 ### Phase 2：统一工具与能力解析
 
-状态：等待 Phase 1 稳定。
+状态：底层 owner 迁移完成，构造与基础边界验证通过；最终跨 Hook 一致性验收未完成，
+渲染后 `OnLLMRequest` 动态改写 Core 工具集的重绑定并入 Phase 3。
 
 目标：每个 turn、每个 target 只形成一次 `CapabilitySnapshot`，Prompt 与执行消费同一快照。
 
@@ -373,12 +376,32 @@ group message
 4. Runner 只执行 snapshot 中的工具，不再二次从全局 Manager 解析。
 5. 删除 `SystemCollector` 对 `ToolsCollector` 私有方法的依赖。
 6. 记录工具被纳入或排除的稳定原因码。
+7. 将 subagent/handoff 固定为 Core-only，即使插件声明或用户配置尝试将其放入 Persona。
 
-验收标准：模型看到的工具名、schema 与 Runner 可执行工具完全一致；一次 target 运行只解析一次
-工具集；配置兼容测试全部通过。
+基础验收标准：同一个快照内模型工具 schema 与 Runner 执行句柄一致；一次 target 的基础工具集
+只解析一次；配置兼容测试全部通过。
+
+最终验收标准：包括渲染后请求 Hook 在内，模型看到的工具名、schema 与 Runner 可执行工具完全
+一致。该项必须在 Phase 3 完成生命周期 owner 迁移后关闭。
 
 验证：复用 `test_interaction_plugin_runtime.py`，增加一个公开输入输出用例校验插件级覆盖与精确
 工具覆盖，不为私有 Collector 调用顺序写测试。
+
+实现结果：
+
+1. 新增公共 `CapabilityResolver` 与冻结的 `CapabilitySnapshot`，集中处理 persona 白名单、
+   请求显式工具、启用状态、会话插件选择和运行目标。
+2. Core 在动态内置工具、Web 搜索、Cron、计算机工具和 subagent 候选组装完成后只形成一份
+   Core snapshot；Prompt Collector、`CoreExecutionSpec` 与 Runner 使用同一工具事实。
+3. Persona 直接消费 Persona snapshot；请求 Hook 未修改工具时不重复解析，修改后只对 Hook
+   提供的显式候选集重新准入，不再访问全局 Manager 或重新解析 persona。
+4. `ToolsCollector` 只负责 snapshot 投影；`SystemCollector` 不再调用其他 Collector 的私有方法。
+5. 插件级覆盖、精确工具覆盖、旧 persona 白名单精确查询、快照内 Prompt/Runner 投影、
+   Snapshot 构造不变量和 Persona subagent 禁令通过基础边界用例；Ruff 与 py_compile 通过。
+
+剩余边界：Core 的官方 `OnLLMRequest` 当前仍在 Prompt 渲染后运行。插件若在该 Hook 动态替换
+`func_tool`，Provider 与 Runner 会看到修改后的请求，但已形成的 ContextPack 工具投影不会自动
+重建。该问题属于 Phase 3 的 ProviderRequest/Hook owner 迁移，不在 Phase 2 再增加回放补丁。
 
 回滚或停止条件：发现官方插件依赖在 Prompt 渲染后动态注册工具，或 snapshot 无法表达现有
 事件过滤。先补公开扩展边界，不允许恢复多处独立解析。
@@ -644,8 +667,8 @@ re-read this plan
 - [x] Phase 1：统一 Persona 工具执行，删除独立工具预判模型调用。
 - [ ] Phase 1 验收：私聊 `815049548` 无工具样本只产生一次 Persona Provider 调用。
 - [x] Phase 1 验收：Persona 单工具、工具失败、附件、fallback 和 Hook 自动化兼容通过。
-- [ ] Phase 2：建立每 target 唯一 CapabilitySnapshot。
-- [ ] Phase 2 验收：Prompt schema 与 Runner 工具完全一致。
+- [x] Phase 2：建立每 target 唯一 CapabilitySnapshot。
+- [ ] Phase 2 最终验收：跨渲染后 Hook 的 Prompt schema 与 Runner 工具完全一致。
 - [ ] Phase 3：统一 ProviderRequest 与 Agent lifecycle。
 - [ ] Phase 3 验收：无活对象 deepcopy、无 Hook 或副作用重放。
 - [ ] Phase 4：统一上下文事实与 target 预算。

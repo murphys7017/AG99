@@ -5,6 +5,7 @@ import pytest
 
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.capabilities import CapabilitySnapshot
 from astrbot.core.interaction.collectors import PersonaVisibleReplyCollector
 from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpec
 from astrbot.core.interaction.expression_agent import (
@@ -34,6 +35,15 @@ from astrbot.core.provider.entities import LLMResponse
 
 def _provider_context_text(call: dict) -> str:
     return "\n".join(str(message) for message in call.get("contexts", []))
+
+
+def _persona_capabilities(tools: ToolSet) -> CapabilitySnapshot:
+    return CapabilitySnapshot(
+        target="personal_expression",
+        persona_id=None,
+        selection_mode="test",
+        tools=tuple(tools),
+    )
 
 
 def test_persona_expression_empty_result_without_effects_is_rejected():
@@ -1000,7 +1010,9 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
             metadata={"persona_effect_specs": []},
         )
     )
-    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
+    agent._resolve_personal_expression_capabilities = AsyncMock(
+        return_value=_persona_capabilities(tools)
+    )
     observed_hooks = []
 
     async def call_hook(event, hook_type, *args, **kwargs):
@@ -1106,7 +1118,9 @@ async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkey
             metadata={"persona_effect_specs": []},
         )
     )
-    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
+    agent._resolve_personal_expression_capabilities = AsyncMock(
+        return_value=_persona_capabilities(tools)
+    )
 
     async def call_hook(_event, hook_type, *args, **_kwargs):
         if hook_type.name == "OnLLMRequestEvent":
@@ -1194,16 +1208,18 @@ async def test_persona_tools_available_but_unused_need_one_model_call(
             metadata={"persona_effect_specs": []},
         )
     )
-    agent._resolve_personal_expression_tools = AsyncMock(
-        return_value=ToolSet(
-            [
-                FunctionTool(
-                    name="optional_tool",
-                    description="Optional Persona tool.",
-                    parameters={"type": "object", "properties": {}},
-                    execution_targets={"personal_expression"},
-                )
-            ]
+    agent._resolve_personal_expression_capabilities = AsyncMock(
+        return_value=_persona_capabilities(
+            ToolSet(
+                [
+                    FunctionTool(
+                        name="optional_tool",
+                        description="Optional Persona tool.",
+                        parameters={"type": "object", "properties": {}},
+                        execution_targets={"personal_expression"},
+                    )
+                ]
+            )
         )
     )
     monkeypatch.setattr(
@@ -1327,7 +1343,9 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
             metadata={"persona_effect_specs": []},
         )
     )
-    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
+    agent._resolve_personal_expression_capabilities = AsyncMock(
+        return_value=_persona_capabilities(tools)
+    )
     monkeypatch.setattr(
         "astrbot.core.interaction.expression_agent.resolve_interaction_chat_provider",
         AsyncMock(return_value=(primary, "primary")),
@@ -1441,7 +1459,9 @@ async def test_persona_request_hook_context_mutation_survives_business_tool_loop
             metadata={"persona_effect_specs": []},
         )
     )
-    agent._resolve_personal_expression_tools = AsyncMock(return_value=tools)
+    agent._resolve_personal_expression_capabilities = AsyncMock(
+        return_value=_persona_capabilities(tools)
+    )
 
     async def call_hook(_event, hook_type, *args, **_kwargs):
         if hook_type.name == "OnLLMRequestEvent":

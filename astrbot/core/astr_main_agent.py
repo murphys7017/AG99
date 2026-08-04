@@ -9,7 +9,6 @@ from typing import Any
 
 from astrbot.core import logger
 from astrbot.core.agent.handoff import HandoffTool
-from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.agent.message import AudioURLPart, ImageURLPart
 from astrbot.core.agent.tool import (
     TOOL_TARGET_CORE,
@@ -19,6 +18,7 @@ from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContex
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
 from astrbot.core.astr_agent_run_util import AgentRunner
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
@@ -37,7 +37,6 @@ from astrbot.core.persona_error_reply import (
     set_persona_custom_error_message_on_event,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.plugin_runtime import tool_supports_runtime_target
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors.conversation_history_collector import (
     ConversationHistoryCollector,
@@ -67,7 +66,6 @@ from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.provider.register import llm_tools
 from astrbot.core.star.context import Context
-from astrbot.core.star.star_handler import star_map
 from astrbot.core.tools.computer_tools import (
     AnnotateExecutionTool,
     BrowserBatchExecTool,
@@ -121,6 +119,8 @@ from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY = "conversation_save_user_message"
 LLM_ERROR_MESSAGE_EXTRA_KEY = "_llm_error_message"
+
+
 @dataclass(slots=True)
 class MainAgentBuildConfig:
     """The main agent build configuration.
@@ -309,15 +309,17 @@ def should_use_interaction_core_profile(event: AstrMessageEvent) -> bool:
     return is_interaction_turn_core_delegated(event)
 
 
-def _build_interaction_core_collectors():
+def _build_interaction_core_collectors(
+    capabilities: CapabilitySnapshot,
+):
     return [
-        SystemCollector(),
+        SystemCollector(capabilities=capabilities),
         CoreTaskCollector(),
         ConversationHistoryCollector(),
         CoreExecutionHistoryCollector(),
         PolicyCollector(),
         SkillsCollector(),
-        ToolsCollector(),
+        ToolsCollector(capabilities=capabilities),
         SubagentCollector(),
         KnowledgeCollector(),
     ]
@@ -474,9 +476,7 @@ def _prepare_knowledge_tools(
     if req.func_tool is None:
         req.func_tool = ToolSet()
     req.func_tool.add_tool(
-        plugin_context.get_llm_tool_manager().get_builtin_tool(
-            KnowledgeBaseQueryTool
-        )
+        plugin_context.get_llm_tool_manager().get_builtin_tool(KnowledgeBaseQueryTool)
     )
 
 
@@ -492,15 +492,15 @@ def _apply_local_env_tools(req: ProviderRequest, plugin_context: Context) -> Non
     req.func_tool.add_tool(tool_mgr.get_builtin_tool(GrepTool))
 
 
-async def _prepare_persona_tools_and_subagents(
+async def _prepare_persona_and_subagents(
     req: ProviderRequest,
     cfg: dict,
     plugin_context: Context,
     event: AstrMessageEvent,
-) -> None:
-    """Prepare executable tools without writing model-visible prompt content."""
+) -> tuple[tuple[str | None, dict | None] | None, frozenset[str]]:
+    """Resolve the current persona and prepare Core-only subagent candidates."""
     if not req.conversation:
-        return
+        return None, frozenset()
 
     (
         persona_id,
@@ -520,43 +520,7 @@ async def _prepare_persona_tools_and_subagents(
 
     tmgr = plugin_context.get_llm_tool_manager()
 
-    # inject toolset in the persona
-    if (persona and persona.get("tools") is None) or not persona:
-        persona_toolset = ToolSet()
-        for tool in tmgr.func_list:
-            if tool.active and tool_supports_runtime_target(
-                event,
-                tool,
-                TOOL_TARGET_CORE,
-            ):
-                persona_toolset.add_tool(tool)
-    else:
-        persona_toolset = ToolSet()
-        if persona["tools"]:
-            for tool_name in persona["tools"]:
-                tool = tmgr.get_func(tool_name)
-                if (
-                    tool
-                    and tool.active
-                    and tool_supports_runtime_target(
-                        event,
-                        tool,
-                        TOOL_TARGET_CORE,
-                    )
-                ):
-                    persona_toolset.add_tool(tool)
-    if req.func_tool:
-        core_toolset = ToolSet()
-        for tool in req.func_tool:
-            if tool_supports_runtime_target(event, tool, TOOL_TARGET_CORE):
-                core_toolset.add_tool(tool)
-        req.func_tool = core_toolset
-    if not req.func_tool:
-        req.func_tool = persona_toolset
-    else:
-        req.func_tool.merge(persona_toolset)
-
-    # sub agents integration
+    excluded_tool_names: set[str] = set()
     orch_cfg = plugin_context.get_config().get("subagent_orchestrator", {})
     so = plugin_context.subagent_orchestrator
     if orch_cfg.get("main_enable", False) and so:
@@ -573,9 +537,11 @@ async def _prepare_persona_tools_and_subagents(
                 persona_tools = None
                 pid = a.get("persona_id")
                 if pid:
-                    persona = plugin_context.persona_manager.get_persona_v3_by_id(pid)
-                    if persona is not None:
-                        persona_tools = persona.get("tools")
+                    subagent_persona = (
+                        plugin_context.persona_manager.get_persona_v3_by_id(pid)
+                    )
+                    if subagent_persona is not None:
+                        persona_tools = subagent_persona.get("tools")
                 tools = a.get("tools", [])
                 if persona_tools is not None:
                     tools = persona_tools
@@ -598,26 +564,17 @@ async def _prepare_persona_tools_and_subagents(
         if req.func_tool is None:
             req.func_tool = ToolSet()
 
-        # add subagent handoff tools
         for tool in so.handoffs:
             req.func_tool.add_tool(tool)
 
-        # check duplicates
         if remove_dup:
             handoff_names = {tool.name for tool in so.handoffs}
-            for tool_name in assigned_tools:
-                if tool_name in handoff_names:
-                    continue
-                req.func_tool.remove_tool(tool_name)
+            excluded_tool_names.update(assigned_tools - handoff_names)
 
-    try:
-        event.trace.record(
-            "sel_persona",
-            persona_id=persona_id,
-            persona_toolset=persona_toolset.names(),
-        )
-    except Exception:
-        pass
+    return (
+        (persona_id, persona if isinstance(persona, dict) else None),
+        frozenset(excluded_tool_names),
+    )
 
 
 def _get_user_content_part_type(part: object) -> str | None:
@@ -811,35 +768,6 @@ def _sanitize_context_by_modalities(
     req.contexts = sanitized_contexts
 
 
-def _plugin_tool_fix(event: AstrMessageEvent, req: ProviderRequest) -> None:
-    """根据事件中的插件设置，过滤请求中的工具列表。
-
-    注意：没有 handler_module_path 的工具（如 MCP 工具）会被保留，
-    因为它们不属于任何插件，不应被插件过滤逻辑影响。
-    """
-    if event.plugins_name is not None and req.func_tool:
-        new_tool_set = ToolSet()
-        for tool in req.func_tool.tools:
-            if isinstance(tool, MCPTool):
-                # 保留 MCP 工具
-                new_tool_set.add_tool(tool)
-                continue
-            mp = tool.handler_module_path
-            if not mp:
-                # 没有 plugin 归属信息的工具（如 subagent transfer_to_*）
-                # 不应受到会话插件过滤影响。
-                new_tool_set.add_tool(tool)
-                continue
-            plugin = star_map.get(mp)
-            if not plugin:
-                # 无法解析插件归属时，保守保留工具，避免误过滤。
-                new_tool_set.add_tool(tool)
-                continue
-            if plugin.name in event.plugins_name or plugin.reserved:
-                new_tool_set.add_tool(tool)
-        req.func_tool = new_tool_set
-
-
 async def _handle_webchat(
     event: AstrMessageEvent, req: ProviderRequest, prov: Provider
 ) -> None:
@@ -945,6 +873,7 @@ def _apply_sandbox_tools(
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(CuaScreenshotTool))
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(CuaMouseClickTool))
         req.func_tool.add_tool(tool_mgr.get_builtin_tool(CuaKeyboardTypeTool))
+
 
 def _proactive_cron_job_tools(req: ProviderRequest, plugin_context: Context) -> None:
     if req.func_tool is None:
@@ -1089,7 +1018,7 @@ async def build_main_agent(
     provider_settings = config.provider_settings or plugin_context.get_config(
         umo=event.unified_msg_origin
     ).get("provider_settings", {})
-    await _prepare_persona_tools_and_subagents(
+    persona_selection, subagent_excluded_tools = await _prepare_persona_and_subagents(
         req,
         provider_settings,
         plugin_context,
@@ -1100,7 +1029,6 @@ async def build_main_agent(
     if not req.session_id:
         req.session_id = event.unified_msg_origin
 
-    _plugin_tool_fix(event, req)
     await _apply_web_search_tools(event, req, plugin_context)
 
     if config.computer_use_runtime == "sandbox":
@@ -1127,6 +1055,34 @@ async def build_main_agent(
         )
 
     _tool_modality_fix(provider, req)
+    capability_resolver = CapabilityResolver()
+    if persona_selection is None:
+        capabilities = capability_resolver.resolve_explicit_toolset(
+            event=event,
+            target=TOOL_TARGET_CORE,
+            toolset=req.func_tool or ToolSet(),
+            excluded_tool_names=subagent_excluded_tools,
+        )
+    else:
+        capabilities = await capability_resolver.resolve(
+            event=event,
+            plugin_context=plugin_context,
+            config=config,
+            target=TOOL_TARGET_CORE,
+            provider_request=req,
+            persona_selection=persona_selection,
+            include_registered_tools=True,
+            excluded_tool_names=subagent_excluded_tools,
+        )
+    req.func_tool = capabilities.to_toolset()
+    try:
+        event.trace.record(
+            "sel_persona",
+            persona_id=capabilities.persona_id,
+            persona_toolset=capabilities.names(),
+        )
+    except Exception:
+        pass
 
     if provider.provider_config.get("max_context_tokens", 0) <= 0:
         model = provider.get_model()
@@ -1154,11 +1110,12 @@ async def build_main_agent(
     builder = PromptContextBuilder(event, plugin_context, config)
     prompt_context_pack = await builder.build(
         collectors=(
-            _build_interaction_core_collectors()
+            _build_interaction_core_collectors(capabilities)
             if interaction_core and base_context_pack is not None
             else None
         ),
         provider_request=req,
+        capabilities=capabilities,
         include_prompt_extensions=base_context_pack is None,
         base=base_context_pack,
         replace_slots=(
@@ -1182,7 +1139,7 @@ async def build_main_agent(
         parent_execution_id=event.get_extra("_core_parent_execution_id"),
         capabilities=CoreCapabilitySnapshot.from_context_pack(
             prompt_context_pack,
-            tools=req.func_tool,
+            tools=capabilities.to_toolset(),
         ),
     )
     event.set_extra(CORE_EXECUTION_SPEC_EXTRA_KEY, execution_spec)

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from astrbot.core.agent.tool import tool_supports_target
+from astrbot.core.agent.handoff import HandoffTool
+from astrbot.core.agent.tool import (
+    TOOL_TARGET_PERSONAL_EXPRESSION,
+    tool_supports_target,
+)
 from astrbot.core.star.star import star_map
 
 PluginRuntimeTarget = Literal["core", "personal_expression"]
 
 PLUGIN_RUNTIME_TARGET_CORE: PluginRuntimeTarget = "core"
-PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION: PluginRuntimeTarget = (
-    "personal_expression"
-)
+PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION: PluginRuntimeTarget = "personal_expression"
 PLUGIN_RUNTIME_TARGETS_CONFIG_KEY = "plugin_runtime_targets"
 PLUGIN_TOOL_TARGETS_CONFIG_KEY = "plugin_tool_targets"
 
@@ -40,7 +42,11 @@ def tool_supports_runtime_target(event, tool: object, target: str) -> bool:
     Function tools remain Core-only by default. A plugin can opt a tool into
     Persona through its own ``execution_targets`` declaration, while users can
     override a plugin or one named tool through ``plugin_tool_targets``.
+    ``HandoffTool`` is an invariant Core capability and cannot be moved to
+    Persona by either declaration or configuration.
     """
+    if target == TOOL_TARGET_PERSONAL_EXPRESSION and isinstance(tool, HandoffTool):
+        return False
     if not _is_personal_runtime_turn(event):
         return tool_supports_target(tool, target)
 
@@ -56,6 +62,18 @@ def tool_supports_runtime_target(event, tool: object, target: str) -> bool:
         if configured_target is not None:
             return configured_target == target
     return tool_supports_target(tool, target)
+
+
+def tool_plugin_is_selected(event, tool: object) -> bool:
+    """Return whether the tool's owning plugin is enabled for this session."""
+    selected_plugins = getattr(event, "plugins_name", None)
+    if selected_plugins is None:
+        return True
+
+    metadata = _metadata_for_module(_tool_module_path(tool))
+    if metadata is None:
+        return True
+    return bool(metadata.reserved or metadata.name in selected_plugins)
 
 
 def _is_personal_runtime_turn(event) -> bool:
@@ -178,7 +196,9 @@ def _metadata_for_module(module_path: str | None):
     if direct is not None:
         return direct
     for candidate_path, metadata in star_map.items():
-        if module_path == candidate_path or module_path.startswith(f"{candidate_path}."):
+        if module_path == candidate_path or module_path.startswith(
+            f"{candidate_path}."
+        ):
             return metadata
     return None
 

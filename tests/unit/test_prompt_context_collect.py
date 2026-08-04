@@ -329,7 +329,11 @@ async def test_build_main_agent_stores_prompt_context_pack_in_event_extra():
         result = await ama.build_main_agent(
             event=event,
             plugin_context=context,
-            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+            config=ama.MainAgentBuildConfig(
+                tool_call_timeout=60,
+                computer_use_runtime="none",
+                add_cron_tools=False,
+            ),
         )
 
     assert result is not None

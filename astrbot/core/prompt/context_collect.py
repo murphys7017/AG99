@@ -11,6 +11,10 @@ from collections.abc import Iterable
 from copy import deepcopy
 
 from astrbot.core import logger
+from astrbot.core.capabilities import (
+    CapabilityResolver,
+    CapabilitySnapshot,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.context import Context
 
@@ -53,19 +57,27 @@ async def resolve_toolset_for_target(
     target: str,
     provider_request=None,
 ):
-    """Resolve executable tools through the Prompt-owned capability collector."""
-    return await ToolsCollector(target=target).resolve_toolset(
-        event,
-        plugin_context,
-        config,
+    """Compatibility wrapper around the runtime capability owner."""
+    capabilities = await CapabilityResolver().resolve(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
+        target=target,
         provider_request=provider_request,
+    )
+    return (
+        capabilities.persona_id,
+        capabilities.to_toolset(),
+        capabilities.selection_mode,
     )
 
 
-def _default_collectors() -> list[ContextCollectorInterface]:
+def _default_collectors(
+    capabilities: CapabilitySnapshot | None = None,
+) -> list[ContextCollectorInterface]:
     """Return the full collector set used by the native Core path."""
     return [
-        SystemCollector(),
+        SystemCollector(capabilities=capabilities),
         CoreTaskCollector(),
         PersonaCollector(),
         InputCollector(),
@@ -76,7 +88,7 @@ def _default_collectors() -> list[ContextCollectorInterface]:
         CoreExecutionHistoryCollector(),
         ExplicitContextCollector(),
         SkillsCollector(),
-        ToolsCollector(),
+        ToolsCollector(capabilities=capabilities),
         SubagentCollector(),
         KnowledgeCollector(),
     ]
@@ -560,6 +572,7 @@ async def collect_context_pack(
     config,
     provider_request=None,
     collectors: Iterable[ContextCollectorInterface] | None = None,
+    capabilities: CapabilitySnapshot | None = None,
     include_prompt_extensions: bool = True,
 ) -> ContextPack:
     """
@@ -571,7 +584,9 @@ async def collect_context_pack(
     """
     catalog = get_catalog(strict=True)
     collector_list = (
-        list(collectors) if collectors is not None else _default_collectors()
+        list(collectors)
+        if collectors is not None
+        else _default_collectors(capabilities)
     )
     static_context_cache = _get_event_dict_extra(event, PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY)
 

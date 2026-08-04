@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
+from astrbot.core.agent.tool import TOOL_TARGET_CORE
+from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.db import BaseDatabase
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.resources import (
@@ -26,7 +28,6 @@ from astrbot.core.workspace import (
 
 from ..context_types import ContextSlot
 from ..interfaces.context_collector_inferface import ContextCollectorInterface
-from .tools_collector import ToolsCollector
 
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
@@ -35,8 +36,16 @@ if TYPE_CHECKING:
 class SystemCollector(ContextCollectorInterface):
     """Collect base system prompt and tool-call instruction metadata."""
 
-    def __init__(self, *, base_only: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        base_only: bool = False,
+        capabilities: CapabilitySnapshot | None = None,
+    ) -> None:
+        if capabilities is not None and capabilities.target != TOOL_TARGET_CORE:
+            raise ValueError("SystemCollector only accepts Core capability snapshots")
         self.base_only = base_only
+        self.capabilities = capabilities
 
     @property
     def cache_key(self) -> str:
@@ -45,7 +54,7 @@ class SystemCollector(ContextCollectorInterface):
 
     @property
     def lifecycle(self) -> str:
-        return "static"
+        return "dynamic" if self.capabilities is not None else "static"
 
     async def collect(
         self,
@@ -286,6 +295,9 @@ class SystemCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None,
     ) -> bool:
+        if self.capabilities is not None:
+            return not self.capabilities.is_empty()
+
         if (
             provider_request
             and provider_request.func_tool
@@ -318,17 +330,11 @@ class SystemCollector(ContextCollectorInterface):
         ):
             return True
 
-        tools_collector = ToolsCollector()
-        _, persona = await tools_collector._resolve_persona(
-            event,
-            plugin_context,
-            config,
-            provider_request,
+        capabilities = await CapabilityResolver().resolve(
+            event=event,
+            plugin_context=plugin_context,
+            config=config,
+            target=TOOL_TARGET_CORE,
+            provider_request=provider_request,
         )
-        toolset, _ = tools_collector._build_persona_toolset(
-            event,
-            plugin_context,
-            persona,
-            provider_request,
-        )
-        return not toolset.empty()
+        return not capabilities.is_empty()

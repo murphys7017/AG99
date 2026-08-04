@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: persona_tool_execution_unification
-  scope: Unify authorized Persona business tools and the terminal persona_expression contract in one shared ToolLoopAgentRunner while preserving plugin target configuration, official Pipeline behavior, group admission, history windows, timeout policy, and non-streaming output ownership.
+  phase: capability_snapshot_unification
+  scope: Resolve Core and Persona executable tools through one CapabilityResolver and project one target-specific CapabilitySnapshot into Prompt and execution, while keeping general plugin target defaults, group admission, history windows, timeout policy, and streaming behavior unchanged.
 context:
   confidence: high
   assumptions:
@@ -364,6 +364,7 @@ verification:
     - "Plugin target WebUI: the Interaction configuration page now uses a dedicated lifecycle/tool target map editor with installed-plugin and plugin-tool suggestions, manual compatibility keys, duplicate/target validation, and complete zh-CN/en-US/ru-RU metadata; focused config metadata tests, dashboard typecheck/production build, JSON parse, Ruff, py_compile, and diff checks passed."
     - "Plugin-submitted group reply admission: the public candidate API, Handler-settlement Router gate, silent fail-closed path, plugin-specific Router guidance, and 50-turn Persona default passed 56 focused Interaction/Runtime/config tests; AngelHeart capability fallback and 42 plugin tests passed, with affected Ruff, API import, compile/structure, JSON/YAML, VitePress build, and diff checks passing."
     - "Personal turn ContextVar lifecycle: cross-Task ProcessStage closure and scheduler-owned downstream plugin scope passed 54 Personal Runtime, group-reply, plugin-runtime, and smoke tests; affected Ruff, py_compile, and diff checks passed."
+    - "Capability snapshot unification: Core and Persona now share one resolver for target, persona whitelist, active state, and session plugin admission; CapabilitySnapshot derives detached schema from its execution handles, ToolsCollector only projects snapshots, SystemCollector has no private Collector dependency, and Persona rejects subagents as a non-configurable Core-only invariant. Eleven focused public-boundary tests, Ruff, py_compile, YAML parse, and git diff checks passed. Final post-render Hook consistency remains a Phase 3 acceptance item."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -381,25 +382,25 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: persona_tool_execution_unification
+    phase: capability_snapshot_unification
     scope:
-      - one shared ToolLoopAgentRunner for authorized Persona business tools and terminal persona_expression
-      - removal of the separate Persona tool-preflight model request and no_tool material rerendering
-      - protocol-level terminal tool handling outside FunctionToolExecutor
-      - OpenAI and Anthropic merging of executable tools with output-contract tools
-      - one Persona request-hook and public Agent lifecycle per run
-      - fallback suppression after business-tool execution and stable Agent context identity across zero-side-effect fallback
+      - one CapabilityResolver for target policy, persona whitelist, active state, and session plugin admission
+      - one immutable CapabilitySnapshot shared by Core Prompt projection, CoreExecutionSpec, and Runner
+      - Persona request-hook capability reconciliation without re-reading global tool managers
+      - ToolsCollector projection-only behavior and removal of SystemCollector private Collector calls
+      - hard Core-only ownership for HandoffTool and subagent delegation
     non_goals:
       - streaming delivery redesign or expanded streaming support
-      - plugin runtime/tool target policy or default changes
+      - general plugin lifecycle/tool target defaults beyond the HandoffTool Core-only invariant
       - group admission, Router mode, history-window, timeout, retry, or queue-policy changes
-      - full Persona/Core lifecycle executor unification, capability snapshot migration, media-boundary consolidation, or broad event-extra removal
+      - ProviderRequest lifecycle relocation, media-boundary consolidation, or broad event-extra removal
     confirmed_gaps:
       - a backend-neutral progress, cancellation, and background-execution permission contract remains absent
       - no built-in additional Runtime Sensor or per-Sensor schema exists yet
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract
+      - Core OnLLMRequest still runs after Prompt rendering, so dynamic func_tool replacement requires Phase 3 lifecycle rebinding
       - proactive media-only output still uses the raw platform sink because it has no canonical semantic material
       - PersonalTurnContext exists but the main Interaction path still coordinates through 117 literal event-extra keys
     dependency_review:

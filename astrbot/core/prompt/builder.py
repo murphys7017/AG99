@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 
+from astrbot.core.capabilities import CapabilitySnapshot
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
@@ -28,6 +29,7 @@ class PromptContextBuilder:
         *,
         collectors: Iterable[ContextCollectorInterface] | None = None,
         provider_request: ProviderRequest | None = None,
+        capabilities: CapabilitySnapshot | None = None,
         include_prompt_extensions: bool = True,
         base: ContextPack | None = None,
         replace_slots: Iterable[str] = (),
@@ -39,6 +41,7 @@ class PromptContextBuilder:
             config=self.config,
             provider_request=provider_request,
             collectors=collectors,
+            capabilities=capabilities,
             include_prompt_extensions=include_prompt_extensions,
         )
         return merge_context_packs(

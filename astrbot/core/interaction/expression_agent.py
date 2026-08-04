@@ -22,6 +22,7 @@ from astrbot.core.agent.tool import (
     TOOL_TARGET_PERSONAL_EXPRESSION,
     FunctionTool,
     ToolSet,
+    normalize_tool_targets,
 )
 from astrbot.core.agent.tool_output_capture import (
     PersonaToolOutputAttachments,
@@ -29,6 +30,7 @@ from astrbot.core.agent.tool_output_capture import (
 )
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.memory.history_source import extract_message_text
 from astrbot.core.message.components import Plain
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
@@ -36,10 +38,8 @@ from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-    tool_supports_runtime_target,
 )
 from astrbot.core.prompt.builder import PromptContextBuilder
-from astrbot.core.prompt.context_collect import resolve_toolset_for_target
 from astrbot.core.prompt.render import (
     PROMPT_APPLY_RESULT_EXTRA_KEY,
     PromptRenderEngine,
@@ -119,7 +119,9 @@ _MISSING_PROMPT_APPLY_RESULT = object()
 
 
 @contextmanager
-def _bind_persona_provider_request(event, provider_request: ProviderRequest) -> Iterator[None]:
+def _bind_persona_provider_request(
+    event, provider_request: ProviderRequest
+) -> Iterator[None]:
     """Expose a branch-local request through the real plugin event.
 
     Existing plugins may validate the concrete ``AstrMessageEvent`` type. Keep
@@ -485,12 +487,9 @@ def extract_persona_expression_result(
         and output_contract.mode == "tool_call"
         and not output_contract.allow_text_fallback
     )
-    protocol_tool_call_required = (
-        strict_tool_call
-        and not (
-            isinstance(compiled_output_contract, CompiledOutputContract)
-            and compiled_output_contract.strategy == "prompt_only"
-        )
+    protocol_tool_call_required = strict_tool_call and not (
+        isinstance(compiled_output_contract, CompiledOutputContract)
+        and compiled_output_contract.strategy == "prompt_only"
     )
     strict_json_object = (
         isinstance(output_contract, OutputContract)
@@ -720,14 +719,19 @@ class InteractionExpressionAgent:
             ):
                 return PersonaExpressionResult()
 
-        toolset = ToolSet()
+        capabilities = CapabilitySnapshot.empty(
+            target=TOOL_TARGET_PERSONAL_EXPRESSION,
+        )
         if req.allow_plugin_tools and self._provider_supports_tool_calls(provider):
-            toolset = await self._resolve_personal_expression_tools(
+            capabilities = await self._resolve_personal_expression_capabilities(
                 event,
                 plugin_context,
                 interaction_config,
             )
-            provider_request.func_tool = toolset
+            provider_request.func_tool = capabilities.to_toolset()
+        initial_tool_signature = _toolset_capability_signature(
+            provider_request.func_tool
+        )
 
         output_contract = render_result.output_contract
         compiled_output_contract = render_result.compiled_output_contract
@@ -753,21 +757,18 @@ class InteractionExpressionAgent:
         provider_request.compiled_output_contract = compiled_output_contract
 
         if req.allow_plugin_tools and isinstance(provider_request.func_tool, ToolSet):
-            filtered_tools = [
-                tool
-                for tool in provider_request.func_tool
-                if tool_supports_runtime_target(
-                    event,
-                    tool,
-                    TOOL_TARGET_PERSONAL_EXPRESSION,
+            if (
+                _toolset_capability_signature(provider_request.func_tool)
+                != initial_tool_signature
+            ):
+                capabilities = CapabilityResolver().resolve_explicit_toolset(
+                    event=event,
+                    target=TOOL_TARGET_PERSONAL_EXPRESSION,
+                    toolset=provider_request.func_tool,
+                    persona_id=capabilities.persona_id,
+                    selection_mode="request_hook",
                 )
-            ]
-            toolset = (
-                provider_request.func_tool
-                if len(filtered_tools) == len(provider_request.func_tool)
-                else ToolSet(filtered_tools)
-            )
-            provider_request.func_tool = toolset
+            provider_request.func_tool = capabilities.to_toolset()
         else:
             provider_request.func_tool = ToolSet()
 
@@ -836,7 +837,9 @@ class InteractionExpressionAgent:
         )
         provider_request.provider = provider
         provider_request.output_contract = render_result.output_contract
-        provider_request.compiled_output_contract = render_result.compiled_output_contract
+        provider_request.compiled_output_contract = (
+            render_result.compiled_output_contract
+        )
         provider_request.func_tool = (
             previous.provider_request.func_tool
             if self._provider_supports_tool_calls(provider)
@@ -943,9 +946,13 @@ class InteractionExpressionAgent:
             event.session_id,
             _describe_expression_request(req),
             provider_config.get("type", ""),
-            provider.get_model() if callable(getattr(provider, "get_model", None)) else "",
+            provider.get_model()
+            if callable(getattr(provider, "get_model", None))
+            else "",
             render_result.metadata.get("renderer"),
-            output_contract.mode if isinstance(output_contract, OutputContract) else None,
+            output_contract.mode
+            if isinstance(output_contract, OutputContract)
+            else None,
             render_result.metadata.get("output_contract_strategy"),
             render_result.metadata.get("output_contract_degraded"),
             compiled_output_contract.tool_name
@@ -1004,7 +1011,10 @@ class InteractionExpressionAgent:
             bool(result.effect_calls),
             [call.name for call in result.effect_calls],
             [
-                {"name": str(issue.get("name", "")), "reason": str(issue.get("reason", ""))}
+                {
+                    "name": str(issue.get("name", "")),
+                    "reason": str(issue.get("reason", "")),
+                }
                 for issue in result.metadata.get("effect_parse_issues", [])
                 if isinstance(issue, dict)
             ],
@@ -1158,21 +1168,20 @@ class InteractionExpressionAgent:
             )
         return llm_resp, tool_hooks.tool_execution_count
 
-    async def _resolve_personal_expression_tools(
+    async def _resolve_personal_expression_capabilities(
         self,
         event,
         plugin_context: Context,
         interaction_config: InteractionAgentConfig,
-    ) -> ToolSet:
+    ) -> CapabilitySnapshot:
         build_config = build_interaction_prompt_build_config(plugin_context, event)
-        _, toolset, _ = await resolve_toolset_for_target(
+        return await CapabilityResolver().resolve(
             event=event,
             plugin_context=plugin_context,
             config=build_config,
             target=TOOL_TARGET_PERSONAL_EXPRESSION,
             provider_request=None,
         )
-        return toolset
 
     @staticmethod
     def _provider_supports_tool_calls(provider: Provider) -> bool:
@@ -1281,13 +1290,13 @@ class InteractionExpressionAgent:
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
         render_result.metadata["prompt_slot_sizes"] = prompt_slot_sizes
         if req.avoid_previous_reply:
-            previous_expression_fingerprint = (
-                _latest_assistant_expression_fingerprint(expression_pack)
+            previous_expression_fingerprint = _latest_assistant_expression_fingerprint(
+                expression_pack
             )
             if previous_expression_fingerprint is not None:
-                render_result.metadata[
-                    PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY
-                ] = previous_expression_fingerprint
+                render_result.metadata[PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY] = (
+                    previous_expression_fingerprint
+                )
         return render_result
 
     @staticmethod
@@ -1398,8 +1407,7 @@ def _build_failure_expression_request(
     return replace(
         req,
         source_text=(
-            "本轮模型调用已经失败。"
-            f"可确认的错误原因：{message or error.reason}"
+            f"本轮模型调用已经失败。可确认的错误原因：{message or error.reason}"
         ),
         preserve_facts=True,
         allow_empty=False,
@@ -1430,11 +1438,14 @@ def _merge_request_prompt_mutation(
 ) -> object:
     """Carry a hook-owned prompt mutation onto a provider-specific rerender."""
 
-    if not all(isinstance(value, str) for value in (
-        rendered_value,
-        hooked_value,
-        rerendered_value,
-    )):
+    if not all(
+        isinstance(value, str)
+        for value in (
+            rendered_value,
+            hooked_value,
+            rerendered_value,
+        )
+    ):
         return _clone_request_mutation_value(hooked_value)
     if rendered_value and rendered_value in hooked_value:
         return hooked_value.replace(rendered_value, rerendered_value, 1)
@@ -1454,11 +1465,14 @@ def _merge_request_collection_mutation(
 ) -> object:
     """Keep hook-owned collection entries and the rerendered dynamic entries."""
 
-    if not all(isinstance(value, list) for value in (
-        rendered_value,
-        hooked_value,
-        rerendered_value,
-    )):
+    if not all(
+        isinstance(value, list)
+        for value in (
+            rendered_value,
+            hooked_value,
+            rerendered_value,
+        )
+    ):
         return _clone_request_mutation_value(hooked_value)
 
     merged = _clone_request_mutation_value(hooked_value)
@@ -1486,14 +1500,36 @@ def _snapshot_provider_request(request: ProviderRequest) -> ProviderRequest:
     return snapshot
 
 
+def _toolset_capability_signature(toolset: object) -> tuple[tuple[object, ...], ...]:
+    """Detect material request-hook changes without re-resolving unchanged tools."""
+    if not isinstance(toolset, ToolSet):
+        return ()
+    return tuple(
+        (
+            id(tool),
+            str(getattr(tool, "name", "") or ""),
+            bool(getattr(tool, "active", True)),
+            str(getattr(tool, "handler_module_path", "") or ""),
+            str(getattr(tool, "description", "") or ""),
+            json.dumps(
+                getattr(tool, "parameters", None),
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+            tuple(
+                sorted(normalize_tool_targets(getattr(tool, "execution_targets", None)))
+            ),
+        )
+        for tool in toolset
+    )
+
+
 def _clone_request_mutation_value(value: object) -> Any:
     """Clone plain containers while retaining opaque plugin/runtime objects."""
 
     if isinstance(value, dict):
-        return {
-            key: _clone_request_mutation_value(item)
-            for key, item in value.items()
-        }
+        return {key: _clone_request_mutation_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_clone_request_mutation_value(item) for item in value]
     if isinstance(value, tuple):
