@@ -27,9 +27,6 @@ if TYPE_CHECKING:
 
 
 class ConversationHistoryCollector(ContextCollectorInterface):
-    def __init__(self, *, recent_turn_limit: int | None = None) -> None:
-        self.recent_turn_limit = recent_turn_limit
-
     """Collect the current conversation history as normalized turn pairs."""
 
     async def collect(
@@ -48,7 +45,6 @@ class ConversationHistoryCollector(ContextCollectorInterface):
         if history_payload is None:
             return []
 
-        history_payload = self._truncate_history_payload(history_payload, config)
         return [self._build_history_slot(provider_request, history_payload)]
 
     async def _resolve_history_source(
@@ -182,7 +178,7 @@ class ConversationHistoryCollector(ContextCollectorInterface):
     ) -> dict[str, Any] | None:
         try:
             messages = parse_conversation_history(raw_history)
-            turns = extract_turn_payloads(messages, limit=self.recent_turn_limit)
+            turns = extract_turn_payloads(messages)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to collect conversation history from %s: %s",
@@ -216,14 +212,7 @@ class ConversationHistoryCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         memory_config,
     ) -> int:
-        max_context_length = getattr(config, "max_context_length", -1)
-        limits = [
-            limit
-            for limit in (max_context_length, self.recent_turn_limit)
-            if isinstance(limit, int) and limit >= 0
-        ]
-        if limits:
-            return min(limits)
+        del config
         return max(0, int(memory_config.short_term.recent_turns_window))
 
     @staticmethod
@@ -233,27 +222,6 @@ class ConversationHistoryCollector(ContextCollectorInterface):
             "user_message": user_message if user_message.get("content") else {},
             "assistant_message": normalize_message_payload(record.assistant_message),
             "assistant_only": not bool(user_message.get("content")),
-        }
-
-    def _truncate_history_payload(
-        self,
-        history_payload: dict[str, Any],
-        config: MainAgentBuildConfig,
-    ) -> dict[str, Any]:
-        max_context_length = self.recent_turn_limit
-        if max_context_length is None:
-            max_context_length = getattr(config, "max_context_length", -1)
-        if not isinstance(max_context_length, int) or max_context_length < 0:
-            return history_payload
-
-        turns = history_payload.get("turns")
-        if not isinstance(turns, list) or len(turns) <= max_context_length:
-            return history_payload
-
-        return {
-            **history_payload,
-            "pre_truncate_turn_count": len(turns),
-            "turns": turns[-max_context_length:] if max_context_length else [],
         }
 
     def _build_history_slot(
@@ -267,14 +235,10 @@ class ConversationHistoryCollector(ContextCollectorInterface):
 
         turns = history_payload["turns"]
         source_name = history_payload["source"]
-        pre_truncate_turn_count = history_payload.get("pre_truncate_turn_count")
         meta = {
             "format": "turn_pairs",
             "turn_count": len(turns),
         }
-        if isinstance(pre_truncate_turn_count, int):
-            meta["pre_truncate_turn_count"] = pre_truncate_turn_count
-            meta["collector_truncated"] = True
 
         return ContextSlot(
             name="conversation.history",

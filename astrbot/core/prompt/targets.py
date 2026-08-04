@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from enum import Enum
-from typing import Any
 
 from .context_types import ContextPack, ContextSlot
+from .target_budget import (
+    PromptTargetBudget,
+    apply_target_budget,
+    resolve_target_budget,
+)
 
 
 class PromptTarget(str, Enum):
@@ -96,26 +100,37 @@ def project_context_pack(
     *,
     router_history_turns: int = 4,
     history_turns: int | None = None,
+    config: object | None = None,
 ) -> ContextPack:
     """Build an isolated target view without mutating the canonical pack."""
 
     resolved_target = PromptTarget(target)
+    budget = resolve_target_budget(
+        resolved_target.value,
+        router_history_turns=router_history_turns,
+        history_turns=history_turns,
+        config=config,
+    )
     projected = ContextPack(
         provider_request_ref=pack.provider_request_ref,
         meta=deepcopy(pack.meta),
     )
+    source_slots: dict[str, ContextSlot] = {}
 
     for slot in pack.slots.values():
         if not _slot_is_visible(slot, resolved_target):
             continue
-        projected_slot = _project_slot(
-            slot,
-            resolved_target,
-            router_history_turns=router_history_turns,
-            history_turns=history_turns,
-        )
+        source_slots[slot.name] = slot
+        projected_slot = _project_slot(slot, resolved_target)
         if projected_slot is not None:
             projected.add_slot(projected_slot)
+
+    apply_target_budget(
+        source_slots=source_slots,
+        projected=projected,
+        target=resolved_target.value,
+        budget=budget,
+    )
 
     projected.meta["prompt_target"] = resolved_target.value
     projected.meta["source_slot_names"] = sorted(pack.slots)
@@ -124,8 +139,12 @@ def project_context_pack(
     return projected
 
 
-def filter_llm_exposed_context_pack(pack: ContextPack) -> ContextPack:
-    """Return an isolated pack containing only slots eligible for LLM rendering."""
+def filter_llm_exposed_context_pack(
+    pack: ContextPack,
+    *,
+    config: object | None = None,
+) -> ContextPack:
+    """Return a Core-budgeted compatibility view of all LLM-exposed slots."""
 
     filtered = ContextPack(
         provider_request_ref=pack.provider_request_ref,
@@ -134,6 +153,17 @@ def filter_llm_exposed_context_pack(pack: ContextPack) -> ContextPack:
     for slot in pack.slots.values():
         if slot.llm_exposure != "never":
             filtered.add_slot(deepcopy(slot))
+    budget = resolve_target_budget(PromptTarget.CORE.value, config=config)
+    apply_target_budget(
+        source_slots={
+            name: slot
+            for name, slot in pack.slots.items()
+            if slot.llm_exposure != "never"
+        },
+        projected=filtered,
+        target=PromptTarget.CORE.value,
+        budget=budget,
+    )
     filtered.meta["source_slot_names"] = sorted(pack.slots)
     filtered.meta["selected_slot_names"] = sorted(filtered.slots)
     filtered.meta["slot_count"] = len(filtered.slots)
@@ -180,9 +210,6 @@ def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
 def _project_slot(
     slot: ContextSlot,
     target: PromptTarget,
-    *,
-    router_history_turns: int,
-    history_turns: int | None,
 ) -> ContextSlot | None:
     projected = deepcopy(slot)
     if projected.name == "capability.plugin_directory":
@@ -194,48 +221,6 @@ def _project_slot(
         if projected is None:
             return None
 
-    if projected.name == "conversation.group_recent":
-        _project_group_recent(
-            projected,
-            max_records=(
-                8
-                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
-                else 12
-            ),
-            max_record_chars=(
-                800
-                if target in {PromptTarget.ROUTER, PromptTarget.PERSONAL_POLICY}
-                else 1200
-            ),
-        )
-        return projected
-
-    bounded_history_targets = {
-        PromptTarget.ROUTER,
-        PromptTarget.CORE_PLANNER,
-        PromptTarget.PERSONAL_POLICY,
-    }
-    if target not in bounded_history_targets and history_turns is None:
-        return projected
-
-    if projected.name == "conversation.history":
-        if history_turns is not None:
-            selected_history_turns = history_turns
-            max_message_chars = 1800
-        elif target is PromptTarget.ROUTER:
-            selected_history_turns = router_history_turns
-            max_message_chars = 1000
-        elif target is PromptTarget.PERSONAL_POLICY:
-            selected_history_turns = max(router_history_turns, 6)
-            max_message_chars = 1200
-        else:
-            selected_history_turns = max(router_history_turns, 8)
-            max_message_chars = 1800
-        _project_history(
-            projected,
-            selected_history_turns,
-            max_message_chars=max_message_chars,
-        )
     return projected
 
 
@@ -308,146 +293,9 @@ def _project_extension_slot(
     return slot
 
 
-def _project_history(
-    slot: ContextSlot,
-    limit: int,
-    *,
-    max_message_chars: int,
-) -> None:
-    if not isinstance(slot.value, dict):
-        return
-    turns = slot.value.get("turns")
-    if not isinstance(turns, list):
-        return
-    safe_limit = max(0, limit)
-    selected_turns = deepcopy(turns[-safe_limit:] if safe_limit else [])
-    for turn in selected_turns:
-        if not isinstance(turn, dict):
-            continue
-        for key in ("user_message", "assistant_message"):
-            message = turn.get(key)
-            if not isinstance(message, dict):
-                continue
-            message["content"] = _sanitize_context_content(
-                message.get("content"),
-                max_chars=max_message_chars,
-            )
-            message.pop("tool_calls", None)
-            message.pop("reasoning_content", None)
-            message.pop("thinking", None)
-    slot.value["turns"] = selected_turns
-    slot.value["turn_count"] = len(selected_turns)
-    slot.meta["target_truncated"] = len(selected_turns) != len(turns)
-    slot.meta["turn_count"] = len(selected_turns)
-
-
-def _project_group_recent(
-    slot: ContextSlot,
-    *,
-    max_records: int,
-    max_record_chars: int,
-) -> None:
-    if not isinstance(slot.value, dict):
-        return
-    records = slot.value.get("records")
-    if not isinstance(records, list):
-        return
-    selected = records[-max(0, max_records) :]
-    safe_records = [
-        _sanitize_group_record(record, max_content_chars=max_record_chars)
-        for record in selected
-    ]
-    slot.value["records"] = safe_records
-    slot.value["text"] = (
-        "Recent group messages; sender identities remain distinct:\n"
-        + "\n".join(_format_projected_group_record(record) for record in safe_records)
-    )
-    slot.meta["target_truncated"] = len(selected) != len(records)
-    slot.meta["record_count"] = len(safe_records)
-
-
-def _sanitize_group_record(
-    value: Any,
-    *,
-    max_content_chars: int,
-) -> dict[str, Any]:
-    """Keep the renderer's structured group-record contract intact.
-
-    Earlier collectors supplied plain strings.  Keep those records usable by
-    lifting them into the current shape instead of allowing a target projection
-    to turn structured records into opaque strings.
-    """
-    if not isinstance(value, dict):
-        return {
-            "content": _sanitize_context_text(
-                str(value or ""),
-                max_chars=max_content_chars,
-            )
-        }
-
-    record: dict[str, Any] = {}
-    for key, max_chars in (
-        ("id", 128),
-        ("sender", 256),
-        ("user_id", 128),
-        ("time", 128),
-    ):
-        raw_value = value.get(key)
-        if raw_value is None:
-            continue
-        record[key] = _sanitize_context_text(str(raw_value), max_chars=max_chars)
-
-    sequence = value.get("sequence")
-    if isinstance(sequence, int) and not isinstance(sequence, bool):
-        record["sequence"] = sequence
-    record["content"] = _sanitize_context_content(
-        value.get("content"),
-        max_chars=max_content_chars,
-    )
-    return record
-
-
-def _format_projected_group_record(record: dict[str, Any]) -> str:
-    sender = str(record.get("sender") or "Unknown")
-    user_id = record.get("user_id")
-    if user_id:
-        sender += f" (user_id={user_id})"
-    occurred_at = str(record.get("time") or "unknown-time")
-    return f"[{sender}/{occurred_at}]: {record.get('content', '')}"
-
-
-def _sanitize_context_content(value: Any, *, max_chars: int) -> str:
-    if isinstance(value, str):
-        return _sanitize_context_text(value, max_chars=max_chars)
-    if not isinstance(value, list):
-        return _sanitize_context_text(str(value or ""), max_chars=max_chars)
-    text_parts: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            text_parts.append(item)
-        elif isinstance(item, dict):
-            text = item.get("text")
-            if isinstance(text, str):
-                text_parts.append(text)
-    return _sanitize_context_text("\n".join(text_parts), max_chars=max_chars)
-
-
-def _sanitize_context_text(value: str, *, max_chars: int) -> str:
-    text = value.strip()
-    lowered = text.lower()
-    diagnostic_markers = (
-        "traceback (most recent call last)",
-        "[erro]",
-        "error code:",
-        "no such file or directory",
-        "invalid image input",
-        "获取图片描述失败",
-    )
-    if any(marker in lowered for marker in diagnostic_markers):
-        return "[runtime diagnostic omitted]"
-    if len(text) <= max_chars:
-        return text
-    return f"{text[:max_chars].rstrip()}..."
-
-
-__all__ = ["PromptTarget", "project_context_pack"]
+__all__ = [
+    "PromptTarget",
+    "PromptTargetBudget",
+    "filter_llm_exposed_context_pack",
+    "project_context_pack",
+]

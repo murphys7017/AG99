@@ -17,6 +17,11 @@ class CoreExecutionLedger:
         self._db = db
         self._retain = max(1, int(retain_per_conversation))
 
+    @property
+    def retain_per_conversation(self) -> int:
+        """Return the canonical retained history horizon for one conversation."""
+        return self._retain
+
     async def append(self, record: CoreExecutionRecord) -> bool:
         last_error: OperationalError | None = None
         for attempt in range(3):

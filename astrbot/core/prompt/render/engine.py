@@ -59,9 +59,10 @@ class PromptRenderEngine:
                 pack,
                 target,
                 history_turns=profile.history_turns if profile is not None else None,
+                config=config,
             )
             if target is not None
-            else filter_llm_exposed_context_pack(pack)
+            else filter_llm_exposed_context_pack(pack, config=config)
         )
         selected_pack = self._apply_render_profile(target_pack, profile)
         renderer = self._resolve_renderer(
@@ -284,12 +285,26 @@ class PromptRenderEngine:
                 "slot_count": len(selected_pack.slots),
                 "selected_slot_names": sorted(selected_pack.slots),
                 "enabled_slot_groups": list(layout.get_enabled_slot_groups()),
+                "prompt_slot_sizes": {
+                    name: self._serialized_size(slot.value)
+                    for name, slot in selected_pack.slots.items()
+                },
             }
         )
+        context_budgets = selected_pack.meta.get("context_budgets")
+        if isinstance(context_budgets, dict):
+            result.metadata["context_budgets"] = deepcopy(context_budgets)
         render_profile = selected_pack.meta.get("render_profile")
         if isinstance(render_profile, str) and render_profile:
             result.metadata["render_profile"] = render_profile
         return result
+
+    @staticmethod
+    def _serialized_size(value: object) -> int:
+        try:
+            return len(json.dumps(value, ensure_ascii=False, default=str))
+        except (TypeError, ValueError):
+            return len(str(value or ""))
 
     def _log_render_result(
         self,

@@ -1266,10 +1266,6 @@ class InteractionExpressionAgent:
             hidden_slot_names=hidden_slot_names,
             history_turns=interaction_config.persona_history_window_size,
         )
-        prompt_slot_sizes = {
-            str(name): _serialized_size(slot.value)
-            for name, slot in expression_pack.slots.items()
-        }
         render_result = PromptRenderEngine().render(
             expression_pack,
             target=PromptTarget.PERSONA,
@@ -1286,9 +1282,8 @@ class InteractionExpressionAgent:
                 event.session_id,
                 _describe_expression_request(req),
                 _resolve_provider_model(provider),
-            )
+        )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
-        render_result.metadata["prompt_slot_sizes"] = prompt_slot_sizes
         if req.avoid_previous_reply:
             previous_expression_fingerprint = _latest_assistant_expression_fingerprint(
                 expression_pack

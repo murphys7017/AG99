@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from astrbot.core.prompt import ContextPack, ContextSlot, PromptTarget
 from astrbot.core.prompt.render.engine import PromptRenderEngine
 from astrbot.core.prompt.targets import project_context_pack
@@ -317,6 +319,90 @@ def test_core_projection_keeps_execution_context_without_persona_material():
     assert projected.get_slot("memory.persona_state") is None
     assert projected.get_slot("input.visible_reply_material") is None
     assert projected.get_slot("system.core_execution_context") is not None
+
+
+def test_target_budgets_bound_history_and_execution_without_mutating_facts():
+    turns = [
+        {
+            "user_message": {"role": "user", "content": f"user-{index}"},
+            "assistant_message": {
+                "role": "assistant",
+                "content": f"assistant-{index}",
+            },
+        }
+        for index in range(80)
+    ]
+    pack = ContextPack(
+        slots={
+            "conversation.history": _slot(
+                "conversation.history",
+                {"turn_count": len(turns), "turns": turns},
+                "memory",
+            ),
+            "conversation.core_execution_history": ContextSlot(
+                name="conversation.core_execution_history",
+                value={
+                    "record_count": 6,
+                    "records": [{"execution_id": index} for index in range(6)],
+                },
+                category="conversation",
+                source="test",
+                meta={"targets": ["core"]},
+            ),
+            "capability.tools_schema": _slot(
+                "capability.tools_schema",
+                {"tool_count": 2, "tools": [{"name": "a"}, {"name": "b"}]},
+                "tools",
+            ),
+        }
+    )
+
+    router = project_context_pack(pack, PromptTarget.ROUTER)
+    planner = project_context_pack(pack, PromptTarget.CORE_PLANNER)
+    persona = project_context_pack(pack, PromptTarget.PERSONA)
+    core = project_context_pack(
+        pack,
+        PromptTarget.CORE,
+        config=SimpleNamespace(max_context_length=-1),
+    )
+    configured_core = project_context_pack(
+        pack,
+        PromptTarget.CORE,
+        config=SimpleNamespace(max_context_length=12),
+    )
+    compatibility_render = PromptRenderEngine().render(
+        pack,
+        config=SimpleNamespace(max_context_length=-1),
+    )
+
+    assert len(router.get_slot("conversation.history").value["turns"]) == 4
+    assert len(planner.get_slot("conversation.history").value["turns"]) == 8
+    assert len(persona.get_slot("conversation.history").value["turns"]) == 50
+    assert len(core.get_slot("conversation.history").value["turns"]) == 64
+    assert len(
+        configured_core.get_slot("conversation.history").value["turns"]
+    ) == 12
+    assert len(
+        core.get_slot("conversation.core_execution_history").value["records"]
+    ) == 4
+    assert len(pack.get_slot("conversation.history").value["turns"]) == 80
+    assert (
+        core.meta["context_budgets"]["conversation_history"]["truncation_reasons"]
+        == ["core_history_hard_fallback"]
+    )
+    assert configured_core.meta["context_budgets"]["conversation_history"][
+        "truncation_reasons"
+    ] == ["configured_core_history_limit"]
+    assert core.meta["context_budgets"]["conversation_history"][
+        "original_message_count"
+    ] == 160
+    assert core.meta["context_budgets"]["conversation_history"][
+        "retained_message_count"
+    ] == 128
+    assert core.meta["context_budgets"]["tool_schema"]["enforced"] is False
+    assert compatibility_render.metadata["context_budgets"][
+        "conversation_history"
+    ]["retained_amount"] == 64
 
 
 def test_group_context_records_remain_structured_in_all_rendered_targets():

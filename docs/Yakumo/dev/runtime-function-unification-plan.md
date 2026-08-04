@@ -438,7 +438,7 @@ group message
 
 ### Phase 4：统一上下文事实与目标预算
 
-状态：等待 Phase 3。
+状态：已实现，等待真实运行验证（2026-08-04）。Phase 3 仍独立待办，本阶段不再被其阻塞。
 
 目标：历史事实只提取一次，各 target 在投影阶段应用独立、可观测且有限的预算。
 
@@ -458,8 +458,28 @@ group message
 5. 截断只发生在 target projection，不修改规范 Conversation 或 Memory 事实。
 6. 具体 Core 默认上限在实施前以真实会话回放确定；不得直接凭感觉改一个数字。
 
+实施结果：
+
+1. `ConversationHistoryCollector` 只提取规范历史，不再读取 target 窗口或执行截断；Interaction
+   基础包采集一次共享历史，进入 Core 时不再重新采集并覆盖 `conversation.history`。
+2. target projection 统一负责历史预算：Router 4 轮、Core Planner 8 轮、Personal Policy 6 轮、
+   Persona 50 轮；Core 优先使用显式 `max_context_length`，配置为 `-1` 时使用 64 轮安全上限。
+3. 64 轮上限依据 2026-08-03 的真实样本确定：旧 Core 将 529 条消息原样写入请求，历史槽约
+   44K 字符；同一会话 Persona 的 50 轮窗口约 8K 字符。64 轮保留完整 Persona 连续性并给
+   当前 Core 任务留出额外上下文，同时把消息上限压到约 128 条。
+4. history 还受单消息字符和估算 token 上限保护；execution ledger 从规范保留范围中投影最近
+   4 条并受 token 上限保护；可裁剪的 Memory 列表只在 projection 中删除低优先级尾项。
+5. Render metadata 统一记录 conversation history、execution ledger、memory、tool schema 的原始量、
+   保留量、估算 token、限制和截断原因。工具 schema 保持 CapabilitySnapshot 的完整选择结果，
+   标记 `enforced=false`，不在 Prompt 层粗暴裁剪，避免模型 schema 与 Runner 执行句柄错位。
+6. 未显式指定 Prompt target 的旧 Core 兼容路径同样应用 Core 预算，但保留其原有 slot 可见性，
+   不借本阶段改变旧 Core 的人格兼容行为。
+
 验收标准：529 条历史样本不再原样进入 Core；Persona 仍能获得 50 轮；日志可看到每类材料
 原始量、保留量、估算 token 和截断原因；回复质量回放无明显断层。
+
+当前验证：公开投影边界、旧 Core 兼容渲染路径、collector 事实完整性、Ruff 和 `py_compile`
+已通过；回复质量与真实 Provider token/时延变化由运行验证确认。
 
 回滚或停止条件：截断导致 Core 丢失当前任务必要证据。应调整 CoreExecutionSpec 的任务材料与
 对话历史分层，而不是恢复无界历史。

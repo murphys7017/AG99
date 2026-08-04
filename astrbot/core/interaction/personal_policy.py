@@ -514,7 +514,7 @@ class PersonalPolicyAgent:
         ).build(
             collectors=[
                 PersonaCollector(),
-                ConversationHistoryCollector(recent_turn_limit=8),
+                ConversationHistoryCollector(),
                 MemoryCollector(),
                 runtime_collector,
             ],

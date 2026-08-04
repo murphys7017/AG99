@@ -38,9 +38,6 @@ from astrbot.core.persona_error_reply import (
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.builder import PromptContextBuilder
-from astrbot.core.prompt.collectors.conversation_history_collector import (
-    ConversationHistoryCollector,
-)
 from astrbot.core.prompt.collectors.core_execution_history_collector import (
     CoreExecutionHistoryCollector,
 )
@@ -161,8 +158,8 @@ class MainAgentBuildConfig:
     llm_compress_provider_id: str = ""
     """The provider ID for the LLM used in context compression."""
     max_context_length: int = -1
-    """The maximum number of turns to keep in context. -1 means no limit.
-    This enforce max turns before compression"""
+    """The configured maximum turns before compression.
+    Core applies a 64-turn projection safety limit when this is -1."""
     fallback_max_context_tokens: int = 128000
     """Fallback context window size when model metadata does not provide one."""
     dequeue_context_length: int = 1
@@ -315,7 +312,6 @@ def _build_interaction_core_collectors(
     return [
         SystemCollector(capabilities=capabilities),
         CoreTaskCollector(),
-        ConversationHistoryCollector(),
         CoreExecutionHistoryCollector(),
         PolicyCollector(),
         SkillsCollector(),
@@ -1118,11 +1114,6 @@ async def build_main_agent(
         capabilities=capabilities,
         include_prompt_extensions=base_context_pack is None,
         base=base_context_pack,
-        replace_slots=(
-            ("conversation.history",)
-            if interaction_core and base_context_pack is not None
-            else ()
-        ),
         scope="core",
     )
     if context_material is not None:

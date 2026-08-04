@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: capability_snapshot_unification
-  scope: Resolve Core and Persona executable tools through one CapabilityResolver and project one target-specific CapabilitySnapshot into Prompt and execution, while keeping general plugin target defaults, group admission, history windows, timeout policy, and streaming behavior unchanged.
+  phase: context_target_budget_unification
+  scope: Collect canonical conversation and execution facts once, then apply target-local bounded history, ledger, memory, and capability diagnostics during Prompt projection while preserving Persona's 50-turn window and legacy Core slot visibility.
 context:
   confidence: high
   assumptions:
@@ -91,7 +91,7 @@ context:
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
     - Interaction uses an explicit base collector profile before routing; the Core overlay adds only execution-specific collectors and never recollects shared session, memory, or explicit provider context.
-    - Persona keeps an independent 50-turn recent-history projection by default. The pre-route Interaction pack collects only the largest Router/Planner/Persona window, while delegated Core explicitly recollects and replaces conversation.history under its existing history rules.
+    - Persona keeps an independent 50-turn recent-history projection by default. Interaction collects one canonical conversation.history fact set; Router, Planner, Policy, Persona, delegated Core, and legacy Core compatibility rendering apply isolated target budgets without recollecting or mutating canonical history.
     - Router and Core Planner model decisions are never inserted into the canonical ContextPack or supplied to each other.
     - Planner output is internal execution material; every user-visible acknowledgement, result, and failure remains owned by the unified Persona Expression layer.
     - Protocol commands and live audio continue to bypass conversational Router and Core Planner.
@@ -365,6 +365,7 @@ verification:
     - "Plugin-submitted group reply admission: the public candidate API, Handler-settlement Router gate, silent fail-closed path, plugin-specific Router guidance, and 50-turn Persona default passed 56 focused Interaction/Runtime/config tests; AngelHeart capability fallback and 42 plugin tests passed, with affected Ruff, API import, compile/structure, JSON/YAML, VitePress build, and diff checks passing."
     - "Personal turn ContextVar lifecycle: cross-Task ProcessStage closure and scheduler-owned downstream plugin scope passed 54 Personal Runtime, group-reply, plugin-runtime, and smoke tests; affected Ruff, py_compile, and diff checks passed."
     - "Capability snapshot unification: Core and Persona now share one resolver for target, persona whitelist, active state, and session plugin admission; CapabilitySnapshot derives detached schema from its execution handles, ToolsCollector only projects snapshots, SystemCollector has no private Collector dependency, and Persona rejects subagents as a non-configurable Core-only invariant. Eleven focused public-boundary tests, Ruff, py_compile, YAML parse, and git diff checks passed. Final post-render Hook consistency remains a Phase 3 acceptance item."
+    - "Context target budget unification: ConversationHistoryCollector now preserves canonical facts, Interaction Core no longer recollects shared history, Router/Planner/Policy/Persona use 4/8/6/50 turns, Core uses configured max_context_length or a 64-turn hard fallback, and execution-ledger plus memory trimming occurs only in projection. Fourteen public-boundary tests, focused Ruff, and py_compile passed; real-runtime quality and latency validation remains operator-owned."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -382,18 +383,19 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: capability_snapshot_unification
+    phase: context_target_budget_unification
     scope:
-      - one CapabilityResolver for target policy, persona whitelist, active state, and session plugin admission
-      - one immutable CapabilitySnapshot shared by Core Prompt projection, CoreExecutionSpec, and Runner
-      - Persona request-hook capability reconciliation without re-reading global tool managers
-      - ToolsCollector projection-only behavior and removal of SystemCollector private Collector calls
-      - hard Core-only ownership for HandoffTool and subagent delegation
+      - one canonical conversation history collection per Interaction turn
+      - one target budget owner for history, group context, execution ledger, and memory projection
+      - Persona 50-turn continuity with narrow Router, Planner, and Policy views
+      - configured Core history limit with a 64-turn hard fallback for max_context_length=-1
+      - render metadata diagnostics for history, execution ledger, memory, and tool schema
     non_goals:
       - streaming delivery redesign or expanded streaming support
-      - general plugin lifecycle/tool target defaults beyond the HandoffTool Core-only invariant
-      - group admission, Router mode, history-window, timeout, retry, or queue-policy changes
-      - ProviderRequest lifecycle relocation, media-boundary consolidation, or broad event-extra removal
+      - ProviderRequest or Hook lifecycle relocation from Phase 3
+      - timeout, retry, fallback, or queue-policy changes from Phase 5
+      - capability target-policy changes or Prompt-layer tool-schema dropping
+      - media-boundary consolidation or broad event-extra removal
     confirmed_gaps:
       - a backend-neutral progress, cancellation, and background-execution permission contract remains absent
       - no built-in additional Runtime Sensor or per-Sensor schema exists yet
@@ -401,6 +403,7 @@ runtime:
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract
       - Core OnLLMRequest still runs after Prompt rendering, so dynamic func_tool replacement requires Phase 3 lifecycle rebinding
+      - real private and group replay must confirm that the 64-turn Core fallback preserves task evidence while reducing prompt latency
       - proactive media-only output still uses the raw platform sink because it has no canonical semantic material
       - PersonalTurnContext exists but the main Interaction path still coordinates through 117 literal event-extra keys
     dependency_review:

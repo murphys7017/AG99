@@ -94,10 +94,7 @@ def _default_collectors(
     ]
 
 
-def interaction_base_collectors(
-    *,
-    recent_history_turn_limit: int = 50,
-) -> list[ContextCollectorInterface]:
+def interaction_base_collectors() -> list[ContextCollectorInterface]:
     """Return facts needed before an Interaction route is known.
 
     Core execution resources are collected later, after routing.  This keeps
@@ -109,7 +106,7 @@ def interaction_base_collectors(
         InputCollector(),
         SessionCollector(),
         MemoryCollector(),
-        ConversationHistoryCollector(recent_turn_limit=recent_history_turn_limit),
+        ConversationHistoryCollector(),
         ExplicitContextCollector(),
     ]
 

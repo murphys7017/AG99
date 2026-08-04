@@ -3669,7 +3669,7 @@ CONFIG_METADATA_3 = {
                     "provider_settings.max_context_length": {
                         "description": "最多携带对话轮数",
                         "type": "int",
-                        "hint": "超出这个数量时丢弃最旧的部分，一轮聊天记为 1 条，-1 为不限制",
+                        "hint": "超出这个数量时丢弃最旧的部分，一轮聊天记为 1 条；-1 表示不设置用户上限，但 Core 仍使用 64 轮安全上限",
                         "condition": {
                             "provider_settings.agent_runner_type": "local",
                         },

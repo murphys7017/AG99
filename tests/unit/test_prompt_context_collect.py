@@ -2137,7 +2137,7 @@ async def test_collect_context_pack_conversation_history_prefers_memory_turn_rec
 
 
 @pytest.mark.asyncio
-async def test_collect_context_pack_truncates_conversation_history_by_config():
+async def test_collect_context_pack_keeps_canonical_conversation_history():
     event, _ = _make_event()
     context = _make_context()
     req = ProviderRequest(prompt="hello")
@@ -2161,13 +2161,12 @@ async def test_collect_context_pack_truncates_conversation_history_by_config():
 
     history_slot = pack.get_slot("conversation.history")
     assert history_slot is not None
-    assert history_slot.value["turn_count"] == 2
+    assert history_slot.value["turn_count"] == 3
     assert [
         turn["user_message"]["content"] for turn in history_slot.value["turns"]
-    ] == ["u2", "u3"]
-    assert history_slot.meta["turn_count"] == 2
-    assert history_slot.meta["pre_truncate_turn_count"] == 3
-    assert history_slot.meta["collector_truncated"] is True
+    ] == ["u1", "u2", "u3"]
+    assert history_slot.meta["turn_count"] == 3
+    assert "collector_truncated" not in history_slot.meta
 
 
 @pytest.mark.asyncio
