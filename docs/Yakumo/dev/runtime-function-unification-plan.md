@@ -22,10 +22,11 @@
 最初最优先的问题不是“17 个插件逐个判断”，而是 Persona 在存在可用工具时，先额外执行
 一次独立的工具预判模型调用，再执行一次最终人格表达模型调用。Phase 1 已删除该预判。
 
-Phase 1 至 Phase 5 复核时又确认了第二个关键路径回归：普通显式消息曾从“Router 与 Persona
-并发”漂移为“等待 Router/Planner 后再启动 Persona”，使首回复重新承担两个串行模型等待。
-Phase 5A 已恢复原设计：普通显式消息和未被 Handler 接管的群聊候选都并发启动 Router 与
-Persona；群聊 `silent` 通过输出 reservation 取消仍未提交的 Persona，而不撤回已送达表达。
+Phase 1 至 Phase 5 复核时又确认了第二个关键路径回归：普通显式消息曾从“Personal 主回复与
+Router 并行控制”漂移为“等待 Router/Planner 后再启动 Persona”，使首回复重新承担两个串行
+模型等待。Phase 5A 恢复并发后仍残留过一项 Planner 媒体压制策略；当前边界进一步收紧为：
+Personal 结果一旦形成就直接进入 Output，只有群聊 Router 的 `silent` 可以尝试取消尚未取得
+发送权的 Personal，Planner 只能决定 Core，不能决定 Personal 是否回复。
 
 插件兼容仍需保留，但插件扩展完整度不是当前性能工作的第一优先级。首要指标是普通消息尽快
 得到 Persona 即时表达；插件生命周期不得增加独立模型判断，插件工具继续默认属于 Core，只有
@@ -35,19 +36,22 @@ Persona；群聊 `silent` 通过输出 reservation 取消仍未提交的 Persona
 循环：
 
 ```text
-ordinary addressed turn
+interaction turn
   -> shared Context Material single-flight
   -> concurrent
-       -> Router -> persona / hybrid
-       -> Persona
-            -> resolve personal_expression capabilities once
-            -> build one request
-            -> run plugin lifecycle once
+       -> Personal
+             -> resolve personal_expression capabilities once
+             -> build one request
+             -> run plugin lifecycle once
             -> shared Agent loop
-                 -> business tool call: execute and continue
-                 -> persona_expression: terminal structured result
-            -> immediate Output
-  -> hybrid / execute -> Core -> Persona final Output
+                  -> business tool call: execute and continue
+                  -> persona_expression: terminal structured result
+             -> immediate Output
+       -> Router
+            -> persona: no Core
+            -> hybrid -> Planner -> not_required / execute Core
+            -> silent (group candidates only): suppress only pending Personal
+  -> Core result -> Personal final Output
 ```
 
 普通无工具消息应在 Persona 第一次模型响应中直接调用 `persona_expression`。只有模型实际
@@ -74,8 +78,9 @@ ordinary addressed turn
 | D-009 | 一次只迁移一个 owner；新 owner 接管后删除旧路径，不长期保留双主链。 |
 | D-010 | 流式输出当前为低优先级，不得阻塞本计划的非流式主链收口。 |
 | D-011 | `HandoffTool`/subagent 委派只属于 Core；Persona 可调用授权业务工具，但永不暴露 subagent。 |
-| D-012 | 进入 Interaction 的消息必须并发启动 Router 与 Persona；不能为了群聊或插件边界重新串行化首回复。 |
-| D-013 | 群聊 `silent` 必须与 Persona 发送权原子仲裁：pending 可取消，committed / emitted 不撤回。 |
+| D-012 | Personal 是唯一即时用户可见回复主线并与 Router 并行；结果形成后直接发送，不能为了群聊、插件或 Core 判断重新串行化首回复。 |
+| D-013 | 群聊 `silent` 必须与 Personal 发送权原子仲裁：pending 可取消，committed / emitted 不撤回；Router mode、Personal status 和 turn outcome 分开记录。 |
+| D-014 | Router 只决定 `silent/persona/hybrid`，Planner 只决定 Core 是否启动；二者都不得因任务类型或媒体输入取得 Personal 回复准入权。 |
 
 ## 三、目标与非目标
 
@@ -189,24 +194,29 @@ Observation、插件候选和 Router `silent` 的影响。日志样本中：
 
 ## 六、目标流程
 
-### 6.1 Persona 路径
+### 6.1 Personal 主回复路径
 
 ```text
 official Pipeline / plugin handlers
-  -> Router selects persona
-  -> Capability Resolver resolves personal_expression tools once
-  -> Prompt projects Persona context
-  -> Request Adapter builds one ProviderRequest
-  -> Persona lifecycle hooks run once
-  -> Shared Agent Runner receives:
-       business Persona tools
-       + terminal persona_expression schema
-  -> first model response
-       -> persona_expression: finish immediately
-       -> business tool call: execute, append result, continue loop
-  -> final persona_expression
-  -> response/done hooks
-  -> Output Runtime
+  -> build shared Context Material once
+  -> start Personal and Router concurrently
+       Personal:
+         -> Capability Resolver resolves personal_expression tools once
+         -> Prompt projects Persona context
+         -> Request Adapter builds one ProviderRequest
+         -> Persona lifecycle hooks run once
+         -> Shared Agent Runner receives:
+              business Persona tools
+              + terminal persona_expression schema
+         -> first model response
+              -> persona_expression: finish immediately
+              -> business tool call: execute, append result, continue loop
+         -> final persona_expression
+         -> response/done hooks
+         -> claim immediate output and send without waiting for Router/Planner
+       Router:
+         -> persona / hybrid / silent
+         -> silent may cancel Personal only while it is still pending
 ```
 
 关键协议：
@@ -220,13 +230,15 @@ official Pipeline / plugin handlers
   “最终表达调用”。
 - 对不支持协议工具的 Provider，沿用 Output Contract 的显式受控降级，不静默伪装成功。
 - 无工具普通消息的目标调用数是 Router 一次、Persona 一次。
+- `route_mode`、`personal_status` 和 `turn_outcome` 是三个独立事实；Router 较晚返回 `silent`
+  时，已经送达的 Personal 保持 `turn_outcome=replied`。
 
 ### 6.2 Core 路径
 
 ```text
-Router selects hybrid
+Router selects hybrid while Personal continues independently
   -> Core Planner
-       -> not_required: Persona target flow
+       -> not_required: do not start Core
        -> execute:
             CoreExecutionSpec
             -> resolve core capabilities once
@@ -238,7 +250,8 @@ Router selects hybrid
 ```
 
 Core 与 Persona 共享工具执行引擎和请求生命周期，但不共享目标工具集、Prompt Profile、
-终止协议或上下文预算。共享执行机制不等于混合职责。
+终止协议或上下文预算。共享执行机制不等于混合职责。Planner 只决定 Core 是否启动，不得因
+任务类型、图片或其他媒体输入压制已经独立运行的 Personal。
 
 ### 6.3 群聊准入路径
 
@@ -607,27 +620,30 @@ follow-up 9 项，以及内部 `TimeoutError` 保真、真实 turn deadline 和�
 
 状态：实现完成，基础边界验证通过；等待私聊 `815049548` 真实 Provider 日志验收。
 
-目标：进入 Interaction 的消息不等待 Router 或 Planner 完成后才启动 Persona，使首回复重新满足
-最初的低延迟设计，同时保持群聊 `silent` 准入、插件 Handler 接管、目标配置和最终输出仲裁。
+目标：进入 Interaction 的消息由 Personal 直接生成并在结果形成后发送，不等待 Router 或 Planner；
+Router 作为并行控制线只影响 pending Personal 的 `silent` 和 Core 是否需要评估，同时保持插件
+Handler 接管、目标配置和最终输出仲裁。
 
 实施结果：
 
 1. 普通显式消息和未被 Handler 接管的群聊候选在同一个 `TurnExecutionScope` 中并发启动
-   Router 与 Persona，二者共享一次 Context Material single-flight，但使用各自 target 投影和
+   Personal 与 Router，二者共享一次 Context Material single-flight，但使用各自 target 投影和
    Provider 调用。
 2. 官方 Handler 保留关键词、命令、终止和 ProviderRequest 接管语义；未接管的群聊候选进入
    同一并行主链。Router `silent` 在 turn lock 下把 pending Persona 标记为 suppressed 并取消，
    已经 committed / emitted 的表达继续完成。
-3. `hybrid` 路径中的 Planner 与已启动 Persona 并行推进；`execute` 立即放行 Core，已经提交的
-   即时表达保留，Core-final 结果仍经统一 Persona Expression。
+3. `hybrid` 路径中的 Planner 与已启动 Personal 并行推进；`execute` 立即放行 Core，但 Planner
+   不再因媒体输入或执行判断压制 Personal。已经提交的即时表达保留，Core-final 结果仍经统一
+   Persona Expression。
 4. Router、Persona 和 Core-final 使用现有 turn deadline、任务 owner、即时/最终输出 reservation
    与取消清理，不恢复旧的裸后台 task 或第二套输出 owner。
 5. 插件 LLM 生命周期仍默认属于 Persona，插件工具仍默认属于 Core；没有增加插件判断模型或
    为并发路径建立特殊工具集合。
 
-验收标准：普通私聊和群聊候选在 Router 尚未返回时已经启动 Persona；群聊 `silent` 能取消 pending
-Persona 且不撤回 committed / emitted 表达；Persona 首回复和 Router Provider wait 在 trace 中
-重叠；`hybrid/execute` 不重复完成 turn。
+验收标准：普通私聊和群聊候选在 Router 尚未返回时已经实际发送 Personal 回复，而不只是启动
+模型任务；群聊 `silent` 能取消 pending Personal 且不撤回 committed / emitted 表达；
+`route_mode=silent / personal_status=emitted / turn_outcome=replied` 可被单条诊断明确表示；
+`hybrid/execute` 不压制即时 Personal，也不重复完成 turn。
 
 回滚或停止条件：并发分支重新共享可写 ProviderRequest、重复执行工具副作用或产生双 completion。
 应修复 branch-local request 与 output reservation，不能退回 Router-first 串行主链。
@@ -732,7 +748,7 @@ Persona 且不撤回 committed / emitted 表达；Persona 首回复和 Router Pr
 | 普通 Persona 路径的 Persona 模型调用 | 2 次 | 1 次 |
 | Persona 工具未使用时的工具执行 | 0 次 | 0 次 |
 | 普通 Persona 总耗时 | 约 13.4 秒 | 同 Provider 暖态下降至少 35%，主要以调用数验收 |
-| 普通消息 Router/Persona 等待 | 串行相加 | 并发重叠，关键路径取两者较慢值 |
+| 普通消息首个用户可见回复 | Router/Persona 串行相加 | 只取 Personal 可见回复耗时；Router/Planner 不在发送关键路径上 |
 | Core 历史消息 | 最高观察到 529 条 | 不超过 target 配置与硬预算 |
 | Core 输入 token | 约 17,419 | 有明确预算和截断诊断，不再随完整历史无界增长 |
 | 慢 hybrid turn | 约 398.6 秒 | 不超过 turn deadline |

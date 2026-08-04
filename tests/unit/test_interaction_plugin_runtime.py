@@ -362,9 +362,6 @@ async def test_persona_route_allows_explicitly_targeted_function_tools():
         return PersonaExpressionResult()
 
     middleware._generate_expression = generate_expression
-    middleware._apply_immediate_expression_policy = (
-        lambda _event, _route, expression, **_kwargs: expression
-    )
     event = Event()
     turn_state = ensure_interaction_turn_state(event)
     turn_state.route_decision = InteractionRouteDecision(

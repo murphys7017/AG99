@@ -7,10 +7,15 @@
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
 - 对启用平台，输入先经过官方 EventBus、Pipeline、权限和插件处理，再在核心 Agent 开始前进入 middleware。
-- Prompt 层先收集一份规范 `ContextPack`；普通显式消息和未被 Handler 接管的群聊候选都由 middleware 并发启动轻量 Router 与 Persona，并仅在 `hybrid` 路径调用独立 Core Planner。群聊 `silent` 只取消尚未取得发送权的 Persona。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
+- Prompt 层先收集一份规范 `ContextPack`；普通显式消息和未被 Handler 接管的群聊候选都由 middleware 并发启动 Personal 与轻量 Router。Personal 结果一旦形成就直接进入 Output，不等待 Router 或 Planner；Router 只在 `silent` 时尝试取消尚未取得发送权的 Personal，并仅在 `hybrid` 路径调用独立 Core Planner。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
 - 对 interaction turn，用户可见输出由 `InteractionOutputController` 统一 materialize、发送、记录。
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
+
+这里必须区分三个互不替代的事实：`route_mode` 表示 Router 的控制判断，
+`personal_status` 表示 Personal 回复是否尚未开始、生成中、已提交、已送达或被压制，
+`turn_outcome` 表示本轮最终是否已经产生用户可见回复。因此 Router 较晚返回 `silent` 时，
+若 Personal 已经提交或送达，合法终态是 `silent / emitted / replied`，不能倒推为静默。
 
 在 Yakumo 的目标态里，interaction middleware 应进一步收口为
 `Persona Runtime Shell`。它是人格层的一轮运行外壳，负责把输入 observation、route/reflex
@@ -116,9 +121,11 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
   `MessageEventResult.set_async_stream(...)` 明确不支持并会给工具循环返回提示。最终 Persona
   Expression 是唯一可见回复的 owner；工具另开后台 task 后的输出不属于该次工具调用，仍按普通
   发送路径处理。
-- `hybrid` 路径中，Planner 与已经启动的 Persona 并行推进；Planner 决定执行时直接放行 Core，
-  已提交的即时表达保留。群聊候选的 Router `silent` 与 Persona 通过 turn lock 和输出 reservation
-  仲裁：pending Persona 被取消，committed / emitted Persona 保留。
+- `hybrid` 路径中，Planner 与已经启动的 Personal 并行推进；Planner 只能决定是否放行 Core，
+  不能因为任务类型、媒体输入或 Core 决策压制 Personal。群聊候选的 Router `silent` 与 Personal
+  通过 turn lock 和输出 reservation 仲裁：pending Personal 被取消，committed / emitted Personal
+  保留。Core 更早取得最终输出 reservation 时，仍可按统一输出事务阻止迟到的 pending Personal，
+  但这是输出先后仲裁，不是 Router 或 Planner 的回复门禁。
 - 人格 Provider 回退时保留 Hook 后冻结的同一 `ProviderRequest`、结构化输出契约和公开
   Agent context，只替换 Provider binding；不会重新渲染请求，也不会重复调用
   `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。备用 Provider 无法满足严格 terminal
@@ -571,7 +578,7 @@ class Main(star.Star):
 
 推荐 mount 选择：
 
-- `capability`: 对 router 推荐放精简插件目录；对 persona_reply 可放插件自己的稳定能力契约。
+- `capability`: 对 Router / Core Planner 推荐放精简插件目录；执行能力契约不进入 Persona，Persona 需要的稳定事实应使用 `context` 或其他明确目标的 extension。
 - `context`: 当前请求动态事实，例如设备状态、运行时状态、临时 session facts。
 - `system`: 仅用于稳定决策规则；不要放动态事实。
 - `input`: 仅用于确实需要贴近当前用户输入的补充材料。

@@ -30,6 +30,7 @@ class InteractionTurnOutcome(str, Enum):
 
 
 class InteractionSpeculativePersonaStatus(str, Enum):
+    NOT_STARTED = "not_started"
     PENDING = "pending"
     COMMITTED = "committed"
     EMITTED = "emitted"
@@ -218,7 +219,7 @@ class InteractionTurnState:
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
     speculative_persona_status: InteractionSpeculativePersonaStatus = (
-        InteractionSpeculativePersonaStatus.PENDING
+        InteractionSpeculativePersonaStatus.NOT_STARTED
     )
     final_output_status: InteractionFinalOutputStatus = (
         InteractionFinalOutputStatus.PENDING

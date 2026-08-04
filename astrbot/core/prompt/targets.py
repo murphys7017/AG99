@@ -37,7 +37,11 @@ _ROUTER_SLOT_NAMES = frozenset(
         "memory.topic_state",
         "memory.short_term",
         "capability.plugin_directory",
+        "extension.system",
         "extension.context",
+        "extension.input",
+        "extension.conversation",
+        "extension.memory",
     }
 )
 
@@ -63,7 +67,11 @@ _CORE_PLANNER_SLOT_NAMES = frozenset(
         "memory.topic_state",
         "memory.short_term",
         "capability.plugin_directory",
+        "extension.system",
         "extension.context",
+        "extension.input",
+        "extension.conversation",
+        "extension.memory",
     }
 )
 

@@ -327,7 +327,12 @@ class DeterministicObservationGate:
             disposition = ObservationGateDisposition.REJECT
             reason = ObservationGateReason.MUTED
         elif features.is_quiet_hours:
-            disposition = ObservationGateDisposition.HOLD
+            # Equal bounds intentionally mean an all-day quiet window. There
+            # is no future boundary to wake from, so do not retain the batch.
+            if settings.quiet_hours_start_minute == settings.quiet_hours_end_minute:
+                disposition = ObservationGateDisposition.REJECT
+            else:
+                disposition = ObservationGateDisposition.HOLD
             reason = ObservationGateReason.QUIET_HOURS
         elif features.is_runtime_busy:
             disposition = ObservationGateDisposition.HOLD

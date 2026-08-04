@@ -195,7 +195,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                     "char_count": sum(
                         len(_format_group_record(record)) for record in records
                     ),
-                    "targets": ["router", "persona", "core"],
+                    "targets": ["router", "core_planner", "persona", "core"],
                     "context_slot": "conversation.group_recent",
                     "context_category": "conversation",
                 },

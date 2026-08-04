@@ -253,6 +253,34 @@ def test_direct_slot_targets_are_enforced_before_target_rules():
     )
 
 
+def test_explicit_prompt_extension_targets_reach_router_and_planner():
+    pack = ContextPack(
+        slots={
+            "extension.system": ContextSlot(
+                name="extension.system",
+                value={
+                    "items": [
+                        {
+                            "value": "route rule",
+                            "meta": {"targets": ["router", "core_planner"]},
+                        }
+                    ]
+                },
+                category="extension",
+                source="plugin",
+                meta={"targets": ["router", "core_planner"]},
+            )
+        }
+    )
+
+    assert project_context_pack(pack, PromptTarget.ROUTER).get_slot(
+        "extension.system"
+    ) is not None
+    assert project_context_pack(pack, PromptTarget.CORE_PLANNER).get_slot(
+        "extension.system"
+    ) is not None
+
+
 def test_direct_slot_with_malformed_targets_is_hidden():
     pack = ContextPack(
         slots={

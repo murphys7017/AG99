@@ -731,6 +731,19 @@ class PersonalSessionRuntime:
             pending_count=self.observation_inbox.pending_count,
         )
         if observation.kind == "heartbeat":
+            if (
+                self.observation_inbox.pending_material_count > 0
+                and (
+                    self.next_observation_wake_at is None
+                    or self.next_observation_wake_at <= now
+                )
+            ):
+                self._clear_observation_wake()
+                task_created = self._ensure_observation_evaluation_task(
+                    observation.observation_id,
+                    delay_seconds=0.0,
+                )
+                return replace(result, evaluation_task_created=task_created)
             return result
 
         self._clear_observation_wake()
@@ -1406,13 +1419,13 @@ class PersonalRuntimeManager:
             or event.get_message_type() is not MessageType.GROUP_MESSAGE
             or event.get_extra("action_type") == "live"
         ):
-            return False
+            return None
         actor_id = str(event.get_sender_id() or "").strip()
         self_id = str(event.get_self_id() or "").strip()
         if not actor_id or actor_id == self_id:
-            return False
+            return None
         if not event.get_message_str().strip() and not event.get_messages():
-            return False
+            return None
 
         normalized_config_id = str(config_id or "default")
         audience_key = event.unified_msg_origin
@@ -2121,6 +2134,10 @@ class PersonalRuntimeManager:
             interaction_config=interaction_config,
             gate_settings=replace(
                 self._observation_gate_settings,
+                enabled=(
+                    self._observation_gate_settings.enabled
+                    and interaction_config.enabled
+                ),
                 muted=interaction_config.personal_runtime_muted,
                 quiet_hours_start_minute=(
                     interaction_config.personal_runtime_quiet_hours_start * 60

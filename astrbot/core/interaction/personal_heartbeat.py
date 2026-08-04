@@ -111,18 +111,26 @@ class PersonalHeartbeatSource:
                 self._next_tick_at.pop(target_key, None)
                 self._last_idle_initiation_submissions.pop(target_key, None)
                 continue
+            interval = runtime_settings.personal_heartbeat_interval_seconds
             due_at = self._next_tick_at.get(target_key, occurred_at)
             if due_at > occurred_at:
                 continue
 
             platform = self._context.get_platform_inst(session.platform_id)
             if platform is None:
+                self._next_tick_at[target_key] = occurred_at + min(
+                    interval,
+                    self._DISABLED_POLL_SECONDS,
+                )
                 continue
             metadata = platform.meta()
             if not supports_personal_runtime(metadata):
+                self._next_tick_at[target_key] = occurred_at + min(
+                    interval,
+                    self._DISABLED_POLL_SECONDS,
+                )
                 continue
 
-            interval = runtime_settings.personal_heartbeat_interval_seconds
             config_info = self._config_manager.get_conf_info(session)
             target = RuntimeObservationTarget(
                 platform_id=session.platform_id,

@@ -58,10 +58,13 @@ from astrbot.core.interaction.turn_state import (
     reserve_interaction_turn_final_output,
 )
 from astrbot.core.interaction.types import (
+    CorePlanningAction,
+    CorePlanningDecision,
+    CoreTaskSpec,
     InteractionRouteDecision,
     InteractionRouteMode,
 )
-from astrbot.core.message.components import Plain, Record
+from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.scheduler import PipelineScheduler
@@ -126,12 +129,14 @@ class _DirectEvent(AstrMessageEvent):
         super().__init__("hello", message, metadata, session_id)
         self.fail_send = fail_send
         self.sent: list[MessageChain] = []
+        self.send_completed = asyncio.Event()
 
     async def send(self, message: MessageChain) -> None:
         if self.fail_send:
             raise RuntimeError("direct send failed")
         self.sent.append(message)
         self._has_send_oper = True
+        self.send_completed.set()
 
 
 def _context_for_target(metadata: PlatformMetadata) -> Context:
@@ -681,10 +686,29 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
     ) is None
 
 
+def test_group_continuation_guards_return_none():
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(_metadata(), message_type=MessageType.FRIEND_MESSAGE)
+
+    assert (
+        manager.classify_group_conversation_continuation(
+            event,
+            config_id="default",
+            runtime_config={"interaction_middleware": {"enabled": False}},
+        )
+        is None
+    )
+
+
 @pytest.mark.asyncio
-async def test_addressed_turn_starts_persona_without_waiting_for_router(monkeypatch):
+async def test_personal_reply_sends_before_slow_silent_router(monkeypatch):
     metadata = _metadata(support_personal_runtime=True)
-    event = _DirectEvent(metadata)
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-1",
+    )
+    mark_group_reply_candidate(event, kind="continuation")
     runtime_config = {"interaction_middleware": {"enabled": True}}
     middleware = InteractionMiddleware(
         runtime_config,
@@ -696,7 +720,7 @@ async def test_addressed_turn_starts_persona_without_waiting_for_router(monkeypa
 
     async def route_after_persona(*_args, **_kwargs):
         await release_router.wait()
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.PERSONA)
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
 
     async def start_persona(*_args, **_kwargs):
         persona_started.set()
@@ -715,13 +739,71 @@ async def test_addressed_turn_starts_persona_without_waiting_for_router(monkeypa
     task = asyncio.create_task(middleware.handle_pipeline_event(event))
     try:
         await asyncio.wait_for(persona_started.wait(), timeout=1.0)
+        await asyncio.wait_for(event.send_completed.wait(), timeout=1.0)
+        assert [message.get_plain_text() for message in event.sent] == ["hello"]
         assert task.done() is False
     finally:
         release_router.set()
         await task
 
-    assert [message.get_plain_text() for message in event.sent] == ["hello"]
+    turn_state = get_interaction_turn_state(event)
+    assert turn_state is not None
+    assert turn_state.route_decision is not None
+    assert turn_state.route_decision.route_mode is InteractionRouteMode.SILENT
+    assert turn_state.speculative_persona_status.value == "emitted"
+    assert turn_state.completion_state.outcome is not None
+    assert turn_state.completion_state.outcome.value == "replied"
     assert event.is_stopped()
+
+
+@pytest.mark.asyncio
+async def test_core_planner_cannot_suppress_ready_personal_reply(monkeypatch):
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(metadata)
+    event.message_obj.message.append(Image(file="input.png"))
+    runtime_config = {"interaction_middleware": {"enabled": True}}
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    planner_finished = asyncio.Event()
+
+    async def generate_after_planner(*_args, **_kwargs):
+        await planner_finished.wait()
+        return PersonaExpressionResult(spoken_reply="hello")
+
+    async def execute_core(*_args, **_kwargs):
+        planner_finished.set()
+        return CorePlanningDecision(
+            action=CorePlanningAction.EXECUTE,
+            task_spec=CoreTaskSpec(task_summary="inspect image"),
+        )
+
+    middleware.router_agent.route = AsyncMock(
+        return_value=InteractionRouteDecision(
+            route_mode=InteractionRouteMode.HYBRID,
+        )
+    )
+    middleware.core_planner.plan = AsyncMock(side_effect=execute_core)
+    middleware.persona_runtime.express_visible_reply = AsyncMock(
+        side_effect=generate_after_planner
+    )
+    middleware._materialize_inbound_media = AsyncMock()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
+        AsyncMock(),
+    )
+
+    await middleware.handle_pipeline_event(event)
+    await asyncio.wait_for(event.send_completed.wait(), timeout=1.0)
+
+    turn_state = get_interaction_turn_state(event)
+    assert turn_state is not None
+    assert [message.get_plain_text() for message in event.sent] == ["hello"]
+    assert turn_state.core_delegated is True
+    assert turn_state.speculative_persona_status.value == "emitted"
+    await turn_state.execution_scope.close()
 
 
 @pytest.mark.asyncio

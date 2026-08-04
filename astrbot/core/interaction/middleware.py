@@ -7,7 +7,7 @@ from typing import Any
 from astrbot import logger
 from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
 from astrbot.core.deadline import TurnDeadlineExceeded
-from astrbot.core.message.components import File, Image, Plain, Record, Reply, Video
+from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
@@ -56,7 +56,6 @@ from .turn_state import (
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
-    has_interaction_turn_final_output_claimed,
     is_interaction_turn_completed,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
@@ -82,18 +81,6 @@ from .types import (
 LOCAL_FAST_EXPRESSION_FALLBACK_RESULT = PersonaExpressionResult(
     spoken_reply="模型服务暂时不可用，请稍后再试。"
 )
-
-CORE_MEDIA_COMPONENT_TYPES = (File, Image, Record, Video)
-
-
-def _contains_core_media(components: list[Any]) -> bool:
-    for comp in components:
-        if isinstance(comp, CORE_MEDIA_COMPONENT_TYPES):
-            return True
-        if isinstance(comp, Reply) and _contains_core_media(comp.chain or []):
-            return True
-    return False
-
 
 def _merge_runtime_config(base: Any, override: Any) -> Any:
     if not isinstance(base, Mapping):
@@ -730,7 +717,7 @@ class InteractionMiddleware:
                 self.plugin_context,
                 InteractionLifecycleStage.ROUTING,
             )
-            await self._handle_async_fast_response_and_route(
+            await self._run_personal_reply_with_router_control(
                 event,
                 interaction_config,
             )
@@ -782,7 +769,7 @@ class InteractionMiddleware:
             return None
         return reason
 
-    async def _handle_async_fast_response_and_route(
+    async def _run_personal_reply_with_router_control(
         self,
         event: AstrMessageEvent,
         interaction_config,
@@ -805,6 +792,8 @@ class InteractionMiddleware:
             ),
         )
         try:
+            # Personal owns delivery and can emit while this coroutine waits for
+            # Router to decide only silence and Core delegation.
             route = await router_task
         except TurnDeadlineExceeded:
             expression = await self._suppress_or_await_speculative_persona(
@@ -942,15 +931,6 @@ class InteractionMiddleware:
             request=PersonaExpressionRequest(allow_plugin_tools=True),
         )
         turn_state = ensure_interaction_turn_state(event)
-        route = turn_state.route_decision
-        planning_decision = turn_state.core_planning_decision
-        if route is not None:
-            expression = self._apply_immediate_expression_policy(
-                event,
-                route,
-                expression,
-                planning_decision=planning_decision,
-            )
         if expression is None or not expression.spoken_reply.strip():
             async with turn_state.lock:
                 if (
@@ -1156,45 +1136,6 @@ class InteractionMiddleware:
             InteractionLifecycleStage.DELEGATED,
             metadata={"route_mode": route.route_mode.value},
         )
-
-    def _apply_immediate_expression_policy(
-        self,
-        event: AstrMessageEvent,
-        route: InteractionRouteDecision,
-        expression: PersonaExpressionResult,
-        *,
-        planning_decision: CorePlanningDecision | None = None,
-    ) -> PersonaExpressionResult | None:
-        if route.route_mode != InteractionRouteMode.HYBRID:
-            return expression
-        if (
-            planning_decision is None
-            or planning_decision.action is CorePlanningAction.NOT_REQUIRED
-        ):
-            return expression
-        if has_interaction_turn_final_output_claimed(event):
-            event.set_extra(
-                "_interaction_immediate_reply_suppressed_reason",
-                "core_completed_first",
-            )
-            return None
-        if not expression.spoken_reply.strip() or not self._has_core_media_input(event):
-            return expression
-        event.set_extra(
-            "_interaction_immediate_reply_suppressed_reason",
-            "core_media_input",
-        )
-        logger.debug(
-            "Interaction immediate reply suppressed for core media input: platform_id=%s session_id=%s route_mode=%s",
-            event.get_platform_id(),
-            event.session_id,
-            route.route_mode.value,
-        )
-        return None
-
-    @staticmethod
-    def _has_core_media_input(event: AstrMessageEvent) -> bool:
-        return _contains_core_media(event.get_messages() or [])
 
     async def _generate_expression(
         self,
@@ -1751,6 +1692,7 @@ class InteractionMiddleware:
                 InteractionLifecycleStage.COMPLETED,
                 metadata={"outcome": InteractionTurnOutcome.SILENT.value},
             )
+            self._record_turn_resolution(event, outcome)
             return
 
         canonical_reply = str(material.get("assistant_text", "") or "").strip()
@@ -1802,6 +1744,26 @@ class InteractionMiddleware:
             event,
             self.plugin_context,
             InteractionLifecycleStage.COMPLETED,
+        )
+        self._record_turn_resolution(event, outcome)
+
+    @staticmethod
+    def _record_turn_resolution(event: AstrMessageEvent, outcome: str) -> None:
+        turn_state = ensure_interaction_turn_state(event)
+        route_mode = (
+            turn_state.route_decision.route_mode.value
+            if turn_state.route_decision is not None
+            else "none"
+        )
+        logger.info(
+            "DIAG interaction.turn_resolution: platform_id=%s session_id=%s "
+            "turn_id=%s route_mode=%s personal_status=%s turn_outcome=%s",
+            event.get_platform_id(),
+            event.session_id,
+            turn_state.turn_id,
+            route_mode,
+            turn_state.speculative_persona_status.value,
+            outcome,
         )
 
     @staticmethod

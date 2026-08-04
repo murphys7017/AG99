@@ -1420,7 +1420,7 @@ class Context:
         module_prefix: str,
     ) -> bool:
         return any(
-            candidate.startswith(module_prefix)
+            candidate == module_prefix or candidate.startswith(f"{module_prefix}.")
             for candidate in (
                 registration.owner_module_path,
                 registration.definition_module_path,

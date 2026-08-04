@@ -12,7 +12,7 @@
 
 | 能力 | 上游 AstrBot | Yakumo Fork |
 |------|:------------:|:-----------:|
-| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **轻量路由分类** → 按需调用 Persona / Core → 统一拟人化 → 回复 |
+| 核心交互方式 | 消息 → Agent → 回复 | 消息 → **Personal 立即生成回复**；并行 Router 按需调用 Core，Core 结果仍由 Personal 表达 |
 | 快速回复 | 不支持 | 唯一拟人层可先产生即时表达，不必等待路由和 Core |
 | 回复风格控制 | 仅靠 prompt | 拟人层统一管理表达方式 |
 | 记忆系统 | 会话历史 | 会话历史 + 分层 Memory；assistant-only 主动表达不回灌抽象记忆 |
@@ -44,17 +44,19 @@ Interaction Middleware 建立本轮交互并整理输入
     ↓
 Prompt Collectors 构建本轮唯一的 ContextPack
     ↓
-普通显式消息并发启动 Router 与 Persona Runtime
-    ├── Persona Runtime → 即时表达 → Output
-    └── Router → persona / hybrid
-         ├── persona → 以即时表达完成本轮
+普通显式消息和未被 Handler 接管的群聊候选并发启动 Personal 与 Router
+    ├── Personal → 结果一旦生成，立即取得发送权并进入 Output
+    └── Router → silent / persona / hybrid
+         ├── silent（仅群聊候选）→ 只尝试取消尚未取得发送权的 Personal
+         ├── persona → 不启动 Core
          └── hybrid → 独立 Core Planner 再判断执行层是否必要
-                      ├── not_required → 以即时表达完成本轮
+                      ├── not_required → 不启动 Core
                       └── execute → Core 执行
-                                   Core 的结果回到同一个 Persona Runtime → Output
+                                   Core 的结果回到同一个 Personal Expression → Output
 
 未显式唤醒的有界群聊候选在 Handler 未接管后进入同一并行主链；Router 返回 silent 时，
-尚未取得发送权的 Persona 会被取消，已经提交或送达的表达不会回滚
+尚未取得发送权的 Personal 会被取消，已经提交或送达的表达不会回滚，因此
+`route_mode=silent` 与最终 `turn_outcome=replied` 可以同时成立
     ↓
 Output Runtime 负责文本、流式与 TTS 等输出物化和平台发送
     ↓
@@ -96,7 +98,7 @@ Cron 和插件显式发送则保持精确投递兼容，不作为 Policy 行动�
 这是本 fork 的核心架构之一，一个通用的交互中间件：
 
 - **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
-- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；普通显式消息和未被 Handler 接管的群聊候选都并发启动 Router 与 Persona，hybrid 再由独立 Core Planner 复核是否执行；群聊 `silent` 只取消尚未取得发送权的 Persona
+- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；普通显式消息和未被 Handler 接管的群聊候选都并发启动 Personal 与 Router。Personal 不等待 Router 或 Planner，Router 只用 `silent` 仲裁尚未提交的回复并用 `hybrid` 决定是否进入 Core
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
 - **流式例外收口**：插件显式选择 `persona` 输出时，流文本先完整收集再执行一次 Persona 表达，避免原文流与改写文案同时发送；`direct` 流保持原有低延迟发送
