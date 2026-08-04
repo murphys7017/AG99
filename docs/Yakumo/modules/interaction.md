@@ -7,7 +7,7 @@
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
 - 对启用平台，输入先经过官方 EventBus、Pipeline、权限和插件处理，再在核心 Agent 开始前进入 middleware。
-- Prompt 层先收集一份规范 `ContextPack`；middleware 先完成轻量 Router，并仅在 `hybrid` 路径调用独立 Core Planner。Planner 允许 Core 后才进入 Persona Expression。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
+- Prompt 层先收集一份规范 `ContextPack`；普通显式消息和未被 Handler 接管的群聊候选都由 middleware 并发启动轻量 Router 与 Persona，并仅在 `hybrid` 路径调用独立 Core Planner。群聊 `silent` 只取消尚未取得发送权的 Persona。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
 - 对 interaction turn，用户可见输出由 `InteractionOutputController` 统一 materialize、发送、记录。
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
@@ -116,8 +116,9 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
   `MessageEventResult.set_async_stream(...)` 明确不支持并会给工具循环返回提示。最终 Persona
   Expression 是唯一可见回复的 owner；工具另开后台 task 后的输出不属于该次工具调用，仍按普通
   发送路径处理。
-- `hybrid` 路径先完成 Planner；Planner 决定执行时直接进入 Core，不会提前执行 Persona
-  插件的工具、效果或 LLM 生命周期副作用。
+- `hybrid` 路径中，Planner 与已经启动的 Persona 并行推进；Planner 决定执行时直接放行 Core，
+  已提交的即时表达保留。群聊候选的 Router `silent` 与 Persona 通过 turn lock 和输出 reservation
+  仲裁：pending Persona 被取消，committed / emitted Persona 保留。
 - 人格 Provider 回退时保留 Hook 后冻结的同一 `ProviderRequest`、结构化输出契约和公开
   Agent context，只替换 Provider binding；不会重新渲染请求，也不会重复调用
   `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。备用 Provider 无法满足严格 terminal
@@ -277,15 +278,15 @@ Input Runtime / Observation
 - Prompt Collectors：一次收集本轮输入、人格、session、官方对话历史、统一 Memory、执行能力和插件贡献，生成规范 `ContextPack`
 - Router：普通显式唤醒只输出 `persona` / `hybrid`；仅 Personal Runtime 标记的有界群聊模型续接候选开放 `silent`。它不承担用户可见回复、task planning 或 effect 输出，读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
-- Router/Persona 协同：Router 先决定 `persona` / `hybrid` /（仅有界群聊模型续接候选可用的）`silent`。`silent` 零输出完成；`hybrid` 继续由 Planner 判断是否委托 Core，只有不委托 Core 的路径才启动 Persona。Router 失败按 `silent` 完成。
+- Router/Persona 协同：普通显式消息和未被 Handler 接管的有界群聊候选同时启动 Router 与 Persona；Router 决定 `persona` / `hybrid`，并只对群聊候选开放 `silent`。`silent` 或 Router 失败会取消 pending Persona；已经提交或送达的表达继续完成，不做撤回。
 - Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
   `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
   lease 释放前统一完成或取消；`TurnDeadlineBudget.enforce()` 统一约束 binding、queue、
   Router、Planner、Persona、Core、Provider 和工具执行，超时取消会等待工具结果 task 清理，
   不允许后台继续写状态
-- Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，不启动 Persona；Planner 只生成 CoreTaskSpec，Core 最终结果仍由统一 Persona 输出层表达。
-- Core 协同提示：Core 只接收执行任务与能力事实，并直接执行、返回实质结果材料；未启动的 Persona 不向 Core 暴露内部状态或预发送文本。
-- Context/失败协同：Router、Planner 和后续 Persona 通过 turn-local single-flight 共享一次 Context Material 构建。Planner 失败禁止 Core，并改走 Persona-only 的失败恢复路径。
+- Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，已经启动的 Persona 可先交付即时表达；Planner 只生成 CoreTaskSpec，Core 最终结果仍由统一 Persona 输出层表达。
+- Core 协同提示：Core 只接收执行任务与能力事实，并直接执行、返回实质结果材料；即时 Persona 的内部状态和预发送文本不注入 Core Prompt。
+- Context/失败协同：Router、Planner 和 Persona 通过 turn-local single-flight 共享一次 Context Material 构建。Planner 失败禁止 Core，并以已经送达或仍可完成的 Persona 走 persona-only 恢复路径。
 - PERSONA / HYBRID 编排；`silent` 只用于有界群聊模型续接候选
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义

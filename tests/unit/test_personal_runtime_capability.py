@@ -682,8 +682,51 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_addressed_turn_starts_persona_without_waiting_for_router(monkeypatch):
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(metadata)
+    runtime_config = {"interaction_middleware": {"enabled": True}}
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    persona_started = asyncio.Event()
+    release_router = asyncio.Event()
+
+    async def route_after_persona(*_args, **_kwargs):
+        await release_router.wait()
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.PERSONA)
+
+    async def start_persona(*_args, **_kwargs):
+        persona_started.set()
+        return PersonaExpressionResult(spoken_reply="hello")
+
+    middleware.router_agent.route = AsyncMock(side_effect=route_after_persona)
+    middleware.persona_runtime.express_visible_reply = AsyncMock(
+        side_effect=start_persona
+    )
+    middleware._materialize_inbound_media = AsyncMock()
+    monkeypatch.setattr(
+        "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
+        AsyncMock(),
+    )
+
+    task = asyncio.create_task(middleware.handle_pipeline_event(event))
+    try:
+        await asyncio.wait_for(persona_started.wait(), timeout=1.0)
+        assert task.done() is False
+    finally:
+        release_router.set()
+        await task
+
+    assert [message.get_plain_text() for message in event.sent] == ["hello"]
+    assert event.is_stopped()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("router_fails", [False, True])
-async def test_model_continuation_silent_route_starts_no_persona(
+async def test_model_continuation_silent_route_suppresses_pending_persona(
     monkeypatch,
     router_fails,
 ):
@@ -700,17 +743,24 @@ async def test_model_continuation_silent_route_starts_no_persona(
         InteractionOutputController(),
         SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
     )
-    route = AsyncMock(
-        side_effect=RuntimeError("router failed")
-        if router_fails
-        else None,
-        return_value=InteractionRouteDecision(
-            route_mode=InteractionRouteMode.SILENT
-        ),
-    )
+    persona_started = asyncio.Event()
+
+    async def hold_persona(*_args, **_kwargs):
+        persona_started.set()
+        await asyncio.Future()
+
+    async def route_after_persona(*_args, **_kwargs):
+        await persona_started.wait()
+        if router_fails:
+            raise RuntimeError("router failed")
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+
+    route = AsyncMock(side_effect=route_after_persona)
     middleware.router_agent.route = route
     middleware._materialize_inbound_media = AsyncMock()
-    middleware._generate_and_emit_speculative_persona = AsyncMock()
+    middleware.persona_runtime.express_visible_reply = AsyncMock(
+        side_effect=hold_persona
+    )
     monkeypatch.setattr(
         "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
         AsyncMock(),
@@ -719,9 +769,12 @@ async def test_model_continuation_silent_route_starts_no_persona(
     await middleware.handle_pipeline_event(event)
 
     route.assert_awaited_once()
-    middleware._generate_and_emit_speculative_persona.assert_not_awaited()
+    middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert event.sent == []
     assert event.get_extra("_interaction_silent_completed") is True
+    assert get_interaction_turn_state(event).speculative_persona_status.value == (
+        "suppressed"
+    )
     assert event.is_stopped()
     assert bool(event.get_extra("_interaction_router_failed", False)) is router_fails
 
@@ -1272,7 +1325,7 @@ async def test_failed_personal_action_settles_material_without_accounting():
 
 
 @pytest.mark.asyncio
-async def test_model_continuation_reaches_silent_router_before_handlers(
+async def test_model_continuation_preserves_handler_takeover_before_route(
     monkeypatch,
 ):
     metadata = _metadata(support_personal_runtime=True)
@@ -1289,7 +1342,7 @@ async def test_model_continuation_reaches_silent_router_before_handlers(
         "provider_settings": {"enable": True},
         "interaction_middleware": {"enabled": True},
     }
-    handler_lookup = Mock(side_effect=AssertionError("handler scan ran before Router"))
+    handler_lookup = Mock(return_value=[])
     monkeypatch.setattr(
         "astrbot.core.pipeline.waking_check.stage.star_handlers_registry.get_handlers_by_event_type",
         handler_lookup,
@@ -1311,7 +1364,7 @@ async def test_model_continuation_reaches_silent_router_before_handlers(
 
     assert event.get_extra(GROUP_REPLY_CANDIDATE_EXTRA) is True
     assert event.get_extra("activated_handlers") == []
-    handler_lookup.assert_not_called()
+    handler_lookup.assert_called_once()
 
     plugin_context = SimpleNamespace(get_config=lambda **_kwargs: runtime_config)
     runtime_context = _context_for_runtime(_RecordingPlatform(metadata))
@@ -1321,11 +1374,21 @@ async def test_model_continuation_reaches_silent_router_before_handlers(
         InteractionOutputController(),
         plugin_context,
     )
-    middleware.router_agent.route = AsyncMock(
-        return_value=InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+    persona_started = asyncio.Event()
+
+    async def hold_persona(*_args, **_kwargs):
+        persona_started.set()
+        await asyncio.Future()
+
+    async def route_after_persona(*_args, **_kwargs):
+        await persona_started.wait()
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+
+    middleware.router_agent.route = AsyncMock(side_effect=route_after_persona)
+    middleware.persona_runtime.express_visible_reply = AsyncMock(
+        side_effect=hold_persona
     )
     middleware._materialize_inbound_media = AsyncMock()
-    middleware._generate_and_emit_speculative_persona = AsyncMock()
     monkeypatch.setattr(
         "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
         AsyncMock(),
@@ -1355,83 +1418,12 @@ async def test_model_continuation_reaches_silent_router_before_handlers(
         pass
 
     middleware.router_agent.route.assert_awaited_once()
-    middleware._generate_and_emit_speculative_persona.assert_not_awaited()
+    middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert process.agent_sub_stage.called is False
     assert event.sent == []
     assert event.is_stopped()
     assert manager.snapshot_diagnostics().sessions[0].state.material_revision == 0
     await manager.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_model_continuation_scans_handlers_after_router_accepts(monkeypatch):
-    metadata = _metadata(support_personal_runtime=True)
-    event = _DirectEvent(
-        metadata,
-        message_type=MessageType.GROUP_MESSAGE,
-        session_id="group-1",
-    )
-    mark_group_reply_candidate(event, kind="continuation")
-    event.set_extra("activated_handlers", [])
-    runtime_config = {
-        "provider_settings": {"enable": True},
-        "platform_settings": {},
-        "interaction_middleware": {"enabled": True},
-    }
-    runtime_context = _context_for_runtime(_RecordingPlatform(metadata))
-    manager = PersonalRuntimeManager()
-    middleware = InteractionMiddleware(
-        runtime_config,
-        InteractionOutputController(),
-        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
-    )
-    order: list[str] = []
-
-    async def route(*_args, **_kwargs):
-        order.append("router")
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.PERSONA)
-
-    async def discover(event, **_kwargs):
-        order.append("handlers")
-        event.set_extra("activated_handlers", [])
-        event.set_extra("handlers_parsed_params", {})
-        return False
-
-    async def finish_without_persona(_event):
-        order.append("pipeline")
-        event.stop_event()
-
-    middleware.router_agent.route = route
-    middleware.handle_pipeline_event = finish_without_persona
-    monkeypatch.setattr(
-        "astrbot.core.pipeline.process_stage.stage.discover_activated_handlers",
-        discover,
-    )
-
-    class NeverAgent:
-        async def process(self, _event):
-            raise AssertionError("model continuation should be handled before Core")
-            yield
-
-    process = ProcessStage()
-    process.ctx = SimpleNamespace(
-        astrbot_config=runtime_config,
-        astrbot_config_id="default",
-        interaction_middleware=middleware,
-    )
-    process.config = runtime_config
-    process.plugin_manager = SimpleNamespace(context=runtime_context)
-    process.personal_runtime_manager = manager
-    process.agent_sub_stage = NeverAgent()
-    process.star_request_sub_stage = SimpleNamespace()
-
-    try:
-        async for _ in process.process(event):
-            pass
-        assert order == ["router", "handlers", "pipeline"]
-    finally:
-        await manager.shutdown()
-
 
 @pytest.mark.asyncio
 async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypatch):
@@ -1453,11 +1445,21 @@ async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypa
         InteractionOutputController(),
         plugin_context,
     )
-    middleware.router_agent.route = AsyncMock(
-        return_value=InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+    persona_started = asyncio.Event()
+
+    async def hold_persona(*_args, **_kwargs):
+        persona_started.set()
+        await asyncio.Future()
+
+    async def route_after_persona(*_args, **_kwargs):
+        await persona_started.wait()
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+
+    middleware.router_agent.route = AsyncMock(side_effect=route_after_persona)
+    middleware.persona_runtime.express_visible_reply = AsyncMock(
+        side_effect=hold_persona
     )
     middleware._materialize_inbound_media = AsyncMock()
-    middleware._generate_and_emit_speculative_persona = AsyncMock()
     monkeypatch.setattr(
         "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
         AsyncMock(),
@@ -1495,7 +1497,7 @@ async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypa
         pass
 
     middleware.router_agent.route.assert_awaited_once()
-    middleware._generate_and_emit_speculative_persona.assert_not_awaited()
+    middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert process.agent_sub_stage.called is False
     assert event.sent == []
     assert event.is_stopped()

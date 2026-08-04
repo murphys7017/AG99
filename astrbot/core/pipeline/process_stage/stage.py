@@ -15,7 +15,6 @@ from astrbot.core.interaction.turn_state import (
     mark_interaction_turn_failed,
     record_interaction_turn_failure,
 )
-from astrbot.core.interaction.types import InteractionRouteMode
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_event,
 )
@@ -25,7 +24,6 @@ from astrbot.core.star.star_handler import StarHandlerMetadata
 
 from ..context import PipelineContext
 from ..stage import Stage, register_stage
-from ..waking_check.stage import discover_activated_handlers
 from .method.agent_request import AgentRequestSubStage
 from .method.star_request import StarRequestSubStage
 
@@ -98,27 +96,7 @@ class ProcessStage(Stage):
             if middleware is None:
                 event.stop_event()
                 return
-            route = await middleware.admit_group_reply_candidate(event)
-            if route.route_mode is InteractionRouteMode.SILENT:
-                await middleware.handle_pipeline_event(event)
-                return
             group_candidate_admitted = True
-            await discover_activated_handlers(
-                event,
-                config=self.config,
-                disable_builtin_commands=bool(
-                    self.config.get("disable_builtin_commands", False)
-                ),
-                no_permission_reply=bool(
-                    self.config.get("platform_settings", {}).get(
-                        "no_permission_reply",
-                        True,
-                    )
-                ),
-            )
-            if event.is_stopped():
-                return
-            activated_handlers = event.get_extra("activated_handlers", [])
 
         # 有插件 Handler 被激活
         if activated_handlers:
@@ -165,8 +143,8 @@ class ProcessStage(Stage):
                 return
 
         # A Handler may decide asynchronously that an otherwise passive
-        # group message is worth evaluating. The plugin proposes; Router
-        # still owns reply admission and may fail closed to silence.
+        # group message is worth evaluating. It joins the same interaction
+        # path as every other candidate; Router and Persona start there once.
         if (
             not is_group_candidate
             and not event.is_stopped()
@@ -176,12 +154,6 @@ class ProcessStage(Stage):
             middleware = self.ctx.interaction_middleware
             if middleware is None:
                 event.stop_event()
-                return
-            route = await middleware.admit_group_reply_candidate(event)
-            if route.route_mode is InteractionRouteMode.SILENT:
-                await middleware.handle_pipeline_event(event)
-                if not event.is_stopped():
-                    event.stop_event()
                 return
             group_candidate_admitted = True
 
@@ -253,13 +225,29 @@ class ProcessStage(Stage):
         stage: str,
         error: BaseException,
     ) -> None:
+        already_completed = is_interaction_turn_completed(event)
         record_interaction_turn_failure(
             event,
             stage=stage,
             reason="turn_deadline_exhausted",
             exception=error,
-            user_visible_action="fallback_error_reply",
+            user_visible_action=(
+                "existing_persona_reply"
+                if already_completed
+                else "fallback_error_reply"
+            ),
         )
+        if already_completed:
+            event.stop_event()
+            logger.warning(
+                "Interaction control deadline expired after Persona delivery: "
+                "platform_id=%s session_id=%s turn_id=%s stage=%s",
+                event.get_platform_id(),
+                event.session_id,
+                event.get_extra("_turn_id"),
+                stage,
+            )
+            return
         middleware = self.ctx.interaction_middleware
         output_controller = (
             middleware.output_controller if middleware is not None else None

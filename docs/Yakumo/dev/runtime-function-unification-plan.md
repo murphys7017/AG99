@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：Phase 1 至 Phase 5 底层 owner 迁移已完成；真实 Provider 日志 smoke、长请求
-  deadline 与后续消息队头延迟仍待运行确认。
+- 状态：Phase 1 至 Phase 5 底层 owner 迁移及 Phase 5A 普通回复并发热路径已完成；真实
+  Provider 日志 smoke、首回复延迟、长请求 deadline 与后续消息队头延迟仍待运行确认。
 - 更新日期：2026-08-04。
 - 实施基线：`ef389bce0`（`docs: plan runtime function unification`）。
 - 日志基线：`data/logs/astrbot.log` 与 `data/logs/astrbot.trace.log` 的 2026-08-03 样本。
@@ -19,23 +19,35 @@
 
 ## 一、结论先行
 
-当前最优先的问题不是“17 个插件逐个判断”，而是 Persona 在存在可用工具时，先额外执行
-一次独立的工具预判模型调用，再执行一次最终人格表达模型调用。17 个工具 schema 是在同一
-次预判请求中提供给模型的，并不是 17 次独立模型判断；但这次预判在绝大多数不使用工具的
-普通对话中仍然会完整消耗一次模型延迟。
+最初最优先的问题不是“17 个插件逐个判断”，而是 Persona 在存在可用工具时，先额外执行
+一次独立的工具预判模型调用，再执行一次最终人格表达模型调用。Phase 1 已删除该预判。
+
+Phase 1 至 Phase 5 复核时又确认了第二个关键路径回归：普通显式消息曾从“Router 与 Persona
+并发”漂移为“等待 Router/Planner 后再启动 Persona”，使首回复重新承担两个串行模型等待。
+Phase 5A 已恢复原设计：普通显式消息和未被 Handler 接管的群聊候选都并发启动 Router 与
+Persona；群聊 `silent` 通过输出 reservation 取消仍未提交的 Persona，而不撤回已送达表达。
+
+插件兼容仍需保留，但插件扩展完整度不是当前性能工作的第一优先级。首要指标是普通消息尽快
+得到 Persona 即时表达；插件生命周期不得增加独立模型判断，插件工具继续默认属于 Core，只有
+显式配置到 Persona 的工具才进入这条热路径。
 
 目标不是删除 Persona 工具能力，也不是重新设计插件挂载配置，而是把它恢复成标准 Agent
 循环：
 
 ```text
-Router
-  -> resolve personal_expression capabilities once
-  -> build one Persona request
-  -> run Persona plugin lifecycle once
-  -> shared Agent loop
-       -> business tool call: execute and continue
-       -> persona_expression: terminal structured result
-  -> Output
+ordinary addressed turn
+  -> shared Context Material single-flight
+  -> concurrent
+       -> Router -> persona / hybrid
+       -> Persona
+            -> resolve personal_expression capabilities once
+            -> build one request
+            -> run plugin lifecycle once
+            -> shared Agent loop
+                 -> business tool call: execute and continue
+                 -> persona_expression: terminal structured result
+            -> immediate Output
+  -> hybrid / execute -> Core -> Persona final Output
 ```
 
 普通无工具消息应在 Persona 第一次模型响应中直接调用 `persona_expression`。只有模型实际
@@ -62,6 +74,8 @@ Router
 | D-009 | 一次只迁移一个 owner；新 owner 接管后删除旧路径，不长期保留双主链。 |
 | D-010 | 流式输出当前为低优先级，不得阻塞本计划的非流式主链收口。 |
 | D-011 | `HandoffTool`/subagent 委派只属于 Core；Persona 可调用授权业务工具，但永不暴露 subagent。 |
+| D-012 | 进入 Interaction 的消息必须并发启动 Router 与 Persona；不能为了群聊或插件边界重新串行化首回复。 |
+| D-013 | 群聊 `silent` 必须与 Persona 发送权原子仲裁：pending 可取消，committed / emitted 不撤回。 |
 
 ## 三、目标与非目标
 
@@ -76,6 +90,7 @@ Router
 6. 让一次 turn 的 deadline 约束 Provider 超时、重试、fallback 和工具循环，避免超时相乘。
 7. 让群聊的所有候选来源只提供证据，由一个准入 owner 决定是否进入 Router。
 8. 为每次拒绝、fallback、工具循环和长耗时提供稳定原因码与阶段耗时。
+9. 让普通显式消息的首回复关键路径取 Router/Persona 两者较慢值，而不是两次模型等待之和。
 
 ### 非目标
 
@@ -86,6 +101,7 @@ Router
 5. 不在本计划中完成第三方 Execution Backend、MCP 全量迁移或 AG99 私有能力重写。
 6. 不为了减少文件行数机械拆类；只有 owner、生命周期或验证边界明确时才拆分。
 7. 不把流式输出作为当前验收条件；非流式路径必须先稳定。
+8. 不通过关闭 Persona 插件生命周期或缩短 50 轮历史伪造首回复性能；应删除串行等待和重复工作。
 
 ## 四、当前问题地图
 
@@ -587,6 +603,35 @@ follow-up 9 项，以及内部 `TimeoutError` 保真、真实 turn deadline 和�
 回滚或停止条件：Provider SDK 无法被外部 deadline 取消，或取消会留下继续执行的工具副作用。
 先完成取消隔离，不得只在外层返回超时而放任后台继续写状态。
 
+### Phase 5A：恢复普通回复并发热路径
+
+状态：实现完成，基础边界验证通过；等待私聊 `815049548` 真实 Provider 日志验收。
+
+目标：进入 Interaction 的消息不等待 Router 或 Planner 完成后才启动 Persona，使首回复重新满足
+最初的低延迟设计，同时保持群聊 `silent` 准入、插件 Handler 接管、目标配置和最终输出仲裁。
+
+实施结果：
+
+1. 普通显式消息和未被 Handler 接管的群聊候选在同一个 `TurnExecutionScope` 中并发启动
+   Router 与 Persona，二者共享一次 Context Material single-flight，但使用各自 target 投影和
+   Provider 调用。
+2. 官方 Handler 保留关键词、命令、终止和 ProviderRequest 接管语义；未接管的群聊候选进入
+   同一并行主链。Router `silent` 在 turn lock 下把 pending Persona 标记为 suppressed 并取消，
+   已经 committed / emitted 的表达继续完成。
+3. `hybrid` 路径中的 Planner 与已启动 Persona 并行推进；`execute` 立即放行 Core，已经提交的
+   即时表达保留，Core-final 结果仍经统一 Persona Expression。
+4. Router、Persona 和 Core-final 使用现有 turn deadline、任务 owner、即时/最终输出 reservation
+   与取消清理，不恢复旧的裸后台 task 或第二套输出 owner。
+5. 插件 LLM 生命周期仍默认属于 Persona，插件工具仍默认属于 Core；没有增加插件判断模型或
+   为并发路径建立特殊工具集合。
+
+验收标准：普通私聊和群聊候选在 Router 尚未返回时已经启动 Persona；群聊 `silent` 能取消 pending
+Persona 且不撤回 committed / emitted 表达；Persona 首回复和 Router Provider wait 在 trace 中
+重叠；`hybrid/execute` 不重复完成 turn。
+
+回滚或停止条件：并发分支重新共享可写 ProviderRequest、重复执行工具副作用或产生双 completion。
+应修复 branch-local request 与 output reservation，不能退回 Router-first 串行主链。
+
 ### Phase 6：统一群聊候选与准入
 
 状态：等待 Persona/Core 延迟稳定后实施。
@@ -687,6 +732,7 @@ follow-up 9 项，以及内部 `TimeoutError` 保真、真实 turn deadline 和�
 | 普通 Persona 路径的 Persona 模型调用 | 2 次 | 1 次 |
 | Persona 工具未使用时的工具执行 | 0 次 | 0 次 |
 | 普通 Persona 总耗时 | 约 13.4 秒 | 同 Provider 暖态下降至少 35%，主要以调用数验收 |
+| 普通消息 Router/Persona 等待 | 串行相加 | 并发重叠，关键路径取两者较慢值 |
 | Core 历史消息 | 最高观察到 529 条 | 不超过 target 配置与硬预算 |
 | Core 输入 token | 约 17,419 | 有明确预算和截断诊断，不再随完整历史无界增长 |
 | 慢 hybrid turn | 约 398.6 秒 | 不超过 turn deadline |
@@ -758,13 +804,15 @@ re-read this plan
 - [ ] Phase 1 验收：私聊 `815049548` 无工具样本只产生一次 Persona Provider 调用。
 - [x] Phase 1 验收：Persona 单工具、工具失败、附件、fallback 和 Hook 自动化兼容通过。
 - [x] Phase 2：建立每 target 唯一 CapabilitySnapshot。
-- [ ] Phase 2 最终验收：跨渲染后 Hook 的 Prompt schema 与 Runner 工具完全一致。
+- [x] Phase 2 最终验收：跨渲染后 Hook 的 Prompt schema 与 Runner 工具由同一有效快照重绑定。
 - [x] Phase 3：统一 ProviderRequest 与 Agent lifecycle。
 - [x] Phase 3 验收：无活对象 deepcopy、无 Hook 或副作用重放。
 - [x] Phase 4：统一上下文事实与 target 预算。
 - [ ] Phase 4 验收：Core 529 条历史样本被稳定限界，Persona 保持 50 轮。
 - [x] Phase 5：统一 deadline、重试、fallback 和 session 队列。
 - [ ] Phase 5 验收：长请求与后续短消息都受可解释总预算约束。
+- [x] Phase 5A：恢复统一 Router/Persona 并发热路径与群聊 silent 仲裁。
+- [ ] Phase 5A 验收：私聊和群聊候选的 Router/Persona Provider wait 在真实日志中重叠。
 - [ ] Phase 6：统一群聊候选与准入。
 - [ ] Phase 6 验收：两个目标群的未回复与回复原因可由统一决策解释。
 - [ ] Phase 7：类型化状态与诊断，删除过渡路径。

@@ -94,14 +94,15 @@
 5. `PipelineScheduler.execute()`
 6. 官方前置 stage 执行：唤醒、白名单、会话状态、限流、内容安全、预处理
 7. 进入 `ProcessStage`
-8. interaction middleware 创建 turn state；协议任务走独立 Core bypass，普通对话先完成 Router
-9. Router 选择 `persona` 时进入 Persona Expression；选择 `hybrid` 时调用 Planner，Planner 仅在返回 `execute` 后继续调用 Core，未委托 Core 的路径才进入 Persona Expression；群聊模型续接候选还可选择 `silent`
+8. interaction middleware 创建 turn state；协议任务走独立 Core bypass，普通显式对话并发启动 Router 与 Persona Expression
+9. Router 选择 `persona` 时以即时 Persona 完成；选择 `hybrid` 时调用 Planner，Planner 返回 `execute` 后继续调用 Core，Core 结果再次进入统一 Persona Expression；未被 Handler 接管的群聊候选也并发启动 Router 与 Persona，并可选择 `silent`
 10. 路由后的最终 Persona 或 Core 分支调用相应插件生命周期与工具；关键词、命令等 Pipeline Handler 仍在官方 pipeline 中运行
 
 群聊的 Conversation 历史只为语义判断提供上下文，不自行扩大 Waking 边界。当前 active turn 的同一
-发送者可立即 follow-up；Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口截止只进入现有 Router，
-由它判断 `silent / persona / hybrid`。该候选路径先等 Router 再启动 Persona，Router 失败按 `silent`
-完成；窗口外和其他发送者仍需唤醒词、@ 或引用 Bot。
+发送者可立即 follow-up；Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口截止进入候选路径。
+候选保留 Handler 接管语义；未被接管时 Router 与 Persona 同时启动，由 Router 判断
+`silent / persona / hybrid`。`silent` 或 Router 失败只取消 pending Persona；窗口外和其他发送者
+仍需唤醒词、@ 或引用 Bot。
 
 interaction turn 的输出路径与普通事件不同：
 

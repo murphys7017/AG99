@@ -44,13 +44,17 @@ Interaction Middleware 建立本轮交互并整理输入
     ↓
 Prompt Collectors 构建本轮唯一的 ContextPack
     ↓
-Router → persona / hybrid /（有界群聊续接候选）silent
-    ├── silent → 零输出完成
-    ├── persona → Persona Runtime → Output
-    └── hybrid → 独立 Core Planner 再判断执行层是否必要
-                 ├── not_required → Persona Runtime → Output
-                 └── execute → Core 执行
-                              Core 的结果回到同一个 Persona Runtime → Output
+普通显式消息并发启动 Router 与 Persona Runtime
+    ├── Persona Runtime → 即时表达 → Output
+    └── Router → persona / hybrid
+         ├── persona → 以即时表达完成本轮
+         └── hybrid → 独立 Core Planner 再判断执行层是否必要
+                      ├── not_required → 以即时表达完成本轮
+                      └── execute → Core 执行
+                                   Core 的结果回到同一个 Persona Runtime → Output
+
+未显式唤醒的有界群聊候选在 Handler 未接管后进入同一并行主链；Router 返回 silent 时，
+尚未取得发送权的 Persona 会被取消，已经提交或送达的表达不会回滚
     ↓
 Output Runtime 负责文本、流式与 TTS 等输出物化和平台发送
     ↓
@@ -92,7 +96,7 @@ Cron 和插件显式发送则保持精确投递兼容，不作为 Policy 行动�
 这是本 fork 的核心架构之一，一个通用的交互中间件：
 
 - **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
-- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；Router 先完成路由，hybrid 再由独立 Core Planner 复核是否执行，只有不委托 Core 的路径启动 Persona
+- **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；普通显式消息和未被 Handler 接管的群聊候选都并发启动 Router 与 Persona，hybrid 再由独立 Core Planner 复核是否执行；群聊 `silent` 只取消尚未取得发送权的 Persona
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
 - **流式例外收口**：插件显式选择 `persona` 输出时，流文本先完整收集再执行一次 Persona 表达，避免原文流与改写文案同时发送；`direct` 流保持原有低延迟发送

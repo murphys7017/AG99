@@ -1,4 +1,4 @@
-"""Router-gated admission for unaddressed group reply candidates."""
+"""Router arbitration for unaddressed group reply candidates."""
 
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ def select_legacy_active_reply_candidate(
     *,
     random_value: float | None = None,
 ) -> bool:
-    """Sample a legacy group active-reply candidate for Router admission.
+    """Sample a legacy group active-reply candidate for interaction arbitration.
 
-    The historical setting is now only a sampling gate. It never permits a
-    direct provider call; the Router can and normally should select ``silent``.
+    The historical setting is only a sampling gate and never claims a reply.
+    Router ``silent`` may still suppress a Persona that has not claimed output.
     """
     if (
         not is_middleware_enabled(config)

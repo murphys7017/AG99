@@ -157,10 +157,12 @@ Expression、Output Controller、assistant-only Conversation 提交和完整 lif
   超时。同一 Runtime Key 默认只有一个拥有用户可见输出完成权的 conversational Turn。
 - 新用户消息优先作为当前 ActiveTask 的 follow-up；无法吸收时进入 mailbox 排队。协议
   事件、原始媒体和显式可并发后台任务不占用 conversational Turn。
-- 将 Router-first 分支选择、Planner 调度、turn 仲裁和最终完成迁入 Session Runtime。
+- 将 Router/Persona 并发启动、Planner 调度、turn 仲裁和最终完成迁入 Session Runtime。
 - `InteractionMiddleware` 收缩为官方 Pipeline 的薄适配器，不再拥有业务编排。
-- 正常对话先完成 Router；`persona` 直接进入表达，`hybrid` 仅在 Planner 不委托 Core 时进入表达。
-  Planner 委托 Core 后，不得预先执行 Persona 的插件钩子、工具或 effect。
+- 普通显式对话并发启动 Router 与 Persona；`persona` 以即时表达完成，`hybrid` 继续 Planner，
+  Planner 委托 Core 时保留已经提交的即时表达，并由 Core-final 结果再次进入统一 Persona。
+  未被 Handler 接管的群聊候选进入同一并行主链；Router `silent` 原子压制 pending Persona，
+  已经提交或送达的表达不回滚。
 - Phase 1 继续以现有 `InteractionTurnState` 作为唯一可写 Turn 状态，不创建平行
   `PersonalTurnState`。类型化改名和 extra 迁移留给 Phase 2。
 - Phase 1 只登记插件、Native follow-up、Subagent 和后台任务的稳定 identity/task handle；
@@ -382,9 +384,10 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   lease；插件、Router/Persona、Core 与输出共享同一 turn 生命周期。存在 activated handler
   时不尝试 active-runner follow-up，避免插件命令被提前吸收。
 - Router、Planner、Persona、Context Material 和 Stream Observation task 已归属 TurnExecutionScope；
-  `hybrid` 放行 Core 时不会启动 Persona 分支，lease 释放前统一完成或取消。
-- Persona-only 与 Core-final 使用同一 turn 级 materialization 和 completion 边界。Router/Planner
-  在 Persona 启动前完成，因此 Core 委托不会留下需要仲裁或取消的 pending Persona 输出。
+  普通显式消息并发启动 Router 与 Persona，`hybrid` 放行 Core 时保留已提交的即时表达，lease
+  释放前统一完成或取消所有 turn-owned task。
+- Persona-only、即时 Persona 与 Core-final 使用同一 turn 级 materialization 和 completion 边界。
+  Final-output reservation 会取消仍未提交的 pending Persona，但不会撤回已经送达的表达。
 - 当前 session 的 `send_message_to_user` 已作为 progress 进入现有 Output Controller，不会
   重入同 session lease 或提前完成 turn；跨 session 文本输出使用独立 proactive turn。
 - 全量物理发送失败和 canonical material 缺失已在本轮修正；分段部分成功仍缺 delivery

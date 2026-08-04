@@ -1,4 +1,4 @@
-"""Low-level event contract for Router-gated group reply candidates."""
+"""Low-level event contract for Router-arbitrated group reply candidates."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def mark_group_reply_candidate(event: Any, *, kind: str) -> None:
 
 
 def request_group_reply_candidate(event: Any) -> bool:
-    """Submit a group message for Router admission without claiming a reply."""
+    """Submit a group message for interaction arbitration without claiming a reply."""
     if event.get_message_type() is not MessageType.GROUP_MESSAGE:
         return False
     if not is_group_reply_candidate(event):

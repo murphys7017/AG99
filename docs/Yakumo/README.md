@@ -17,7 +17,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - `Core Planner` 只准备执行意图；Native、Claude Code、OpenCode 等执行后台位于统一执行边界之后。
 - `effect_calls` 是插件扩展协议，AstrBot 不理解 Motion、Live2D 等插件领域语义。
 
-普通消息先完成 Router；Router 返回 `persona`、`hybrid`，并且只对有界群聊续接候选开放 `silent`。`hybrid` 再经 Core Planner 判断是否执行，只有未委托 Core 的路径直接启动 Persona；Core 的最终结果仍经同一个 Persona Expression 输出。同一群聊发送者在 Bot 成功回复后的前 10 秒可直接续接；此后到配置窗口结束的未唤醒消息才会向 Router 开放 `silent`。
+普通、明确面向 Bot 的消息与未被 Handler 接管的有界群聊候选都并发启动 Router 与 Persona Expression。Router 返回 `persona`、`hybrid`，并只对群聊候选开放 `silent`；`silent` 会取消仍处于 pending 的 Persona，但不会撤回已经提交或送达的表达。`hybrid` 再经 Core Planner 判断是否执行，已启动的 Persona 可以先产生即时表达，Core 的最终结果仍经同一个 Persona Expression 输出。同一群聊发送者在 Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口结束的未唤醒消息才进入这一候选准入。
 
 ## 当前稳定边界
 
@@ -40,11 +40,15 @@ Platform Adapter
   -> Personal Runtime turn admission / session lease
   -> official Plugin Handlers
   -> TurnExecutionScope
-  -> Router
-  -> persona: Persona Expression -> Output
-  -> hybrid: Core Planner -> not_required: Persona Expression -> Output
-                         -> execute: CoreExecutionSpec -> Native Core Executor
-                                     -> Persona Expression -> Output
+       -> Router ------------------------------+
+       -> Persona Expression -> immediate Output
+            Router persona --------------------+-> complete
+            Router hybrid -> Core Planner
+                 -> not_required ---------------+-> complete
+                 -> execute: CoreExecutionSpec -> Native Core Executor
+                             -> Persona Expression -> final Output
+
+  bounded unaddressed group candidate -> Router first -> silent or admitted path
 ```
 
 Prompt 使用唯一数据流：

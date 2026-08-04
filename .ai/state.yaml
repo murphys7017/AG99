@@ -1,8 +1,8 @@
 task:
-  class: refactor
+  class: bugfix
   risk: high
-  phase: turn_deadline_unification
-  scope: Give each Personal Runtime turn one monotonic execution deadline spanning runtime binding, session queueing, Router, Planner, Persona, Core, Provider recovery and fallback, tools, and observation handling, followed by cancellation cleanup and existing Output Controller failure delivery without changing plugin target policy.
+  phase: router_persona_concurrency_restoration
+  scope: Restore the documented concurrent Router and Persona critical path for every Interaction turn, including bounded group candidates, while preserving Pipeline Handler takeover, plugin target policy, deadline ownership, and atomic output arbitration.
 context:
   confidence: high
   assumptions:
@@ -16,8 +16,8 @@ context:
     - Only Policy-approved PersonalActionIntent expression is compared with the previous delivered visible reply. Explicit Context.send_message, Cron, and plugin proactive output retain exact-send compatibility behavior.
     - Autonomous expression deduplication uses an irreversible normalized fingerprint from physical delivery feedback persisted by the Personal Runtime control-state repository; Persona Conversation history remains an additional semantic source, while raw reply text is not added to PersonalState or diagnostics.
     - A duplicate autonomous expression is suppressed before effects, TTS, platform delivery, Conversation persistence, cooldown, or proactive quota accounting.
-    - Ordinary addressed user messages retain the existing concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
-    - Canonical Conversation history supplies semantic context but does not grant wake permission by itself; same-actor group follow-ups use the active turn, a 10-second direct window, then the existing Router with silent enabled until the bounded continuation window expires. Model-continuation candidates bypass Handler discovery until Router accepts persona or hybrid, then run the existing Handler discovery once before Persona or Core work.
+    - Ordinary addressed user messages and bounded group candidates use the same concurrent Router and Persona path; Personal Policy applies only to background and ambient RuntimeObservation batches.
+    - Canonical Conversation history supplies semantic context but does not grant wake permission by itself; same-actor group follow-ups use the active turn, a 10-second direct window, then the existing Router with silent enabled until the bounded continuation window expires. Model-continuation candidates preserve official Handler takeover first; candidates not consumed by a Handler enter the shared Router/Persona path once.
     - RuntimeObservationEvent and submit_runtime_observation_event remain post-decision proactive-output adapters and are not the generic Observation Inbox API.
     - PersonalSessionRuntime idle deletion must become bounded TTL/LRU retention before it can own cross-turn state; initial planning bounds are 24 hours and 1024 idle runtimes.
     - Restart-safe state plus mute, quiet-hours, cooldown-duration, and output-budget configuration are present; defer writes a no-action deadline, every delivered visible reply writes reply cooldown, and only delivered ActionIntent output writes proactive usage.
@@ -96,7 +96,7 @@ context:
     - Official plugin Handler location, filters, priorities, ProviderRequest yield semantics, and Context.send_message public call shape remain compatible; proactive text now enters Personal Runtime by design.
     - Interaction pipeline results preserve official response-safety and OnDecoratingResult hooks through one shared PreOutputProcessor without reapplying ordinary TTS/t2i/prefix/segmentation decoration; the former event-extra callback bridge is removed.
     - RespondStage-driven and direct Persona Interaction replies share one TurnDeliveryCoordinator-owned OnAfterMessageSent, visible-completion, postprocess, and deferred-finalization boundary. InteractionOutputController remains a compatibility facade, while direct non-Interaction event.send paths retain their existing semantics.
-    - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed for bounded group model-continuation candidates and explicit plugin-submitted group reply candidates, which await Router before Persona and fail closed to silent. Candidate metadata is a low-level event contract and never mutates explicit wake fields; legacy plugins that do not use the opt-in candidate API preserve existing wake behavior.
+    - Router remains the existing minimal classifier and never plans tasks or receives tool schemas; silent is exposed for bounded group model-continuation candidates and explicit plugin-submitted group reply candidates. Router and Persona start concurrently after Handler takeover settles; silent or Router failure suppresses only a pending Persona and never retracts committed or delivered output. Candidate metadata is a low-level event contract and never mutates explicit wake fields; legacy plugins that do not use the opt-in candidate API preserve existing wake behavior.
     - Core Planner performs one binary execute/not_required validation and produces CoreTaskSpec only for execute.
     - Prompt collectors build one canonical ContextPack per interaction turn; Router, Core Planner, Persona, and Core render isolated target projections from its facts.
     - Interaction uses an explicit base collector profile before routing; the Core overlay adds only execution-specific collectors and never recollects shared session, memory, or explicit provider context.
@@ -163,7 +163,7 @@ architecture:
     - Interaction Turn State allocates logical output-segment IDs independently from physical visible-message IDs; TTS dual output and segmented delivery preserve the logical ID without a positional ID queue.
     - ProcessStage -> InteractionMiddleware.handle_pipeline_event is now the only production Interaction inbound boundary; Middleware marks Core delegation but never reinserts events into the official queue.
     - Conversational Router decisions currently expose persona/hybrid; live audio and protocol commands use an internal Core bypass instead of impersonating a Router decision.
-    - Router and, when needed, Core Planner resolve before Persona Expression starts. This prevents Persona-targeted plugin effects and tools from running for work delegated to Core; silent routes never start Persona Expression.
+    - Ordinary addressed turns and unaddressed group continuation/plugin candidates start Router and Persona Expression concurrently under one TurnExecutionScope after Pipeline Handler takeover settles. Router silent and Core-final reservation cancel only an uncommitted speculative Persona and never retract delivered output.
     - Router, Persona, and Planner share one turn-local Context Material single-flight; cancelling one waiter does not cancel collection needed by another branch.
     - Current interaction Turn State stores a pure InteractionRouteDecision; immediate replies and effect calls travel only with the PersonaExpressionResult that produced them.
     - Core final output is returned to Middleware through core_reply_handler, rendered by the single Persona Runtime, then delivered as an explicit prepared result by Output Controller.
@@ -220,6 +220,7 @@ architecture:
     - Core Planner parsing now enforces its declared closed schema instead of repairing missing fields or coercing wrong types.
 verification:
   checks_run:
+    - "2026-08-04 Router/Persona concurrency restoration: ordinary and bounded group-candidate turns preserve Handler takeover, then start Router and Persona together; silent suppresses only pending Persona, committed or delivered output is retained, and a later Router/Planner deadline does not emit a duplicate failure reply. Five focused public-flow cases, one deadline-delivery smoke, affected Ruff, py_compile, YAML parse, and git diff checks passed. Real Provider traces remain operator validation."
     - "2026-08-04 Phase 5 commit review remediation: deadline scopes now distinguish their own cancellation from provider/plugin TimeoutError, unresolved follow-ups are withdrawn from the old Agent on admission failure, and required protocol tools cannot be removed by OpenAI-compatible recovery. OpenAI Provider 63 tests and follow-up 9 tests passed; affected Ruff, py_compile, git diff checks, deadline classification, and follow-up withdrawal smoke passed."
     - "2026-08-04 Phase 3/4 closure review: post-OnLLMRequest Core capability binding is centralized for Native and third-party runners, Native Agent context processing reuses the projected Core history limit including the 64-turn fallback, and ToolLoopAgentRunner resolves its file-read overflow helper from the final post-Hook request instead of a cached pre-Hook handler. Focused Persona/plugin/Prompt/ToolRunner suites passed 170 tests; affected Ruff, py_compile, and git diff checks passed. Real Provider quality, token, and latency logs remain operator validation."
     - "2026-08-04 turn deadline unification: OpenAI Provider, shared Tool Runner, Router, Planner, Persona, Output Lifecycle, plugin runtime, and Personal Runtime suites passed 196 tests; affected Ruff and py_compile passed; monotonic total-deadline cancellation and configured stage-timeout classification smoke passed. Final-output cancellation releases its reservation, queue cancellation cannot leak the session lock, and deadline diagnostics are emitted from the common submission-settle boundary. Initial OpenAI run had 9 environment-only tmp_path permission errors and passed fully after using a workspace temp directory. Real Provider long-turn and same-session queue latency remain pending runtime-log validation."
@@ -367,8 +368,8 @@ verification:
     - "Personal Runtime post-review remediation: tests/unit/test_personal_runtime_capability.py public Context/Cron compatibility and platform-send failure accounting checks (6 passed); affected-file Ruff, py_compile, and git diff --check passed"
     - "Personal Runtime log-review remediation: Interaction, delivery, Prompt target/catalog, Policy, Runtime accounting, and assistant-only Memory checks passed (100 tests); focused Ruff, py_compile, YAML parses, VitePress build, and git diff checks passed. Default Record standalone behavior and Personal Runtime composite TTS behavior were both covered."
     - "Autonomous expression deduplication: 75 Interaction, Persona, Policy, Runtime, Context/Cron compatibility, and deterministic suppression tests passed; focused Ruff, py_compile, YAML parse, VitePress build, and diff checks passed."
-    - "Bounded group continuation: active, 10-second fast, 10-to-120-second model candidate, conditional Router silent, Router failure fail-closed, and zero-Persona-output cases passed within 62 focused Interaction/Policy/Persona/Runtime tests; Ruff, py_compile, JSON/YAML parse, VitePress build, and diff checks passed."
-    - "Personal Runtime batch-ownership remediation: 141 Runtime, Policy, Router, delivery, Memory, and Prompt tests passed, including empty-Heartbeat ignore, retained cooldown wake stability, rejected and failed-action batch settlement, actual dual-output TTS grouping through legacy send_by_session, and Router-before-Handler continuation admission; focused Ruff, py_compile, YAML parse, diff checks, and VitePress build passed."
+    - "Superseded historical bounded-group validation: the former zero-Persona silent path passed 62 focused checks before the 2026-08-04 concurrent Router/Persona arbitration restoration."
+    - "Superseded historical batch-ownership validation: the former Router-before-Handler continuation path passed 141 focused checks before Handler takeover and shared Router/Persona orchestration were restored on 2026-08-04."
     - "Restart-safe autonomous-expression deduplication: 27 focused Personal Runtime and SQLite tests passed, covering delivered fingerprint persistence, restored-runtime suppression without Conversation fallback, and legacy SQLite column upgrade; affected-file Ruff, py_compile, YAML parse, diff check, and VitePress build passed."
     - "Persona request mutation snapshot remediation: runtime-bound FunctionTool handlers containing asyncio.Future remain usable without deepcopy; 176 focused plugin, expression, tool execution, Context, Prompt, Runtime capability, and event tests passed with Ruff, compileall, YAML parse, and diff checks."
     - "Persona structured-response hook remediation: parsed persona_expression text now populates a derived hook-visible MessageChain, so protocol tool-call responses with an empty provider chain remain compatible with legacy response hooks and do not trigger a false empty-output fallback; 26 expression tests passed with Ruff and diff checks."
@@ -394,24 +395,26 @@ verification:
     - Expanded Prompt renderer collection remains blocked by an existing stale test import: tests/unit/test_prompt_tree_renderer.py imports COMPUTER_USE_DISABLED_SKILLS_PROMPT from astrbot.core.astr_main_agent_resources after that symbol moved to prompt resources; the other 117 relevant tests passed.
     - Expanded Core tool-path collection including tests/unit/test_prompt_context_collect.py remains blocked by an existing stale import of CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT from astrbot.core.astr_main_agent_resources; the remaining 83 Core tool execution, manager, loop, and conflict-resolution tests passed.
     - Phase 5 VitePress validation could not start in the managed Windows sandbox because the docs resolver was denied while reading parent directories for docs/.vitepress/config.mjs; source validation, YAML parsing, Ruff, py_compile, and focused tests remain available.
-  validation_gap: "Batch-owned material freshness is deterministic within one process, while the final delivered-expression fingerprint persists by RuntimeKey. Sensor payload fingerprints and batch revisions are intentionally process-local, so a restarted Runtime may treat a later Sensor report as fresh; persisted cooldown and daily limits remain enforced. Conditional Router continuation timing, zero-output silent behavior, and fail-closed errors are acceptance-tested, while real-group semantic classification quality still requires operator observation. Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain operator-configured capabilities rather than general defaults. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and broader policy-quality data remain absent. Phase 1 Persona tool execution still requires a real private-chat 815049548 log smoke to confirm one Persona provider call and warm-path latency. Targeted Pyright remains unavailable."
+  validation_gap: "Batch-owned material freshness is deterministic within one process, while the final delivered-expression fingerprint persists by RuntimeKey. Sensor payload fingerprints and batch revisions are intentionally process-local, so a restarted Runtime may treat a later Sensor report as fresh; persisted cooldown and daily limits remain enforced. Conditional Router continuation timing, pending-Persona silent suppression, and fail-closed errors are acceptance-tested, while real-group semantic classification quality still requires operator observation. Heartbeat, ambient group source, Personal Policy, plugin Sensor entry, and multi-target observation routing remain operator-configured capabilities rather than general defaults. Declared per-Sensor schemas, structured partial delivery receipts, external execution backends, and broader policy-quality data remain absent. Phase 1 Persona tool execution and Phase 5A Router/Persona overlap still require real private-chat 815049548 and bounded-group log smokes to confirm one Persona provider call, concurrent Provider waits, silent cancellation, and warm-path latency. Targeted Pyright remains unavailable."
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: turn_deadline_unification
+    phase: router_persona_concurrency_restoration
     scope:
-      - one monotonic TurnDeadlineBudget from reservation through queue and execution
-      - remaining-budget enforcement across Router, Planner, Persona, Core, Provider fallback, and tools
-      - classified OpenAI-compatible recovery without SDK or deterministic blind retries
-      - cancellation-safe tool tasks, final-output reservations, and session-lock handoff
-      - one deadline diagnostic snapshot at the submission settle boundary
+      - ordinary addressed turns and bounded group candidates start Router and Persona concurrently under one TurnExecutionScope after Handler takeover settles
+      - Router silent suppresses pending Persona without retracting committed or delivered output
+      - hybrid planning overlaps the already-started Persona path and delegates Core without retracting delivered immediate output
+      - final-output reservation cancels only pending Persona work and retains the existing completion owner
     non_goals:
       - streaming delivery redesign or expanded streaming support
-      - group admission or reply-frequency policy changes from Phase 6
       - capability target-policy changes or Prompt-layer tool-schema dropping
       - media-boundary consolidation or broad event-extra removal
+      - group reply-frequency tuning or Phase 6 admission-policy redesign
     confirmed_gaps:
-      - real Provider long-turn and same-session queue logs must confirm wall-clock behavior under local models and plugins
+      - real private-chat Provider traces must confirm Router and Persona waits overlap and reduce first-response latency
+      - real bounded-group traces must confirm pending Persona cancellation on silent without retracting delivered output
+      - real hybrid traces must confirm immediate and Core-final output ordering without duplicate turn completion
+      - real Provider long-turn and same-session queue logs must still confirm wall-clock deadline behavior under local models and plugins
       - third-party plugin tools must cooperate with Python task cancellation; the runtime cannot forcibly stop external side effects
       - unconsumed third-party streaming remains intentionally lower priority and lacks full deadline diagnostics
       - a backend-neutral progress, cancellation, and background-execution permission contract remains absent

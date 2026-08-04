@@ -12,7 +12,6 @@ from astrbot.core.interaction.group_context_capture import (
     is_group_context_capture_candidate,
 )
 from astrbot.core.interaction.group_reply import (
-    is_group_reply_candidate,
     mark_group_reply_candidate,
     select_legacy_active_reply_candidate,
 )
@@ -294,12 +293,6 @@ class WakingCheckStage(Stage):
                         event.get_sender_id(),
                         continuation,
                     )
-
-        if is_group_reply_candidate(event):
-            # Router owns admission for this unaddressed continuation candidate.
-            event.set_extra("activated_handlers", [])
-            event.set_extra("handlers_parsed_params", {})
-            return
 
         is_wake = (
             await discover_activated_handlers(
