@@ -16,6 +16,8 @@ from astrbot.core.agent.message import (
     dump_messages_with_checkpoints,
 )
 from astrbot.core.agent.response import AgentStats
+from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
+from astrbot.core.agent_lifecycle import AgentRequestLifecycle
 from astrbot.core.astr_main_agent import (
     CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY,
     LLM_ERROR_MESSAGE_EXTRA_KEY,
@@ -23,10 +25,12 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildResult,
     build_main_agent,
 )
+from astrbot.core.capabilities import CapabilityResolver
 from astrbot.core.db.po import CoreExecutionRecord as CoreExecutionLedgerRecord
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreExecutionSpec,
+    bind_effective_core_capabilities,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -47,7 +51,6 @@ from astrbot.core.provider.entities import (
     LLMResponse,
     ProviderRequest,
 )
-from astrbot.core.star.star_handler import EventType
 from astrbot.core.utils.metrics import Metric
 
 from .....astr_agent_run_util import AgentRunner, run_agent, run_live_agent
@@ -206,11 +209,14 @@ class InternalAgentSubStage(Stage):
                 await event.send_typing()
             except Exception:
                 logger.warning("send_typing failed", exc_info=True)
-            if await call_event_hook(
+            request_lifecycle = AgentRequestLifecycle(
                 event,
-                EventType.OnWaitingLLMRequestEvent,
                 execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
-            ):
+                hook_dispatcher=call_event_hook,
+                record_reasoning=True,
+                dispatch_response_postprocess=True,
+            )
+            if await request_lifecycle.dispatch_waiting():
                 return
 
             runner_registered = False
@@ -226,6 +232,7 @@ class InternalAgentSubStage(Stage):
                     plugin_context=self.ctx.plugin_manager.context,
                     config=build_cfg,
                     apply_reset=False,
+                    request_lifecycle=request_lifecycle,
                 )
 
                 if build_result is None:
@@ -242,6 +249,10 @@ class InternalAgentSubStage(Stage):
                 req = build_result.provider_request
                 provider = build_result.provider
                 reset_coro = build_result.reset_coro
+                request_lifecycle = (
+                    build_result.request_lifecycle or request_lifecycle
+                )
+                request_lifecycle.bind_request(req)
 
                 api_base = provider.provider_config.get("api_base", "")
                 for host in decoded_blocked:
@@ -259,15 +270,38 @@ class InternalAgentSubStage(Stage):
                     and not event.platform_meta.support_streaming_message
                 )
 
-                if await call_event_hook(
-                    event,
-                    EventType.OnLLMRequestEvent,
-                    req,
-                    execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
-                ):
+                if await request_lifecycle.dispatch_request():
                     if reset_coro:
                         reset_coro.close()
                     return
+
+                effective_capabilities = CapabilityResolver().resolve_explicit_toolset(
+                    event=event,
+                    target=TOOL_TARGET_CORE,
+                    toolset=req.func_tool if isinstance(req.func_tool, ToolSet) else ToolSet(),
+                    persona_id=(
+                        build_result.capabilities.persona_id
+                        if build_result.capabilities is not None
+                        else None
+                    ),
+                    selection_mode="request_hook",
+                )
+                req.func_tool = effective_capabilities.to_toolset()
+                build_result.capabilities = effective_capabilities
+                prompt_apply_result = request_lifecycle.prompt_apply_result
+                if hasattr(prompt_apply_result, "tool_schema_count"):
+                    prompt_apply_result.tool_schema_count = len(
+                        effective_capabilities.tools
+                    )
+                if build_result.execution_spec is not None:
+                    build_result.execution_spec = bind_effective_core_capabilities(
+                        build_result.execution_spec,
+                        effective_capabilities,
+                    )
+                    event.set_extra(
+                        CORE_EXECUTION_SPEC_EXTRA_KEY,
+                        build_result.execution_spec,
+                    )
 
                 # apply reset
                 if reset_coro:
@@ -283,6 +317,7 @@ class InternalAgentSubStage(Stage):
 
                 event.trace.record(
                     "astr_agent_prepare",
+                    request_lifecycle_id=request_lifecycle.lifecycle_id,
                     system_prompt=req.system_prompt,
                     tools=req.func_tool.names() if req.func_tool else [],
                     stream=streaming_response,
@@ -391,6 +426,7 @@ class InternalAgentSubStage(Stage):
 
                 event.trace.record(
                     "astr_agent_complete",
+                    request_lifecycle_id=request_lifecycle.lifecycle_id,
                     stats=agent_runner.stats.to_dict(),
                     resp=final_resp.completion_text if final_resp else None,
                 )

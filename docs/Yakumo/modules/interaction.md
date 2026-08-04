@@ -98,9 +98,11 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
   发送路径处理。
 - `hybrid` 路径先完成 Planner；Planner 决定执行时直接进入 Core，不会提前执行 Persona
   插件的工具、效果或 LLM 生命周期副作用。
-- 人格 Provider 回退时会按备用 Provider 重新绑定结构化输出协议，但不会重复调用
-  `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`，并保持同一个公开 Agent context。
-  一旦业务工具已经开始执行，本次 Persona run 不再切换 Provider，避免重放副作用。
+- 人格 Provider 回退时保留 Hook 后冻结的同一 `ProviderRequest`、结构化输出契约和公开
+  Agent context，只替换 Provider binding；不会重新渲染请求，也不会重复调用
+  `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。备用 Provider 无法满足严格 terminal
+  tool contract 时会明确失败。一旦业务工具已经开始执行，本次 Persona run 不再切换 Provider，
+  避免重放副作用。
 
 ### 验证步骤
 

@@ -1,8 +1,8 @@
 task:
   class: refactor
   risk: high
-  phase: context_target_budget_unification
-  scope: Collect canonical conversation and execution facts once, then apply target-local bounded history, ledger, memory, and capability diagnostics during Prompt projection while preserving Persona's 50-turn window and legacy Core slot visibility.
+  phase: provider_request_lifecycle_unification
+  scope: Unify Persona, Native Core, and third-party Agent plugin lifecycle ownership around one final ProviderRequest; freeze post-Hook capabilities without copying live handlers; preserve existing plugin target and fallback side-effect semantics.
 context:
   confidence: high
   assumptions:
@@ -78,6 +78,9 @@ context:
     - Persona-facing prompt/context, relationship, entertainment, effect, and LLM lifecycle contributions default to Personal Expression. Executable FunctionTools independently default to Core; a tool declaration or user plugin_tool_targets override must explicitly opt a tool into Personal Expression.
     - The normal Persona flow resolves only explicitly authorized Persona tools and always enters one shared Agent loop, even when the business-tool inventory is empty. Core-result rewriting and runtime-observation expression still expose no business tools. Final persona_expression remains a terminal structured-response protocol and is never executed as a plugin tool.
     - Persona request hooks receive the branch-local PromptApplyResult while the rendered ProviderRequest is bound, so canonical Prompt extensions are not reinjected by legacy request bridges and the marker cannot leak into a later Core branch.
+    - Persona, Native Core, and third-party Agent execution share AgentRequestLifecycle as the production Hook owner; astr_agent_hooks.py remains compatibility-only and is not referenced by the production Main Agent.
+    - A Persona fallback retains the same post-Hook ProviderRequest and public Agent context, changes only the Provider binding and executable ToolSet binding, rejects an incompatible strict terminal contract, and never replays Hook or completed business-tool side effects.
+    - Core OnLLMRequest mutations are deterministically reauthorized into one effective CapabilitySnapshot that is written back to ProviderRequest, MainAgentBuildResult, CoreExecutionSpec, capability schema, and diagnostics.
     - PersonaEffect is not an executable Persona Tool. It extends the final persona_expression structured-output contract with validated declarative effect_calls; its protocol-level tool-call encoding exists only to enforce output shape. Effects run after expression through output handling, never enter the Persona ToolSet or tool loop, and are Persona-only.
     - Interaction model IDs are optional per-stage overrides. Empty expression, Router, and Planner IDs resolve to the event's currently selected official chat provider, while explicit IDs retain precedence.
     - Terminal plugin Handlers are Pipeline-level response owners, not Persona mounts. A keyword/command Handler that returns a terminal reply may stop the event and prevent Persona or Core from starting; its output can be delivered directly or explicitly persona-rewritten, but that delivery choice does not transfer reply ownership to Persona. A Handler that yields ProviderRequest retains the existing Core-delegation path.
@@ -366,6 +369,7 @@ verification:
     - "Personal turn ContextVar lifecycle: cross-Task ProcessStage closure and scheduler-owned downstream plugin scope passed 54 Personal Runtime, group-reply, plugin-runtime, and smoke tests; affected Ruff, py_compile, and diff checks passed."
     - "Capability snapshot unification: Core and Persona now share one resolver for target, persona whitelist, active state, and session plugin admission; CapabilitySnapshot derives detached schema from its execution handles, ToolsCollector only projects snapshots, SystemCollector has no private Collector dependency, and Persona rejects subagents as a non-configurable Core-only invariant. Eleven focused public-boundary tests, Ruff, py_compile, YAML parse, and git diff checks passed. Final post-render Hook consistency remains a Phase 3 acceptance item."
     - "Context target budget unification: ConversationHistoryCollector now preserves canonical facts, Interaction Core no longer recollects shared history, Router/Planner/Policy/Persona use 4/8/6/50 turns, Core uses configured max_context_length or a 64-turn hard fallback, and execution-ledger plus memory trimming occurs only in projection. Fourteen public-boundary tests, focused Ruff, and py_compile passed; real-runtime quality and latency validation remains operator-owned."
+    - "ProviderRequest lifecycle unification: Persona, Native Core, and third-party runners now share one lifecycle owner; Persona request snapshots and mutation replay were removed; post-Hook Core tools are reauthorized into one effective capability snapshot. Focused plugin-runtime, Prompt integration, and Main Agent checks produced 74 passes; two pre-existing Windows video URI assertions remain unrelated. Focused Ruff, py_compile, YAML, diff, VitePress, and live-Future capability-binding smoke checks passed."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.
@@ -383,16 +387,14 @@ verification:
 runtime:
   mode: minimal_v1
   current_batch:
-    phase: context_target_budget_unification
+    phase: provider_request_lifecycle_unification
     scope:
-      - one canonical conversation history collection per Interaction turn
-      - one target budget owner for history, group context, execution ledger, and memory projection
-      - Persona 50-turn continuity with narrow Router, Planner, and Policy views
-      - configured Core history limit with a 64-turn hard fallback for max_context_length=-1
-      - render metadata diagnostics for history, execution ledger, memory, and tool schema
+      - one AgentRequestLifecycle owner for Persona, Native Core, and third-party Runner plugin Hooks
+      - one post-Hook effective CapabilitySnapshot across request, build result, CoreExecutionSpec, and diagnostics
+      - one frozen Persona ProviderRequest across fallback attempts without Hook or tool-side-effect replay
+      - stable lifecycle IDs for runtime trace correlation
     non_goals:
       - streaming delivery redesign or expanded streaming support
-      - ProviderRequest or Hook lifecycle relocation from Phase 3
       - timeout, retry, fallback, or queue-policy changes from Phase 5
       - capability target-policy changes or Prompt-layer tool-schema dropping
       - media-boundary consolidation or broad event-extra removal
@@ -402,8 +404,9 @@ runtime:
       - partial physical delivery lacks a structured receipt
       - Prompt still depends on platform, plugin, provider, memory, and Native agent contracts instead of narrow fact ports
       - Native capability snapshots still carry ToolSet runtime objects instead of a backend-neutral capability contract
-      - Core OnLLMRequest still runs after Prompt rendering, so dynamic func_tool replacement requires Phase 3 lifecycle rebinding
       - real private and group replay must confirm that the 64-turn Core fallback preserves task evidence while reducing prompt latency
+      - real private-chat replay must confirm one lifecycle ID per branch, no duplicate Hook calls, and acceptable Qwen-to-MiniMax frozen-request fallback quality
+      - an unconsumed third-party streaming response may still close before the Runner emits its completion Hook; streaming remains intentionally lower priority
       - proactive media-only output still uses the raw platform sink because it has no canonical semantic material
       - PersonalTurnContext exists but the main Interaction path still coordinates through 117 literal event-extra keys
     dependency_review:

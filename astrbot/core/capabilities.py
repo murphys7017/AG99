@@ -105,6 +105,25 @@ class CapabilitySnapshot:
     def serialized_tools(self) -> list[dict[str, Any]]:
         return deepcopy(list(self._serialized_tools))
 
+    def serialized_inventory(self) -> dict[str, Any]:
+        tools = self.serialized_tools()
+        return {
+            "format": "tool_inventory_v1",
+            "tool_count": len(tools),
+            "tools": tools,
+        }
+
+    def inventory_metadata(self) -> dict[str, Any]:
+        return {
+            "format": "tool_inventory_v1",
+            "tool_count": len(self.tools),
+            "persona_id": self.persona_id,
+            "selection_mode": self.selection_mode,
+            "tool_target": self.target,
+            "decision_count": len(self.decisions),
+            "excluded_reasons": self.excluded_reason_counts(),
+        }
+
     def excluded_reason_counts(self) -> dict[str, int]:
         return dict(
             Counter(

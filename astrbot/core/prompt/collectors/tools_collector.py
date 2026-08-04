@@ -112,23 +112,10 @@ class ToolsCollector(ContextCollectorInterface):
         )
 
     def _build_tools_slot(self, capabilities: CapabilitySnapshot) -> ContextSlot:
-        serialized_tools = capabilities.serialized_tools()
         return ContextSlot(
             name="capability.tools_schema",
-            value={
-                "format": "tool_inventory_v1",
-                "tool_count": len(serialized_tools),
-                "tools": serialized_tools,
-            },
+            value=capabilities.serialized_inventory(),
             category="tools",
             source="capability_resolver",
-            meta={
-                "format": "tool_inventory_v1",
-                "tool_count": len(serialized_tools),
-                "persona_id": capabilities.persona_id,
-                "selection_mode": capabilities.selection_mode,
-                "tool_target": capabilities.target,
-                "decision_count": len(capabilities.decisions),
-                "excluded_reasons": capabilities.excluded_reason_counts(),
-            },
+            meta=capabilities.inventory_metadata(),
         )

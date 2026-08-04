@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import math
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import uuid4
 
-from astrbot.core.prompt.context_types import ContextPack
+from astrbot.core.capabilities import CapabilitySnapshot
+from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render.interfaces import RenderResult
 from astrbot.core.prompt.render.request_adapter import (
     PromptApplyResult,
@@ -139,6 +142,74 @@ class NativeExecutionAdapter:
         )
 
 
+def bind_effective_core_capabilities(
+    spec: CoreExecutionSpec,
+    capabilities: CapabilitySnapshot,
+) -> CoreExecutionSpec:
+    """Replace the pre-Hook tool view with the authorized effective snapshot."""
+
+    context_pack = ContextPack(
+        slots=dict(spec.context_pack.slots),
+        provider_request_ref=None,
+        meta=deepcopy(spec.context_pack.meta),
+    )
+    inventory = capabilities.serialized_inventory()
+    if capabilities.is_empty():
+        context_pack.slots.pop("capability.tools_schema", None)
+        tool_schema: dict[str, Any] | None = None
+    else:
+        existing = context_pack.get_slot("capability.tools_schema")
+        context_pack.slots["capability.tools_schema"] = (
+            replace(
+                existing,
+                value=inventory,
+                source="capability_resolver",
+                meta=capabilities.inventory_metadata(),
+            )
+            if existing is not None
+            else ContextSlot(
+                name="capability.tools_schema",
+                value=inventory,
+                category="tools",
+                source="capability_resolver",
+                render_mode="raw",
+                meta=capabilities.inventory_metadata(),
+            )
+        )
+        tool_schema = inventory
+
+    context_budgets = context_pack.meta.get("context_budgets")
+    if isinstance(context_budgets, dict):
+        serialized_size = (
+            len(json.dumps(inventory, ensure_ascii=False, default=str))
+            if tool_schema is not None
+            else 0
+        )
+        context_budgets["tool_schema"] = {
+            "original_amount": len(capabilities.tools),
+            "retained_amount": len(capabilities.tools),
+            "original_estimated_tokens": math.ceil(serialized_size / 4),
+            "retained_estimated_tokens": math.ceil(serialized_size / 4),
+            "limit_amount": None,
+            "limit_estimated_tokens": None,
+            "truncated": False,
+            "truncation_reasons": ["request_hook_effective_capability"],
+            "enforced": False,
+        }
+
+    effective = CoreCapabilitySnapshot(
+        tools=capabilities.to_toolset(),
+        tool_schema=tool_schema,
+        skills=deepcopy(spec.capabilities.skills),
+        knowledge=deepcopy(spec.capabilities.knowledge),
+    )
+    return replace(
+        spec,
+        context_pack=context_pack,
+        capabilities=effective,
+    )
+
+
 def _slot_value(pack: ContextPack, name: str) -> Any:
     slot = pack.get_slot(name)
     return slot.value if slot is not None else None
@@ -150,4 +221,5 @@ __all__ = [
     "CoreExecutionSpec",
     "NativeExecutionAdapter",
     "NativeExecutionInput",
+    "bind_effective_core_capabilities",
 ]

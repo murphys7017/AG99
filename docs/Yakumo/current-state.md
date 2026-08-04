@@ -34,7 +34,8 @@
 - `astrbot/core/astr_main_agent.py`
 - `astrbot/core/astr_agent_context.py`
 - `astrbot/core/astr_agent_tool_exec.py`
-- `astrbot/core/astr_agent_hooks.py`
+- `astrbot/core/agent_lifecycle.py`
+- `astrbot/core/astr_agent_hooks.py`（仅兼容旧外部导入）
 - `astrbot/core/agent/*`
 - `astrbot/core/prompt/*`
 
@@ -122,7 +123,8 @@
 - `core_planner` 只在 Router 选择 `hybrid` 后独立调用：它不读取 Router 的模型决策或 Prompt，只从同一事实包的 Planner 投影判断 `execute` / `not_required`。execute 生成 `CoreTaskSpec` 后才允许 Core；`not_required` 转入 Persona 表达。Planner 失败仍禁止 Core，并按 Persona-only 路径恢复。
 - Core 执行上下文只携带任务和执行事实，要求 Core 直接返回实质结果材料；Core 完成后由统一 Persona 层生成可见表达，不存在独立的 Persona 快速回复分支。
 - Interaction turn 中，插件 LLM 生命周期默认路由到 Persona Expression，并按 `interaction_middleware.plugin_runtime_targets`、插件类 `interaction_runtime_target` 声明、Persona 默认值依次解析。插件拥有的可执行工具独立解析且默认进入 Core；工具声明或 `interaction_middleware.plugin_tool_targets` 用户配置可明确选择 Persona。Persona 现在始终通过一个共享 `ToolLoopAgentRunner` 完成正式表达：授权业务工具和 terminal `persona_expression` 同时对模型可见，不再先调用独立模型判断是否使用工具；业务工具结果留在同一 Agent context，最终 Persona Expression 独占可见回复。关键词、命令和 `AdapterMessageEvent` Handler 保持官方 Pipeline 所有权与终止语义。
-- Native Core 当前按 `ContextPack -> CoreExecutionSpec -> Native 目标渲染 -> RenderResult -> NativeExecutionAdapter -> ProviderRequest` 进入官方 AgentRunner。`CoreExecutionSpec` 只保存执行身份、TaskSpec、规范 ContextPack、执行历史和能力快照，不包含渲染结果或 Provider 请求。它在形成时深拷贝 ContextPack、TaskSpec、执行历史及可序列化 capability 描述，因此不与 Prompt 构建侧共享可变数据；Native `ToolSet` 是明确保留的实时执行句柄。它目前仍在 Native `build_main_agent` 内形成，不是完整 Backend API；最终解析为 `core` 的插件会在最终 `ProviderRequest` 形成后、执行前运行 `OnLLMRequest`。
+- Native Core 当前按 `ContextPack -> CoreExecutionSpec -> Native 目标渲染 -> RenderResult -> NativeExecutionAdapter -> ProviderRequest` 进入官方 AgentRunner。`CoreExecutionSpec` 只保存执行身份、TaskSpec、规范 ContextPack、执行历史和能力快照，不包含渲染结果或 Provider 请求。它在形成时深拷贝 ContextPack、TaskSpec、执行历史及可序列化 capability 描述，因此不与 Prompt 构建侧共享可变数据；Native `ToolSet` 是明确保留的实时执行句柄。它目前仍在 Native `build_main_agent` 内形成，不是完整 Backend API。最终解析为 `core` 的插件会在最终 `ProviderRequest` 形成后、执行前运行一次 `OnLLMRequest`；Hook 后的实际工具集会重新通过统一 Capability Resolver 授权，并同步回请求、Main Agent 构建结果、CoreExecutionSpec、工具 schema 与预算诊断。
+- Persona、Native Core 和第三方 Agent Runner 的生产插件生命周期现由 `AgentRequestLifecycle` 统一。各入口保留原有可用阶段；Persona 与 Native Core 包含 Waiting，第三方兼容 Runner 仍从 LLMRequest 开始，随后统一进入 AgentBegin、模型/工具循环、LLMResponse、AgentDone 与可选 postprocess。同一分支使用一个 lifecycle ID。Persona fallback 保留 Hook 后冻结的同一 ProviderRequest，只替换 Provider binding，不重渲染、不重放 Hook；若备用 Provider 无法满足严格 terminal tool contract，则明确失败。`astr_agent_hooks.py` 仅保留为旧外部导入兼容面，不再是生产 Main Agent owner。
 - `CoreCapabilitySnapshot` 不再把 SubAgent 建模为一等通用能力。Native Core 仍通过 `SubagentCollector`、`SubAgentOrchestrator` 和 `HandoffTool` 兼容承载，当前 Native ContextPack 和 ToolSet 因此仍会携带 handoff 信息；未来 Backend 不需要实现 AstrBot SubAgent，新增专业能力优先注册为插件 Tool。
 - Core Execution Ledger 以 `execution_id` 独立保存 task、attempt、有限工具证据、结果、错误和 token usage，并仅投影给 Core。当前记录生成仍位于 Native InternalAgentSubStage；统一 Execution Event、取消和第三方 Backend 回流尚未完成。
 - Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，贡献项通过 `meta.targets` 进入目标投影；Router、Planner、Persona 不再按 purpose 分别触发采集。完整事实由默认 Collector 统一收集，Core 在同一 Pack 上加入阶段性的 `CoreTaskSpec` 后投影为 Core 视图。

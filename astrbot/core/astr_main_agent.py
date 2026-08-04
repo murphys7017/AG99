@@ -14,8 +14,11 @@ from astrbot.core.agent.tool import (
     TOOL_TARGET_CORE,
     ToolSet,
 )
+from astrbot.core.agent_lifecycle import (
+    AgentRequestLifecycle,
+    AgentRequestLifecycleHooks,
+)
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
-from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
 from astrbot.core.astr_agent_run_util import AgentRunner
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
@@ -187,8 +190,10 @@ class MainAgentBuildResult:
     agent_runner: AgentRunner
     provider_request: ProviderRequest
     provider: Provider
+    capabilities: CapabilitySnapshot | None = None
     execution_spec: CoreExecutionSpec | None = None
     reset_coro: Coroutine | None = None
+    request_lifecycle: AgentRequestLifecycle | None = None
 
 
 def _set_llm_error_message(event: AstrMessageEvent, message: str) -> None:
@@ -943,6 +948,7 @@ async def build_main_agent(
     provider: Provider | None = None,
     req: ProviderRequest | None = None,
     apply_reset: bool = True,
+    request_lifecycle: AgentRequestLifecycle | None = None,
 ) -> MainAgentBuildResult | None:
     """构建主对话代理（Main Agent），并且自动 reset。
 
@@ -1156,6 +1162,17 @@ async def build_main_agent(
         native_execution.prompt_apply_result,
         req,
     )
+    if request_lifecycle is None:
+        request_lifecycle = AgentRequestLifecycle(
+            event,
+            execution_surface=TOOL_TARGET_CORE,
+            record_reasoning=True,
+            dispatch_response_postprocess=True,
+        )
+    request_lifecycle.bind_request(
+        req,
+        prompt_apply_result=native_execution.prompt_apply_result,
+    )
     _modalities_fix(provider, req)
     _sanitize_context_by_modalities(config, provider, req)
 
@@ -1173,7 +1190,7 @@ async def build_main_agent(
             tool_call_timeout=config.tool_call_timeout,
         ),
         tool_executor=FunctionToolExecutor(),
-        agent_hooks=MAIN_AGENT_HOOKS,
+        agent_hooks=AgentRequestLifecycleHooks(request_lifecycle),
         streaming=config.streaming_response,
         llm_compress_instruction=config.llm_compress_instruction,
         llm_compress_keep_recent=config.llm_compress_keep_recent,
@@ -1200,6 +1217,8 @@ async def build_main_agent(
         agent_runner=agent_runner,
         provider_request=req,
         provider=provider,
+        capabilities=capabilities,
         execution_spec=execution_spec,
         reset_coro=reset_coro if not apply_reset else None,
+        request_lifecycle=request_lifecycle,
     )

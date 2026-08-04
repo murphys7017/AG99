@@ -16,7 +16,12 @@ from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
     DeerFlowAgentRunner,
 )
 from astrbot.core.agent.runners.dify.dify_agent_runner import DifyAgentRunner
-from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
+from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
+from astrbot.core.agent_lifecycle import (
+    AgentRequestLifecycle,
+    AgentRequestLifecycleHooks,
+)
+from astrbot.core.capabilities import CapabilityResolver
 from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
@@ -43,7 +48,6 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import (
     ProviderRequest,
 )
-from astrbot.core.star.star_handler import EventType
 from astrbot.core.utils.config_number import coerce_int_config
 from astrbot.core.utils.metrics import Metric
 
@@ -352,14 +356,23 @@ class ThirdPartyAgentSubStage(Stage):
 
         apply_interaction_core_task_spec(req, event)
 
-        # call event hook
-        if await call_event_hook(
+        request_lifecycle = AgentRequestLifecycle(
             event,
-            EventType.OnLLMRequestEvent,
-            req,
             execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
-        ):
+            provider_request=req,
+            hook_dispatcher=call_event_hook,
+            record_reasoning=True,
+            dispatch_response_postprocess=True,
+        )
+        if await request_lifecycle.dispatch_request():
             return
+        effective_capabilities = CapabilityResolver().resolve_explicit_toolset(
+            event=event,
+            target=TOOL_TARGET_CORE,
+            toolset=req.func_tool if isinstance(req.func_tool, ToolSet) else ToolSet(),
+            selection_mode="request_hook",
+        )
+        req.func_tool = effective_capabilities.to_toolset()
 
         if self.runner_type == "dify":
             runner = DifyAgentRunner[AstrAgentContext]()
@@ -413,7 +426,7 @@ class ThirdPartyAgentSubStage(Stage):
                     context=astr_agent_ctx,
                     tool_call_timeout=120,
                 ),
-                agent_hooks=MAIN_AGENT_HOOKS,
+                agent_hooks=AgentRequestLifecycleHooks(request_lifecycle),
                 provider_config=self.prov_cfg,
                 streaming=streaming_response,
             )

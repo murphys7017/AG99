@@ -2,8 +2,8 @@
 
 ## 文档状态
 
-- 状态：Phase 1 实现完成、真实日志 smoke 延后；Phase 2 底层 owner 迁移已完成，
-  最终跨 Hook 一致性验收等待 Phase 3。
+- 状态：Phase 1、Phase 2 与 Phase 3 底层 owner 迁移已完成；真实 Provider 日志 smoke
+  与延迟验收仍待运行确认。
 - 更新日期：2026-08-04。
 - 实施基线：`ef389bce0`（`docs: plan runtime function unification`）。
 - 日志基线：`data/logs/astrbot.log` 与 `data/logs/astrbot.trace.log` 的 2026-08-03 样本。
@@ -355,8 +355,8 @@ group message
 
 ### Phase 2：统一工具与能力解析
 
-状态：底层 owner 迁移完成，构造与基础边界验证通过；最终跨 Hook 一致性验收未完成，
-渲染后 `OnLLMRequest` 动态改写 Core 工具集的重绑定并入 Phase 3。
+状态：已完成。构造、基础边界和渲染后 `OnLLMRequest` 动态工具重绑定已统一；真实运行
+质量与耗时继续随 Phase 3 验收。
 
 目标：每个 turn、每个 target 只形成一次 `CapabilitySnapshot`，Prompt 与执行消费同一快照。
 
@@ -408,7 +408,7 @@ group message
 
 ### Phase 3：统一 ProviderRequest 与插件生命周期
 
-状态：等待 Phase 2。
+状态：底层 owner 迁移完成，自动化边界验证通过；等待真实 Provider 日志 smoke（2026-08-04）。
 
 目标：一次最终分支只构建一个规范 ProviderRequest，并在一个稳定生命周期中运行 Hook、Agent
 和 fallback。
@@ -432,6 +432,31 @@ group message
 
 验收标准：每个分支只记录一个 request lifecycle id；无 `deepcopy` 活 handler；fallback 保留插件
 修改且不重复副作用；Persona 和 Core 的 Hook 状态机由同一 executor 驱动。
+
+实施结果：
+
+1. 新增共享 `AgentRequestLifecycle`，统一 Waiting、LLMRequest、AgentBegin、工具观察、
+   LLMResponse、AgentDone、reasoning 与响应后处理；Native Core、Persona 和第三方 Runner 不再
+   各自维护生产生命周期实现。
+2. Persona 删除 `ProviderRequest` 快照、字段差异回放和 fallback 重渲染。Hook 后请求成为该
+   lifecycle 的冻结请求；fallback 只替换 Provider binding，不重跑业务 Hook，也不复制
+   FunctionTool handler、Context、event 或 Future。
+3. Persona 在解析出 terminal `persona_expression` 后才触发 `OnLLMResponse` / `OnAgentDone`，
+   因此旧插件看到的是最终用户可见文本，而不是空的协议 tool-call MessageChain。
+4. Core 在 `OnLLMRequest` 后对最终 `func_tool` 做一次确定性重新授权，并将同一个
+   `CapabilitySnapshot` 同步到 `ProviderRequest`、`MainAgentBuildResult`、
+   `CoreExecutionSpec`、工具 schema slot 与预算诊断；不增加模型预判。
+5. Core capability 重绑定只复制 ContextPack 容器边界并替换工具 slot，保留原 slot 的 exposure、
+   placement、priority 和 render mode，不深拷贝实时工具句柄。
+6. 每次 Persona/Core run 记录稳定 lifecycle ID。旧 `astr_agent_hooks.py` 暂作为外部导入兼容面
+   保留，但生产 Main Agent 已不再引用；退出策略留给兼容清理阶段，不能重新成为第二条主链。
+
+当前验证：Persona、插件目标、Prompt integration 和 Main Agent 公共边界共 76 项中 74 项通过；
+两项既有 Windows 视频 URI 断言仍期望去掉根路径斜杠，与本阶段无关。聚焦 Ruff、`py_compile`、
+YAML、`git diff --check`、VitePress 构建和“不复制 Future 且保留 slot 元数据”的公开 capability
+重绑定 smoke 均通过。真实验证仍需确认：Qwen 主 Provider 到 MiniMax fallback 时同一冻结请求的
+质量、每个分支只有一个 lifecycle ID、Hook 不重复、以及私聊 `815049548` 的实际调用数和耗时。
+第三方流式响应若未被消费，其完成 Hook 仍属于流式低优先级残余风险。
 
 回滚或停止条件：旧插件依赖未公开的对象身份或 Hook 重入。应增加边界适配器和迁移诊断，
 不能让两套 lifecycle 都继续写状态。

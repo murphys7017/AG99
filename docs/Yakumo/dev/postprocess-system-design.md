@@ -29,7 +29,7 @@ AstrBot 当前已经存在若干“请求后时机”：
 
 - `EventType.OnLLMResponseEvent`
 - `EventType.OnAfterMessageSentEvent`
-- `MainAgentHooks.on_agent_done()`
+- `AgentRequestLifecycle.dispatch_agent_done()`
 
 这些时机本身是有价值的，但当前还存在几个问题：
 
@@ -139,7 +139,7 @@ interaction middleware 接入后还需要额外明确：
 - 依赖“消息已经成功送出”的后处理任务
 - 更保守的 memory update
 
-### 3. `MainAgentHooks.on_agent_done()`
+### 3. `AgentRequestLifecycle.dispatch_agent_done()`
 
 含义：
 

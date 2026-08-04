@@ -4,9 +4,8 @@ import asyncio
 import copy
 import json
 import math
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field, fields, replace
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 try:
@@ -15,18 +14,20 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     repair_json = None
 
 from astrbot import logger
-from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import (
     TOOL_TARGET_PERSONAL_EXPRESSION,
-    FunctionTool,
     ToolSet,
     normalize_tool_targets,
 )
 from astrbot.core.agent.tool_output_capture import (
     PersonaToolOutputAttachments,
     activate_persona_tool_output_attachments,
+)
+from astrbot.core.agent_lifecycle import (
+    AgentRequestLifecycle,
+    AgentRequestLifecycleHooks,
 )
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
@@ -41,7 +42,6 @@ from astrbot.core.plugin_runtime import (
 )
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.render import (
-    PROMPT_APPLY_RESULT_EXTRA_KEY,
     PromptRenderEngine,
     PromptRenderProfile,
     PromptTarget,
@@ -52,7 +52,6 @@ from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.provider.request_media import normalize_provider_request_images
 from astrbot.core.star.context import Context
-from astrbot.core.star.star_handler import EventType
 
 from .collectors import PersonaVisibleReplyCollector
 from .context_builder import (
@@ -114,110 +113,16 @@ class InteractionExpressionError(RuntimeError):
         super().__init__(message or reason)
 
 
-_MISSING_PROVIDER_REQUEST = object()
-_MISSING_PROMPT_APPLY_RESULT = object()
-
-
-@contextmanager
-def _bind_persona_provider_request(
-    event, provider_request: ProviderRequest
-) -> Iterator[None]:
-    """Expose a branch-local request through the real plugin event.
-
-    Existing plugins may validate the concrete ``AstrMessageEvent`` type. Keep
-    that public contract intact while restoring the event's previous request as
-    soon as the Persona lifecycle boundary exits.
-    """
-
-    previous = event.get_extra("provider_request", _MISSING_PROVIDER_REQUEST)
-    event.set_extra("provider_request", provider_request)
-    try:
-        yield
-    finally:
-        if previous is not _MISSING_PROVIDER_REQUEST:
-            event.set_extra("provider_request", previous)
-            return
-        extras = getattr(event, "_extras", None)
-        if isinstance(extras, dict):
-            extras.pop("provider_request", None)
-        else:
-            event.set_extra("provider_request", None)
-
-
-@contextmanager
-def _bind_persona_prompt_apply_result(event, apply_result: object) -> Iterator[None]:
-    """Expose the current Persona render application only to its plugin hooks."""
-
-    previous = event.get_extra(
-        PROMPT_APPLY_RESULT_EXTRA_KEY,
-        _MISSING_PROMPT_APPLY_RESULT,
-    )
-    event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, apply_result)
-    try:
-        yield
-    finally:
-        if previous is not _MISSING_PROMPT_APPLY_RESULT:
-            event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, previous)
-            return
-        extras = getattr(event, "_extras", None)
-        if isinstance(extras, dict):
-            extras.pop(PROMPT_APPLY_RESULT_EXTRA_KEY, None)
-        else:
-            event.set_extra(PROMPT_APPLY_RESULT_EXTRA_KEY, None)
-
-
 @dataclass(slots=True)
 class _PreparedPersonaExpression:
     req: PersonaExpressionRequest
     render_result: Any
     provider_request: ProviderRequest
-    rendered_provider_request: ProviderRequest
     run_context: ContextWrapper[AstrAgentContext]
+    capabilities: CapabilitySnapshot
+    lifecycle: AgentRequestLifecycle
     tool_execution_count: int = 0
     stopped: bool = False
-
-
-class _PersonaExpressionToolHooks(BaseAgentRunHooks[AstrAgentContext]):
-    """Expose official tool hooks for the Persona-only tool loop."""
-
-    def __init__(self, event, provider_request: ProviderRequest) -> None:
-        self._event = event
-        self._provider_request = provider_request
-        self.tool_execution_count = 0
-
-    async def on_tool_start(
-        self,
-        run_context: ContextWrapper[AstrAgentContext],
-        tool: FunctionTool,
-        tool_args: dict | None,
-    ) -> None:
-        del run_context
-        self.tool_execution_count += 1
-        with _bind_persona_provider_request(self._event, self._provider_request):
-            await call_event_hook(
-                self._event,
-                EventType.OnUsingLLMToolEvent,
-                tool,
-                tool_args,
-            )
-
-    async def on_tool_end(
-        self,
-        run_context: ContextWrapper[AstrAgentContext],
-        tool: FunctionTool,
-        tool_args: dict | None,
-        tool_result,
-    ) -> None:
-        del run_context
-        self._event.clear_result()
-        with _bind_persona_provider_request(self._event, self._provider_request):
-            await call_event_hook(
-                self._event,
-                EventType.OnLLMToolRespondEvent,
-                tool,
-                tool_args,
-                tool_result,
-            )
 
 
 def _build_persona_hook_run_context(
@@ -619,9 +524,10 @@ class InteractionExpressionAgent:
                     fallback_provider_id,
                 )
                 logger.warning(
-                    "Persona expression switched to fallback provider: platform_id=%s session_id=%s provider_id=%s primary_error=%s",
+                    "Persona expression switched to fallback provider: platform_id=%s session_id=%s lifecycle_id=%s provider_id=%s primary_error=%s",
                     event.get_platform_id(),
                     event.session_id,
+                    prepared.lifecycle.lifecycle_id if prepared is not None else "",
                     fallback_provider_id,
                     primary_error,
                 )
@@ -667,9 +573,6 @@ class InteractionExpressionAgent:
     ) -> PersonaExpressionResult:
         if prepared is not None:
             prepared = await self._prepare_fallback_persona_expression(
-                event,
-                plugin_context,
-                interaction_config,
                 provider,
                 prepared,
             )
@@ -704,20 +607,19 @@ class InteractionExpressionAgent:
             render_result,
             provider_request,
         )
+        lifecycle = AgentRequestLifecycle(
+            event,
+            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            provider_request=provider_request,
+            prompt_apply_result=prompt_apply_result,
+            hook_dispatcher=call_event_hook,
+        )
 
         # Preserve the official lifecycle boundary before Persona generation.
         # Legacy plugins commonly use this hook for per-turn state and must not
         # be silently skipped by the Persona path.
-        with (
-            _bind_persona_provider_request(event, provider_request),
-            _bind_persona_prompt_apply_result(event, prompt_apply_result),
-        ):
-            if await call_event_hook(
-                event,
-                EventType.OnWaitingLLMRequestEvent,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-            ):
-                return PersonaExpressionResult()
+        if await lifecycle.dispatch_waiting():
+            return PersonaExpressionResult()
 
         capabilities = CapabilitySnapshot.empty(
             target=TOOL_TARGET_PERSONAL_EXPRESSION,
@@ -737,22 +639,12 @@ class InteractionExpressionAgent:
         compiled_output_contract = render_result.compiled_output_contract
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
-        rendered_provider_request = _snapshot_provider_request(provider_request)
 
         # Request hooks run once before the shared Persona agent starts. Their
         # ordinary ProviderRequest mutations remain visible throughout the
         # business-tool loop and final structured expression.
-        with (
-            _bind_persona_provider_request(event, provider_request),
-            _bind_persona_prompt_apply_result(event, prompt_apply_result),
-        ):
-            if await call_event_hook(
-                event,
-                EventType.OnLLMRequestEvent,
-                provider_request,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-            ):
-                return PersonaExpressionResult()
+        if await lifecycle.dispatch_request():
+            return PersonaExpressionResult()
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
 
@@ -780,17 +672,12 @@ class InteractionExpressionAgent:
             req=req,
             render_result=render_result,
             provider_request=provider_request,
-            rendered_provider_request=rendered_provider_request,
             run_context=run_context,
+            capabilities=capabilities,
+            lifecycle=lifecycle,
         )
-        with _bind_persona_provider_request(event, provider_request):
-            if await call_event_hook(
-                event,
-                EventType.OnAgentBeginEvent,
-                run_context,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-            ):
-                return PersonaExpressionResult()
+        if await lifecycle.dispatch_agent_begin(run_context):
+            return PersonaExpressionResult()
         return await self._complete_persona_expression(
             event,
             interaction_config,
@@ -800,116 +687,29 @@ class InteractionExpressionAgent:
 
     async def _prepare_fallback_persona_expression(
         self,
-        event,
-        plugin_context: Context,
-        interaction_config: InteractionAgentConfig,
         provider: Provider,
         previous: _PreparedPersonaExpression,
     ) -> _PreparedPersonaExpression:
-        """Rebind an already-hooked expression request to a fallback provider."""
-        turn_state = get_interaction_turn_state(event)
-        if turn_state is not None:
-            async with turn_state.lock:
-                render_result = await self._prepare_render_result(
-                    event,
-                    plugin_context,
-                    interaction_config,
-                    provider,
-                    req=previous.req,
-                )
-        else:
-            render_result = await self._prepare_render_result(
-                event,
-                plugin_context,
-                interaction_config,
-                provider,
-                req=previous.req,
+        """Rebind one frozen, already-hooked request to a fallback provider."""
+        provider_request = previous.provider_request
+        terminal_tool_name = _resolve_terminal_tool_name(
+            provider_request.output_contract,
+            provider_request.compiled_output_contract,
+        )
+        if terminal_tool_name and not self._provider_supports_tool_calls(provider):
+            raise InteractionExpressionError(
+                "fallback_provider_incompatible",
+                "fallback provider does not support the required Persona tool contract",
+                prepared=previous,
             )
-
-        provider_request = build_prompt_render_provider_request(event, provider)
-        provider_request.session_id = event.session_id
-        apply_render_result_to_request(render_result, provider_request)
-        rendered_provider_request = _snapshot_provider_request(provider_request)
-        self._apply_request_hook_mutations(
-            previous.rendered_provider_request,
-            previous_request=previous.provider_request,
-            next_request=provider_request,
-        )
         provider_request.provider = provider
-        provider_request.output_contract = render_result.output_contract
-        provider_request.compiled_output_contract = (
-            render_result.compiled_output_contract
-        )
         provider_request.func_tool = (
-            previous.provider_request.func_tool
+            previous.capabilities.to_toolset()
             if self._provider_supports_tool_calls(provider)
             else ToolSet()
         )
-        return _PreparedPersonaExpression(
-            req=previous.req,
-            render_result=render_result,
-            provider_request=provider_request,
-            rendered_provider_request=rendered_provider_request,
-            # Fallback is still the same Persona run. Keep the public Agent
-            # context identity so plugin state written during OnAgentBegin is
-            # visible to tool hooks and OnAgentDone.
-            run_context=previous.run_context,
-            tool_execution_count=previous.tool_execution_count,
-        )
-
-    @staticmethod
-    def _apply_request_hook_mutations(
-        rendered_request: ProviderRequest,
-        *,
-        previous_request: ProviderRequest,
-        next_request: ProviderRequest,
-    ) -> None:
-        """Carry official request-hook mutations across provider-specific rendering."""
-        for field_info in fields(ProviderRequest):
-            name = field_info.name
-            if name in {
-                "output_contract",
-                "compiled_output_contract",
-                # Tool visibility is rebound explicitly after rendering so a
-                # fallback cannot admit Core-only tools or stale schemas.
-                "func_tool",
-            }:
-                continue
-            before_hook = getattr(rendered_request, name)
-            after_hook = getattr(previous_request, name)
-            if after_hook != before_hook:
-                next_value = getattr(next_request, name)
-                if name == "prompt":
-                    setattr(
-                        next_request,
-                        name,
-                        _merge_request_prompt_mutation(
-                            before_hook,
-                            after_hook,
-                            next_value,
-                        ),
-                    )
-                elif name in {
-                    "contexts",
-                    "extra_user_content_parts",
-                    "image_urls",
-                    "audio_urls",
-                }:
-                    setattr(
-                        next_request,
-                        name,
-                        _merge_request_collection_mutation(
-                            before_hook,
-                            after_hook,
-                            next_value,
-                        ),
-                    )
-                else:
-                    setattr(
-                        next_request,
-                        name,
-                        _clone_request_mutation_value(after_hook),
-                    )
+        previous.lifecycle.bind_request(provider_request)
+        return previous
 
     async def _complete_persona_expression(
         self,
@@ -941,10 +741,11 @@ class InteractionExpressionAgent:
                 image_stats.dropped,
             )
         logger.info(
-            "DIAG expression.contract: platform_id=%s session_id=%s phase=%s provider_type=%s model=%s renderer=%s contract_mode=%s strategy=%s degraded=%s tool_name=%s",
+            "DIAG expression.contract: platform_id=%s session_id=%s phase=%s lifecycle_id=%s provider_type=%s model=%s renderer=%s contract_mode=%s strategy=%s degraded=%s tool_name=%s",
             event.get_platform_id(),
             event.session_id,
             _describe_expression_request(req),
+            prepared.lifecycle.lifecycle_id,
             provider_config.get("type", ""),
             provider.get_model()
             if callable(getattr(provider, "get_model", None))
@@ -959,7 +760,13 @@ class InteractionExpressionAgent:
             if compiled_output_contract is not None
             else None,
         )
-        _log_persona_prompt_size_diagnostics(event, req, render_result)
+        _log_persona_prompt_size_diagnostics(
+            event,
+            req,
+            render_result,
+            provider_request,
+            prepared.lifecycle.lifecycle_id,
+        )
         try:
             llm_resp, tool_execution_count = await self._run_persona_agent(
                 event,
@@ -1053,21 +860,10 @@ class InteractionExpressionAgent:
         # Protocol tool-call responses often carry an empty MessageChain. Keep
         # the parsed Persona reply authoritative for both legacy response APIs.
         response_for_hooks.completion_text = result.spoken_reply
-        with _bind_persona_provider_request(event, provider_request):
-            response_stopped = await call_event_hook(
-                event,
-                EventType.OnLLMResponseEvent,
-                response_for_hooks,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-            )
-            agent_done_stopped = await call_event_hook(
-                event,
-                EventType.OnAgentDoneEvent,
-                prepared.run_context,
-                response_for_hooks,
-                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-            )
-        if response_stopped or agent_done_stopped:
+        if await prepared.lifecycle.dispatch_agent_done(
+            prepared.run_context,
+            response_for_hooks,
+        ):
             return PersonaExpressionResult()
         result.spoken_reply = str(response_for_hooks.completion_text or "")
         try:
@@ -1079,10 +875,11 @@ class InteractionExpressionAgent:
         if req.short_reply and result.spoken_reply and len(result.spoken_reply) > 40:
             result.spoken_reply = result.spoken_reply[:40].rstrip("，,。.!！?？")
         logger.info(
-            "Persona expression generated: platform_id=%s session_id=%s phase=%s length=%s effect_calls=%s",
+            "Persona expression generated: platform_id=%s session_id=%s phase=%s lifecycle_id=%s length=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             _describe_expression_request(req),
+            prepared.lifecycle.lifecycle_id,
             len(result.spoken_reply),
             [call.name for call in result.effect_calls],
         )
@@ -1096,7 +893,6 @@ class InteractionExpressionAgent:
         prepared: _PreparedPersonaExpression,
     ) -> tuple[LLMResponse, int]:
         provider_request = prepared.provider_request
-        tool_hooks = _PersonaExpressionToolHooks(event, provider_request)
         terminal_tool_name = _resolve_terminal_tool_name(
             provider_request.output_contract,
             provider_request.compiled_output_contract,
@@ -1111,9 +907,10 @@ class InteractionExpressionAgent:
         prepared.run_context.tool_execution_surface = TOOL_TARGET_PERSONAL_EXPRESSION
 
         logger.info(
-            "DIAG expression.agent_loop: platform_id=%s session_id=%s tool_count=%s tool_names=%s terminal_tool=%s",
+            "DIAG expression.agent_loop: platform_id=%s session_id=%s lifecycle_id=%s tool_count=%s tool_names=%s terminal_tool=%s",
             event.get_platform_id(),
             event.session_id,
+            prepared.lifecycle.lifecycle_id,
             len(provider_request.func_tool or ToolSet()),
             (provider_request.func_tool or ToolSet()).names(),
             terminal_tool_name,
@@ -1124,7 +921,10 @@ class InteractionExpressionAgent:
             request=provider_request,
             run_context=prepared.run_context,
             tool_executor=FunctionToolExecutor(),
-            agent_hooks=tool_hooks,
+            agent_hooks=AgentRequestLifecycleHooks(
+                prepared.lifecycle,
+                dispatch_agent_stages=False,
+            ),
             streaming=False,
             terminal_tool_names=terminal_tool_names,
             provider_kwargs={
@@ -1138,19 +938,19 @@ class InteractionExpressionAgent:
         except TimeoutError:
             raise InteractionExpressionError(
                 "timeout",
-                tool_execution_count=tool_hooks.tool_execution_count,
+                tool_execution_count=prepared.lifecycle.tool_execution_count,
             ) from None
         except InteractionExpressionError as exc:
             exc.tool_execution_count = max(
                 exc.tool_execution_count,
-                tool_hooks.tool_execution_count,
+                prepared.lifecycle.tool_execution_count,
             )
             raise
         except Exception as exc:  # noqa: BLE001
             raise InteractionExpressionError(
                 "model_error",
                 str(exc),
-                tool_execution_count=tool_hooks.tool_execution_count,
+                tool_execution_count=prepared.lifecycle.tool_execution_count,
             ) from exc
 
         llm_resp = runner.get_final_llm_resp()
@@ -1158,15 +958,15 @@ class InteractionExpressionAgent:
             raise InteractionExpressionError(
                 "model_error",
                 "persona agent did not produce a final LLM response",
-                tool_execution_count=tool_hooks.tool_execution_count,
+                tool_execution_count=prepared.lifecycle.tool_execution_count,
             )
         if llm_resp.role == "err":
             raise InteractionExpressionError(
                 "model_error",
                 llm_resp.completion_text or "provider returned an error response",
-                tool_execution_count=tool_hooks.tool_execution_count,
+                tool_execution_count=prepared.lifecycle.tool_execution_count,
             )
-        return llm_resp, tool_hooks.tool_execution_count
+        return llm_resp, prepared.lifecycle.tool_execution_count
 
     async def _resolve_personal_expression_capabilities(
         self,
@@ -1329,24 +1129,80 @@ def _describe_expression_request(req: PersonaExpressionRequest) -> str:
     return "direct_reply"
 
 
-def _log_persona_prompt_size_diagnostics(event, req, render_result) -> None:
+def _log_persona_prompt_size_diagnostics(
+    event,
+    req,
+    render_result,
+    provider_request: ProviderRequest,
+    lifecycle_id: str,
+) -> None:
     raw_slot_sizes = render_result.metadata.get("prompt_slot_sizes", {})
     slot_sizes = raw_slot_sizes if isinstance(raw_slot_sizes, dict) else {}
 
+    toolset = (
+        provider_request.func_tool
+        if isinstance(provider_request.func_tool, ToolSet)
+        else ToolSet()
+    )
+    business_tool_schema = toolset.openai_schema()
+    compiled_contract = provider_request.compiled_output_contract
+    terminal_tool_schema = []
+    if (
+        isinstance(compiled_contract, CompiledOutputContract)
+        and compiled_contract.strategy == "protocol_tool_call"
+        and compiled_contract.tool_name
+    ):
+        terminal_tool_schema = [
+            {
+                "type": "function",
+                "function": {
+                    "name": compiled_contract.tool_name,
+                    "parameters": compiled_contract.tool_schema or {},
+                },
+            }
+        ]
+    effective_tool_schema = [*business_tool_schema, *terminal_tool_schema]
+
     section_sizes = {
-        "system": len(render_result.system_prompt or ""),
-        "messages": _serialized_size(render_result.messages),
-        "tool_schema": _serialized_size(render_result.tool_schema or []),
+        "system": len(provider_request.system_prompt or ""),
+        "messages": _serialized_size(provider_request.contexts or []),
+        "request": _serialized_size(
+            {
+                "prompt": provider_request.prompt,
+                "extra_user_content_parts": provider_request.extra_user_content_parts,
+            }
+        ),
+        "tool_schema": _serialized_size(effective_tool_schema),
     }
     total_chars = sum(section_sizes.values())
+    context_budgets = render_result.metadata.get("context_budgets")
+    if isinstance(context_budgets, dict):
+        context_budgets["tool_schema"] = {
+            "original_amount": len(effective_tool_schema),
+            "retained_amount": len(effective_tool_schema),
+            "original_estimated_tokens": math.ceil(
+                section_sizes["tool_schema"] / 4
+            ),
+            "retained_estimated_tokens": math.ceil(
+                section_sizes["tool_schema"] / 4
+            ),
+            "limit_amount": None,
+            "limit_estimated_tokens": None,
+            "truncated": False,
+            "truncation_reasons": ["capability_snapshot_selection"],
+            "enforced": False,
+        }
     logger.info(
-        "DIAG expression.prompt_size: platform_id=%s session_id=%s phase=%s total_chars=%s estimated_tokens=%s sections=%s slots=%s",
+        "DIAG expression.prompt_size: platform_id=%s session_id=%s phase=%s lifecycle_id=%s total_chars=%s estimated_tokens=%s sections=%s tool_count=%s tool_names=%s slots=%s",
         event.get_platform_id(),
         event.session_id,
         _describe_expression_request(req),
+        lifecycle_id,
         total_chars,
         math.ceil(total_chars / 4),
         section_sizes,
+        len(effective_tool_schema),
+        [*toolset.names(), *([compiled_contract.tool_name] if terminal_tool_schema else [])],
         dict(sorted(slot_sizes.items(), key=lambda item: item[1], reverse=True)),
     )
 
@@ -1426,75 +1282,6 @@ def _resolve_terminal_tool_name(
     return str(output_contract.preferred_tool_name or "").strip() or None
 
 
-def _merge_request_prompt_mutation(
-    rendered_value: object,
-    hooked_value: object,
-    rerendered_value: object,
-) -> object:
-    """Carry a hook-owned prompt mutation onto a provider-specific rerender."""
-
-    if not all(
-        isinstance(value, str)
-        for value in (
-            rendered_value,
-            hooked_value,
-            rerendered_value,
-        )
-    ):
-        return _clone_request_mutation_value(hooked_value)
-    if rendered_value and rendered_value in hooked_value:
-        return hooked_value.replace(rendered_value, rerendered_value, 1)
-    if rerendered_value:
-        return (
-            f"{hooked_value}\n\n{rerendered_value}"
-            if hooked_value
-            else rerendered_value
-        )
-    return hooked_value
-
-
-def _merge_request_collection_mutation(
-    rendered_value: object,
-    hooked_value: object,
-    rerendered_value: object,
-) -> object:
-    """Keep hook-owned collection entries and the rerendered dynamic entries."""
-
-    if not all(
-        isinstance(value, list)
-        for value in (
-            rendered_value,
-            hooked_value,
-            rerendered_value,
-        )
-    ):
-        return _clone_request_mutation_value(hooked_value)
-
-    merged = _clone_request_mutation_value(hooked_value)
-    rendered_items = [_request_mutation_key(value) for value in rendered_value]
-    merged_items = [_request_mutation_key(value) for value in merged]
-    for value in rerendered_value:
-        key = _request_mutation_key(value)
-        if key not in rendered_items and key not in merged_items:
-            merged.append(_clone_request_mutation_value(value))
-            merged_items.append(key)
-    return merged
-
-
-def _snapshot_provider_request(request: ProviderRequest) -> ProviderRequest:
-    """Snapshot hook-visible data without copying live execution handles."""
-
-    snapshot = copy.copy(request)
-    for field_info in fields(ProviderRequest):
-        name = field_info.name
-        setattr(
-            snapshot,
-            name,
-            _clone_request_mutation_value(getattr(request, name)),
-        )
-    return snapshot
-
-
 def _toolset_capability_signature(toolset: object) -> tuple[tuple[object, ...], ...]:
     """Detect material request-hook changes without re-resolving unchanged tools."""
     if not isinstance(toolset, ToolSet):
@@ -1518,24 +1305,3 @@ def _toolset_capability_signature(toolset: object) -> tuple[tuple[object, ...], 
         )
         for tool in toolset
     )
-
-
-def _clone_request_mutation_value(value: object) -> Any:
-    """Clone plain containers while retaining opaque plugin/runtime objects."""
-
-    if isinstance(value, dict):
-        return {key: _clone_request_mutation_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_clone_request_mutation_value(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_clone_request_mutation_value(item) for item in value)
-    if isinstance(value, set):
-        return {_clone_request_mutation_value(item) for item in value}
-    return value
-
-
-def _request_mutation_key(value: object) -> str:
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        return repr(value)
