@@ -43,7 +43,7 @@ ContextPack
 - `input_text_suffix`
 - `hidden_slot_names`
 
-Engine 会先深拷贝目标 Pack，再应用 Profile。`system_prompt` 替换 `system.base`；suffix 只作用于字符串 `input.text`；hidden slot 是精确名称过滤。Profile 不修改输入 Pack。
+Engine 会先深拷贝目标 Pack，再应用 Profile。`system_prompt` 在 Persona、Core 及无显式 target 的 legacy Core 中保留旧 `ProviderRequest.system_prompt` 作为兼容尾段，在 Router、Core Planner 与 Personal Policy 中替换旧值；suffix 只作用于字符串 `input.text`；hidden slot 是精确名称过滤。Profile 不修改输入 Pack。
 
 ### `PromptLayoutInterface` / `DefaultPromptLayout`
 

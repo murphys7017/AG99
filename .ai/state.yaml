@@ -1,8 +1,8 @@
 task:
   class: bugfix
   risk: high
-  phase: router_persona_concurrency_restoration
-  scope: Restore the documented concurrent Router and Persona critical path for every Interaction turn, including bounded group candidates, while preserving Pipeline Handler takeover, plugin target policy, deadline ownership, and atomic output arbitration.
+  phase: plugin_target_boundary_audit
+  scope: Restrict plugin lifecycle, tools, and Prompt Extensions to Personal Expression or Core while keeping Router and Core Planner isolated from plugin prompts and preserving trusted core-owned control-plane context.
 context:
   confidence: high
   assumptions:
@@ -25,7 +25,7 @@ context:
     - Personal Runtime control-state persistence is serialized per Runtime so concurrent completion feedback and Policy usage updates cannot overwrite each other; repository restore failure degrades to process-local state, while final-save failure is diagnosed without aborting Core shutdown.
     - PersonalHeartbeatSource is lifecycle-owned and applies one independent due time per configured Runtime observation target. An empty target list falls back to the legacy default proactive-message target; Heartbeat never creates an event, acquires a turn lease, or invokes Persona, Core, or Output. It ignores an empty Inbox and may request reevaluation only for retained material that has no later lifecycle-owned wake deadline.
     - The Interaction master switch is also the deterministic Observation Gate feature switch. Equal quiet-hours bounds mean an all-day quiet window and reject rather than retain batches because no future wake boundary exists.
-    - PromptExtension meta.targets is the explicit authorization boundary for router, core_planner, persona, and core. Router/Planner keep capability payloads sanitized through capability.plugin_directory, while explicitly targeted non-capability extension mounts remain visible.
+    - Plugin PromptExtension targets are restricted to persona and core. Router and Core Planner never mount plugin extensions, plugin capability directories, plugin tools, or plugin LLM lifecycle hooks; only explicitly trusted AstrBot core collectors may provide structured control-plane facts such as recent group context.
     - Official async-generator plugin handlers retain yield ProviderRequest delegation through call_handler and ProcessStage; call_event_hook is a separate coroutine-only LLM lifecycle interface.
     - Context resolves the global Runtime observation target registry across loaded configuration profiles, retaining only targets whose UMO resolves back to an effective profile that declares them. ConversationActivitySource is default-disabled and limited to non-self, non-live, non-addressed text in one of those group targets; the event-matched configuration controls its feature flag and Runtime/Policy settings. Waking only preserves an eligible candidate, while the official whitelist and session-status stages retain their authority before the tap submits a structural fact and stops the original event before rate limiting, plugins, Router, or Core.
     - Plugin Runtime Sensors register stable plugin_id/source_id ownership in Context and receive only a restricted submit handle; Context resolves the target, Lifecycle dispatches to existing PersonalRuntimeManager.submit_observation, and plugin unload removes registrations so stale handles cannot submit.

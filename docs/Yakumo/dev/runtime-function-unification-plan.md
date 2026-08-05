@@ -81,6 +81,7 @@ interaction turn
 | D-012 | Personal 是唯一即时用户可见回复主线并与 Router 并行；结果形成后直接发送，不能为了群聊、插件或 Core 判断重新串行化首回复。 |
 | D-013 | 群聊 `silent` 必须与 Personal 发送权原子仲裁：pending 可取消，committed / emitted 不撤回；Router mode、Personal status 和 turn outcome 分开记录。 |
 | D-014 | Router 只决定 `silent/persona/hybrid`，Planner 只决定 Core 是否启动；二者都不得因任务类型或媒体输入取得 Personal 回复准入权。 |
+| D-015 | 插件生命周期、插件工具和插件 Prompt Extension 只挂载到 `personal_expression` 或 `core`；Router/Planner 不加载插件能力目录或插件业务事实。官方群聊上下文等控制面事实必须由核心 Collector 提供。 |
 
 ## 三、目标与非目标
 

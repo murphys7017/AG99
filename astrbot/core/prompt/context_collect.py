@@ -47,6 +47,12 @@ PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY = "_prompt_extension_static_cache"
 PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
     mount: f"extension.{mount}" for mount in PROMPT_EXTENSION_MOUNTS
 }
+PLUGIN_PROMPT_TARGETS = frozenset({"persona", "core"})
+CONTROL_PLANE_PROMPT_TARGETS = frozenset({"router", "core_planner"})
+_CONTROL_PLANE_COLLECTOR_MODULE_PREFIXES = (
+    "astrbot.core.",
+    "astrbot.builtin_stars.",
+)
 
 
 async def resolve_toolset_for_target(
@@ -277,7 +283,22 @@ def build_prompt_extension_slots(
     *,
     source: str = "prompt_extension_collectors",
 ) -> list[ContextSlot]:
-    extension_list = list(extensions)
+    extension_list = [
+        normalized
+        for extension in extensions
+        if (normalized := _normalize_plugin_prompt_extension(extension)) is not None
+    ]
+    return _build_normalized_prompt_extension_slots(
+        extension_list,
+        source=source,
+    )
+
+
+def _build_normalized_prompt_extension_slots(
+    extension_list: list[PromptExtension],
+    *,
+    source: str,
+) -> list[ContextSlot]:
     grouped_items: dict[str, list[dict[str, object]]] = {
         mount: [] for mount in PROMPT_EXTENSION_MOUNTS
     }
@@ -316,10 +337,8 @@ def build_prompt_extension_slots(
     slots: list[ContextSlot] = [
         slot for slot in direct_slots if slot.name != "capability.plugin_directory"
     ]
-    plugin_directory = _build_plugin_directory(extension_list)
     merged_plugin_directory = _combine_plugin_directories(
-        direct_plugin_directories,
-        plugin_directory,
+        direct_plugin_directories
     )
     if merged_plugin_directory:
         slots.append(
@@ -366,16 +385,50 @@ def build_prompt_extension_slots(
     return slots
 
 
+def _normalize_plugin_prompt_extension(
+    extension: PromptExtension,
+    *,
+    allow_control_plane_targets: bool = False,
+) -> PromptExtension | None:
+    """Keep third-party prompt contributions off Router and Core Planner."""
+    normalized = deepcopy(extension)
+    meta = dict(normalized.meta)
+    raw_targets = meta.get("targets")
+    if raw_targets is None:
+        targets = {"core"}
+    elif isinstance(raw_targets, list | tuple | set | frozenset):
+        targets = {
+            str(target).strip()
+            for target in raw_targets
+            if str(target).strip()
+        }
+        allowed_targets = set(PLUGIN_PROMPT_TARGETS)
+        if allow_control_plane_targets:
+            allowed_targets.update(CONTROL_PLANE_PROMPT_TARGETS)
+        targets.intersection_update(allowed_targets)
+    else:
+        return None
+    if not targets:
+        return None
+    meta["targets"] = sorted(targets)
+    normalized.meta = meta
+    return normalized
+
+
+def _collector_allows_control_plane_targets(collector: object) -> bool:
+    if getattr(collector, "control_plane_context", False) is not True:
+        return False
+    module_path = str(getattr(type(collector), "__module__", "") or "")
+    return module_path.startswith(_CONTROL_PLANE_COLLECTOR_MODULE_PREFIXES)
+
+
 def _combine_plugin_directories(
     direct_slots: list[ContextSlot],
-    generated_plugins: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     plugins: list[dict[str, object]] = []
     seen: set[tuple[str, str, tuple[str, ...]]] = set()
 
-    candidates: list[tuple[object, object]] = [
-        (plugin, None) for plugin in generated_plugins
-    ]
+    candidates: list[tuple[object, object]] = []
     for slot in direct_slots:
         raw_plugins = slot.value.get("plugins") if isinstance(slot.value, dict) else None
         if isinstance(raw_plugins, dict):
@@ -409,51 +462,6 @@ def _combine_plugin_directories(
     return plugins
 
 
-def _build_plugin_directory(
-    extensions: list[PromptExtension],
-) -> list[dict[str, object]]:
-    plugins: list[dict[str, object]] = []
-    seen: set[tuple[str, str, tuple[str, ...]]] = set()
-    prompt_targets = {"router", "core_planner"}
-    for extension in extensions:
-        if extension.mount != "capability" or not isinstance(extension.value, dict):
-            continue
-        raw_targets = extension.meta.get("targets")
-        targets = (
-            sorted(
-                prompt_targets.intersection(
-                    str(target) for target in raw_targets
-                )
-            )
-            if isinstance(raw_targets, list | tuple | set)
-            else []
-        )
-        if not targets:
-            continue
-        raw_plugins = extension.value.get("plugins")
-        if isinstance(raw_plugins, dict):
-            raw_plugins = [raw_plugins]
-        if not isinstance(raw_plugins, list):
-            continue
-        for raw_plugin in raw_plugins:
-            if not isinstance(raw_plugin, dict):
-                continue
-            name = str(raw_plugin.get("name", "") or "").strip()
-            description = str(raw_plugin.get("description", "") or "").strip()
-            key = (name, description, tuple(targets))
-            if not name or not description or key in seen:
-                continue
-            seen.add(key)
-            plugins.append(
-                {
-                    "name": name,
-                    "description": description,
-                    "targets": targets,
-                }
-            )
-    return plugins
-
-
 async def _collect_prompt_extension_slots(
     *,
     event: AstrMessageEvent,
@@ -484,6 +492,9 @@ async def _collect_prompt_extension_slots(
     for collector in collectors:
         collector_name = collector.__class__.__name__
         collector_names.append(collector_name)
+        allow_control_plane_targets = _collector_allows_control_plane_targets(
+            collector
+        )
         lifecycle = _collector_lifecycle(collector)
         plugin_id = str(getattr(collector, "plugin_id", "") or "").strip()
         static_cache_key = _prompt_extension_cache_key(collector, plugin_id)
@@ -495,7 +506,17 @@ async def _collect_prompt_extension_slots(
         )
         if lifecycle == "static" and cached_items is not None:
             cached_extensions = _normalize_prompt_extension_items(deepcopy(cached_items))
-            collected_extensions.extend(cached_extensions)
+            collected_extensions.extend(
+                normalized
+                for extension in cached_extensions
+                if (
+                    normalized := _normalize_plugin_prompt_extension(
+                        extension,
+                        allow_control_plane_targets=allow_control_plane_targets,
+                    )
+                )
+                is not None
+            )
             continue
         try:
             raw_extensions = await collector.collect(
@@ -542,7 +563,12 @@ async def _collect_prompt_extension_slots(
                 )
                 continue
 
-            collected_extensions.append(extension)
+            normalized = _normalize_plugin_prompt_extension(
+                extension,
+                allow_control_plane_targets=allow_control_plane_targets,
+            )
+            if normalized is not None:
+                collected_extensions.append(normalized)
 
         if lifecycle == "static":
             _store_static_cache_entry(
@@ -555,7 +581,7 @@ async def _collect_prompt_extension_slots(
 
     event.set_extra(PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY, static_cache)
 
-    slots = build_prompt_extension_slots(
+    slots = _build_normalized_prompt_extension_slots(
         collected_extensions,
         source="prompt_extension_collectors",
     )

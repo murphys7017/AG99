@@ -74,6 +74,8 @@ class GroupContextRecord:
 class GroupChatContext(PromptExtensionCollectorInterface):
     """Collect bounded, post-reply group context for the canonical prompt pipeline."""
 
+    control_plane_context = True
+
     def __init__(self, acm: AstrBotConfigManager, context: star.Context) -> None:
         self.acm = acm
         self.context = context
@@ -195,6 +197,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                     "char_count": sum(
                         len(_format_group_record(record)) for record in records
                     ),
+                    "official_context": True,
                     "targets": ["router", "core_planner", "persona", "core"],
                     "context_slot": "conversation.group_recent",
                     "context_category": "conversation",

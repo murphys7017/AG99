@@ -57,6 +57,7 @@ def test_router_exposes_silent_only_for_group_reply_candidates():
 
     assert "silent" not in default_system_prompt
     assert "silent" not in default_request_prompt
+    assert "插件目录" not in default_system_prompt
     assert "- silent" in continuation_system_prompt
     assert "在 persona、hybrid 与 silent 之间不确定时选择 silent" in (
         continuation_system_prompt

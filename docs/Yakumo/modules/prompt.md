@@ -73,20 +73,20 @@ Interaction 当前通过默认 Collector 建立一份完整的本轮共享事实
 
 | 目标 | 当前可见范围 | 明确排除 |
 |---|---|---|
-| Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、topic/short-term memory、插件目录 | 完整人格、媒体正文、工具 schema、effect、Core/Planner 决策 |
-| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、topic/short-term memory、插件目录 | 完整人格、Router 决策、effect、实际工具 schema |
+| Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、topic/short-term memory | 完整人格、插件扩展、插件目录、媒体正文、工具 schema、effect、Core/Planner 决策 |
+| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、topic/short-term memory | 完整人格、插件扩展、插件目录、Router 决策、effect、实际工具 schema |
 | Persona | 完整人格、官方历史、群聊上下文、memory/persona state、当前输入、待表达材料和 Core 结果 | policy、knowledge、执行能力、Core 私有执行上下文 |
 | Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec`、有限 Core Execution History | 完整人格、persona state、待表达材料、effect 语义 |
 
 Router 和 Core Planner 只共享事实来源，不共享模型 Prompt、决策或输出。投影中的历史长度、字段清理和诊断移除属于确定性安全边界，不是“让模型自己忽略”。
 
-Prompt Extension 的 `meta.targets` 可声明 `router`、`core_planner`、`persona`、`core`。普通 extension 未声明目标时只属于 Core。Router/Planner 的插件目录只保留明确授权的插件 `name` 和 `description`。
+插件 Prompt Extension 的 `meta.targets` 只允许 `persona`、`core`。普通 extension 未声明目标时只属于 Core。Router/Planner 不挂载插件扩展或插件目录；群聊近期上下文等官方事实若需进入控制面，必须由 AstrBot 内部明确标记的核心 Collector 以结构化上下文槽提供。插件自行设置 `official_context` 不会获得控制面权限。
 
 ## Render Profile
 
 `PromptRenderProfile` 在目标投影后应用到一个新的目标视图，当前支持：
 
-- `system_prompt`：替换目标视图中的 `system.base`。
+- `system_prompt`：提供目标自己的系统指令。Persona、Core 及无显式 target 的 legacy Core 会在其后保留旧 `ProviderRequest.system_prompt` 以兼容既有插件；Router、Core Planner 与 Personal Policy 始终替换旧值，避免插件提示进入控制面。
 - `request_prompt`：成为最终模型请求命令，不写入共享事实。
 - `output_contract`：写入目标树的输出契约元数据。
 - `input_text_suffix`：只追加到字符串类型的 `input.text`。

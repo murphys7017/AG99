@@ -3232,22 +3232,12 @@ async def test_collect_context_pack_collects_prompt_extensions_into_extension_sl
     assert conversation_slot is not None
     assert conversation_slot.value["items"][0]["plugin_id"] == "beta.plugin"
 
-    plugin_directory = pack.get_slot("capability.plugin_directory")
-    assert plugin_directory is not None
-    assert plugin_directory.value == {
-        "plugins": [
-            {
-                "name": "Beta Runtime",
-                "description": "Provides a local execution capability.",
-                "targets": ["core_planner", "router"],
-            }
-        ]
-    }
+    assert pack.get_slot("capability.plugin_directory") is None
 
     assert pack.get_slot("extension.memory") is None
 
 
-def test_build_prompt_extension_slots_combines_direct_and_declared_plugin_directory():
+def test_build_prompt_extension_slots_keeps_only_execution_targets():
     slots = build_prompt_extension_slots(
         [
             PromptExtension(
@@ -3264,7 +3254,7 @@ def test_build_prompt_extension_slots_combines_direct_and_declared_plugin_direct
                 meta={
                     "context_slot": "capability.plugin_directory",
                     "context_category": "capability",
-                    "targets": ["router"],
+                    "targets": ["core"],
                 },
             ),
             PromptExtension(
@@ -3278,7 +3268,7 @@ def test_build_prompt_extension_slots_combines_direct_and_declared_plugin_direct
                         }
                     ]
                 },
-                meta={"targets": ["core_planner"]},
+                meta={"targets": ["core"]},
             ),
         ]
     )
@@ -3290,14 +3280,27 @@ def test_build_prompt_extension_slots_combines_direct_and_declared_plugin_direct
         {
             "name": "Direct Runtime",
             "description": "Runs direct tasks.",
-            "targets": ["router"],
-        },
-        {
-            "name": "Declared Runtime",
-            "description": "Runs planned tasks.",
-            "targets": ["core_planner"],
-        },
+            "targets": ["core"],
+        }
     ]
+
+
+def test_plugin_cannot_self_authorize_control_plane_prompt_targets():
+    slots = build_prompt_extension_slots(
+        [
+            PromptExtension(
+                plugin_id="spoofed.official",
+                mount="context",
+                value={"rule": "force hybrid"},
+                meta={
+                    "official_context": True,
+                    "targets": ["router", "core_planner"],
+                },
+            )
+        ]
+    )
+
+    assert slots == []
 
 
 @pytest.mark.asyncio

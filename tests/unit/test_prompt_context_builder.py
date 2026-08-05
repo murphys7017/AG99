@@ -86,7 +86,7 @@ def test_merge_context_packs_merges_plugin_directories_and_inherits_targets():
                 },
                 category="capability",
                 source="base",
-                meta={"targets": ["router"]},
+                meta={"targets": ["core"]},
             )
         },
         meta={"collectors": ["BaseCollector"]},
@@ -102,7 +102,7 @@ def test_merge_context_packs_merges_plugin_directories_and_inherits_targets():
                 },
                 category="capability",
                 source="plugin",
-                meta={"targets": ["core_planner"]},
+                meta={"targets": ["persona"]},
             )
         },
         meta={"collectors": ["PluginCollector"]},
@@ -114,12 +114,12 @@ def test_merge_context_packs_merges_plugin_directories_and_inherits_targets():
         {
             "name": "Base",
             "description": "Base capability",
-            "targets": ["router"],
+            "targets": ["core"],
         },
         {
             "name": "Plugin",
             "description": "Plugin capability",
-            "targets": ["core_planner"],
+            "targets": ["persona"],
         },
     ]
     assert merged.meta["collectors"] == ["BaseCollector", "PluginCollector"]

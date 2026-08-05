@@ -17,7 +17,7 @@ Plugin Collector
   -> ProviderRequest
 ```
 
-Collectors run before target projection. One fact can therefore be explicitly exposed to Router, Core Planner, Persona, or Core through `meta.targets`. Collectors never receive those models' decisions and cannot mutate the canonical pack.
+Collectors run before target projection. A plugin fact can therefore be explicitly exposed to Persona or Core through `meta.targets`. Router and Core Planner do not mount plugin extensions or plugin capability directories; they consume only core-owned routing facts. Collectors never receive those models' decisions and cannot mutate the canonical pack.
 
 ## Register a Collector
 
@@ -77,30 +77,7 @@ The main `PromptExtension` fields are:
 - `order`: stable ordering within a mount; lower values come first.
 - `meta.targets`: the model roles allowed to read this fact.
 
-Valid targets are `router`, `core_planner`, `persona`, and `core`. A regular extension without targets defaults to Core only. Do not assume global visibility.
-
-## Router and Planner Plugin Directory
-
-When Router or Core Planner only needs to know which plugins exist and what they do, contribute a minimal `capability` directory:
-
-```python
-PromptExtension(
-    plugin_id="my_plugin",
-    mount="capability",
-    value={
-        "plugins": [
-            {
-                "name": "calendar",
-                "description": "Reads and updates calendar events.",
-            }
-        ]
-    },
-    value_kind="mapping",
-    meta={"targets": ["router", "core_planner"]},
-)
-```
-
-Projection keeps only `name` and `description`. Do not include example conversations, low-level schemas, plugin IDs, diagnostics, or execution results.
+Valid plugin targets are `persona` and `core`. A regular extension without targets defaults to Core only. Router and Core Planner do not accept plugin extensions or plugin capability directories. Facts needed by those control-plane models must be provided by explicitly trusted, core-owned collectors; setting `official_context` in a plugin does not grant that permission.
 
 ## Lifecycle and Failures
 
@@ -120,7 +97,7 @@ A failing plugin collector is logged and skipped so one plugin cannot break core
 | LLM Tool | Register executable capability; plugin tools default to Core and enter Persona only through an explicit declaration or user override |
 | `on_llm_request` | Modify the pre-tool Persona request once, or the routed Core low-level request, based on plugin target |
 
-Plugin LLM lifecycle and LLM Tool targets resolve independently. Lifecycle order is the `plugin_runtime_targets` override, class or legacy decorator declaration, then the Persona default. Tool order is the user `plugin_tool_targets` override, the tool's `tool_targets` declaration, then the Core default. Non-Interaction flows retain the official Core behavior. Persona `on_llm_request` runs once before its optional tool loop, and its non-contract mutations are retained for the final expression; it does not run for Router, Core Planner, or internal Persona tool calls. Actual Persona tool execution still emits `on_using_llm_tool` and `on_llm_tool_respond`. Facts needed by those targets must use Prompt Extensions with explicit targets; do not make per-turn dynamic facts depend on a low-level request hook.
+Plugin LLM lifecycle and LLM Tool targets resolve independently. Lifecycle order is the `plugin_runtime_targets` override, class or legacy decorator declaration, then the Persona default. Tool order is the user `plugin_tool_targets` override, the tool's `tool_targets` declaration, then the Core default. Non-Interaction flows retain the official Core behavior. Persona `on_llm_request` runs once before its optional tool loop, and its non-contract mutations are retained for the final expression; it does not run for Router, Core Planner, or internal Persona tool calls. Actual Persona tool execution still emits `on_using_llm_tool` and `on_llm_tool_respond`. Facts needed by plugin-enabled targets must use Prompt Extensions with explicit `persona` or `core` targets; do not make per-turn dynamic facts depend on a low-level request hook.
 
 ## Safety Rules
 

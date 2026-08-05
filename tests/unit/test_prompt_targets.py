@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from astrbot.core.prompt import ContextPack, ContextSlot, PromptTarget
+from astrbot.core.prompt.render import PromptRenderProfile
 from astrbot.core.prompt.render.engine import PromptRenderEngine
 from astrbot.core.prompt.targets import project_context_pack
 
@@ -102,7 +103,6 @@ def test_router_projection_uses_summary_and_recent_context_only():
         "conversation.group_recent",
         "memory.topic_state",
         "memory.short_term",
-        "capability.plugin_directory",
     }
     assert projected.get_slot("conversation.history").value["turns"] == [
         {"id": 1},
@@ -110,14 +110,7 @@ def test_router_projection_uses_summary_and_recent_context_only():
         {"id": 3},
         {"id": 4},
     ]
-    assert projected.get_slot("capability.plugin_directory").value == {
-        "plugins": [
-            {
-                "name": "Router Plugin",
-                "description": "Router-visible capability",
-            }
-        ]
-    }
+    assert projected.get_slot("capability.plugin_directory") is None
     assert source.get_slot("conversation.history").value["turn_count"] == 5
     assert source.get_slot("capability.plugin_directory").value["plugins"][0][
         "targets"
@@ -183,13 +176,7 @@ def test_core_planner_projection_uses_facts_without_router_or_persona_decisions(
     assert projected.get_slot("input.text") is not None
     assert projected.get_slot("conversation.history") is not None
     assert projected.get_slot("memory.short_term") is not None
-    assert projected.get_slot("capability.plugin_directory") is not None
-    assert projected.get_slot("capability.plugin_directory").value["plugins"] == [
-        {
-            "name": "Planner Plugin",
-            "description": "Planner-visible capability",
-        }
-    ]
+    assert projected.get_slot("capability.plugin_directory") is None
     assert projected.get_slot("persona.summary") is None
     assert projected.get_slot("interaction.route_decision") is None
     assert projected.get_slot("system.core_execution_context") is None
@@ -218,11 +205,7 @@ def test_plugin_directory_entries_inherit_slot_targets():
     router = project_context_pack(pack, PromptTarget.ROUTER)
     planner = project_context_pack(pack, PromptTarget.CORE_PLANNER)
 
-    assert router.get_slot("capability.plugin_directory").value == {
-        "plugins": [
-            {"name": "Direct Plugin", "description": "Direct capability"}
-        ]
-    }
+    assert router.get_slot("capability.plugin_directory") is None
     assert planner.get_slot("capability.plugin_directory") is None
 
 
@@ -253,7 +236,7 @@ def test_direct_slot_targets_are_enforced_before_target_rules():
     )
 
 
-def test_explicit_prompt_extension_targets_reach_router_and_planner():
+def test_plugin_prompt_extensions_do_not_reach_router_or_planner():
     pack = ContextPack(
         slots={
             "extension.system": ContextSlot(
@@ -262,23 +245,71 @@ def test_explicit_prompt_extension_targets_reach_router_and_planner():
                     "items": [
                         {
                             "value": "route rule",
-                            "meta": {"targets": ["router", "core_planner"]},
+                            "meta": {
+                                "targets": [
+                                    "router",
+                                    "core_planner",
+                                    "persona",
+                                    "core",
+                                ]
+                            },
                         }
                     ]
                 },
                 category="extension",
                 source="plugin",
-                meta={"targets": ["router", "core_planner"]},
+                meta={
+                    "targets": [
+                        "router",
+                        "core_planner",
+                        "persona",
+                        "core",
+                    ]
+                },
             )
         }
     )
 
-    assert project_context_pack(pack, PromptTarget.ROUTER).get_slot(
-        "extension.system"
-    ) is not None
-    assert project_context_pack(pack, PromptTarget.CORE_PLANNER).get_slot(
-        "extension.system"
-    ) is not None
+    assert project_context_pack(pack, PromptTarget.ROUTER).get_slot("extension.system") is None
+    assert project_context_pack(pack, PromptTarget.CORE_PLANNER).get_slot("extension.system") is None
+    assert project_context_pack(pack, PromptTarget.PERSONA).get_slot("extension.system") is not None
+    assert project_context_pack(pack, PromptTarget.CORE).get_slot("extension.system") is not None
+
+
+def test_control_plane_profile_does_not_merge_legacy_plugin_system_prompt():
+    pack = ContextPack(
+        slots={
+            "system.base": _slot(
+                "system.base",
+                "Legacy plugin system prompt.",
+                "system",
+            )
+        }
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        target=PromptTarget.ROUTER,
+        profile=PromptRenderProfile(
+            name="router_boundary",
+            system_prompt="Router instruction.",
+        ),
+    )
+
+    assert "Router instruction." in result.system_prompt
+    assert "Legacy plugin system prompt." not in result.system_prompt
+
+    persona_result = PromptRenderEngine().render(
+        pack,
+        target=PromptTarget.PERSONA,
+        profile=PromptRenderProfile(
+            name="persona_compatibility",
+            system_prompt="Persona instruction.",
+        ),
+    )
+
+    assert "Persona instruction." in persona_result.system_prompt
+    assert "Legacy plugin system prompt." in persona_result.system_prompt
 
 
 def test_direct_slot_with_malformed_targets_is_hidden():
@@ -467,12 +498,11 @@ def test_extension_targets_are_filtered_for_extension_enabled_prompt_targets():
         }
     )
 
-    for target in (
-        PromptTarget.ROUTER,
-        PromptTarget.CORE_PLANNER,
-        PromptTarget.PERSONA,
-        PromptTarget.CORE,
-    ):
+    for target in (PromptTarget.ROUTER, PromptTarget.CORE_PLANNER):
+        projected = project_context_pack(pack, target)
+        assert projected.get_slot("extension.context") is None
+
+    for target in (PromptTarget.PERSONA, PromptTarget.CORE):
         projected = project_context_pack(pack, target)
         items = projected.get_slot("extension.context").value["items"]
         assert [item["plugin_id"] for item in items] == [target.value]

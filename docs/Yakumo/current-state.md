@@ -136,7 +136,7 @@
 - Persona、Native Core 和第三方 Agent Runner 的生产插件生命周期现由 `AgentRequestLifecycle` 统一。各入口保留原有可用阶段；Persona 与 Native Core 包含 Waiting，第三方兼容 Runner 仍从 LLMRequest 开始，随后统一进入 AgentBegin、模型/工具循环、LLMResponse、AgentDone 与可选 postprocess。同一分支使用一个 lifecycle ID。Persona fallback 保留 Hook 后冻结的同一 ProviderRequest，只替换 Provider binding，不重渲染、不重放 Hook；若备用 Provider 无法满足严格 terminal tool contract，则明确失败。`astr_agent_hooks.py` 仅保留为旧外部导入兼容面，不再是生产 Main Agent owner。
 - `CoreCapabilitySnapshot` 不再把 SubAgent 建模为一等通用能力。Native Core 仍通过 `SubagentCollector`、`SubAgentOrchestrator` 和 `HandoffTool` 兼容承载，当前 Native ContextPack 和 ToolSet 因此仍会携带 handoff 信息；未来 Backend 不需要实现 AstrBot SubAgent，新增专业能力优先注册为插件 Tool。
 - Core Execution Ledger 以 `execution_id` 独立保存 task、attempt、有限工具证据、结果、错误和 token usage，并仅投影给 Core。当前记录生成仍位于 Native InternalAgentSubStage；统一 Execution Event、取消和第三方 Backend 回流尚未完成。
-- Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，贡献项通过 `meta.targets` 进入目标投影；Router、Planner、Persona 不再按 purpose 分别触发采集。完整事实由默认 Collector 统一收集，Core 在同一 Pack 上加入阶段性的 `CoreTaskSpec` 后投影为 Core 视图。
+- Interaction 的 Prompt Contributor 在规范事实包构建阶段统一运行一次，插件贡献项只通过 `meta.targets` 进入 Persona/Core 目标投影；Router、Planner 不挂载插件扩展或插件目录，只消费核心 Collector 提供的路由/规划事实。Router、Planner、Persona 不再按 purpose 分别触发插件采集。完整事实由默认 Collector 统一收集，Core 在同一 Pack 上加入阶段性的 `CoreTaskSpec` 后投影为 Core 视图。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
   prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；persona runtime 指令与输出契约由 Render Profile 提供，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料由 Collector 进入 `input.visible_reply_material`
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功

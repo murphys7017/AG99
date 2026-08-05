@@ -8,7 +8,7 @@ outline: deep
 
 AstrBot 是一个开源的一站式 Agentic 个人和群聊助手，可在 QQ、Telegram、企业微信、飞书、钉钉、Slack 等数十款主流即时通讯软件上部署，此外还内置类似 OpenWebUI 的轻量化 ChatUI，为个人、开发者和团队打造可靠、可扩展的对话式智能基础设施。无论是个人 AI 伙伴、智能客服、自动化助手，还是企业知识库，AstrBot 都能在你的即时通讯软件平台的工作流中快速构建 AI 应用。
 
-当前仓库的 Yakumo fork 在官方 EventBus / Pipeline 与核心 Agent 之间增加 Interaction Middleware。普通对话先由无工具、无 JSON 契约的 Router 选择 `silent` / `persona` / `hybrid`；`hybrid` 先由 Core Planner 判断是否执行，未委托 Core 的路径直接进入唯一 Persona Runtime，Core 结果也回到该表达层。插件 LLM 生命周期默认增强 Persona Expression，可执行工具默认进入 Core，只有工具声明或用户配置明确允许时才进入 Persona；[Persona Effect](/dev/star/guides/persona-effects) 与 [Prompt Extension](/dev/star/guides/prompt-extensions) 分别扩展结构化表现和目标明确的模型事实，而不把平台私有语义写入 Router 或 Core。
+当前仓库的 Yakumo fork 在官方 EventBus / Pipeline 与核心 Agent 之间增加 Interaction Middleware。普通对话先由无工具、无 JSON 契约的 Router 选择 `silent` / `persona` / `hybrid`；`hybrid` 先由 Core Planner 判断是否执行，未委托 Core 的路径直接进入唯一 Persona Runtime，Core 结果也回到该表达层。插件 LLM 生命周期默认增强 Persona Expression，可执行工具默认进入 Core，只有工具声明或用户配置明确允许时才进入 Persona；[Persona Effect](/dev/star/guides/persona-effects) 与 [Prompt Extension](/dev/star/guides/prompt-extensions) 分别扩展结构化表现和 Persona/Core 的目标明确事实，Router 与 Core Planner 只消费核心控制面事实。
 
 ## 文档概览
 

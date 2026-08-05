@@ -45,6 +45,7 @@ def test_core_planner_prompt_is_independent_from_router_decision():
     assert "silent" not in prompt
     assert "Router" not in prompt
     assert "上游路由" not in prompt
+    assert "插件目录" not in prompt
 
 
 def test_core_planner_prefers_protocol_tool_call():

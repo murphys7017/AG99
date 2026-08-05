@@ -92,6 +92,7 @@ def test_group_chat_context_collector_is_dynamic():
     group_context = GroupChatContext(MagicMock(), MagicMock())
 
     assert group_context.lifecycle == "dynamic"
+    assert group_context.control_plane_context is True
 
 
 @pytest.mark.asyncio

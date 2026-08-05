@@ -17,7 +17,7 @@ Plugin Collector
   -> ProviderRequest
 ```
 
-Collector 在目标投影前运行，因此同一份事实可以通过 `meta.targets` 分别授权给 Router、Core Planner、Persona 或 Core。它不会拿到这些模型的决策，也不能修改规范 Pack。
+Collector 在目标投影前运行，因此同一份插件事实可以通过 `meta.targets` 授权给 Persona 或 Core。Router 和 Core Planner 不挂载插件扩展，也不读取插件能力目录；它们只消费核心维护的路由事实。Collector 不会拿到这些模型的决策，也不能修改规范 Pack。
 
 ## 注册 Collector
 
@@ -79,35 +79,12 @@ class Main(Star):
 
 目标值：
 
-- `router`
-- `core_planner`
 - `persona`
 - `core`
 
 普通 extension 没有声明 `targets` 时默认只提供给 Core。不要依赖“所有目标默认可见”。
 
-## Router 与 Planner 插件目录
-
-如果 Router 或 Core Planner 只需要知道“有哪些插件、分别做什么”，使用 `capability` mount，并提供精简插件目录：
-
-```python
-PromptExtension(
-    plugin_id="my_plugin",
-    mount="capability",
-    value={
-        "plugins": [
-            {
-                "name": "calendar",
-                "description": "Reads and updates calendar events.",
-            }
-        ]
-    },
-    value_kind="mapping",
-    meta={"targets": ["router", "core_planner"]},
-)
-```
-
-目标投影只保留 `name` 和 `description`。不要放示例对话、底层 schema、插件 ID、调试日志或执行结果；Router 只需要判断是否值得进入 Persona/Core 路径，Planner 只需要判断执行层是否必要。
+Router 和 Core Planner 不接受插件能力目录。需要让它们参与路由或执行判断的事实，必须由 AstrBot 内部明确标记的核心 Collector 以非插件的结构化上下文提供；插件不能通过 Prompt Extension 改变 Router/Planner 的准入或规划，自行设置 `official_context` 也不会获得该权限。
 
 ## 生命周期与失败
 
@@ -127,7 +104,7 @@ PromptExtension(
 | LLM Tool | 注册可执行能力；插件工具默认进入 Core，只有工具声明或用户配置明确允许时进入 Persona |
 | `on_llm_request` | 修改路由后的最终 Persona 或 Core 低层请求，取决于插件运行目标 |
 
-插件 LLM 生命周期与 LLM Tool 独立解析：生命周期按“`plugin_runtime_targets` 配置覆盖 > 类或旧装饰器声明 > Persona 默认值”，工具按“`plugin_tool_targets` 用户覆盖 > 工具 `tool_targets` 声明 > Core 默认值”。非 Interaction 流程保持官方 Core 行为。`on_llm_request` 不覆盖 Router、Core Planner 或 Persona 内部工具回路；实际执行 Persona 插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。需要这些目标读取的信息必须进入 Prompt Extension，并声明 targets；不要把每轮动态事实依赖在低层请求钩子上。
+插件 LLM 生命周期与 LLM Tool 独立解析：生命周期按“`plugin_runtime_targets` 配置覆盖 > 类或旧装饰器声明 > Persona 默认值”，工具按“`plugin_tool_targets` 用户覆盖 > 工具 `tool_targets` 声明 > Core 默认值”。非 Interaction 流程保持官方 Core 行为。`on_llm_request` 不覆盖 Router、Core Planner 或 Persona 内部工具回路；实际执行 Persona 插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。需要 Persona/Core 读取的插件事实必须进入 Prompt Extension，并声明 `persona` 或 `core`；不要把每轮动态事实依赖在低层请求钩子上。
 
 ## 安全约束
 

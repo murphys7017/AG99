@@ -512,7 +512,7 @@ interaction middleware 对插件主要暴露两个阶段接口：
    - 在本轮规范 `ContextPack` 构建阶段运行一次。
    - 用于向统一 Prompt 事实包注入结构化信息。
    - 返回 `PromptExtension` 或 `list[PromptExtension]`。
-   - 通过 `meta.targets` 声明 Router、Core Planner、Persona 或 Core 是否可见；不接收任何模型决策。
+   - 通过 `meta.targets` 声明 Persona 或 Core 是否可见；不接收任何模型决策，也不能挂载到 Router/Core Planner。
 
 2. `register_interaction_result_contributor(...)`
    - 在 interaction 输出阶段运行。
@@ -549,7 +549,7 @@ class LocalPluginDirectoryContributor:
                     }
                 ]
             },
-            meta={"targets": ["router", "core_planner"]},
+            meta={"targets": ["core"]},
         )
 
 
@@ -562,7 +562,7 @@ class Main(star.Star):
 ```
 
 `collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionPromptView`，其 `purpose` 为 `context_collection`。它提供规范事实快照，而不是 Router、Planner 或 Persona 的局部视图；插件必须在返回的 `PromptExtension.meta.targets` 中声明目标。
-如果插件希望 Router 或 Core Planner 知道本地能力，返回精简插件目录并标记相应 targets。目录只说明插件是什么、负责什么；投影会丢弃运输外壳，只把 `name` / `description` 放进最终 Prompt。Router 不理解插件私有协议、动作参数或输出 schema；Core Planner 也不接收 Router 的决策。
+插件不能通过 Prompt Extension 向 Router 或 Core Planner 暴露能力目录或业务事实。需要进入控制面的路由/规划事实必须由核心 Collector 提供；插件本身只挂载到 Persona 或 Core。Router 不理解插件私有协议、动作参数或输出 schema；Core Planner 也不接收 Router 的决策。
 如果插件希望影响 Persona visible reply，应返回目标为 `persona` 的 `PromptExtension`。中间件自己的 persona runtime 指令和 visible reply material 不走 extension。
 常用字段：
 
@@ -578,7 +578,7 @@ class Main(star.Star):
 
 推荐 mount 选择：
 
-- `capability`: 对 Router / Core Planner 推荐放精简插件目录；执行能力契约不进入 Persona，Persona 需要的稳定事实应使用 `context` 或其他明确目标的 extension。
+- `capability`: 插件能力目录不进入 Router / Core Planner；插件的稳定事实应使用 `context` 或其他明确目标为 Persona/Core 的 extension，执行能力契约仍通过 Tool API 注册。
 - `context`: 当前请求动态事实，例如设备状态、运行时状态、临时 session facts。
 - `system`: 仅用于稳定决策规则；不要放动态事实。
 - `input`: 仅用于确实需要贴近当前用户输入的补充材料。
