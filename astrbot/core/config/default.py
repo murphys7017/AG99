@@ -214,6 +214,8 @@ DEFAULT_CONFIG = {
     "interaction_middleware": {
         "enabled": True,
         "turn_timeout": 120.0,
+        "parallel_plugin_runtime_enabled": False,
+        "plugin_parallel_window_seconds": 3.0,
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
@@ -4397,6 +4399,16 @@ CONFIG_METADATA_3 = {
                         "description": "单轮总超时秒数",
                         "type": "float",
                         "hint": "从进入 Personal Runtime 排队开始计时，Router、Planner、Persona、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
+                    },
+                    "interaction_middleware.parallel_plugin_runtime_enabled": {
+                        "description": "启用插件三线并行运行时",
+                        "type": "bool",
+                        "hint": "关闭时，官方消息 Handler 在 Personal/Router 之前按旧串行路径执行。开启后，合格的普通对话统一由 Coordinator 同时启动 Personal/Router；若存在 activated Handlers，它们整体进入同一 Plugin Job。这不是按插件开关，真实日志验收完成前保持关闭。",
+                    },
+                    "interaction_middleware.plugin_parallel_window_seconds": {
+                        "description": "插件当前轮仲裁窗口秒数",
+                        "type": "float",
+                        "hint": "从 Personal、Router、Plugin Job 的共同 t0 开始计时。窗口到期只让当前轮停止等待插件，不取消后台插件；Core 等待插件作出决定，不等待插件完整执行。",
                     },
                     "interaction_middleware.plugin_runtime_targets": {
                         "description": "插件对话钩子生效链路",

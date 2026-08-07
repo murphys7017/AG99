@@ -43,6 +43,8 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
     default_config = load_interaction_agent_config({})
     assert default_config.enabled is True
     assert default_config.persona_history_window_size == 50
+    assert default_config.parallel_plugin_runtime_enabled is False
+    assert default_config.plugin_parallel_window_seconds == 3.0
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
 
 

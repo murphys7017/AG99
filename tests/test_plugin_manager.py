@@ -67,6 +67,7 @@ def test_remove_plugin_runtime_extensions_clears_all_plugin_registries():
         remove_interaction_result_contributors_by_module_prefix=lambda prefix: 1,
         remove_interaction_stream_deciders_by_module_prefix=lambda prefix: 1,
         remove_interaction_lifecycle_observers_by_module_prefix=lambda prefix: 1,
+        remove_runtime_observation_sensors_by_module_prefix=lambda prefix: 1,
         unregister_persona_effects=lambda **kwargs: 1,
     )
     prefix = "data.plugins.demo"
@@ -78,6 +79,7 @@ def test_remove_plugin_runtime_extensions_clears_all_plugin_registries():
         "remove_interaction_result_contributors_by_module_prefix",
         "remove_interaction_stream_deciders_by_module_prefix",
         "remove_interaction_lifecycle_observers_by_module_prefix",
+        "remove_runtime_observation_sensors_by_module_prefix",
     ):
         setattr(
             context,
@@ -97,6 +99,7 @@ def test_remove_plugin_runtime_extensions_clears_all_plugin_registries():
         ("remove_interaction_stream_deciders_by_module_prefix", prefix),
         ("remove_interaction_lifecycle_observers_by_module_prefix", prefix),
         ("unregister_persona_effects", prefix),
+        ("remove_runtime_observation_sensors_by_module_prefix", prefix),
     ]
 
 
@@ -338,7 +341,7 @@ def _build_load_mock(events):
 
 
 def _build_reload_mock(events):
-    async def mock_reload(specified_dir_name=None):
+    async def mock_reload(specified_dir_name=None, **_kwargs):
         events.append(("reload", specified_dir_name or TEST_PLUGIN_DIR))
         return True, ""
 
@@ -1144,7 +1147,11 @@ async def test_update_plugin_dependency_install_flow(
         "astrbot.core.star.star_manager.pip_installer.install",
         _build_dependency_install_mock(events, dependency_install_fails),
     )
-    monkeypatch.setattr(plugin_manager_pm, "reload", _build_reload_mock(events))
+    monkeypatch.setattr(
+        plugin_manager_pm,
+        "_reload_locked",
+        _build_reload_mock(events),
+    )
 
     if dependency_install_fails:
         with pytest.raises(PluginDependencyInstallError, match="pip failed"):
@@ -1484,7 +1491,7 @@ async def test_reload_activated_plugin_still_unbinds(
         return True, None
 
     monkeypatch.setattr(plugin_manager_pm, "_terminate_plugin", mock_terminate)
-    monkeypatch.setattr(plugin_manager_pm, "_unbind_plugin", mock_unbind)
+    monkeypatch.setattr(plugin_manager_pm, "_unbind_plugin_after_drain", mock_unbind)
     monkeypatch.setattr(plugin_manager_pm, "load", mock_load)
 
     try:

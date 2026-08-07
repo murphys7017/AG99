@@ -40,7 +40,16 @@ from .personal_heartbeat import PersonalHeartbeatSource
 from .personal_runtime import PersonalRuntimeManager
 from .personal_state_repository import PersonalStateRepository
 from .personal_wake_scheduler import PersonalRuntimeWakeScheduler
+from .plugin_execution_runtime import PluginExecutionRuntime
 from .router_agent import InteractionRouterAgent, InteractionRouterError
+from .turn_coordinator import (
+    CoordinatedProviderRequest,
+    InteractionControlResolution,
+    InteractionCoordinatedTurn,
+    InteractionTurnCoordinator,
+    PluginJobLaunch,
+    PluginProviderRequestRejected,
+)
 from .turn_state import (
     INTERACTION_TURN_STATE_EXTRA_KEY,
     InteractionContextMaterial,
@@ -77,6 +86,7 @@ __all__ = [
     "PLUGIN_OUTPUT_MODE_EXTRA_KEY",
     "PluginOutputMode",
     "PluginOutputRequest",
+    "PluginExecutionRuntime",
     "PersonaEffectCall",
     "PersonaEffectParseIssue",
     "PersonaEffectRegistryError",
@@ -113,6 +123,12 @@ __all__ = [
     "InteractionRouteMode",
     "InteractionRouterAgent",
     "InteractionRouterError",
+    "CoordinatedProviderRequest",
+    "InteractionCoordinatedTurn",
+    "InteractionControlResolution",
+    "InteractionTurnCoordinator",
+    "PluginJobLaunch",
+    "PluginProviderRequestRejected",
     "apply_interaction_core_task_spec",
     "ensure_interaction_turn_state",
     "get_interaction_turn_state",

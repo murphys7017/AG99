@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from astrbot import logger
-from astrbot.core.deadline import TurnDeadlineExceeded
+from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
 from astrbot.core.persona_error_reply import (
     resolve_conversation_persona_id,
     resolve_event_conversation_persona_id,
@@ -54,6 +54,7 @@ from .personal_state import (
     PersonalStateSnapshot,
 )
 from .personal_state_repository import PersonalStateRepository
+from .plugin_execution_runtime import get_active_plugin_branch_event
 from .runtime_event import RuntimeObservationEvent
 from .turn_context import (
     PersonalTurnContext,
@@ -427,6 +428,42 @@ class RuntimeObservationEventSubmission(PlatformEventSubmission):
         return await super().admit(allow_follow_up=False)
 
 
+class _TurnAdmissionGate:
+    """Give normal platform turns priority over delayed background turns."""
+
+    def __init__(self) -> None:
+        self._condition = asyncio.Condition()
+        self._active = False
+        self._normal_waiters = 0
+
+    async def acquire(self, *, delayed: bool = False) -> None:
+        async with self._condition:
+            if delayed:
+                await self._condition.wait_for(
+                    lambda: not self._active and self._normal_waiters == 0
+                )
+                self._active = True
+                return
+
+            self._normal_waiters += 1
+            try:
+                await self._condition.wait_for(lambda: not self._active)
+                self._active = True
+            finally:
+                self._normal_waiters -= 1
+                self._condition.notify_all()
+
+    async def release(self) -> None:
+        async with self._condition:
+            if not self._active:
+                raise RuntimeError("Personal Runtime turn admission is not active")
+            self._active = False
+            self._condition.notify_all()
+
+    def locked(self) -> bool:
+        return self._active
+
+
 class PersonalTurnLease:
     def __init__(
         self,
@@ -495,7 +532,7 @@ class PersonalTurnLease:
                     self.runtime._active_turn_context = None
                     self.runtime.touch()
                     self.reservation.transition(PendingTurnState.SETTLED)
-                    self.runtime.turn_lock.release()
+                    await self.runtime.turn_lock.release()
 
 
 class PersonalSessionRuntime:
@@ -511,7 +548,7 @@ class PersonalSessionRuntime:
     ) -> None:
         now = time.time()
         self.key = key
-        self.turn_lock = asyncio.Lock()
+        self.turn_lock = _TurnAdmissionGate()
         self.active_turn_id: str | None = None
         self.active_actor_id: str | None = None
         self._active_turn_context: PersonalTurnContext | None = None
@@ -1228,6 +1265,9 @@ class PersonalSessionRuntime:
     ) -> TurnAdmission:
         turn = reservation.turn
         event = turn.event
+        delayed_admission = bool(
+            event.get_extra("_personal_runtime_delayed_admission", False)
+        )
         capture = self.follow_ups.try_capture(event) if allow_follow_up else None
         deadline = turn.state.deadline
         queue_context = (
@@ -1256,10 +1296,14 @@ class PersonalSessionRuntime:
                         )
 
                 reservation.transition(PendingTurnState.QUEUED)
-                await self.turn_lock.acquire()
+                await self.turn_lock.acquire(delayed=delayed_admission)
                 lock_acquired = True
 
             reservation.transition(PendingTurnState.ACTIVE)
+            if turn.state.deadline is None:
+                turn.state.deadline = TurnDeadlineBudget.start(
+                    self._interaction_config.turn_timeout
+                )
             turn.previous_expression_fingerprint = (
                 self.state.last_expression_fingerprint
             )
@@ -1295,7 +1339,7 @@ class PersonalSessionRuntime:
                 self.active_turn_id = None
                 self.active_actor_id = None
                 self._active_turn_context = None
-                self.turn_lock.release()
+                await self.turn_lock.release()
             if capture is not None:
                 await self.follow_ups.finalize(
                     capture,
@@ -1632,6 +1676,35 @@ class PersonalRuntimeManager:
         finally:
             self._settle(reservation)
 
+    async def submit_delayed_plugin_event(
+        self,
+        event: RuntimeObservationEvent,
+        config_id: str,
+        plugin_context: Any,
+        runtime_config: dict,
+        handler: Callable[
+            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
+        ],
+        *,
+        profile: str,
+    ) -> Any:
+        """Submit a low-priority T2 whose deadline starts after admission."""
+        if profile not in {
+            "delayed_plugin_expression",
+            "delayed_plugin_direct",
+        }:
+            raise ValueError(f"Unsupported delayed plugin profile: {profile}")
+        event.set_extra("_personal_runtime_submission_kind", profile)
+        event.set_extra("_personal_runtime_delayed_admission", True)
+        event.set_extra("_personal_runtime_deadline_after_admission", True)
+        return await self.submit_runtime_observation_event(
+            event,
+            config_id,
+            plugin_context,
+            runtime_config,
+            handler,
+        )
+
     async def dispatch_proactive_message(
         self,
         *,
@@ -1643,6 +1716,24 @@ class PersonalRuntimeManager:
         message: Any,
         finalize: bool = True,
     ) -> bool:
+        plugin_branch_event = get_active_plugin_branch_event()
+        if (
+            plugin_branch_event is not None
+            and plugin_branch_event.unified_msg_origin == str(session)
+        ):
+            controller = plugin_branch_event.get_extra(
+                "_interaction_output_controller"
+            )
+            capture_plugin_output = getattr(controller, "capture_plugin_output", None)
+            if callable(capture_plugin_output):
+                await capture_plugin_output(
+                    message,
+                    plugin_branch_event,
+                    mode="direct",
+                    finalize=finalize,
+                )
+                return True
+
         active_turn = _ACTIVE_PERSONAL_TURN.get()
         if (
             active_turn is not None

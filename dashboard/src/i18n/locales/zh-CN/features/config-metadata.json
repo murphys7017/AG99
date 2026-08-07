@@ -1042,6 +1042,18 @@
         "enabled": {
           "description": "启用交互中间件"
         },
+        "turn_timeout": {
+          "description": "单轮总超时秒数",
+          "hint": "从进入 Personal Runtime 排队开始计时，Router、Planner、Persona、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。"
+        },
+        "parallel_plugin_runtime_enabled": {
+          "description": "启用插件三线并行运行时",
+          "hint": "关闭时，官方消息 Handler 在 Personal/Router 之前按旧串行路径执行。开启后，合格的普通对话统一由 Coordinator 同时启动 Personal/Router；若存在 activated Handlers，它们整体进入同一 Plugin Job。这不是按插件开关，真实日志验收完成前保持关闭。"
+        },
+        "plugin_parallel_window_seconds": {
+          "description": "插件当前轮仲裁窗口秒数",
+          "hint": "从 Personal、Router、Plugin Job 的共同 t0 开始计时。窗口到期只让当前轮停止等待插件，不取消后台插件；Core 等待插件作出决定，不等待插件完整执行。"
+        },
         "plugin_runtime_targets": {
           "description": "插件对话钩子生效链路",
           "hint": "只控制插件对模型请求、响应等环节的增强（LLM 生命周期 Hook），不影响命令、消息 Handler、事件监听器或模型可调用工具；配置优先于插件声明，未声明时默认在人格表达链路生效。"

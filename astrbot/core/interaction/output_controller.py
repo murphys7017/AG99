@@ -24,6 +24,7 @@ from astrbot.core.voice import (
     synthesize_text,
 )
 
+from .assistant_artifacts import serialize_assistant_message_chain
 from .config import load_interaction_agent_config
 from .contributors import (
     InteractionOutputDraft,
@@ -65,12 +66,14 @@ from .turn_state import (
     mark_interaction_turn_cancelled,
     mark_interaction_turn_core_streaming_result_consumed,
     mark_interaction_turn_finalization_pending,
+    mark_interaction_turn_personal_emitted,
     mark_interaction_turn_stream_interjection_emitted,
     next_interaction_turn_output_segment_id,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
     record_interaction_turn_stream_observation_failure,
+    record_interaction_turn_visible_message_fingerprint,
     remove_interaction_turn_stream_observation_task,
     reserve_interaction_turn_final_output,
     set_interaction_turn_core_streaming_active,
@@ -80,12 +83,16 @@ from .turn_state import (
     update_interaction_turn_stream_buffer,
 )
 from .types import InteractionAgentConfig, InteractionRouteMode
+from .visible_message_fingerprint import fingerprint_visible_message
 
 PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY = (
     "_interaction_plugin_output_transaction_active"
 )
 PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY = (
     "_interaction_plugin_output_transaction_start"
+)
+PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY = (
+    "_interaction_plugin_output_transaction_assistant_artifacts"
 )
 
 
@@ -457,6 +464,7 @@ class InteractionOutputController:
         *,
         mode: str = PluginOutputMode.DIRECT.value,
         finalize: bool = True,
+        platform_extras: dict[str, Any] | None = None,
     ) -> None:
         """Entry point for plugin-origin output through the Output Runtime.
 
@@ -502,6 +510,12 @@ class InteractionOutputController:
         deferred_by_transaction = finalize and self._begin_plugin_output_transaction(
             event
         )
+        if finalize and resolved_kind == "plugin_direct":
+            self._record_plugin_assistant_artifacts(
+                event,
+                message,
+                deferred_by_transaction=deferred_by_transaction,
+            )
 
         (
             message,
@@ -517,6 +531,7 @@ class InteractionOutputController:
             event,
             message,
             message_kind=resolved_kind,
+            platform_extras=platform_extras,
             output_segment_id=message_id,
             allow_segmented_reply=True,
             semantic_text=semantic_text,
@@ -645,25 +660,38 @@ class InteractionOutputController:
         """Commit pending plugin output only when the handler owns the final reply."""
         active = bool(event.get_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY))
         start = event.get_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY)
+        pending_artifacts = event.get_extra(
+            PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY,
+            [],
+        )
+        if not isinstance(pending_artifacts, list):
+            pending_artifacts = []
         event.set_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY, False)
         event.set_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY, None)
+        event.set_extra(PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY, None)
         if not active or delegated_to_core or not isinstance(start, int):
             return
 
+        if pending_artifacts:
+            self._append_assistant_artifacts(event, pending_artifacts)
         turn_state = get_interaction_turn_state(event)
-        if turn_state is None or start >= len(turn_state.visible_outputs):
+        has_visible_outputs = (
+            turn_state is not None and start < len(turn_state.visible_outputs)
+        )
+        if not has_visible_outputs and not pending_artifacts:
             return
 
-        final_index = len(turn_state.visible_outputs) - 1
-        for index in range(start, len(turn_state.visible_outputs)):
-            memory_relevant = index == final_index
-            turn_state.visible_outputs[index]["memory_relevant"] = memory_relevant
-            if index < len(turn_state.utterances):
-                turn_state.utterances[index].memory_relevant = memory_relevant
+        if has_visible_outputs and turn_state is not None:
+            final_index = len(turn_state.visible_outputs) - 1
+            for index in range(start, len(turn_state.visible_outputs)):
+                memory_relevant = index == final_index
+                turn_state.visible_outputs[index]["memory_relevant"] = memory_relevant
+                if index < len(turn_state.utterances):
+                    turn_state.utterances[index].memory_relevant = memory_relevant
 
-        outputs = [dict(output) for output in turn_state.visible_outputs]
-        event.set_extra("_visible_turn_outputs", outputs)
-        event.set_extra("_postprocess_visible_outputs", outputs)
+            outputs = [dict(output) for output in turn_state.visible_outputs]
+            event.set_extra("_visible_turn_outputs", outputs)
+            event.set_extra("_postprocess_visible_outputs", outputs)
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
 
@@ -677,6 +705,43 @@ class InteractionOutputController:
             start = len(turn_state.visible_outputs) if turn_state is not None else 0
             event.set_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY, start)
         return True
+
+    @staticmethod
+    def _record_plugin_assistant_artifacts(
+        event: AstrMessageEvent,
+        message: MessageChain,
+        *,
+        deferred_by_transaction: bool,
+    ) -> None:
+        if not any(not isinstance(component, Plain) for component in message.chain):
+            return
+        artifacts = serialize_assistant_message_chain(message)
+        if deferred_by_transaction:
+            pending = event.get_extra(
+                PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY,
+                [],
+            )
+            if not isinstance(pending, list):
+                pending = []
+            event.set_extra(
+                PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY,
+                [*pending, *artifacts],
+            )
+            return
+        InteractionOutputController._append_assistant_artifacts(event, artifacts)
+
+    @staticmethod
+    def _append_assistant_artifacts(
+        event: AstrMessageEvent,
+        artifacts: list[dict[str, Any]],
+    ) -> None:
+        existing = event.get_extra("_interaction_assistant_artifacts", [])
+        if not isinstance(existing, list):
+            existing = []
+        event.set_extra(
+            "_interaction_assistant_artifacts",
+            [*existing, *artifacts],
+        )
 
     async def capture_visible_completion(
         self,
@@ -899,19 +964,26 @@ class InteractionOutputController:
     def _materialize_finalized_turn(event: AstrMessageEvent) -> None:
         turn_id = str(event.get_extra("_turn_id", "") or "").strip()
         visible_outputs = get_interaction_turn_visible_outputs(event)
+        assistant_artifacts = event.get_extra(
+            "_interaction_assistant_artifacts",
+            [],
+        )
+        if not isinstance(assistant_artifacts, list):
+            assistant_artifacts = []
         turn_state = get_interaction_turn_state(event)
         canonical_reply = build_interaction_turn_reply(
             visible_outputs,
             turn_id=turn_id,
             utterances=turn_state.utterances if turn_state is not None else None,
         )
-        if turn_id and canonical_reply:
+        if turn_id and (canonical_reply or assistant_artifacts):
             set_interaction_turn_finalized_material(
                 event,
                 {
                     "turn_id": turn_id,
                     "user_text": (event.message_str or "").strip(),
                     "assistant_text": canonical_reply,
+                    "assistant_artifacts": list(assistant_artifacts),
                     "visible_outputs": visible_outputs,
                     "history_source": "interaction.turn.material",
                 },
@@ -1762,6 +1834,9 @@ class InteractionOutputController:
         result_contribution: InteractionResultContribution | None = None,
     ) -> dict[str, Any]:
         extras: dict[str, Any] = {}
+        delivery_metadata = event.get_extra("_interaction_delivery_metadata")
+        if isinstance(delivery_metadata, Mapping):
+            extras.update(dict(delivery_metadata))
         if result_contribution is not None:
             extras.update(result_contribution.platform_extras)
             if result_contribution.client_objects:
@@ -2238,6 +2313,8 @@ class InteractionOutputController:
                 platform_extras=output_extras,
                 record_send_operation=record_send_operation,
             )
+            if message_kind == "immediate_reply":
+                mark_interaction_turn_personal_emitted(event)
             visible_message_id = str(output_extras.get("visible_message_id", "") or "")
             if visible_message_id:
                 delivered_message_ids.append(visible_message_id)
@@ -2258,6 +2335,10 @@ class InteractionOutputController:
             raise RuntimeError(
                 f"Interaction output was not delivered: {message_kind}"
             )
+        record_interaction_turn_visible_message_fingerprint(
+            event,
+            fingerprint_visible_message(message),
+        )
         return delivered_message_ids
 
     async def _notify_lifecycle(
@@ -2296,13 +2377,17 @@ class InteractionOutputController:
         metadata: dict[str, Any] | None = None,
         memory_relevant: bool = True,
     ) -> None:
+        resolved_metadata = dict(metadata or {})
+        delivery_metadata = event.get_extra("_interaction_delivery_metadata")
+        if isinstance(delivery_metadata, Mapping):
+            resolved_metadata["delivery_metadata"] = dict(delivery_metadata)
         append_interaction_turn_visible_output(
             event,
             message_kind=message_kind,
             text=text,
             message_id=message_id,
             delivered_message_ids=delivered_message_ids,
-            metadata=metadata,
+            metadata=resolved_metadata,
             memory_relevant=memory_relevant,
         )
 

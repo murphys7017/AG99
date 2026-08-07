@@ -38,7 +38,9 @@ middleware 的职责是组合这些服务，并在一个 interaction turn 内形
 ```jsonc
 "interaction_middleware": {
   "enabled": true,
-  "turn_timeout": 120.0
+  "turn_timeout": 120.0,
+  "parallel_plugin_runtime_enabled": false,
+  "plugin_parallel_window_seconds": 3.0
 }
 ```
 
@@ -48,6 +50,20 @@ Runtime binding、follow-up 判定、session queue、Router、Planner、Persona�
 中的较小值。总时限耗尽记录 `turn_deadline_exhausted`，取消并等待 turn-owned 子任务，
 然后通过 Output Controller 交付 Persona 自定义错误文案或统一降级文案。每轮结束的
 `DIAG interaction.deadline` 会列出 stage 分配、耗时、状态和 `turn_limited`。
+
+`parallel_plugin_runtime_enabled` 是整条 Official Plugin Job 新路径的全局开关，不是 per-plugin
+开关。统一 Handler 执行器、branch event、PluginExecutionRuntime、InteractionTurnCoordinator、
+Core Gate、EXPIRED 脱离和低优先级 T2 已接入生产 ProcessStage，但仍保持 `false` 等待真实日志与
+启用前停止线验收；开启后，`plugin_parallel_window_seconds` 从 Personal、Router、Plugin Job 的
+共同 `t0` 计算，只结束 T1 对插件决定的等待，不取消 Runtime-owned Job。
+裸 `FAILED` 只表示 Plugin Job 在取得处理权前的运行时故障，按 fail-open 继续 Router/Personal；
+官方 Handler 自身异常仍沿用错误产物与 stop 语义。direct/media T1 和 T2 共用 assistant artifact
+历史序列化，T2 没有可固定父 conversation 时不会新建历史会话。
+
+三线诊断通过 `DIAG interaction.parallel_turn` 的 `control_resolved`、`t1_settled` 和
+`plugin_completed` 三个阶段还原同一 turn；`DIAG plugin.handler_invocation`、
+`DIAG plugin.delayed_delivery` 和 `DIAG plugin.runtime` 分别解释 Handler 产物、T2 投递与后台 Job
+存活状态。Personal 的 `emitted_at` 在平台发送成功后记录，不以模型返回或发送意图代替。
 
 ## 插件运行目标
 

@@ -1,5 +1,6 @@
 import asyncio
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -49,7 +50,17 @@ from astrbot.core.interaction.personal_runtime import (
 )
 from astrbot.core.interaction.personal_state import PersonalDeliveryStatus
 from astrbot.core.interaction.personal_state_repository import PersonalStateRepository
+from astrbot.core.interaction.plugin_execution_runtime import (
+    PluginExecutionRuntime,
+    activate_plugin_branch_event,
+)
+from astrbot.core.interaction.plugin_execution_types import (
+    PluginArtifactKind,
+    PluginBranchResult,
+    PluginGateResolution,
+)
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
+from astrbot.core.interaction.turn_coordinator import InteractionTurnCoordinator
 from astrbot.core.interaction.turn_state import (
     InteractionFinalOutputStatus,
     append_interaction_turn_visible_output,
@@ -66,6 +77,13 @@ from astrbot.core.interaction.types import (
 )
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.pipeline.process_stage.method.star_request import (
+    StarRequestSubStage,
+)
+from astrbot.core.pipeline.process_stage.plugin_branch import create_plugin_branch_event
+from astrbot.core.pipeline.process_stage.plugin_handler_executor import (
+    PluginHandlerExecutor,
+)
 from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.scheduler import PipelineScheduler
 from astrbot.core.pipeline.waking_check.stage import WakingCheckStage
@@ -74,7 +92,10 @@ from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
+from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
+from astrbot.core.star.star import StarMetadata, star_map
+from astrbot.core.star.star_handler import EventType, StarHandlerMetadata
 
 
 class _Platform:
@@ -393,6 +414,38 @@ async def test_context_send_message_keeps_proactive_message_boundary():
 
     assert await context.send_message(session, message)
     assert platform.sent == [(session, message)]
+
+
+@pytest.mark.asyncio
+async def test_context_send_message_captures_same_session_plugin_media():
+    metadata = _metadata()
+    platform = _RecordingPlatform(metadata)
+    context = _context_for_runtime(platform)
+    manager = PersonalRuntimeManager()
+
+    async def dispatcher(session, message, finalize):
+        return await manager.dispatch_proactive_message(
+            context=context,
+            middleware=SimpleNamespace(),
+            config_id="default",
+            runtime_config={},
+            session=session,
+            message=message,
+            finalize=finalize,
+        )
+
+    context.set_proactive_message_dispatcher(dispatcher)
+    session = MessageSession("demo", MessageType.FRIEND_MESSAGE, "target")
+    event = _DirectEvent(metadata)
+    branch, result, _sink = create_plugin_branch_event(event)
+    message = MessageChain([Image.fromURL("https://example.com/result.png")])
+
+    with activate_plugin_branch_event(branch):
+        assert await context.send_message(session, message)
+
+    assert platform.sent == []
+    assert len(result.output_artifacts) == 1
+    assert result.output_artifacts[0].message.chain[0].url == message.chain[0].url
 
 
 @pytest.mark.asyncio
@@ -1422,7 +1475,10 @@ async def test_model_continuation_preserves_handler_takeover_before_route(
         "plugin_set": ["*"],
         "platform_settings": {},
         "provider_settings": {"enable": True},
-        "interaction_middleware": {"enabled": True},
+        "interaction_middleware": {
+            "enabled": True,
+            "parallel_plugin_runtime_enabled": True,
+        },
     }
     handler_lookup = Mock(return_value=[])
     monkeypatch.setattr(
@@ -1493,6 +1549,12 @@ async def test_model_continuation_preserves_handler_takeover_before_route(
     process.config = runtime_config
     process.plugin_manager = SimpleNamespace(context=runtime_context)
     process.personal_runtime_manager = manager
+    plugin_runtime = PluginExecutionRuntime()
+    process.interaction_turn_coordinator = InteractionTurnCoordinator(
+        plugin_runtime
+    )
+    process.plugin_artifact_delivery = object()
+    process.delayed_plugin_delivery = object()
     process.agent_sub_stage = NeverAgent()
     process.star_request_sub_stage = SimpleNamespace()
 
@@ -1504,7 +1566,11 @@ async def test_model_continuation_preserves_handler_takeover_before_route(
     assert process.agent_sub_stage.called is False
     assert event.sent == []
     assert event.is_stopped()
+    assert event.get_extra("_interaction_plugin_gate_resolution") == "passed"
+    assert event.get_extra("_interaction_core_start_delay_due_to_plugin_ms") == 0
+    assert plugin_runtime.snapshot_diagnostics().active_plugin_job_count == 0
     assert manager.snapshot_diagnostics().sessions[0].state.material_revision == 0
+    await plugin_runtime.shutdown()
     await manager.shutdown()
 
 @pytest.mark.asyncio
@@ -1583,6 +1649,185 @@ async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypa
     assert process.agent_sub_stage.called is False
     assert event.sent == []
     assert event.is_stopped()
+
+
+@pytest.mark.asyncio
+async def test_process_stage_resumes_plugin_after_each_provider_request():
+    metadata = _metadata()
+    event = _DirectEvent(metadata)
+    event.set_extra("activated_handlers", [object()])
+    runtime_config = {
+        "provider_settings": {"enable": True},
+        "interaction_middleware": {"enabled": True},
+    }
+    output_controller = InteractionOutputController()
+    output_controller.finalize_plugin_output_transaction = AsyncMock()
+    middleware = InteractionMiddleware(
+        runtime_config,
+        output_controller,
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    middleware.handle_pipeline_event = AsyncMock()
+    resumed: list[str] = []
+    provider_prompts: list[str] = []
+
+    class MultiRequestHandlerStage:
+        async def process(self, _event):
+            yield ProviderRequest(prompt="first")
+            resumed.append("after-first")
+            yield ProviderRequest(prompt="second")
+            resumed.append("after-second")
+
+    class RecordingAgentStage:
+        async def process(self, agent_event):
+            request = agent_event.get_extra("provider_request")
+            provider_prompts.append(request.prompt)
+            yield
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="default",
+        interaction_middleware=middleware,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(
+        context=SimpleNamespace(get_config=lambda **_kwargs: runtime_config)
+    )
+    process.personal_runtime_manager = None
+    process.agent_sub_stage = RecordingAgentStage()
+    process.star_request_sub_stage = MultiRequestHandlerStage()
+
+    async for _ in process.process(event):
+        pass
+
+    assert provider_prompts == ["first", "second"]
+    assert resumed == ["after-first", "after-second"]
+
+
+@pytest.mark.asyncio
+async def test_late_provider_request_closes_only_its_handler(monkeypatch):
+    event = _DirectEvent(_metadata())
+    order: list[str] = []
+
+    async def late_handler(_event):
+        try:
+            order.append("late-started")
+            yield ProviderRequest(prompt="late")
+            order.append("late-resumed")
+        finally:
+            order.append("late-closed")
+
+    async def later_handler(_event):
+        order.append("later-started")
+        yield
+
+    handlers = [
+        StarHandlerMetadata(
+            event_type=EventType.AdapterMessageEvent,
+            handler_full_name="test_late_handler",
+            handler_name="late_handler",
+            handler_module_path="test.late_plugin",
+            handler=late_handler,
+            event_filters=[],
+        ),
+        StarHandlerMetadata(
+            event_type=EventType.AdapterMessageEvent,
+            handler_full_name="test_later_handler",
+            handler_name="later_handler",
+            handler_module_path="test.later_plugin",
+            handler=later_handler,
+            event_filters=[],
+        ),
+    ]
+    monkeypatch.setitem(
+        star_map,
+        "test.late_plugin",
+        StarMetadata(name="late-plugin"),
+    )
+    monkeypatch.setitem(
+        star_map,
+        "test.later_plugin",
+        StarMetadata(name="later-plugin"),
+    )
+    event.set_extra("activated_handlers", handlers)
+    event.set_extra("handlers_parsed_params", {})
+    result = PluginBranchResult()
+    executor = PluginHandlerExecutor(StarRequestSubStage())
+
+    source = executor.process(
+        event,
+        output_controller=None,
+        submission=None,
+        run_agent_turn=None,
+        result=result,
+        publish_gate=lambda _resolution: PluginGateResolution.EXPIRED,
+    )
+    async for _ in source:
+        pass
+
+    assert order == ["late-started", "late-closed", "later-started"]
+    assert result.ignored_provider_requests_after_detach == 1
+    assert result.provider_executions == 0
+
+
+@pytest.mark.asyncio
+async def test_plugin_branch_isolates_input_state_and_visible_output():
+    event = _DirectEvent(_metadata())
+    event.set_extra("shared_fact", "kept")
+    event.set_extra("shared_container", {"items": ["main"]})
+    event.set_extra("provider_request", ProviderRequest(prompt="main"))
+
+    branch, result, _sink = create_plugin_branch_event(event)
+
+    assert type(branch) is type(event)
+    assert branch.message_obj.raw_message is event.message_obj.raw_message
+    assert branch.get_extra("shared_fact") == "kept"
+    assert branch.get_extra("provider_request") is None
+
+    branch.message_str = "changed"
+    branch.message_obj.message[0].text = "branch text"
+    branch.message_obj.sender.nickname = "Branch User"
+    branch.get_extra("shared_container")["items"].append("branch")
+    branch.set_extra("branch_only", True)
+    branch.stop_event()
+    await branch.send(MessageChain([Plain("direct branch output")]))
+    await branch.send_persona(MessageChain([Plain("semantic branch output")]))
+
+    assert event.message_str == "hello"
+    assert event.message_obj.message[0].text == "hello"
+    assert event.message_obj.sender.nickname == "User"
+    assert event.get_extra("shared_container") == {"items": ["main"]}
+    assert event.get_extra("branch_only") is None
+    assert not event.is_stopped()
+    assert event.sent == []
+    assert [artifact.kind for artifact in result.output_artifacts] == [
+        PluginArtifactKind.DIRECT,
+        PluginArtifactKind.SEMANTIC,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_plugin_branch_owns_temporary_media_until_delivery_finishes(tmp_path):
+    source = tmp_path / "input.png"
+    source.write_bytes(b"plugin-media")
+    event = _DirectEvent(_metadata())
+    event.message_obj.message.append(Image.fromFileSystem(str(source)))
+    event.track_temporary_local_file(str(source))
+
+    branch, result, _sink = create_plugin_branch_event(event)
+    await result.media_lease.materialize_inputs()
+    branch_image = branch.message_obj.message[-1]
+    branch_path = await branch_image.convert_to_file_path()
+
+    event.cleanup_temporary_local_files()
+    assert not source.exists()
+    assert branch_path != str(source)
+    assert Path(branch_path).read_bytes() == b"plugin-media"
+
+    await branch.send(MessageChain([branch_image]))
+    result.cleanup_media()
+    assert not Path(branch_path).exists()
 
 
 @pytest.mark.asyncio

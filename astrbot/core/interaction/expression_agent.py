@@ -58,6 +58,7 @@ from .collectors import PersonaVisibleReplyCollector
 from .context_builder import (
     build_prompt_render_provider_request,
     get_or_build_interaction_context_material,
+    get_or_build_interaction_persona_context_pack,
 )
 from .effects import (
     PersonaEffectCall,
@@ -1063,6 +1064,13 @@ class InteractionExpressionAgent:
             event,
             material.persona_payload.get("persona_id", ""),
         )
+        persona_context_pack = await get_or_build_interaction_persona_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            interaction_config=interaction_config,
+            build_config=build_config,
+            material=material,
+        )
         provider_request = build_prompt_render_provider_request(event, provider)
         expression_pack = await PromptContextBuilder(
             event,
@@ -1072,7 +1080,7 @@ class InteractionExpressionAgent:
             provider_request=provider_request,
             collectors=[PersonaVisibleReplyCollector(req)],
             include_prompt_extensions=False,
-            base=material.prompt_context_pack,
+            base=persona_context_pack,
             scope="persona_expression",
         )
         reasoning_marker = resolve_deepseek_first_turn_reasoning_marker(
@@ -1120,7 +1128,7 @@ class InteractionExpressionAgent:
                 event.session_id,
                 _describe_expression_request(req),
                 _resolve_provider_model(provider),
-        )
+            )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
         if req.avoid_previous_reply:
             previous_expression_fingerprint = _latest_assistant_expression_fingerprint(
@@ -1218,12 +1226,8 @@ def _log_persona_prompt_size_diagnostics(
         context_budgets["tool_schema"] = {
             "original_amount": len(effective_tool_schema),
             "retained_amount": len(effective_tool_schema),
-            "original_estimated_tokens": math.ceil(
-                section_sizes["tool_schema"] / 4
-            ),
-            "retained_estimated_tokens": math.ceil(
-                section_sizes["tool_schema"] / 4
-            ),
+            "original_estimated_tokens": math.ceil(section_sizes["tool_schema"] / 4),
+            "retained_estimated_tokens": math.ceil(section_sizes["tool_schema"] / 4),
             "limit_amount": None,
             "limit_estimated_tokens": None,
             "truncated": False,
@@ -1240,7 +1244,10 @@ def _log_persona_prompt_size_diagnostics(
         math.ceil(total_chars / 4),
         section_sizes,
         len(effective_tool_schema),
-        [*toolset.names(), *([compiled_contract.tool_name] if terminal_tool_schema else [])],
+        [
+            *toolset.names(),
+            *([compiled_contract.tool_name] if terminal_tool_schema else []),
+        ],
         dict(sorted(slot_sizes.items(), key=lambda item: item[1], reverse=True)),
     )
 

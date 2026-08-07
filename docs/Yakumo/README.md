@@ -21,7 +21,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 
 ## 当前稳定边界
 
-- Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Router、Planner、Personal Policy、Persona 和 Core 不再各自采集或拼接 Prompt。
+- Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Interaction 先形成 canonical base facts，再后台预取 Persona/Core 共用的 plugin enrichment。Persona 只消费已就绪结果，Router 与 Planner 不等待普通插件扩展，Core 等待并复用同一 task。
 - Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；第三方 Backend 尚未接入这一边界。
 - Personal Runtime 在插件 Handler 前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。
   reservation 同时启动一个 `TurnDeadlineBudget`；binding、queue、Router、Planner、Persona、
@@ -94,6 +94,7 @@ Collector 负责收集事实，Projection 决定 Router、Planner、Personal Pol
 - `dev/persona-system-final-goal.md`
 - `dev/autonomous-persona-runtime-initial-plan.md`
 - `dev/runtime-function-unification-plan.md`
+- `dev/parallel-plugin-runtime-plan.md`
 - `dev/execution-backend-preparation-plan.md`
 - `prompt-development-plan.md`
 - `dev/cost-context-runtime-plan.md`

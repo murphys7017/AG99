@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterable
 from copy import copy, deepcopy
 from typing import Any
@@ -103,6 +104,7 @@ async def build_interaction_context_pack(
         provider_request=event.get_extra("provider_request"),
         collectors=interaction_base_collectors(),
         include_prompt_extensions=True,
+        prompt_extension_collector_scope="control_plane",
         scope="interaction_base",
     )
     return await builder.build(
@@ -185,6 +187,181 @@ async def get_or_build_interaction_context_material(
     )
 
 
+async def get_or_build_interaction_persona_context_pack(
+    *,
+    event,
+    plugin_context: Context,
+    interaction_config: InteractionAgentConfig,
+    build_config: InteractionPromptBuildConfig,
+    material: InteractionContextMaterial | None = None,
+) -> ContextPack:
+    material = material or await get_or_build_interaction_context_material(
+        event=event,
+        plugin_context=plugin_context,
+        interaction_config=interaction_config,
+        build_config=build_config,
+    )
+    base_context_pack = material.prompt_context_pack
+    if base_context_pack is None:
+        raise RuntimeError("Interaction base context pack is unavailable")
+
+    cached = material.target_context_packs.get("plugin")
+    if cached is not None:
+        _log_persona_context_selection(
+            event,
+            plugin_status="ready",
+            selected_context="plugin",
+        )
+        return cached
+
+    build_task = material.target_context_tasks.get("plugin")
+    if build_task is None and get_interaction_turn_state(event) is None:
+        _log_persona_context_selection(
+            event,
+            plugin_status="unowned",
+            selected_context="base_fallback",
+        )
+        return base_context_pack
+
+    build_task = _ensure_interaction_plugin_context_pack_task(
+        event=event,
+        plugin_context=plugin_context,
+        build_config=build_config,
+        material=material,
+    )
+    if not build_task.done():
+        _log_persona_context_selection(
+            event,
+            plugin_status="pending",
+            selected_context="base_fallback",
+        )
+        return base_context_pack
+    if build_task.cancelled():
+        _log_persona_context_selection(
+            event,
+            plugin_status="cancelled",
+            selected_context="base_fallback",
+        )
+        return base_context_pack
+
+    exception = build_task.exception()
+    if exception is not None:
+        _log_persona_context_selection(
+            event,
+            plugin_status="failed",
+            selected_context="base_fallback",
+            error_type=type(exception).__name__,
+        )
+        return base_context_pack
+
+    _log_persona_context_selection(
+        event,
+        plugin_status="ready",
+        selected_context="plugin",
+    )
+    return build_task.result()
+
+
+async def get_or_build_interaction_core_context_pack(
+    *,
+    event,
+    plugin_context: Context,
+    build_config: object,
+    material: InteractionContextMaterial,
+) -> ContextPack:
+    return await _get_or_build_interaction_plugin_context_pack(
+        event=event,
+        plugin_context=plugin_context,
+        build_config=build_config,
+        material=material,
+    )
+
+
+async def _get_or_build_interaction_plugin_context_pack(
+    *,
+    event,
+    plugin_context: Context,
+    build_config: object,
+    material: InteractionContextMaterial,
+) -> ContextPack:
+    cached = material.target_context_packs.get("plugin")
+    if cached is not None:
+        return cached
+
+    build_task = material.target_context_tasks.get("plugin")
+    if build_task is None and get_interaction_turn_state(event) is None:
+        return await _build_interaction_plugin_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=build_config,
+            material=material,
+        )
+
+    build_task = _ensure_interaction_plugin_context_pack_task(
+        event=event,
+        plugin_context=plugin_context,
+        build_config=build_config,
+        material=material,
+    )
+    return await asyncio.shield(build_task)
+
+
+def _ensure_interaction_plugin_context_pack_task(
+    *,
+    event,
+    plugin_context: Context,
+    build_config: object,
+    material: InteractionContextMaterial,
+) -> asyncio.Task[ContextPack]:
+    build_task = material.target_context_tasks.get("plugin")
+    if build_task is None:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None:
+            raise RuntimeError(
+                "Interaction plugin context prefetch requires a turn execution scope"
+            )
+        awaitable = _build_interaction_plugin_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=build_config,
+            material=material,
+        )
+        build_task = turn_state.execution_scope.create_task(
+            awaitable,
+            role="context_plugin",
+            name=(
+                f"interaction_context_plugin_"
+                f"{event.get_platform_id()}_{turn_state.turn_id}"
+            ),
+        )
+        material.target_context_tasks["plugin"] = build_task
+        build_task.add_done_callback(
+            lambda done_task: _finish_context_target_task(
+                material,
+                "plugin",
+                done_task,
+            )
+        )
+    return build_task
+
+
+def _log_persona_context_selection(
+    event,
+    *,
+    plugin_status: str,
+    selected_context: str,
+    error_type: str = "",
+) -> None:
+    logger.info(
+        "DIAG interaction.persona_context: platform_id=%s session_id=%s plugin_status=%s selected_context=%s error_type=%s",
+        event.get_platform_id(),
+        event.session_id,
+        plugin_status,
+        selected_context,
+        error_type,
+    )
+
+
 def _finish_context_material_task(
     turn_state: InteractionTurnState,
     task: asyncio.Task[InteractionContextMaterial],
@@ -196,6 +373,20 @@ def _finish_context_material_task(
     task.exception()
 
 
+def _finish_context_target_task(
+    material: InteractionContextMaterial,
+    target: str,
+    task: asyncio.Task[ContextPack],
+) -> None:
+    if task.cancelled():
+        return
+    exception = task.exception()
+    if exception is not None:
+        return
+    if material.target_context_tasks.get(target) is task:
+        material.target_context_tasks.pop(target, None)
+
+
 async def _build_interaction_context_material(
     *,
     event,
@@ -204,6 +395,7 @@ async def _build_interaction_context_material(
     build_config: InteractionPromptBuildConfig,
 ) -> InteractionContextMaterial:
     turn_state = get_interaction_turn_state(event)
+    started_at = time.monotonic()
 
     prompt_context_pack = await build_interaction_context_pack(
         event,
@@ -226,6 +418,36 @@ async def _build_interaction_context_material(
         ),
     )
     _refresh_context_material_view(material, interaction_config)
+    if turn_state is not None:
+        turn_state.context_material = material
+        _ensure_interaction_plugin_context_pack_task(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=build_config,
+            material=material,
+        )
+    logger.info(
+        "DIAG interaction.context_material: platform_id=%s session_id=%s scope=base duration_ms=%.2f slot_count=%s extension_collectors=%s",
+        event.get_platform_id(),
+        event.session_id,
+        (time.monotonic() - started_at) * 1000,
+        len(prompt_context_pack.slots),
+        prompt_context_pack.meta.get("extension_collectors", []),
+    )
+    return material
+
+
+async def _build_interaction_plugin_context_pack(
+    *,
+    event,
+    plugin_context: Context,
+    build_config: object,
+    material: InteractionContextMaterial,
+) -> ContextPack:
+    started_at = time.monotonic()
+    base_extension_collectors = set(
+        material.prompt_context_pack.meta.get("extension_collectors", [])
+    )
     prompt_context_pack = await PromptContextBuilder(
         event,
         plugin_context,
@@ -235,15 +457,29 @@ async def _build_interaction_context_material(
         collectors=[
             InteractionPromptContributorCollector(material.context_snapshot),
         ],
-        include_prompt_extensions=False,
-        base=prompt_context_pack,
-        scope="interaction_contributors",
+        include_prompt_extensions=True,
+        prompt_extension_collector_scope="plugin",
+        base=material.prompt_context_pack,
+        scope="interaction_plugin_context",
     )
-    material.prompt_context_pack = prompt_context_pack
-    material.collected_scopes.add("interaction_contributors")
-    if turn_state is not None:
-        turn_state.context_material = material
-    return material
+    material.target_context_packs["plugin"] = prompt_context_pack
+    plugin_extension_collectors = [
+        collector_name
+        for collector_name in prompt_context_pack.meta.get(
+            "extension_collectors",
+            [],
+        )
+        if collector_name not in base_extension_collectors
+    ]
+    logger.info(
+        "DIAG interaction.context_material: platform_id=%s session_id=%s scope=plugin duration_ms=%.2f slot_count=%s extension_collectors=%s",
+        event.get_platform_id(),
+        event.session_id,
+        (time.monotonic() - started_at) * 1000,
+        len(prompt_context_pack.slots),
+        plugin_extension_collectors,
+    )
+    return prompt_context_pack
 
 
 def _refresh_context_material_view(
@@ -358,34 +594,11 @@ async def collect_interaction_prompt_extensions(
         phase="collect",
     ).copy_read_only()
     contributors = list(plugin_context.list_interaction_prompt_contributors())
-    raw_timeout = (
-        config.get("contributor_timeout", 1.0)
-        if isinstance(config, dict)
-        else getattr(config, "contributor_timeout", 1.0)
-    )
-    try:
-        timeout = max(0.1, float(raw_timeout or 1.0))
-    except (TypeError, ValueError):
-        timeout = 1.0
 
     async def _collect_one(contributor):
         plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
         try:
-            payload = await asyncio.wait_for(
-                contributor.collect(event, plugin_context, view),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            error = f"timeout after {timeout:.2f}s"
-            _record_interaction_prompt_contributor_failure(
-                event,
-                plugin_id=plugin_id,
-                error=error,
-            )
-            return InteractionPromptContributorError(
-                "collector_timeout",
-                f"Interaction prompt contributor timed out: plugin_id={plugin_id} timeout={timeout:.2f}s",
-            )
+            payload = await contributor.collect(event, plugin_context, view)
         except Exception as exc:  # noqa: BLE001
             _record_interaction_prompt_contributor_failure(
                 event,
@@ -417,7 +630,7 @@ async def collect_interaction_prompt_extensions(
     )
     for result in results:
         if isinstance(result, InteractionPromptContributorError):
-            raise result
+            continue
         extensions.extend(result)
 
     extensions.sort(key=lambda item: (item.order, item.plugin_id))

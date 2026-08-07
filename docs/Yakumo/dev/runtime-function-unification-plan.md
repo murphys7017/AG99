@@ -37,9 +37,10 @@ Personal 结果一旦形成就直接进入 Output，只有群聊 Router 的 `sil
 
 ```text
 interaction turn
-  -> shared Context Material single-flight
+  -> canonical base Context Material single-flight
   -> concurrent
        -> Personal
+             -> inspect prefetched plugin enrichment without waiting
              -> resolve personal_expression capabilities once
              -> build one request
              -> run plugin lifecycle once
@@ -199,9 +200,10 @@ Observation、插件候选和 Router `silent` 的影响。日志样本中：
 
 ```text
 official Pipeline / plugin handlers
-  -> build shared Context Material once
+  -> build canonical base Context Material once
   -> start Personal and Router concurrently
        Personal:
+         -> use prefetched plugin enrichment only when already ready
          -> Capability Resolver resolves personal_expression tools once
          -> Prompt projects Persona context
          -> Request Adapter builds one ProviderRequest
@@ -628,8 +630,9 @@ Handler 接管、目标配置和最终输出仲裁。
 实施结果：
 
 1. 普通显式消息和未被 Handler 接管的群聊候选在同一个 `TurnExecutionScope` 中并发启动
-   Personal 与 Router，二者共享一次 Context Material single-flight，但使用各自 target 投影和
-   Provider 调用。
+   Personal 与 Router；二者共享 canonical base Context Material single-flight。base 完成后立即预取
+   Persona/Core 共用的 plugin enrichment single-flight；Persona 不等待，Core 才等待该 task，
+   各分支继续使用独立 target 投影和 Provider 调用。
 2. 官方 Handler 保留关键词、命令、终止和 ProviderRequest 接管语义；未接管的群聊候选进入
    同一并行主链。Router `silent` 在 turn lock 下把 pending Persona 标记为 suppressed 并取消，
    已经 committed / emitted 的表达继续完成。
@@ -648,6 +651,68 @@ Handler 接管、目标配置和最终输出仲裁。
 
 回滚或停止条件：并发分支重新共享可写 ProviderRequest、重复执行工具副作用或产生双 completion。
 应修复 branch-local request 与 output reservation，不能退回 Router-first 串行主链。
+
+### Phase 5B：Personal / Router / Official Plugin 三线并行
+
+状态：最终设计与补充审阅已完成；Phase 5B-1 至 5B-7 已完成默认关闭开关后的生产实现，纯媒体跨路径指纹已补齐，Phase 5B-0 与 5B-8 仍等待真实日志和启用验收。详细方案见
+[`parallel-plugin-runtime-plan.md`](parallel-plugin-runtime-plan.md)。
+
+目标：在官方 Handler Filter discovery 和 Personal Runtime turn admission 完成后，以同一个 `t0`
+同时启动 Personal、Router 和一条按官方顺序执行 activated Handlers 的 Plugin Job。Personal
+结果形成后立即发送；Router 结果与从 `t0` 计算的插件绝对窗口共同决定普通 Core 是否启动。
+Core Gate 等待 Plugin Gate 的解析时间 `plugin_resolved_at`，不等待真实 Job 的完整结束时间。
+首个用户可见 Personal 回复是本阶段最高优先级；目标不是强制插件更快，而是插件 Handler body
+与普通插件 Prompt enrichment 的耗时都不再叠加到该回复路径。
+
+关键边界：
+
+1. 不新增插件 claim、接管模型或 per-plugin timeout。
+2. 先抽取统一 PluginHandlerExecutor，旧串行路径与新并行路径共用 Handler、窗口内
+   ProviderRequest、post-yield 和错误语义。
+3. Plugin Gate 与 Plugin Job 使用独立状态；窗口内第一次 yield ProviderRequest 即解析为
+   DELEGATED。
+4. 真实 Plugin Job 从创建起归 PluginExecutionRuntime，turn 只持有绝对窗口 watcher。
+5. 超过一个全局插件窗口后，当前 turn 停止等待，但不取消插件执行。
+6. detached Job 不能再修改旧 turn；迟到结果通过低优先级后台 T2 交付。
+7. 迟到链路只消费独立系统插件形成的 semantic/direct/media 产物；semantic 经 Personal 表达，
+   direct、命令、权限、协议和媒体结果原样交付。
+8. 两种 T2 都经过 admission、lease、reservation，携带 delayed metadata 并写 assistant-only 历史。
+9. 三条分支不能共享可写 ProviderRequest、result、stop 状态、ContextVar 或输出 reservation。
+10. Interaction 层的 InteractionTurnCoordinator 是三线 task、Plugin watcher 和 Core Gate 的
+    唯一创建者；ProcessStage 只在 admission 后调用它，不持有并行仲裁。
+11. branch 创建时快照 message_str、消息组件和其他 Prompt 可见输入，只读共享平台活对象，
+    不得共享可变 message chain 或 deepcopy 整个 event。
+12. 同一产物由 `plugin_job_id + handler_invocation_id + artifact_sequence` 唯一标识，窗口内和迟到
+    投递不得重复。
+13. 第一实施批次不增加 detached Job 容量拒绝或第二个 TTL，只增加存活数量和最长存活时间诊断。
+14. Plugin Gate 已 EXPIRED 后出现的 ProviderRequest 不执行、不启动 Core、不进入 T2，只记录
+    provider_request_ignored_after_detach 并安全收口。
+15. T2 固定使用 T1 的 parent_conversation_id；reset 后不写入新的 conversation。
+16. direct/media T1 与 T2 共用 assistant artifact history serializer 写入 assistant-only 历史，
+    不伪造文本。
+17. 明确允许 Personal immediate、Core final、非重复插件 T2 三段输出；只用确定性指纹抑制与
+    T1 已发送内容完全等价的迟到产物，不增加语义判断模型。
+18. 目标不支持 proactive message 时丢弃迟到产物并记录
+    delayed_delivery_target_unsupported，不重试或回灌普通事件。
+19. 全局功能开关控制整个新 Plugin Job 路径，不允许 per-plugin 新旧路径混用。
+20. 插件 reload/unload 进入 draining，等待活跃 Job lease 释放后再完成 unbind/purge。
+21. Router 要求 Core 时记录 core_start_delay_due_to_plugin_ms，单独量化插件窗口造成的等待。
+22. 第一条 final 在窗口内立即成为 HANDLED 并只交付当前 artifact 快照；同一官方 Handler 链后续
+    final 在 T1 settled 后进入低优先级 T2，迟到 ProviderRequest 仍不被承认。
+23. 裸 FAILED 只表示 Plugin Job 在取得处理权前的执行器、媒体、branch sink 或 Runtime 故障；
+    它 fail-open 到 Router 和 Personal，不取消 Router、不压制 Personal，也不吞掉 T1。官方
+    Handler 普通异常仍通过现有错误产物与 stop 语义归一为 HANDLED/STOPPED。
+
+验收标准：真实 trace 能证明三个 task 同时启动；Handler body 不阻塞 Personal 首回复；Filter
+discovery 耗时可独立识别；Core 等待 `plugin_resolved_at` 而不是 `plugin_completed_at`；
+窗口从共同 `t0` 计算；窗口内旧插件行为兼容；窗口外状态不污染旧 turn；T2 不抢占用户消息，
+EXPIRED ProviderRequest 不启动 Core；branch 输入快照、全局路径开关、reload draining、目标平台
+能力拒绝、三段输出去重、semantic/direct 双 profile、父对话绑定、assistant-only 历史和
+delivery_key 去重均可由公开行为验证。
+
+回滚或停止条件：无法为旧插件建立 branch-local event 状态，或出现 Handler、ProviderRequest、
+工具副作用、最终输出和 completion 的重复执行；detached Job 被旧 turn 取消；插件 reload 销毁
+仍运行 Handler；T2 抢占用户消息。不得退回 Plugin-first 或 Router-first 串行主链。
 
 ### Phase 6：统一群聊候选与准入
 
@@ -830,6 +895,34 @@ re-read this plan
 - [ ] Phase 5 验收：长请求与后续短消息都受可解释总预算约束。
 - [x] Phase 5A：恢复统一 Router/Persona 并发热路径与群聊 silent 仲裁。
 - [ ] Phase 5A 验收：私聊和群聊候选的 Router/Persona Provider wait 在真实日志中重叠。
+- [x] Phase 5B 设计文档：冻结三线 owner、Gate/Job、branch 快照、Core Gate、后台脱离、T2、
+  reload draining、停止线和完成标准。
+- [ ] Phase 5B-0：全局配置、WebUI、discovery/Handler 诊断已完成；等待真实日志记录
+  Personal/Router/Core 对照基线。
+- [x] Phase 5B-1：抽取统一 PluginHandlerExecutor，旧串行路径保持窗口内 ProviderRequest/post-yield
+  兼容。
+- [x] Phase 5B-2：建立 branch-local event、Prompt 可见输入快照、类型化 PluginBranchResult 和
+  产物分类。
+- [x] Phase 5B-3：建立 PluginExecutionRuntime、Gate/Job 双状态、插件 lease、reload draining 和
+  delivery ledger。
+- [x] Phase 5B-4：InteractionTurnCoordinator、同一 `t0` task owner、绝对窗口 watcher、
+  branch-local ContextVar 和 ProviderRequest rendezvous 已由 ProcessStage 接入生产主链；整条路径
+  仍由默认关闭的全局开关保护。
+- [x] Phase 5B-5：`plugin_resolved_at`、Router/Plugin Gate race、Personal 压制、窗口内 artifact
+  仲裁和统一 Core Gate 已完成生产接线。
+- [x] Phase 5B-6：EXPIRED 后台执行、迟到 stop/result/send 隔离、媒体租约和迟到 ProviderRequest
+  拒绝已完成。
+- [x] Phase 5B-7：低优先级 T2、expression/direct 双 profile、父对话绑定、目标平台能力拒绝、
+  文本、完整组件链与 delivery_key 去重和 artifact 历史已完成；STOPPED 不冻结空快照，未赶上
+  T1 收口的官方 Handler final 同样通过 ledger 进入 T2。
+- [x] Phase 5B-8 实现：聚合 turn 时间线、Handler/T2 细节、后台 Job 指标、WebUI 说明、纯媒体
+  跨路径指纹和开关开启分支的唯一 Coordinator 收敛已完成。
+- [x] Prompt Context 关键路径收口：基础事实与普通插件扩展拆为两个 single-flight pack；Router / Core
+  Planner 只等待 base，Persona 对后台 plugin pack 做 non-blocking best-effort，Core 等待并复用同一
+  task，避免慢 Contributor 污染首回复和控制面延迟。
+- [ ] Phase 5B-8 启用验收：完成真实私聊与目标群日志复核后再启用全局开关。
+- [ ] Phase 5B 验收：Handler body 不阻塞首回复；窗口超时不取消 Job；T2 不污染旧 turn、不抢占
+  用户消息，且同一 delivery_key 不重复投递。
 - [ ] Phase 6：统一群聊候选与准入。
 - [ ] Phase 6 验收：两个目标群的未回复与回复原因可由统一决策解释。
 - [ ] Phase 7：类型化状态与诊断，删除过渡路径。
@@ -844,5 +937,6 @@ re-read this plan
 - [Prompt Development Plan](../prompt-development-plan.md)
 - [Output Contract](output-contract.md)
 - [Interaction Output Plugin Contract](interaction-output-plugin-contract.md)
+- [Personal / Router / Plugin 三线并行设计计划](parallel-plugin-runtime-plan.md)
 - [Personal Runtime 前置主链清理计划](execution-backend-preparation-plan.md)
 - [Input / Core / Output 目标态](input-core-output-target-state.md)

@@ -70,10 +70,12 @@ from .turn_state import (
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
     set_interaction_turn_route_decision,
+    suppress_interaction_turn_pending_persona,
 )
 from .types import (
     CorePlanningAction,
     CorePlanningDecision,
+    InteractionAgentConfig,
     InteractionRouteDecision,
     InteractionRouteMode,
 )
@@ -239,6 +241,38 @@ class InteractionMiddleware:
 
     def is_enabled_for_event(self, event: AstrMessageEvent) -> bool:
         return is_middleware_enabled(self._get_runtime_config(event))
+
+    def is_parallel_plugin_runtime_eligible(
+        self,
+        event: AstrMessageEvent,
+        *,
+        is_group_candidate: bool,
+    ) -> bool:
+        """Keep the experimental three-line path out of protocol turns."""
+        if not self.is_enabled_for_event(event):
+            return False
+        if event.is_stopped() or event._has_send_oper or event.call_llm:
+            return False
+        if self._is_live_mode_event(event):
+            return False
+        if isinstance(event.get_extra("provider_request"), ProviderRequest):
+            return False
+        if self._maybe_prepare_protocol_command_bypass(event) is not None:
+            return False
+        return bool(event.is_at_or_wake_command or is_group_candidate)
+
+    def accept_coordinated_route(
+        self,
+        event: AstrMessageEvent,
+        route: InteractionRouteDecision,
+    ) -> None:
+        """Commit a Router result produced by the shared turn coordinator."""
+        self._record_route_diagnostics(event, route)
+        self.attach_event_context(
+            event,
+            turn_id=str(event.get_extra("_turn_id", "") or ""),
+            route_decision=route,
+        )
 
     @staticmethod
     def _is_live_mode_event(event: AstrMessageEvent) -> bool:
@@ -553,6 +587,8 @@ class InteractionMiddleware:
         event: RuntimeObservationEvent,
         turn: PersonalTurnContext,
         message: MessageChain,
+        *,
+        platform_extras: dict[str, Any] | None = None,
     ) -> None:
         """Deliver an admitted proactive plugin output through the turn runtime."""
         if turn.event is not event or turn.observation is not event.observation:
@@ -575,6 +611,7 @@ class InteractionMiddleware:
                 event,
                 mode="direct",
                 finalize=True,
+                platform_extras=platform_extras,
             )
         except BaseException:
             await finish_interaction_turn_final_output(
@@ -658,65 +695,9 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> None:
         try:
-            runtime_config = self._get_runtime_config(event)
-            self._reject_development_fallback_policy(runtime_config)
-            if isinstance(runtime_config, Mapping):
-                event.set_extra("_astrbot_config", runtime_config)
-            interaction_config = load_interaction_agent_config(runtime_config)
-            turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
-            turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
-            await dispatch_interaction_lifecycle(
-                event,
-                self.plugin_context,
-                InteractionLifecycleStage.RECEIVED,
-            )
-            await self._materialize_inbound_media(event)
-            if isinstance(event.get_extra("provider_request"), ProviderRequest):
-                self.attach_event_context(event, turn_id=turn_state.turn_id)
-                event.set_extra("_interaction_protocol_core_bypass", True)
-                event.set_extra(
-                    "_interaction_protocol_core_bypass_reason",
-                    "explicit_provider_request",
-                )
-                await dispatch_interaction_lifecycle(
-                    event,
-                    self.plugin_context,
-                    InteractionLifecycleStage.DELEGATED,
-                    metadata={
-                        "route_kind": "explicit_provider_request",
-                        "reason": "plugin_handler_requested_llm",
-                    },
-                )
-                self._forward_to_core(event)
+            interaction_config = await self.prepare_routable_pipeline_turn(event)
+            if interaction_config is None:
                 return
-            protocol_reason = None
-            if self._is_live_mode_event(event):
-                protocol_reason = self._prepare_live_mode_protocol_bypass(event)
-            else:
-                protocol_reason = self._maybe_prepare_protocol_command_bypass(event)
-            if protocol_reason is not None:
-                self.attach_event_context(event, turn_id=turn_state.turn_id)
-                event.set_extra("_interaction_protocol_core_bypass", True)
-                event.set_extra(
-                    "_interaction_protocol_core_bypass_reason",
-                    protocol_reason,
-                )
-                await dispatch_interaction_lifecycle(
-                    event,
-                    self.plugin_context,
-                    InteractionLifecycleStage.DELEGATED,
-                    metadata={
-                        "route_kind": "protocol_core_bypass",
-                        "reason": protocol_reason,
-                    },
-                )
-                self._forward_to_core(event)
-                return
-            await dispatch_interaction_lifecycle(
-                event,
-                self.plugin_context,
-                InteractionLifecycleStage.ROUTING,
-            )
             await self._run_personal_reply_with_router_control(
                 event,
                 interaction_config,
@@ -740,6 +721,72 @@ class InteractionMiddleware:
                 metadata={"reason": str(exc)},
             )
             raise
+
+    async def prepare_routable_pipeline_turn(
+        self,
+        event: AstrMessageEvent,
+    ) -> InteractionAgentConfig | None:
+        """Prepare one turn and return config only when Router/Personal should run."""
+        runtime_config = self._get_runtime_config(event)
+        self._reject_development_fallback_policy(runtime_config)
+        if isinstance(runtime_config, Mapping):
+            event.set_extra("_astrbot_config", runtime_config)
+        interaction_config = load_interaction_agent_config(runtime_config)
+        turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
+        turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.RECEIVED,
+        )
+        await self._materialize_inbound_media(event)
+        if isinstance(event.get_extra("provider_request"), ProviderRequest):
+            self.attach_event_context(event, turn_id=turn_state.turn_id)
+            event.set_extra("_interaction_protocol_core_bypass", True)
+            event.set_extra(
+                "_interaction_protocol_core_bypass_reason",
+                "explicit_provider_request",
+            )
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.DELEGATED,
+                metadata={
+                    "route_kind": "explicit_provider_request",
+                    "reason": "plugin_handler_requested_llm",
+                },
+            )
+            self._forward_to_core(event)
+            return None
+        protocol_reason = None
+        if self._is_live_mode_event(event):
+            protocol_reason = self._prepare_live_mode_protocol_bypass(event)
+        else:
+            protocol_reason = self._maybe_prepare_protocol_command_bypass(event)
+        if protocol_reason is not None:
+            self.attach_event_context(event, turn_id=turn_state.turn_id)
+            event.set_extra("_interaction_protocol_core_bypass", True)
+            event.set_extra(
+                "_interaction_protocol_core_bypass_reason",
+                protocol_reason,
+            )
+            await dispatch_interaction_lifecycle(
+                event,
+                self.plugin_context,
+                InteractionLifecycleStage.DELEGATED,
+                metadata={
+                    "route_kind": "protocol_core_bypass",
+                    "reason": protocol_reason,
+                },
+            )
+            self._forward_to_core(event)
+            return None
+        await dispatch_interaction_lifecycle(
+            event,
+            self.plugin_context,
+            InteractionLifecycleStage.ROUTING,
+        )
+        return interaction_config
 
     def _prepare_live_mode_protocol_bypass(
         self,
@@ -772,25 +819,64 @@ class InteractionMiddleware:
     async def _run_personal_reply_with_router_control(
         self,
         event: AstrMessageEvent,
-        interaction_config,
+        interaction_config: InteractionAgentConfig,
     ) -> None:
-        self.attach_event_context(
-            event,
-            turn_id=str(event.get_extra("_turn_id", "") or ""),
-        )
-        turn_state = ensure_interaction_turn_state(event)
+        self.prepare_parallel_turn_control(event)
         persona_task = self._start_speculative_persona_task(
             event,
             interaction_config,
         )
+        turn_state = ensure_interaction_turn_state(event)
         router_task = turn_state.execution_scope.create_task(
-            self._route_interaction(event, interaction_config),
+            self.run_router_task(event, interaction_config),
             role="router",
             name=(
                 f"interaction_router_{event.get_platform_id()}_"
                 f"{turn_state.turn_id}"
             ),
         )
+        route = await self.await_route_with_persona_control(
+            event,
+            persona_task,
+            router_task,
+        )
+        await self.complete_routed_turn(
+            event,
+            interaction_config,
+            persona_task,
+            route,
+        )
+
+    def prepare_parallel_turn_control(self, event: AstrMessageEvent) -> None:
+        self.attach_event_context(
+            event,
+            turn_id=str(event.get_extra("_turn_id", "") or ""),
+        )
+        self._set_speculative_persona_status(
+            event,
+            InteractionSpeculativePersonaStatus.PENDING,
+        )
+
+    async def run_personal_task(
+        self,
+        event: AstrMessageEvent,
+        interaction_config: InteractionAgentConfig,
+    ) -> PersonaExpressionResult | None:
+        return await self._generate_and_emit_persona(event, interaction_config)
+
+    async def run_router_task(
+        self,
+        event: AstrMessageEvent,
+        interaction_config: InteractionAgentConfig,
+    ) -> InteractionRouteDecision:
+        return await self._route_interaction(event, interaction_config)
+
+    async def await_route_with_persona_control(
+        self,
+        event: AstrMessageEvent,
+        persona_task: asyncio.Task[PersonaExpressionResult | None],
+        router_task: asyncio.Task[InteractionRouteDecision],
+    ) -> InteractionRouteDecision:
         try:
             # Personal owns delivery and can emit while this coroutine waits for
             # Router to decide only silence and Core delegation.
@@ -819,6 +905,16 @@ class InteractionMiddleware:
             turn_id=str(event.get_extra("_turn_id", "") or ""),
             route_decision=route,
         )
+        return route
+
+    async def complete_routed_turn(
+        self,
+        event: AstrMessageEvent,
+        interaction_config: InteractionAgentConfig,
+        persona_task: asyncio.Task[PersonaExpressionResult | None],
+        route: InteractionRouteDecision,
+    ) -> None:
+        turn_state = ensure_interaction_turn_state(event)
         if route.route_mode == InteractionRouteMode.SILENT:
             expression = await self._suppress_or_await_speculative_persona(
                 event,
@@ -893,15 +989,11 @@ class InteractionMiddleware:
     def _start_speculative_persona_task(
         self,
         event: AstrMessageEvent,
-        interaction_config,
+        interaction_config: InteractionAgentConfig,
     ) -> asyncio.Task[PersonaExpressionResult | None]:
         turn_state = ensure_interaction_turn_state(event)
-        self._set_speculative_persona_status(
-            event,
-            InteractionSpeculativePersonaStatus.PENDING,
-        )
         return turn_state.execution_scope.create_task(
-            self._generate_and_emit_persona(event, interaction_config),
+            self.run_personal_task(event, interaction_config),
             role="speculative_persona",
             name=(
                 f"interaction_speculative_persona_{event.get_platform_id()}_"
@@ -977,19 +1069,27 @@ class InteractionMiddleware:
         propagate_failure: bool = True,
     ) -> PersonaExpressionResult | None:
         turn_state = ensure_interaction_turn_state(event)
-        should_cancel = False
         async with turn_state.lock:
-            if (
-                turn_state.speculative_persona_status
-                is InteractionSpeculativePersonaStatus.PENDING
-            ):
-                self._set_speculative_persona_status(
-                    event,
-                    InteractionSpeculativePersonaStatus.SUPPRESSED,
-                )
-                should_cancel = not persona_task.done()
-        if should_cancel:
-            persona_task.cancel()
+            status = turn_state.speculative_persona_status
+        if status is InteractionSpeculativePersonaStatus.PENDING:
+            if await suppress_interaction_turn_pending_persona(event, persona_task):
+                return None
+            status = turn_state.speculative_persona_status
+        if status is InteractionSpeculativePersonaStatus.EMITTED:
+            # The visible reply is already committed. Do not wait for trailing
+            # Persona bookkeeping just to complete the control-plane turn.
+            reply = get_interaction_turn_immediate_reply(event)
+            return (
+                PersonaExpressionResult(spoken_reply=reply)
+                if reply
+                else None
+            )
+        if status in {
+            InteractionSpeculativePersonaStatus.NOT_STARTED,
+            InteractionSpeculativePersonaStatus.SUPPRESSED,
+            InteractionSpeculativePersonaStatus.FAILED,
+        }:
+            return None
         result = await asyncio.gather(persona_task, return_exceptions=True)
         value = result[0]
         if isinstance(value, BaseException):
@@ -1571,7 +1671,13 @@ class InteractionMiddleware:
                 utterances=utterances,
             )
         canonical_reply = (canonical_reply or "").strip()
-        if not canonical_reply:
+        assistant_artifacts = event.get_extra(
+            "_interaction_assistant_artifacts",
+            [],
+        )
+        if not isinstance(assistant_artifacts, list):
+            assistant_artifacts = []
+        if not canonical_reply and not assistant_artifacts:
             return None
         is_observation = isinstance(event, RuntimeObservationEvent)
         material = {
@@ -1582,6 +1688,7 @@ class InteractionMiddleware:
                 None if is_observation else build_canonical_user_message(event)
             ),
             "assistant_text": canonical_reply,
+            "assistant_artifacts": list(assistant_artifacts),
             "visible_outputs": outputs,
             "history_source": (
                 "interaction.runtime_observation"
@@ -1593,6 +1700,9 @@ class InteractionMiddleware:
             material["observation_kind"] = event.observation.kind
             material["observation_source"] = event.observation.source
             material["observation_correlation_id"] = event.observation.correlation_id
+        delivery_metadata = event.get_extra("_interaction_delivery_metadata")
+        if isinstance(delivery_metadata, Mapping):
+            material["assistant_metadata"] = dict(delivery_metadata)
         set_interaction_turn_finalized_material(event, material)
         return material
 
@@ -1696,7 +1806,8 @@ class InteractionMiddleware:
             return
 
         canonical_reply = str(material.get("assistant_text", "") or "").strip()
-        if not canonical_reply:
+        assistant_artifacts = material.get("assistant_artifacts", [])
+        if not canonical_reply and not assistant_artifacts:
             self._record_turn_finalization_failure(
                 event,
                 "missing_canonical_reply",

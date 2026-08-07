@@ -1040,6 +1040,18 @@
         "enabled": {
           "description": "Enable Interaction Middleware"
         },
+        "turn_timeout": {
+          "description": "Total Turn Timeout Seconds",
+          "hint": "Timing starts when the turn enters the Personal Runtime queue. Router, Planner, Persona, Core, plugin tools, retries, and fallback share this total budget. The default is 120 seconds and sub-stages do not reset it."
+        },
+        "parallel_plugin_runtime_enabled": {
+          "description": "Enable Parallel Plugin Runtime",
+          "hint": "When disabled, official message handlers run on the legacy serial path before Personal and Router. When enabled, every eligible ordinary turn uses one Coordinator for Personal and Router; activated handlers, when present, enter one Plugin Job started at the same t0. This is a whole-path switch, not a per-plugin setting. Keep it disabled until runtime validation is complete."
+        },
+        "plugin_parallel_window_seconds": {
+          "description": "Plugin Turn Arbitration Window Seconds",
+          "hint": "Measured from the shared t0 of Personal, Router, and the Plugin Job. Expiry only stops the current turn from waiting; it does not cancel the background plugin. Core waits for the plugin decision, not full plugin completion."
+        },
         "plugin_runtime_targets": {
           "description": "Plugin LLM Hook Execution Path",
           "hint": "Controls only LLM lifecycle hooks, not commands, message handlers, event listeners, or FunctionTools. User configuration overrides the plugin declaration; undeclared plugins default to Persona Expression."

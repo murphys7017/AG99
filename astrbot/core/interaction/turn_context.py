@@ -100,7 +100,10 @@ class PlatformTurnContextFactory:
             event,
             turn_id=existing_turn_id or uuid.uuid4().hex,
         )
-        if state.deadline is None:
+        defer_deadline_until_admission = bool(
+            event.get_extra("_personal_runtime_deadline_after_admission", False)
+        )
+        if state.deadline is None and not defer_deadline_until_admission:
             state.deadline = TurnDeadlineBudget.start(
                 load_interaction_agent_config(runtime_config).turn_timeout
             )

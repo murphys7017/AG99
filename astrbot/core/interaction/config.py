@@ -45,6 +45,16 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 120.0,
             ),
         ),
+        parallel_plugin_runtime_enabled=bool(
+            interaction_config.get("parallel_plugin_runtime_enabled", False)
+        ),
+        plugin_parallel_window_seconds=max(
+            0.0,
+            _float_or_default(
+                interaction_config.get("plugin_parallel_window_seconds", 3.0),
+                3.0,
+            ),
+        ),
         expression_provider_id=expression_provider_id,
         expression_temperature=_float_or_default(
             interaction_config.get("expression_temperature", 0.6),

@@ -1017,10 +1017,7 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
 
     async def call_hook(event, hook_type, *args, **kwargs):
         del event
-        if hook_type.name in {"OnUsingLLMToolEvent", "OnLLMToolRespondEvent"}:
-            assert "execution_surface" not in kwargs
-        else:
-            assert kwargs["execution_surface"] == "personal_expression"
+        assert kwargs["execution_surface"] == "personal_expression"
         observed_hooks.append(hook_type.name)
         return False
 

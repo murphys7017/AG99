@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncGenerator, Callable
 
 from astrbot import logger
@@ -39,6 +40,8 @@ UNIQUE_SESSION_ID_BUILDERS: dict[str, Callable[[AstrMessageEvent], str | None]] 
     "matrix": lambda e: f"{e.get_sender_id()}_{e.get_group_id() or e.get_session_id()}",
 }
 
+HANDLER_DISCOVERY_METRICS_EXTRA = "_interaction_handler_discovery_metrics"
+
 
 def build_unique_session_id(event: AstrMessageEvent) -> str | None:
     platform = event.get_platform_name()
@@ -53,7 +56,46 @@ async def discover_activated_handlers(
     disable_builtin_commands: bool,
     no_permission_reply: bool,
 ) -> bool:
-    """Run the existing Handler discovery once after a message is admitted."""
+    """Run the existing Handler discovery once during waking checks."""
+
+    started_at = time.time()
+    started_perf = time.perf_counter()
+    try:
+        return await _discover_activated_handlers(
+            event,
+            config=config,
+            disable_builtin_commands=disable_builtin_commands,
+            no_permission_reply=no_permission_reply,
+        )
+    finally:
+        completed_at = time.time()
+        duration_ms = (time.perf_counter() - started_perf) * 1000
+        activated_handlers = event.get_extra("activated_handlers", []) or []
+        metrics = {
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": duration_ms,
+            "activated_handler_count": len(activated_handlers),
+        }
+        event.set_extra(HANDLER_DISCOVERY_METRICS_EXTRA, metrics)
+        logger.info(
+            "DIAG plugin.handler_discovery: platform_id=%s session_id=%s "
+            "activated_handlers=%d duration_ms=%.2f",
+            event.get_platform_id(),
+            event.session_id,
+            len(activated_handlers),
+            duration_ms,
+        )
+
+
+async def _discover_activated_handlers(
+    event: AstrMessageEvent,
+    *,
+    config: dict,
+    disable_builtin_commands: bool,
+    no_permission_reply: bool,
+) -> bool:
+    """Apply the official Handler filters and session admission rules."""
 
     activated_handlers = []
     handlers_parsed_params = {}

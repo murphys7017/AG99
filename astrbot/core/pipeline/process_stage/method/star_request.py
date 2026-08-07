@@ -1,17 +1,21 @@
 """本地 Agent 模式的 AstrBot 插件调用 Stage"""
 
+import time
 import traceback
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any
 
 from astrbot.core import logger
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, StarHandlerMetadata
 
 from ...context import PipelineContext, call_event_hook, call_handler
 from ...stage import Stage
+from ..plugin_handler_executor import PluginHandlerControl
 
 
 class StarRequestSubStage(Stage):
@@ -23,7 +27,7 @@ class StarRequestSubStage(Stage):
     async def process(
         self,
         event: AstrMessageEvent,
-    ) -> AsyncGenerator[Any, None]:
+    ) -> AsyncGenerator[Any, PluginHandlerControl | None]:
         activated_handlers: list[StarHandlerMetadata] = event.get_extra(
             "activated_handlers",
         )
@@ -33,7 +37,7 @@ class StarRequestSubStage(Stage):
         if not handlers_parsed_params:
             handlers_parsed_params = {}
 
-        for handler in activated_handlers:
+        for handler_index, handler in enumerate(activated_handlers):
             if event.is_stopped():
                 break
             params = handlers_parsed_params.get(handler.handler_full_name, {})
@@ -44,10 +48,37 @@ class StarRequestSubStage(Stage):
                 )
                 continue
             logger.debug(f"plugin -> {md.name} - {handler.handler_name}")
+            handler_invocation_id = (
+                f"{handler.handler_full_name}:{handler_index}"
+            )
+            invocation_started_at = time.time()
+            invocation_started_perf = time.perf_counter()
+            provider_request_count = 0
+            artifact_count_before = self._plugin_artifact_count(event)
+            event.set_extra(
+                "_interaction_plugin_handler_invocation_id",
+                handler_invocation_id,
+            )
+            event.set_extra(
+                "_interaction_plugin_handler_module_path",
+                handler.handler_module_path,
+            )
+            event.set_extra(
+                "_interaction_plugin_handler_name",
+                handler.handler_name,
+            )
             try:
                 wrapper = call_handler(event, handler.handler, **params)
-                async for ret in wrapper:
-                    yield ret
+                async with aclosing(wrapper):
+                    async for ret in wrapper:
+                        if isinstance(ret, ProviderRequest):
+                            provider_request_count += 1
+                        control = yield ret
+                        if (
+                            control
+                            is PluginHandlerControl.CLOSE_CURRENT_INVOCATION
+                        ):
+                            break
                 if event.is_stopped():
                     break
                 event.clear_result()  # 清除上一个 handler 的结果
@@ -72,3 +103,45 @@ class StarRequestSubStage(Stage):
                     event.clear_result()
 
                 event.stop_event()
+            finally:
+                invocation_completed_at = time.time()
+                artifact_count = max(
+                    0,
+                    self._plugin_artifact_count(event) - artifact_count_before,
+                )
+                logger.info(
+                    "DIAG plugin.handler_invocation: platform_id=%s "
+                    "session_id=%s origin_plugin_id=%s "
+                    "origin_handler_name=%s handler_invocation_id=%s "
+                    "started_at=%.6f completed_at=%.6f duration_ms=%.2f "
+                    "provider_request_count=%d artifact_count=%d",
+                    event.get_platform_id(),
+                    event.session_id,
+                    handler.handler_module_path,
+                    handler.handler_name,
+                    handler_invocation_id,
+                    invocation_started_at,
+                    invocation_completed_at,
+                    (time.perf_counter() - invocation_started_perf) * 1000,
+                    provider_request_count,
+                    artifact_count,
+                )
+                event.set_extra(
+                    "_interaction_plugin_handler_invocation_id",
+                    None,
+                )
+                event.set_extra(
+                    "_interaction_plugin_handler_module_path",
+                    None,
+                )
+                event.set_extra(
+                    "_interaction_plugin_handler_name",
+                    None,
+                )
+
+    @staticmethod
+    def _plugin_artifact_count(event: AstrMessageEvent) -> int:
+        controller = event.get_extra("_interaction_output_controller")
+        result = getattr(controller, "result", None)
+        artifacts = getattr(result, "output_artifacts", None)
+        return len(artifacts) if isinstance(artifacts, list) else 0

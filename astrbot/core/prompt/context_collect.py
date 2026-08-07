@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from copy import deepcopy
+from typing import Literal
 
 from astrbot.core import logger
 from astrbot.core.capabilities import (
@@ -49,6 +50,7 @@ PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
 }
 PLUGIN_PROMPT_TARGETS = frozenset({"persona", "core"})
 CONTROL_PLANE_PROMPT_TARGETS = frozenset({"router", "core_planner"})
+PromptExtensionCollectorScope = Literal["all", "control_plane", "plugin"]
 _CONTROL_PLANE_COLLECTOR_MODULE_PREFIXES = (
     "astrbot.core.",
     "astrbot.builtin_stars.",
@@ -320,9 +322,7 @@ def _build_normalized_prompt_extension_slots(
                 ContextSlot(
                     name=direct_slot_name.strip(),
                     value=deepcopy(extension.value),
-                    category=str(
-                        extension.meta.get("context_category", "extension")
-                    ),
+                    category=str(extension.meta.get("context_category", "extension")),
                     source=extension.plugin_id,
                     render_mode="structured",
                     meta=deepcopy(extension.meta),
@@ -337,9 +337,7 @@ def _build_normalized_prompt_extension_slots(
     slots: list[ContextSlot] = [
         slot for slot in direct_slots if slot.name != "capability.plugin_directory"
     ]
-    merged_plugin_directory = _combine_plugin_directories(
-        direct_plugin_directories
-    )
+    merged_plugin_directory = _combine_plugin_directories(direct_plugin_directories)
     if merged_plugin_directory:
         slots.append(
             ContextSlot(
@@ -397,11 +395,7 @@ def _normalize_plugin_prompt_extension(
     if raw_targets is None:
         targets = {"core"}
     elif isinstance(raw_targets, list | tuple | set | frozenset):
-        targets = {
-            str(target).strip()
-            for target in raw_targets
-            if str(target).strip()
-        }
+        targets = {str(target).strip() for target in raw_targets if str(target).strip()}
         allowed_targets = set(PLUGIN_PROMPT_TARGETS)
         if allow_control_plane_targets:
             allowed_targets.update(CONTROL_PLANE_PROMPT_TARGETS)
@@ -430,7 +424,9 @@ def _combine_plugin_directories(
 
     candidates: list[tuple[object, object]] = []
     for slot in direct_slots:
-        raw_plugins = slot.value.get("plugins") if isinstance(slot.value, dict) else None
+        raw_plugins = (
+            slot.value.get("plugins") if isinstance(slot.value, dict) else None
+        )
         if isinstance(raw_plugins, dict):
             raw_plugins = [raw_plugins]
         if not isinstance(raw_plugins, list):
@@ -468,6 +464,7 @@ async def _collect_prompt_extension_slots(
     plugin_context: Context,
     config,
     provider_request,
+    collector_scope: PromptExtensionCollectorScope = "all",
 ) -> tuple[list[ContextSlot], list[str]]:
     list_collectors = getattr(plugin_context, "list_prompt_extension_collectors", None)
     if not callable(list_collectors):
@@ -478,6 +475,11 @@ async def _collect_prompt_extension_slots(
         collectors = list(raw_collectors or [])
     except TypeError:
         return [], []
+    collectors = [
+        collector
+        for collector in collectors
+        if _prompt_extension_collector_in_scope(collector, collector_scope)
+    ]
     collectors.sort(
         key=lambda collector: (
             _coerce_prompt_extension_collector_priority(collector),
@@ -492,9 +494,7 @@ async def _collect_prompt_extension_slots(
     for collector in collectors:
         collector_name = collector.__class__.__name__
         collector_names.append(collector_name)
-        allow_control_plane_targets = _collector_allows_control_plane_targets(
-            collector
-        )
+        allow_control_plane_targets = _collector_allows_control_plane_targets(collector)
         lifecycle = _collector_lifecycle(collector)
         plugin_id = str(getattr(collector, "plugin_id", "") or "").strip()
         static_cache_key = _prompt_extension_cache_key(collector, plugin_id)
@@ -505,7 +505,9 @@ async def _collect_prompt_extension_slots(
             provider_request=provider_request,
         )
         if lifecycle == "static" and cached_items is not None:
-            cached_extensions = _normalize_prompt_extension_items(deepcopy(cached_items))
+            cached_extensions = _normalize_prompt_extension_items(
+                deepcopy(cached_items)
+            )
             collected_extensions.extend(
                 normalized
                 for extension in cached_extensions
@@ -588,6 +590,20 @@ async def _collect_prompt_extension_slots(
     return slots, collector_names
 
 
+def _prompt_extension_collector_in_scope(
+    collector: object,
+    scope: PromptExtensionCollectorScope,
+) -> bool:
+    is_control_plane = _collector_allows_control_plane_targets(collector)
+    if scope == "all":
+        return True
+    if scope == "control_plane":
+        return is_control_plane
+    if scope == "plugin":
+        return not is_control_plane
+    raise ValueError(f"unsupported prompt extension collector scope: {scope}")
+
+
 async def collect_context_pack(
     *,
     event: AstrMessageEvent,
@@ -597,6 +613,7 @@ async def collect_context_pack(
     collectors: Iterable[ContextCollectorInterface] | None = None,
     capabilities: CapabilitySnapshot | None = None,
     include_prompt_extensions: bool = True,
+    prompt_extension_collector_scope: PromptExtensionCollectorScope = "all",
 ) -> ContextPack:
     """
     Collect prompt context into a single pack.
@@ -611,7 +628,9 @@ async def collect_context_pack(
         if collectors is not None
         else _default_collectors(capabilities)
     )
-    static_context_cache = _get_event_dict_extra(event, PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY)
+    static_context_cache = _get_event_dict_extra(
+        event, PROMPT_STATIC_CONTEXT_CACHE_EXTRA_KEY
+    )
 
     pack = ContextPack(
         provider_request_ref=provider_request,
@@ -689,6 +708,7 @@ async def collect_context_pack(
             plugin_context=plugin_context,
             config=config,
             provider_request=provider_request,
+            collector_scope=prompt_extension_collector_scope,
         )
         pack.meta["extension_collectors"] = extension_collectors
 

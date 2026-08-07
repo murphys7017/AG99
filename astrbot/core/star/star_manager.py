@@ -1,5 +1,7 @@
 """插件的重载、启停、安装、卸载等操作。"""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import functools
@@ -15,6 +17,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 import yaml
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -51,6 +54,11 @@ from .filter.permission import PermissionType, PermissionTypeFilter
 from .star import StarMetadata, star_map, star_registry
 from .star_handler import EventType, star_handlers_registry
 from .updator import PluginUpdator
+
+if TYPE_CHECKING:
+    from astrbot.core.interaction.plugin_execution_runtime import (
+        PluginExecutionRuntime,
+    )
 
 try:
     from watchfiles import PythonFilter, awatch
@@ -197,6 +205,7 @@ class PluginManager:
         """插件配置 Schema 文件名"""
         self._pm_lock = asyncio.Lock()
         """StarManager操作互斥锁"""
+        self.plugin_execution_runtime: PluginExecutionRuntime | None = None
 
         self.failed_plugin_dict = {}
         """加载失败插件的信息，用于后续可能的热重载"""
@@ -204,6 +213,12 @@ class PluginManager:
         self.failed_plugin_info = ""
         if os.getenv("ASTRBOT_RELOAD", "0") == "1":
             asyncio.create_task(self._watch_plugins_changes())
+
+    def bind_plugin_execution_runtime(
+        self,
+        runtime: PluginExecutionRuntime,
+    ) -> None:
+        self.plugin_execution_runtime = runtime
 
     async def _watch_plugins_changes(self) -> None:
         """监视插件文件变化"""
@@ -883,17 +898,33 @@ class PluginManager:
 
         """
         async with self._pm_lock:
-            specified_module_path = None
-            if specified_plugin_name:
-                for smd in list(star_registry):
-                    if smd.name == specified_plugin_name:
-                        specified_module_path = smd.module_path
-                        break
+            return await self._reload_locked(specified_plugin_name)
 
-            # 终止插件
-            if not specified_module_path:
-                # 重载所有插件
-                for smd in star_registry:
+    async def _reload_locked(
+        self,
+        specified_plugin_name=None,
+        *,
+        pre_drained_module_path: str | None = None,
+    ):
+        specified_module_path = None
+        if specified_plugin_name:
+            for smd in list(star_registry):
+                if smd.name == specified_plugin_name:
+                    specified_module_path = smd.module_path
+                    break
+            if (
+                specified_module_path is None
+                and pre_drained_module_path is not None
+            ):
+                raise RuntimeError(
+                    f"更新中的插件 {specified_plugin_name} 已从注册表消失。"
+                )
+
+        # 终止插件
+        if not specified_module_path:
+            # 重载所有插件
+            for smd in list(star_registry):
+                async with self._drain_plugin_execution(smd.module_path):
                     try:
                         await self._terminate_plugin(smd)
                     except Exception as e:
@@ -902,15 +933,24 @@ class PluginManager:
                             f"插件 {smd.name} 未被正常终止: {e!s}, 可能会导致该插件运行不正常。",
                         )
                     if smd.name and smd.module_path:
-                        await self._unbind_plugin(smd.name, smd.module_path)
+                        await self._unbind_plugin_after_drain(
+                            smd.name,
+                            smd.module_path,
+                        )
 
-                star_handlers_registry.clear()
-                star_map.clear()
-                star_registry.clear()
-            else:
-                # 只重载指定插件
-                smd = star_map.get(specified_module_path)
-                if smd:
+            star_handlers_registry.clear()
+            star_map.clear()
+            star_registry.clear()
+        else:
+            # 只重载指定插件
+            smd = star_map.get(specified_module_path)
+            if smd:
+                drain_path = (
+                    None
+                    if specified_module_path == pre_drained_module_path
+                    else specified_module_path
+                )
+                async with self._drain_plugin_execution(drain_path):
                     try:
                         await self._terminate_plugin(smd)
                     except Exception as e:
@@ -919,11 +959,14 @@ class PluginManager:
                             f"插件 {smd.name} 未被正常终止: {e!s}, 可能会导致该插件运行不正常。",
                         )
                     if smd.name and smd.activated:
-                        await self._unbind_plugin(smd.name, specified_module_path)
+                        await self._unbind_plugin_after_drain(
+                            smd.name,
+                            specified_module_path,
+                        )
 
-            result = await self.load(specified_module_path)
+        result = await self.load(specified_module_path)
 
-            return result
+        return result
 
     async def load(
         self,
@@ -1343,14 +1386,18 @@ class PluginManager:
                 break
 
         if plugin and plugin.name and plugin.module_path:
-            try:
-                await self._terminate_plugin(plugin)
-            except Exception:
-                logger.warning(traceback.format_exc())
-            try:
-                await self._unbind_plugin(plugin.name, plugin.module_path)
-            except Exception:
-                logger.warning(traceback.format_exc())
+            async with self._drain_plugin_execution(plugin.module_path):
+                try:
+                    await self._terminate_plugin(plugin)
+                except Exception:
+                    logger.warning(traceback.format_exc())
+                try:
+                    await self._unbind_plugin_after_drain(
+                        plugin.name,
+                        plugin.module_path,
+                    )
+                except Exception:
+                    logger.warning(traceback.format_exc())
 
         if os.path.exists(plugin_path):
             try:
@@ -1592,20 +1639,22 @@ class PluginManager:
             root_dir_name = plugin.root_dir_name
             ppath = self.plugin_store_path
 
-            # 终止插件
-            try:
-                await self._terminate_plugin(plugin)
-            except Exception as e:
-                logger.warning(traceback.format_exc())
-                logger.warning(
-                    f"插件 {plugin_name} 未被正常终止 {e!s}, 可能会导致资源泄露等问题。",
-                )
-
             # 从 star_registry 和 star_map 中删除
             if plugin.module_path is None or root_dir_name is None:
                 raise Exception(f"插件 {plugin_name} 数据不完整，无法卸载。")
 
-            await self._unbind_plugin(plugin_name, plugin.module_path)
+            async with self._drain_plugin_execution(plugin.module_path):
+                try:
+                    await self._terminate_plugin(plugin)
+                except Exception as e:
+                    logger.warning(traceback.format_exc())
+                    logger.warning(
+                        f"插件 {plugin_name} 未被正常终止 {e!s}, 可能会导致资源泄露等问题。",
+                    )
+                await self._unbind_plugin_after_drain(
+                    plugin_name,
+                    plugin.module_path,
+                )
 
             # 删除插件文件夹
             try:
@@ -1686,6 +1735,30 @@ class PluginManager:
             plugin_module_path: 插件的完整模块路径
 
         """
+        async with self._drain_plugin_execution(plugin_module_path):
+            await self._unbind_plugin_after_drain(plugin_name, plugin_module_path)
+
+    @contextlib.asynccontextmanager
+    async def _drain_plugin_execution(self, plugin_module_path: str | None):
+        runtime = getattr(self, "plugin_execution_runtime", None)
+        if runtime is None or not plugin_module_path:
+            yield
+            return
+        try:
+            await runtime.begin_module_draining(plugin_module_path)
+        except BaseException:
+            runtime.end_module_draining(plugin_module_path)
+            raise
+        try:
+            yield
+        finally:
+            runtime.end_module_draining(plugin_module_path)
+
+    async def _unbind_plugin_after_drain(
+        self,
+        plugin_name: str,
+        plugin_module_path: str,
+    ) -> None:
         plugin = None
         del star_map[plugin_module_path]
         for i, p in enumerate(star_registry):
@@ -1761,20 +1834,33 @@ class PluginManager:
         self, plugin_name: str, proxy="", download_url: str = ""
     ) -> None:
         """升级一个插件"""
-        plugin = self.context.get_registered_star(plugin_name)
-        if not plugin:
-            raise Exception("插件不存在。")
-        if plugin.reserved:
-            raise Exception("该插件是 AstrBot 保留插件，无法更新。")
+        async with self._pm_lock:
+            plugin = self.context.get_registered_star(plugin_name)
+            if not plugin:
+                raise Exception("插件不存在。")
+            if plugin.reserved:
+                raise Exception("该插件是 AstrBot 保留插件，无法更新。")
 
-        await self.updator.update(plugin, proxy=proxy, download_url=download_url)
-        if plugin.root_dir_name:
-            plugin_dir_path = os.path.join(self.plugin_store_path, plugin.root_dir_name)
-            await self._ensure_plugin_requirements(
-                plugin_dir_path,
-                plugin_name,
-            )
-        await self.reload(plugin_name)
+            plugin_module_path = getattr(plugin, "module_path", None)
+            async with self._drain_plugin_execution(plugin_module_path):
+                await self.updator.update(
+                    plugin,
+                    proxy=proxy,
+                    download_url=download_url,
+                )
+                if plugin.root_dir_name:
+                    plugin_dir_path = os.path.join(
+                        self.plugin_store_path,
+                        plugin.root_dir_name,
+                    )
+                    await self._ensure_plugin_requirements(
+                        plugin_dir_path,
+                        plugin_name,
+                    )
+                await self._reload_locked(
+                    plugin_name,
+                    pre_drained_module_path=plugin_module_path,
+                )
 
     async def turn_off_plugin(self, plugin_name: str) -> None:
         """禁用一个插件。
@@ -1787,8 +1873,10 @@ class PluginManager:
             if not plugin:
                 raise Exception("插件不存在。")
 
-            # 调用插件的终止方法
-            await self._terminate_plugin(plugin)
+            # 等待后台 Handler 释放 lease 后再终止插件资源。
+            async with self._drain_plugin_execution(plugin.module_path):
+                await self._terminate_plugin(plugin)
+                plugin.activated = False
 
             # 加入到 shared_preferences 中
             inactivated_plugins: list = await sp.global_get("inactivated_plugins", [])
@@ -1813,8 +1901,6 @@ class PluginManager:
             await sp.global_put("inactivated_plugins", inactivated_plugins)
             await sp.global_put("inactivated_llm_tools", inactivated_llm_tools)
 
-            plugin.activated = False
-
     @staticmethod
     async def _terminate_plugin(star_metadata: StarMetadata) -> None:
         """终止插件，调用插件的 terminate() 和 __del__() 方法"""
@@ -1830,22 +1916,17 @@ class PluginManager:
 
         if "__del__" in star_metadata.star_cls_type.__dict__:
             loop = asyncio.get_running_loop()
-            future = loop.run_in_executor(
-                None,
-                star_metadata.star_cls.__del__,
-            )
-
-            def _log_del_exception(fut: asyncio.Future) -> None:
-                if fut.cancelled():
-                    return
-                if (exc := fut.exception()) is not None:
-                    logger.error(
-                        "插件 %s 在 __del__ 中抛出了异常：%r",
-                        star_metadata.name,
-                        exc,
-                    )
-
-            future.add_done_callback(_log_del_exception)
+            try:
+                await loop.run_in_executor(
+                    None,
+                    star_metadata.star_cls.__del__,
+                )
+            except Exception as exc:
+                logger.error(
+                    "插件 %s 在 __del__ 中抛出了异常：%r",
+                    star_metadata.name,
+                    exc,
+                )
         elif "terminate" in star_metadata.star_cls_type.__dict__:
             await star_metadata.star_cls.terminate()
 

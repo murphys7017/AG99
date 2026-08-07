@@ -31,6 +31,7 @@ from astrbot.core.interaction import (
     PersonalRuntimeManager,
     PersonalRuntimeWakeScheduler,
     PersonalStateRepository,
+    PluginExecutionRuntime,
 )
 from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.memory import (
@@ -81,6 +82,7 @@ class AstrBotCoreLifecycle:
         self.memory_service = None
         self.memory_postprocessor = None
         self.interaction_middleware: InteractionMiddleware | None = None
+        self.plugin_execution_runtime = PluginExecutionRuntime()
         self.personal_heartbeat_source: PersonalHeartbeatSource | None = None
         self.personal_runtime_manager = PersonalRuntimeManager(
             state_repository=PersonalStateRepository(db)
@@ -334,6 +336,9 @@ class AstrBotCoreLifecycle:
 
         # 初始化插件管理器
         self.plugin_manager = PluginManager(self.star_context, self.astrbot_config)
+        self.plugin_manager.bind_plugin_execution_runtime(
+            self.plugin_execution_runtime
+        )
 
         # 扫描、注册插件、实例化插件类
         await self.plugin_manager.reload()
@@ -515,6 +520,7 @@ class AstrBotCoreLifecycle:
                 await self.cron_manager.shutdown()
 
             await self.personal_runtime_wake_scheduler.shutdown()
+            await self.plugin_execution_runtime.shutdown()
             await self.personal_runtime_manager.shutdown()
             await get_postprocess_manager().shutdown()
 
@@ -590,6 +596,7 @@ class AstrBotCoreLifecycle:
                     astrbot_config_id=conf_id,
                     interaction_middleware=self.interaction_middleware,
                     personal_runtime_manager=self.personal_runtime_manager,
+                    plugin_execution_runtime=self.plugin_execution_runtime,
                     pre_output_processor=self.pre_output_processor,
                     turn_delivery_coordinator=self.turn_delivery_coordinator,
                 ),
@@ -615,6 +622,7 @@ class AstrBotCoreLifecycle:
                 astrbot_config_id=conf_id,
                 interaction_middleware=self.interaction_middleware,
                 personal_runtime_manager=self.personal_runtime_manager,
+                plugin_execution_runtime=self.plugin_execution_runtime,
                 pre_output_processor=self.pre_output_processor,
                 turn_delivery_coordinator=self.turn_delivery_coordinator,
             ),

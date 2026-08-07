@@ -89,6 +89,10 @@ class InteractionUtterance:
 @dataclass(slots=True)
 class InteractionContextMaterial:
     prompt_context_pack: ContextPack | None = None
+    target_context_packs: dict[str, ContextPack] = field(default_factory=dict)
+    target_context_tasks: dict[str, asyncio.Task[ContextPack]] = field(
+        default_factory=dict
+    )
     persona_payload: dict[str, Any] = field(default_factory=dict)
     memory_payload: dict[str, Any] = field(default_factory=dict)
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
@@ -176,6 +180,29 @@ class TurnExecutionScope:
                 cancelled = True
         return cancelled
 
+    def cancel_and_detach(
+        self,
+        role: str,
+        task: asyncio.Task[Any] | None = None,
+    ) -> bool:
+        """Cancel turn work without making scope shutdown wait for it."""
+        role_tasks = self.tasks.get(role)
+        if not role_tasks:
+            return False
+        if task is None:
+            detached_tasks = tuple(role_tasks)
+        elif task in role_tasks:
+            detached_tasks = (task,)
+        else:
+            return False
+        for detached_task in detached_tasks:
+            role_tasks.discard(detached_task)
+            if not detached_task.done():
+                detached_task.cancel()
+        if not role_tasks:
+            self.tasks.pop(role, None)
+        return any(not detached_task.done() for detached_task in detached_tasks)
+
     async def close(self) -> None:
         if self.closed:
             return
@@ -218,6 +245,7 @@ class InteractionTurnState:
     core_delegated: bool = False
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
+    personal_emitted_monotonic: float | None = None
     speculative_persona_status: InteractionSpeculativePersonaStatus = (
         InteractionSpeculativePersonaStatus.NOT_STARTED
     )
@@ -227,6 +255,7 @@ class InteractionTurnState:
     execution_scope: TurnExecutionScope = field(default_factory=TurnExecutionScope)
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
+    visible_message_fingerprints: set[str] = field(default_factory=set)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)
     output_segment_counter: int = 0
     visible_message_counter: int = 0
@@ -304,7 +333,10 @@ def build_interaction_turn_reply(
     for item in visible_outputs:
         if not isinstance(item, dict):
             continue
-        if clean_turn_id and str(item.get("turn_id", "") or "").strip() != clean_turn_id:
+        if (
+            clean_turn_id
+            and str(item.get("turn_id", "") or "").strip() != clean_turn_id
+        ):
             continue
         if not bool(item.get("memory_relevant", True)):
             continue
@@ -579,6 +611,18 @@ def get_interaction_turn_immediate_reply(event) -> str | None:
     return None
 
 
+def mark_interaction_turn_personal_emitted(event) -> float:
+    state = ensure_interaction_turn_state(event)
+    if state.personal_emitted_monotonic is None:
+        state.personal_emitted_monotonic = time.monotonic()
+    return state.personal_emitted_monotonic
+
+
+def get_interaction_turn_personal_emitted_monotonic(event) -> float | None:
+    state = get_interaction_turn_state(event)
+    return state.personal_emitted_monotonic if state is not None else None
+
+
 def append_interaction_turn_visible_output(
     event,
     *,
@@ -619,6 +663,22 @@ def append_interaction_turn_visible_output(
 def get_interaction_turn_visible_outputs(event) -> list[dict[str, Any]]:
     state = ensure_interaction_turn_state(event)
     return [dict(output) for output in state.visible_outputs]
+
+
+def record_interaction_turn_visible_message_fingerprint(
+    event,
+    fingerprint: str | None,
+) -> None:
+    normalized = str(fingerprint or "").strip()
+    if normalized:
+        ensure_interaction_turn_state(event).visible_message_fingerprints.add(
+            normalized
+        )
+
+
+def get_interaction_turn_visible_message_fingerprints(event) -> set[str]:
+    state = ensure_interaction_turn_state(event)
+    return set(state.visible_message_fingerprints)
 
 
 def update_interaction_turn_stream_buffer(
@@ -745,8 +805,30 @@ async def reserve_interaction_turn_final_output(event) -> bool:
             state.speculative_persona_status = (
                 InteractionSpeculativePersonaStatus.SUPPRESSED
             )
-            state.execution_scope.cancel("speculative_persona")
+            state.execution_scope.cancel_and_detach("speculative_persona")
         return True
+
+
+async def suppress_interaction_turn_pending_persona(
+    event,
+    persona_task: asyncio.Task[Any] | None = None,
+) -> bool:
+    """Suppress only Persona work that has not committed visible output."""
+    state = ensure_interaction_turn_state(event)
+    async with state.lock:
+        if (
+            state.speculative_persona_status
+            is not InteractionSpeculativePersonaStatus.PENDING
+        ):
+            return False
+        state.speculative_persona_status = (
+            InteractionSpeculativePersonaStatus.SUPPRESSED
+        )
+        state.execution_scope.cancel_and_detach(
+            "speculative_persona",
+            persona_task,
+        )
+    return True
 
 
 async def finish_interaction_turn_final_output(
@@ -776,16 +858,17 @@ async def finish_interaction_turn_final_output(
 async def reserve_interaction_turn_immediate_output(event) -> bool:
     state = ensure_interaction_turn_state(event)
     async with state.lock:
-        if state.speculative_persona_status is not InteractionSpeculativePersonaStatus.PENDING:
+        if (
+            state.speculative_persona_status
+            is not InteractionSpeculativePersonaStatus.PENDING
+        ):
             return False
         if state.final_output_status is not InteractionFinalOutputStatus.PENDING:
             state.speculative_persona_status = (
                 InteractionSpeculativePersonaStatus.SUPPRESSED
             )
             return False
-        state.speculative_persona_status = (
-            InteractionSpeculativePersonaStatus.COMMITTED
-        )
+        state.speculative_persona_status = InteractionSpeculativePersonaStatus.COMMITTED
         return True
 
 

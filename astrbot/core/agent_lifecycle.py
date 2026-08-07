@@ -194,6 +194,7 @@ class AgentRequestLifecycle:
                 EventType.OnUsingLLMToolEvent,
                 tool,
                 tool_args,
+                execution_surface=self.execution_surface,
             )
 
     async def dispatch_tool_end(
@@ -210,6 +211,7 @@ class AgentRequestLifecycle:
                 tool,
                 tool_args,
                 tool_result,
+                execution_surface=self.execution_surface,
             )
 
     def _restore_extra(self, key: str, previous: object) -> None:

@@ -746,10 +746,19 @@ class Context:
             capture.capture(message_chain)
             return True
 
-        if (
-            self._proactive_message_dispatcher is not None
-            and message_chain.get_plain_text().strip()
-        ):
+        should_use_runtime_dispatcher = bool(message_chain.get_plain_text().strip())
+        if self._proactive_message_dispatcher is not None and not should_use_runtime_dispatcher:
+            from astrbot.core.interaction.plugin_execution_runtime import (
+                get_active_plugin_branch_event,
+            )
+
+            plugin_branch_event = get_active_plugin_branch_event()
+            should_use_runtime_dispatcher = bool(
+                plugin_branch_event is not None
+                and plugin_branch_event.unified_msg_origin == str(session)
+            )
+
+        if self._proactive_message_dispatcher is not None and should_use_runtime_dispatcher:
             return await self._proactive_message_dispatcher(
                 session,
                 message_chain,

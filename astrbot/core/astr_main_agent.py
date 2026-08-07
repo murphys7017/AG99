@@ -29,6 +29,9 @@ from astrbot.core.execution import (
     CoreExecutionSpec,
     NativeExecutionAdapter,
 )
+from astrbot.core.interaction.context_builder import (
+    get_or_build_interaction_core_context_pack,
+)
 from astrbot.core.interaction.core_bridge import (
     ensure_interaction_core_execution_prompt,
     get_core_task_spec,
@@ -1108,11 +1111,14 @@ async def build_main_agent(
     prompt_target = PromptTarget.CORE if interaction_core else None
     turn_state = event.get_extra("_interaction_turn_state")
     context_material = getattr(turn_state, "context_material", None)
-    base_context_pack = (
-        getattr(context_material, "prompt_context_pack", None)
-        if interaction_core
-        else None
-    )
+    base_context_pack = None
+    if interaction_core and context_material is not None:
+        base_context_pack = await get_or_build_interaction_core_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=config,
+            material=context_material,
+        )
     builder = PromptContextBuilder(event, plugin_context, config)
     prompt_context_pack = await builder.build(
         collectors=(
@@ -1127,8 +1133,7 @@ async def build_main_agent(
         scope="core",
     )
     if context_material is not None:
-        context_material.prompt_context_pack = prompt_context_pack
-        context_material.collected_scopes.add("core")
+        context_material.target_context_packs["core_execution"] = prompt_context_pack
     event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
     log_context_pack(prompt_context_pack, event=event)
 

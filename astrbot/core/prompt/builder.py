@@ -11,7 +11,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
-from .context_collect import collect_context_pack
+from .context_collect import PromptExtensionCollectorScope, collect_context_pack
 from .context_types import ContextPack, ContextSlot, PromptContextConflictError
 from .interfaces import ContextCollectorInterface
 
@@ -31,6 +31,7 @@ class PromptContextBuilder:
         provider_request: ProviderRequest | None = None,
         capabilities: CapabilitySnapshot | None = None,
         include_prompt_extensions: bool = True,
+        prompt_extension_collector_scope: PromptExtensionCollectorScope = "all",
         base: ContextPack | None = None,
         replace_slots: Iterable[str] = (),
         scope: str = "default",
@@ -43,6 +44,7 @@ class PromptContextBuilder:
             collectors=collectors,
             capabilities=capabilities,
             include_prompt_extensions=include_prompt_extensions,
+            prompt_extension_collector_scope=prompt_extension_collector_scope,
         )
         return merge_context_packs(
             base,

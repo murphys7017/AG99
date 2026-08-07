@@ -44,7 +44,7 @@ Fact Sources
 
 ### Collector
 
-默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent、knowledge 和 Core Execution History。Execution History 是 optional、Core-only 的独立 ledger 投影，不属于可见 Conversation。Interaction 在同一规范 Pack 上增加附件摘要、Interaction Prompt Contributor；Persona 阶段再派生本轮待表达材料。
+默认 Collector 覆盖 system、persona、input、session、policy、memory、official conversation history、插件显式 context、skills、tools、subagent、knowledge 和 Core Execution History。Execution History 是 optional、Core-only 的独立 ledger 投影，不属于可见 Conversation。Interaction 先建立不含普通插件扩展的基础事实 Pack，再基于它单次派生普通 Prompt Extension / Interaction Prompt Contributor Pack；Persona 阶段继续派生本轮待表达材料。
 
 Collector 只返回事实：
 
@@ -65,7 +65,7 @@ Collector 只返回事实：
 
 跨阶段新增或替换事实必须经过 Builder。`ContextPack` 数据类型本身仍然可变，供收集和渲染内部使用；业务模块不得把直接 `add_slot()`、`slots.pop()` 或原地改值当作跨阶段 API。进入 `CoreExecutionSpec` 时，slots、meta、TaskSpec、执行历史和可序列化 capability 描述会被深拷贝，避免后续构建侧变更影响已经准备的执行事实；Native `ToolSet` 是唯一明确保留的实时执行句柄。
 
-Interaction 当前通过默认 Collector 建立一份完整的本轮共享事实包，Router、Planner 和 Persona 只消费各自的极简投影。后续性能优化应由 Collector 生命周期、缓存、并发和按需采集策略完成，不能让业务模块重新建立同类事实源。
+Interaction 当前使用两层 single-flight。`interaction_base` 收集 system、persona、input、session、memory、history、附件摘要和官方群聊上下文等可信控制面事实；Router、Core Planner 与 Persona 的首个请求在这一层完成后即可渲染。`interaction_plugin_context` 随即在后台收集普通 Prompt Extension 与 Interaction Prompt Contributor，每轮只执行一次并按 `meta.targets` 投影。Persona 只在该 Pack 已就绪时尽力使用，否则立即回退 base；Core 等待并复用同一个 task。两层都来自同一基础事实源，业务模块不得重新查询历史、memory、输入或 session，也不得把插件扩展重新塞回 Router / Planner。
 
 ## 目标投影
 
@@ -128,7 +128,7 @@ Provider Renderer 只编译已经形成的树：
 
 ### Interaction
 
-Interaction 每轮先建立共享 Pack。Router、Core Planner 和 Persona 从该 Pack 的独立投影渲染；Persona 的待表达材料通过专用 Collector 派生。Planner 选择执行后，Main Agent 复用共享 Pack，并加入阶段性的 `CoreTaskSpec` 后渲染 Core 目标。
+Interaction 每轮先建立基础 Pack，并立即后台预取唯一的插件扩展 Pack；Router 和 Core Planner 直接从基础 Pack 的独立投影渲染。Persona 不等待插件扩展，已就绪时消费该 Pack，否则从基础 Pack 派生待表达材料。Planner 选择执行后，Main Agent 等待同一插件扩展 task，再加入阶段性的 `CoreTaskSpec`、工具、知识和执行历史并渲染 Core 目标。
 
 ### 非 Interaction Core
 
