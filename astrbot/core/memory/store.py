@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -133,6 +134,7 @@ class MemoryStore:
             expire_on_commit=False,
         )
         self.inited = False
+        self._initialize_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def get_db(self):
@@ -142,18 +144,23 @@ class MemoryStore:
             yield session
 
     async def initialize(self) -> None:
-        async with self.engine.begin() as conn:
-            await conn.run_sync(BaseMemoryModel.metadata.create_all)
-            await self._migrate_nullable_platform_user_key_columns(conn)
-        async with self.engine.connect() as conn:
-            conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-            await conn.execute(text("PRAGMA journal_mode=WAL"))
-            await conn.execute(text("PRAGMA synchronous=NORMAL"))
-            await conn.execute(text("PRAGMA cache_size=20000"))
-            await conn.execute(text("PRAGMA temp_store=MEMORY"))
-            await conn.execute(text("PRAGMA mmap_size=134217728"))
-            await conn.execute(text("PRAGMA optimize"))
-        self.inited = True
+        if self.inited:
+            return
+        async with self._initialize_lock:
+            if self.inited:
+                return
+            async with self.engine.begin() as conn:
+                await conn.run_sync(BaseMemoryModel.metadata.create_all)
+                await self._migrate_nullable_platform_user_key_columns(conn)
+            async with self.engine.connect() as conn:
+                conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+                await conn.execute(text("PRAGMA journal_mode=WAL"))
+                await conn.execute(text("PRAGMA synchronous=NORMAL"))
+                await conn.execute(text("PRAGMA cache_size=20000"))
+                await conn.execute(text("PRAGMA temp_store=MEMORY"))
+                await conn.execute(text("PRAGMA mmap_size=134217728"))
+                await conn.execute(text("PRAGMA optimize"))
+            self.inited = True
 
     async def _migrate_nullable_platform_user_key_columns(self, conn) -> None:
         for migration in self._PLATFORM_USER_KEY_NULLABLE_MIGRATIONS:

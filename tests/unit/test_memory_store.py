@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -245,6 +246,23 @@ async def test_memory_store_initializes_tables_and_runtime_dirs(temp_dir: Path):
             ):
                 result = await session.execute(select(model))
                 assert result.scalars().all() == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_store_concurrent_first_reads_initialize_once(temp_dir: Path):
+    store = MemoryStore(db_path=temp_dir / "memory.db")
+
+    try:
+        results = await asyncio.gather(
+            store.get_topic_state(TEST_UMO, "conv-1"),
+            store.get_short_term_memory(TEST_UMO, "conv-1"),
+            store.get_recent_turn_records(TEST_UMO, limit=1, conversation_id="conv-1"),
+        )
+
+        assert results == [None, None, []]
+        assert store.inited is True
     finally:
         await store.close()
 
