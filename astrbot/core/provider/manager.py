@@ -361,6 +361,10 @@ class ProviderManager:
                 from .sources.openai_source import (
                     ProviderOpenAIOfficial as ProviderOpenAIOfficial,
                 )
+            case "ollama_chat_completion":
+                from .sources.ollama_source import (
+                    ProviderOllamaNative as ProviderOllamaNative,
+                )
             case "volcengine_ark_chat_completion":
                 from .sources.volcengine_ark_source import (
                     ProviderVolcengineArk as ProviderVolcengineArk,
