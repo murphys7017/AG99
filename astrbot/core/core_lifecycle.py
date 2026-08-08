@@ -183,7 +183,7 @@ class AstrBotCoreLifecycle:
         """Prewarm every distinct memory service used by loaded configurations."""
         seen_services: set[int] = set()
         for conf_id, config in self.astrbot_config_mgr.confs.items():
-            memory_service = get_memory_service(config)
+            memory_service = get_memory_service(config, cache_key=conf_id)
             service_key = id(memory_service)
             if service_key in seen_services:
                 continue
@@ -386,7 +386,10 @@ class AstrBotCoreLifecycle:
             dispatch_runtime_observation
         )
         bind_memory_provider_manager(self.provider_manager)
-        self.memory_service = get_memory_service(self.astrbot_config)
+        self.memory_service = get_memory_service(
+            self.astrbot_config,
+            cache_key="default",
+        )
         await self.memory_service.initialize()
         get_postprocess_manager().start()
         self.memory_postprocessor = register_memory_postprocessor(self.memory_service)

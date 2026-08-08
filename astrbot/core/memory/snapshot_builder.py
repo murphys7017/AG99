@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from astrbot.core import logger
@@ -83,13 +84,24 @@ class MemorySnapshotBuilder:
         identity: MemoryIdentity | None = None,
     ) -> MemorySnapshot:
         options = read_options or MemorySnapshotReadOptions()
-        topic_state = await self.store.get_topic_state(umo, conversation_id)
-        short_term_memory = await self.store.get_short_term_memory(umo, conversation_id)
-        recent_turns = await self.store.get_recent_turn_records(
-            umo,
-            limit=1,
-            conversation_id=conversation_id,
-        )
+        local_reads = [
+            self.store.get_topic_state(umo, conversation_id),
+            self.store.get_short_term_memory(umo, conversation_id),
+        ]
+        # Identity resolution already has the only data needed from the latest
+        # turn, so normal collector calls do not need this fallback query.
+        if identity is None:
+            local_reads.append(
+                self.store.get_recent_turn_records(
+                    umo,
+                    limit=1,
+                    conversation_id=conversation_id,
+                )
+            )
+        local_results = await asyncio.gather(*local_reads)
+        topic_state = local_results[0]
+        short_term_memory = local_results[1]
+        recent_turns = local_results[2] if identity is None else []
         latest_turn = recent_turns[0] if recent_turns else None
         if identity is not None:
             canonical_user_id = identity.canonical_user_id

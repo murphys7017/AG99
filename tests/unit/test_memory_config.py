@@ -414,3 +414,24 @@ def test_get_memory_config_uses_current_json_config_payload(temp_dir: Path):
         assert loaded.storage.sqlite_path == temp_dir / "current.db"
     finally:
         reset_memory_config()
+
+
+def test_get_memory_config_reuses_explicit_config_cache_key(temp_dir: Path):
+    reset_memory_config()
+    try:
+        first_payload = build_default_memory_config_payload()
+        first_payload["storage"]["sqlite_path"] = str(temp_dir / "shared.db")
+        second_payload = deepcopy(first_payload)
+
+        first = get_memory_config(
+            {"memory": first_payload},
+            cache_key="group-config",
+        )
+        second = get_memory_config(
+            {"memory": second_payload},
+            cache_key="group-config",
+        )
+
+        assert second is first
+    finally:
+        reset_memory_config()

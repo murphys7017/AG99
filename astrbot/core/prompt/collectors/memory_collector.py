@@ -55,11 +55,12 @@ class MemoryCollector(ContextCollectorInterface):
         event_config = event.get_extra("_astrbot_config")
         if not isinstance(event_config, Mapping):
             event_config = None
+        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
 
-        memory_config = get_memory_config(event_config)
+        memory_config = get_memory_config(event_config, cache_key=config_id)
         if not memory_config.enabled or not memory_config.injection.enabled:
             return []
-        memory_service = get_memory_service(event_config)
+        memory_service = get_memory_service(event_config, cache_key=config_id)
         await memory_service.initialize()
         identity = None
         if memory_service.identity_resolver is not None:

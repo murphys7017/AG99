@@ -811,16 +811,27 @@ _MEMORY_CONFIG: MemoryConfig | None = None
 _MEMORY_CONFIGS_BY_KEY: dict[str, MemoryConfig] = {}
 
 
-def _memory_config_key(config: object | None) -> str:
+def _memory_config_key(
+    config: object | None,
+    *,
+    cache_key: str | None = None,
+) -> str:
+    normalized_cache_key = str(cache_key or "").strip()
+    if normalized_cache_key:
+        return f"config:{normalized_cache_key}"
     if config is None:
         return "default"
     return str(id(config))
 
 
-def get_memory_config(config: Mapping[str, object] | None = None) -> MemoryConfig:
+def get_memory_config(
+    config: Mapping[str, object] | None = None,
+    *,
+    cache_key: str | None = None,
+) -> MemoryConfig:
     global _MEMORY_CONFIG
     if config is not None:
-        key = _memory_config_key(config)
+        key = _memory_config_key(config, cache_key=cache_key)
         cached_config = _MEMORY_CONFIGS_BY_KEY.get(key)
         if cached_config is None:
             payload = config.get("memory")
@@ -835,10 +846,17 @@ def get_memory_config(config: Mapping[str, object] | None = None) -> MemoryConfi
     return _MEMORY_CONFIG
 
 
-def reset_memory_config(config: Mapping[str, object] | None = None) -> None:
+def reset_memory_config(
+    config: Mapping[str, object] | None = None,
+    *,
+    cache_key: str | None = None,
+) -> None:
     global _MEMORY_CONFIG
     if config is None:
         _MEMORY_CONFIG = None
         _MEMORY_CONFIGS_BY_KEY.clear()
         return
-    _MEMORY_CONFIGS_BY_KEY.pop(_memory_config_key(config), None)
+    _MEMORY_CONFIGS_BY_KEY.pop(
+        _memory_config_key(config, cache_key=cache_key),
+        None,
+    )

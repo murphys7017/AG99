@@ -6,6 +6,16 @@ from ..entities import ProviderType
 from ..provider import EmbeddingProvider
 from ..register import register_provider_adapter
 
+_OLLAMA_EMBEDDING_PROTECTED_FIELDS = {"model", "input", "dimensions"}
+
+
+def _normalize_ollama_embedding_api_base(api_base: str) -> str:
+    normalized = api_base.rstrip("/")
+    for suffix in ("/api/embed", "/v1"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+    return normalized
+
 
 @register_provider_adapter(
     "ollama_embedding",
@@ -18,10 +28,13 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         self.provider_config = provider_config
         self.provider_settings = provider_settings
 
-        self.base_url = (
-            provider_config.get("embedding_api_base", "http://localhost:11434")
-            .rstrip("/")
-            .removesuffix("/api/embed")
+        self.base_url = _normalize_ollama_embedding_api_base(
+            str(
+                provider_config.get(
+                    "embedding_api_base",
+                    "http://localhost:11434",
+                )
+            )
         )
         self.timeout = int(provider_config.get("timeout", 60))
         self.model = provider_config.get("embedding_model", "nomic-embed-text")
@@ -59,6 +72,16 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
                     payload["dimensions"] = dimensions
             except (ValueError, TypeError):
                 pass
+        custom_extra_body = self.provider_config.get("custom_extra_body", {})
+        if isinstance(custom_extra_body, dict):
+            for key, value in custom_extra_body.items():
+                if key in _OLLAMA_EMBEDDING_PROTECTED_FIELDS:
+                    logger.warning(
+                        "Ignoring protected Ollama embedding request field: %s",
+                        key,
+                    )
+                    continue
+                payload[key] = value
         return payload
 
     async def get_embedding(self, text: str) -> list[float]:

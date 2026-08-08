@@ -137,7 +137,8 @@ class ConversationHistoryCollector(ContextCollectorInterface):
         event_config = event.get_extra("_astrbot_config")
         if not isinstance(event_config, dict):
             event_config = None
-        memory_config = get_memory_config(event_config)
+        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
+        memory_config = get_memory_config(event_config, cache_key=config_id)
         if not memory_config.enabled:
             return None
 
@@ -147,7 +148,10 @@ class ConversationHistoryCollector(ContextCollectorInterface):
             return None
 
         try:
-            records = await get_memory_service(event_config).store.get_recent_turn_records(
+            records = await get_memory_service(
+                event_config,
+                cache_key=config_id,
+            ).store.get_recent_turn_records(
                 umo,
                 limit,
                 conversation_id=conversation_id,

@@ -1937,6 +1937,7 @@ CONFIG_METADATA_2 = {
                         "embedding_dimensions": 768,
                         "timeout": 60,
                         "proxy": "",
+                        "custom_extra_body": {},
                     },
                     "vLLM Rerank": {
                         "id": "vllm_rerank",

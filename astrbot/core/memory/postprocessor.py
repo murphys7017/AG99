@@ -89,7 +89,13 @@ class MemoryPostProcessor:
         event_config = ctx.event.get_extra("_astrbot_config")
         if not isinstance(event_config, Mapping):
             event_config = None
-        if event_config is not None and not get_memory_config(event_config).enabled:
+        config_id = str(
+            ctx.event.get_extra("_astrbot_config_id", "default") or "default"
+        )
+        if event_config is not None and not get_memory_config(
+            event_config,
+            cache_key=config_id,
+        ).enabled:
             ctx.event.set_extra("_memory_postprocess_skipped_reason", "memory_disabled")
             return
         if event_config is None and not get_memory_config().enabled:
@@ -152,7 +158,8 @@ def register_memory_postprocessor(
 def resolve_memory_service_for_event(event: Any) -> MemoryService:
     event_config = event.get_extra("_astrbot_config")
     if isinstance(event_config, Mapping):
-        return get_memory_service(event_config)
+        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
+        return get_memory_service(event_config, cache_key=config_id)
     return get_memory_service()
 
 

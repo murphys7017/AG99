@@ -623,7 +623,10 @@ class TestAstrBotCoreLifecycleInitialize:
         # Verify pipeline scheduler loaded
         assert lifecycle.pipeline_scheduler_mapping is not None
         mock_register_memory_postprocessor.assert_called_once()
-        mock_get_memory_service.assert_called_once_with(lifecycle.astrbot_config)
+        mock_get_memory_service.assert_called_once_with(
+            lifecycle.astrbot_config,
+            cache_key="default",
+        )
         assert lifecycle.interaction_middleware is not None
         assert lifecycle.interaction_output_controller is not None
         mock_memory_service.initialize.assert_awaited_once()

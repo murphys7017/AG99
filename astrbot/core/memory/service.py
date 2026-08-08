@@ -400,7 +400,14 @@ _MEMORY_SERVICES_BY_KEY: dict[str, MemoryService] = {}
 _MEMORY_PROVIDER_MANAGER: Any | None = None
 
 
-def _memory_service_key(config: object | None) -> str:
+def _memory_service_key(
+    config: object | None,
+    *,
+    cache_key: str | None = None,
+) -> str:
+    normalized_cache_key = str(cache_key or "").strip()
+    if normalized_cache_key:
+        return f"config:{normalized_cache_key}"
     if config is None:
         return "default"
     return str(id(config))
@@ -479,13 +486,19 @@ def bind_memory_provider_manager(provider_manager: Any) -> None:
         service.bind_provider_manager(provider_manager)
 
 
-def get_memory_service(config: Any | None = None) -> MemoryService:
+def get_memory_service(
+    config: Any | None = None,
+    *,
+    cache_key: str | None = None,
+) -> MemoryService:
     global _MEMORY_SERVICE
     if config is not None:
-        key = _memory_service_key(config)
+        key = _memory_service_key(config, cache_key=cache_key)
         cached_service = _MEMORY_SERVICES_BY_KEY.get(key)
         if cached_service is None:
-            cached_service = _build_memory_service(get_memory_config(config))
+            cached_service = _build_memory_service(
+                get_memory_config(config, cache_key=cache_key)
+            )
             _MEMORY_SERVICES_BY_KEY[key] = cached_service
         return cached_service
 
@@ -494,10 +507,17 @@ def get_memory_service(config: Any | None = None) -> MemoryService:
     return _MEMORY_SERVICE
 
 
-async def shutdown_memory_service(config: Any | None = None) -> None:
+async def shutdown_memory_service(
+    config: Any | None = None,
+    *,
+    cache_key: str | None = None,
+) -> None:
     global _MEMORY_SERVICE
     if config is not None:
-        service = _MEMORY_SERVICES_BY_KEY.pop(_memory_service_key(config), None)
+        service = _MEMORY_SERVICES_BY_KEY.pop(
+            _memory_service_key(config, cache_key=cache_key),
+            None,
+        )
         if service is not None:
             await service.store.close()
         return

@@ -1050,8 +1050,8 @@ class ConfigRoute(Route):
             if config.get("memory") != old_memory_config:
                 updated_config = self.acm.confs.get(conf_id)
                 if updated_config is not None:
-                    reset_memory_config(updated_config)
-                    await shutdown_memory_service(updated_config)
+                    reset_memory_config(updated_config, cache_key=conf_id)
+                    await shutdown_memory_service(updated_config, cache_key=conf_id)
             await self.core_lifecycle.reload_pipeline_scheduler(conf_id)
 
             # Non-blocking Bay connectivity check

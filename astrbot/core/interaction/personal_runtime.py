@@ -23,7 +23,10 @@ from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
-from .group_reply import is_group_reply_candidate
+from .group_reply import (
+    GROUP_REPLY_CANDIDATE_KIND_EXTRA,
+    is_group_reply_candidate,
+)
 from .lifecycle import dispatch_interaction_lifecycle
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .observation_inbox import (
@@ -699,6 +702,23 @@ class PersonalSessionRuntime:
             or turn.actor is None
         ):
             return
+        actor_id = str(turn.actor.actor_id or "").strip() or None
+        candidate_kind = str(
+            turn.event.get_extra(GROUP_REPLY_CANDIDATE_KIND_EXTRA, "") or ""
+        ).strip()
+        if (
+            feedback.delivery_status is PersonalDeliveryStatus.SUPPRESSED
+            and candidate_kind == "continuation"
+            and actor_id == self.conversation_actor_id
+        ):
+            logger.debug(
+                "Personal Runtime preserved group continuation after silent "
+                "candidate: audience=%s actor_id=%s turn_id=%s",
+                self.key.audience_key,
+                actor_id,
+                turn.turn_id,
+            )
+            return
         if (
             not self._interaction_config.enabled
             or feedback.delivery_status is not PersonalDeliveryStatus.DELIVERED
@@ -708,7 +728,7 @@ class PersonalSessionRuntime:
             self.conversation_actor_id = None
             self.conversation_reply_completed_at = None
             return
-        self.conversation_actor_id = str(turn.actor.actor_id or "").strip() or None
+        self.conversation_actor_id = actor_id
         self.conversation_reply_completed_at = completed_at
 
     def configure_personal_policy(

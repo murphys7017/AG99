@@ -713,6 +713,28 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
         runtime_config=runtime_config,
     ) == "model"
 
+    mark_group_reply_candidate(same_actor_follow_up, kind="continuation")
+    same_actor_follow_up.set_extra(
+        "_interaction_output_controller",
+        InteractionOutputController(),
+    )
+    async with manager.submit_platform_event(
+        same_actor_follow_up,
+        "default",
+        context,
+        runtime_config,
+    ) as submission:
+        admission = await submission.admit(allow_follow_up=False)
+        assert admission.lease is not None
+        try:
+            assert await reserve_interaction_turn_final_output(same_actor_follow_up)
+            await finish_interaction_turn_final_output(
+                same_actor_follow_up,
+                InteractionFinalOutputStatus.SUPPRESSED,
+            )
+        finally:
+            await admission.lease.release()
+
     monkeypatch.setattr(
         "astrbot.core.interaction.personal_runtime.time.time",
         lambda: completed_at + 30,
