@@ -37,6 +37,11 @@ class MemoryVectorIndex:
             return
         await self._ensure_vec_db()
 
+    async def prewarm(self) -> None:
+        """Initialize the index and warm the configured embedding provider."""
+        vec_db = await self._ensure_vec_db()
+        await vec_db.embedding_provider.get_embedding("astrbot memory prewarm")
+
     async def upsert_long_term_memory(self, memory_id: str) -> None:
         memory = await self.store.get_long_term_memory_index(memory_id)
         if memory is None:

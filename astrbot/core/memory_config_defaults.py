@@ -72,6 +72,8 @@ def build_default_memory_config_payload() -> dict:
         },
         "vector_index": {
             "enabled": True,
+            "prewarm": False,
+            "prewarm_timeout_seconds": 5.0,
             "provider": "faiss",
             "provider_id": "",
             "model": "",

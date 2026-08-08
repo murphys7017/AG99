@@ -279,6 +279,8 @@ class MemoryLongTermConfig:
 @dataclass(slots=True)
 class MemoryVectorIndexConfig:
     enabled: bool = True
+    prewarm: bool = False
+    prewarm_timeout_seconds: float = 5.0
     provider: str = "faiss"
     provider_id: str = ""
     model: str = ""
@@ -708,6 +710,11 @@ def load_memory_config(
         ),
         vector_index=MemoryVectorIndexConfig(
             enabled=_as_bool(vector_index_payload.get("enabled"), True),
+            prewarm=_as_bool(vector_index_payload.get("prewarm"), False),
+            prewarm_timeout_seconds=_as_float(
+                vector_index_payload.get("prewarm_timeout_seconds"),
+                5.0,
+            ),
             provider=_as_str(vector_index_payload.get("provider"), "faiss"),
             provider_id=_as_str(vector_index_payload.get("provider_id"), ""),
             model=_as_str(vector_index_payload.get("model"), ""),

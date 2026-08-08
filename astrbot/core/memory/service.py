@@ -199,6 +199,14 @@ class MemoryService:
             identity=identity,
         )
 
+    async def prewarm_vector_index(self) -> bool:
+        await self.initialize()
+        vector_index = self._get_vector_index()
+        if vector_index is None or not self.store.config.vector_index.enabled:
+            return False
+        await vector_index.prewarm()
+        return True
+
     async def run_consolidation(
         self,
         canonical_user_id: str,

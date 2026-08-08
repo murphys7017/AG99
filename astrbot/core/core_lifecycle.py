@@ -179,6 +179,63 @@ class AstrBotCoreLifecycle:
                 fallback_id,
             )
 
+    async def _prewarm_memory_vector_indexes(self) -> None:
+        """Prewarm every distinct memory service used by loaded configurations."""
+        seen_services: set[int] = set()
+        for conf_id, config in self.astrbot_config_mgr.confs.items():
+            memory_service = get_memory_service(config)
+            service_key = id(memory_service)
+            if service_key in seen_services:
+                continue
+            seen_services.add(service_key)
+
+            vector_index_config = memory_service.store.config.vector_index
+            if not vector_index_config.prewarm:
+                continue
+
+            timeout_seconds = max(
+                0.1,
+                vector_index_config.prewarm_timeout_seconds,
+            )
+            started_at = time.monotonic()
+            try:
+                prewarmed = await asyncio.wait_for(
+                    memory_service.prewarm_vector_index(),
+                    timeout=timeout_seconds,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "memory vector index prewarm timed out; continuing startup: "
+                    "conf_id=%s timeout_seconds=%.2f",
+                    conf_id,
+                    timeout_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "memory vector index prewarm failed; continuing startup: "
+                    "conf_id=%s error=%s",
+                    conf_id,
+                    exc,
+                    exc_info=True,
+                )
+            else:
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                if prewarmed:
+                    logger.info(
+                        "memory vector index prewarmed: conf_id=%s provider_id=%s "
+                        "duration_ms=%s",
+                        conf_id,
+                        vector_index_config.provider_id or "auto",
+                        duration_ms,
+                    )
+                else:
+                    logger.info(
+                        "memory vector index prewarm skipped: conf_id=%s "
+                        "vector_index_enabled=%s",
+                        conf_id,
+                        vector_index_config.enabled,
+                    )
+
     async def initialize(self) -> None:
         """初始化 AstrBot 核心生命周期管理类.
 
@@ -347,6 +404,7 @@ class AstrBotCoreLifecycle:
         self._default_chat_provider_warning_emitted = False
         await self.provider_manager.initialize()
         self._warn_about_unset_default_chat_provider()
+        await self._prewarm_memory_vector_indexes()
 
         await self.kb_manager.initialize()
 
