@@ -1431,11 +1431,11 @@ CONFIG_METADATA_2 = {
                     "Ollama": {
                         "id": "ollama",
                         "provider": "ollama",
-                        "type": "openai_chat_completion",
+                        "type": "ollama_chat_completion",
                         "provider_type": "chat_completion",
                         "enable": True,
                         "key": ["ollama"],  # ollama 的 key 默认是 ollama
-                        "api_base": "http://127.0.0.1:11434/v1",
+                        "api_base": "http://127.0.0.1:11434",
                         "proxy": "",
                         "custom_headers": {},
                         "ollama_disable_thinking": False,
@@ -1893,6 +1893,7 @@ CONFIG_METADATA_2 = {
                         "embedding_dimensions": 1024,
                         "timeout": 20,
                         "proxy": "",
+                        "custom_extra_body": {},
                     },
                     "Gemini Embedding": {
                         "id": "gemini_embedding",
@@ -4843,6 +4844,18 @@ CONFIG_METADATA_3 = {
                     "memory.vector_index.enabled": {
                         "description": "启用向量索引",
                         "type": "bool",
+                        "collapsed": True,
+                    },
+                    "memory.vector_index.prewarm": {
+                        "description": "启动时预热记忆向量索引",
+                        "type": "bool",
+                        "hint": "Provider 初始化后预热向量索引和 Embedding 模型，避免首轮记忆检索承担冷启动延迟。失败时仅记录告警，不阻止 AstrBot 启动。",
+                        "collapsed": True,
+                    },
+                    "memory.vector_index.prewarm_timeout_seconds": {
+                        "description": "记忆向量预热超时",
+                        "type": "float",
+                        "hint": "启动时等待向量索引和 Embedding 模型预热的最长秒数。",
                         "collapsed": True,
                     },
                     "memory.analysis.analyzers": {
