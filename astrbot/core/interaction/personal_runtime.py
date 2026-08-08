@@ -390,6 +390,7 @@ class TurnAdmission:
     turn: PersonalTurnContext
     consumed_as_follow_up: bool
     lease: PersonalTurnLease | None = None
+    skipped_busy: bool = False
 
 
 class PlatformEventSubmission:
@@ -411,13 +412,19 @@ class PlatformEventSubmission:
     def set_provider_request(self, request: ProviderRequest) -> None:
         self._reservation.turn.provider_request = request
 
-    async def admit(self, *, allow_follow_up: bool) -> TurnAdmission:
+    async def admit(
+        self,
+        *,
+        allow_follow_up: bool,
+        wait_if_busy: bool = True,
+    ) -> TurnAdmission:
         if self._admitted:
             raise RuntimeError("Platform event has already been admitted.")
         self._admitted = True
         return await self._manager._bind_and_admit(
             self._reservation,
             allow_follow_up=allow_follow_up,
+            wait_if_busy=wait_if_busy,
         )
 
 
@@ -452,6 +459,14 @@ class _TurnAdmissionGate:
             finally:
                 self._normal_waiters -= 1
                 self._condition.notify_all()
+
+    async def try_acquire(self) -> bool:
+        """Acquire immediately without overtaking an active or queued turn."""
+        async with self._condition:
+            if self._active or self._normal_waiters:
+                return False
+            self._active = True
+            return True
 
     async def release(self) -> None:
         async with self._condition:
@@ -1262,6 +1277,7 @@ class PersonalSessionRuntime:
         reservation: PendingTurnReservation,
         *,
         allow_follow_up: bool,
+        wait_if_busy: bool,
     ) -> TurnAdmission:
         turn = reservation.turn
         event = turn.event
@@ -1296,8 +1312,17 @@ class PersonalSessionRuntime:
                         )
 
                 reservation.transition(PendingTurnState.QUEUED)
-                await self.turn_lock.acquire(delayed=delayed_admission)
-                lock_acquired = True
+                if wait_if_busy:
+                    await self.turn_lock.acquire(delayed=delayed_admission)
+                    lock_acquired = True
+                else:
+                    lock_acquired = await self.turn_lock.try_acquire()
+                    if not lock_acquired:
+                        return TurnAdmission(
+                            turn=turn,
+                            consumed_as_follow_up=False,
+                            skipped_busy=True,
+                        )
 
             reservation.transition(PendingTurnState.ACTIVE)
             if turn.state.deadline is None:
@@ -1922,6 +1947,7 @@ class PersonalRuntimeManager:
         reservation: PendingTurnReservation,
         *,
         allow_follow_up: bool,
+        wait_if_busy: bool = True,
     ) -> TurnAdmission:
         event = reservation.turn.event
         runtime = self._event_sessions.get(event)
@@ -1930,6 +1956,7 @@ class PersonalRuntimeManager:
         return await runtime.admit(
             reservation,
             allow_follow_up=allow_follow_up,
+            wait_if_busy=wait_if_busy,
         )
 
     async def _bind_and_admit(
@@ -1937,6 +1964,7 @@ class PersonalRuntimeManager:
         reservation: PendingTurnReservation,
         *,
         allow_follow_up: bool,
+        wait_if_busy: bool = True,
     ) -> TurnAdmission:
         deadline = reservation.turn.state.deadline
         if deadline is None:
@@ -1947,6 +1975,7 @@ class PersonalRuntimeManager:
         return await self._admit(
             reservation,
             allow_follow_up=allow_follow_up,
+            wait_if_busy=wait_if_busy,
         )
 
     def register_active_runner(self, event: Any, runner: Any) -> bool:

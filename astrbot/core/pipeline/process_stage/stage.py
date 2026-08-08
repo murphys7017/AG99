@@ -713,6 +713,9 @@ class ProcessStage(Stage):
         )
         event.set_extra("activated_handlers", activated_handlers)
         is_group_candidate = is_group_reply_candidate(event)
+        skip_busy_group_candidate = (
+            is_group_candidate and self._is_expirable_group_candidate(event)
+        )
         self._prepare_interaction_output(event)
         manager: PersonalRuntimeManager | None = getattr(
             self,
@@ -740,6 +743,7 @@ class ProcessStage(Stage):
                 try:
                     admission = await submission.admit(
                         allow_follow_up=not bool(activated_handlers),
+                        wait_if_busy=not skip_busy_group_candidate,
                     )
                 except TurnDeadlineExceeded as exc:
                     await self._handle_deadline_expiry(
@@ -753,6 +757,33 @@ class ProcessStage(Stage):
                     logger.info(
                         "Personal Runtime consumed message as active-runner follow-up: session_id=%s",
                         event.unified_msg_origin,
+                    )
+                    return
+                if admission.skipped_busy:
+                    event.set_extra(
+                        "_personal_runtime_admission_skip_reason",
+                        "busy_group_candidate",
+                    )
+                    plugin_source = self._run_busy_group_candidate_plugins(
+                        event,
+                        activated_handlers=activated_handlers,
+                        submission=submission,
+                    )
+                    async with aclosing(plugin_source):
+                        async for item in plugin_source:
+                            yield item
+                    event.stop_event()
+                    logger.info(
+                        "Personal Runtime skipped stale group candidate while "
+                        "session was busy: platform_id=%s session_id=%s "
+                        "turn_id=%s candidate_kind=%s",
+                        event.get_platform_id(),
+                        event.session_id,
+                        admission.turn.turn_id,
+                        event.get_extra(
+                            "_interaction_group_reply_candidate_kind",
+                            "unknown",
+                        ),
                     )
                     return
                 lease = admission.lease
@@ -798,3 +829,38 @@ class ProcessStage(Stage):
                             await lease.release()
                     else:
                         await lease.release()
+
+    @staticmethod
+    def _is_expirable_group_candidate(
+        event: AstrMessageEvent,
+    ) -> bool:
+        candidate_kind = str(
+            event.get_extra("_interaction_group_reply_candidate_kind", "") or ""
+        ).strip()
+        return candidate_kind in {"ambient", "continuation"}
+
+    async def _run_busy_group_candidate_plugins(
+        self,
+        event: AstrMessageEvent,
+        *,
+        activated_handlers: list[StarHandlerMetadata],
+        submission: PlatformEventSubmission,
+    ) -> AsyncGenerator[None, None]:
+        """Preserve official Plugin Handler semantics for a stale passive turn."""
+        if not activated_handlers:
+            return
+        middleware = self.ctx.interaction_middleware
+        output_controller = (
+            middleware.output_controller if middleware is not None else None
+        )
+        execution_result = PluginBranchResult()
+        plugin_source = self._get_plugin_handler_executor().process(
+            event,
+            output_controller=output_controller,
+            submission=submission,
+            run_agent_turn=self._run_core_agent_only,
+            result=execution_result,
+        )
+        async with aclosing(plugin_source):
+            async for item in plugin_source:
+                yield item
