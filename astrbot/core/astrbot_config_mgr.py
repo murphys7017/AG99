@@ -125,8 +125,6 @@ class AstrBotConfigManager:
         """获取指定 umo 的配置文件。如果不存在，则 fallback 到默认配置文件。"""
         if not umo:
             return self.confs["default"]
-        if isinstance(umo, MessageSession):
-            umo = f"{umo.platform_id}:{umo.message_type}:{umo.session_id}"
 
         uuid_ = self._load_conf_mapping(umo)["id"]
 
@@ -143,9 +141,6 @@ class AstrBotConfigManager:
 
     def get_conf_info(self, umo: str | MessageSession) -> ConfInfo:
         """获取指定 umo 的配置文件元数据"""
-        if isinstance(umo, MessageSession):
-            umo = f"{umo.platform_id}:{umo.message_type}:{umo.session_id}"
-
         return self._load_conf_mapping(umo)
 
     def get_conf_list(self) -> list[ConfInfo]:
