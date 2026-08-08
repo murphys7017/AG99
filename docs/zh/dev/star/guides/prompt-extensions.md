@@ -95,6 +95,16 @@ Router 和 Core Planner 不接受插件能力目录。需要让它们参与路�
 
 插件 Collector 的异常会记录告警并跳过，避免一个插件阻断核心 Prompt。插件应自行记录必要诊断，但不得把异常日志、traceback 或过期执行痕迹作为模型事实返回。
 
+## Interaction 时延边界
+
+Interaction turn 会先构建 Router、Planner、Persona 和 Core 共享的基础事实，再在后台构建只面向
+Persona/Core 的插件富化包。Router 和 Planner 从不读取普通插件 Extension；Persona 仅在富化包
+已经就绪时把它合并进当前表达，未就绪时会直接生成首回复；Core 在需要执行时才等待并复用同一结果。
+
+因此 Prompt Extension 是“尽力增强”，不能作为当前首回复、Router 判断或消息接管的硬依赖。若插件
+必须终止、接管或改变当前消息的处理，应使用官方 Pipeline Handler；不要在 Collector 中发送消息、
+执行工具或以等待慢外部请求的方式实现控制逻辑。
+
 ## 与其他接口的区别
 
 | 接口 | 用途 |

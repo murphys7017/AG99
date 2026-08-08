@@ -12,7 +12,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - `conversation` 是一段对话 episode。
 - `persona` 是持续存在的交互主体。
 - `memory` 通过统一 Memory Service 为 Prompt 提供事实，不再建立 Interaction 私有记忆副本。
-- `Personal Runtime` 在官方 EventBus 和 Pipeline 之后、核心执行器之前管理 turn、并发和 follow-up。
+- `Personal Runtime` 在官方 EventBus 和 Pipeline 完成过滤、权限与 Handler 准入后、核心执行器之前管理 turn、并发和 follow-up。
 - `Persona Expression` 是所有用户可见文本进入 Output 前的唯一拟人层。
 - `Core Planner` 只准备执行意图；Native、Claude Code、OpenCode 等执行后台位于统一执行边界之后。
 - `effect_calls` 是插件扩展协议，AstrBot 不理解 Motion、Live2D 等插件领域语义。
@@ -23,7 +23,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 
 - Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Interaction 先形成 canonical base facts，再后台预取 Persona/Core 共用的 plugin enrichment。Persona 只消费已就绪结果，Router 与 Planner 不等待普通插件扩展，Core 等待并复用同一 task。
 - Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；第三方 Backend 尚未接入这一边界。
-- Personal Runtime 在插件 Handler 前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。
+- Personal Runtime 在 Plugin Handler body 执行前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。默认兼容路径仍先保留 Handler 接管机会；默认关闭的并行插件路径会在 discovery 后从同一 `t0` 启动 Personal、Router 和 Plugin Job。
   reservation 同时启动一个 `TurnDeadlineBudget`；binding、queue、Router、Planner、Persona、
   Core、Provider fallback 与工具循环共享默认 120 秒的单调递减总预算。
 - `PersonalSessionRuntime` 现在按 RuntimeKey 在进程内跨 turn 保留控制状态；空闲实例受 24 小时 TTL 和 1024 条 LRU 上限约束。窄化的 Personal State Repository 只持久化最近表达、冷却、静音和每日用量，重启后按同一 RuntimeKey 恢复；Inbox、active turn、attention 和模型临时状态仍只存在于进程内。每个 Runtime 还持有最多 64 条 Observation 的有界 Inbox、唯一固定聚合窗口 task、确定性 Gate 和最后一次 Personal Policy 结果。Turn 结束时根据真实物理投递回执形成 Completion Feedback；所有已送达可见回复都会推进最近表达时间并启动自主表达冷却，只有携带 `ActionIntent.action_id` 的已送达输出才消耗每日主动输出配额，失败发送两者都不更新。
@@ -36,12 +36,13 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 ```text
 Platform Adapter
   -> EventBus
-  -> official Pipeline / plugin filters
+  -> official Pipeline / filters / Handler discovery
   -> Personal Runtime turn admission / session lease
-  -> official Plugin Handlers
-  -> TurnExecutionScope
-       -> Router ------------------------------+
+  -> default path: Handler takeover -> unclaimed turn enters TurnExecutionScope
+  -> optional parallel-plugin path (default off): TurnExecutionScope at one t0
+       -> Router --------------------------------+
        -> Persona Expression -> immediate Output
+       -> Official Plugin Job -------------------+
             Router persona --------------------+-> complete
             Router hybrid -> Core Planner
                  -> not_required ---------------+-> complete
@@ -55,7 +56,8 @@ Prompt 使用唯一数据流：
 
 ```text
 Collectors
-  -> PromptContextBuilder / ContextPack
+  -> base PromptContextBuilder / ContextPack
+  -> background plugin-enrichment ContextPack for Persona/Core
   -> CoreExecutionSpec
   -> Native target projection
   -> PromptRenderProfile
@@ -65,7 +67,7 @@ Collectors
   -> NativeExecutionAdapter -> ProviderRequest
 ```
 
-Collector 负责收集事实，Projection 决定 Router、Planner、Personal Policy、Persona 和 Core 各自可见的内容，Renderer 只负责编译 Provider 格式。Prompt 系统不负责路由、工具执行、Memory 写入或消息发送。
+Collector 负责收集事实，Projection 决定 Router、Planner、Personal Policy、Persona 和 Core 各自可见的内容，Renderer 只负责编译 Provider 格式。Prompt 系统不负责路由、工具执行、Memory 写入或消息发送。Router 和 Planner 只消费 base facts；Persona 只在 enrichment 已就绪时合并，Core 在需要执行时等待并复用同一 enrichment task。因此普通插件 Prompt 贡献是尽力增强，不是首回复的硬依赖。
 
 可见 Dialogue History 与 Core Execution Ledger 是两个事实源：Conversation 保存规范用户输入、最终 Persona 表达和明确的 assistant-only 主动表达；后者会作为 `TurnRecord` 保留并供 Prompt 理解上下文，但不会更新抽象 Memory 状态或反向产生自主表达材料。Ledger 保存 Core task、工具证据、结果和错误，并且只投影给 Core。当前 Native 已接入执行准备边界，完整 Backend/Event/取消协议仍属于后续工作。
 

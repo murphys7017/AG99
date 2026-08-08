@@ -88,6 +88,20 @@ Valid plugin targets are `persona` and `core`. A regular extension without targe
 
 A failing plugin collector is logged and skipped so one plugin cannot break core Prompt collection. Do not return tracebacks, stale failures, or diagnostics as model facts.
 
+## Interaction Latency Boundary
+
+An Interaction turn first builds base facts shared by Router, Planner, Persona, and
+Core, then constructs a Persona/Core-only plugin-enrichment pack in the background.
+Router and Planner never read ordinary plugin extensions. Persona uses enrichment
+only when it is already ready; otherwise it produces the first reply from base facts.
+Core waits for and reuses the same enrichment result only when execution is needed.
+
+Prompt Extensions are therefore best-effort enhancements, not hard dependencies for
+the current first reply, Router decision, or message takeover. A plugin that must
+stop, take over, or alter handling of the current message must use an official
+Pipeline Handler. Do not use a collector to send messages, execute tools, or wait on
+slow external control work.
+
 ## Related APIs
 
 | API | Purpose |

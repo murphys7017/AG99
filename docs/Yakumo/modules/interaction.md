@@ -65,6 +65,18 @@ Core Gate、EXPIRED 脱离和低优先级 T2 已接入生产 ProcessStage，但�
 `DIAG plugin.delayed_delivery` 和 `DIAG plugin.runtime` 分别解释 Handler 产物、T2 投递与后台 Job
 存活状态。Personal 的 `emitted_at` 在平台发送成功后记录，不以模型返回或发送意图代替。
 
+## 首回复与插件富化
+
+Interaction Prompt 构建分为两层：先形成 Router、Planner、Persona 和 Core 共享的 base facts，
+随后并行预取只面向 Persona/Core 的 plugin enrichment。Router 与 Planner 永远不读取普通插件
+Prompt Extension；Persona 在 enrichment 已就绪时才把它合并进当前表达，未就绪时直接基于 base
+facts 生成首回复；Core 在获准执行后等待并复用同一个 enrichment task。
+
+这条规则只影响普通的 Prompt Extension 与 Interaction Prompt Contributor，不改变官方 Pipeline
+Handler 的接管、命令或关键词语义。插件若必须在当前轮阻止、接管或改变消息处理，应使用官方
+Handler 契约，而不是把控制逻辑放进 Prompt Extension。Collector 必须保持无副作用，并尽量快速；
+慢贡献最多错过当前首回复，不能阻塞 Personal 或 Router。
+
 ## 插件运行目标
 
 Personal Runtime 在缺省配置下启用。已有配置若明确写了

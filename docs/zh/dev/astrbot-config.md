@@ -468,6 +468,14 @@ Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑
 - `enabled`：是否启用 Interaction Middleware。省略时启用；设为 `false` 可保留原有 Core-only 行为。
 - `expression_provider_id`、`router_provider_id` 与 `planner_provider_id`：可选的分阶段模型覆盖。
   留空时复用当前会话已配置的聊天模型；显式填写 ID 时优先使用该模型。
+- `parallel_plugin_runtime_enabled`：是否启用 Personal、Router 与 Official Plugin Job 的三线并行路径。
+  默认 `false`，且是整条插件路径的全局开关，不支持按单个插件半启用。关闭时保留 Handler 先接管的
+  兼容路径；开启前应先检查 `DIAG interaction.parallel_turn` 等运行日志。
+- `plugin_parallel_window_seconds`：三线并行时 T1 等待插件处理决定的窗口，默认 `3` 秒。窗口结束只
+  解除本轮对插件决定的等待，不会取消仍在运行的插件 Job；迟到产物按插件输出协议处理。
+- `persona_history_window_size`：Persona Expression 使用的最近 Conversation 历史轮数，默认 `50`。
+  增大它会提高当前请求的上下文长度；它不替代 Memory 的语义检索，也不改变 Router 或 Core Planner
+  的独立历史预算。
 - `plugin_runtime_targets`：插件 LLM 生命周期目标映射。键推荐使用插件目录名，值为 `core` 或
   `personal_expression`。该配置会覆盖插件类可选的 `interaction_runtime_target` 声明；既未配置
   也未声明的插件默认在 Persona Expression 运行。普通关键词、命令和 `AdapterMessageEvent`

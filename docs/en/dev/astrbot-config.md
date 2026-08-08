@@ -474,6 +474,19 @@ and plugin tools while still allowing compatible module-path keys to be entered 
 - `expression_provider_id`, `router_provider_id`, and `planner_provider_id`:
   Optional per-stage model overrides. Leave a field empty to reuse the current
   session's configured chat provider; an explicit ID takes precedence.
+- `parallel_plugin_runtime_enabled`: Enable the three-lane Personal, Router, and
+  Official Plugin Job path. It defaults to `false` and applies to the complete
+  plugin path, not individual plugins. Disabled keeps the Handler-first
+  compatibility path; review `DIAG interaction.parallel_turn` diagnostics before
+  enabling it.
+- `plugin_parallel_window_seconds`: The T1 window for a parallel plugin decision,
+  defaulting to `3` seconds. Expiry releases the turn from waiting for that decision;
+  it does not cancel a still-running plugin job, whose late artifacts follow the
+  plugin output contract.
+- `persona_history_window_size`: Number of recent Conversation turns used by
+  Persona Expression, defaulting to `50`. Raising it increases request context; it
+  neither replaces semantic Memory retrieval nor changes the independent Router or
+  Core Planner history budgets.
 - `plugin_runtime_targets`: Plugin LLM lifecycle-target map. Use the plugin directory
   name as the key when possible, with a value of `core` or `personal_expression`.
   This configuration overrides a plugin class's optional
