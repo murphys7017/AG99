@@ -30,6 +30,62 @@
 
 middleware 的职责是组合这些服务，并在一个 interaction turn 内形成可观测、可扩展、可回滚的执行现场。
 
+## 插件处理时序
+
+Interaction 不把所有插件都当作 Persona 输入。插件首先按行为类型分流：
+
+| 类型 | 处理方式 | 是否进入 Router/Planner |
+|---|---|---|
+| 官方 Pipeline Handler | 由官方 Handler discovery 找到并执行；可以返回最终结果、停止事件，或 `yield ProviderRequest` 委托 Core。Handler 生成器在 Core 完成后还会继续执行 post-yield 逻辑和剩余 Handler | 否 |
+| Prompt Extension / Contributor | 在基础 ContextPack 之后后台收集，按 `meta.targets` 投影到 Persona 或 Core；异常只记录并跳过 | 否 |
+| 插件 LLM 生命周期 | 按 `plugin_runtime_targets` 选择 Persona 或 Core 的请求生命周期；不为 Router/Planner 执行 | 否 |
+| 插件 LLM Tool | 按 `plugin_tool_targets` 和工具自身声明独立授权；默认 Core，显式允许时进入 Persona | 否，工具只在实际执行目标中可见 |
+| 显式输出 | `event.send()`、`emit_output()`、`Context.send_message()` 等按 direct/persona 语义进入输出控制；显式目标不再经过“是否应该回复”的路由判断 | 否 |
+| Runtime Sensor | 只提交受限结构化 Observation，进入 Personal Runtime 的 Inbox/Gate/Policy；不能提交用户文本、工具调用或最终文案 | 否 |
+
+### Handler 路径
+
+官方 Handler 仍然是插件接管消息的第一边界。Handler 如果产生终止结果或停止事件，可以阻止
+后续 Personal 与 Core；如果 `yield ProviderRequest`，则进入同一个 Core 执行边界，Core 完成后
+恢复 Handler 生成器，不会再次进入默认 Core。Handler 的输出所有权取决于输出模式：`direct`
+保留插件结果，`persona` 把语义材料交给 Persona 改写；两者都不会让 Router 或 Planner 重新
+决定一次。
+
+默认关闭 `parallel_plugin_runtime_enabled` 时，保持 Handler-first 兼容路径。开启后，完成
+Handler discovery 且存在激活 Handler 的 turn，会同时启动 Personal、Router 和一个
+Runtime-owned Official Plugin Job：
+
+```text
+t0
+  ├─ Personal Expression
+  ├─ Router
+  └─ Official Plugin Job
+       ├─ HANDLED / STOPPED  -> 终止或压制 pending Personal
+       ├─ DELEGATED          -> ProviderRequest 进入 Core
+       ├─ PASSED             -> Personal / Router 继续
+       └─ EXPIRED            -> Core 不再等待插件决定，Job 可在后台完成
+```
+
+Personal 已经 committed 或 delivered 后，插件结果不能撤回它；迟到插件产物按 direct/persona
+输出协议和 T2 投递边界处理。这个并行路径是全局开关，不是逐插件开关。
+
+### Persona 注入路径
+
+如果插件的目标是“读取当前输入，提供材料，让 Persona 生成一条统一回复”，使用 Prompt
+Extension 或 Interaction Prompt Contributor，而不是直接发送消息。它的生命周期是：
+
+```text
+插件收集当前事件资料
+  -> base ContextPack 完成
+  -> plugin enrichment 后台生成
+  -> targets=persona 的事实进入 Persona（已就绪才合并）
+  -> Persona Expression 生成唯一用户可见回复
+```
+
+这类插件不会参与 Router 的 `persona / hybrid / silent` 判断，也不能用注入事实强行让 Router
+回复。需要改变消息是否被接管时，应使用官方 Handler；需要执行动作时，应注册 LLM Tool 或使用
+插件自己的显式业务系统。
+
 ## Turn 总预算
 
 每个 Personal Runtime turn 在 reservation 时启动一个基于单调时钟的

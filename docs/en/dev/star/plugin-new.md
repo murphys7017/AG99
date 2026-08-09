@@ -13,6 +13,23 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 > The Yakumo fork also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
 > In an Interaction turn, normal plugin LLM hooks enhance Persona Expression by default, while executable tools default to Core. Plugins can declare a lifecycle target with `interaction_runtime_target` and a tool target with `tool_targets`; user `plugin_runtime_targets` and `plugin_tool_targets` settings override them independently.
 
+## Choose a Plugin Entry Point
+
+Yakumo does not automatically put every plugin into Persona. Choose the entry point
+that matches the plugin's behavior:
+
+- **Commands, keywords, protocols, or an independent business system that must take over a message:** use an official Pipeline Handler. A Handler may return/send a result or `yield ProviderRequest` to Core; it is not routed again by Router/Planner.
+- **Current state or input material that Persona/Core should see:** use a [Prompt Extension](./guides/prompt-extensions). Select `persona` or `core` with `meta.targets`; Router and Core Planner do not receive plugin extensions.
+- **A capability the model should execute:** register an LLM Tool. Tools default to Core and enter Persona only through an explicit tool declaration or `plugin_tool_targets` configuration.
+- **Background device, calendar, or world-state facts:** use a Runtime Sensor. Sensors submit structured Observations; Personal Runtime's Gate/Policy decides whether to express them.
+- **Content the plugin has already decided to deliver exactly:** use `Context.send_message()` or an explicit output API. It preserves its target and content and does not invoke another “should the bot reply?” model decision.
+
+In ordinary Persona conversations, visible natural language from authorized plugin
+materials is still sent by Persona Expression. Independent-system, command, and
+explicit-send plugins do not need to disguise themselves as Persona input. See the
+[Interaction Middleware](../../../Yakumo/modules/interaction.md) documentation for
+the complete turn sequence.
+
 ## Environment Setup
 
 ### Obtain the Plugin Template

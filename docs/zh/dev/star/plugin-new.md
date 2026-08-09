@@ -15,6 +15,19 @@ outline: deep
 > Yakumo fork 额外提供 [Persona Effect](./guides/persona-effects) 和 [Prompt Extension](./guides/prompt-extensions)。前者扩展 Persona 的结构化表现输出，后者向统一 Prompt 管线贡献模型可见事实；两者都不是 LLM Tool。
 > Interaction turn 中，普通插件的 LLM 钩子默认增强 Persona Expression，可执行工具默认进入 Core。插件可用 `interaction_runtime_target` 声明生命周期目标、用工具 `tool_targets` 声明工具目标；用户的 `plugin_runtime_targets` 与 `plugin_tool_targets` 配置分别覆盖它们。
 
+## 先选择插件入口
+
+Yakumo 不会把所有插件自动塞进 Persona。开发前先按插件行为选择入口：
+
+- **需要命令、关键词、协议或独立业务系统接管消息**：使用官方 Pipeline Handler。Handler 可以直接返回或发送结果，也可以 `yield ProviderRequest` 委托 Core；它不经过 Router/Planner 的再次判断。
+- **需要让 Persona/Core 看到当前状态或输入资料**：使用 [Prompt Extension](./guides/prompt-extensions)。通过 `meta.targets` 选择 `persona` 或 `core`；Router 和 Core Planner 不接收插件扩展。
+- **需要模型执行插件能力**：注册 LLM Tool。工具默认进入 Core，只有工具声明或 `plugin_tool_targets` 配置明确允许时才进入 Persona。
+- **需要后台报告设备、日历或世界状态**：使用 Runtime Sensor。Sensor 只提交结构化 Observation，后续是否表达由 Personal Runtime 的 Gate/Policy 决定。
+- **插件已经决定内容并需要精确投递**：使用 `Context.send_message()` 或显式输出 API。它保持原有目标和内容，不会再经过“是否应该回复”的模型判断。
+
+普通 Persona 对话中，插件的可见自然语言最终仍由 Persona Expression 统一发送；但独立系统插件、
+命令插件和显式发送插件不需要伪装成 Persona 输入。详见 [Interaction Middleware](../../../Yakumo/modules/interaction.md#插件处理时序)。
+
 ## 环境准备
 
 ### 获取插件模板

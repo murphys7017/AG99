@@ -69,6 +69,37 @@ Personal、Router 和 Official Plugin Job。该开关是整条插件运行路径
 应先按 [Interaction Module](./docs/Yakumo/modules/interaction.md#turn-总预算) 的诊断和停止线完成
 真实运行验证后再启用。
 
+## 插件如何参与一轮消息
+
+插件不是一条“全部交给 Persona”的统一链路。根据插件要解决的问题，使用不同的入口：
+
+| 插件入口 | 适合做什么 | 参与目标与输出归属 |
+|---|---|---|
+| 官方 Pipeline Handler | 关键词、命令、协议和拥有独立业务系统的插件 | 所有 Handler 都先经过官方 Pipeline；可以直接接管并终止本轮，输出可按 `direct` 或 `persona` 策略处理，不会被 Router/Planner 重新判断 |
+| Prompt Extension / Contributor | 把状态、能力摘要或当前事件资料注入模型上下文 | 通过 `meta.targets` 选择 `persona` 或 `core`；不进入 Router/Planner，不发送消息，也不执行副作用 |
+| 插件 LLM 生命周期 | 修改 Persona 或 Core 的低层请求、观察模型生命周期 | `plugin_runtime_targets` 决定挂到 `personal_expression` 或 `core`；默认是 Persona，不触发 Router/Planner |
+| 插件 LLM Tool | 让模型实际调用插件能力 | 默认进入 Core；只有工具声明或 `plugin_tool_targets` 明确选择后才进入 Persona。Persona 工具输出作为材料，最终仍由 Persona Expression 回复 |
+| `Context.send_message()` / 显式输出 | 插件自己的系统需要精确发送消息 | 保持显式投递目标和内容，不经过 Router/Personal Policy 的“要不要回复”判断；当前 turn 内的输出仍遵守统一输出控制 |
+| Runtime Sensor | 后台上报日历、设备、状态等事实 | 进入 Personal Runtime 的 Observation/Gate/Policy 链，不直接创建用户消息，不直接调用 Persona、Core 或 Output |
+
+一次普通消息的插件时序可以简化为：
+
+```text
+消息进入官方 Pipeline
+  -> Handler discovery
+  -> Handler 接管并产生最终结果？是：结束本轮
+  -> 否：进入 Personal / Router 主链
+       -> Prompt Extension 尽力注入 Persona/Core 上下文
+       -> LLM lifecycle 按目标修改 Persona 或 Core 请求
+       -> LLM Tool 只在被授权的目标中执行
+       -> 可见自然语言统一由 Persona Expression 输出
+```
+
+开启 `parallel_plugin_runtime_enabled` 后，Handler body 会作为独立 Official Plugin Job 与
+Personal、Router 从同一个 `t0` 并行启动；插件先给出终止结果时可以压制仍未发送的 Personal，
+但不会撤回已经发送的回复。插件很慢时，Job 不必被强行取消，首回复和插件后台完成可以分离。
+完整边界见 [Interaction Middleware](./docs/Yakumo/modules/interaction.md#插件处理时序)。
+
 Persona Runtime 不是第二套回复生成器：普通 Persona 对话与 Core 的最终结果都通过同一个表达入口。Motion、Live2D 等具体表现能力由插件通过通用 effect 契约扩展；插件可以按当前事件决定是否向 Persona 暴露 effect，核心交互流程只校验和传递 effect，不理解具体动作含义。
 
 **事实统一、视图分离** — Prompt 层只采集一次规范事实，Router、Core Planner、Persona 和 Core 从同一个 ContextPack 投影各自视图：
