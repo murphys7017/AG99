@@ -15,6 +15,7 @@ from astrbot.core.prompt.context_collect import (
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces import ContextCollectorInterface
+from astrbot.core.prompt.strict_mode import is_prompt_pipeline_strict
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
@@ -214,52 +215,24 @@ async def get_or_build_interaction_persona_context_pack(
         )
         return cached
 
-    build_task = material.target_context_tasks.get("plugin")
-    if build_task is None and get_interaction_turn_state(event) is None:
-        _log_persona_context_selection(
-            event,
-            plugin_status="unowned",
-            selected_context="base_fallback",
-        )
-        return base_context_pack
-
-    build_task = _ensure_interaction_plugin_context_pack_task(
+    _log_persona_context_selection(
+        event,
+        plugin_status="pending",
+        selected_context="plugin_wait",
+    )
+    context_pack = await _get_or_build_interaction_plugin_context_pack(
         event=event,
         plugin_context=plugin_context,
         build_config=build_config,
         material=material,
     )
-    if not build_task.done():
-        _log_persona_context_selection(
-            event,
-            plugin_status="pending",
-            selected_context="base_fallback",
-        )
-        return base_context_pack
-    if build_task.cancelled():
-        _log_persona_context_selection(
-            event,
-            plugin_status="cancelled",
-            selected_context="base_fallback",
-        )
-        return base_context_pack
-
-    exception = build_task.exception()
-    if exception is not None:
-        _log_persona_context_selection(
-            event,
-            plugin_status="failed",
-            selected_context="base_fallback",
-            error_type=type(exception).__name__,
-        )
-        return base_context_pack
 
     _log_persona_context_selection(
         event,
         plugin_status="ready",
         selected_context="plugin",
     )
-    return build_task.result()
+    return context_pack
 
 
 async def get_or_build_interaction_core_context_pack(
@@ -586,6 +559,11 @@ async def collect_interaction_prompt_extensions(
     context_snapshot: dict[str, Any],
 ) -> list[PromptExtension]:
     extensions: list[PromptExtension] = []
+    contributor_timeout = max(
+        0.1,
+        float(getattr(config, "contributor_timeout", 1.0) or 1.0),
+    )
+    strict = is_prompt_pipeline_strict(config)
     view = _build_prompt_view(
         event=event,
         config=config,
@@ -598,7 +576,22 @@ async def collect_interaction_prompt_extensions(
     async def _collect_one(contributor):
         plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
         try:
-            payload = await contributor.collect(event, plugin_context, view)
+            payload = await asyncio.wait_for(
+                contributor.collect(event, plugin_context, view),
+                timeout=contributor_timeout,
+            )
+        except TimeoutError:
+            error = f"timeout_after_{contributor_timeout:.3f}s"
+            _record_interaction_prompt_contributor_failure(
+                event,
+                plugin_id=plugin_id,
+                error=error,
+            )
+            return InteractionPromptContributorError(
+                "collector_timeout",
+                "Interaction prompt contributor timed out: "
+                f"plugin_id={plugin_id} timeout={contributor_timeout:.3f}s",
+            )
         except Exception as exc:  # noqa: BLE001
             _record_interaction_prompt_contributor_failure(
                 event,
@@ -628,6 +621,13 @@ async def collect_interaction_prompt_extensions(
     results = await asyncio.gather(
         *[_collect_one(contributor) for contributor in contributors],
     )
+    failures = [
+        result
+        for result in results
+        if isinstance(result, InteractionPromptContributorError)
+    ]
+    if strict and failures:
+        raise failures[0]
     for result in results:
         if isinstance(result, InteractionPromptContributorError):
             continue
