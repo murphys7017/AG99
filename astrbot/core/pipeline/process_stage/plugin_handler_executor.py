@@ -109,14 +109,29 @@ class PluginHandlerExecutor:
                         break
                     next_control = None
                     if not isinstance(response, ProviderRequest):
+                        captured = False
                         capture_pipeline_result = getattr(
                             output_controller,
                             "capture_pipeline_result",
                             None,
                         )
                         if callable(capture_pipeline_result):
-                            capture_pipeline_result(event)
-                        yield
+                            captured = bool(capture_pipeline_result(event))
+
+                        defer_stop_for_delivery = (
+                            not captured
+                            and event.is_stopped()
+                            and self._has_deliverable_pipeline_result(event)
+                        )
+                        if defer_stop_for_delivery:
+                            # Official handlers may stop propagation before yielding
+                            # their final result. Open only this downstream delivery pass.
+                            event.continue_event()
+                        try:
+                            yield
+                        finally:
+                            if defer_stop_for_delivery:
+                                event.stop_event()
                         continue
 
                     result.delegated_to_core = True
@@ -222,3 +237,10 @@ class PluginHandlerExecutor:
                     result.ignored_provider_requests_after_detach,
                     result.duration_ms,
                 )
+
+    @staticmethod
+    def _has_deliverable_pipeline_result(event: AstrMessageEvent) -> bool:
+        result = event.get_result()
+        if result is None:
+            return False
+        return bool(result.chain) or result.async_stream is not None
