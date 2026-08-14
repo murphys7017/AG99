@@ -1313,6 +1313,18 @@ class PersonalSessionRuntime:
         )
         follow_up_activated = False
         lock_acquired = False
+
+        async def finalize_capture(*, consumed_marked: bool) -> None:
+            nonlocal capture
+            current_capture = capture
+            capture = None
+            if current_capture is not None:
+                await self.follow_ups.finalize(
+                    current_capture,
+                    activated=follow_up_activated,
+                    consumed_marked=consumed_marked,
+                )
+
         try:
             async with queue_context:
                 if capture is not None:
@@ -1320,11 +1332,7 @@ class PersonalSessionRuntime:
                         capture
                     )
                     if consumed:
-                        await self.follow_ups.finalize(
-                            capture,
-                            activated=False,
-                            consumed_marked=True,
-                        )
+                        await finalize_capture(consumed_marked=True)
                         reservation.transition(PendingTurnState.SETTLED)
                         return TurnAdmission(
                             turn=turn,
@@ -1338,6 +1346,7 @@ class PersonalSessionRuntime:
                 else:
                     lock_acquired = await self.turn_lock.try_acquire()
                     if not lock_acquired:
+                        await finalize_capture(consumed_marked=False)
                         return TurnAdmission(
                             turn=turn,
                             consumed_as_follow_up=False,
@@ -1377,6 +1386,7 @@ class PersonalSessionRuntime:
                     follow_up_activated,
                 ),
             )
+            capture = None
             lock_acquired = False
             return admission
         except BaseException:
@@ -1385,12 +1395,7 @@ class PersonalSessionRuntime:
                 self.active_actor_id = None
                 self._active_turn_context = None
                 await self.turn_lock.release()
-            if capture is not None:
-                await self.follow_ups.finalize(
-                    capture,
-                    activated=follow_up_activated,
-                    consumed_marked=False,
-                )
+            await finalize_capture(consumed_marked=False)
             raise
 
     @staticmethod

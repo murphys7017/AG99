@@ -761,6 +761,87 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
     ) is None
 
 
+@pytest.mark.asyncio
+async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    runtime_config = {"interaction_middleware": {"enabled": True}}
+    first_event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-follow-up",
+    )
+    busy_event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-follow-up",
+    )
+    next_event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-follow-up",
+    )
+
+    class Ticket:
+        def __init__(self) -> None:
+            self.resolved = asyncio.Event()
+            self.resolved.set()
+            self.consumed = False
+
+    class Runner:
+        def __init__(self) -> None:
+            self.run_context = SimpleNamespace(
+                context=SimpleNamespace(event=first_event)
+            )
+
+        def follow_up(self, *, message_text: str) -> Ticket:
+            assert message_text == "hello"
+            return Ticket()
+
+    runner = Runner()
+    try:
+        async with manager.submit_platform_event(
+            first_event,
+            "default",
+            context,
+            runtime_config,
+        ) as first_submission:
+            first_admission = await first_submission.admit(allow_follow_up=False)
+            assert first_admission.lease is not None
+            assert manager.register_active_runner(first_event, runner)
+
+            async with manager.submit_platform_event(
+                busy_event,
+                "default",
+                context,
+                runtime_config,
+            ) as busy_submission:
+                busy_admission = await busy_submission.admit(
+                    allow_follow_up=True,
+                    wait_if_busy=False,
+                )
+                assert busy_admission.skipped_busy
+
+            await first_admission.lease.release()
+
+            async with manager.submit_platform_event(
+                next_event,
+                "default",
+                context,
+                runtime_config,
+            ) as next_submission:
+                next_admission = await asyncio.wait_for(
+                    next_submission.admit(allow_follow_up=True),
+                    timeout=0.5,
+                )
+                assert next_admission.lease is not None
+                await next_admission.lease.release()
+            manager.unregister_active_runner(first_event, runner)
+    finally:
+        await manager.shutdown()
+
+
 def test_group_continuation_guards_return_none():
     manager = PersonalRuntimeManager()
     event = _DirectEvent(_metadata(), message_type=MessageType.FRIEND_MESSAGE)
