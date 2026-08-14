@@ -193,6 +193,7 @@ class BasePromptRenderer:
             ("system.tool_call_instruction", "tool_call_instruction"),
             ("system.live_mode_prompt", "live_mode"),
             ("system.web_search_citation_prompt", "web_search_citation"),
+            ("system.tts_expression_guidance", "tts_expression"),
         ):
             slot = self._find_slot(slots, slot_name)
             if slot is None:

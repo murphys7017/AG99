@@ -6,11 +6,15 @@ import traceback
 from astrbot.core import file_token_service, html_renderer, logger
 from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.message.components import At, Image, Json, Node, Plain, Record, Reply
-from astrbot.core.message.message_event_result import ResultContentType
+from astrbot.core.message.message_chain_transforms import (
+    strip_minimax_tts_expression_tags_from_plain_components,
+)
+from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.output_lifecycle import PreOutputProcessor
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.star.session_llm_manager import SessionServiceManager
+from astrbot.core.tts_expression_tags import is_minimax_tts_expression_enabled
 from astrbot.core.voice import (
     VoiceServiceError,
     build_tts_delivery_metadata,
@@ -230,12 +234,25 @@ class ResultDecorateStage(Stage):
                     result.chain = new_chain
 
             # TTS
+            tts_expression_enabled = is_minimax_tts_expression_enabled(
+                self.ctx.plugin_manager.context,
+                event,
+                self.ctx.astrbot_config.get("provider_tts_settings", {}),
+            )
             should_attempt_tts = (
                 bool(self.ctx.astrbot_config["provider_tts_settings"]["enable"])
                 and result.is_llm_result()
                 and await SessionServiceManager.should_process_tts_request(event)
                 and random.random() <= self.tts_trigger_probability
             )
+            if (
+                tts_expression_enabled
+                and result.is_llm_result()
+                and not should_attempt_tts
+            ):
+                result.chain = strip_minimax_tts_expression_tags_from_plain_components(
+                    result.chain,
+                )
             if (
                 not should_attempt_tts
                 and self.show_reasoning
@@ -301,7 +318,13 @@ class ResultDecorateStage(Stage):
                                 Record(
                                     file=tts_result.delivered_file,
                                     url=tts_result.delivered_file,
-                                    text=tts_result.text,
+                                    text=(
+                                        strip_minimax_tts_expression_tags_from_plain_components(
+                                            MessageChain([Plain(tts_result.text)]),
+                                        ).get_plain_text()
+                                        if tts_expression_enabled
+                                        else tts_result.text
+                                    ),
                                     delivery_metadata=build_tts_delivery_metadata(
                                         tts_result.state,
                                         audio_attachment="present",
@@ -311,7 +334,13 @@ class ResultDecorateStage(Stage):
                             if dual_output:
                                 new_chain.append(
                                     Plain(
-                                        comp.text,
+                                        (
+                                            strip_minimax_tts_expression_tags_from_plain_components(
+                                                MessageChain([comp]),
+                                            ).get_plain_text()
+                                            if tts_expression_enabled
+                                            else comp.text
+                                        ),
                                         delivery_metadata=build_tts_delivery_metadata(
                                             tts_result.state,
                                             audio_attachment="absent",
@@ -326,9 +355,16 @@ class ResultDecorateStage(Stage):
                             else:
                                 logger.error(traceback.format_exc())
                                 logger.error("TTS 失败，发送 audio.state=failed。")
+                            fallback_text = (
+                                strip_minimax_tts_expression_tags_from_plain_components(
+                                    MessageChain([comp]),
+                                ).get_plain_text()
+                                if tts_expression_enabled
+                                else comp.text
+                            )
                             new_chain.append(
                                 Plain(
-                                    comp.text,
+                                    fallback_text,
                                     delivery_metadata=(
                                         build_tts_delivery_metadata(
                                             exc.state,
@@ -342,7 +378,13 @@ class ResultDecorateStage(Stage):
                         except Exception:
                             logger.error(traceback.format_exc())
                             logger.error("TTS 输出物化失败，保留文本输出。")
-                            new_chain.append(comp)
+                            new_chain.extend(
+                                strip_minimax_tts_expression_tags_from_plain_components(
+                                    MessageChain([comp]),
+                                ).chain
+                                if tts_expression_enabled
+                                else [comp]
+                            )
                     else:
                         new_chain.append(comp)
                 result.chain = new_chain

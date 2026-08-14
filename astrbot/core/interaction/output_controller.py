@@ -15,12 +15,14 @@ from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_chain_transforms import (
     replace_leading_plain_components,
     replace_plain_text_preserving_components,
+    strip_minimax_tts_expression_tags_from_plain_components,
 )
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.output_lifecycle import PreOutputProcessor, TurnDeliveryCoordinator
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.star.session_llm_manager import SessionServiceManager
+from astrbot.core.tts_expression_tags import is_minimax_tts_expression_enabled
 from astrbot.core.voice import (
     TTSState,
     VoiceServiceError,
@@ -261,6 +263,23 @@ class InteractionOutputController:
     ) -> dict[str, Any]:
         value = self._get_config_value("provider_tts_settings", {}, event=event)
         return value if isinstance(value, dict) else {}
+
+    def _strip_tts_expression_tags_if_needed(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        *,
+        result_is_model_result: bool,
+    ) -> MessageChain:
+        if not result_is_model_result or self.plugin_context is None:
+            return message
+        if not is_minimax_tts_expression_enabled(
+            self.plugin_context,
+            event,
+            self._get_tts_settings(event),
+        ):
+            return message
+        return strip_minimax_tts_expression_tags_from_plain_components(message)
 
     async def emit_failure_reply(
         self,
@@ -1874,9 +1893,14 @@ class InteractionOutputController:
         message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
         self._refresh_outbound_materialization_config(event)
+        display_message = self._strip_tts_expression_tags_if_needed(
+            event,
+            message,
+            result_is_model_result=result_is_model_result,
+        )
         materialization: dict[str, Any] = {
             "message_kind": message_kind,
-            "semantic_text": message.get_plain_text(),
+            "semantic_text": display_message.get_plain_text(),
             "delivered_as": "text",
             "tts_status": "not_attempted",
         }
@@ -1905,6 +1929,11 @@ class InteractionOutputController:
                 ),
                 "tts_status": "failed",
             }
+            materialized = self._strip_tts_expression_tags_if_needed(
+                event,
+                materialized,
+                result_is_model_result=result_is_model_result,
+            )
             if exc.state is not None:
                 materialized = self._attach_tts_failure_segment(
                     materialized,
@@ -1939,9 +1968,14 @@ class InteractionOutputController:
         message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
         self._refresh_outbound_materialization_config(event)
+        display_message = self._strip_tts_expression_tags_if_needed(
+            event,
+            message,
+            result_is_model_result=True,
+        )
         materialization: dict[str, Any] = {
             "message_kind": "immediate_reply",
-            "semantic_text": message.get_plain_text(),
+            "semantic_text": display_message.get_plain_text(),
             "delivered_as": "text",
             "tts_status": "not_attempted",
         }
@@ -1965,6 +1999,11 @@ class InteractionOutputController:
                 ),
                 "tts_status": "failed",
             }
+            materialized = self._strip_tts_expression_tags_if_needed(
+                event,
+                materialized,
+                result_is_model_result=True,
+            )
             if exc.state is not None:
                 materialized = self._attach_tts_failure_segment(
                     materialized,
@@ -2029,7 +2068,14 @@ class InteractionOutputController:
             and random.random() <= self.tts_trigger_probability
         )
         if not should_try_tts:
-            return message, {}
+            return (
+                self._strip_tts_expression_tags_if_needed(
+                    event,
+                    message,
+                    result_is_model_result=result_is_model_result,
+                ),
+                {},
+            )
         new_chain = []
         converted: list[dict[str, Any]] = []
         for comp in message.chain:
@@ -2060,7 +2106,11 @@ class InteractionOutputController:
                     Record(
                         file=result.delivered_file,
                         url=result.delivered_file,
-                        text=result.text,
+                        text=self._strip_tts_expression_tags_if_needed(
+                            event,
+                            MessageChain([Plain(result.text)]),
+                            result_is_model_result=True,
+                        ).get_plain_text(),
                         delivery_metadata=build_tts_delivery_metadata(
                             result.state,
                             audio_attachment="present",
@@ -2080,7 +2130,11 @@ class InteractionOutputController:
                 if bool(tts_settings.get("dual_output")):
                     new_chain.append(
                         Plain(
-                            comp.text,
+                            self._strip_tts_expression_tags_if_needed(
+                                event,
+                                MessageChain([comp]),
+                                result_is_model_result=result_is_model_result,
+                            ).get_plain_text(),
                             delivery_metadata=build_tts_delivery_metadata(
                                 result.state,
                                 audio_attachment="absent",

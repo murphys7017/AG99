@@ -34,6 +34,16 @@ class PipelineScheduler:
         activate = getattr(manager, "activate_event_turn", None)
         return activate(event) if callable(activate) else nullcontext()
 
+    @staticmethod
+    def _log_stopped_event(event: AstrMessageEvent, stage_name: str) -> None:
+        if event.get_extra("_interaction_enabled"):
+            logger.debug(
+                "当前交互轮已完成，跳过剩余 Pipeline 阶段。stage=%s",
+                stage_name,
+            )
+            return
+        logger.debug("阶段 %s 已终止事件传播。", stage_name)
+
     async def _process_stages(self, event: AstrMessageEvent, from_stage=0) -> None:
         """依次执行各个阶段
 
@@ -55,9 +65,7 @@ class PipelineScheduler:
                     async for _ in coroutine:
                         # 此处是前置处理完成后的暂停点(yield), 下面开始执行后续阶段
                         if event.is_stopped():
-                            logger.debug(
-                                f"阶段 {stage.__class__.__name__} 已终止事件传播。",
-                            )
+                            self._log_stopped_event(event, stage.__class__.__name__)
                             break
 
                         # 递归调用, 处理所有后续阶段
@@ -66,9 +74,7 @@ class PipelineScheduler:
 
                         # 此处是后续所有阶段处理完毕后返回的点, 执行后置处理
                         if event.is_stopped():
-                            logger.debug(
-                                f"阶段 {stage.__class__.__name__} 已终止事件传播。",
-                            )
+                            self._log_stopped_event(event, stage.__class__.__name__)
                             break
             else:
                 # 如果返回的是普通协程(不含yield的async函数), 则不进入下一层(基线条件)
@@ -76,7 +82,7 @@ class PipelineScheduler:
                 await coroutine
 
                 if event.is_stopped():
-                    logger.debug(f"阶段 {stage.__class__.__name__} 已终止事件传播。")
+                    self._log_stopped_event(event, stage.__class__.__name__)
                     break
 
     async def execute(self, event: AstrMessageEvent) -> None:

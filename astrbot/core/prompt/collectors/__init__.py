@@ -19,6 +19,7 @@ from .skills_collector import SkillsCollector
 from .subagent_collector import SubagentCollector
 from .system_collector import SystemCollector
 from .tools_collector import ToolsCollector
+from .tts_expression_collector import TTSExpressionCollector
 
 __all__ = [
     "ConversationHistoryCollector",
@@ -35,5 +36,6 @@ __all__ = [
     "SkillsCollector",
     "SubagentCollector",
     "SystemCollector",
+    "TTSExpressionCollector",
     "ToolsCollector",
 ]
