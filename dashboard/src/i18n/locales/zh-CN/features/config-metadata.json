@@ -1002,6 +1002,14 @@
         "group_message_max_cnt": {
           "description": "最大消息数量"
         },
+        "group_context_max_chars": {
+          "description": "上下文最大字符数",
+          "hint": "从最新消息向前保留，达到总字符预算后停止；用于限制群聊上下文的 token 占用。"
+        },
+        "group_context_record_max_chars": {
+          "description": "单条上下文最大字符数",
+          "hint": "超长群消息会在记录时截断，避免单条消息挤占整个上下文。"
+        },
         "image_caption": {
           "description": "自动理解图片",
           "hint": "需要设置群聊图片转述模型。"
@@ -1010,9 +1018,21 @@
           "description": "群聊图片转述模型",
           "hint": "用于群聊上下文感知的图片理解，与默认图片转述模型分开配置。"
         },
+        "image_caption_prompt": {
+          "description": "群聊图片转述提示词",
+          "hint": "留空时回退到 provider_settings.image_caption_prompt。"
+        },
         "image_caption_whitelist": {
           "description": "群聊图片预转述白名单",
           "hint": "仅限制群聊上下文构建时的图片预转述；为空时不限制。可填写 /sid 获取的 ID 或群号。"
+        },
+        "image_caption_max_chars": {
+          "description": "图片转述最大字符数",
+          "hint": "过长的图片转述会截断后写入群聊上下文。"
+        },
+        "image_caption_cache_size": {
+          "description": "图片转述缓存数量",
+          "hint": "按图片内容、模型和提示词去重，避免重复图片重复调用模型。"
         },
         "active_reply": {
           "enable": {

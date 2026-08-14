@@ -1000,6 +1000,14 @@
         "group_message_max_cnt": {
           "description": "Maximum Message Count"
         },
+        "group_context_max_chars": {
+          "description": "Maximum Context Characters",
+          "hint": "Retains the newest messages first and stops at the total character budget to limit group-context token usage."
+        },
+        "group_context_record_max_chars": {
+          "description": "Maximum Characters per Context Record",
+          "hint": "Long group messages are truncated when recorded so one message cannot consume the entire context budget."
+        },
         "image_caption": {
           "description": "Auto-understand Images",
           "hint": "Requires setting a group chat image caption model."
@@ -1008,9 +1016,21 @@
           "description": "Group Chat Image Caption Model",
           "hint": "Used for image understanding in group chat context awareness, configured separately from the default image caption model."
         },
+        "image_caption_prompt": {
+          "description": "Group Chat Image Caption Prompt",
+          "hint": "When empty, falls back to provider_settings.image_caption_prompt."
+        },
         "image_caption_whitelist": {
           "description": "Group Chat Image Pre-caption Whitelist",
           "hint": "Only limits image pre-captioning while building group chat context. Leave empty to disable filtering. Fill in IDs from /sid or group IDs."
+        },
+        "image_caption_max_chars": {
+          "description": "Maximum Image Caption Characters",
+          "hint": "Long image captions are truncated before being written to group context."
+        },
+        "image_caption_cache_size": {
+          "description": "Image Caption Cache Size",
+          "hint": "Deduplicates by image content, model, and prompt to avoid repeated model calls for the same image."
         },
         "active_reply": {
           "enable": {
