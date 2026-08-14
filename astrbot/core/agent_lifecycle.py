@@ -8,7 +8,16 @@ from typing import Any
 from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.agent_lifecycle_scope import (
+    _MISSING as LIFECYCLE_MISSING,
+)
+from astrbot.core.agent_lifecycle_scope import (
+    activate_agent_lifecycle,
+    create_agent_lifecycle_overlay,
+    get_active_agent_lifecycle,
+)
 from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.plugin_runtime import PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
 from astrbot.core.postprocess import dispatch_postprocess
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.prompt.render import PROMPT_APPLY_RESULT_EXTRA_KEY
@@ -49,6 +58,12 @@ class AgentRequestLifecycle:
         self._request_stopped = False
         self._agent_begin_stopped = False
         self._agent_done_stopped = False
+        self._overlay = (
+            create_agent_lifecycle_overlay(event)
+            if execution_surface == PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION
+            and getattr(event, "_supports_agent_lifecycle_overlay", False)
+            else None
+        )
 
     def bind_request(
         self,
@@ -62,31 +77,31 @@ class AgentRequestLifecycle:
 
     @contextmanager
     def expose_request(self) -> Iterator[None]:
-        request = self.provider_request
-        if request is None:
-            yield
-            return
+        with self._activate_scope():
+            request = self.provider_request
+            if request is None:
+                yield
+                return
 
-        previous_request = self.event.get_extra("provider_request", _MISSING)
-        previous_apply_result = self.event.get_extra(
-            PROMPT_APPLY_RESULT_EXTRA_KEY,
-            _MISSING,
-        )
-        self.event.set_extra("provider_request", request)
-        if self.prompt_apply_result is not _MISSING:
-            self.event.set_extra(
+            previous_request = self._capture_extra("provider_request")
+            previous_apply_result = self._capture_extra(
                 PROMPT_APPLY_RESULT_EXTRA_KEY,
-                self.prompt_apply_result,
             )
-        try:
-            yield
-        finally:
-            self._restore_extra("provider_request", previous_request)
+            self.event.set_extra("provider_request", request)
             if self.prompt_apply_result is not _MISSING:
-                self._restore_extra(
+                self.event.set_extra(
                     PROMPT_APPLY_RESULT_EXTRA_KEY,
-                    previous_apply_result,
+                    self.prompt_apply_result,
                 )
+            try:
+                yield
+            finally:
+                self._restore_extra("provider_request", previous_request)
+                if self.prompt_apply_result is not _MISSING:
+                    self._restore_extra(
+                        PROMPT_APPLY_RESULT_EXTRA_KEY,
+                        previous_apply_result,
+                    )
 
     async def dispatch_waiting(self) -> bool:
         if self._waiting_dispatched:
@@ -143,13 +158,12 @@ class AgentRequestLifecycle:
             return self._agent_done_stopped
         self._agent_done_dispatched = True
 
-        if self.record_reasoning and llm_response.reasoning_content:
-            self.event.set_extra(
-                "_llm_reasoning_content",
-                llm_response.reasoning_content,
-            )
-
         with self.expose_request():
+            if self.record_reasoning and llm_response.reasoning_content:
+                self.event.set_extra(
+                    "_llm_reasoning_content",
+                    llm_response.reasoning_content,
+                )
             response_stopped = bool(
                 await self.hook_dispatcher(
                     self.event,
@@ -172,7 +186,7 @@ class AgentRequestLifecycle:
         if (
             self.dispatch_response_postprocess
             and not self._agent_done_stopped
-            and not self.event.is_stopped()
+            and not self.is_stopped()
         ):
             await dispatch_postprocess(
                 event=self.event,
@@ -203,8 +217,8 @@ class AgentRequestLifecycle:
         tool_args: dict | None,
         tool_result,
     ) -> None:
-        self.event.clear_result()
         with self.expose_request():
+            self.event.clear_result()
             await self.hook_dispatcher(
                 self.event,
                 EventType.OnLLMToolRespondEvent,
@@ -215,6 +229,10 @@ class AgentRequestLifecycle:
             )
 
     def _restore_extra(self, key: str, previous: object) -> None:
+        overlay = get_active_agent_lifecycle(self.event)
+        if overlay is not None:
+            overlay.restore_extra(key, previous)
+            return
         if previous is not _MISSING:
             self.event.set_extra(key, previous)
             return
@@ -223,6 +241,36 @@ class AgentRequestLifecycle:
             extras.pop(key, None)
         else:
             self.event.set_extra(key, None)
+
+    def _capture_extra(self, key: str) -> object:
+        overlay = get_active_agent_lifecycle(self.event)
+        if overlay is not None:
+            return overlay.capture_extra(key)
+        return self.event.get_extra(key, _MISSING)
+
+    @contextmanager
+    def _activate_scope(self) -> Iterator[None]:
+        if self._overlay is None:
+            yield
+            return
+        with activate_agent_lifecycle(self._overlay):
+            yield
+
+    def is_stopped(self) -> bool:
+        """Return this lifecycle's stop state without reading a sibling scope."""
+
+        if self._overlay is not None:
+            if self._overlay.force_stopped:
+                return True
+            result = (
+                self._overlay.result
+                if self._overlay.result is not LIFECYCLE_MISSING
+                else self._overlay.initial_result
+            )
+            if result is None:
+                return self._overlay.initial_stopped
+            return result.is_stopped()
+        return self.event.is_stopped()
 
 
 class AgentRequestLifecycleHooks(BaseAgentRunHooks):

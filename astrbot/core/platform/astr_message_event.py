@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import copy
 import hashlib
 import os
 import re
@@ -11,6 +12,12 @@ from typing import Any
 from astrbot import logger
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
+from astrbot.core.agent_lifecycle_scope import (
+    _MISSING as LIFECYCLE_MISSING,
+)
+from astrbot.core.agent_lifecycle_scope import (
+    get_active_agent_lifecycle,
+)
 from astrbot.core.db.po import Conversation
 from astrbot.core.message.components import (
     At,
@@ -34,6 +41,8 @@ from .platform_metadata import PlatformMetadata
 
 
 class AstrMessageEvent(abc.ABC):
+    _supports_agent_lifecycle_overlay = True
+
     def __init__(
         self,
         message_str: str,
@@ -220,16 +229,35 @@ class AstrMessageEvent(abc.ABC):
 
     def set_extra(self, key, value) -> None:
         """设置额外的信息。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.local_extras[key] = value
+            return
         self._extras[key] = value
 
     def get_extra(self, key: str | None = None, default=None) -> Any:
         """获取额外的信息。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            if key is None:
+                extras = {} if overlay.extras_cleared else dict(self._extras)
+                extras.update(overlay.local_extras)
+                return extras
+            if key in overlay.local_extras:
+                return overlay.local_extras[key]
+            if overlay.extras_cleared:
+                return default
         if key is None:
             return self._extras
         return self._extras.get(key, default)
 
     def clear_extra(self) -> None:
         """清除额外的信息。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.local_extras.clear()
+            overlay.extras_cleared = True
+            return
         logger.info(f"清除 {self.get_platform_name()} 的额外信息: {self._extras}")
         self._extras.clear()
 
@@ -415,10 +443,20 @@ class AstrMessageEvent(abc.ABC):
         # 兼容外部插件或调用方传入的 chain=None 的情况，确保为可迭代列表
         if isinstance(result, MessageEventResult) and result.chain is None:
             result.chain = []
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.result = result
+            return
         self._result = result
 
     def stop_event(self) -> None:
         """终止事件传播。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.force_stopped = True
+            result = self._ensure_overlay_result(overlay)
+            result.stop_event()
+            return
         self._force_stopped = True
         if self._result is None:
             self.set_result(MessageEventResult().stop_event())
@@ -427,6 +465,12 @@ class AstrMessageEvent(abc.ABC):
 
     def continue_event(self) -> None:
         """继续事件传播。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.force_stopped = False
+            result = self._ensure_overlay_result(overlay)
+            result.continue_event()
+            return
         self._force_stopped = False
         if self._result is None:
             self.set_result(MessageEventResult().continue_event())
@@ -435,6 +479,18 @@ class AstrMessageEvent(abc.ABC):
 
     def is_stopped(self) -> bool:
         """是否终止事件传播。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            if overlay.force_stopped:
+                return True
+            result = (
+                overlay.result
+                if overlay.result is not LIFECYCLE_MISSING
+                else overlay.initial_result
+            )
+            if result is None:
+                return overlay.initial_stopped
+            return result.is_stopped()
         if self._force_stopped:
             return True
         if self._result is None:
@@ -450,11 +506,32 @@ class AstrMessageEvent(abc.ABC):
 
     def get_result(self) -> MessageEventResult | None:
         """获取消息事件的结果。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            return (
+                overlay.result
+                if overlay.result is not LIFECYCLE_MISSING
+                else overlay.initial_result
+            )
         return self._result
 
     def clear_result(self) -> None:
         """清除消息事件的结果。"""
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.result = None
+            return
         self._result = None
+
+    def _ensure_overlay_result(self, overlay) -> MessageEventResult:
+        if overlay.result is LIFECYCLE_MISSING:
+            if overlay.initial_result is None:
+                overlay.result = MessageEventResult()
+            else:
+                overlay.result = copy.copy(overlay.initial_result)
+                if isinstance(getattr(overlay.result, "chain", None), list):
+                    overlay.result.chain = list(overlay.result.chain)
+        return overlay.result
 
     """消息链相关"""
 
