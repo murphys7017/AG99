@@ -60,7 +60,10 @@ from astrbot.core.interaction.plugin_execution_types import (
     PluginGateResolution,
 )
 from astrbot.core.interaction.runtime_event import RuntimeObservationEvent
-from astrbot.core.interaction.turn_coordinator import InteractionTurnCoordinator
+from astrbot.core.interaction.turn_coordinator import (
+    InteractionTurnCoordinator,
+    PluginJobLaunch,
+)
 from astrbot.core.interaction.turn_state import (
     InteractionFinalOutputStatus,
     append_interaction_turn_visible_output,
@@ -910,6 +913,64 @@ async def test_personal_reply_sends_before_slow_silent_router(monkeypatch):
     assert turn_state.completion_state.outcome is not None
     assert turn_state.completion_state.outcome.value == "replied"
     assert event.is_stopped()
+
+
+@pytest.mark.asyncio
+async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
+    event = _DirectEvent(_metadata())
+    plugin_runtime = PluginExecutionRuntime()
+    coordinator = InteractionTurnCoordinator(plugin_runtime)
+    persona_started = asyncio.Event()
+    release_plugin = asyncio.Event()
+
+    async def hold_persona():
+        persona_started.set()
+        await asyncio.Future()
+
+    async def resolve_silent_route():
+        await persona_started.wait()
+        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
+
+    async def hold_plugin(_publish_gate, _submit_provider_request):
+        await release_plugin.wait()
+
+    turn = await coordinator.start(
+        event,
+        personal_factory=hold_persona,
+        router_factory=resolve_silent_route,
+        plugin_window_seconds=5.0,
+        plugin_launch=PluginJobLaunch(
+            branch_event=event,
+            result=PluginBranchResult(),
+            run_job=hold_plugin,
+        ),
+    )
+    control_task = asyncio.create_task(coordinator.resolve_control(turn))
+    try:
+        await asyncio.wait_for(turn.router_task, timeout=1.0)
+        for _ in range(10):
+            state = get_interaction_turn_state(event)
+            if state is not None and state.speculative_persona_status.value == "suppressed":
+                break
+            await asyncio.sleep(0)
+
+        state = get_interaction_turn_state(event)
+        assert state is not None
+        assert state.route_decision is not None
+        assert state.route_decision.route_mode is InteractionRouteMode.SILENT
+        assert state.speculative_persona_status.value == "suppressed"
+        assert control_task.done() is False
+        assert turn.plugin_watcher_task is not None
+        assert turn.plugin_watcher_task.done() is False
+
+        assert turn.plugin_job is not None
+        turn.plugin_job.publish_gate(PluginGateResolution.PASSED)
+        control = await asyncio.wait_for(control_task, timeout=1.0)
+        assert control.route is state.route_decision
+    finally:
+        release_plugin.set()
+        await turn.event.get_extra("_interaction_turn_state").execution_scope.close()
+        await plugin_runtime.shutdown()
 
 
 @pytest.mark.asyncio

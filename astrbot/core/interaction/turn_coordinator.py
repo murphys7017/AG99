@@ -25,9 +25,9 @@ from .turn_state import (
     InteractionSpeculativePersonaStatus,
     ensure_interaction_turn_state,
     get_interaction_turn_personal_emitted_monotonic,
+    publish_interaction_turn_route_decision,
     suppress_interaction_turn_pending_persona,
 )
-from .types import InteractionRouteMode
 
 TurnTaskFactory = Callable[[], Awaitable[Any]]
 PluginProviderRequestSubmitter = Callable[[ProviderRequest], Awaitable[None]]
@@ -437,11 +437,11 @@ class InteractionTurnCoordinator:
         if gate_task is None:
             route = await turn.router_task
             router_completed_at = turn.task_completed_at.get("router", loop.time())
-            if getattr(route, "route_mode", None) is InteractionRouteMode.SILENT:
-                await suppress_interaction_turn_pending_persona(
-                    turn.event,
-                    turn.personal_task,
-                )
+            await publish_interaction_turn_route_decision(
+                turn.event,
+                route,
+                turn.personal_task,
+            )
             return InteractionControlResolution(
                 route=route,
                 plugin_gate=PluginGateResolution.PASSED,
@@ -487,6 +487,11 @@ class InteractionTurnCoordinator:
         if turn.router_task in done:
             route = await turn.router_task
             router_completed_at = turn.task_completed_at.get("router", loop.time())
+            await publish_interaction_turn_route_decision(
+                turn.event,
+                route,
+                turn.personal_task,
+            )
 
         plugin_gate = await gate_task
         plugin_resolved_at = (
@@ -519,9 +524,9 @@ class InteractionTurnCoordinator:
         if route is None:
             route = await turn.router_task
             router_completed_at = turn.task_completed_at.get("router", loop.time())
-        if getattr(route, "route_mode", None) is InteractionRouteMode.SILENT:
-            await suppress_interaction_turn_pending_persona(
+            await publish_interaction_turn_route_decision(
                 turn.event,
+                route,
                 turn.personal_task,
             )
         core_gate_at = max(router_completed_at, plugin_resolved_at)

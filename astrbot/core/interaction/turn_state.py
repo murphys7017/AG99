@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any
 from astrbot.core.deadline import TurnDeadlineBudget
 from astrbot.core.prompt.context_types import ContextPack
 
-from .types import CorePlanningDecision, CoreTaskSpec, InteractionRouteDecision
+from .types import (
+    CorePlanningDecision,
+    CoreTaskSpec,
+    InteractionRouteDecision,
+    InteractionRouteMode,
+)
 
 if TYPE_CHECKING:
     from .personal_runtime import PersonalRuntimeKey
@@ -391,6 +396,31 @@ def set_interaction_turn_route_decision(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.route_decision = decision
+
+
+async def publish_interaction_turn_route_decision(
+    event,
+    decision: InteractionRouteDecision,
+    persona_task: asyncio.Task[Any] | None = None,
+) -> bool:
+    """Publish Router output and atomically suppress a still-pending Persona."""
+    state = ensure_interaction_turn_state(event)
+    async with state.lock:
+        state.route_decision = decision
+        if (
+            decision.route_mode is not InteractionRouteMode.SILENT
+            or state.speculative_persona_status
+            is not InteractionSpeculativePersonaStatus.PENDING
+        ):
+            return False
+        state.speculative_persona_status = (
+            InteractionSpeculativePersonaStatus.SUPPRESSED
+        )
+        state.execution_scope.cancel_and_detach(
+            "speculative_persona",
+            persona_task,
+        )
+        return True
 
 
 def set_interaction_turn_core_planning_decision(
@@ -862,6 +892,14 @@ async def reserve_interaction_turn_immediate_output(event) -> bool:
             state.speculative_persona_status
             is not InteractionSpeculativePersonaStatus.PENDING
         ):
+            return False
+        if (
+            state.route_decision is not None
+            and state.route_decision.route_mode is InteractionRouteMode.SILENT
+        ):
+            state.speculative_persona_status = (
+                InteractionSpeculativePersonaStatus.SUPPRESSED
+            )
             return False
         if state.final_output_status is not InteractionFinalOutputStatus.PENDING:
             state.speculative_persona_status = (

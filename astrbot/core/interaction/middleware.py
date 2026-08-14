@@ -266,12 +266,11 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         route: InteractionRouteDecision,
     ) -> None:
-        """Commit a Router result produced by the shared turn coordinator."""
+        """Record a Router result already published by the shared coordinator."""
         self._record_route_diagnostics(event, route)
         self.attach_event_context(
             event,
             turn_id=str(event.get_extra("_turn_id", "") or ""),
-            route_decision=route,
         )
 
     @staticmethod
@@ -1035,14 +1034,6 @@ class InteractionMiddleware:
                     )
             return None
 
-        route = turn_state.route_decision
-        if route is not None and route.route_mode is InteractionRouteMode.SILENT:
-            async with turn_state.lock:
-                self._set_speculative_persona_status(
-                    event,
-                    InteractionSpeculativePersonaStatus.SUPPRESSED,
-                )
-            return None
         if not await reserve_interaction_turn_immediate_output(event):
             return None
         try:
