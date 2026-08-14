@@ -562,6 +562,69 @@ async def test_immediate_text_override_keeps_persona_tool_rich_output():
     assert [type(component) for component in delivered[0].chain] == [Plain, Image]
 
 
+@pytest.mark.asyncio
+async def test_plugin_persona_output_keeps_non_text_components():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    controller = object.__new__(InteractionOutputController)
+    delivered = []
+    controller._render_visible_reply = AsyncMock(
+        return_value=PersonaExpressionResult(spoken_reply="rewritten reply")
+    )
+    controller._next_output_segment_id = lambda _event, _kind: "segment-1"
+    controller._begin_plugin_output_transaction = lambda _event: False
+    controller._record_plugin_assistant_artifacts = Mock()
+    controller.materialize_interaction_outbound_message = AsyncMock(
+        side_effect=lambda _event, message, **_kwargs: (message, {})
+    )
+    controller._deliver_visible_message = AsyncMock(
+        side_effect=lambda _event, message, **_kwargs: delivered.append(message) or []
+    )
+    controller._record_visible_output = Mock()
+    controller._materialize_finalized_turn = Mock()
+    controller._persist_interaction_turn = AsyncMock()
+    event = Event()
+
+    await controller.capture_plugin_output(
+        MessageChain([Plain("source reply"), Image("attachment.png")]),
+        event,
+        mode="persona",
+    )
+
+    assert len(delivered) == 1
+    assert delivered[0].get_plain_text() == "rewritten reply"
+    assert [type(component) for component in delivered[0].chain] == [Plain, Image]
+
+
+@pytest.mark.asyncio
+async def test_t2i_keeps_components_after_the_leading_text(monkeypatch):
+    controller = object.__new__(InteractionOutputController)
+    controller.t2i_word_threshold = 1
+    controller.t2i_use_network = False
+    controller.t2i_active_template = "base"
+    controller._register_interaction_t2i_file_if_needed = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "astrbot.core.interaction.output_controller.html_renderer.render_t2i",
+        AsyncMock(return_value="https://example.invalid/rendered.png"),
+    )
+    attachment = Image("attachment.png")
+    message = MessageChain([Plain("long text"), attachment]).use_t2i(True)
+
+    rendered, metadata = await controller._apply_interaction_t2i(object(), message)
+
+    assert metadata["delivered_as"] == "image"
+    assert [type(component) for component in rendered.chain] == [Image, Image]
+    assert rendered.chain[1] is attachment
+
+
 def test_plugin_lifecycle_target_does_not_override_tool_target(monkeypatch):
     plugin_module = "test_plugins.work_tools"
     monkeypatch.setitem(

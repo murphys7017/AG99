@@ -12,6 +12,10 @@ from astrbot import logger
 from astrbot.core import file_token_service, html_renderer
 from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
+from astrbot.core.message.message_chain_transforms import (
+    replace_leading_plain_components,
+    replace_plain_text_preserving_components,
+)
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.output_lifecycle import PreOutputProcessor, TurnDeliveryCoordinator
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -340,7 +344,7 @@ class InteractionOutputController:
             )
             merged = merge_result_contributions(contributions)
             if merged.final_text_override is not None:
-                message = self._replace_message_text_preserving_components(
+                message = replace_plain_text_preserving_components(
                     message,
                     merged.final_text_override,
                 )
@@ -505,7 +509,10 @@ class InteractionOutputController:
                         "_interaction_plugin_output_effect_calls",
                         list(result.effect_calls),
                     )
-                message = message.derive([Plain(result.spoken_reply)])
+                message = replace_plain_text_preserving_components(
+                    message,
+                    result.spoken_reply,
+                )
                 resolved_kind = "plugin_persona"
             else:
                 resolved_kind = "plugin_direct"
@@ -1486,7 +1493,7 @@ class InteractionOutputController:
         )
         merged = merge_result_contributions(contributions)
         if merged.final_text_override is not None:
-            final_message = self._replace_message_text_preserving_components(
+            final_message = replace_plain_text_preserving_components(
                 final_message,
                 merged.final_text_override,
             )
@@ -1562,24 +1569,6 @@ class InteractionOutputController:
             for component in message.chain
             if not isinstance(component, Plain)
         ]
-
-    @staticmethod
-    def _replace_message_text_preserving_components(
-        message: MessageChain,
-        text: str,
-    ) -> MessageChain:
-        """Apply a text override without discarding tool-provided rich output."""
-
-        return message.derive(
-            [
-                Plain(text),
-                *(
-                    component
-                    for component in message.chain
-                    if not isinstance(component, Plain)
-                ),
-            ]
-        )
 
     @staticmethod
     def _is_core_final_model_result(event: AstrMessageEvent) -> bool:
@@ -2184,7 +2173,7 @@ class InteractionOutputController:
         else:
             image = Image.fromFileSystem(image_url)
         return (
-            message.derive([image]),
+            replace_leading_plain_components(message, image),
             {
                 "delivered_as": "image",
                 "t2i_source_text": plain_str,

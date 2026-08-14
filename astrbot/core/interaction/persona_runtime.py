@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from astrbot.core.message.components import Plain
+from astrbot.core.message.message_chain_transforms import (
+    replace_plain_text_preserving_components,
+)
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.star.context import Context
 
@@ -64,7 +66,10 @@ class InteractionPersonaRuntime:
                 "_interaction_plugin_output_effect_calls",
                 list(result.effect_calls),
             )
-        return message.derive([Plain(result.spoken_reply)])
+        return replace_plain_text_preserving_components(
+            message,
+            result.spoken_reply,
+        )
 
     async def render_core_reply(
         self,
