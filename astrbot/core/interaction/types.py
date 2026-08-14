@@ -145,6 +145,7 @@ class InteractionAgentConfig:
     turn_timeout: float = 120.0
     parallel_plugin_runtime_enabled: bool = False
     plugin_parallel_window_seconds: float = 3.0
+    persona_plugin_context_mode: str = "wait_complete"
     expression_provider_id: str = ""
     expression_temperature: float = 0.6
     expression_timeout: float = 8.0

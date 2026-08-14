@@ -216,6 +216,7 @@ DEFAULT_CONFIG = {
         "turn_timeout": 120.0,
         "parallel_plugin_runtime_enabled": False,
         "plugin_parallel_window_seconds": 3.0,
+        "persona_plugin_context_mode": "wait_complete",
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
@@ -4411,6 +4412,13 @@ CONFIG_METADATA_3 = {
                         "description": "插件当前轮仲裁窗口秒数",
                         "type": "float",
                         "hint": "从 Personal、Router、Plugin Job 的共同 t0 开始计时。窗口到期只让当前轮停止等待插件，不取消后台插件；Core 等待插件作出决定，不等待插件完整执行。",
+                    },
+                    "interaction_middleware.persona_plugin_context_mode": {
+                        "description": "Persona 首回复的插件上下文策略",
+                        "type": "string",
+                        "options": ["wait_complete", "best_effort"],
+                        "labels": ["等待插件上下文完成", "不等待，直接使用基础上下文"],
+                        "hint": "控制普通 Prompt Extension 和 Contributor 是否阻塞 Persona 首次请求。等待模式受单轮总超时保护；协议或适配器直接注入的人格输入不受此项影响。",
                     },
                     "interaction_middleware.plugin_runtime_targets": {
                         "description": "插件对话钩子生效链路",

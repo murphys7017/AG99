@@ -1,5 +1,15 @@
+import asyncio
+
 import pytest
 
+from astrbot.core.interaction.context_builder import (
+    get_or_build_interaction_persona_context_pack,
+)
+from astrbot.core.interaction.turn_state import InteractionContextMaterial
+from astrbot.core.interaction.types import (
+    InteractionAgentConfig,
+    InteractionPromptBuildConfig,
+)
 from astrbot.core.prompt import (
     ContextPack,
     ContextSlot,
@@ -15,6 +25,78 @@ def _slot(name: str, value, source: str = "test") -> ContextSlot:
         category="input",
         source=source,
     )
+
+
+class _PersonaContextEvent:
+    session_id = "test-session"
+
+    @staticmethod
+    def get_platform_id() -> str:
+        return "test"
+
+
+@pytest.mark.asyncio
+async def test_persona_context_mode_uses_base_while_plugin_pack_is_pending():
+    base_pack = ContextPack(slots={"input.text": _slot("input.text", "base")})
+    plugin_pack = ContextPack(
+        slots={"input.text": _slot("input.text", "plugin")}
+    )
+    release_plugin_pack = asyncio.Event()
+
+    async def build_plugin_pack() -> ContextPack:
+        await release_plugin_pack.wait()
+        return plugin_pack
+
+    task = asyncio.create_task(build_plugin_pack())
+    material = InteractionContextMaterial(
+        prompt_context_pack=base_pack,
+        target_context_tasks={"plugin": task},
+    )
+    try:
+        selected = await get_or_build_interaction_persona_context_pack(
+            event=_PersonaContextEvent(),
+            plugin_context=object(),
+            interaction_config=InteractionAgentConfig(
+                persona_plugin_context_mode="best_effort"
+            ),
+            build_config=InteractionPromptBuildConfig(),
+            material=material,
+        )
+        assert selected is base_pack
+        assert not task.done()
+
+        release_plugin_pack.set()
+        await task
+        selected_after_completion = await get_or_build_interaction_persona_context_pack(
+            event=_PersonaContextEvent(),
+            plugin_context=object(),
+            interaction_config=InteractionAgentConfig(
+                persona_plugin_context_mode="best_effort"
+            ),
+            build_config=InteractionPromptBuildConfig(),
+            material=material,
+        )
+        assert selected_after_completion is plugin_pack
+
+        wait_complete_task = asyncio.create_task(asyncio.sleep(0, result=plugin_pack))
+        wait_complete_material = InteractionContextMaterial(
+            prompt_context_pack=base_pack,
+            target_context_tasks={"plugin": wait_complete_task},
+        )
+        selected_wait_complete = await get_or_build_interaction_persona_context_pack(
+            event=_PersonaContextEvent(),
+            plugin_context=object(),
+            interaction_config=InteractionAgentConfig(
+                persona_plugin_context_mode="wait_complete"
+            ),
+            build_config=InteractionPromptBuildConfig(),
+            material=wait_complete_material,
+        )
+        assert selected_wait_complete is plugin_pack
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def test_merge_context_packs_returns_new_versioned_snapshot():

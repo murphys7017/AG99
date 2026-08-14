@@ -17,6 +17,13 @@ def _int_or_default(value: Any, default: int) -> int:
         return default
 
 
+def _persona_plugin_context_mode(value: Any) -> str:
+    normalized = str(value or "wait_complete").strip().lower()
+    if normalized in {"best_effort", "wait_complete"}:
+        return normalized
+    return "wait_complete"
+
+
 def is_middleware_enabled(config: Any) -> bool:
     interaction_config = config.get("interaction_middleware", {})
     return bool(interaction_config.get("enabled", True))
@@ -54,6 +61,9 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 interaction_config.get("plugin_parallel_window_seconds", 3.0),
                 3.0,
             ),
+        ),
+        persona_plugin_context_mode=_persona_plugin_context_mode(
+            interaction_config.get("persona_plugin_context_mode", "wait_complete")
         ),
         expression_provider_id=expression_provider_id,
         expression_temperature=_float_or_default(

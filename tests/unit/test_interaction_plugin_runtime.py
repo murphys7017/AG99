@@ -45,6 +45,17 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
     assert default_config.persona_history_window_size == 50
     assert default_config.parallel_plugin_runtime_enabled is False
     assert default_config.plugin_parallel_window_seconds == 3.0
+    assert default_config.persona_plugin_context_mode == "wait_complete"
+    assert (
+        load_interaction_agent_config(
+            {
+                "interaction_middleware": {
+                    "persona_plugin_context_mode": "best_effort"
+                }
+            }
+        ).persona_plugin_context_mode
+        == "best_effort"
+    )
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
 
 

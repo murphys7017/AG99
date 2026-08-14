@@ -16,11 +16,12 @@ Phase 5B-4 至 5B-7 已把同一 t0 三线启动、Core Gate、窗口到期脱�
 T2、父对话绑定和 direct/media assistant-only 历史接入生产 ProcessStage。全局开关仍保持 false；
 真实私聊/群聊时间线完成前不得默认启用。
 
-Prompt Context 已同步拆成两层 single-flight：基础事实层只收集官方可信控制面扩展，Router、Core
-Planner 和 Persona 的首个请求只等待这一层；普通 Prompt Extension 与 Interaction Prompt
-Contributor 在基础事实完成后立即后台预取，每轮只收集一次。Persona 只在插件 Pack 已经就绪时
-尽力使用，否则直接用基础 Pack；Core 则等待并复用同一个插件 Pack。慢 Contributor 因而不再把
-自身耗时叠加到 Personal 首回复或 Router / Planner 控制面判断。
+Prompt Context 已同步拆成两层 single-flight：基础事实层只收集官方可信控制面扩展，Router 和 Core
+Planner 的首个请求只等待这一层；普通 Prompt Extension 与 Interaction Prompt Contributor 在基础事实
+完成后立即后台预取，每轮只收集一次。`persona_plugin_context_mode` 由用户选择 Persona 是否等待
+插件 Pack：`wait_complete` 等待完整上下文，`best_effort` 只在已就绪时使用、否则直接使用基础 Pack。
+Core 则等待并复用同一个插件 Pack。慢 Contributor 不会阻塞 Router / Planner，是否阻塞 Personal 首回复
+由用户配置决定。
 
 本文只处理普通 Interaction turn 中官方 Pipeline Handler 的执行位置、状态隔离、Core 仲裁和
 迟到结果交付。Prompt Extension、LLM 生命周期 Hook、FunctionTool 和 Persona Effect 继续遵守
@@ -105,8 +106,9 @@ Persona Effect。Router 和 Planner 不加载普通插件 Prompt、Hook 或工�
 
 Prompt Extension / Contributor 的收集 owner 是独立插件上下文 pack，而不是 Router 或 Persona。
 该 pack 每个 turn 只构建一次，并按 `meta.targets` 投影给 Persona 或 Core；Router / Core Planner
-只消费基础 pack。Persona 对该 pack 采用 non-blocking best-effort：已就绪才消费，pending、失败或
-取消时立即回退基础 pack；Core 必须等待同一个 single-flight task，不得重新执行 Contributor。
+只消费基础 pack。`persona_plugin_context_mode=best_effort` 时，Persona 仅在插件 pack 已就绪时消费，
+pending、失败或取消时立即回退基础 pack；`wait_complete` 时，Persona 等待同一 task，并保留既有
+Prompt strictness 的失败语义。Core 必须等待同一个 single-flight task，不得重新执行 Contributor。
 单个 Contributor 失败或返回无效产物只记录并跳过，不使其他 Contributor 或整个 Core pack 失败；
 取消由 turn 总生命周期负责。不得为了降低等待再增加第二套 Collector target 配置、插件预判模型
 或按插件超时。

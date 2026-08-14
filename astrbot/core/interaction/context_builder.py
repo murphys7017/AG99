@@ -215,6 +215,53 @@ async def get_or_build_interaction_persona_context_pack(
         )
         return cached
 
+    if interaction_config.persona_plugin_context_mode == "best_effort":
+        build_task = material.target_context_tasks.get("plugin")
+        if build_task is None:
+            if get_interaction_turn_state(event) is None:
+                _log_persona_context_selection(
+                    event,
+                    plugin_status="unowned",
+                    selected_context="base_fallback",
+                )
+                return base_context_pack
+            build_task = _ensure_interaction_plugin_context_pack_task(
+                event=event,
+                plugin_context=plugin_context,
+                build_config=build_config,
+                material=material,
+            )
+        if not build_task.done():
+            _log_persona_context_selection(
+                event,
+                plugin_status="pending",
+                selected_context="base_fallback",
+            )
+            return base_context_pack
+        if build_task.cancelled():
+            _log_persona_context_selection(
+                event,
+                plugin_status="cancelled",
+                selected_context="base_fallback",
+            )
+            return base_context_pack
+        exception = build_task.exception()
+        if exception is not None:
+            _log_persona_context_selection(
+                event,
+                plugin_status="failed",
+                selected_context="base_fallback",
+                error_type=type(exception).__name__,
+            )
+            return base_context_pack
+        context_pack = build_task.result()
+        _log_persona_context_selection(
+            event,
+            plugin_status="ready",
+            selected_context="plugin",
+        )
+        return context_pack
+
     _log_persona_context_selection(
         event,
         plugin_status="pending",
