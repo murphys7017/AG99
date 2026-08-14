@@ -16,6 +16,7 @@ from astrbot.core.interaction.plugin_artifact_delivery import (
 from astrbot.core.interaction.plugin_execution_runtime import (
     PluginExecutionRuntime,
     PluginModuleDrainingError,
+    PluginModuleDrainTimeoutError,
     get_active_plugin_branch_event,
 )
 from astrbot.core.interaction.plugin_execution_types import (
@@ -138,6 +139,45 @@ async def test_plugin_module_draining_waits_for_active_lease():
 
     replacement_lease = runtime.acquire_module_lease(["data.plugins.demo.main"])
     await replacement_lease.release()
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_module_drain_timeout_aborts_management_without_releasing_job():
+    runtime = PluginExecutionRuntime()
+    module_path = "data.plugins.demo.main"
+    lease = runtime.acquire_module_lease([module_path])
+    started = asyncio.Event()
+    release_job = asyncio.Event()
+
+    async def run_job(_publish_gate):
+        started.set()
+        await release_job.wait()
+
+    job = runtime.start(
+        branch_event=SimpleNamespace(name="branch"),
+        result=PluginBranchResult(),
+        run_job=run_job,
+        release_leases=lease.release,
+    )
+    lease.bind_job(job.job_id)
+    await started.wait()
+
+    with pytest.raises(PluginModuleDrainTimeoutError) as caught:
+        await runtime.begin_module_draining(module_path, timeout_seconds=0.01)
+
+    error = caught.value
+    assert error.module_path == module_path
+    assert error.active_lease_count == 1
+    assert error.active_job_ids == (job.job_id,)
+    assert error.oldest_job_age_seconds >= 0.0
+    assert job.task is not None and not job.task.done()
+
+    replacement_lease = runtime.acquire_module_lease([module_path])
+    await replacement_lease.release()
+
+    release_job.set()
+    await job.wait_completed()
     await runtime.shutdown()
 
 

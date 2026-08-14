@@ -454,7 +454,6 @@ runtime:
       - real Provider and platform traces must confirm delayed expression and direct output preserve parent conversation history without duplicate visible delivery
       - real traces must confirm Router and Core Planner proceed after scope=base without waiting for scope=plugin
       - M9 the broad claim that an ordinary DELEGATED Core failure loses already completed plugin artifacts is not confirmed: final artifacts resolve Gate to HANDLED or STOPPED before a later ProviderRequest can delegate, ordinary Core Exceptions are converted to an error output, and turn deadlines have an outer fallback; retain only a narrow recovery-boundary risk for cancellation or unusual BaseException
-      - M10 plugin module draining waits without a deadline; a permanently hung detached Job can block reload, unload, or disable indefinitely and retain its ledger and media leases
       - real traces must validate both user-selected Persona plugin-context modes: best_effort must emit from base while enrichment remains pending, and wait_complete must use the same completed task without duplicate Contributor execution
       - effect_calls with no registered effects uses valid empty-array-only JSON Schema items=false; retain this only as an unverified strict-provider compatibility risk until a real provider rejection is observed
       - DELEGATED remains the documented in-window ProviderRequest compatibility path; a slow delegated Job still consumes T1 turn budget until the surrounding turn deadline, so real same-session queue latency must be observed
@@ -483,6 +482,7 @@ runtime:
         - pending Persona suppression detaches cancelled speculative work instead of waiting during turn-scope shutdown
         - T1 artifact delivery closes both artifact and final-output reservations on delivery failure
         - ProcessStage rejects discovery Handler metadata replaced or unbound by plugin reload before lease acquisition
+        - plugin module draining now has a 15-second safety bound; timeout reports active leases/jobs, clears draining, and aborts reload/unload without unloading leased plugin code
         - Plugin takeover detaches the cancelled Router task, and Handler artifacts carry a populated delivery group
         - immediate Persona, Core final, and finalized proactive plugin output share one atomic turn-lock reservation
         - proactive text output and same-session tool progress use Personal Runtime and Output Controller

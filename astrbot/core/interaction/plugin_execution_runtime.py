@@ -24,6 +24,8 @@ PluginJobRunner = Callable[[PluginGatePublisher], Awaitable[None]]
 PluginLeaseReleaser = Callable[[], Awaitable[None]]
 PluginJobCompletionHandler = Callable[["PluginExecutionJob"], Awaitable[None]]
 
+DEFAULT_PLUGIN_MODULE_DRAIN_TIMEOUT_SECONDS = 15.0
+
 _ACTIVE_PLUGIN_BRANCH_EVENT: contextvars.ContextVar[Any | None] = (
     contextvars.ContextVar("active_plugin_branch_event", default=None)
 )
@@ -58,17 +60,54 @@ class PluginModuleDrainingError(RuntimeError):
         self.module_path = module_path
 
 
+class PluginModuleDrainTimeoutError(RuntimeError):
+    """Raised when a management action cannot safely drain a plugin module."""
+
+    def __init__(
+        self,
+        module_path: str,
+        *,
+        timeout_seconds: float,
+        active_lease_count: int,
+        active_job_ids: tuple[str, ...],
+        oldest_job_age_seconds: float,
+    ) -> None:
+        super().__init__(
+            "Plugin module drain timed out: "
+            f"module_path={module_path} timeout_seconds={timeout_seconds:.3f} "
+            f"active_lease_count={active_lease_count} "
+            f"active_job_ids={','.join(active_job_ids)} "
+            f"oldest_job_age_seconds={oldest_job_age_seconds:.3f}"
+        )
+        self.module_path = module_path
+        self.timeout_seconds = timeout_seconds
+        self.active_lease_count = active_lease_count
+        self.active_job_ids = active_job_ids
+        self.oldest_job_age_seconds = oldest_job_age_seconds
+
+
 @dataclass(slots=True)
 class PluginModuleLease:
     runtime: PluginExecutionRuntime
     module_paths: tuple[str, ...]
+    job_id: str | None = None
     released: bool = False
+
+    def bind_job(self, job_id: str) -> None:
+        if self.released:
+            raise RuntimeError("Cannot bind a released plugin module lease")
+        if self.job_id is not None:
+            if self.job_id != job_id:
+                raise RuntimeError("Plugin module lease is already bound to another Job")
+            return
+        self.runtime._bind_module_lease_job(self.module_paths, job_id)
+        self.job_id = job_id
 
     async def release(self) -> None:
         if self.released:
             return
         self.released = True
-        self.runtime._release_module_lease(self.module_paths)
+        self.runtime._release_module_lease(self.module_paths, self.job_id)
 
 
 @dataclass(slots=True)
@@ -142,6 +181,7 @@ class PluginExecutionRuntime:
         self._background_failed_count = 0
         self._cancelled_on_shutdown_count = 0
         self._module_lease_counts: dict[str, int] = {}
+        self._module_job_ids: dict[str, set[str]] = {}
         self._draining_modules: set[str] = set()
         self._drain_events: dict[str, asyncio.Event] = {}
         self._delivery_ledger: dict[
@@ -168,8 +208,26 @@ class PluginExecutionRuntime:
             )
         return PluginModuleLease(self, unique_paths)
 
-    def _release_module_lease(self, module_paths: tuple[str, ...]) -> None:
+    def _bind_module_lease_job(
+        self,
+        module_paths: tuple[str, ...],
+        job_id: str,
+    ) -> None:
         for module_path in module_paths:
+            self._module_job_ids.setdefault(module_path, set()).add(job_id)
+
+    def _release_module_lease(
+        self,
+        module_paths: tuple[str, ...],
+        job_id: str | None,
+    ) -> None:
+        for module_path in module_paths:
+            if job_id is not None:
+                job_ids = self._module_job_ids.get(module_path)
+                if job_ids is not None:
+                    job_ids.discard(job_id)
+                    if not job_ids:
+                        self._module_job_ids.pop(module_path, None)
             remaining = self._module_lease_counts.get(module_path, 0) - 1
             if remaining > 0:
                 self._module_lease_counts[module_path] = remaining
@@ -179,12 +237,63 @@ class PluginExecutionRuntime:
             if drain_event is not None:
                 drain_event.set()
 
-    async def begin_module_draining(self, module_path: str) -> None:
+    def _get_module_drain_snapshot(
+        self,
+        module_path: str,
+    ) -> tuple[int, tuple[str, ...], float]:
+        job_ids = tuple(sorted(self._module_job_ids.get(module_path, ())))
+        now = time.monotonic()
+        ages = [
+            now - job.started_monotonic
+            for job_id in job_ids
+            if (job := self._jobs.get(job_id)) is not None
+        ]
+        return (
+            self._module_lease_counts.get(module_path, 0),
+            job_ids,
+            max(ages, default=0.0),
+        )
+
+    async def begin_module_draining(
+        self,
+        module_path: str,
+        *,
+        timeout_seconds: float = DEFAULT_PLUGIN_MODULE_DRAIN_TIMEOUT_SECONDS,
+    ) -> None:
+        timeout_seconds = max(0.0, float(timeout_seconds))
         self._draining_modules.add(module_path)
         event = self._drain_events.setdefault(module_path, asyncio.Event())
         if self._module_lease_counts.get(module_path, 0) == 0:
             event.set()
-        await event.wait()
+        try:
+            await asyncio.wait_for(
+                event.wait(),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError as exc:
+            active_lease_count, active_job_ids, oldest_job_age_seconds = (
+                self._get_module_drain_snapshot(module_path)
+            )
+            error = PluginModuleDrainTimeoutError(
+                module_path,
+                timeout_seconds=timeout_seconds,
+                active_lease_count=active_lease_count,
+                active_job_ids=active_job_ids,
+                oldest_job_age_seconds=oldest_job_age_seconds,
+            )
+            logger.warning(
+                "DIAG plugin.module_drain_timeout: module_path=%s "
+                "timeout_seconds=%.3f active_lease_count=%d "
+                "active_job_ids=%s oldest_job_age_seconds=%.3f",
+                module_path,
+                timeout_seconds,
+                active_lease_count,
+                ",".join(active_job_ids),
+                oldest_job_age_seconds,
+            )
+            # Abort the management action without leaving the unchanged plugin blocked.
+            self.end_module_draining(module_path)
+            raise error from exc
 
     def end_module_draining(self, module_path: str) -> None:
         self._draining_modules.discard(module_path)

@@ -501,9 +501,10 @@ Job 终态后释放 lease。Core Lifecycle shutdown 必须先停止 PluginExecut
 Provider 资源。
 
 插件 reload/unload 必须采用 draining 时序：先阻止该插件产生新的 Handler invocation，再等待
-引用该插件模块/runtime 的活跃 Job lease 释放，最后才从 star_map、Handler registry、Tool registry
-和模块缓存中完成 unbind/purge。reload 可以等待或明确报告仍在 draining，但不得先销毁对象再让
-后台 Job 继续运行旧引用。
+引用该插件模块/runtime 的活跃 Job lease 释放，最长 15 秒，最后才从 star_map、Handler registry、
+Tool registry 和模块缓存中完成 unbind/purge。超时必须记录 module path、活跃 lease/Job 与最长
+Job 年龄，撤销 draining 并中止本次管理操作；不得强制取消 Job、卸载仍被 lease 引用的模块，或让
+未变更的旧插件保持在 draining。drain 成功前不得先销毁对象再让后台 Job 继续运行旧引用。
 
 第一阶段不设置 PluginTaskBin 容量拒绝，也不设置第二个对话 TTL。Job 在 t0 已经启动，detach
 时无法无损“拒绝新 Job”；强行设置容量上限只会转化为取消插件、阻塞 Core 或泄漏 task。
@@ -854,7 +855,8 @@ Gate 解析为 EXPIRED 而不取消真实 Job。Runtime 持有 module lease、re
 诊断和原子 delivery ledger，Core shutdown 在插件与 Provider 清理前先关闭 Runtime。生产主链在
 全局开关开启时创建 Runtime-owned Plugin Job；开关默认关闭时继续使用旧串行路径。插件 reload、
 update、uninstall 和 disable 均先进入 draining 并等待活跃 lease 释放，再 terminate 和 unbind；
-取消等待会清理 draining 状态，不会永久阻止后续 Job。
+等待上限为 15 秒，超时会中止管理操作、记录活跃 Job 诊断并清理 draining 状态，不会永久阻止后续
+Job，也不会销毁仍在执行的插件代码。
 
 ### Phase 5B-4：同一 t0 三线启动
 

@@ -128,7 +128,9 @@
   只发送而不新建历史 conversation。裸 FAILED 作为插件运行时故障 fail-open 到 Router/Personal，
   不取得 T1 接管权。direct/media T1 与 T2 共用 assistant artifact serializer。开关仍保持 false，
   T1/T2 已通过完整 MessageChain 指纹抑制可证明相同的纯媒体输出；当前等待真实私聊和目标群日志
-  验收。reload、update、uninstall 和 disable 会先等待活跃 Plugin Job lease，再终止或解绑插件；
+  验收。reload、update、uninstall 和 disable 会先等待活跃 Plugin Job lease，最长 15 秒；超时会记录
+  module path、活跃 lease/Job 与最长 Job 年龄，撤销 draining 并中止本次管理操作，保留旧插件与后台
+  Job 原样运行，只有 drain 成功后才终止或解绑插件；
   draining 窗口内的新消息跳过整条 Official Plugin Job，以 PASSED 继续 Personal/Router/Core，
   不回退旧 Handler 路径，也不会让整轮消息失败；
   开关开启时空 Handler 与有 Handler 的合格 turn 均由唯一 Coordinator 管理，空 Handler 直接

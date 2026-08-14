@@ -275,6 +275,8 @@ class InteractionTurnCoordinator:
                     ),
                     completion_handler=plugin_launch.completion_handler,
                 )
+                if module_lease is not None:
+                    module_lease.bind_job(plugin_job.job_id)
                 plugin_watcher_task = turn_state.execution_scope.create_task(
                     plugin_job.wait_for_gate(deadline),
                     role="plugin_window",
