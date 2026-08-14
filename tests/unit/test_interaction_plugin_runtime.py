@@ -24,7 +24,10 @@ from astrbot.core.interaction.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
     tool_supports_runtime_target,
 )
-from astrbot.core.interaction.turn_state import ensure_interaction_turn_state
+from astrbot.core.interaction.turn_state import (
+    ensure_interaction_turn_state,
+    get_interaction_turn_state,
+)
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
     InteractionRouteMode,
@@ -352,6 +355,42 @@ async def test_core_result_returns_through_persona_without_reopening_plugin_tool
         PersonaExpressionResult(spoken_reply="人格化后的执行结果"),
         event,
     )
+
+
+@pytest.mark.asyncio
+async def test_core_persona_failure_falls_back_to_raw_core_output():
+    class Event:
+        def __init__(self):
+            self._extras = {"_turn_id": "turn-core-fallback"}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    middleware = object.__new__(InteractionMiddleware)
+    middleware._render_visible_reply_via_persona = AsyncMock(
+        side_effect=RuntimeError("provider unavailable")
+    )
+    middleware.output_controller = SimpleNamespace(
+        deliver_prepared_core_reply=AsyncMock(),
+        deliver_raw_core_reply=AsyncMock(),
+    )
+    event = Event()
+    source_message = MessageChain([Plain("Core execution completed")])
+
+    await middleware._handle_core_reply_via_persona(source_message, event)
+
+    middleware.output_controller.deliver_prepared_core_reply.assert_not_awaited()
+    middleware.output_controller.deliver_raw_core_reply.assert_awaited_once_with(
+        source_message,
+        event,
+    )
+    state = get_interaction_turn_state(event)
+    assert state is not None
+    assert state.failures[-1].stage == "core_persona_render"
+    assert state.failures[-1].user_visible_action == "deliver_core_result_without_persona"
 
 
 @pytest.mark.asyncio

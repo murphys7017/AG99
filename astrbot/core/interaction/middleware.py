@@ -173,24 +173,23 @@ class InteractionMiddleware:
                 ),
             )
         except TurnDeadlineExceeded as exc:
-            record_interaction_turn_failure(
+            await self._deliver_core_result_without_persona(
+                message,
                 event,
                 stage=exc.stage,
                 reason=exc.reason,
                 exception=exc,
-                user_visible_action="deliver_core_result_without_persona",
             )
-            logger.warning(
-                "Core result Persona rendering reached turn deadline; delivering "
-                "the existing Core result without another model call: turn_id=%s",
-                event.get_extra("_turn_id"),
+            return
+        except Exception as exc:  # noqa: BLE001
+            await self._deliver_core_result_without_persona(
+                message,
+                event,
+                stage="core_persona_render",
+                reason=str(getattr(exc, "reason", "") or "exception"),
+                exception=exc,
             )
-            result = PersonaExpressionResult(
-                spoken_reply=(
-                    core_result_text
-                    or LOCAL_FAST_EXPRESSION_FALLBACK_RESULT.spoken_reply
-                )
-            )
+            return
         if result.effect_calls:
             event.set_extra(
                 "_interaction_final_response_effect_calls",
@@ -201,6 +200,37 @@ class InteractionMiddleware:
             result,
             event,
         )
+
+    async def _deliver_core_result_without_persona(
+        self,
+        message: MessageChain,
+        event: AstrMessageEvent,
+        *,
+        stage: str,
+        reason: str,
+        exception: BaseException,
+    ) -> None:
+        """Deliver the completed Core result when Persona rendering is unavailable."""
+        record_interaction_turn_failure(
+            event,
+            stage=stage,
+            reason=reason,
+            exception=exception,
+            user_visible_action="deliver_core_result_without_persona",
+        )
+        logger.warning(
+            "Core result Persona rendering failed; delivering the existing Core "
+            "result without another model call: turn_id=%s stage=%s reason=%s",
+            event.get_extra("_turn_id"),
+            stage,
+            reason,
+        )
+        fallback_message = message
+        if not fallback_message.chain:
+            fallback_message = message.derive(
+                [Plain(LOCAL_FAST_EXPRESSION_FALLBACK_RESULT.spoken_reply)]
+            )
+        await self.output_controller.deliver_raw_core_reply(fallback_message, event)
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
         if self.plugin_context is None:

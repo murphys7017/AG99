@@ -1439,14 +1439,40 @@ class InteractionOutputController:
         result: PersonaExpressionResult,
         event: AstrMessageEvent,
     ) -> None:
-        core_result_text = source_message.get_plain_text()
         final_message = source_message.derive(
             [
                 Plain(result.spoken_reply),
                 *self._persona_tool_attachment_components(result),
             ]
         )
+        await self._deliver_core_final_message(
+            source_message,
+            final_message,
+            event,
+            effect_calls=result.effect_calls,
+        )
 
+    async def deliver_raw_core_reply(
+        self,
+        source_message: MessageChain,
+        event: AstrMessageEvent,
+    ) -> None:
+        """Deliver an existing Core result without Persona rewriting it."""
+        await self._deliver_core_final_message(
+            source_message,
+            source_message,
+            event,
+        )
+
+    async def _deliver_core_final_message(
+        self,
+        source_message: MessageChain,
+        final_message: MessageChain,
+        event: AstrMessageEvent,
+        *,
+        effect_calls: Sequence[Any] = (),
+    ) -> None:
+        core_result_text = source_message.get_plain_text()
         contributions = await self._collect_result_contributions(
             event,
             core_result=core_result_text,
@@ -1456,15 +1482,13 @@ class InteractionOutputController:
             candidate_message_id=(
                 message_id := self._next_output_segment_id(event, "core_reply")
             ),
-            effect_calls=result.effect_calls,
+            effect_calls=effect_calls,
         )
         merged = merge_result_contributions(contributions)
         if merged.final_text_override is not None:
-            final_message = source_message.derive(
-                [
-                    Plain(merged.final_text_override),
-                    *self._persona_tool_attachment_components(result),
-                ]
+            final_message = self._replace_message_text_preserving_components(
+                final_message,
+                merged.final_text_override,
             )
 
         source_result = event.get_result()
