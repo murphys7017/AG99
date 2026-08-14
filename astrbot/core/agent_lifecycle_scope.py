@@ -21,6 +21,7 @@ class AgentLifecycleOverlay:
     result: Any = _MISSING
     initial_result: Any = None
     initial_stopped: bool = False
+    force_stopped: bool = False
 
     def capture_extra(self, key: str) -> Any:
         return self.local_extras.get(key, _MISSING)

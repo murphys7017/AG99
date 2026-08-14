@@ -33,6 +33,7 @@ async def test_persona_and_core_lifecycle_state_isolated_while_hooks_overlap():
             assert event.get_extra("provider_request") is persona_request
             assert event.get_extra("provider_request") is persona_request
             event.stop_event()
+            assert event.is_stopped() is True
             persona_hook_finished.set()
             return True
 
