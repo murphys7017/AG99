@@ -1,9 +1,10 @@
 """
 Output mode definitions for the interaction middleware plugin output path.
 
-This module defines the minimal identity model for plugin output:
+This module defines the minimal identity model for outbound interaction output:
 
     output_origin:  core | plugin   (who produced the output)
+    core_output_delivery: progress | final  (whether Core output may finalize a turn)
     plugin_output_mode: direct | persona  (whether to persona-rewrite first)
 """
 
@@ -40,6 +41,13 @@ class OutputOrigin(str, Enum):
     PLUGIN = "plugin"
 
 
+class CoreOutputDelivery(str, Enum):
+    """Lifecycle role of a Core-origin visible message."""
+
+    PROGRESS = "progress"
+    FINAL = "final"
+
+
 @dataclass(slots=True)
 class PluginOutputRequest:
     """Encapsulates a plugin output request for the Output Runtime."""
@@ -51,6 +59,7 @@ class PluginOutputRequest:
 
 # Extra keys used on AstrMessageEvent for output-origin tracking.
 OUTPUT_ORIGIN_EXTRA_KEY = "_interaction_output_origin"
+CORE_OUTPUT_DELIVERY_EXTRA_KEY = "_interaction_core_output_delivery"
 PLUGIN_OUTPUT_MODE_EXTRA_KEY = "_interaction_plugin_output_mode"
 # Diagnostic extras (read-only, for testing / debugging).
 PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY = "_interaction_plugin_output_last_mode"
@@ -66,3 +75,17 @@ def temporary_output_origin(event: Any, origin: str) -> Iterator[None]:
         yield
     finally:
         event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, previous)
+
+
+@contextmanager
+def temporary_core_output_delivery(
+    event: Any,
+    delivery: str,
+) -> Iterator[None]:
+    """Temporarily declare whether Core output is progress or a final result."""
+    previous = event.get_extra(CORE_OUTPUT_DELIVERY_EXTRA_KEY)
+    event.set_extra(CORE_OUTPUT_DELIVERY_EXTRA_KEY, delivery)
+    try:
+        yield
+    finally:
+        event.set_extra(CORE_OUTPUT_DELIVERY_EXTRA_KEY, previous)

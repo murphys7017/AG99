@@ -36,8 +36,10 @@ from .contributors import (
 from .core_bridge import get_interaction_route_decision
 from .expression_agent import PersonaExpressionRequest, PersonaExpressionResult
 from .output_modes import (
+    CORE_OUTPUT_DELIVERY_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
+    CoreOutputDelivery,
     OutputOrigin,
     PluginOutputMode,
     temporary_output_origin,
@@ -400,35 +402,39 @@ class InteractionOutputController:
             )
             return
 
-        if outbound_kind == "passthrough":
+        if outbound_kind in {"core_progress", "passthrough"}:
+            is_progress = outbound_kind == "core_progress"
             semantic_text = message.get_plain_text()
-            message_id = self._next_output_segment_id(event, "passthrough")
+            message_id = self._next_output_segment_id(event, outbound_kind)
             (
                 message,
                 materialization,
             ) = await self.materialize_interaction_outbound_message(
                 event,
                 message,
-                message_kind="passthrough",
+                message_kind=outbound_kind,
                 result_is_model_result=False,
                 message_id=message_id,
             )
             delivered_message_ids = await self._deliver_visible_message(
                 event,
                 message,
-                message_kind="passthrough",
+                message_kind=outbound_kind,
                 output_segment_id=message_id,
                 allow_segmented_reply=True,
                 semantic_text=semantic_text,
             )
             self._record_visible_output(
                 event,
-                message_kind="passthrough",
+                message_kind=outbound_kind,
                 text=semantic_text,
                 message_id=message_id,
                 delivered_message_ids=delivered_message_ids,
                 metadata=materialization,
+                memory_relevant=not is_progress,
             )
+            if is_progress:
+                return
             self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(event)
             return
@@ -2430,6 +2436,11 @@ class InteractionOutputController:
             return "streaming_finish_marker"
         if has_interaction_turn_final_output_claimed(event):
             return "suppressed_duplicate_final"
+        if (
+            event.get_extra(CORE_OUTPUT_DELIVERY_EXTRA_KEY)
+            == CoreOutputDelivery.PROGRESS.value
+        ):
+            return "core_progress"
 
         result = event.get_result()
         result_is_model = bool(result and result.is_model_result())

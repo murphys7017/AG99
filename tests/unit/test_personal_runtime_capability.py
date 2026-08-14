@@ -25,6 +25,10 @@ from astrbot.core.interaction.observation_inbox import (
     ObservationMaterial,
 )
 from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.output_modes import (
+    CoreOutputDelivery,
+    temporary_core_output_delivery,
+)
 from astrbot.core.interaction.personal_action import PersonalActionIntent
 from astrbot.core.interaction.personal_expression_guard import (
     fingerprint_personal_expression,
@@ -68,6 +72,7 @@ from astrbot.core.interaction.turn_state import (
     InteractionFinalOutputStatus,
     append_interaction_turn_visible_output,
     finish_interaction_turn_final_output,
+    get_interaction_turn_finalized_material,
     get_interaction_turn_state,
     reserve_interaction_turn_final_output,
 )
@@ -913,6 +918,29 @@ async def test_personal_reply_sends_before_slow_silent_router(monkeypatch):
     assert turn_state.completion_state.outcome is not None
     assert turn_state.completion_state.outcome.value == "replied"
     assert event.is_stopped()
+
+
+@pytest.mark.asyncio
+async def test_core_progress_output_does_not_finalize_visible_turn():
+    event = _DirectEvent(_metadata())
+    event.set_extra("_turn_id", "turn-progress")
+    persist = AsyncMock()
+    controller = InteractionOutputController(persist_callback=persist)
+
+    with temporary_core_output_delivery(event, CoreOutputDelivery.PROGRESS.value):
+        await controller.capture_message_chain(
+            MessageChain(type="tool_call").message("tool is running"),
+            event,
+        )
+
+    state = get_interaction_turn_state(event)
+    assert state is not None
+    assert [message.get_plain_text() for message in event.sent] == ["tool is running"]
+    assert state.final_output_status is InteractionFinalOutputStatus.PENDING
+    assert get_interaction_turn_finalized_material(event) is None
+    assert state.visible_outputs[-1]["kind"] == "core_progress"
+    assert state.visible_outputs[-1]["memory_relevant"] is False
+    persist.assert_not_awaited()
 
 
 @pytest.mark.asyncio

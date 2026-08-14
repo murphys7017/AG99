@@ -67,6 +67,7 @@ _VALID_UTTERANCE_KINDS = frozenset(
     {
         "immediate_reply",
         "stream_interjection",
+        "core_progress",
         "passthrough",
         "core_reply",
         "core_stream",
