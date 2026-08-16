@@ -182,12 +182,17 @@ class PersonalHeartbeatSource:
                 status=result.status.value,
                 reason_codes=result.reason_codes,
             )
-            logger.debug(
-                "Personal Runtime heartbeat submitted: target=%s status=%s reasons=%s",
-                target_key,
-                result.status.value,
-                ",".join(result.reason_codes),
-            )
+            if not (
+                result.status.value == "ignored"
+                and result.reason_codes == ("heartbeat_without_material",)
+            ):
+                logger.debug(
+                    "Personal Runtime heartbeat submitted: target=%s status=%s "
+                    "reasons=%s",
+                    target_key,
+                    result.status.value,
+                    ",".join(result.reason_codes),
+                )
             self._next_tick_at[target_key] = occurred_at + interval
             results.append(result)
             if not runtime_settings.personal_idle_initiation_enabled:

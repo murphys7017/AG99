@@ -260,6 +260,7 @@ class Context:
             _RuntimeObservationSensorRegistration
         ] = []
         self._runtime_observation_sensor_seq = 0
+        self._runtime_observation_target_warnings: set[str] = set()
 
     async def llm_generate(
         self,
@@ -654,6 +655,15 @@ class Context:
 
         targets: list[MessageSesion] = []
         seen: set[str] = set()
+        unsupported_targets: set[str] = set()
+        warned_targets = getattr(
+            self,
+            "_runtime_observation_target_warnings",
+            None,
+        )
+        if warned_targets is None:
+            warned_targets = set()
+            self._runtime_observation_target_warnings = warned_targets
         config_manager = getattr(self, "astrbot_config_mgr", None)
         if umo:
             configs = (self.get_config(umo=umo),)
@@ -685,18 +695,27 @@ class Context:
                     )
                 ):
                     continue
-                platform = self.get_platform_inst(session.platform_id)
-                if platform is None or not supports_personal_runtime(platform.meta()):
-                    logger.warning(
-                        "Personal Runtime observation target does not explicitly support "
-                        "Personal Runtime output: %s",
-                        target,
-                    )
-                    continue
                 if resolved_target in seen:
                     continue
                 seen.add(resolved_target)
+                platform = self.get_platform_inst(session.platform_id)
+                if platform is None:
+                    warned_targets.discard(resolved_target)
+                    continue
+                if not supports_personal_runtime(platform.meta()):
+                    unsupported_targets.add(resolved_target)
+                    if resolved_target not in warned_targets:
+                        logger.warning(
+                            "Personal Runtime observation target does not explicitly "
+                            "support Personal Runtime output: %s",
+                            target,
+                        )
+                        warned_targets.add(resolved_target)
+                    continue
+                warned_targets.discard(resolved_target)
                 targets.append(session)
+        if not umo:
+            warned_targets.intersection_update(unsupported_targets)
         return tuple(targets)
 
     async def send_message(
