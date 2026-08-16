@@ -85,6 +85,7 @@ class PluginBranchResult:
     stopped: bool = False
     failure: BaseException | None = None
     delegated_to_core: bool = False
+    delegated_t1_failure_type: str | None = None
     started_at: float | None = None
     gate_resolved_at: float | None = None
     gate_resolved_monotonic: float | None = None
@@ -96,6 +97,23 @@ class PluginBranchResult:
     def freeze_t1_artifact_boundary(self) -> None:
         if self.t1_artifact_count is None:
             self.t1_artifact_count = len(self.output_artifacts)
+
+    def record_delegated_t1_failure(self, error: BaseException) -> None:
+        if self.gate_resolution is not PluginGateResolution.DELEGATED:
+            return
+        if self.delegated_t1_failure_type is None:
+            self.delegated_t1_failure_type = type(error).__name__
+
+    @property
+    def delayed_delivery_eligible(self) -> bool:
+        return self.gate_resolution in {
+            PluginGateResolution.EXPIRED,
+            PluginGateResolution.HANDLED,
+            PluginGateResolution.STOPPED,
+        } or (
+            self.gate_resolution is PluginGateResolution.DELEGATED
+            and self.delegated_t1_failure_type is not None
+        )
 
     def cleanup_media(self) -> None:
         cleanup = getattr(self.media_lease, "cleanup", None)

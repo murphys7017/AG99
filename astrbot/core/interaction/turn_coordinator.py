@@ -373,6 +373,7 @@ class InteractionTurnCoordinator:
             "plugin_job_id=%s plugin_started_at=%s "
             "plugin_window_deadline=%.6f plugin_resolved_at=%s "
             "plugin_gate=%s plugin_completed_at=%s plugin_job_state=%s "
+            "delegated_t1_failure_type=%s "
             "core_gate_at=%s core_gate_reason=%s plugin_delay_ms=%.2f",
             phase,
             turn.event.get_platform_id(),
@@ -395,6 +396,12 @@ class InteractionTurnCoordinator:
             plugin_gate.value,
             self._format_diagnostic_time(turn.task_completed_at.get("plugin")),
             plugin_result.job_state.value if plugin_result is not None else "none",
+            (
+                plugin_result.delegated_t1_failure_type
+                if plugin_result is not None
+                else ""
+            )
+            or "none",
             self._format_diagnostic_time(core_gate_at),
             self._core_gate_reason(
                 plugin_gate,

@@ -302,11 +302,7 @@ class ProcessStage(Stage):
             async def complete_plugin_job(job) -> None:
                 try:
                     await t1_settled.wait()
-                    if job.result.gate_resolution in {
-                        PluginGateResolution.EXPIRED,
-                        PluginGateResolution.HANDLED,
-                        PluginGateResolution.STOPPED,
-                    }:
+                    if job.result.delayed_delivery_eligible:
                         await delayed_delivery.deliver(delayed_context, job.result)
                 finally:
                     if turn is not None:
@@ -385,9 +381,16 @@ class ProcessStage(Stage):
                     turn,
                     submission=submission,
                 )
-                async with aclosing(provider_source):
-                    async for _ in provider_source:
-                        yield
+                try:
+                    async with aclosing(provider_source):
+                        async for _ in provider_source:
+                            yield
+                except BaseException as exc:
+                    if isinstance(exc, (asyncio.CancelledError, Exception)):
+                        branch_result.record_delegated_t1_failure(exc)
+                        if turn.plugin_job is not None:
+                            turn.plugin_job.mark_detached()
+                    raise
                 if branch_result.output_artifacts:
                     await artifact_delivery.deliver_inline(
                         event,

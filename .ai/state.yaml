@@ -451,11 +451,12 @@ runtime:
       - introducing a global media-content hashing subsystem in this batch
       - group reply-frequency tuning or Phase 6 admission-policy redesign
     confirmed_gaps:
+      - "2026-08-16 QQ incident resolved after the operator restarted NapCat. A post-reconnect private message from 815049548 traversed aiocqhttp, EventBus, Personal/Router/Plugin coordination, and completed with turn_outcome=replied; treat the earlier silence as an external OneBot event-forwarding outage rather than a Personal/Router/Plugin defect."
       - real private-chat 815049548 and bounded-group traces must confirm same-t0 Personal/Router/Plugin overlap, Personal delivery before control completion, plugin_resolved_at Core Gate timing, EXPIRED detach, delayed T2 ordering, and warm-path latency
       - real traces must confirm Handler discovery and Handler body timing separately from Personal/Router/Core timing on the enabled path
       - real Provider and platform traces must confirm delayed expression and direct output preserve parent conversation history without duplicate visible delivery
       - real traces must confirm Router and Core Planner proceed after scope=base without waiting for scope=plugin
-      - M9 the broad claim that an ordinary DELEGATED Core failure loses already completed plugin artifacts is not confirmed: final artifacts resolve Gate to HANDLED or STOPPED before a later ProviderRequest can delegate, ordinary Core Exceptions are converted to an error output, and turn deadlines have an outer fallback; retain only a narrow recovery-boundary risk for cancellation or unusual BaseException
+      - real traces must confirm the repaired DELEGATED recovery boundary: a T1 Core exception, deadline, or cancellation records delegated_t1_failure_type, detaches the Plugin Job, never replays ProviderRequest, and permits still-undelivered artifacts present when the Job completes to use the existing low-priority T2 ledger path
       - real traces must validate both user-selected Persona plugin-context modes: best_effort must emit from base while enrichment remains pending, and wait_complete must use the same completed task without duplicate Contributor execution
       - effect_calls with no registered effects uses valid empty-array-only JSON Schema items=false; retain this only as an unverified strict-provider compatibility risk until a real provider rejection is observed
       - DELEGATED remains the documented in-window ProviderRequest compatibility path; a slow delegated Job still consumes T1 turn budget until the surrounding turn deadline, so real same-session queue latency must be observed
@@ -478,6 +479,7 @@ runtime:
         - Interaction base Context Material no longer waits for ordinary Prompt Extension or Interaction Prompt Contributor collection
         - Persona consumes the single plugin extension Pack only when ready, while Core awaits and reuses the same task without overwriting the canonical base Pack
         - plugin ProviderRequest generators resume after delegated Core execution
+        - DELEGATED T1 failures now detach the Plugin Job and preserve completed artifacts through the existing delayed-delivery ledger without changing the historical Gate result or replaying ProviderRequest
         - detached ProviderRequest closes only its originating Handler invocation while later activated Handlers continue
         - session admission and lease acquisition now happen before plugin handlers
         - TurnExecutionScope owns Router, Persona, Context Material, and stream-observation tasks

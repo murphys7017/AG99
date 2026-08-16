@@ -21,7 +21,6 @@ from .plugin_execution_types import (
     PluginArtifactKind,
     PluginBranchResult,
     PluginDeliveryDisposition,
-    PluginGateResolution,
     PluginOutputArtifact,
 )
 from .runtime_event import RuntimeObservationEvent
@@ -111,11 +110,7 @@ class DelayedPluginDeliveryCoordinator:
         result: PluginBranchResult,
     ) -> DelayedPluginDeliverySummary:
         summary = DelayedPluginDeliverySummary()
-        if result.gate_resolution not in {
-            PluginGateResolution.EXPIRED,
-            PluginGateResolution.HANDLED,
-            PluginGateResolution.STOPPED,
-        }:
+        if not result.delayed_delivery_eligible:
             return summary
 
         target = self._build_target(context.parent_event)

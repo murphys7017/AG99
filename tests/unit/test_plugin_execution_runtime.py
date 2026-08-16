@@ -529,7 +529,7 @@ async def test_delayed_media_duplicate_is_suppressed_before_t2_admission(
 
 
 @pytest.mark.asyncio
-async def test_delayed_semantic_media_uses_direct_profile_and_keeps_flags():
+async def test_delegated_failure_delivers_semantic_media_with_flags():
     runtime = PluginExecutionRuntime()
     event = _CoordinatorEvent()
     message = MessageChain([Image.fromURL("https://example.com/result.png")])
@@ -547,9 +547,12 @@ async def test_delayed_semantic_media_uses_direct_profile_and_keeps_flags():
     )
     result = PluginBranchResult(
         plugin_job_id="job-1",
-        gate_resolution=PluginGateResolution.EXPIRED,
+        gate_resolution=PluginGateResolution.DELEGATED,
         output_artifacts=[artifact],
     )
+    assert not result.delayed_delivery_eligible
+    result.record_delegated_t1_failure(RuntimeError("delegated core failed"))
+    assert result.delayed_delivery_eligible
     delivered: list[MessageChain] = []
     profiles: list[str] = []
 

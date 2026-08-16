@@ -177,6 +177,10 @@ ProviderRequest 不是第三类插件，也不是迟到结果通道。它只作�
 36. 窗口内第一条 final 立即把 Gate 解析为 HANDLED，并只把当时已经形成的 artifact 快照交给
     T1；同一官方 Handler 链随后形成的 final 在 T1 收口后进入低优先级 T2，不静默丢弃，也不让
     迟到 ProviderRequest 重新取得 Core 权限。
+37. DELEGATED 的正常成功路径仍只在 T1 内完成；如果 T1 的委托 Core 因异常、deadline 或取消
+    退出，则 Job 明确脱离旧 turn，ProviderRequest 不重放，Job 完成时仍未交付的 artifact 可在
+    T1 收口后按现有 ledger 和低优先级 T2 规则交付。该窄例外只恢复产物，不改变 Gate 的
+    DELEGATED 历史事实，也不允许后台 Job 重新取得 T1 控制权。
 
 ## 五、状态与时间模型
 
