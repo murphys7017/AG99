@@ -52,14 +52,6 @@ contexts:
     lifecycle: dynamic
     notes: "WebChat 使用搜索工具时的引用格式要求"
 
-  - id: system.tts_expression_guidance
-    category: system
-    slots: [system]
-    required: false
-    multiple: false
-    lifecycle: dynamic
-    notes: "受支持 TTS 模型的语气标签使用说明；仅投影到 Persona 和 Core"
-
   - id: system.core_execution_context
     category: system
     slots: [system]

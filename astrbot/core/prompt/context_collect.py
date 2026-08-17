@@ -33,7 +33,6 @@ from .collectors.skills_collector import SkillsCollector
 from .collectors.subagent_collector import SubagentCollector
 from .collectors.system_collector import SystemCollector
 from .collectors.tools_collector import ToolsCollector
-from .collectors.tts_expression_collector import TTSExpressionCollector
 from .context_catalog import get_catalog
 from .context_types import ContextPack, ContextSlot, PromptContextConflictError
 from .extensions.types import (
@@ -87,7 +86,6 @@ def _default_collectors(
     """Return the full collector set used by the native Core path."""
     return [
         SystemCollector(capabilities=capabilities),
-        TTSExpressionCollector(),
         CoreTaskCollector(),
         PersonaCollector(),
         InputCollector(),
@@ -112,7 +110,6 @@ def interaction_base_collectors() -> list[ContextCollectorInterface]:
     """
     return [
         SystemCollector(base_only=True),
-        TTSExpressionCollector(),
         PersonaCollector(),
         InputCollector(),
         SessionCollector(),

@@ -52,7 +52,14 @@ from astrbot.core.prompt.structured_json import extract_json_object
 from astrbot.core.provider import Provider, resolve_fallback_chat_providers
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.provider.request_media import normalize_provider_request_images
+from astrbot.core.speech_cues import (
+    SpeechCue,
+    build_speech_cue_guidance,
+    build_speech_cue_schema,
+    normalize_speech_cues,
+)
 from astrbot.core.star.context import Context
+from astrbot.core.star.star_handler import EventType
 
 from .collectors import PersonaVisibleReplyCollector
 from .context_builder import (
@@ -102,6 +109,7 @@ class PersonaExpressionResult:
     spoken_reply: str = ""
     effect_calls: list[PersonaEffectCall] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    speech_cues: list[SpeechCue] = field(default_factory=list)
 
 
 class InteractionExpressionError(RuntimeError):
@@ -175,8 +183,9 @@ def build_persona_runtime_system_prompt() -> str:
     return (
         "你负责以当前人格对用户表达。\n"
         "根据本次调用提供的 visible_reply_material，生成自然语言表达以及必要的人格 effect 调用。\n"
-        "必须按本次输出契约返回只包含 spoken_reply 与 effect_calls 的结构化结果。\n"
+        "必须按本次输出契约返回只包含 spoken_reply、speech_cues 与 effect_calls 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
+        f"{build_speech_cue_guidance()}\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
@@ -248,6 +257,7 @@ def build_persona_expression_tool_parameters(
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "spoken_reply": {"type": "string"},
+        "speech_cues": build_speech_cue_schema(),
         "effect_calls": {
             "type": "array",
             "items": False,
@@ -285,7 +295,7 @@ def build_persona_expression_tool_parameters(
         "type": "object",
         "additionalProperties": False,
         "properties": copy.deepcopy(properties),
-        "required": ["spoken_reply", "effect_calls"],
+        "required": ["spoken_reply", "speech_cues", "effect_calls"],
     }
 
 
@@ -354,6 +364,9 @@ def _coerce_tool_call_payload(tool_arg: object) -> dict[str, Any] | None:
     effect_calls = _coerce_json_like(normalized.get("effect_calls", []))
     if isinstance(effect_calls, list):
         normalized["effect_calls"] = effect_calls
+    speech_cues = _coerce_json_like(normalized.get("speech_cues", []))
+    if isinstance(speech_cues, list):
+        normalized["speech_cues"] = speech_cues
     metadata = _coerce_json_like(normalized.get("metadata", {}))
     if isinstance(metadata, dict):
         normalized["metadata"] = metadata
@@ -369,14 +382,34 @@ def _build_persona_expression_result_from_payload(
         payload.get("effect_calls", []),
         effects,
     )
+    speech_cues, speech_cue_issues = normalize_speech_cues(
+        payload.get("speech_cues", []),
+    )
     metadata = _coerce_mapping_dict(payload.get("metadata"))
     if effect_issues:
         metadata["effect_parse_issues"] = [issue.to_dict() for issue in effect_issues]
+    if speech_cue_issues:
+        metadata["speech_cue_parse_issues"] = speech_cue_issues
     return PersonaExpressionResult(
         spoken_reply=str(payload.get("spoken_reply", "") or ""),
+        speech_cues=speech_cues,
         effect_calls=effect_calls,
         metadata=metadata,
     )
+
+
+def _normalize_result_speech_cues(result: PersonaExpressionResult) -> None:
+    speech_cues, issues = normalize_speech_cues(result.speech_cues)
+    result.speech_cues = speech_cues
+    if not issues:
+        return
+    if not isinstance(result.metadata, dict):
+        result.metadata = {}
+    existing = result.metadata.get("speech_cue_parse_issues", [])
+    result.metadata["speech_cue_parse_issues"] = [
+        *(existing if isinstance(existing, list) else []),
+        *issues,
+    ]
 
 
 def extract_persona_expression_result(
@@ -863,12 +896,15 @@ class InteractionExpressionAgent:
                 if isinstance(issue, dict)
             ],
         )
-        try:
-            validate_persona_expression_result(req, result)
-        except InteractionExpressionError as exc:
-            exc.tool_execution_count = prepared.tool_execution_count
-            exc.prepared = prepared
-            raise
+        logger.info(
+            "DIAG expression.speech_cues: platform_id=%s session_id=%s phase=%s cue_count=%s cue_kinds=%s cue_parse_issues=%s",
+            event.get_platform_id(),
+            event.session_id,
+            _describe_expression_request(req),
+            len(result.speech_cues),
+            [cue.kind for cue in result.speech_cues],
+            result.metadata.get("speech_cue_parse_issues", []),
+        )
         hook_result_chain = (
             llm_resp.result_chain.derive(
                 [
@@ -903,6 +939,14 @@ class InteractionExpressionAgent:
         ):
             return PersonaExpressionResult()
         result.spoken_reply = str(response_for_hooks.completion_text or "")
+        if await call_event_hook(
+            event,
+            EventType.OnPersonaExpressionResultEvent,
+            result,
+            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+        ):
+            return PersonaExpressionResult()
+        _normalize_result_speech_cues(result)
         try:
             validate_persona_expression_result(req, result)
         except InteractionExpressionError as exc:
@@ -912,12 +956,13 @@ class InteractionExpressionAgent:
         if req.short_reply and result.spoken_reply and len(result.spoken_reply) > 40:
             result.spoken_reply = result.spoken_reply[:40].rstrip("，,。.!！?？")
         logger.info(
-            "Persona expression generated: platform_id=%s session_id=%s phase=%s lifecycle_id=%s length=%s effect_calls=%s",
+            "Persona expression generated: platform_id=%s session_id=%s phase=%s lifecycle_id=%s length=%s speech_cues=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
             _describe_expression_request(req),
             prepared.lifecycle.lifecycle_id,
             len(result.spoken_reply),
+            [cue.kind for cue in result.speech_cues],
             [call.name for call in result.effect_calls],
         )
         return result

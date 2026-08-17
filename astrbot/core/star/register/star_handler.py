@@ -528,6 +528,20 @@ def register_on_agent_done(**kwargs):
     return decorator
 
 
+def register_on_persona_expression_result(**kwargs):
+    """在 Persona 结构化表达完成后修改结果。处理器返回值会被忽略。"""
+
+    def decorator(awaitable):
+        _ = get_handler_or_create(
+            awaitable,
+            EventType.OnPersonaExpressionResultEvent,
+            **kwargs,
+        )
+        return awaitable
+
+    return decorator
+
+
 def register_on_using_llm_tool(**kwargs):
     """当调用函数工具前的事件。
     会传入 tool 和 tool_args 参数。
