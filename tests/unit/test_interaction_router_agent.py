@@ -1,5 +1,10 @@
 import pytest
 
+from astrbot.core.interaction.group_reply import (
+    group_conversation_allows_silent,
+    mark_group_reply_candidate,
+    set_group_conversation_continuation_mode,
+)
 from astrbot.core.interaction.router_agent import (
     build_interaction_router_prompt,
     build_interaction_router_system_prompt,
@@ -67,10 +72,32 @@ def test_router_exposes_silent_only_for_group_reply_candidates():
 
 def test_router_treats_plugin_reply_requests_as_silence_capable_candidates():
     system_prompt = build_interaction_router_system_prompt(
-        group_candidate_kind="plugin"
+        allow_silent=True,
+        group_candidate_kind="plugin",
     )
-    request_prompt = build_interaction_router_prompt(group_candidate_kind="plugin")
+    request_prompt = build_interaction_router_prompt(
+        allow_silent=True,
+        group_candidate_kind="plugin",
+    )
 
     assert "插件判断只表示消息值得评估，不表示必须回复" in system_prompt
     assert "重复呼唤" in system_prompt
     assert "silent" in request_prompt
+
+
+def test_direct_continuation_cannot_become_silent_after_plugin_candidate_promotion():
+    class Event:
+        def __init__(self):
+            self.extras = {}
+
+        def get_extra(self, key, default=None):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+    event = Event()
+    mark_group_reply_candidate(event, kind="plugin")
+    set_group_conversation_continuation_mode(event, "direct")
+
+    assert not group_conversation_allows_silent(event)

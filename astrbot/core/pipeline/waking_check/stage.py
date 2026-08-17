@@ -13,8 +13,11 @@ from astrbot.core.interaction.group_context_capture import (
     is_group_context_capture_candidate,
 )
 from astrbot.core.interaction.group_reply import (
+    get_group_conversation_continuation_mode,
+    mark_group_conversation_explicit_trigger,
     mark_group_reply_candidate,
     select_legacy_active_reply_candidate,
+    set_group_conversation_continuation_mode,
 )
 from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
@@ -264,6 +267,8 @@ class WakingCheckStage(Stage):
                 is_wake = True
                 event.is_at_or_wake_command = True
                 event.is_wake = True
+                if not event.is_private_chat():
+                    mark_group_conversation_explicit_trigger(event)
                 event.message_str = event.message_str[len(wake_prefix) :].strip()
                 break
         if not is_wake:
@@ -284,6 +289,8 @@ class WakingCheckStage(Stage):
                     event.is_wake = True
                     wake_prefix = ""
                     event.is_at_or_wake_command = True
+                    if not event.is_private_chat():
+                        mark_group_conversation_explicit_trigger(event)
                     break
             # 检查是否是私聊
             if event.is_private_chat() and not self.friend_message_needs_wake_prefix:
@@ -310,6 +317,7 @@ class WakingCheckStage(Stage):
                     runtime_config=self.ctx.astrbot_config,
                 )
                 if continuation is not None:
+                    set_group_conversation_continuation_mode(event, continuation)
                     capture_group_context = is_group_context_capture_candidate(
                         event,
                         self.ctx.astrbot_config,
@@ -345,6 +353,18 @@ class WakingCheckStage(Stage):
             )
             or is_wake
         )
+        if (
+            get_group_conversation_continuation_mode(event) == "active"
+            and event.get_extra("activated_handlers", [])
+        ):
+            set_group_conversation_continuation_mode(event, "direct")
+            logger.info(
+                "Personal Runtime downgraded active follow-up to direct "
+                "continuation so official Handlers retain takeover: "
+                "session_id=%s sender_id=%s",
+                event.unified_msg_origin,
+                event.get_sender_id(),
+            )
         if event.is_stopped():
             return
 

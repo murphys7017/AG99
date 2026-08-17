@@ -531,10 +531,14 @@ and plugin tools while still allowing compatible module-path keys to be entered 
   configured observed groups to become restricted `conversation_activity` facts.
   They still pass the whitelist and session-status checks, and do not enter the
   normal plugin, Router, or Core path.
-- `personal_runtime_conversation_continuation_seconds`: After a successful Bot
-  reply, unaddressed messages from the same sender within this window are
-  classified by Router as `persona`, `hybrid`, or `silent`. Set this to `0` to
-  disable the window.
+- `personal_runtime_direct_continuation_seconds`: After a successful visible
+  reply, only the same user who explicitly triggered the Bot may continue
+  without addressing it again. Router may still choose `persona` or `hybrid`,
+  but not `silent`. The default is `10` seconds and is capped by the total
+  continuation window.
+- `personal_runtime_conversation_continuation_seconds`: After the direct window,
+  only that same trigger user remains eligible and Router may choose `persona`,
+  `hybrid`, or `silent`. The default is `120` seconds; set it to `0` to disable.
 - `personal_runtime_muted`, `personal_runtime_quiet_hours_*`,
   `personal_runtime_reply_cooldown_seconds`,
   `personal_runtime_no_action_cooldown_seconds`, and

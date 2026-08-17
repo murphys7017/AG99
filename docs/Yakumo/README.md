@@ -17,7 +17,7 @@ Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的
 - `Core Planner` 只准备执行意图；Native、Claude Code、OpenCode 等执行后台位于统一执行边界之后。
 - `effect_calls` 是插件扩展协议，AstrBot 不理解 Motion、Live2D 等插件领域语义。
 
-普通、明确面向 Bot 的消息与未被 Handler 接管的有界群聊候选都并发启动 Router 与 Persona Expression。Router 返回 `persona`、`hybrid`，并只对群聊候选开放 `silent`；`silent` 会取消仍处于 pending 的 Persona，但不会撤回已经提交或送达的表达。`hybrid` 再经 Core Planner 判断是否执行，已启动的 Persona 可以先产生即时表达，Core 的最终结果仍经同一个 Persona Expression 输出。同一群聊发送者在 Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口结束的未唤醒消息才进入这一候选准入。
+普通、明确面向 Bot 的消息与未被 Handler 接管的有界群聊候选都并发启动 Router 与 Persona Expression。Router 返回 `persona`、`hybrid`，并只对群聊候选开放 `silent`；`silent` 会取消仍处于 pending 的 Persona，但不会撤回已经提交或送达的表达。`hybrid` 再经 Core Planner 判断是否执行，已启动的 Persona 可以先产生即时表达，Core 的最终结果仍经同一个 Persona Expression 输出。群聊连续对话 owner 由 `PersonalRuntimeManager` 按群级 audience 统一仲裁，不随 Persona 切换产生多个 owner；只有通过唤醒命令、`@Bot` 或回复 Bot 明确触发对话的用户可以取得 owner。Bot 成功回复后的前 `personal_runtime_direct_continuation_seconds` 秒仅该用户可直接续接，此后到总窗口结束仍只接受该用户，但开放 Router `silent`。其他群成员不会继承窗口，没有显式触发 Bot 的 Handler-only turn 也不会建立或清空 owner。
 
 ## 当前稳定边界
 

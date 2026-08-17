@@ -1187,7 +1187,11 @@
         },
         "personal_runtime_conversation_continuation_seconds": {
           "description": "Group Conversation Continuation Seconds",
-          "hint": "After a delivered reply, the same user can continue directly for 10 seconds. For the rest of the window, the existing Router chooses persona, hybrid, or silent. Set to 0 to disable."
+          "hint": "After a delivered reply to the user who explicitly triggered the bot, only that user may continue within this window. After the direct window, Router chooses persona, hybrid, or silent. Set to 0 to disable."
+        },
+        "personal_runtime_direct_continuation_seconds": {
+          "description": "Direct Group Continuation Seconds",
+          "hint": "Starts when the bot visibly replies. Only the same explicit trigger user may continue without addressing the bot again. Router still chooses persona or hybrid, but silent is disabled. This value is capped by the total continuation window."
         },
         "personal_runtime_muted": {
           "description": "Mute Proactive Persona",

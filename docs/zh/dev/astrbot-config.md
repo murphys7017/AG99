@@ -511,8 +511,11 @@ Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑
 - `personal_conversation_activity_enabled`：允许已配置观察范围内的非唤醒群聊消息形成受限的
   `conversation_activity` 事实；它仍会先经过白名单和会话状态检查，不会作为普通消息进入插件、
   Router 或 Core。
-- `personal_runtime_conversation_continuation_seconds`：Bot 成功回复后，同一发送者在窗口内的未唤醒
-  消息由 Router 判断 `persona`、`hybrid` 或 `silent`。设为 `0` 可关闭。
+- `personal_runtime_direct_continuation_seconds`：Bot 成功回复明确触发它的用户后，仅该用户可在这段
+  窗口内无需再次 `@`；Router 仍判断 `persona` 或 `hybrid`，但不能选择 `silent`。默认 `10` 秒，
+  且不会超过连续对话总窗口。
+- `personal_runtime_conversation_continuation_seconds`：直接续接窗口结束后，仍只允许上述同一用户的
+  未唤醒消息进入 Router，由其判断 `persona`、`hybrid` 或 `silent`。默认 `120` 秒，设为 `0` 可关闭。
 - `personal_runtime_muted`、`personal_runtime_quiet_hours_*`、
   `personal_runtime_reply_cooldown_seconds`、`personal_runtime_no_action_cooldown_seconds` 与
   `personal_runtime_daily_proactive_output_limit`：控制静音、安静时段、重试节流和每日主动表达上限。

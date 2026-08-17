@@ -7,15 +7,29 @@ from collections.abc import Mapping
 from typing import Any
 
 from astrbot.core.platform.group_reply_candidate import (
+    GROUP_CONVERSATION_CONTINUATION_MODE_EXTRA,
+    GROUP_CONVERSATION_EXPLICIT_TRIGGER_EXTRA,
     GROUP_REPLY_CANDIDATE_EXTRA,
     GROUP_REPLY_CANDIDATE_KIND_EXTRA,
+    get_group_conversation_continuation_mode,
+    is_group_conversation_explicit_trigger,
     is_group_reply_candidate,
+    mark_group_conversation_explicit_trigger,
     mark_group_reply_candidate,
     request_group_reply_candidate,
+    set_group_conversation_continuation_mode,
 )
 from astrbot.core.platform.message_type import MessageType
 
 from .config import is_middleware_enabled
+
+
+def group_conversation_allows_silent(event: Any) -> bool:
+    """Return whether Router may suppress this unaddressed group turn."""
+    continuation_mode = get_group_conversation_continuation_mode(event)
+    if continuation_mode in {"active", "direct"}:
+        return False
+    return is_group_reply_candidate(event)
 
 
 def select_legacy_active_reply_candidate(
@@ -80,10 +94,17 @@ def _normalize_whitelist(value: object) -> set[str]:
 
 
 __all__ = [
+    "GROUP_CONVERSATION_CONTINUATION_MODE_EXTRA",
+    "GROUP_CONVERSATION_EXPLICIT_TRIGGER_EXTRA",
     "GROUP_REPLY_CANDIDATE_EXTRA",
     "GROUP_REPLY_CANDIDATE_KIND_EXTRA",
+    "get_group_conversation_continuation_mode",
+    "group_conversation_allows_silent",
+    "is_group_conversation_explicit_trigger",
     "is_group_reply_candidate",
+    "mark_group_conversation_explicit_trigger",
     "mark_group_reply_candidate",
     "request_group_reply_candidate",
     "select_legacy_active_reply_candidate",
+    "set_group_conversation_continuation_mode",
 ]

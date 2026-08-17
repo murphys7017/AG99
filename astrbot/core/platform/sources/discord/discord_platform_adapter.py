@@ -19,6 +19,9 @@ from astrbot.api.platform import (
     register_platform_adapter,
 )
 from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.group_reply_candidate import (
+    mark_group_conversation_explicit_trigger,
+)
 from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.star import star_map
@@ -288,6 +291,8 @@ class DiscordPlatformAdapter(Platform):
         if is_slash_command:
             message_event.is_wake = True
             message_event.is_at_or_wake_command = True
+            if message_event.get_message_type() is MessageType.GROUP_MESSAGE:
+                mark_group_conversation_explicit_trigger(message_event)
             self.commit_event(message_event)
             return
 
@@ -332,6 +337,8 @@ class DiscordPlatformAdapter(Platform):
         if is_mention:
             message_event.is_wake = True
             message_event.is_at_or_wake_command = True
+            if message_event.get_message_type() is MessageType.GROUP_MESSAGE:
+                mark_group_conversation_explicit_trigger(message_event)
 
         self.commit_event(message_event)
 

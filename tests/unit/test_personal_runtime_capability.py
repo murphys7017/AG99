@@ -12,6 +12,9 @@ from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
 from astrbot.core.interaction.group_reply import (
     GROUP_REPLY_CANDIDATE_EXTRA,
+    get_group_conversation_continuation_mode,
+    is_group_conversation_explicit_trigger,
+    mark_group_conversation_explicit_trigger,
     mark_group_reply_candidate,
 )
 from astrbot.core.interaction.middleware import InteractionMiddleware
@@ -660,6 +663,7 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
         message_type=MessageType.GROUP_MESSAGE,
         session_id="group-1",
     )
+    mark_group_conversation_explicit_trigger(event)
     same_actor_follow_up = _DirectEvent(
         metadata,
         message_type=MessageType.GROUP_MESSAGE,
@@ -674,6 +678,7 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
     runtime_config = {
         "interaction_middleware": {
             "enabled": True,
+            "personal_runtime_direct_continuation_seconds": 10,
             "personal_runtime_conversation_continuation_seconds": 120,
         }
     }
@@ -693,7 +698,7 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
                     same_actor_follow_up,
                     config_id="default",
                     runtime_config=runtime_config,
-                ) == "active"
+                ) == "direct"
                 assert manager.classify_group_conversation_continuation(
                     other_actor_message,
                     config_id="default",
@@ -719,7 +724,7 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
         same_actor_follow_up,
         config_id="default",
         runtime_config=runtime_config,
-    ) == "model"
+    ) == "direct"
 
     mark_group_reply_candidate(same_actor_follow_up, kind="continuation")
     same_actor_follow_up.set_extra(
@@ -770,6 +775,179 @@ async def test_group_follow_up_uses_model_gated_continuation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handler_only_group_turn_does_not_grant_continuation():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    manager = PersonalRuntimeManager()
+    event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-handler-only",
+    )
+    same_actor_message = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-handler-only",
+    )
+    runtime_config = {
+        "interaction_middleware": {
+            "enabled": True,
+            "personal_runtime_direct_continuation_seconds": 10,
+            "personal_runtime_conversation_continuation_seconds": 120,
+        }
+    }
+    event.set_extra("activated_handlers", [object()])
+    event.set_extra("_interaction_output_controller", InteractionOutputController())
+
+    try:
+        async with manager.submit_platform_event(
+            event,
+            "default",
+            context,
+            runtime_config,
+        ) as submission:
+            admission = await submission.admit(allow_follow_up=False)
+            assert admission.lease is not None
+            assert (
+                manager.classify_group_conversation_continuation(
+                    same_actor_message,
+                    config_id="default",
+                    runtime_config=runtime_config,
+                )
+                is None
+            )
+            # Core forwarding may mutate this legacy flag later; it must not
+            # retroactively make a non-explicit plugin turn an owner.
+            event.is_at_or_wake_command = True
+            await event.emit_output(
+                MessageChain([Plain("plugin reply")]),
+                mode="direct",
+            )
+            await admission.lease.release()
+            assert (
+                manager.classify_group_conversation_continuation(
+                    same_actor_message,
+                    config_id="default",
+                    runtime_config=runtime_config,
+                )
+                is None
+            )
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_group_continuation_owner_is_unique_across_persona_runtimes():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+
+    class _SwitchingPersonaManager(_PersonaManager):
+        selected = "persona-1"
+
+        async def resolve_selected_persona(self, **_kwargs):
+            return self.selected, {}, None, None
+
+    context.persona_manager = _SwitchingPersonaManager()
+    manager = PersonalRuntimeManager()
+    runtime_config = {
+        "interaction_middleware": {
+            "enabled": True,
+            "personal_runtime_direct_continuation_seconds": 10,
+            "personal_runtime_conversation_continuation_seconds": 120,
+        }
+    }
+
+    def make_event(sender_id: str) -> _DirectEvent:
+        event = _DirectEvent(
+            metadata,
+            message_type=MessageType.GROUP_MESSAGE,
+            session_id="group-persona-switch",
+            sender_id=sender_id,
+        )
+        mark_group_conversation_explicit_trigger(event)
+        event.set_extra("_interaction_output_controller", InteractionOutputController())
+        return event
+
+    async def deliver(event: _DirectEvent) -> None:
+        async with manager.submit_platform_event(
+            event,
+            "default",
+            context,
+            runtime_config,
+        ) as submission:
+            admission = await submission.admit(allow_follow_up=False)
+            assert admission.lease is not None
+            await event.emit_output(
+                MessageChain([Plain("group reply")]),
+                mode="direct",
+            )
+            await admission.lease.release()
+
+    first = make_event("user-1")
+    second = make_event("user-2")
+    try:
+        await deliver(first)
+        assert (
+            manager.classify_group_conversation_continuation(
+                first,
+                config_id="default",
+                runtime_config=runtime_config,
+            )
+            == "direct"
+        )
+
+        context.persona_manager.selected = "persona-2"
+        async with manager.submit_platform_event(
+            second,
+            "default",
+            context,
+            runtime_config,
+        ) as submission:
+            admission = await submission.admit(allow_follow_up=False)
+            assert admission.lease is not None
+            assert (
+                manager.classify_group_conversation_continuation(
+                    first,
+                    config_id="default",
+                    runtime_config=runtime_config,
+                )
+                is None
+            )
+            assert (
+                manager.classify_group_conversation_continuation(
+                    second,
+                    config_id="default",
+                    runtime_config=runtime_config,
+                )
+                == "direct"
+            )
+            await second.emit_output(
+                MessageChain([Plain("new group reply")]),
+                mode="direct",
+            )
+            await admission.lease.release()
+
+        assert (
+            manager.classify_group_conversation_continuation(
+                first,
+                config_id="default",
+                runtime_config=runtime_config,
+            )
+            is None
+        )
+        assert (
+            manager.classify_group_conversation_continuation(
+                second,
+                config_id="default",
+                runtime_config=runtime_config,
+            )
+            == "direct"
+        )
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
     metadata = _metadata(support_personal_runtime=True)
     context = _context_for_runtime(_RecordingPlatform(metadata))
@@ -780,6 +958,7 @@ async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
         message_type=MessageType.GROUP_MESSAGE,
         session_id="group-follow-up",
     )
+    mark_group_conversation_explicit_trigger(first_event)
     busy_event = _DirectEvent(
         metadata,
         message_type=MessageType.GROUP_MESSAGE,
@@ -818,6 +997,11 @@ async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
             first_admission = await first_submission.admit(allow_follow_up=False)
             assert first_admission.lease is not None
             assert manager.register_active_runner(first_event, runner)
+            assert manager.classify_group_conversation_continuation(
+                busy_event,
+                config_id="default",
+                runtime_config=runtime_config,
+            ) == "active"
 
             async with manager.submit_platform_event(
                 busy_event,
@@ -1764,6 +1948,64 @@ async def test_model_continuation_preserves_handler_takeover_before_route(
     assert manager.snapshot_diagnostics().sessions[0].state.material_revision == 0
     await plugin_runtime.shutdown()
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_waking_marks_explicit_owner_and_preserves_active_handler_takeover(
+    monkeypatch,
+):
+    metadata = _metadata(support_personal_runtime=True)
+    explicit_event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-waking-boundary",
+    )
+    explicit_event.message_str = "/hello"
+    explicit_event.message_obj.message_str = "/hello"
+    explicit_event.message_obj.message = [Plain("/hello")]
+    active_event = _DirectEvent(
+        metadata,
+        message_type=MessageType.GROUP_MESSAGE,
+        session_id="group-waking-boundary",
+    )
+    runtime_config = {
+        "admins_id": [],
+        "wake_prefix": ["/"],
+        "plugin_set": ["*"],
+        "platform_settings": {},
+        "interaction_middleware": {"enabled": True},
+    }
+
+    async def discover_handlers(event, **_kwargs):
+        handlers = [object()] if event is active_event else []
+        event.set_extra("activated_handlers", handlers)
+        return bool(handlers)
+
+    monkeypatch.setattr(
+        "astrbot.core.pipeline.waking_check.stage.discover_activated_handlers",
+        discover_handlers,
+    )
+    waking = WakingCheckStage()
+    await waking.initialize(
+        SimpleNamespace(
+            astrbot_config=runtime_config,
+            astrbot_config_id="default",
+            personal_runtime_manager=SimpleNamespace(
+                classify_group_conversation_continuation=lambda *_args, **_kwargs: (
+                    "active"
+                )
+            ),
+        )
+    )
+
+    await waking.process(explicit_event)
+    await waking.process(active_event)
+
+    assert is_group_conversation_explicit_trigger(explicit_event)
+    assert explicit_event.is_at_or_wake_command
+    assert get_group_conversation_continuation_mode(active_event) == "direct"
+    assert active_event.get_extra("activated_handlers")
+    assert active_event.is_at_or_wake_command
 
 @pytest.mark.asyncio
 async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypatch):

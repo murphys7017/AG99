@@ -13,6 +13,10 @@ from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
+from .group_reply import (
+    get_group_conversation_continuation_mode,
+    is_group_conversation_explicit_trigger,
+)
 from .observation import RuntimeObservation
 from .runtime_event import RuntimeObservationEvent
 from .turn_state import InteractionTurnState, ensure_interaction_turn_state
@@ -79,6 +83,7 @@ class PersonalTurnContext:
     provider_request: ProviderRequest | None
     plugin_context: Any
     previous_expression_fingerprint: str | None = None
+    group_continuation_owner_eligible: bool = False
 
 
 class PlatformTurnContextFactory:
@@ -158,6 +163,15 @@ class PlatformTurnContextFactory:
         provider_request = event.get_extra("provider_request")
         if not isinstance(provider_request, ProviderRequest):
             provider_request = None
+        group_continuation_owner_eligible = (
+            session_data.message_type is MessageType.GROUP_MESSAGE
+            and actor is not None
+            and (
+                is_group_conversation_explicit_trigger(event)
+                or get_group_conversation_continuation_mode(event)
+                in {"active", "direct", "model"}
+            )
+        )
         return PersonalTurnContext(
             turn_id=state.turn_id,
             event=event,
@@ -170,6 +184,7 @@ class PlatformTurnContextFactory:
             runtime_config=MappingProxyType(dict(runtime_config)),
             provider_request=provider_request,
             plugin_context=plugin_context,
+            group_continuation_owner_eligible=group_continuation_owner_eligible,
         )
 
 

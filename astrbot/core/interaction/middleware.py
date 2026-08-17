@@ -30,7 +30,7 @@ from .expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
 )
-from .group_reply import is_group_reply_candidate
+from .group_reply import group_conversation_allows_silent
 from .lifecycle import dispatch_interaction_lifecycle
 from .output_controller import InteractionOutputController
 from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
@@ -1319,7 +1319,7 @@ class InteractionMiddleware:
     ) -> InteractionRouteDecision:
         fallback_mode = (
             InteractionRouteMode.SILENT
-            if is_group_reply_candidate(event)
+            if group_conversation_allows_silent(event)
             else InteractionRouteMode.HYBRID
         )
         if self.plugin_context is None:

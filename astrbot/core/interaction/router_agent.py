@@ -20,7 +20,7 @@ from .context_builder import (
 )
 from .group_reply import (
     GROUP_REPLY_CANDIDATE_KIND_EXTRA,
-    is_group_reply_candidate,
+    group_conversation_allows_silent,
 )
 from .prompt_support import (
     build_interaction_prompt_build_config,
@@ -46,7 +46,7 @@ def build_interaction_router_system_prompt(
     allow_silent: bool = False,
     group_candidate_kind: str | None = None,
 ) -> str:
-    is_group_candidate = allow_silent or bool(group_candidate_kind)
+    is_group_candidate = allow_silent
     candidate_contexts = {
         "continuation": "这是一次未显式唤醒的群聊延续候选。当前发送者与机器人最近回复的对象相同；如果当前消息直接评价、追问、澄清或承接机器人刚才的回复，应选择 persona，不能仅因用户没有再次呼唤机器人而选择 silent。只有消息已经转向群内其他人、与机器人上一条回复无关或确实不需要机器人参与时，才选择 silent。仅同一发送者和时间相近本身仍不足以回复。\n",
         "ambient": "这是一次未显式唤醒的群聊主动候选。默认选择 silent；除非当前消息明确需要机器人加入且回复会为群聊增加直接价值，否则选择 silent。不要因为普通闲聊、提及模型、上下文或候选资格本身加入对话。\n",
@@ -87,11 +87,7 @@ def build_interaction_router_prompt(
     allow_silent: bool = False,
     group_candidate_kind: str | None = None,
 ) -> str:
-    labels = (
-        "silent、persona 或 hybrid"
-        if allow_silent or group_candidate_kind
-        else "persona 或 hybrid"
-    )
+    labels = "silent、persona 或 hybrid" if allow_silent else "persona 或 hybrid"
     return f"请只输出 {labels}。"
 
 
@@ -162,7 +158,7 @@ class InteractionRouterAgent:
             "_interaction_router_raw_output",
             _truncate_router_diagnostic(llm_resp.completion_text),
         )
-        allow_silent = is_group_reply_candidate(event)
+        allow_silent = group_conversation_allows_silent(event)
         payload = extract_interaction_route_payload(llm_resp.completion_text)
         route = InteractionRouteDecision.from_mapping(payload)
         if route is None:
@@ -186,10 +182,12 @@ class InteractionRouterAgent:
         interaction_config: InteractionAgentConfig,
         provider: Provider,
     ):
-        allow_silent = is_group_reply_candidate(event)
+        allow_silent = group_conversation_allows_silent(event)
         candidate_kind = str(
             event.get_extra(GROUP_REPLY_CANDIDATE_KIND_EXTRA, "") or ""
         ).strip() or None
+        if not allow_silent:
+            candidate_kind = None
         build_config = build_interaction_prompt_build_config(plugin_context, event)
         material = await get_or_build_interaction_context_material(
             event=event,

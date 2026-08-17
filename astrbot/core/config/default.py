@@ -242,6 +242,7 @@ DEFAULT_CONFIG = {
         "personal_runtime_reply_cooldown_seconds": 1800.0,
         "personal_runtime_no_action_cooldown_seconds": 300.0,
         "personal_runtime_daily_proactive_output_limit": 6,
+        "personal_runtime_direct_continuation_seconds": 10.0,
         "personal_runtime_conversation_continuation_seconds": 120.0,
         "personal_heartbeat_enabled": False,
         "personal_conversation_activity_enabled": False,
@@ -4597,7 +4598,12 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.personal_runtime_conversation_continuation_seconds": {
                         "description": "群聊连续对话窗口秒数",
                         "type": "float",
-                        "hint": "机器人成功回复后，同一用户在窗口内的未唤醒消息由 Router 判断 persona、hybrid 或 silent。设为 0 可关闭。",
+                        "hint": "机器人成功回复明确触发它的用户后，仅该用户在窗口内的未唤醒消息可继续进入对话；直接续接窗口结束后由 Router 判断 persona、hybrid 或 silent。设为 0 可关闭。",
+                    },
+                    "interaction_middleware.personal_runtime_direct_continuation_seconds": {
+                        "description": "群聊直接续接窗口秒数",
+                        "type": "float",
+                        "hint": "从机器人成功发送可见回复开始计时，仅明确触发机器人的同一用户可在该窗口内无需再次 @；Personal、Router 与插件仍按正常链路运行，但 Router 不允许 silent。该值不会超过群聊连续对话总窗口。",
                     },
                     "interaction_middleware.personal_runtime_muted": {
                         "description": "静音主动人格",

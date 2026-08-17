@@ -23,10 +23,7 @@ from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
-from .group_reply import (
-    GROUP_REPLY_CANDIDATE_KIND_EXTRA,
-    is_group_reply_candidate,
-)
+from .group_reply import is_group_reply_candidate
 from .lifecycle import dispatch_interaction_lifecycle
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .observation_inbox import (
@@ -99,6 +96,22 @@ class PersonalRuntimeKey:
     persona_id: str
     audience_key: str
     privacy_scope: str
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupConversationOwnerKey:
+    config_id: str
+    audience_key: str
+    privacy_scope: str
+
+
+@dataclass(slots=True)
+class _GroupConversationOwnerState:
+    active_turn_id: str | None = None
+    active_actor_id: str | None = None
+    active_runtime_key: PersonalRuntimeKey | None = None
+    delivered_actor_id: str | None = None
+    reply_completed_at: float | None = None
 
 
 class ObservationWakeScheduler(Protocol):
@@ -279,19 +292,31 @@ class _FollowUpCoordinator:
         if self.active_runner is runner:
             self.active_runner = None
 
-    def try_capture(self, event: Any) -> _FollowUpCapture | None:
-        sender_id = event.get_sender_id()
+    def _active_runner_for_actor(self, actor_id: str) -> Any | None:
+        normalized_actor_id = str(actor_id or "").strip()
         runner = self.active_runner
-        if not sender_id or runner is None:
+        if not normalized_actor_id or runner is None:
             return None
         runner_event = getattr(
             getattr(runner.run_context, "context", None),
             "event",
             None,
         )
-        if runner_event is None or runner_event.get_sender_id() != sender_id:
+        if runner_event is None:
+            return None
+        if str(runner_event.get_sender_id() or "").strip() != normalized_actor_id:
             return None
         if runner_event.get_extra("agent_stop_requested"):
+            return None
+        return runner
+
+    def has_active_runner_for_actor(self, actor_id: str) -> bool:
+        return self._active_runner_for_actor(actor_id) is not None
+
+    def try_capture(self, event: Any) -> _FollowUpCapture | None:
+        sender_id = event.get_sender_id()
+        runner = self._active_runner_for_actor(sender_id)
+        if runner is None:
             return None
 
         message_text = (event.get_message_str() or "").strip()
@@ -485,11 +510,13 @@ class _TurnAdmissionGate:
 class PersonalTurnLease:
     def __init__(
         self,
+        manager: PersonalRuntimeManager,
         runtime: PersonalSessionRuntime,
         reservation: PendingTurnReservation,
         follow_up_capture: _FollowUpCapture | None,
         follow_up_activated: bool,
     ) -> None:
+        self.manager = manager
         self.runtime = runtime
         self.reservation = reservation
         self.follow_up_capture = follow_up_capture
@@ -500,6 +527,7 @@ class PersonalTurnLease:
         if self.released:
             return
         self.released = True
+        feedback: CompletionFeedback | None = None
         try:
             if self.follow_up_capture is not None:
                 await self.runtime.follow_ups.finalize(
@@ -545,8 +573,12 @@ class PersonalTurnLease:
                         self.reservation.turn.turn_id,
                     )
                 finally:
+                    self.manager._complete_group_conversation_turn(
+                        self.runtime,
+                        self.reservation.turn,
+                        feedback=feedback,
+                    )
                     self.runtime.active_turn_id = None
-                    self.runtime.active_actor_id = None
                     self.runtime._active_turn_context = None
                     self.runtime.touch()
                     self.reservation.transition(PendingTurnState.SETTLED)
@@ -568,10 +600,7 @@ class PersonalSessionRuntime:
         self.key = key
         self.turn_lock = _TurnAdmissionGate()
         self.active_turn_id: str | None = None
-        self.active_actor_id: str | None = None
         self._active_turn_context: PersonalTurnContext | None = None
-        self.conversation_actor_id: str | None = None
-        self.conversation_reply_completed_at: float | None = None
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
@@ -656,80 +685,10 @@ class PersonalSessionRuntime:
             ),
             usage_day=usage_day,
         )
-        self._update_group_conversation_continuation(
-            turn,
-            feedback=feedback,
-            completed_at=completed_at,
-        )
         self.last_completion_feedback = feedback
         if persistent_state_changed or self._persistent_state_dirty:
             self._persistent_state_dirty = True
             await self._persist_state()
-
-    def classify_group_conversation_continuation(
-        self,
-        actor_id: str,
-        *,
-        now: float,
-        continuation_seconds: float,
-    ) -> str | None:
-        normalized_actor_id = str(actor_id or "").strip()
-        if not normalized_actor_id or continuation_seconds <= 0:
-            return None
-        if self.active_actor_id is not None:
-            return "active" if self.active_actor_id == normalized_actor_id else None
-        if self.conversation_actor_id != normalized_actor_id:
-            return None
-        completed_at = self.conversation_reply_completed_at
-        if completed_at is None or now >= completed_at + continuation_seconds:
-            self.conversation_actor_id = None
-            self.conversation_reply_completed_at = None
-            return None
-        # A delivered group reply only makes subsequent messages candidates.
-        # Router owns the unaddressed admission decision, including silence.
-        return "model"
-
-    def _update_group_conversation_continuation(
-        self,
-        turn: PersonalTurnContext,
-        *,
-        feedback: CompletionFeedback,
-        completed_at: float,
-    ) -> None:
-        if (
-            turn.observation is not None
-            or turn.session.message_type is not MessageType.GROUP_MESSAGE
-            or turn.actor is None
-        ):
-            return
-        actor_id = str(turn.actor.actor_id or "").strip() or None
-        candidate_kind = str(
-            turn.event.get_extra(GROUP_REPLY_CANDIDATE_KIND_EXTRA, "") or ""
-        ).strip()
-        if (
-            feedback.delivery_status is PersonalDeliveryStatus.SUPPRESSED
-            and candidate_kind == "continuation"
-            and actor_id == self.conversation_actor_id
-        ):
-            logger.debug(
-                "Personal Runtime preserved group continuation after silent "
-                "candidate: audience=%s actor_id=%s turn_id=%s",
-                self.key.audience_key,
-                actor_id,
-                turn.turn_id,
-            )
-            return
-        if (
-            not self._interaction_config.enabled
-            or feedback.delivery_status is not PersonalDeliveryStatus.DELIVERED
-            or self._interaction_config.personal_runtime_conversation_continuation_seconds
-            <= 0
-        ):
-            self.conversation_actor_id = None
-            self.conversation_reply_completed_at = None
-            return
-        self.conversation_actor_id = actor_id
-        self.conversation_reply_completed_at = completed_at
 
     def configure_personal_policy(
         self,
@@ -1294,6 +1253,7 @@ class PersonalSessionRuntime:
 
     async def admit(
         self,
+        manager: PersonalRuntimeManager,
         reservation: PendingTurnReservation,
         *,
         allow_follow_up: bool,
@@ -1313,6 +1273,7 @@ class PersonalSessionRuntime:
         )
         follow_up_activated = False
         lock_acquired = False
+        group_owner_activated = False
 
         async def finalize_capture(*, consumed_marked: bool) -> None:
             nonlocal capture
@@ -1362,12 +1323,9 @@ class PersonalSessionRuntime:
                 self.state.last_expression_fingerprint
             )
             self.active_turn_id = turn.turn_id
-            self.active_actor_id = (
-                str(turn.actor.actor_id or "").strip() or None
-                if turn.actor is not None
-                else None
-            )
             self._active_turn_context = turn
+            manager._activate_group_conversation_turn(self, turn)
+            group_owner_activated = True
             user_activity_at = (
                 None
                 if is_group_reply_candidate(event)
@@ -1380,6 +1338,7 @@ class PersonalSessionRuntime:
                 turn=turn,
                 consumed_as_follow_up=False,
                 lease=PersonalTurnLease(
+                    manager,
                     self,
                     reservation,
                     capture,
@@ -1391,8 +1350,13 @@ class PersonalSessionRuntime:
             return admission
         except BaseException:
             if lock_acquired:
+                if group_owner_activated:
+                    manager._complete_group_conversation_turn(
+                        self,
+                        turn,
+                        feedback=None,
+                    )
                 self.active_turn_id = None
-                self.active_actor_id = None
                 self._active_turn_context = None
                 await self.turn_lock.release()
             await finalize_capture(consumed_marked=False)
@@ -1474,6 +1438,9 @@ class PersonalRuntimeManager:
         self._observation_wake_scheduler: ObservationWakeScheduler | None = None
         self._state_repository = state_repository
         self._runtime_creation_lock = asyncio.Lock()
+        self._group_conversation_owners: dict[
+            _GroupConversationOwnerKey, _GroupConversationOwnerState
+        ] = {}
         self._accepting = True
         self._eviction_count = 0
 
@@ -1496,6 +1463,91 @@ class PersonalRuntimeManager:
         self._observation_wake_scheduler = scheduler
         for runtime in self._sessions.values():
             runtime.bind_observation_wake_scheduler(scheduler)
+
+    @staticmethod
+    def _group_conversation_owner_key(
+        turn_or_event: PersonalTurnContext | Any,
+        *,
+        config_id: str | None = None,
+    ) -> _GroupConversationOwnerKey | None:
+        if isinstance(turn_or_event, PersonalTurnContext):
+            session = turn_or_event.session
+            return _GroupConversationOwnerKey(
+                config_id=session.config_id,
+                audience_key=session.unified_msg_origin,
+                privacy_scope=session.privacy_scope,
+            )
+        if turn_or_event.get_message_type() is not MessageType.GROUP_MESSAGE:
+            return None
+        return _GroupConversationOwnerKey(
+            config_id=str(config_id or "default"),
+            audience_key=turn_or_event.unified_msg_origin,
+            privacy_scope="group",
+        )
+
+    def _activate_group_conversation_turn(
+        self,
+        runtime: PersonalSessionRuntime,
+        turn: PersonalTurnContext,
+    ) -> None:
+        if not turn.group_continuation_owner_eligible or turn.actor is None:
+            return
+        key = self._group_conversation_owner_key(turn)
+        if key is None:
+            return
+        state = self._group_conversation_owners.setdefault(
+            key,
+            _GroupConversationOwnerState(),
+        )
+        state.active_turn_id = turn.turn_id
+        state.active_actor_id = str(turn.actor.actor_id or "").strip() or None
+        state.active_runtime_key = runtime.key
+
+    def _complete_group_conversation_turn(
+        self,
+        runtime: PersonalSessionRuntime,
+        turn: PersonalTurnContext,
+        *,
+        feedback: CompletionFeedback | None,
+    ) -> None:
+        if not turn.group_continuation_owner_eligible or turn.actor is None:
+            return
+        key = self._group_conversation_owner_key(turn)
+        if key is None:
+            return
+        state = self._group_conversation_owners.get(key)
+        if state is None or state.active_turn_id != turn.turn_id:
+            return
+
+        state.active_turn_id = None
+        state.active_actor_id = None
+        state.active_runtime_key = None
+        if (
+            feedback is not None
+            and feedback.delivery_status is PersonalDeliveryStatus.DELIVERED
+        ):
+            state.delivered_actor_id = str(turn.actor.actor_id or "").strip() or None
+            state.reply_completed_at = (
+                feedback.output_completed_at or time.time()
+            )
+        if (
+            state.active_turn_id is None
+            and state.delivered_actor_id is None
+        ):
+            self._group_conversation_owners.pop(key, None)
+
+    def _clear_group_conversation_runtime_owner(self, key: PersonalRuntimeKey) -> None:
+        owner_key = _GroupConversationOwnerKey(
+            config_id=key.config_id,
+            audience_key=key.audience_key,
+            privacy_scope=key.privacy_scope,
+        )
+        state = self._group_conversation_owners.get(owner_key)
+        if state is None or state.active_runtime_key != key:
+            return
+        state.active_turn_id = None
+        state.active_actor_id = None
+        state.active_runtime_key = None
 
     def classify_group_conversation_continuation(
         self,
@@ -1521,26 +1573,47 @@ class PersonalRuntimeManager:
         if not event.get_message_str().strip() and not event.get_messages():
             return None
 
-        normalized_config_id = str(config_id or "default")
-        audience_key = event.unified_msg_origin
+        owner_key = self._group_conversation_owner_key(
+            event,
+            config_id=config_id,
+        )
+        if owner_key is None:
+            return None
+        state = self._group_conversation_owners.get(owner_key)
+        if state is None:
+            return None
         now = time.time()
-        for key, runtime in self._sessions.items():
-            if (
-                key.config_id != normalized_config_id
-                or key.audience_key != audience_key
-                or key.privacy_scope != "group"
-            ):
-                continue
-            continuation = runtime.classify_group_conversation_continuation(
-                actor_id,
-                now=now,
-                continuation_seconds=(
-                    interaction_config.personal_runtime_conversation_continuation_seconds
-                ),
-            )
-            if continuation is not None:
-                return continuation
-        return None
+
+        if state.active_turn_id is not None:
+            runtime = self._sessions.get(state.active_runtime_key)
+            if runtime is None or runtime.active_turn_id != state.active_turn_id:
+                state.active_turn_id = None
+                state.active_actor_id = None
+                state.active_runtime_key = None
+            elif state.active_actor_id == actor_id:
+                return (
+                    "active"
+                    if runtime.follow_ups.has_active_runner_for_actor(actor_id)
+                    else "direct"
+                )
+            else:
+                return None
+
+        if state.delivered_actor_id != actor_id:
+            return None
+        completed_at = state.reply_completed_at
+        if completed_at is None or now >= (
+            completed_at
+            + interaction_config.personal_runtime_conversation_continuation_seconds
+        ):
+            self._group_conversation_owners.pop(owner_key, None)
+            return None
+        if now < (
+            completed_at
+            + interaction_config.personal_runtime_direct_continuation_seconds
+        ):
+            return "direct"
+        return "model"
 
     async def wake_observations(self, key: PersonalRuntimeKey) -> None:
         if not self._accepting:
@@ -1979,6 +2052,7 @@ class PersonalRuntimeManager:
         if runtime is None:
             raise RuntimeError("Pending turn must be bound before admission.")
         return await runtime.admit(
+            self,
             reservation,
             allow_follow_up=allow_follow_up,
             wait_if_busy=wait_if_busy,
@@ -2239,6 +2313,7 @@ class PersonalRuntimeManager:
         )
         self._event_sessions.clear()
         self._sessions.clear()
+        self._group_conversation_owners.clear()
 
     async def _get_or_create_runtime(
         self,
@@ -2334,6 +2409,7 @@ class PersonalRuntimeManager:
         if runtime is None or not runtime.is_idle():
             return
         self._sessions.pop(key, None)
+        self._clear_group_conversation_runtime_owner(key)
         if self._observation_wake_scheduler is not None:
             self._observation_wake_scheduler.cancel(key)
         self._eviction_count += 1

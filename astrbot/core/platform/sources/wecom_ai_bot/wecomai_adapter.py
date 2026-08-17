@@ -22,6 +22,9 @@ from astrbot.api.platform import (
     PlatformMetadata,
 )
 from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.group_reply_candidate import (
+    mark_group_conversation_explicit_trigger,
+)
 from astrbot.core.utils.webhook_utils import log_webhook_info
 
 from ...register import register_platform_adapter
@@ -663,6 +666,8 @@ class WecomAIBotAdapter(Platform):
                 True  # 企业微信智能机器人默认消息都是 at 或唤醒命令
             )
             message_event.is_wake = True  # 企业微信智能机器人消息默认当做唤醒命令处理
+            if message_event.get_message_type() is MessageType.GROUP_MESSAGE:
+                mark_group_conversation_explicit_trigger(message_event)
 
             self.commit_event(message_event)
 

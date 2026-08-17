@@ -31,6 +31,15 @@ def is_middleware_enabled(config: Any) -> bool:
 
 def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     interaction_config = config.get("interaction_middleware", {})
+    continuation_seconds = max(
+        0.0,
+        _float_or_default(
+            interaction_config.get(
+                "personal_runtime_conversation_continuation_seconds", 120.0
+            ),
+            120.0,
+        ),
+    )
     expression_provider_id = str(
         interaction_config.get("expression_provider_id", "") or ""
     )
@@ -172,15 +181,19 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 6,
             ),
         ),
-        personal_runtime_conversation_continuation_seconds=max(
-            0.0,
-            _float_or_default(
-                interaction_config.get(
-                    "personal_runtime_conversation_continuation_seconds", 120.0
+        personal_runtime_direct_continuation_seconds=min(
+            continuation_seconds,
+            max(
+                0.0,
+                _float_or_default(
+                    interaction_config.get(
+                        "personal_runtime_direct_continuation_seconds", 10.0
+                    ),
+                    10.0,
                 ),
-                120.0,
             ),
         ),
+        personal_runtime_conversation_continuation_seconds=continuation_seconds,
         personal_heartbeat_enabled=bool(
             interaction_config.get("personal_heartbeat_enabled", False)
         ),
