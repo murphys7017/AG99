@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from .scope_context import MemoryScopeContext
 from .store import MemoryStore
 from .types import MemoryUpdateRequest, TurnRecord
 
@@ -25,6 +26,11 @@ class TurnRecordService:
             assistant_message=dict(req.assistant_message),
             message_timestamp=req.message_timestamp,
             source_refs=list(req.source_refs),
+            scope_context=(
+                req.scope_context
+                if isinstance(req.scope_context, MemoryScopeContext)
+                else None
+            ),
             created_at=datetime.now(UTC),
         )
 

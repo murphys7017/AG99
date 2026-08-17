@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .scope_context import MemoryScopeContext
 
 JsonValue = str | int | float | bool | None | dict[str, Any] | list[Any]
 JsonDict = dict[str, JsonValue]
@@ -13,6 +16,7 @@ SourceRef = str
 
 class ScopeType(str, Enum):
     USER = "user"
+    GROUP = "group"
     CONVERSATION = "conversation"
     SESSION = "session"
     GLOBAL = "global"
@@ -67,6 +71,7 @@ class MemoryUpdateRequest:
     turn_id: str | None = None
     source_refs: list[SourceRef] = field(default_factory=list)
     assistant_only: bool = False
+    scope_context: MemoryScopeContext | None = None
 
 
 @dataclass(slots=True)
@@ -82,6 +87,7 @@ class TurnRecord:
     assistant_message: MessagePayload
     message_timestamp: datetime
     source_refs: list[SourceRef] = field(default_factory=list)
+    scope_context: MemoryScopeContext | None = None
     created_at: datetime | None = None
 
 
@@ -102,6 +108,8 @@ class ShortTermMemory:
     short_summary: str | None
     active_focus: str | None
     updated_at: datetime | None = None
+    revision: int = 0
+    fingerprint: str | None = None
 
 
 @dataclass(slots=True)

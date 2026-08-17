@@ -11,6 +11,7 @@ from .analyzers.base import (
     MemoryAnalyzerExecutionError,
 )
 from .config import MemoryAnalysisConfig, MemoryShortTermConfig
+from .fingerprint import build_short_term_fingerprint
 from .history_source import RecentConversationSource, extract_message_text
 from .store import MemoryStore
 from .types import ShortTermMemory, TopicState, TurnRecord
@@ -109,6 +110,10 @@ class ShortTermMemoryService:
             short_summary=analysis_result.get("short_summary") or None,
             active_focus=analysis_result.get("active_focus") or None,
             updated_at=turn.message_timestamp,
+            fingerprint=build_short_term_fingerprint(
+                analysis_result.get("short_summary"),
+                analysis_result.get("active_focus"),
+            ),
         )
         return await self.store.upsert_short_term_memory(memory)
 
@@ -174,6 +179,10 @@ class ShortTermMemoryService:
                 short_summary=analysis_result.get("short_summary") or None,
                 active_focus=analysis_result.get("active_focus") or None,
                 updated_at=turn.message_timestamp,
+                fingerprint=build_short_term_fingerprint(
+                    analysis_result.get("short_summary"),
+                    analysis_result.get("active_focus"),
+                ),
             )
         )
         return topic_state, short_term_memory

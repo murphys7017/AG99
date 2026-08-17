@@ -14,6 +14,7 @@ from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from .analyzers.base import MemoryAnalyzerError
 from .config import get_memory_config
 from .history_source import RecentConversationSource, parse_conversation_history
+from .scope_context import resolve_memory_scope_context
 from .service import MemoryService, get_memory_service
 from .types import MemoryUpdateRequest
 
@@ -85,6 +86,7 @@ class MemoryPostProcessor:
             message_timestamp=ctx.timestamp or datetime.now(UTC),
             source_refs=source_refs,
             assistant_only=bool(latest_turn.get("assistant_only", False)),
+            scope_context=resolve_memory_scope_context(event, identity),
         )
 
     async def run(self, ctx: PostProcessContext) -> None:

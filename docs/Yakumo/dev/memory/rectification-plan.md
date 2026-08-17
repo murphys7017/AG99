@@ -20,7 +20,7 @@
 
 ## 实施阶段
 
-当前进度：Phase 1 已完成基础实现与轻量验证；Phase 2 及之后尚未开始。
+当前进度：Phase 1 已完成；Phase 2 的作用域上下文与 Short-Term revision 基础已完成；Phase 3 及之后尚未开始。
 
 ### Phase 1：先修基础稳定性，不改变记忆语义
 

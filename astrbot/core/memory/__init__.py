@@ -46,6 +46,12 @@ from .postprocessor import (
     unregister_memory_postprocessor,
 )
 from .projection import ExperienceProjectionService
+from .scope_context import (
+    MemoryScopeContext,
+    resolve_memory_scope_context,
+    scope_context_from_dict,
+    scope_context_to_dict,
+)
 from .service import (
     MemoryService,
     bind_memory_provider_manager,
@@ -131,6 +137,7 @@ __all__ = [
     "MemoryIdentityResolver",
     "PromptJsonMemoryAnalyzer",
     "MemorySnapshot",
+    "MemoryScopeContext",
     "MemoryService",
     "MemorySnapshotBuilder",
     "MemorySnapshotReadOptions",
@@ -147,6 +154,9 @@ __all__ = [
     "SessionInsight",
     "ShortTermMemory",
     "ShortTermMemoryService",
+    "resolve_memory_scope_context",
+    "scope_context_from_dict",
+    "scope_context_to_dict",
     "SourceRef",
     "TopicState",
     "TurnRecordService",

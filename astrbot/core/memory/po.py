@@ -35,6 +35,7 @@ class MemoryTurnRecord(BaseMemoryModel, table=True):
     assistant_message: dict = Field(default_factory=dict, sa_type=JSON)
     message_timestamp: datetime = Field(nullable=False, index=True)
     source_refs: list = Field(default_factory=list, sa_type=JSON)
+    scope_context: dict = Field(default_factory=dict, sa_type=JSON)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -75,6 +76,8 @@ class MemoryShortTermMemory(BaseMemoryModel, table=True):
     short_summary: str | None = Field(default=None, sa_type=Text)
     active_focus: str | None = Field(default=None, sa_type=Text)
     updated_at: datetime | None = Field(default=None, index=True)
+    revision: int = Field(default=0, nullable=False)
+    fingerprint: str | None = Field(default=None, index=True, max_length=64)
 
     __table_args__ = (
         UniqueConstraint(

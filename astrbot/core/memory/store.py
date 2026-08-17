@@ -12,6 +12,7 @@ from sqlmodel import col, desc, select, text
 from astrbot.core import logger
 
 from .config import MemoryConfig, get_memory_config
+from .fingerprint import build_short_term_fingerprint
 from .po import (
     BaseMemoryModel,
     MemoryExperience,
@@ -26,6 +27,7 @@ from .po import (
     MemoryTopicState,
     MemoryTurnRecord,
 )
+from .scope_context import scope_context_from_dict, scope_context_to_dict
 from .types import (
     Experience,
     LongTermMemoryIndex,
@@ -238,6 +240,7 @@ class MemoryStore:
                 entity.assistant_message = record.assistant_message
                 entity.message_timestamp = record.message_timestamp
                 entity.source_refs = list(record.source_refs)
+                entity.scope_context = scope_context_to_dict(record.scope_context)
 
                 await session.flush()
                 await session.refresh(entity)
@@ -327,6 +330,13 @@ class MemoryStore:
                 entity.short_summary = memory.short_summary
                 entity.active_focus = memory.active_focus
                 entity.updated_at = memory.updated_at
+                fingerprint = memory.fingerprint or build_short_term_fingerprint(
+                    memory.short_summary,
+                    memory.active_focus,
+                )
+                if entity.fingerprint != fingerprint:
+                    entity.revision = max(1, int(entity.revision or 0) + 1)
+                entity.fingerprint = fingerprint
 
                 await session.flush()
                 await session.refresh(entity)
@@ -1277,6 +1287,7 @@ class MemoryStore:
             assistant_message=dict(entity.assistant_message or {}),
             message_timestamp=entity.message_timestamp,
             source_refs=list(entity.source_refs or []),
+            scope_context=scope_context_from_dict(entity.scope_context),
             created_at=entity.created_at,
         )
 
@@ -1300,6 +1311,8 @@ class MemoryStore:
             short_summary=entity.short_summary,
             active_focus=entity.active_focus,
             updated_at=entity.updated_at,
+            revision=int(entity.revision or 0),
+            fingerprint=entity.fingerprint,
         )
 
     @staticmethod
