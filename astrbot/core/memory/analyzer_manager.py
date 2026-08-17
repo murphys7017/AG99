@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from astrbot.core.provider.provider import Provider
 from .analyzers.base import (
     BaseMemoryAnalyzer,
     MemoryAnalyzerConfigurationError,
+    MemoryAnalyzerExecutionError,
     MemoryAnalyzerPromptError,
     MemoryAnalyzerProviderError,
     MemoryAnalyzerRequest,
@@ -128,7 +130,16 @@ class MemoryAnalyzerManager:
             provider_tier,
             stage,
         )
-        result = await implementation.analyze(request)
+        try:
+            result = await asyncio.wait_for(
+                implementation.analyze(request),
+                timeout=max(0.001, float(request.timeout_seconds)),
+            )
+        except asyncio.TimeoutError as exc:
+            raise MemoryAnalyzerExecutionError(
+                f"memory analyzer `{analyzer_name}` timed out after "
+                f"{request.timeout_seconds}s"
+            ) from exc
         logger.info(
             "memory analyzer execution finished: analyzer=%s keys=%s provider_id=%s",
             analyzer_name,

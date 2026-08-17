@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -28,6 +29,7 @@ class MemoryVectorIndex:
         self.serializer = serializer or DocumentSerializer(config=self.config)
         self.provider_manager = None
         self._vec_db: FaissVecDB | None = None
+        self._initialization_lock = asyncio.Lock()
 
     def bind_provider_manager(self, provider_manager) -> None:
         self.provider_manager = provider_manager
@@ -106,31 +108,36 @@ class MemoryVectorIndex:
         if self._vec_db is not None:
             return self._vec_db
 
-        provider_id, embedding_provider = await self._resolve_embedding_provider()
-        if not isinstance(embedding_provider, EmbeddingProvider):
-            raise RuntimeError(
-                "memory vector index provider is not an embedding provider: "
-                f"{provider_id}"
-            )
-        if self.config.vector_index.model:
-            embedding_provider.set_model(self.config.vector_index.model)
+        async with self._initialization_lock:
+            if self._vec_db is not None:
+                return self._vec_db
 
-        root_dir = Path(self.config.vector_index.root_dir) / "long_term"
-        root_dir.mkdir(parents=True, exist_ok=True)
-        vec_db = FaissVecDB(
-            doc_store_path=str(root_dir / "doc.db"),
-            index_store_path=str(root_dir / "index.faiss"),
-            embedding_provider=embedding_provider,
-        )
-        await vec_db.initialize()
-        self._vec_db = vec_db
-        logger.info(
-            "memory vector index initialized: provider_id=%s model=%s root=%s",
-            provider_id,
-            self.config.vector_index.model or None,
-            root_dir,
-        )
-        return vec_db
+            provider_id, embedding_provider = await self._resolve_embedding_provider()
+            if not isinstance(embedding_provider, EmbeddingProvider):
+                raise RuntimeError(
+                    "memory vector index provider is not an embedding provider: "
+                    f"{provider_id}"
+                )
+            if self.config.vector_index.model:
+                embedding_provider.set_model(self.config.vector_index.model)
+
+            root_dir = Path(self.config.vector_index.root_dir) / "long_term"
+            root_dir.mkdir(parents=True, exist_ok=True)
+            vec_db = await asyncio.to_thread(
+                FaissVecDB,
+                doc_store_path=str(root_dir / "doc.db"),
+                index_store_path=str(root_dir / "index.faiss"),
+                embedding_provider=embedding_provider,
+            )
+            await vec_db.initialize()
+            self._vec_db = vec_db
+            logger.info(
+                "memory vector index initialized: provider_id=%s model=%s root=%s",
+                provider_id,
+                self.config.vector_index.model or None,
+                root_dir,
+            )
+            return vec_db
 
     async def _resolve_embedding_provider(self) -> tuple[str, EmbeddingProvider]:
         configured_provider_id = self.config.vector_index.provider_id.strip()

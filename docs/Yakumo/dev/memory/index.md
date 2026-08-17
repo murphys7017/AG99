@@ -8,6 +8,7 @@ Memory Service 是抽象记忆的唯一 owner。官方 Conversation 保存精确
 
 - `architecture.md`：当前读写链路、模块、配置、存储和所有权边界。
 - `progress.md`：已经实现的能力、当前限制和下一步。
+- `rectification-plan.md`：Memory 整改目标、边界和分阶段实施计划。
 
 ## 维护规则
 

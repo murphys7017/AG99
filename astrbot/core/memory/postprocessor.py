@@ -28,10 +28,12 @@ class MemoryPostProcessor:
     async def build_update_request(
         self,
         ctx: PostProcessContext,
+        memory_service: MemoryService | None = None,
     ) -> MemoryUpdateRequest | None:
-        if self.memory_service.identity_resolver is None:
+        service = memory_service or self.memory_service
+        if service.identity_resolver is None:
             raise RuntimeError("memory postprocess requires identity resolver")
-        identity_result = self.memory_service.identity_resolver.resolve_from_event(
+        identity_result = service.identity_resolver.resolve_from_event(
             ctx.event
         )
         identity = (
@@ -110,8 +112,8 @@ class MemoryPostProcessor:
                 "session_not_whitelisted",
             )
             return
-        self.memory_service = resolve_memory_service_for_event(ctx.event)
-        req = await self.build_update_request(ctx)
+        memory_service = resolve_memory_service_for_event(ctx.event)
+        req = await self.build_update_request(ctx, memory_service)
         if req is None:
             ctx.event.set_extra(
                 "_memory_postprocess_skipped_reason",
@@ -119,7 +121,7 @@ class MemoryPostProcessor:
             )
             return
         try:
-            await self.memory_service.update_from_postprocess(req)
+            await memory_service.update_from_postprocess(req)
         except MemoryAnalyzerError as exc:
             ctx.event.set_extra(
                 "_memory_postprocess_skipped_reason",

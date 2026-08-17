@@ -5993,7 +5993,7 @@ async def test_memory_postprocessor_uses_event_config_memory_service(monkeypatch
     ctx.provider_request = ProviderRequest(prompt="hello", session_id="session-1")
     ctx.timestamp = datetime.now(UTC)
 
-    def _resolve_service(config=None):
+    def _resolve_service(config=None, **_kwargs):
         return event_service if config is event_config else default_service
 
     monkeypatch.setattr(
