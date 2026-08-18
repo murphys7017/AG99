@@ -117,10 +117,10 @@ PersonaState 只允许进入：
 - USER consolidation 成功后按开关和 interval 提交。
 - 默认配置保持全部关闭。
 
-### 6C：管理与验收
+### 6C：管理与验收（管理部分已完成）
 
-- 提供只读状态、演进日志和显式 rollback 管理入口。
-- 记录 submitted/skipped/applied/rejected/failed/rolled_back 诊断。
+- MemoryService 已提供只读状态、演进日志和显式 rollback 管理入口。
+- PersonaStateService 已记录 submitted/skipped/applied/rejected/failed/rolled_back 诊断。
 - 使用一个私聊用户进行真实运行观察，再决定是否开启 `memory.injection.persona_state`。
 
 ## 最小验证

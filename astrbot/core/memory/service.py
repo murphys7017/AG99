@@ -9,6 +9,7 @@ from typing import Any
 from astrbot.core import logger
 
 from .analyzer_manager import MemoryAnalyzerManager
+from .analyzers.base import MemoryAnalyzerExecutionError
 from .config import MemoryConfig, get_memory_config
 from .consolidation_service import ConsolidationService
 from .document_search import DocumentSearchService
@@ -35,6 +36,9 @@ from .types import (
     MemoryIdentityBinding,
     MemorySnapshot,
     MemoryUpdateRequest,
+    PersonaEvolutionLog,
+    PersonaState,
+    PersonaStateEvolutionResult,
     ScopeRef,
     ScopeType,
     SessionInsight,
@@ -294,7 +298,7 @@ class MemoryService:
             and self.store.config.persona.enabled
             and self.store.config.jobs.persona_reflection_enabled
         ):
-            await self.job_scheduler.submit(
+            submitted = await self.job_scheduler.submit(
                 MemoryScopeJob(
                     owner_id=job.owner_id,
                     scope_type=job.scope_type,
@@ -310,6 +314,10 @@ class MemoryService:
                     ),
                 )
             )
+            if submitted:
+                self.persona_state_service.record_submitted()
+            else:
+                self.persona_state_service.record_skipped()
         if (
             not experiences
             or self.long_term_service is None
@@ -426,23 +434,30 @@ class MemoryService:
                 ensure_ascii=False,
             ),
         }
-        results = await self.analyzer_manager.dispatch_stage(
-            "persona_reflection",
-            payload=analysis_payload,
-            umo=str(payload.get("umo", "")) or None,
-            conversation_id=str(payload.get("conversation_id", "")) or None,
-        )
-        result = results.get("persona_reflect_v1")
-        if result is None:
-            raise RuntimeError(
-                "persona_reflection missing required analyzer persona_reflect_v1"
+        try:
+            results = await self.analyzer_manager.dispatch_stage(
+                "persona_reflection",
+                payload=analysis_payload,
+                umo=str(payload.get("umo", "")) or None,
+                conversation_id=str(payload.get("conversation_id", "")) or None,
             )
-        applied = await self.persona_state_service.apply_reflection_result(
-            canonical_user_id,
-            persona_id=current_state.persona_id if current_state else None,
-            data=result.data,
-            source_refs=source_refs,
-        )
+            result = results.get("persona_reflect_v1")
+            if result is None:
+                raise RuntimeError(
+                    "persona_reflection missing required analyzer persona_reflect_v1"
+                )
+            applied = await self.persona_state_service.apply_reflection_result(
+                canonical_user_id,
+                persona_id=current_state.persona_id if current_state else None,
+                data=result.data,
+                source_refs=source_refs,
+            )
+        except MemoryAnalyzerExecutionError:
+            self.persona_state_service.record_rejected()
+            raise
+        except Exception:
+            self.persona_state_service.record_failed()
+            raise
         logger.info(
             "memory persona reflection finished: canonical_user_id=%s "
             "insight_id=%s applied=%s",
@@ -450,6 +465,45 @@ class MemoryService:
             insight_id or None,
             applied is not None,
         )
+
+    async def get_persona_state(
+        self,
+        canonical_user_id: str,
+    ) -> PersonaState | None:
+        await self.initialize()
+        return await self.persona_state_service.get_state(canonical_user_id)
+
+    async def list_persona_evolution_logs(
+        self,
+        canonical_user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[PersonaEvolutionLog]:
+        await self.initialize()
+        return await self.persona_state_service.list_evolution_logs(
+            canonical_user_id,
+            limit=limit,
+        )
+
+    async def rollback_persona_state_evolution(
+        self,
+        log_id: str,
+        *,
+        reason: str | None = None,
+        now: datetime | None = None,
+    ) -> PersonaStateEvolutionResult:
+        await self.initialize()
+        return await self.persona_state_service.rollback(
+            log_id,
+            reason=reason,
+            now=now,
+        )
+
+    def diagnostics_view(self) -> dict[str, object]:
+        return {
+            "scheduler": self.job_scheduler.diagnostics(),
+            "persona_reflection": self.persona_state_service.diagnostics_view(),
+        }
 
     @staticmethod
     def _build_persona_reflection_payload(

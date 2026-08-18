@@ -19,13 +19,14 @@
 - Memory Phase 5 第一批已接入 `MemoryJobScheduler`：后台 Postprocessor 提交 consolidation/promotion，任务按 scope 串行、同一 conversation 合并，后台异常被消费并记录诊断；直接调用 `MemoryService.update_from_postprocess()` 仍保持同步执行和异常传播。
 - Memory Phase 5 第二批已将 Recall refresh 和 dirty vector sync 接入同一 scheduler；Recall 继续保持 stale-while-revalidate，向量修复增加显式 `schedule_dirty_long_term_vector_indexes()` 非等待入口，并按任务类型和 dedupe key 合并。
 - Persona reflection analyzer 与 `persona_reflection` 后台 Job 已接入 consolidation 成功后的 USER scope 链路；两个开关仍默认关闭，失败只影响 PersonaState，不影响已完成的 Memory consolidation/promotion。
+- `MemoryService` 已提供 PersonaState 只读状态、演进日志、显式 rollback 和 scheduler/reflection 诊断入口；真实运行观察与开关启用仍未执行。
 - `MemoryCollector` 已进入统一 Prompt ContextPack，并由 target projection 控制 Router、
   Planner、Persona 和 Core 的可见范围。
 - Interaction 私有 Memory Store 和 `memory.interaction` slot 已删除。
 
 ## 当前限制
 
-- consolidation、长期 promotion、Recall 刷新和 dirty vector sync 已由后台 scheduler 承担；PersonaState 管理入口、运行诊断和真实运行验收尚未完成，默认注入与自动演进仍默认关闭。
+- consolidation、长期 promotion、Recall 刷新和 dirty vector sync 已由后台 scheduler 承担；PersonaState 真实运行验收尚未完成，默认注入与自动演进仍默认关闭。
 - canonical identity 缺失的用户回合只跳过 USER 中长期沉淀；若回合带有稳定 GROUP scope，GROUP 中长期沉淀仍可执行。
 - Memory analyzer 依赖配置的 Provider；分析失败按 Postprocessor 失败语义记录并跳过该次更新。
 - 向量检索、文档回表和 analyzer 调用仍需要持续关注延迟、超时和可观测性。
@@ -33,9 +34,8 @@
 
 ## 下一步
 
-1. 提供 PersonaState 只读状态、演进日志和显式 rollback 管理入口。
-2. 完善 Memory read/write latency、降级组件和后台任务诊断。
-3. 固化 finalized material 到 MemoryUpdateRequest 的版本化契约，并进行真实运行验收。
+1. 完善 Memory read/write latency、降级组件和后台任务诊断。
+2. 固化 finalized material 到 MemoryUpdateRequest 的版本化契约，并进行真实运行验收。
 
 具体模块关系见 `architecture.md`；配置事实以 `astrbot/core/memory/config.py`、
 `astrbot/core/memory_config_defaults.py` 和统一配置 schema 为准。

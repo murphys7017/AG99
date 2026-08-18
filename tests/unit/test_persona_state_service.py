@@ -85,3 +85,35 @@ async def test_persona_state_rollback_restores_previous_state(
         assert rolled_back.state.warmth == pytest.approx(first.state.warmth)
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_persona_reflection_result_updates_diagnostics(
+    temp_dir: Path,
+) -> None:
+    store = MemoryStore(db_path=temp_dir / "memory.db")
+    service = PersonaStateService(store)
+    try:
+        result = await service.apply_reflection_result(
+            "user-3",
+            persona_id="persona-1",
+            data={
+                "should_update": True,
+                "confidence": 0.9,
+                "reason": "Consistent preference evidence",
+                "deltas": {
+                    "familiarity": 0.04,
+                    "trust": 0.0,
+                    "warmth": 0.0,
+                    "formality_preference": 0.0,
+                    "directness_preference": 0.0,
+                },
+            },
+        )
+
+        assert result is not None
+        assert service.diagnostics_view()["applied"] == 1
+        await service.rollback(result.log.log_id)
+        assert service.diagnostics_view()["rolled_back"] == 1
+    finally:
+        await store.close()

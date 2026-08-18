@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -29,6 +30,32 @@ PERSONA_REFLECTION_MAX_DELTA = 0.08
 class PersonaStateService:
     def __init__(self, store: MemoryStore) -> None:
         self.store = store
+        self._diagnostic_counts: Counter[str] = Counter()
+
+    def record_submitted(self) -> None:
+        self._diagnostic_counts["submitted"] += 1
+
+    def record_skipped(self) -> None:
+        self._diagnostic_counts["skipped"] += 1
+
+    def record_rejected(self) -> None:
+        self._diagnostic_counts["rejected"] += 1
+
+    def record_failed(self) -> None:
+        self._diagnostic_counts["failed"] += 1
+
+    def diagnostics_view(self) -> dict[str, int]:
+        return {
+            status: self._diagnostic_counts.get(status, 0)
+            for status in (
+                "submitted",
+                "skipped",
+                "applied",
+                "rejected",
+                "failed",
+                "rolled_back",
+            )
+        }
 
     @staticmethod
     def neutral_values() -> dict[str, float]:
@@ -188,8 +215,9 @@ class PersonaStateService:
             data
         )
         if not should_update:
+            self.record_skipped()
             return None
-        return await self.apply_reflection(
+        result = await self.apply_reflection(
             canonical_user_id,
             persona_id=persona_id,
             deltas=deltas,
@@ -198,6 +226,11 @@ class PersonaStateService:
             source_refs=source_refs,
             now=now,
         )
+        if result is None:
+            self.record_skipped()
+        else:
+            self._diagnostic_counts["applied"] += 1
+        return result
 
     async def list_evolution_logs(
         self,
@@ -234,6 +267,7 @@ class PersonaStateService:
             reason=self._normalize_reason(reason),
             created_at=self._normalize_datetime(now or datetime.now(UTC)),
         )
+        self._diagnostic_counts["rolled_back"] += 1
         return PersonaStateEvolutionResult(state=state, log=log)
 
     @classmethod
