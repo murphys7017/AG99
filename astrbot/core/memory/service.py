@@ -14,6 +14,7 @@ from .document_search import DocumentSearchService
 from .experience_service import ExperienceService
 from .history_source import RecentConversationSource
 from .identity import MemoryIdentityMappingService, MemoryIdentityResolver
+from .job_scheduler import MemoryJobScheduler, MemoryScopeJob
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
 from .recall_snapshot import RecallSnapshotManager
@@ -72,6 +73,7 @@ class MemoryService:
         self.long_term_service = long_term_service
         self.manual_long_term_service = manual_long_term_service
         self.document_search_service = document_search_service
+        self.job_scheduler = MemoryJobScheduler(self._run_scope_job)
         self._initialized = False
         self._initialize_lock = asyncio.Lock()
 
@@ -96,7 +98,12 @@ class MemoryService:
                 )
             self._initialized = True
 
-    async def update_from_postprocess(self, req: MemoryUpdateRequest) -> TurnRecord:
+    async def update_from_postprocess(
+        self,
+        req: MemoryUpdateRequest,
+        *,
+        background_jobs: bool = False,
+    ) -> TurnRecord:
         await self.initialize()
         logger.info(
             "memory update started: umo=%s conversation_id=%s source_refs=%s",
@@ -155,6 +162,7 @@ class MemoryService:
             )
             return turn
 
+        submitted_jobs: list[MemoryScopeJob] = []
         for scope in contribution_refs:
             owner_id = scope_owner_id(
                 scope.scope_type,
@@ -163,52 +171,25 @@ class MemoryService:
             )
             if owner_id is None:
                 continue
-            if (
-                self.consolidation_service is None
-                or not await self.consolidation_service.should_run_consolidation(
-                    owner_id,
-                    turn.conversation_id,
-                    scope_type=scope.scope_type,
-                    scope_id=scope.scope_id,
-                    umo=turn.umo,
-                )
-            ):
-                continue
-            logger.info(
-                "memory consolidation triggered after update: umo=%s conversation_id=%s scope_type=%s scope_id=%s",
-                turn.umo,
-                turn.conversation_id,
-                scope.scope_type,
-                scope.scope_id,
-            )
-            _, experiences = await self.run_consolidation(
-                owner_id,
-                turn.conversation_id,
-                scope_type=scope.scope_type,
+            job = MemoryScopeJob(
+                owner_id=owner_id,
+                scope_type=(
+                    scope.scope_type.value
+                    if hasattr(scope.scope_type, "value")
+                    else str(scope.scope_type)
+                ),
                 scope_id=scope.scope_id,
+                conversation_id=turn.conversation_id,
                 umo=turn.umo,
             )
-            if (
-                experiences
-                and self.long_term_service is not None
-                and await self.long_term_service.should_run_promotion(
-                    owner_id,
-                    scope_type=scope.scope_type,
-                    scope_id=scope.scope_id,
-                )
-            ):
-                logger.info(
-                    "memory long-term promotion triggered after consolidation: owner_id=%s conversation_id=%s scope_type=%s scope_id=%s",
-                    owner_id,
-                    turn.conversation_id,
-                    scope.scope_type,
-                    scope.scope_id,
-                )
-                await self.long_term_service.run_promotion(
-                    owner_id,
-                    scope_type=scope.scope_type,
-                    scope_id=scope.scope_id,
-                )
+            if background_jobs:
+                await self.job_scheduler.submit(job)
+            else:
+                submitted_jobs.append(job)
+
+        if not background_jobs:
+            for job in submitted_jobs:
+                await self._run_scope_job(job)
         logger.info(
             "memory update finished: turn_id=%s umo=%s conversation_id=%s",
             turn.turn_id,
@@ -269,8 +250,62 @@ class MemoryService:
         return snapshot
 
     async def shutdown(self) -> None:
+        await self.job_scheduler.close()
         await self.recall_snapshot_manager.close()
         await self.store.close()
+
+    async def _run_scope_job(self, job: MemoryScopeJob) -> None:
+        if (
+            self.consolidation_service is None
+            or not self.store.config.jobs.consolidation_enabled
+            or not await self.consolidation_service.should_run_consolidation(
+                job.owner_id,
+                job.conversation_id,
+                scope_type=job.scope_type,
+                scope_id=job.scope_id,
+                umo=job.umo,
+            )
+        ):
+            return
+
+        logger.info(
+            "memory consolidation triggered after update: umo=%s conversation_id=%s scope_type=%s scope_id=%s",
+            job.umo,
+            job.conversation_id,
+            job.scope_type,
+            job.scope_id,
+        )
+        _, experiences = await self.run_consolidation(
+            job.owner_id,
+            job.conversation_id,
+            scope_type=job.scope_type,
+            scope_id=job.scope_id,
+            umo=job.umo,
+        )
+        if (
+            not experiences
+            or self.long_term_service is None
+            or not self.store.config.jobs.long_term_enabled
+            or not await self.long_term_service.should_run_promotion(
+                job.owner_id,
+                scope_type=job.scope_type,
+                scope_id=job.scope_id,
+            )
+        ):
+            return
+
+        logger.info(
+            "memory long-term promotion triggered after consolidation: owner_id=%s conversation_id=%s scope_type=%s scope_id=%s",
+            job.owner_id,
+            job.conversation_id,
+            job.scope_type,
+            job.scope_id,
+        )
+        await self.long_term_service.run_promotion(
+            job.owner_id,
+            scope_type=job.scope_type,
+            scope_id=job.scope_id,
+        )
 
     async def prewarm_vector_index(self) -> bool:
         await self.initialize()

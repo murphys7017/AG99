@@ -13,7 +13,8 @@ Finalized Turn Material
   -> TurnRecord
   -> assistant-only: stop
   -> user turn: Short-Term Update
-     -> optional Consolidation / Experience / Long-Term Promotion
+     -> MemoryJobScheduler(background Postprocessor)
+        -> scoped Consolidation / Experience / Long-Term Promotion
 ```
 
 - Interaction 或普通 Pipeline 负责形成稳定回合材料。
@@ -36,8 +37,10 @@ material；普通 Pipeline 则读取官方 Conversation 或当前 Provider 回�
    `ShortTermMemory`、`PersonaState`，也不运行 consolidation、Experience 或长期记忆
    promotion。
 3. 普通用户回合更新 `TopicState` 与 `ShortTermMemory`，再按 `MemoryScopeContext` 枚举可贡献的 USER/GROUP scope。
-4. 每个 scope 独立按阈值运行 consolidation，产生对应的 `SessionInsight` 与 `Experience`；GROUP 会聚合同一群组不同成员的回合。
-5. 每个 scope 独立推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。
+4. 生产 Postprocessor 将每个 scope 提交给 `MemoryJobScheduler`；同一 scope 串行执行，同一 conversation 的重复待处理任务合并。任务内部按阈值运行 consolidation，产生对应的 `SessionInsight` 与 `Experience`；GROUP 会聚合同一群组不同成员的回合。
+5. 每个 scope 的任务继续推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。Recall 刷新、dirty vector sync 和 PersonaState 演进尚未由该 scheduler 托管。
+
+`MemoryService.update_from_postprocess()` 的生产调用显式使用 `background_jobs=True`，不会等待 analyzer 或整理任务；直接管理调用默认同步执行并传播异常，避免把后台异常吞成同步 API 的假成功。
 
 assistant-only 是 Conversation 历史转换层的显式标记，不由文本是否为空推断。主动 Persona
 表达以空 `user_message` 形成该标记，因此可继续提供给 Conversation 和 Prompt 作为语义上下文，
@@ -87,6 +90,7 @@ Router、Planner、Persona 和 Core 不直接查询 Memory Service，只消费 P
   LongTermMemory、PersonaState、MemorySnapshot 等公共数据类型。
 - `store.py`：SQLite 结构化持久化。
 - `service.py`：统一读写编排与按配置隔离的 service 实例。
+- `job_scheduler.py`：按作用域串行、按 conversation 合并并消费后台 consolidation/promotion 异常。
 - `short_term_service.py`：近期主题、摘要和 active focus。
 - `consolidation_service.py` / `experience_service.py`：中期抽象与经历沉淀。
 - `long_term_service.py`：长期记忆创建、更新和证据关联。

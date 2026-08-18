@@ -37,6 +37,7 @@ from .identity import (
     MemoryIdentityResolver,
     build_platform_user_key,
 )
+from .job_scheduler import MemoryJobScheduler, MemoryScopeJob
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
 from .postprocessor import (
@@ -136,9 +137,11 @@ __all__ = [
     "MemoryIdentityBinding",
     "MemoryIdentityMappingService",
     "MemoryIdentityResolver",
+    "MemoryJobScheduler",
     "PromptJsonMemoryAnalyzer",
     "MemorySnapshot",
     "MemoryScopeContext",
+    "MemoryScopeJob",
     "MemoryService",
     "MemorySnapshotBuilder",
     "MemorySnapshotReadOptions",

@@ -123,7 +123,7 @@ class MemoryPostProcessor:
             )
             return
         try:
-            await memory_service.update_from_postprocess(req)
+            await memory_service.update_from_postprocess(req, background_jobs=True)
         except MemoryAnalyzerError as exc:
             ctx.event.set_extra(
                 "_memory_postprocess_skipped_reason",
