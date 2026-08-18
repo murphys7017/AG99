@@ -44,6 +44,11 @@ def build_default_memory_config_payload() -> dict:
             "update_interval_turns": 6,
             "update_min_chars": 0,
         },
+        "recall": {
+            "enabled": True,
+            "refresh_interval_seconds": 300.0,
+            "max_entries": 256,
+        },
         "injection": {
             "enabled": True,
             "topic_state": True,

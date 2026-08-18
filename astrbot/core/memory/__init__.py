@@ -46,6 +46,7 @@ from .postprocessor import (
     unregister_memory_postprocessor,
 )
 from .projection import ExperienceProjectionService
+from .recall_snapshot import RecallSnapshotManager
 from .scope_context import (
     MemoryScopeContext,
     resolve_memory_scope_context,
@@ -141,6 +142,7 @@ __all__ = [
     "MemoryService",
     "MemorySnapshotBuilder",
     "MemorySnapshotReadOptions",
+    "RecallSnapshotManager",
     "MemoryStore",
     "MemoryUpdateRequest",
     "MessagePayload",

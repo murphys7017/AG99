@@ -313,3 +313,10 @@ class MemorySnapshot:
     long_term_memories: list[LongTermMemoryIndex] = field(default_factory=list)
     persona_state: PersonaState | None = None
     debug_meta: JsonDict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class MemoryRecallSnapshot:
+    experiences: list[Experience] = field(default_factory=list)
+    long_term_memories: list[LongTermMemoryIndex] = field(default_factory=list)
+    debug_meta: JsonDict = field(default_factory=dict)

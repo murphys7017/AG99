@@ -195,6 +195,12 @@ def _patch_memory_service():
             conversation_id="conv-id",
         )
     )
+    service.get_prompt_snapshot = AsyncMock(
+        return_value=MemorySnapshot(
+            umo="test_platform:private:test-session",
+            conversation_id="conv-id",
+        )
+    )
     service.store.get_recent_turn_records = AsyncMock(return_value=[])
     memory_config = MemoryConfig()
     service.memory_config = memory_config
@@ -1767,7 +1773,7 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
             updated_at=datetime(2026, 4, 5, 12, 34, 0),
         ),
     )
-    _patch_memory_service.get_snapshot.return_value = snapshot
+    _patch_memory_service.get_prompt_snapshot.return_value = snapshot
 
     pack = await collect_context_pack(
         event=event,
@@ -1777,12 +1783,12 @@ async def test_collect_context_pack_collects_memory_slots_from_snapshot(
         collectors=[MemoryCollector()],
     )
 
-    _patch_memory_service.get_snapshot.assert_awaited_once()
-    snapshot_kwargs = _patch_memory_service.get_snapshot.await_args.kwargs
+    _patch_memory_service.get_prompt_snapshot.assert_awaited_once()
+    snapshot_kwargs = _patch_memory_service.get_prompt_snapshot.await_args.kwargs
     assert snapshot_kwargs["umo"] == event.unified_msg_origin
     assert snapshot_kwargs["conversation_id"] == "conv-id"
-    assert snapshot_kwargs["query"] == "effective prompt"
     assert snapshot_kwargs["identity"] is current_identity
+    assert snapshot_kwargs["scope_context"] is not None
     assert isinstance(snapshot_kwargs["read_options"], MemorySnapshotReadOptions)
     assert snapshot_kwargs["read_options"].long_term.top_k == 3
     assert snapshot_kwargs["read_options"].long_term.query_required is True
@@ -1838,7 +1844,7 @@ async def test_collect_context_pack_memory_skips_empty_snapshot(_patch_memory_se
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
-    _patch_memory_service.get_snapshot.return_value = MemorySnapshot(
+    _patch_memory_service.get_prompt_snapshot.return_value = MemorySnapshot(
         umo=event.unified_msg_origin,
         conversation_id="conv-id",
     )
@@ -1876,11 +1882,10 @@ async def test_collect_context_pack_memory_uses_none_conversation_id_without_req
         collectors=[MemoryCollector()],
     )
 
-    _patch_memory_service.get_snapshot.assert_awaited_once()
-    snapshot_kwargs = _patch_memory_service.get_snapshot.await_args.kwargs
+    _patch_memory_service.get_prompt_snapshot.assert_awaited_once()
+    snapshot_kwargs = _patch_memory_service.get_prompt_snapshot.await_args.kwargs
     assert snapshot_kwargs["umo"] == event.unified_msg_origin
     assert snapshot_kwargs["conversation_id"] is None
-    assert snapshot_kwargs["query"] == "raw event text"
     assert isinstance(snapshot_kwargs["read_options"], MemorySnapshotReadOptions)
 
 
@@ -1905,7 +1910,7 @@ async def test_collect_context_pack_memory_skips_when_injection_disabled(
         collectors=[MemoryCollector()],
     )
 
-    _patch_memory_service.get_snapshot.assert_not_awaited()
+    _patch_memory_service.get_prompt_snapshot.assert_not_awaited()
     assert pack.get_slot("memory.topic_state") is None
 
 
@@ -1924,7 +1929,7 @@ async def test_collect_context_pack_memory_debug_fields_can_be_included(
     _patch_memory_service.memory_config.injection.experiences.enabled = True
     _patch_memory_service.memory_config.injection.experiences.top_k = 1
     _patch_memory_service.memory_config.injection.persona_state = True
-    _patch_memory_service.get_snapshot.return_value = MemorySnapshot(
+    _patch_memory_service.get_prompt_snapshot.return_value = MemorySnapshot(
         umo=event.unified_msg_origin,
         conversation_id="conv-id",
         topic_state=TopicState(
@@ -2009,7 +2014,7 @@ async def test_collect_context_pack_memory_failure_is_recorded_without_aborting_
     context.persona_manager.resolve_selected_persona = AsyncMock(
         return_value=(None, None, None, False)
     )
-    _patch_memory_service.get_snapshot.side_effect = RuntimeError("memory down")
+    _patch_memory_service.get_prompt_snapshot.side_effect = RuntimeError("memory down")
 
     pack = await collect_context_pack(
         event=event,

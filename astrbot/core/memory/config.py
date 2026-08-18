@@ -235,6 +235,13 @@ class MemoryShortTermConfig:
 
 
 @dataclass(slots=True)
+class MemoryRecallConfig:
+    enabled: bool = True
+    refresh_interval_seconds: float = 300.0
+    max_entries: int = 256
+
+
+@dataclass(slots=True)
 class MemoryInjectionListConfig:
     enabled: bool = True
     top_k: int = 0
@@ -363,6 +370,7 @@ class MemoryConfig:
     )
     identity: MemoryIdentityConfig = field(default_factory=MemoryIdentityConfig)
     short_term: MemoryShortTermConfig = field(default_factory=MemoryShortTermConfig)
+    recall: MemoryRecallConfig = field(default_factory=MemoryRecallConfig)
     injection: MemoryInjectionConfig = field(default_factory=MemoryInjectionConfig)
     consolidation: MemoryConsolidationConfig = field(
         default_factory=MemoryConsolidationConfig
@@ -591,6 +599,7 @@ def load_memory_config(
     short_term_payload = (
         payload.get("short_term", {}) if isinstance(payload, dict) else {}
     )
+    recall_payload = payload.get("recall", {}) if isinstance(payload, dict) else {}
     injection_payload = (
         payload.get("injection", {}) if isinstance(payload, dict) else {}
     )
@@ -663,6 +672,14 @@ def load_memory_config(
                 short_term_payload.get("update_min_chars"),
                 0,
             ),
+        ),
+        recall=MemoryRecallConfig(
+            enabled=_as_bool(recall_payload.get("enabled"), True),
+            refresh_interval_seconds=_as_float(
+                recall_payload.get("refresh_interval_seconds"),
+                300.0,
+            ),
+            max_entries=_as_int(recall_payload.get("max_entries"), 256),
         ),
         injection=MemoryInjectionConfig(
             enabled=_as_bool(injection_payload.get("enabled"), True),

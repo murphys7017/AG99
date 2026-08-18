@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from astrbot.core.memory.config import get_memory_config
+from astrbot.core.memory.scope_context import resolve_memory_scope_context
 from astrbot.core.memory.service import get_memory_service
 from astrbot.core.memory.snapshot_builder import (
     memory_injection_to_snapshot_read_options,
@@ -51,7 +52,6 @@ class MemoryCollector(ContextCollectorInterface):
             return []
 
         conversation_id = self._resolve_conversation_id(provider_request)
-        query = self._resolve_query(event, provider_request)
         event_config = event.get_extra("_astrbot_config")
         if not isinstance(event_config, Mapping):
             event_config = None
@@ -71,14 +71,18 @@ class MemoryCollector(ContextCollectorInterface):
                 else identity_result
             )
 
-        snapshot = await memory_service.get_snapshot(
+        snapshot = await memory_service.get_prompt_snapshot(
             umo=umo,
             conversation_id=conversation_id,
-            query=query,
             read_options=memory_injection_to_snapshot_read_options(
                 memory_config.injection
             ),
             identity=identity,
+            scope_context=(
+                resolve_memory_scope_context(event, identity)
+                if identity is not None
+                else None
+            ),
         )
 
         slots: list[ContextSlot] = []
@@ -393,24 +397,6 @@ class MemoryCollector(ContextCollectorInterface):
         conversation_id = getattr(provider_request.conversation, "cid", None)
         if isinstance(conversation_id, str) and conversation_id.strip():
             return conversation_id
-        return None
-
-    def _resolve_query(
-        self,
-        event: AstrMessageEvent,
-        provider_request: ProviderRequest | None,
-    ) -> str | None:
-        if provider_request and isinstance(provider_request.prompt, str):
-            prompt = provider_request.prompt.strip()
-            if prompt:
-                return prompt
-
-        message_str = getattr(event, "message_str", None)
-        if isinstance(message_str, str):
-            message_str = message_str.strip()
-            if message_str:
-                return message_str
-
         return None
 
     def _serialize_datetime(self, value: datetime | None) -> str | None:

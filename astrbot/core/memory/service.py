@@ -16,6 +16,8 @@ from .history_source import RecentConversationSource
 from .identity import MemoryIdentityMappingService, MemoryIdentityResolver
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
+from .recall_snapshot import RecallSnapshotManager
+from .scope_context import MemoryScopeContext
 from .short_term_service import ShortTermMemoryService
 from .snapshot_builder import MemorySnapshotBuilder, MemorySnapshotReadOptions
 from .store import MemoryStore
@@ -56,6 +58,10 @@ class MemoryService:
         self.turn_record_service = turn_record_service
         self.short_term_service = short_term_service
         self.snapshot_builder = snapshot_builder
+        self.recall_snapshot_manager = RecallSnapshotManager(
+            snapshot_builder,
+            config=self.store.config.recall,
+        )
         self.analyzer_manager = analyzer_manager or MemoryAnalyzerManager()
         self.identity_mapping_service = identity_mapping_service
         self.identity_resolver = identity_resolver
@@ -198,6 +204,38 @@ class MemoryService:
             read_options=read_options,
             identity=identity,
         )
+
+    async def get_prompt_snapshot(
+        self,
+        umo: str,
+        conversation_id: str | None,
+        *,
+        read_options: MemorySnapshotReadOptions | None = None,
+        identity: MemoryIdentity | None = None,
+        scope_context: MemoryScopeContext | None = None,
+    ) -> MemorySnapshot:
+        await self.initialize()
+        options = read_options or MemorySnapshotReadOptions()
+        snapshot = await self.snapshot_builder.build_local_snapshot(
+            umo,
+            conversation_id,
+            read_options=options,
+            identity=identity,
+        )
+        recall = self.recall_snapshot_manager.get_or_schedule(
+            snapshot,
+            scope_context=scope_context,
+            read_options=options,
+        )
+        if recall is not None:
+            snapshot.experiences = recall.experiences
+            snapshot.long_term_memories = recall.long_term_memories
+            snapshot.debug_meta.update(recall.debug_meta)
+        return snapshot
+
+    async def shutdown(self) -> None:
+        await self.recall_snapshot_manager.close()
+        await self.store.close()
 
     async def prewarm_vector_index(self) -> bool:
         await self.initialize()
@@ -519,18 +557,18 @@ async def shutdown_memory_service(
             None,
         )
         if service is not None:
-            await service.store.close()
+            await service.shutdown()
         return
 
     if _MEMORY_SERVICE is None:
         for service in list(_MEMORY_SERVICES_BY_KEY.values()):
-            await service.store.close()
+            await service.shutdown()
         _MEMORY_SERVICES_BY_KEY.clear()
         return
-    await _MEMORY_SERVICE.store.close()
+    await _MEMORY_SERVICE.shutdown()
     _MEMORY_SERVICE = None
     for service in list(_MEMORY_SERVICES_BY_KEY.values()):
-        await service.store.close()
+        await service.shutdown()
     _MEMORY_SERVICES_BY_KEY.clear()
 
 

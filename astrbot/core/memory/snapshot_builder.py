@@ -19,6 +19,7 @@ from .types import (
     Experience,
     LongTermMemoryIndex,
     MemoryIdentity,
+    MemoryRecallSnapshot,
     MemorySnapshot,
     ScopeType,
 )
@@ -84,6 +85,32 @@ class MemorySnapshotBuilder:
         identity: MemoryIdentity | None = None,
     ) -> MemorySnapshot:
         options = read_options or MemorySnapshotReadOptions()
+        snapshot = await self.build_local_snapshot(
+            umo,
+            conversation_id,
+            read_options=options,
+            identity=identity,
+        )
+        recall = await self.build_recall_snapshot(
+            snapshot,
+            query=query,
+            read_options=options,
+        )
+        snapshot.experiences = recall.experiences
+        snapshot.long_term_memories = recall.long_term_memories
+        snapshot.debug_meta.update(recall.debug_meta)
+        if query is not None:
+            snapshot.debug_meta["query"] = query
+        return snapshot
+
+    async def build_local_snapshot(
+        self,
+        umo: str,
+        conversation_id: str | None,
+        *,
+        read_options: MemorySnapshotReadOptions,
+        identity: MemoryIdentity | None = None,
+    ) -> MemorySnapshot:
         local_reads = [
             self.store.get_topic_state(umo, conversation_id),
             self.store.get_short_term_memory(umo, conversation_id),
@@ -109,59 +136,21 @@ class MemorySnapshotBuilder:
         else:
             canonical_user_id = latest_turn.canonical_user_id if latest_turn else None
             platform_user_key = latest_turn.platform_user_key if latest_turn else None
-        experiences = []
-        long_term_memories = []
         persona_state = None
-        degraded_components: list[dict[str, str]] = []
         if canonical_user_id:
-            if options.enabled and options.long_term.enabled:
-                try:
-                    long_term_memories = await self._load_snapshot_long_term_memories(
-                        umo=umo,
-                        canonical_user_id=canonical_user_id,
-                        conversation_id=conversation_id,
-                        query=query,
-                        read_options=options,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    degraded_components.append(
-                        {
-                            "component": "long_term_retrieval",
-                            "error_type": type(exc).__name__,
-                            "reason": str(exc),
-                        }
-                    )
-                    logger.warning(
-                        "memory long-term retrieval failed; continuing with local snapshot: umo=%s conversation_id=%s error=%s",
-                        umo,
-                        conversation_id,
-                        exc,
-                        exc_info=True,
-                    )
-            if options.enabled and options.experiences.enabled:
-                experiences = await self._load_snapshot_experiences(
-                    canonical_user_id=canonical_user_id,
-                    conversation_id=conversation_id,
-                    query=query,
-                    long_term_memories=long_term_memories,
-                    read_options=options,
-                )
-            if options.enabled and options.persona_state:
+            if read_options.enabled and read_options.persona_state:
                 persona_state = await self.store.get_persona_state(
                     ScopeType.USER,
                     canonical_user_id,
                 )
         logger.info(
-            "memory snapshot built: umo=%s conversation_id=%s topic_state=%s short_term_memory=%s canonical_user_id=%s experiences=%s long_term_memories=%s persona_state=%s query_present=%s",
+            "memory local snapshot built: umo=%s conversation_id=%s topic_state=%s short_term_memory=%s canonical_user_id=%s persona_state=%s",
             umo,
             conversation_id,
             topic_state is not None,
             short_term_memory is not None,
             canonical_user_id,
-            len(experiences),
-            len(long_term_memories),
             persona_state is not None,
-            query is not None,
         )
         return MemorySnapshot(
             umo=umo,
@@ -170,17 +159,67 @@ class MemorySnapshotBuilder:
             canonical_user_id=canonical_user_id,
             topic_state=topic_state,
             short_term_memory=short_term_memory,
+            experiences=[],
+            long_term_memories=[],
+            persona_state=persona_state,
+            debug_meta={},
+        )
+
+    async def build_recall_snapshot(
+        self,
+        snapshot: MemorySnapshot,
+        *,
+        query: str | None,
+        read_options: MemorySnapshotReadOptions,
+    ) -> MemoryRecallSnapshot:
+        options = read_options
+        if not snapshot.canonical_user_id or not options.enabled:
+            return MemoryRecallSnapshot()
+
+        long_term_memories: list[LongTermMemoryIndex] = []
+        degraded_components: list[dict[str, str]] = []
+        if options.long_term.enabled:
+            try:
+                long_term_memories = await self._load_snapshot_long_term_memories(
+                    umo=snapshot.umo,
+                    canonical_user_id=snapshot.canonical_user_id,
+                    conversation_id=snapshot.conversation_id,
+                    query=query,
+                    read_options=options,
+                )
+            except Exception as exc:  # noqa: BLE001
+                degraded_components.append(
+                    {
+                        "component": "long_term_retrieval",
+                        "error_type": type(exc).__name__,
+                        "reason": str(exc),
+                    }
+                )
+                logger.warning(
+                    "memory long-term retrieval failed; continuing with local snapshot: umo=%s conversation_id=%s error=%s",
+                    snapshot.umo,
+                    snapshot.conversation_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        experiences: list[Experience] = []
+        if options.experiences.enabled:
+            experiences = await self._load_snapshot_experiences(
+                canonical_user_id=snapshot.canonical_user_id,
+                conversation_id=snapshot.conversation_id,
+                query=query,
+                long_term_memories=long_term_memories,
+                read_options=options,
+            )
+        return MemoryRecallSnapshot(
             experiences=experiences,
             long_term_memories=long_term_memories,
-            persona_state=persona_state,
-            debug_meta={
-                **({"query": query} if query is not None else {}),
-                **(
-                    {"degraded_components": degraded_components}
-                    if degraded_components
-                    else {}
-                ),
-            },
+            debug_meta=(
+                {"degraded_components": degraded_components}
+                if degraded_components
+                else {}
+            ),
         )
 
     async def _load_snapshot_long_term_memories(
