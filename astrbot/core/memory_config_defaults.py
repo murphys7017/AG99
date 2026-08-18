@@ -5,6 +5,7 @@ DEFAULT_MEMORY_ADVANCED_ANALYZER_NAMES = (
     "experience_extract_v1",
     "long_term_promote_v1",
     "long_term_compose_v1",
+    "persona_reflect_v1",
 )
 DEFAULT_MEMORY_KEYWORD_EXTRACTOR_IMPLEMENTATION = "jieba_tfidf"
 DEFAULT_MEMORY_ANALYZER_SPECS: dict[str, tuple[str, str]] = {
@@ -15,6 +16,7 @@ DEFAULT_MEMORY_ANALYZER_SPECS: dict[str, tuple[str, str]] = {
     "experience_extract_v1": ("experience_extract_v1.md", "ExperienceExtractResult"),
     "long_term_promote_v1": ("long_term_promote_v1.md", "LongTermPromoteResult"),
     "long_term_compose_v1": ("long_term_compose_v1.md", "LongTermComposeResult"),
+    "persona_reflect_v1": ("persona_reflect_v1.md", "PersonaReflectResult"),
 }
 DEFAULT_MEMORY_ANALYSIS_STAGES: dict[str, list[str]] = {
     "short_term_update": ["topic_v1", "focus_v1", "summary_v1"],
@@ -22,6 +24,7 @@ DEFAULT_MEMORY_ANALYSIS_STAGES: dict[str, list[str]] = {
     "experience_extract": ["experience_extract_v1"],
     "long_term_promote": ["long_term_promote_v1"],
     "long_term_compose": ["long_term_compose_v1"],
+    "persona_reflection": ["persona_reflect_v1"],
 }
 
 

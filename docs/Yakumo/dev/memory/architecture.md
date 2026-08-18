@@ -121,7 +121,7 @@ Memory 配置已进入 AstrBot 统一配置，不存在 `data/memory/config.yaml
   Memory 状态、Policy 材料或唤醒权限。
 - 静态 Persona 不由 Memory 改写；`PersonaState` 是独立动态状态。
 - `PersonaStateService` 只接受 USER scope 语义变化，负责中性基线、置信度、delta 限幅、间隔判断，以及 state + evolution log 的原子写入和显式回滚。
-- PersonaState 自动 reflection 尚未接入 analyzer 或后台 Job，相关开关和 Prompt 注入继续默认关闭。
+- PersonaState reflection 只消费 consolidation 后的 SessionInsight/Experience；相关开关和 Prompt 注入继续默认关闭，管理入口和真实运行验收仍待完成。
 - Prompt 负责读取和可见范围，不负责 consolidation 或持久化。
 - Interaction finalized material 是 Interaction 回合的提交材料，不再另存私有记忆。
 - 长期文档和向量索引是检索载体，SQLite 中的 index/link/status 仍是结构化真源。

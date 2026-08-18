@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -279,13 +280,36 @@ class MemoryService:
             job.scope_type,
             job.scope_id,
         )
-        _, experiences = await self.run_consolidation(
+        insight, experiences = await self.run_consolidation(
             job.owner_id,
             job.conversation_id,
             scope_type=job.scope_type,
             scope_id=job.scope_id,
             umo=job.umo,
         )
+        if (
+            insight is not None
+            and experiences
+            and job.scope_type == ScopeType.USER.value
+            and self.store.config.persona.enabled
+            and self.store.config.jobs.persona_reflection_enabled
+        ):
+            await self.job_scheduler.submit(
+                MemoryScopeJob(
+                    owner_id=job.owner_id,
+                    scope_type=job.scope_type,
+                    scope_id=job.scope_id,
+                    conversation_id=job.conversation_id,
+                    umo=job.umo,
+                    kind="persona_reflection",
+                    dedupe_key=f"persona:{insight.insight_id}",
+                    payload=self._build_persona_reflection_payload(
+                        job,
+                        insight,
+                        experiences,
+                    ),
+                )
+            )
         if (
             not experiences
             or self.long_term_service is None
@@ -327,7 +351,138 @@ class MemoryService:
                     f"memory vector sync remains dirty: {refreshed.memory_id}"
                 )
             return
+        if job.kind == "persona_reflection":
+            if not isinstance(job.payload, dict):
+                raise TypeError("memory persona reflection job payload is invalid")
+            await self._run_persona_reflection_job(job.payload)
+            return
         raise ValueError(f"unknown memory job kind: {job.kind}")
+
+    async def _run_persona_reflection_job(self, payload: dict[str, Any]) -> None:
+        if (
+            not self.store.config.persona.enabled
+            or not self.store.config.jobs.persona_reflection_enabled
+        ):
+            return
+        canonical_user_id = str(payload.get("canonical_user_id", "")).strip()
+        if not canonical_user_id:
+            raise ValueError("persona reflection job missing canonical_user_id")
+        insight = payload.get("insight")
+        experiences = payload.get("experiences")
+        if not isinstance(insight, dict) or not isinstance(experiences, list):
+            raise ValueError("persona reflection job payload is incomplete")
+
+        current_state = await self.persona_state_service.get_state(canonical_user_id)
+        current_values = (
+            self.persona_state_service.neutral_values()
+            if current_state is None
+            else {
+                field_name: float(getattr(current_state, field_name))
+                for field_name in (
+                    "familiarity",
+                    "trust",
+                    "warmth",
+                    "formality_preference",
+                    "directness_preference",
+                )
+            }
+        )
+        semantic_experiences: list[dict[str, Any]] = []
+        source_refs = []
+        for item in experiences:
+            if not isinstance(item, dict):
+                raise ValueError("persona reflection experience payload is invalid")
+            experience_id = str(item.get("experience_id", "")).strip()
+            if experience_id:
+                source_refs.append(f"experience:{experience_id}")
+            semantic_experiences.append(
+                {
+                    "category": str(item.get("category", "")),
+                    "summary": str(item.get("summary", "")),
+                    "detail_summary": (
+                        str(item["detail_summary"])
+                        if item.get("detail_summary") is not None
+                        else ""
+                    ),
+                    "importance": float(item.get("importance", 0.0)),
+                    "confidence": float(item.get("confidence", 0.0)),
+                }
+            )
+        insight_id = str(insight.get("insight_id", "")).strip()
+        if insight_id:
+            source_refs.append(f"insight:{insight_id}")
+
+        analysis_payload = {
+            "current_persona_state_json": json.dumps(
+                current_values,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "insight_topic_summary": str(insight.get("topic_summary", "")),
+            "insight_progress_summary": str(insight.get("progress_summary", "")),
+            "insight_summary_text": str(insight.get("summary_text", "")),
+            "experiences_json": json.dumps(
+                semantic_experiences,
+                ensure_ascii=False,
+            ),
+        }
+        results = await self.analyzer_manager.dispatch_stage(
+            "persona_reflection",
+            payload=analysis_payload,
+            umo=str(payload.get("umo", "")) or None,
+            conversation_id=str(payload.get("conversation_id", "")) or None,
+        )
+        result = results.get("persona_reflect_v1")
+        if result is None:
+            raise RuntimeError(
+                "persona_reflection missing required analyzer persona_reflect_v1"
+            )
+        applied = await self.persona_state_service.apply_reflection_result(
+            canonical_user_id,
+            persona_id=current_state.persona_id if current_state else None,
+            data=result.data,
+            source_refs=source_refs,
+        )
+        logger.info(
+            "memory persona reflection finished: canonical_user_id=%s "
+            "insight_id=%s applied=%s",
+            canonical_user_id,
+            insight_id or None,
+            applied is not None,
+        )
+
+    @staticmethod
+    def _build_persona_reflection_payload(
+        job: MemoryScopeJob,
+        insight: SessionInsight,
+        experiences: list[Experience],
+    ) -> dict[str, Any]:
+        return {
+            "canonical_user_id": job.owner_id,
+            "conversation_id": job.conversation_id,
+            "umo": job.umo,
+            "insight": {
+                "insight_id": insight.insight_id,
+                "topic_summary": insight.topic_summary or "",
+                "progress_summary": insight.progress_summary or "",
+                "summary_text": insight.summary_text or "",
+            },
+            "experiences": [
+                {
+                    "experience_id": item.experience_id,
+                    "category": (
+                        item.category.value
+                        if hasattr(item.category, "value")
+                        else str(item.category)
+                    ),
+                    "summary": item.summary,
+                    "detail_summary": item.detail_summary,
+                    "importance": item.importance,
+                    "confidence": item.confidence,
+                }
+                for item in experiences
+            ],
+        }
 
     async def prewarm_vector_index(self) -> bool:
         await self.initialize()

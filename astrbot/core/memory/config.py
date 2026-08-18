@@ -203,6 +203,37 @@ Existing memory JSON:
 Supporting experiences JSON:
 {supporting_experiences_json}
 """,
+    "persona_reflect_v1.md": """You are a Persona relationship reflection analyzer.
+
+Task:
+- Read only the consolidated semantic memory supplied below.
+- Decide whether there is strong, repeated evidence to adjust the dynamic relationship state.
+- Do not infer a change from one isolated event.
+- Never propose changes to the static Persona itself.
+- Return raw JSON only. Do NOT use markdown code blocks. Do NOT wrap the response in triple backticks.
+
+Requirements:
+- should_update: boolean
+- confidence: float between 0 and 1
+- reason: concise explanation for the audit log
+- deltas: object containing all five fields below; each value is a small signed change
+  - familiarity
+  - trust
+  - warmth
+  - formality_preference
+  - directness_preference
+
+Current dynamic state:
+{current_persona_state_json}
+
+Latest session insight:
+- topic: {insight_topic_summary}
+- progress: {insight_progress_summary}
+- summary: {insight_summary_text}
+
+Consolidated experiences:
+{experiences_json}
+""",
 }
 
 DEFAULT_IDENTITY_MAPPINGS_PAYLOAD: dict[str, list[dict[str, str]]] = {"bindings": []}

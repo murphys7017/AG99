@@ -43,6 +43,13 @@ OUTPUT_SCHEMA_CONTRACTS: dict[str, str] = {
         'Return exactly one JSON object with keys: "title", "summary", '
         '"detail_summary", "tags", "importance", "confidence", and "status".'
     ),
+    "PersonaReflectResult": (
+        'Return exactly one JSON object with keys: "should_update", "confidence", '
+        '"reason", and "deltas". "should_update" must be a boolean. '
+        '"confidence" must be a number between 0 and 1. "reason" must be a non-empty string. '
+        '"deltas" must contain numeric keys "familiarity", "trust", "warmth", '
+        '"formality_preference", and "directness_preference".'
+    ),
 }
 
 

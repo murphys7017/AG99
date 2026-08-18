@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
+from .analyzers.base import MemoryAnalyzerExecutionError
 from .store import MemoryStore
 from .types import (
     PersonaEvolutionLog,
@@ -127,6 +128,76 @@ class PersonaStateService:
             created_at=current_time,
         )
         return PersonaStateEvolutionResult(state=persisted, log=log)
+
+    def validate_reflection_result(
+        self,
+        data: object,
+    ) -> tuple[bool, float, str | None, dict[str, float]]:
+        if not isinstance(data, dict):
+            raise MemoryAnalyzerExecutionError(
+                "persona_reflection returned invalid payload"
+            )
+        should_update = data.get("should_update")
+        if not isinstance(should_update, bool):
+            raise MemoryAnalyzerExecutionError(
+                "persona_reflection field should_update must be boolean"
+            )
+        try:
+            confidence = self._require_finite_number(
+                data.get("confidence"),
+                "confidence",
+            )
+        except ValueError as exc:
+            raise MemoryAnalyzerExecutionError(str(exc)) from exc
+        if not 0.0 <= confidence <= 1.0:
+            raise MemoryAnalyzerExecutionError(
+                "persona_reflection field confidence must be between 0 and 1"
+            )
+        reason = data.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise MemoryAnalyzerExecutionError(
+                "persona_reflection field reason must be a non-empty string"
+            )
+        deltas = data.get("deltas")
+        if not isinstance(deltas, Mapping):
+            raise MemoryAnalyzerExecutionError(
+                "persona_reflection field deltas must be an object"
+            )
+        missing_fields = set(PERSONA_STATE_FIELDS) - set(deltas)
+        if missing_fields:
+            fields = ", ".join(sorted(missing_fields))
+            raise MemoryAnalyzerExecutionError(
+                f"persona_reflection deltas missing fields: {fields}"
+            )
+        try:
+            normalized_deltas = self._normalize_deltas(deltas)
+        except ValueError as exc:
+            raise MemoryAnalyzerExecutionError(str(exc)) from exc
+        return should_update, confidence, reason.strip(), normalized_deltas
+
+    async def apply_reflection_result(
+        self,
+        canonical_user_id: str,
+        *,
+        persona_id: str | None,
+        data: object,
+        source_refs: Sequence[SourceRef] = (),
+        now: datetime | None = None,
+    ) -> PersonaStateEvolutionResult | None:
+        should_update, confidence, reason, deltas = self.validate_reflection_result(
+            data
+        )
+        if not should_update:
+            return None
+        return await self.apply_reflection(
+            canonical_user_id,
+            persona_id=persona_id,
+            deltas=deltas,
+            confidence=confidence,
+            reason=reason,
+            source_refs=source_refs,
+            now=now,
+        )
 
     async def list_evolution_logs(
         self,

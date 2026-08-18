@@ -300,6 +300,10 @@ def test_build_default_memory_config_payload_contains_expected_sections():
         payload["analysis"]["analyzers"]["long_term_compose_v1"]["prompt_file"]
         == "long_term_compose_v1.md"
     )
+    assert (
+        payload["analysis"]["analyzers"]["persona_reflect_v1"]["prompt_file"]
+        == "persona_reflect_v1.md"
+    )
     assert payload["vector_index"]["enabled"] is True
     assert payload["vector_index"]["provider"] == "faiss"
     assert payload["vector_index"]["provider_id"] == ""
@@ -319,6 +323,9 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     ]
     assert payload["analysis"]["stages"]["long_term_compose"]["analyzers"] == [
         "long_term_compose_v1",
+    ]
+    assert payload["analysis"]["stages"]["persona_reflection"]["analyzers"] == [
+        "persona_reflect_v1",
     ]
 
 

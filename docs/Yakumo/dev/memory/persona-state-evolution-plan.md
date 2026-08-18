@@ -105,11 +105,12 @@ PersonaState 只允许进入：
 ### 6A：持久化与服务边界（已完成）
 
 - 新增 `PersonaStateService`。
+- Persona reflection analyzer 与 `persona_reflection` 后台 Job 已接入 consolidation 成功后的 USER scope 链路。
 - 新增原子 apply、读取 evolution log 和 rollback Store API。
 - 定义中性基线、delta 限幅和 interval 判断。
 - 不接 Provider，不接自动调度。
 
-### 6B：Analyzer 与后台 Job
+### 6B：Analyzer 与后台 Job（已完成）
 
 - 增加 `persona_reflect_v1` prompt、schema contract 和 analysis stage。
 - `MemoryJobScheduler` 增加 `persona_reflection` kind。
