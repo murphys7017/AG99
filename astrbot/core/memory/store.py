@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import and_
+from sqlalchemy import and_, case
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import col, desc, select, text
 
@@ -313,33 +314,46 @@ class MemoryStore:
         memory: ShortTermMemory,
     ) -> ShortTermMemory:
         conversation_key = self._conversation_key(memory.conversation_id)
+        fingerprint = memory.fingerprint or build_short_term_fingerprint(
+            memory.short_summary,
+            memory.active_focus,
+        )
         async with self.get_db() as session:
             async with session.begin():
+                statement = sqlite_insert(MemoryShortTermMemory).values(
+                    umo=memory.umo,
+                    conversation_id=conversation_key,
+                    short_summary=memory.short_summary,
+                    active_focus=memory.active_focus,
+                    updated_at=memory.updated_at,
+                    revision=1,
+                    fingerprint=fingerprint,
+                )
+                statement = statement.on_conflict_do_update(
+                    index_elements=["umo", "conversation_id"],
+                    set_={
+                        "short_summary": statement.excluded.short_summary,
+                        "active_focus": statement.excluded.active_focus,
+                        "updated_at": statement.excluded.updated_at,
+                        "revision": case(
+                            (
+                                MemoryShortTermMemory.fingerprint
+                                == statement.excluded.fingerprint,
+                                MemoryShortTermMemory.revision,
+                            ),
+                            else_=MemoryShortTermMemory.revision + 1,
+                        ),
+                        "fingerprint": statement.excluded.fingerprint,
+                    },
+                )
+                await session.execute(statement)
                 entity = await self._get_short_term_memory_entity(
                     session,
                     memory.umo,
                     conversation_key,
                 )
-                if entity is None:
-                    entity = MemoryShortTermMemory(
-                        umo=memory.umo,
-                        conversation_id=conversation_key,
-                    )
-                    session.add(entity)
+                assert entity is not None
 
-                entity.short_summary = memory.short_summary
-                entity.active_focus = memory.active_focus
-                entity.updated_at = memory.updated_at
-                fingerprint = memory.fingerprint or build_short_term_fingerprint(
-                    memory.short_summary,
-                    memory.active_focus,
-                )
-                if entity.fingerprint != fingerprint:
-                    entity.revision = max(1, int(entity.revision or 0) + 1)
-                entity.fingerprint = fingerprint
-
-                await session.flush()
-                await session.refresh(entity)
                 return self._to_short_term_memory(entity)
 
     async def get_short_term_memory(

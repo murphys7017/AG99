@@ -44,7 +44,7 @@ class EmbeddingStorage:
             raise ValueError(
                 f"向量维度不匹配, 期望: {self.dimension}, 实际: {vector.shape[0]}",
             )
-        await asyncio.to_thread(self._insert_sync, vector, id)
+        await self._run_io(self._insert_sync, vector, id)
 
     async def insert_batch(self, vectors: np.ndarray, ids: list[int]) -> None:
         """批量插入向量
@@ -61,7 +61,7 @@ class EmbeddingStorage:
             raise ValueError(
                 f"向量维度不匹配, 期望: {self.dimension}, 实际: {vectors.shape[1]}",
             )
-        await asyncio.to_thread(self._insert_batch_sync, vectors, ids)
+        await self._run_io(self._insert_batch_sync, vectors, ids)
 
     async def search(self, vector: np.ndarray, k: int) -> tuple:
         """搜索最相似的向量
@@ -74,7 +74,7 @@ class EmbeddingStorage:
 
         """
         assert self.index is not None, "FAISS index is not initialized."
-        return await asyncio.to_thread(self._search_sync, vector, k)
+        return await self._run_io(self._search_sync, vector, k)
 
     async def delete(self, ids: list[int]) -> None:
         """删除向量
@@ -85,7 +85,7 @@ class EmbeddingStorage:
         """
         assert self.index is not None, "FAISS index is not initialized."
         id_array = np.array(ids, dtype=np.int64)
-        await asyncio.to_thread(self._delete_sync, id_array)
+        await self._run_io(self._delete_sync, id_array)
 
     async def save_index(self) -> None:
         """保存索引
@@ -96,7 +96,21 @@ class EmbeddingStorage:
         """
         if self.index is None:
             return
-        await asyncio.to_thread(self._save_index_locked_sync)
+        await self._run_io(self._save_index_locked_sync)
+
+    async def _run_io(self, func, *args):
+        """Let synchronous FAISS work finish before propagating cancellation."""
+        worker = asyncio.create_task(asyncio.to_thread(func, *args))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await worker
+            except BaseException:
+                # The original cancellation remains the public outcome; awaiting
+                # the worker still consumes any exception raised in the thread.
+                pass
+            raise
 
     def _insert_sync(self, vector: np.ndarray, id: int) -> None:
         with self._io_lock:

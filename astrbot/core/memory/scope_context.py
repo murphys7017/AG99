@@ -18,12 +18,17 @@ class MemoryScopeContext:
         default_factory=lambda: ScopeRef(ScopeType.GLOBAL, "global")
     )
 
-    def refs(self) -> tuple[ScopeRef, ...]:
+    def recall_refs(self) -> tuple[ScopeRef, ...]:
+        """Return scopes eligible for reads, including the global scope."""
         return tuple(
             ref
             for ref in (self.user, self.group, self.global_scope)
             if ref is not None
         )
+
+    def contribution_refs(self) -> tuple[ScopeRef, ...]:
+        """Return default write scopes without leaking ordinary turns globally."""
+        return tuple(ref for ref in (self.user, self.group) if ref is not None)
 
 
 def resolve_memory_scope_context(
