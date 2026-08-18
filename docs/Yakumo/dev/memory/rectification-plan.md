@@ -20,7 +20,7 @@
 
 ## 实施阶段
 
-当前进度：Phase 1、Phase 2、Phase 3 和 Phase 4 已完成；Phase 5 第一批已完成 consolidation 与长期 promotion 的统一后台调度。
+当前进度：Phase 1、Phase 2、Phase 3 和 Phase 4 已完成；Phase 5 已完成 consolidation/promotion、Recall 刷新和 dirty vector sync 的统一后台调度，PersonaState 自动演进仍待设计与实现。
 
 ### Phase 1：先修基础稳定性，不改变记忆语义
 
@@ -47,7 +47,7 @@ Phase 4 已同时完成读取与写入：`memory.recall.scope_priority` 控制�
 
 ### Phase 5：语义投影与异步调度收口
 
-将 semantic payload 与内部 provenance 分成两个明确结构。MemoryCollector 默认只序列化语义字段，调试字段也不得默认进入模型 Prompt。已建立后台 `MemoryJobScheduler`，第一批负责短期更新后的 consolidation 与 promotion：按 scope 串行、按 conversation 合并待处理任务，并消费后台异常形成诊断。Recall 快照刷新、dirty vector sync 和 PersonaState 自动演进仍待后续批次接入；它们不能被误认为已由本批 scheduler 托管。
+将 semantic payload 与内部 provenance 分成两个明确结构。MemoryCollector 默认只序列化语义字段，调试字段也不得默认进入模型 Prompt。`MemoryJobScheduler` 现在统一承载四类后台工作：短期更新后的 consolidation、promotion、Recall refresh 和 dirty vector sync。任务按 scope 串行、按 dedupe key 合并，并消费后台异常形成诊断；Recall 仍保持 stale-while-revalidate，dirty vector sync 提供显式的非等待提交入口。PersonaState 自动演进仍待后续设计与实现，不能被误认为已由本批 scheduler 托管。
 
 `MemoryService.update_from_postprocess()` 保留两种明确语义：生产 Postprocessor 传入 `background_jobs=True`，只完成回合与短期写入并提交后台任务；其他直接调用默认同步执行 scope job，并继续传播 analyzer/整理异常，保持管理和测试入口的可观察行为。
 
@@ -64,4 +64,4 @@ Phase 4 已同时完成读取与写入：`memory.recall.scope_priority` 控制�
 
 ## 执行顺序
 
-先完成 Phase 1 并单独验证，再依次推进作用域、Short-Term revision、Recall Snapshot、Personal 接入和群聊记忆。Phase 5 按“consolidation/promotion 调度 → Recall 刷新与向量同步调度 → PersonaState 演进”分批推进。每个阶段都保持可回滚，避免同时引入“作用域变化”和“读取时序变化”导致问题难以归因。
+先完成 Phase 1 并单独验证，再依次推进作用域、Short-Term revision、Recall Snapshot、Personal 接入和群聊记忆。Phase 5 已按“consolidation/promotion 调度 → Recall 刷新与向量同步调度”推进完成；下一阶段只单独处理 PersonaState 演进设计与实现。每个阶段都保持可回滚，避免同时引入“作用域变化”和“读取时序变化”导致问题难以归因。

@@ -61,9 +61,11 @@ class MemoryService:
         self.turn_record_service = turn_record_service
         self.short_term_service = short_term_service
         self.snapshot_builder = snapshot_builder
+        self.job_scheduler = MemoryJobScheduler(self._run_memory_job)
         self.recall_snapshot_manager = RecallSnapshotManager(
             snapshot_builder,
             config=self.store.config.recall,
+            submit_job=self.job_scheduler.submit,
         )
         self.analyzer_manager = analyzer_manager or MemoryAnalyzerManager()
         self.identity_mapping_service = identity_mapping_service
@@ -73,7 +75,6 @@ class MemoryService:
         self.long_term_service = long_term_service
         self.manual_long_term_service = manual_long_term_service
         self.document_search_service = document_search_service
-        self.job_scheduler = MemoryJobScheduler(self._run_scope_job)
         self._initialized = False
         self._initialize_lock = asyncio.Lock()
 
@@ -238,7 +239,7 @@ class MemoryService:
             read_options=options,
             identity=identity,
         )
-        recall = self.recall_snapshot_manager.get_or_schedule(
+        recall = await self.recall_snapshot_manager.get_or_schedule(
             snapshot,
             scope_context=scope_context,
             read_options=options,
@@ -306,6 +307,24 @@ class MemoryService:
             scope_type=job.scope_type,
             scope_id=job.scope_id,
         )
+
+    async def _run_memory_job(self, job: MemoryScopeJob) -> None:
+        if job.kind == "scope":
+            await self._run_scope_job(job)
+            return
+        if job.kind == "recall_refresh":
+            await self.recall_snapshot_manager.run_refresh_job(job.payload)
+            return
+        if job.kind == "vector_sync":
+            if not isinstance(job.payload, str):
+                raise TypeError("memory vector sync job payload is invalid")
+            refreshed = await self.refresh_long_term_vector_index(job.payload)
+            if refreshed.vector_sync_status == LongTermVectorSyncStatus.DIRTY:
+                raise RuntimeError(
+                    f"memory vector sync remains dirty: {refreshed.memory_id}"
+                )
+            return
+        raise ValueError(f"unknown memory job kind: {job.kind}")
 
     async def prewarm_vector_index(self) -> bool:
         await self.initialize()
@@ -501,6 +520,33 @@ class MemoryService:
                 await self.refresh_long_term_vector_index(memory.memory_id)
             )
         return refreshed
+
+    async def schedule_dirty_long_term_vector_indexes(
+        self,
+        *,
+        limit: int = 100,
+    ) -> int:
+        """Submit dirty vector repairs without waiting for embedding work."""
+        await self.initialize()
+        dirty_memories = await self.store.list_long_term_memories_by_vector_status(
+            LongTermVectorSyncStatus.DIRTY,
+            limit=limit,
+        )
+        submitted = 0
+        for memory in dirty_memories:
+            job = MemoryScopeJob(
+                owner_id=memory.canonical_user_id or memory.memory_id,
+                scope_type="vector_sync",
+                scope_id=memory.memory_id,
+                conversation_id=None,
+                umo=memory.umo,
+                kind="vector_sync",
+                dedupe_key=memory.memory_id,
+                payload=memory.memory_id,
+            )
+            if await self.job_scheduler.submit(job):
+                submitted += 1
+        return submitted
 
     def _get_vector_index(self) -> MemoryVectorIndex | None:
         if self.long_term_service is not None and self.long_term_service.vector_index:

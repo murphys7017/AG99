@@ -15,6 +15,9 @@ class MemoryScopeJob:
     scope_id: str
     conversation_id: str | None
     umo: str
+    kind: str = "scope"
+    dedupe_key: str | None = None
+    payload: object | None = None
 
     @property
     def scope_key(self) -> tuple[str, str, str]:
@@ -24,9 +27,13 @@ class MemoryScopeJob:
     def conversation_key(self) -> str:
         return self.conversation_id or ""
 
+    @property
+    def queue_key(self) -> str:
+        return self.dedupe_key or self.conversation_key
+
 
 class MemoryJobScheduler:
-    """Serialize memory jobs by scope while coalescing repeated conversations."""
+    """Serialize memory jobs by scope while coalescing repeated work."""
 
     def __init__(
         self,
@@ -48,16 +55,17 @@ class MemoryJobScheduler:
         async with self._lock:
             if self._closed:
                 logger.debug(
-                    "memory job rejected during shutdown: scope=%s conversation_id=%s",
+                    "memory job rejected during shutdown: kind=%s scope=%s queue_key=%s",
+                    job.kind,
                     job.scope_key,
-                    job.conversation_id,
+                    job.queue_key,
                 )
                 return False
 
             pending_for_scope = self._pending[job.scope_key]
-            if job.conversation_key in pending_for_scope:
+            if job.queue_key in pending_for_scope:
                 self._coalesced += 1
-            pending_for_scope[job.conversation_key] = job
+            pending_for_scope[job.queue_key] = job
             self._submitted += 1
             task = self._tasks.get(job.scope_key)
             if task is None or task.done():
@@ -119,9 +127,10 @@ class MemoryJobScheduler:
                     except Exception as exc:  # noqa: BLE001
                         self._failed += 1
                         logger.error(
-                            "memory scope job failed: scope=%s conversation_id=%s error=%s",
+                            "memory job failed: kind=%s scope=%s queue_key=%s error=%s",
+                            job.kind,
                             scope_key,
-                            job.conversation_id,
+                            job.queue_key,
                             exc,
                             exc_info=True,
                         )

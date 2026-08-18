@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from astrbot.core import logger
 
 from .config import MemoryRecallConfig
 from .fingerprint import build_short_term_fingerprint
+from .job_scheduler import MemoryScopeJob
 from .recall_policy import ScopedRecallPolicy
 from .scope_context import MemoryScopeContext
 from .snapshot_builder import MemorySnapshotBuilder, MemorySnapshotReadOptions
@@ -46,6 +49,15 @@ class _RecallEntry:
     refreshed_at: float
 
 
+@dataclass(frozen=True, slots=True)
+class _RecallRefreshJob:
+    key: _RecallKey
+    snapshot: MemorySnapshot
+    query: str | None
+    read_options: MemorySnapshotReadOptions
+    scope_context: MemoryScopeContext | None
+
+
 class RecallSnapshotManager:
     """Serve stale recall data while refreshing one version in the background."""
 
@@ -53,16 +65,19 @@ class RecallSnapshotManager:
         self,
         builder: MemorySnapshotBuilder,
         config: MemoryRecallConfig,
+        submit_job: Callable[[MemoryScopeJob], Awaitable[bool]] | None = None,
     ) -> None:
         self.builder = builder
         self.config = config
         self.scope_policy = ScopedRecallPolicy(config)
         self._entries: OrderedDict[_RecallKey, _RecallEntry] = OrderedDict()
         self._latest_by_family: dict[_RecallFamilyKey, _RecallKey] = {}
-        self._refresh_tasks: dict[_RecallKey, asyncio.Task[None]] = {}
+        self._scheduled_keys: set[_RecallKey] = set()
+        self._detached_tasks: set[asyncio.Task[None]] = set()
+        self._submit_job = submit_job
         self._closed = False
 
-    def get_or_schedule(
+    async def get_or_schedule(
         self,
         snapshot: MemorySnapshot,
         *,
@@ -116,7 +131,7 @@ class RecallSnapshotManager:
 
         stale_key = self._latest_by_family.get(family)
         stale_entry = self._entries.get(stale_key) if stale_key is not None else None
-        self._schedule_refresh(
+        await self._schedule_refresh(
             key,
             snapshot=snapshot,
             query=query,
@@ -127,14 +142,15 @@ class RecallSnapshotManager:
 
     async def close(self) -> None:
         self._closed = True
-        tasks = list(self._refresh_tasks.values())
+        self._scheduled_keys.clear()
+        tasks = list(self._detached_tasks)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        self._refresh_tasks.clear()
+        self._detached_tasks.clear()
 
-    def _schedule_refresh(
+    async def _schedule_refresh(
         self,
         key: _RecallKey,
         *,
@@ -143,30 +159,48 @@ class RecallSnapshotManager:
         read_options: MemorySnapshotReadOptions,
         scope_context: MemoryScopeContext | None,
     ) -> None:
-        if key in self._refresh_tasks:
+        if key in self._scheduled_keys:
             return
-        task = asyncio.create_task(
-            self._refresh(key, snapshot, query, read_options, scope_context),
-            name="memory-recall-refresh",
-        )
-        self._refresh_tasks[key] = task
-
-    async def _refresh(
-        self,
-        key: _RecallKey,
-        snapshot: MemorySnapshot,
-        query: str | None,
-        read_options: MemorySnapshotReadOptions,
-        scope_context: MemoryScopeContext | None,
-    ) -> None:
-        try:
-            if read_options.long_term.query_required and not query:
-                return
-            recalled = await self.builder.build_recall_snapshot(
-                snapshot,
+        self._scheduled_keys.add(key)
+        job = MemoryScopeJob(
+            owner_id=key.family.canonical_user_id,
+            scope_type="recall_refresh",
+            scope_id=_key_digest(key.family),
+            conversation_id=key.family.conversation_id,
+            umo=key.family.umo,
+            kind="recall_refresh",
+            dedupe_key=_key_digest(key),
+            payload=_RecallRefreshJob(
+                key=key,
+                snapshot=snapshot,
                 query=query,
                 read_options=read_options,
                 scope_context=scope_context,
+            ),
+        )
+        if self._submit_job is None:
+            task = asyncio.create_task(
+                self._run_detached_refresh(job.payload),
+                name="memory-recall-refresh",
+            )
+            self._detached_tasks.add(task)
+            task.add_done_callback(self._detached_tasks.discard)
+            return
+        if not await self._submit_job(job):
+            self._scheduled_keys.discard(key)
+
+    async def run_refresh_job(self, payload: object | None) -> None:
+        if not isinstance(payload, _RecallRefreshJob):
+            raise TypeError("memory recall refresh job payload is invalid")
+        key = payload.key
+        try:
+            if payload.read_options.long_term.query_required and not payload.query:
+                return
+            recalled = await self.builder.build_recall_snapshot(
+                payload.snapshot,
+                query=payload.query,
+                read_options=payload.read_options,
+                scope_context=payload.scope_context,
             )
             if self._closed:
                 return
@@ -183,8 +217,17 @@ class RecallSnapshotManager:
                 key.family.conversation_id,
                 exc,
             )
+            raise
         finally:
-            self._refresh_tasks.pop(key, None)
+            self._scheduled_keys.discard(key)
+
+    async def _run_detached_refresh(self, payload: object | None) -> None:
+        try:
+            await self.run_refresh_job(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
 
     def _is_expired(self, entry: _RecallEntry) -> bool:
         interval = max(0.0, float(self.config.refresh_interval_seconds))
@@ -201,6 +244,10 @@ def _build_recall_query(short_term) -> str | None:
     parts = [short_term.short_summary, short_term.active_focus]
     query = " ".join(str(part).strip() for part in parts if part and str(part).strip())
     return query or None
+
+
+def _key_digest(value: object) -> str:
+    return hashlib.sha256(repr(value).encode("utf-8")).hexdigest()
 
 
 __all__ = ["RecallSnapshotManager"]
