@@ -24,8 +24,7 @@
 
 ## 当前限制
 
-- 自动 PersonaState 演进尚未形成与短期/长期链路同等完整的 service；默认注入也关闭。
-- consolidation、长期 promotion、Recall 刷新和 dirty vector sync 已由后台 scheduler 承担；PersonaState 自动演进仍未形成完整 service、触发和审核链路。
+- consolidation、长期 promotion、Recall 刷新和 dirty vector sync 已由后台 scheduler 承担；PersonaState 自动演进尚未形成完整 service、触发和审核链路，默认注入也关闭。
 - canonical identity 缺失的用户回合只跳过 USER 中长期沉淀；若回合带有稳定 GROUP scope，GROUP 中长期沉淀仍可执行。
 - Memory analyzer 依赖配置的 Provider；分析失败按 Postprocessor 失败语义记录并跳过该次更新。
 - 向量检索、文档回表和 analyzer 调用仍需要持续关注延迟、超时和可观测性。
@@ -33,8 +32,8 @@
 
 ## 下一步
 
-1. 明确 PersonaState 自动演进的触发、审核和回滚边界。
-2. 明确并实现 PersonaState 自动演进的触发、审核、回滚和作用域边界。
+1. 按 `persona-state-evolution-plan.md` 先实现 PersonaState 原子 apply/log/rollback 服务边界。
+2. 再接入默认关闭、仅 USER scope 的 reflection analyzer 和后台 Job。
 3. 完善 Memory read/write latency、降级组件和后台任务诊断。
 4. 固化 finalized material 到 MemoryUpdateRequest 的版本化契约，并进行真实运行验收。
 
