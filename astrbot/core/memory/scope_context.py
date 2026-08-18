@@ -75,6 +75,18 @@ def scope_context_from_dict(value: Any) -> MemoryScopeContext | None:
     )
 
 
+def scope_owner_id(
+    scope_type: ScopeType | str,
+    scope_id: str,
+    canonical_user_id: str | None = None,
+) -> str | None:
+    """Return the stable storage owner for a contribution scope."""
+    normalized_type = _enum_value(scope_type)
+    if normalized_type == ScopeType.USER.value:
+        return _normalize(canonical_user_id) or _normalize(scope_id) or None
+    return _normalize(scope_id) or None
+
+
 def _scope_ref_to_dict(ref: ScopeRef | None) -> dict[str, str] | None:
     if ref is None:
         return None
@@ -112,4 +124,5 @@ __all__ = [
     "resolve_memory_scope_context",
     "scope_context_from_dict",
     "scope_context_to_dict",
+    "scope_owner_id",
 ]

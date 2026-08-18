@@ -19,6 +19,7 @@ from .keyword_extractor import (
     ConfiguredMemoryKeywordExtractor,
     build_keyword_extractor,
 )
+from .scope_context import scope_owner_id
 from .store import MemoryStore
 from .types import (
     Experience,
@@ -69,6 +70,9 @@ class LongTermMemoryService:
     async def should_run_promotion(
         self,
         canonical_user_id: str,
+        *,
+        scope_type: ScopeType | str = ScopeType.USER,
+        scope_id: str | None = None,
     ) -> bool:
         if not self._is_enabled():
             logger.info(
@@ -76,7 +80,15 @@ class LongTermMemoryService:
                 canonical_user_id,
             )
             return False
-        scope_type, scope_id = self._resolve_scope(canonical_user_id)
+        owner_id = scope_owner_id(
+            scope_type,
+            scope_id or canonical_user_id,
+            canonical_user_id,
+        )
+        if owner_id is None:
+            return False
+        canonical_user_id = owner_id
+        scope_id = scope_id or owner_id
         cursor = await self.store.get_long_term_promotion_cursor(
             canonical_user_id,
             scope_type,
@@ -104,13 +116,24 @@ class LongTermMemoryService:
     async def run_promotion(
         self,
         canonical_user_id: str,
+        *,
+        scope_type: ScopeType | str = ScopeType.USER,
+        scope_id: str | None = None,
     ) -> list[LongTermMemoryIndex]:
         if not self._is_enabled():
             return []
         if self.analyzer_manager is None:
             raise RuntimeError("long-term promotion requested without analyzer manager")
 
-        scope_type, scope_id = self._resolve_scope(canonical_user_id)
+        owner_id = scope_owner_id(
+            scope_type,
+            scope_id or canonical_user_id,
+            canonical_user_id,
+        )
+        if owner_id is None:
+            return []
+        canonical_user_id = owner_id
+        scope_id = scope_id or owner_id
         cursor = await self.store.get_long_term_promotion_cursor(
             canonical_user_id,
             scope_type,
@@ -599,12 +622,6 @@ class LongTermMemoryService:
                 f"long_term_compose returned invalid status `{validated['status']}`"
             )
         return validated
-
-    @staticmethod
-    def _resolve_scope(
-        canonical_user_id: str,
-    ) -> tuple[ScopeType, str]:
-        return ScopeType.USER, canonical_user_id
 
     @staticmethod
     def _resolve_related_experiences(

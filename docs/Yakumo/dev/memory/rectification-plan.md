@@ -20,7 +20,7 @@
 
 ## 实施阶段
 
-当前进度：Phase 1、Phase 2 和 Phase 3 已完成；Phase 4 的 USER/GROUP/GLOBAL scoped recall 已完成，群聊 USER/GROUP 贡献仍待实现。
+当前进度：Phase 1、Phase 2、Phase 3 和 Phase 4 已完成；Phase 5 的统一后台调度仍待实现。
 
 ### Phase 1：先修基础稳定性，不改变记忆语义
 
@@ -43,7 +43,7 @@ Phase 1 的验收重点是：配置隔离、超时可控、并发首次检索不
 
 用户回合在群聊中按策略分别贡献 `USER` 和 `GROUP` 记忆；Personal 检索时合并用户、群组和全局结果，并保持作用域优先级、top-k 和冲突处理可配置。不存在群组身份时只跳过 GROUP，不影响 USER/GLOBAL。
 
-当前已完成读取侧：`memory.recall.scope_priority` 控制启用顺序，现有 injection top-k 继续控制最终数量，`deduplicate_across_scopes` 控制同类同标题/摘要冲突是否由高优先级作用域胜出。USER 读取绑定当前 canonical user；GROUP/GLOBAL 按稳定 scope key 共享读取。写入侧仍保持 USER-only，待下一批单独切换。
+Phase 4 已同时完成读取与写入：`memory.recall.scope_priority` 控制启用顺序，现有 injection top-k 继续控制最终数量，`deduplicate_across_scopes` 控制同类同标题/摘要冲突是否由高优先级作用域胜出。USER 读取绑定当前 canonical user；GROUP/GLOBAL 按稳定 scope key 共享读取。群聊回合按可用 scope 同时贡献 USER/GROUP；共享作用域使用稳定 scope owner key 进行 consolidation、Experience 和 Long-Term promotion，当前贡献者只作为 provenance 保留，不决定共享记忆的可见范围。没有群组身份时只跳过 GROUP，不影响 USER。
 
 ### Phase 5：语义投影与异步调度收口
 

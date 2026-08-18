@@ -15,6 +15,7 @@
 - `MemorySnapshotBuilder` 可读取 topic、short-term、experience、long-term 和 persona state。
 - Prompt 使用异步 Recall Snapshot：当前回合只同步读取 topic、short-term 和 persona state，长期记忆由 short-term revision/fingerprint 驱动后台刷新，首次无缓存时不等待。
 - Recall 可按 `USER`、`GROUP`、`GLOBAL` 合并；USER 绑定当前 canonical user，GROUP/GLOBAL 按稳定 scope key 共享，并按配置的作用域优先级、最终 top-k 和冲突去重策略收口。
+- 群聊用户回合可同时贡献 `USER` 与 `GROUP`；GROUP consolidation 会聚合同一群组的不同成员回合，使用稳定群组 owner key 运行 Experience/Long-Term promotion，贡献者身份仍保留在回合 provenance 中。
 - `MemoryCollector` 已进入统一 Prompt ContextPack，并由 target projection 控制 Router、
   Planner、Persona 和 Core 的可见范围。
 - Interaction 私有 Memory Store 和 `memory.interaction` slot 已删除。
@@ -23,19 +24,17 @@
 
 - 自动 PersonaState 演进尚未形成与短期/长期链路同等完整的 service；默认注入也关闭。
 - consolidation 与长期 promotion 当前主要由回合写入阈值触发，独立后台调度还不是主链。
-- 群聊长期记忆的读取侧已具备 scoped recall，但自动 Experience/Long-Term 贡献仍只写 USER；USER/GROUP 双写尚未接入。
-- canonical identity 缺失的用户回合只保留回合与短期写入，中长期沉淀会明确停止。
+- canonical identity 缺失的用户回合只跳过 USER 中长期沉淀；若回合带有稳定 GROUP scope，GROUP 中长期沉淀仍可执行。
 - Memory analyzer 依赖配置的 Provider；分析失败按 Postprocessor 失败语义记录并跳过该次更新。
 - 向量检索、文档回表和 analyzer 调用仍需要持续关注延迟、超时和可观测性。
 - Context Catalog 的生命周期与脱敏字段尚未全部成为运行时强约束。
 
 ## 下一步
 
-1. 接入群聊回合的 USER/GROUP 双作用域 Experience 与 Long-Term 贡献。
-2. 明确 PersonaState 自动演进的触发、审核和回滚边界。
-3. 将后台 consolidation/promotion 接入统一的预算、调度和任务 owner。
-4. 完善 Memory read/write latency、降级组件和向量同步诊断。
-5. 固化 finalized material 到 MemoryUpdateRequest 的版本化契约。
+1. 明确 PersonaState 自动演进的触发、审核和回滚边界。
+2. 将后台 consolidation/promotion 接入统一的预算、调度和任务 owner。
+3. 完善 Memory read/write latency、降级组件和向量同步诊断。
+4. 固化 finalized material 到 MemoryUpdateRequest 的版本化契约。
 
 具体模块关系见 `architecture.md`；配置事实以 `astrbot/core/memory/config.py`、
 `astrbot/core/memory_config_defaults.py` 和统一配置 schema 为准。

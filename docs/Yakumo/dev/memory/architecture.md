@@ -35,16 +35,16 @@ material；普通 Pipeline 则读取官方 Conversation 或当前 Provider 回�
 2. `assistant_only=True` 时结束写入：该回合保留精确历史，但不更新 `TopicState`、
    `ShortTermMemory`、`PersonaState`，也不运行 consolidation、Experience 或长期记忆
    promotion。
-3. 普通用户回合更新 `TopicState` 与 `ShortTermMemory`，再解析 canonical user identity。
-4. 有 canonical identity 且达到阈值时，运行 consolidation，产生 `SessionInsight` 与
-   `Experience`。
-5. 达到长期沉淀阈值时，创建或更新 `LongTermMemory`，同步文档和向量索引状态。
+3. 普通用户回合更新 `TopicState` 与 `ShortTermMemory`，再按 `MemoryScopeContext` 枚举可贡献的 USER/GROUP scope。
+4. 每个 scope 独立按阈值运行 consolidation，产生对应的 `SessionInsight` 与 `Experience`；GROUP 会聚合同一群组不同成员的回合。
+5. 每个 scope 独立推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。
 
 assistant-only 是 Conversation 历史转换层的显式标记，不由文本是否为空推断。主动 Persona
 表达以空 `user_message` 形成该标记，因此可继续提供给 Conversation 和 Prompt 作为语义上下文，
 却不会把 Bot 自己的表达反馈成抽象记忆。真实的附件或媒体用户输入会归一化为
 `[attachment]`，仍按用户回合处理。缺少 canonical user identity 的用户回合仍可写入回合和
-短期层；中长期链路停止，不用平台身份做隐式 fallback。平台白名单关闭 Memory 写入时，
+短期层；若存在稳定 GROUP scope，GROUP 中长期沉淀仍可继续，否则中长期链路停止，不用平台身份
+做隐式 USER fallback。平台白名单关闭 Memory 写入时，
 Postprocessor 直接跳过该事件。
 
 ## 读取链路

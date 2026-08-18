@@ -603,6 +603,51 @@ class MemoryStore:
             result = await session.execute(stmt)
             return [self._to_turn_record(item) for item in result.scalars().all()]
 
+    async def list_turn_records_for_scope(
+        self,
+        scope_type: ScopeType | str,
+        scope_id: str,
+        conversation_id: str | None,
+        start_at: datetime | None,
+        end_at: datetime | None = None,
+        *,
+        umo: str | None = None,
+    ) -> list[TurnRecord]:
+        """Load turns that contributed to a shared scope.
+
+        Scope membership is stored as JSON on the turn record, so the final
+        membership check stays in Python instead of relying on SQLite JSON
+        extensions. The query is still bounded by the conversation and time
+        window used by consolidation.
+        """
+        async with self.get_db() as session:
+            conditions = []
+            if umo is not None:
+                conditions.append(col(MemoryTurnRecord.umo) == umo)
+            if conversation_id is None:
+                conditions.append(col(MemoryTurnRecord.conversation_id).is_(None))
+            else:
+                conditions.append(
+                    col(MemoryTurnRecord.conversation_id) == conversation_id
+                )
+            if start_at is not None:
+                conditions.append(col(MemoryTurnRecord.message_timestamp) >= start_at)
+            if end_at is not None:
+                conditions.append(col(MemoryTurnRecord.message_timestamp) <= end_at)
+            stmt = select(MemoryTurnRecord)
+            if conditions:
+                stmt = stmt.where(and_(*conditions))
+            stmt = stmt.order_by(MemoryTurnRecord.message_timestamp)
+            result = await session.execute(stmt)
+            records = [self._to_turn_record(item) for item in result.scalars().all()]
+
+        expected_type = self._enum_value(scope_type)
+        return [
+            record
+            for record in records
+            if _turn_record_has_scope(record, expected_type, scope_id)
+        ]
+
     async def upsert_long_term_memory_index(
         self,
         memory: LongTermMemoryIndex,
@@ -1298,6 +1343,7 @@ class MemoryStore:
     def _enum_value(value: ScopeType | str) -> str:
         return value.value if hasattr(value, "value") else str(value)
 
+
     def _to_turn_record(self, entity: MemoryTurnRecord) -> TurnRecord:
         return TurnRecord(
             turn_id=entity.turn_id,
@@ -1473,3 +1519,17 @@ class MemoryStore:
             source_refs=list(entity.source_refs or []),
             created_at=entity.created_at,
         )
+
+
+def _turn_record_has_scope(record: TurnRecord, scope_type: str, scope_id: str) -> bool:
+    context = record.scope_context
+    if context is not None:
+        for ref in context.contribution_refs():
+            ref_type = (
+                ref.scope_type.value
+                if hasattr(ref.scope_type, "value")
+                else str(ref.scope_type)
+            )
+            if ref_type == scope_type and ref.scope_id == scope_id:
+                return True
+    return scope_type == ScopeType.USER.value and record.canonical_user_id == scope_id

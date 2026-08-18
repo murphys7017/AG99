@@ -17,7 +17,7 @@ from .identity import MemoryIdentityMappingService, MemoryIdentityResolver
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
 from .recall_snapshot import RecallSnapshotManager
-from .scope_context import MemoryScopeContext
+from .scope_context import MemoryScopeContext, scope_owner_id
 from .short_term_service import ShortTermMemoryService
 from .snapshot_builder import MemorySnapshotBuilder, MemorySnapshotReadOptions
 from .store import MemoryStore
@@ -32,6 +32,8 @@ from .types import (
     MemoryIdentityBinding,
     MemorySnapshot,
     MemoryUpdateRequest,
+    ScopeRef,
+    ScopeType,
     SessionInsight,
     TurnRecord,
 )
@@ -122,17 +124,26 @@ class MemoryService:
             turn,
             conversation_history=conversation_history,
         )
-        if not turn.canonical_user_id:
-            if turn.user_message:
+        contribution_refs = (
+            turn.scope_context.contribution_refs()
+            if turn.scope_context is not None
+            else ()
+        )
+        if not contribution_refs and turn.canonical_user_id:
+            contribution_refs = (
+                ScopeRef(ScopeType.USER, turn.canonical_user_id),
+            )
+        if not contribution_refs:
+            if turn.user_message and not turn.canonical_user_id:
                 logger.warning(
-                    "memory update skipped mid-long pipeline: missing canonical_user_id turn_id=%s umo=%s platform_user_key=%s",
+                    "memory update skipped mid-long pipeline: no contribution scope turn_id=%s umo=%s platform_user_key=%s",
                     turn.turn_id,
                     turn.umo,
                     turn.platform_user_key,
                 )
             else:
                 logger.debug(
-                    "memory mid-long pipeline skipped for assistant-only turn: turn_id=%s umo=%s",
+                    "memory mid-long pipeline skipped: no contribution scope turn_id=%s umo=%s",
                     turn.turn_id,
                     turn.umo,
                 )
@@ -143,36 +154,60 @@ class MemoryService:
                 turn.conversation_id,
             )
             return turn
-        if (
-            self.consolidation_service is not None
-            and await self.consolidation_service.should_run_consolidation(
+
+        for scope in contribution_refs:
+            owner_id = scope_owner_id(
+                scope.scope_type,
+                scope.scope_id,
                 turn.canonical_user_id,
-                turn.conversation_id,
             )
-        ):
+            if owner_id is None:
+                continue
+            if (
+                self.consolidation_service is None
+                or not await self.consolidation_service.should_run_consolidation(
+                    owner_id,
+                    turn.conversation_id,
+                    scope_type=scope.scope_type,
+                    scope_id=scope.scope_id,
+                    umo=turn.umo,
+                )
+            ):
+                continue
             logger.info(
-                "memory consolidation triggered after update: umo=%s conversation_id=%s",
+                "memory consolidation triggered after update: umo=%s conversation_id=%s scope_type=%s scope_id=%s",
                 turn.umo,
                 turn.conversation_id,
+                scope.scope_type,
+                scope.scope_id,
             )
             _, experiences = await self.run_consolidation(
-                turn.canonical_user_id,
+                owner_id,
                 turn.conversation_id,
+                scope_type=scope.scope_type,
+                scope_id=scope.scope_id,
+                umo=turn.umo,
             )
             if (
                 experiences
                 and self.long_term_service is not None
                 and await self.long_term_service.should_run_promotion(
-                    turn.canonical_user_id,
+                    owner_id,
+                    scope_type=scope.scope_type,
+                    scope_id=scope.scope_id,
                 )
             ):
                 logger.info(
-                    "memory long-term promotion triggered after consolidation: canonical_user_id=%s conversation_id=%s",
-                    turn.canonical_user_id,
+                    "memory long-term promotion triggered after consolidation: owner_id=%s conversation_id=%s scope_type=%s scope_id=%s",
+                    owner_id,
                     turn.conversation_id,
+                    scope.scope_type,
+                    scope.scope_id,
                 )
                 await self.long_term_service.run_promotion(
-                    turn.canonical_user_id,
+                    owner_id,
+                    scope_type=scope.scope_type,
+                    scope_id=scope.scope_id,
                 )
         logger.info(
             "memory update finished: turn_id=%s umo=%s conversation_id=%s",
@@ -249,6 +284,10 @@ class MemoryService:
         self,
         canonical_user_id: str,
         conversation_id: str | None,
+        *,
+        scope_type: str = "user",
+        scope_id: str | None = None,
+        umo: str | None = None,
     ) -> tuple[SessionInsight | None, list[Experience]]:
         await self.initialize()
         if self.consolidation_service is None:
@@ -264,13 +303,19 @@ class MemoryService:
             )
 
         logger.info(
-            "memory consolidation started: canonical_user_id=%s conversation_id=%s",
+            "memory consolidation started: canonical_user_id=%s conversation_id=%s scope_type=%s scope_id=%s umo=%s",
             canonical_user_id,
             conversation_id,
+            scope_type,
+            scope_id,
+            umo,
         )
         insight, experiences = await self.consolidation_service.run_for_scope(
             canonical_user_id,
             conversation_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            umo=umo,
         )
         (
             persisted_insight,

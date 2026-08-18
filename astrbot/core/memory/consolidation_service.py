@@ -14,6 +14,7 @@ from .analyzers.base import (
 )
 from .config import MemoryAnalysisConfig, MemoryConsolidationConfig
 from .history_source import extract_message_text
+from .scope_context import scope_owner_id
 from .store import MemoryStore
 from .types import (
     Experience,
@@ -58,6 +59,10 @@ class ConsolidationService:
         self,
         canonical_user_id: str,
         conversation_id: str | None,
+        *,
+        scope_type: ScopeType | str = ScopeType.USER,
+        scope_id: str | None = None,
+        umo: str | None = None,
     ) -> bool:
         if not self._is_enabled():
             logger.info(
@@ -67,15 +72,21 @@ class ConsolidationService:
             )
             return False
 
+        owner_id = scope_owner_id(scope_type, scope_id or canonical_user_id, canonical_user_id)
+        if owner_id is None:
+            return False
         turn_records = await self._get_pending_turn_records(
-            canonical_user_id,
+            owner_id,
             conversation_id,
+            scope_type=scope_type,
+            scope_id=scope_id or owner_id,
+            umo=umo,
         )
         threshold = self._get_threshold()
         should_run = len(turn_records) >= threshold
         logger.info(
             "memory consolidation check: canonical_user_id=%s conversation_id=%s pending_turns=%s threshold=%s should_run=%s",
-            canonical_user_id,
+            owner_id,
             conversation_id,
             len(turn_records),
             threshold,
@@ -87,13 +98,24 @@ class ConsolidationService:
         self,
         canonical_user_id: str,
         conversation_id: str | None,
+        *,
+        scope_type: ScopeType | str = ScopeType.USER,
+        scope_id: str | None = None,
+        umo: str | None = None,
     ) -> tuple[SessionInsight | None, list[Experience]]:
         if not self._is_enabled():
             return None, []
 
+        owner_id = scope_owner_id(scope_type, scope_id or canonical_user_id, canonical_user_id)
+        if owner_id is None:
+            return None, []
+        resolved_scope_id = scope_id or owner_id
         turn_records = await self._get_pending_turn_records(
-            canonical_user_id,
+            owner_id,
             conversation_id,
+            scope_type=scope_type,
+            scope_id=resolved_scope_id,
+            umo=umo,
         )
         if len(turn_records) < self._get_threshold():
             return None, []
@@ -106,7 +128,7 @@ class ConsolidationService:
         )
 
         insight = await self._build_session_insight(
-            canonical_user_id=canonical_user_id,
+            canonical_user_id=owner_id,
             conversation_id=conversation_id,
             turn_records=turn_records,
             topic_state=topic_state,
@@ -115,6 +137,8 @@ class ConsolidationService:
         experiences = await self._extract_experiences(
             insight=insight,
             turn_records=turn_records,
+            scope_type=scope_type,
+            scope_id=resolved_scope_id,
         )
         return insight, experiences
 
@@ -136,17 +160,30 @@ class ConsolidationService:
         self,
         canonical_user_id: str,
         conversation_id: str | None,
+        *,
+        scope_type: ScopeType | str,
+        scope_id: str,
+        umo: str | None,
     ) -> list[TurnRecord]:
         latest_insight = await self.store.get_latest_session_insight(
             canonical_user_id,
             conversation_id,
         )
         start_at = latest_insight.window_end_at if latest_insight is not None else None
-        turn_records = await self.store.list_turn_records_by_canonical_user(
-            canonical_user_id,
-            conversation_id,
-            start_at,
-        )
+        if self._enum_value(scope_type) == ScopeType.USER.value:
+            turn_records = await self.store.list_turn_records_by_canonical_user(
+                canonical_user_id,
+                conversation_id,
+                start_at,
+            )
+        else:
+            turn_records = await self.store.list_turn_records_for_scope(
+                scope_type,
+                scope_id,
+                conversation_id,
+                start_at,
+                umo=umo,
+            )
         if start_at is not None:
             turn_records = [
                 turn for turn in turn_records if turn.message_timestamp > start_at
@@ -207,6 +244,8 @@ class ConsolidationService:
         *,
         insight: SessionInsight,
         turn_records: list[TurnRecord],
+        scope_type: ScopeType | str,
+        scope_id: str,
     ) -> list[Experience]:
         if self.analyzer_manager is None:
             raise RuntimeError("consolidation requested without analyzer manager")
@@ -233,8 +272,6 @@ class ConsolidationService:
             )
         raw_experiences = self._validate_experience_extract_payload(result.data)
 
-        scope_type = ScopeType.USER
-        scope_id = insight.canonical_user_id
         turn_source_refs = [f"turn:{turn.turn_id}" for turn in turn_records]
         insight_source_ref = f"insight:{insight.insight_id}"
 
@@ -385,6 +422,10 @@ class ConsolidationService:
                     )
             validated.append(item)
         return validated
+
+    @staticmethod
+    def _enum_value(value: ScopeType | str) -> str:
+        return value.value if hasattr(value, "value") else str(value)
 
     @staticmethod
     def _build_turn_dialogue_text(turn_records: list[TurnRecord]) -> str:
