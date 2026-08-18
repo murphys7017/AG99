@@ -102,7 +102,7 @@ PersonaState 只允许进入：
 
 ## 实施批次
 
-### 6A：持久化与服务边界
+### 6A：持久化与服务边界（已完成）
 
 - 新增 `PersonaStateService`。
 - 新增原子 apply、读取 evolution log 和 rollback Store API。

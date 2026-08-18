@@ -40,6 +40,12 @@ from .identity import (
 from .job_scheduler import MemoryJobScheduler, MemoryScopeJob
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
+from .persona_state_service import (
+    PERSONA_REFLECTION_MAX_DELTA,
+    PERSONA_REFLECTION_MIN_CONFIDENCE,
+    PERSONA_STATE_FIELDS,
+    PersonaStateService,
+)
 from .postprocessor import (
     MemoryPostProcessor,
     register_memory_postprocessor,
@@ -88,6 +94,8 @@ from .types import (
     MessagePayload,
     PersonaEvolutionLog,
     PersonaState,
+    PersonaStateConflictError,
+    PersonaStateEvolutionResult,
     ScopeRef,
     ScopeType,
     SessionInsight,
@@ -153,6 +161,12 @@ __all__ = [
     "LongTermMemoryLinkRelation",
     "PersonaEvolutionLog",
     "PersonaState",
+    "PersonaStateConflictError",
+    "PersonaStateEvolutionResult",
+    "PersonaStateService",
+    "PERSONA_REFLECTION_MAX_DELTA",
+    "PERSONA_REFLECTION_MIN_CONFIDENCE",
+    "PERSONA_STATE_FIELDS",
     "RecentConversationSource",
     "ScopeRef",
     "ScopeType",

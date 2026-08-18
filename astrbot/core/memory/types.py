@@ -280,6 +280,16 @@ class PersonaEvolutionLog:
 
 
 @dataclass(slots=True)
+class PersonaStateEvolutionResult:
+    state: PersonaState | None
+    log: PersonaEvolutionLog
+
+
+class PersonaStateConflictError(RuntimeError):
+    """Raised when a persona-state mutation is based on stale state."""
+
+
+@dataclass(slots=True)
 class MemoryIdentity:
     umo: str
     platform_id: str | None

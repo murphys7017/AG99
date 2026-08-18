@@ -38,6 +38,7 @@ from .types import (
     MemoryIdentityBinding,
     PersonaEvolutionLog,
     PersonaState,
+    PersonaStateConflictError,
     ScopeType,
     SessionInsight,
     ShortTermMemory,
@@ -138,6 +139,7 @@ class MemoryStore:
         )
         self.inited = False
         self._initialize_lock = asyncio.Lock()
+        self._persona_state_write_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def get_db(self):
@@ -1101,6 +1103,306 @@ class MemoryStore:
                 await session.flush()
                 await session.refresh(entity)
                 return self._to_persona_evolution_log(entity)
+
+    async def apply_persona_state_evolution(
+        self,
+        state: PersonaState,
+        *,
+        expected_state: PersonaState | None,
+        log_id: str,
+        reason: str | None,
+        source_refs: list[str],
+        created_at: datetime | None = None,
+    ) -> tuple[PersonaState, PersonaEvolutionLog]:
+        scope_type = self._enum_value(state.scope_type)
+        async with self._persona_state_write_lock:
+            async with self.get_db() as session:
+                async with session.begin():
+                    entity = await self._get_persona_state_entity(
+                        session,
+                        scope_type,
+                        state.scope_id,
+                    )
+                    current = self._to_persona_state(entity) if entity else None
+                    self._require_expected_persona_state(current, expected_state)
+                    if current is not None and current.state_id != state.state_id:
+                        raise PersonaStateConflictError(
+                            "persona state_id changed before the evolution could be applied"
+                        )
+                    await self._require_new_persona_log_id(session, log_id)
+
+                    before_state = self._persona_state_to_snapshot(current)
+                    if entity is None:
+                        entity = MemoryPersonaState(state_id=state.state_id)
+                        session.add(entity)
+                    self._assign_persona_state_entity(entity, state)
+
+                    await session.flush()
+                    await session.refresh(entity)
+                    persisted = self._to_persona_state(entity)
+                    log_entity = MemoryPersonaEvolutionLog(
+                        log_id=log_id,
+                        scope_type=scope_type,
+                        scope_id=state.scope_id,
+                        before_state=before_state,
+                        after_state=self._persona_state_to_snapshot(persisted) or {},
+                        reason=reason,
+                        source_refs=list(source_refs),
+                        created_at=created_at or datetime.now(UTC),
+                    )
+                    session.add(log_entity)
+                    await session.flush()
+                    await session.refresh(log_entity)
+                    return persisted, self._to_persona_evolution_log(log_entity)
+
+    async def get_persona_evolution_log(
+        self,
+        log_id: str,
+    ) -> PersonaEvolutionLog | None:
+        async with self.get_db() as session:
+            result = await session.execute(
+                select(MemoryPersonaEvolutionLog).where(
+                    col(MemoryPersonaEvolutionLog.log_id) == log_id
+                )
+            )
+            entity = result.scalar_one_or_none()
+            return self._to_persona_evolution_log(entity) if entity else None
+
+    async def list_persona_evolution_logs(
+        self,
+        scope_type: ScopeType | str,
+        scope_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[PersonaEvolutionLog]:
+        async with self.get_db() as session:
+            stmt = (
+                select(MemoryPersonaEvolutionLog)
+                .where(
+                    and_(
+                        col(MemoryPersonaEvolutionLog.scope_type)
+                        == self._enum_value(scope_type),
+                        col(MemoryPersonaEvolutionLog.scope_id) == scope_id,
+                    )
+                )
+                .order_by(
+                    desc(MemoryPersonaEvolutionLog.created_at),
+                    desc(MemoryPersonaEvolutionLog.id),
+                )
+                .limit(max(1, int(limit)))
+            )
+            result = await session.execute(stmt)
+            return [
+                self._to_persona_evolution_log(entity)
+                for entity in result.scalars().all()
+            ]
+
+    async def rollback_persona_state_evolution(
+        self,
+        log_id: str,
+        *,
+        rollback_log_id: str,
+        reason: str | None,
+        created_at: datetime | None = None,
+    ) -> tuple[PersonaState | None, PersonaEvolutionLog]:
+        rollback_time = created_at or datetime.now(UTC)
+        async with self._persona_state_write_lock:
+            async with self.get_db() as session:
+                async with session.begin():
+                    target_result = await session.execute(
+                        select(MemoryPersonaEvolutionLog).where(
+                            col(MemoryPersonaEvolutionLog.log_id) == log_id
+                        )
+                    )
+                    target = target_result.scalar_one_or_none()
+                    if target is None:
+                        raise ValueError(
+                            f"persona evolution log `{log_id}` was not found"
+                        )
+                    await self._require_new_persona_log_id(session, rollback_log_id)
+
+                    entity = await self._get_persona_state_entity(
+                        session,
+                        target.scope_type,
+                        target.scope_id,
+                    )
+                    current = self._to_persona_state(entity) if entity else None
+                    current_snapshot = self._persona_state_to_snapshot(current) or {}
+                    if current_snapshot != dict(target.after_state or {}):
+                        raise PersonaStateConflictError(
+                            "persona state no longer matches the selected evolution log"
+                        )
+
+                    before_snapshot = dict(target.before_state or {})
+                    restored: PersonaState | None
+                    if not before_snapshot:
+                        if entity is not None:
+                            await session.delete(entity)
+                        restored = None
+                    else:
+                        restored = self._persona_state_from_snapshot(before_snapshot)
+                        restored.updated_at = rollback_time
+                        if entity is None:
+                            entity = MemoryPersonaState(state_id=restored.state_id)
+                            session.add(entity)
+                        self._assign_persona_state_entity(entity, restored)
+                        await session.flush()
+                        await session.refresh(entity)
+                        restored = self._to_persona_state(entity)
+
+                    rollback_log = MemoryPersonaEvolutionLog(
+                        log_id=rollback_log_id,
+                        scope_type=target.scope_type,
+                        scope_id=target.scope_id,
+                        before_state=current_snapshot or None,
+                        after_state=self._persona_state_to_snapshot(restored) or {},
+                        reason=reason or f"Rolled back persona evolution {log_id}",
+                        source_refs=[f"persona_evolution:{log_id}"],
+                        created_at=rollback_time,
+                    )
+                    session.add(rollback_log)
+                    await session.flush()
+                    await session.refresh(rollback_log)
+                    return restored, self._to_persona_evolution_log(rollback_log)
+
+    async def _get_persona_state_entity(
+        self,
+        session: AsyncSession,
+        scope_type: ScopeType | str,
+        scope_id: str,
+    ) -> MemoryPersonaState | None:
+        result = await session.execute(
+            select(MemoryPersonaState).where(
+                and_(
+                    col(MemoryPersonaState.scope_type)
+                    == self._enum_value(scope_type),
+                    col(MemoryPersonaState.scope_id) == scope_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def _require_new_persona_log_id(
+        self,
+        session: AsyncSession,
+        log_id: str,
+    ) -> None:
+        result = await session.execute(
+            select(MemoryPersonaEvolutionLog.id).where(
+                col(MemoryPersonaEvolutionLog.log_id) == log_id
+            )
+        )
+        if result.scalar_one_or_none() is not None:
+            raise PersonaStateConflictError(
+                f"persona evolution log `{log_id}` already exists"
+            )
+
+    @classmethod
+    def _require_expected_persona_state(
+        cls,
+        current: PersonaState | None,
+        expected: PersonaState | None,
+    ) -> None:
+        if cls._persona_state_to_snapshot(current) != cls._persona_state_to_snapshot(
+            expected
+        ):
+            raise PersonaStateConflictError(
+                "persona state changed before the evolution could be applied"
+            )
+
+    @classmethod
+    def _assign_persona_state_entity(
+        cls,
+        entity: MemoryPersonaState,
+        state: PersonaState,
+    ) -> None:
+        entity.scope_type = cls._enum_value(state.scope_type)
+        entity.scope_id = state.scope_id
+        entity.persona_id = state.persona_id
+        entity.familiarity = cls._clamp_score(state.familiarity)
+        entity.trust = cls._clamp_score(state.trust)
+        entity.warmth = cls._clamp_score(state.warmth)
+        entity.formality_preference = cls._clamp_score(
+            state.formality_preference
+        )
+        entity.directness_preference = cls._clamp_score(
+            state.directness_preference
+        )
+        entity.updated_at = state.updated_at or datetime.now(UTC)
+
+    @classmethod
+    def _persona_state_to_snapshot(
+        cls,
+        state: PersonaState | None,
+    ) -> dict | None:
+        if state is None:
+            return None
+        return {
+            "state_id": state.state_id,
+            "scope_type": cls._enum_value(state.scope_type),
+            "scope_id": state.scope_id,
+            "persona_id": state.persona_id,
+            "familiarity": cls._clamp_score(state.familiarity),
+            "trust": cls._clamp_score(state.trust),
+            "warmth": cls._clamp_score(state.warmth),
+            "formality_preference": cls._clamp_score(
+                state.formality_preference
+            ),
+            "directness_preference": cls._clamp_score(
+                state.directness_preference
+            ),
+            "updated_at": cls._serialize_persona_datetime(state.updated_at),
+        }
+
+    @classmethod
+    def _persona_state_from_snapshot(cls, snapshot: dict) -> PersonaState:
+        required_fields = {
+            "state_id",
+            "scope_type",
+            "scope_id",
+            "familiarity",
+            "trust",
+            "warmth",
+            "formality_preference",
+            "directness_preference",
+        }
+        missing_fields = required_fields - set(snapshot)
+        if missing_fields:
+            fields = ", ".join(sorted(missing_fields))
+            raise ValueError(f"persona state snapshot missing fields: {fields}")
+        return PersonaState(
+            state_id=str(snapshot["state_id"]),
+            scope_type=str(snapshot["scope_type"]),
+            scope_id=str(snapshot["scope_id"]),
+            persona_id=(
+                str(snapshot["persona_id"])
+                if snapshot.get("persona_id") is not None
+                else None
+            ),
+            familiarity=float(snapshot["familiarity"]),
+            trust=float(snapshot["trust"]),
+            warmth=float(snapshot["warmth"]),
+            formality_preference=float(snapshot["formality_preference"]),
+            directness_preference=float(snapshot["directness_preference"]),
+            updated_at=cls._parse_persona_datetime(snapshot.get("updated_at")),
+        )
+
+    @staticmethod
+    def _serialize_persona_datetime(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat()
+
+    @staticmethod
+    def _parse_persona_datetime(value: object) -> datetime | None:
+        if value is None or value == "":
+            return None
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     async def _get_topic_state_entity(
         self,

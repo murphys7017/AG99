@@ -18,13 +18,14 @@
 - 群聊用户回合可同时贡献 `USER` 与 `GROUP`；GROUP consolidation 会聚合同一群组的不同成员回合，使用稳定群组 owner key 运行 Experience/Long-Term promotion，贡献者身份仍保留在回合 provenance 中。
 - Memory Phase 5 第一批已接入 `MemoryJobScheduler`：后台 Postprocessor 提交 consolidation/promotion，任务按 scope 串行、同一 conversation 合并，后台异常被消费并记录诊断；直接调用 `MemoryService.update_from_postprocess()` 仍保持同步执行和异常传播。
 - Memory Phase 5 第二批已将 Recall refresh 和 dirty vector sync 接入同一 scheduler；Recall 继续保持 stale-while-revalidate，向量修复增加显式 `schedule_dirty_long_term_vector_indexes()` 非等待入口，并按任务类型和 dedupe key 合并。
+- `PersonaStateService` 已完成 USER scope 中性基线、置信度与 delta 边界、reflection interval 判断、state + evolution log 原子写入、日志查询和显式回滚；尚未接入 Provider 或后台触发。
 - `MemoryCollector` 已进入统一 Prompt ContextPack，并由 target projection 控制 Router、
   Planner、Persona 和 Core 的可见范围。
 - Interaction 私有 Memory Store 和 `memory.interaction` slot 已删除。
 
 ## 当前限制
 
-- consolidation、长期 promotion、Recall 刷新和 dirty vector sync 已由后台 scheduler 承担；PersonaState 自动演进尚未形成完整 service、触发和审核链路，默认注入也关闭。
+- consolidation、长期 promotion、Recall 刷新和 dirty vector sync 已由后台 scheduler 承担；PersonaState reflection analyzer、后台触发和管理入口尚未完成，默认注入也关闭。
 - canonical identity 缺失的用户回合只跳过 USER 中长期沉淀；若回合带有稳定 GROUP scope，GROUP 中长期沉淀仍可执行。
 - Memory analyzer 依赖配置的 Provider；分析失败按 Postprocessor 失败语义记录并跳过该次更新。
 - 向量检索、文档回表和 analyzer 调用仍需要持续关注延迟、超时和可观测性。
@@ -32,8 +33,8 @@
 
 ## 下一步
 
-1. 按 `persona-state-evolution-plan.md` 先实现 PersonaState 原子 apply/log/rollback 服务边界。
-2. 再接入默认关闭、仅 USER scope 的 reflection analyzer 和后台 Job。
+1. 按 `persona-state-evolution-plan.md` 接入默认关闭、仅 USER scope 的 reflection analyzer 和后台 Job。
+2. 提供 PersonaState 只读状态、演进日志和显式 rollback 管理入口。
 3. 完善 Memory read/write latency、降级组件和后台任务诊断。
 4. 固化 finalized material 到 MemoryUpdateRequest 的版本化契约，并进行真实运行验收。
 

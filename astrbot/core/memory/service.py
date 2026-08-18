@@ -17,6 +17,7 @@ from .identity import MemoryIdentityMappingService, MemoryIdentityResolver
 from .job_scheduler import MemoryJobScheduler, MemoryScopeJob
 from .long_term_service import LongTermMemoryService
 from .manual_service import LongTermMemoryManualService
+from .persona_state_service import PersonaStateService
 from .recall_snapshot import RecallSnapshotManager
 from .scope_context import MemoryScopeContext, scope_owner_id
 from .short_term_service import ShortTermMemoryService
@@ -56,6 +57,7 @@ class MemoryService:
         long_term_service: LongTermMemoryService | None = None,
         manual_long_term_service: LongTermMemoryManualService | None = None,
         document_search_service: DocumentSearchService | None = None,
+        persona_state_service: PersonaStateService | None = None,
     ) -> None:
         self.store = store
         self.turn_record_service = turn_record_service
@@ -75,6 +77,7 @@ class MemoryService:
         self.long_term_service = long_term_service
         self.manual_long_term_service = manual_long_term_service
         self.document_search_service = document_search_service
+        self.persona_state_service = persona_state_service or PersonaStateService(store)
         self._initialized = False
         self._initialize_lock = asyncio.Lock()
 

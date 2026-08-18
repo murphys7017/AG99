@@ -1,8 +1,8 @@
 task:
-  class: bugfix
+  class: feature
   risk: high
-  phase: parallel_plugin_runtime_production_validation
-  scope: Complete the default-disabled Personal, Router, and Official Plugin three-line production path without letting Plugin Handler latency block the first Personal reply or detached Plugin work mutate the original turn.
+  phase: memory_persona_state_evolution
+  scope: Complete default-disabled USER-scoped PersonaState evolution without blocking replies, mutating static Persona, or exposing technical provenance in ordinary prompts.
 context:
   confidence: high
   assumptions:
@@ -140,6 +140,8 @@ context:
     - Memory technical identifiers remain available in structured storage and provenance. Normal Personal and Router semantic prompts omit them by default, while explicit diagnostics, management, debugging, and exact-reference paths may include them when required.
     - Memory scope reads may include USER, GROUP, and GLOBAL, while ordinary turn contributions default to USER and GROUP only. GLOBAL contribution requires an explicit later policy rather than being inferred from every turn.
     - The scoped Memory schema does not migrate pre-Phase-2 local Memory data. Existing memory.db files must be rebuilt when adopting scope_context, revision, and fingerprint columns.
+    - PersonaState automatic evolution is USER-scoped, default-disabled, and derived only from consolidated semantic memory. It never rewrites static Persona and remains invisible to Router, Planner, and Core.
+    - PersonaState mutations go through one service and one Store transaction that validates the prior state, writes the new state and evolution log together, and supports conflict-safe explicit rollback.
     - Group-chat prompt records use stable sender IDs when available, while nicknames remain display labels only.
     - Prompt target selection is deterministic code projection over the canonical base facts and, for Persona/Core only, the shared plugin-enrichment pack; the removed LLM/rule Prompt Selector is not part of the current architecture.
     - Router, Core Planner, Persona, and Core target projections define distinct context boundaries over the layered ContextPack pipeline.
@@ -422,6 +424,7 @@ verification:
     - "2026-08-18 Memory Phase 4 scoped memory completed: Prompt recall merges USER, GROUP, and GLOBAL scopes, while group turns now contribute USER and GROUP independently. GROUP consolidation aggregates turns from different members by stable scope owner, and GROUP Long-Term promotion uses an independent scope cursor; the contributor remains provenance only. Four focused consolidation/service tests, a two-member GROUP storage smoke, Ruff, compileall, and git diff checks passed."
     - "2026-08-18 Memory Phase 5 first batch: MemoryJobScheduler now owns background consolidation and Long-Term promotion after Postprocessor writes, serializes work per scope, coalesces repeated conversations, and records consumed background failures. Direct MemoryService.update_from_postprocess calls retain synchronous execution and exception propagation. Three focused Memory service tests, affected Ruff, memory compileall, import smoke, and git diff checks passed; Recall refresh, dirty vector sync, and PersonaState evolution remain outside this batch."
     - "2026-08-18 Memory Phase 5 second batch: MemoryJobScheduler now also owns Recall refresh and explicit dirty vector repair submissions through typed job kinds and dedupe keys. Recall retains stale-while-revalidate behavior; synchronous vector repair remains available for management callers. Six focused Memory service/vector/snapshot tests, scheduler coalescing smoke, affected Ruff, memory compileall, and git diff checks passed. PersonaState automatic evolution remains intentionally unimplemented pending trigger, review, rollback, and scope decisions."
+    - "2026-08-18 Memory Phase 6A: PersonaStateService now owns USER-only neutral baselines, reflection interval checks, confidence and delta bounds, atomic state plus evolution-log writes, ordered log reads, and conflict-safe explicit rollback. Twelve focused Store/PersonaState tests, affected Ruff, memory compileall, public import smoke, YAML parse, and git diff checks passed; Provider analysis and background scheduling remain disabled and unimplemented."
   checks_failed:
     - Phase 2A targeted Pyright was not run because the project environment does not provide a `pyright` executable; Ruff, py_compile, import smoke, and the public input-output smoke passed.
     - A broad tests/unit collection command failed during conftest import because local data/cmd_config.json returned PermissionError; explicit affected suites and all interaction unit files passed.

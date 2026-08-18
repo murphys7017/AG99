@@ -39,7 +39,7 @@ material；普通 Pipeline 则读取官方 Conversation 或当前 Provider 回�
    promotion。
 3. 普通用户回合更新 `TopicState` 与 `ShortTermMemory`，再按 `MemoryScopeContext` 枚举可贡献的 USER/GROUP scope。
 4. 生产 Postprocessor 将每个 scope 提交给 `MemoryJobScheduler`；同一 scope 串行执行，同一 conversation 的重复待处理任务合并。任务内部按阈值运行 consolidation，产生对应的 `SessionInsight` 与 `Experience`；GROUP 会聚合同一群组不同成员的回合。
-5. 每个 scope 的任务继续推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。Recall refresh 与 dirty vector sync 也通过同一 scheduler 托管；PersonaState 自动演进仍未实现。
+5. 每个 scope 的任务继续推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。Recall refresh 与 dirty vector sync 也通过同一 scheduler 托管；PersonaState 已有原子演进与回滚服务，但自动 reflection 尚未接入 scheduler。
 
 `MemoryService.update_from_postprocess()` 的生产调用显式使用 `background_jobs=True`，不会等待 analyzer 或整理任务；直接管理调用默认同步执行并传播异常，避免把后台异常吞成同步 API 的假成功。Recall refresh 通过同一 scheduler 提交，但仍由 `RecallSnapshotManager` 保持 stale-while-revalidate 的缓存语义；dirty vector sync 通过 `schedule_dirty_long_term_vector_indexes()` 提交，原有同步修复入口继续保留给管理调用。
 
@@ -120,7 +120,8 @@ Memory 配置已进入 AstrBot 统一配置，不存在 `data/memory/config.yaml
 - Conversation 为后续语义理解保留 assistant-only 主动表达；这一可见历史不会自行产生
   Memory 状态、Policy 材料或唤醒权限。
 - 静态 Persona 不由 Memory 改写；`PersonaState` 是独立动态状态。
-- `PersonaState` 当前只有存储与读取模型，尚未自动演进；任何自动演进都必须另行定义触发、审核、回滚和作用域边界。
+- `PersonaStateService` 只接受 USER scope 语义变化，负责中性基线、置信度、delta 限幅、间隔判断，以及 state + evolution log 的原子写入和显式回滚。
+- PersonaState 自动 reflection 尚未接入 analyzer 或后台 Job，相关开关和 Prompt 注入继续默认关闭。
 - Prompt 负责读取和可见范围，不负责 consolidation 或持久化。
 - Interaction finalized material 是 Interaction 回合的提交材料，不再另存私有记忆。
 - 长期文档和向量索引是检索载体，SQLite 中的 index/link/status 仍是结构化真源。
