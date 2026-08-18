@@ -9,9 +9,10 @@ from astrbot.core import logger
 
 from .config import MemoryRecallConfig
 from .fingerprint import build_short_term_fingerprint
+from .recall_policy import ScopedRecallPolicy
 from .scope_context import MemoryScopeContext
 from .snapshot_builder import MemorySnapshotBuilder, MemorySnapshotReadOptions
-from .types import MemoryRecallSnapshot, MemorySnapshot, ScopeType
+from .types import MemoryRecallSnapshot, MemorySnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +20,8 @@ class _RecallProfile:
     experiences_top_k: int
     long_term_top_k: int
     query_required: bool
+    scope_priority: tuple[str, ...]
+    deduplicate_across_scopes: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +56,7 @@ class RecallSnapshotManager:
     ) -> None:
         self.builder = builder
         self.config = config
+        self.scope_policy = ScopedRecallPolicy(config)
         self._entries: OrderedDict[_RecallKey, _RecallEntry] = OrderedDict()
         self._latest_by_family: dict[_RecallFamilyKey, _RecallKey] = {}
         self._refresh_tasks: dict[_RecallKey, asyncio.Task[None]] = {}
@@ -74,6 +78,8 @@ class RecallSnapshotManager:
             experiences_top_k=max(0, min(read_options.experiences.top_k, 10)),
             long_term_top_k=max(0, min(read_options.long_term.top_k, 10)),
             query_required=read_options.long_term.query_required,
+            scope_priority=tuple(self.config.scope_priority),
+            deduplicate_across_scopes=self.config.deduplicate_across_scopes,
         )
         if profile.experiences_top_k <= 0 and profile.long_term_top_k <= 0:
             return None
@@ -86,7 +92,10 @@ class RecallSnapshotManager:
             short_term.short_summary,
             short_term.active_focus,
         )
-        scopes = self._scope_key(scope_context, snapshot.canonical_user_id)
+        scopes = self.scope_policy.cache_scope_key(
+            scope_context,
+            snapshot.canonical_user_id,
+        )
         family = _RecallFamilyKey(
             umo=snapshot.umo,
             conversation_id=snapshot.conversation_id,
@@ -112,6 +121,7 @@ class RecallSnapshotManager:
             snapshot=snapshot,
             query=query,
             read_options=read_options,
+            scope_context=scope_context,
         )
         return stale_entry.snapshot if stale_entry is not None else None
 
@@ -131,11 +141,12 @@ class RecallSnapshotManager:
         snapshot: MemorySnapshot,
         query: str | None,
         read_options: MemorySnapshotReadOptions,
+        scope_context: MemoryScopeContext | None,
     ) -> None:
         if key in self._refresh_tasks:
             return
         task = asyncio.create_task(
-            self._refresh(key, snapshot, query, read_options),
+            self._refresh(key, snapshot, query, read_options, scope_context),
             name="memory-recall-refresh",
         )
         self._refresh_tasks[key] = task
@@ -146,6 +157,7 @@ class RecallSnapshotManager:
         snapshot: MemorySnapshot,
         query: str | None,
         read_options: MemorySnapshotReadOptions,
+        scope_context: MemoryScopeContext | None,
     ) -> None:
         try:
             if read_options.long_term.query_required and not query:
@@ -154,6 +166,7 @@ class RecallSnapshotManager:
                 snapshot,
                 query=query,
                 read_options=read_options,
+                scope_context=scope_context,
             )
             if self._closed:
                 return
@@ -183,24 +196,6 @@ class RecallSnapshotManager:
             key, _ = self._entries.popitem(last=False)
             if self._latest_by_family.get(key.family) == key:
                 self._latest_by_family.pop(key.family, None)
-
-    @staticmethod
-    def _scope_key(
-        scope_context: MemoryScopeContext | None,
-        canonical_user_id: str,
-    ) -> tuple[tuple[str, str], ...]:
-        if scope_context is None:
-            return ((ScopeType.USER.value, canonical_user_id),)
-        return tuple(
-            sorted(
-                (
-                    str(ref.scope_type.value if hasattr(ref.scope_type, "value") else ref.scope_type),
-                    ref.scope_id,
-                )
-                for ref in scope_context.recall_refs()
-            )
-        )
-
 
 def _build_recall_query(short_term) -> str | None:
     parts = [short_term.short_summary, short_term.active_focus]

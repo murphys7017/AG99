@@ -229,7 +229,7 @@ class VectorSearchHit:
 
 @dataclass(slots=True)
 class DocumentSearchRequest:
-    canonical_user_id: str
+    canonical_user_id: str | None
     query: str
     umo: str | None = None
     conversation_id: str | None = None

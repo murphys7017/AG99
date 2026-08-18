@@ -459,19 +459,24 @@ class MemoryStore:
 
     async def list_experiences_for_scope(
         self,
-        canonical_user_id: str,
+        canonical_user_id: str | None,
         scope_type: ScopeType | str,
         scope_id: str,
         *,
         ascending: bool = True,
+        limit: int = 0,
     ) -> list[Experience]:
         async with self.get_db() as session:
-            stmt = select(MemoryExperience).where(
-                and_(
-                    col(MemoryExperience.canonical_user_id) == canonical_user_id,
-                    col(MemoryExperience.scope_type) == self._enum_value(scope_type),
-                    col(MemoryExperience.scope_id) == scope_id,
+            conditions = [
+                col(MemoryExperience.scope_type) == self._enum_value(scope_type),
+                col(MemoryExperience.scope_id) == scope_id,
+            ]
+            if canonical_user_id is not None:
+                conditions.append(
+                    col(MemoryExperience.canonical_user_id) == canonical_user_id
                 )
+            stmt = select(MemoryExperience).where(
+                and_(*conditions)
             )
             if ascending:
                 stmt = stmt.order_by(
@@ -485,6 +490,8 @@ class MemoryStore:
                     desc(MemoryExperience.created_at),
                     desc(MemoryExperience.experience_id),
                 )
+            if limit > 0:
+                stmt = stmt.limit(limit)
             result = await session.execute(stmt)
             return [self._to_experience(item) for item in result.scalars().all()]
 
@@ -622,16 +629,19 @@ class MemoryStore:
 
     async def list_long_term_memory_indexes(
         self,
-        canonical_user_id: str,
+        canonical_user_id: str | None,
         limit: int,
         *,
         scope_type: ScopeType | str | None = None,
         scope_id: str | None = None,
     ) -> list[LongTermMemoryIndex]:
         async with self.get_db() as session:
-            stmt = select(MemoryLongTermMemoryIndex).where(
-                col(MemoryLongTermMemoryIndex.canonical_user_id) == canonical_user_id
-            )
+            stmt = select(MemoryLongTermMemoryIndex)
+            if canonical_user_id is not None:
+                stmt = stmt.where(
+                    col(MemoryLongTermMemoryIndex.canonical_user_id)
+                    == canonical_user_id
+                )
             if scope_type is not None:
                 stmt = stmt.where(
                     col(MemoryLongTermMemoryIndex.scope_type)

@@ -4,6 +4,7 @@ from .document_loader import DocumentLoader
 from .types import (
     DocumentSearchRequest,
     DocumentSearchResult,
+    LongTermMemoryIndex,
 )
 from .vector_index import MemoryVectorIndex
 
@@ -35,6 +36,8 @@ class DocumentSearchService:
             index = await self.store.get_long_term_memory_index(hit.memory_id)
             if index is None:
                 continue
+            if not self._matches_request_scope(index, req):
+                continue
             body_text = None
             if req.include_body:
                 document = self.document_loader.load_long_term_document(index.doc_path)
@@ -65,6 +68,23 @@ class DocumentSearchService:
             reverse=True,
         )
         return [item[0] for item in hydrated]
+
+    def _matches_request_scope(
+        self,
+        index: LongTermMemoryIndex,
+        req: DocumentSearchRequest,
+    ) -> bool:
+        if (
+            req.canonical_user_id is not None
+            and index.canonical_user_id != req.canonical_user_id
+        ):
+            return False
+        if (
+            req.scope_type is not None
+            and self._enum_value(index.scope_type) != self._enum_value(req.scope_type)
+        ):
+            return False
+        return req.scope_id is None or index.scope_id == req.scope_id
 
     def _build_metadata_filters(self, req: DocumentSearchRequest) -> dict[str, object]:
         filters: dict[str, object] = {}

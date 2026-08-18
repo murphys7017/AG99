@@ -13,6 +13,8 @@ from .config import (
     get_memory_config,
 )
 from .document_search import DocumentSearchService
+from .recall_policy import ScopedMemoryCandidate, ScopedRecallPolicy
+from .scope_context import MemoryScopeContext
 from .store import MemoryStore
 from .types import (
     DocumentSearchRequest,
@@ -21,6 +23,7 @@ from .types import (
     MemoryIdentity,
     MemoryRecallSnapshot,
     MemorySnapshot,
+    ScopeRef,
     ScopeType,
 )
 
@@ -75,6 +78,7 @@ class MemorySnapshotBuilder:
         self.store = store
         self.document_search_service = document_search_service
         self.config = config or getattr(store, "config", None) or get_memory_config()
+        self.recall_policy = ScopedRecallPolicy(self.config.recall)
 
     async def build_snapshot(
         self,
@@ -171,9 +175,16 @@ class MemorySnapshotBuilder:
         *,
         query: str | None,
         read_options: MemorySnapshotReadOptions,
+        scope_context: MemoryScopeContext | None = None,
     ) -> MemoryRecallSnapshot:
         options = read_options
         if not snapshot.canonical_user_id or not options.enabled:
+            return MemoryRecallSnapshot()
+        scopes = self.recall_policy.resolve_scopes(
+            snapshot.canonical_user_id,
+            scope_context,
+        )
+        if not scopes:
             return MemoryRecallSnapshot()
 
         long_term_memories: list[LongTermMemoryIndex] = []
@@ -186,6 +197,7 @@ class MemorySnapshotBuilder:
                     conversation_id=snapshot.conversation_id,
                     query=query,
                     read_options=options,
+                    scopes=scopes,
                 )
             except Exception as exc:  # noqa: BLE001
                 degraded_components.append(
@@ -211,6 +223,8 @@ class MemorySnapshotBuilder:
                 query=query,
                 long_term_memories=long_term_memories,
                 read_options=options,
+                scopes=scopes,
+                scoped_recall=scope_context is not None,
             )
         return MemoryRecallSnapshot(
             experiences=experiences,
@@ -230,6 +244,7 @@ class MemorySnapshotBuilder:
         conversation_id: str | None,
         query: str | None,
         read_options: MemorySnapshotReadOptions,
+        scopes: tuple[ScopeRef, ...],
     ) -> list[LongTermMemoryIndex]:
         injection = read_options.long_term
         limit = max(0, min(injection.top_k, SNAPSHOT_LONG_TERM_LIMIT))
@@ -238,30 +253,54 @@ class MemorySnapshotBuilder:
         if injection.query_required and not query:
             return []
 
-        if query and self.document_search_service is not None:
-            results = await self.document_search_service.search_long_term_memories(
-                DocumentSearchRequest(
-                    canonical_user_id=canonical_user_id,
-                    query=query,
-                    umo=umo,
-                    conversation_id=conversation_id,
-                    scope_type=ScopeType.USER,
-                    scope_id=canonical_user_id,
-                    top_k=limit,
-                )
+        candidates: list[ScopedMemoryCandidate] = []
+        for scope_rank, scope in enumerate(scopes):
+            scope_user_id = self.recall_policy.canonical_user_id_for_scope(
+                scope,
+                canonical_user_id,
             )
-            memories: list[LongTermMemoryIndex] = []
-            for item in results:
-                memory = await self.store.get_long_term_memory_index(item.memory_id)
-                if memory is not None:
-                    memories.append(memory)
-            return memories
+            if query and self.document_search_service is not None:
+                results = await self.document_search_service.search_long_term_memories(
+                    DocumentSearchRequest(
+                        canonical_user_id=scope_user_id,
+                        query=query,
+                        umo=umo,
+                        conversation_id=conversation_id,
+                        scope_type=scope.scope_type,
+                        scope_id=scope.scope_id,
+                        top_k=limit,
+                    )
+                )
+                for item in results:
+                    memory = await self.store.get_long_term_memory_index(item.memory_id)
+                    if memory is not None:
+                        candidates.append(
+                            ScopedMemoryCandidate(
+                                memory=memory,
+                                scope_rank=scope_rank,
+                                score=item.score,
+                            )
+                        )
+                continue
 
-        return await self.store.list_long_term_memory_indexes(
-            canonical_user_id,
-            limit,
-            scope_type=ScopeType.USER,
-            scope_id=canonical_user_id,
+            memories = await self.store.list_long_term_memory_indexes(
+                scope_user_id,
+                limit,
+                scope_type=scope.scope_type,
+                scope_id=scope.scope_id,
+            )
+            candidates.extend(
+                ScopedMemoryCandidate(
+                    memory=memory,
+                    scope_rank=scope_rank,
+                    score=None,
+                )
+                for memory in memories
+            )
+        return self.recall_policy.merge_long_term_candidates(
+            candidates,
+            limit=limit,
+            query_present=query is not None,
         )
 
     async def _load_snapshot_experiences(
@@ -272,16 +311,39 @@ class MemorySnapshotBuilder:
         query: str | None,
         long_term_memories: list[LongTermMemoryIndex],
         read_options: MemorySnapshotReadOptions,
+        scopes: tuple[ScopeRef, ...],
+        scoped_recall: bool,
     ) -> list[Experience]:
         limit = max(0, min(read_options.experiences.top_k, SNAPSHOT_EXPERIENCE_LIMIT))
         if limit <= 0:
             return []
 
-        recent_experiences = await self.store.list_recent_experiences(
-            canonical_user_id,
-            limit,
-            conversation_id=conversation_id,
-        )
+        if not scoped_recall:
+            recent_experiences = await self.store.list_recent_experiences(
+                canonical_user_id,
+                limit,
+                conversation_id=conversation_id,
+            )
+        else:
+            recent_experiences = []
+            for scope in scopes:
+                recent_experiences.extend(
+                    await self.store.list_experiences_for_scope(
+                        self.recall_policy.canonical_user_id_for_scope(
+                            scope,
+                            canonical_user_id,
+                        ),
+                        scope.scope_type,
+                        scope.scope_id,
+                        ascending=False,
+                        limit=limit,
+                    )
+                )
+            recent_experiences = self.recall_policy.merge_experiences(
+                recent_experiences,
+                scopes=scopes,
+                limit=limit,
+            )
         if not query or not long_term_memories:
             return recent_experiences
 
@@ -298,13 +360,12 @@ class MemorySnapshotBuilder:
                 seen_experience_ids.add(experience.experience_id)
                 experiences.append(experience)
                 if len(experiences) >= limit:
-                    return experiences
-
-        for experience in recent_experiences:
-            if experience.experience_id in seen_experience_ids:
-                continue
-            seen_experience_ids.add(experience.experience_id)
-            experiences.append(experience)
+                    break
             if len(experiences) >= limit:
                 break
-        return experiences
+        return self.recall_policy.merge_experiences(
+            [*experiences, *recent_experiences],
+            scopes=scopes,
+            limit=limit,
+            preferred_ids=[item.experience_id for item in experiences],
+        )

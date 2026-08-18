@@ -48,6 +48,8 @@ def build_default_memory_config_payload() -> dict:
             "enabled": True,
             "refresh_interval_seconds": 300.0,
             "max_entries": 256,
+            "scope_priority": ["user", "group", "global"],
+            "deduplicate_across_scopes": True,
         },
         "injection": {
             "enabled": True,

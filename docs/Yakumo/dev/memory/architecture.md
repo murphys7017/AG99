@@ -52,8 +52,10 @@ Postprocessor 直接跳过该事件。
 ```text
 PromptContextBuilder
   -> MemoryCollector
-  -> MemoryService.get_snapshot()
-  -> MemorySnapshotBuilder
+  -> MemoryService.get_prompt_snapshot()
+  -> local snapshot(topic / short-term / persona)
+  -> RecallSnapshotManager(stale-while-revalidate)
+  -> background scoped recall(USER / GROUP / GLOBAL)
   -> memory.* ContextSlot
   -> target projection
 ```
@@ -66,9 +68,17 @@ PromptContextBuilder
 - `memory.long_term_memories`
 - `memory.persona_state`
 
-是否读取以及 top-k 由统一 `memory.injection` 配置决定。Router、Planner、Persona 和 Core
-不直接查询 Memory Service，只消费 Prompt target 投影。`MemoryCollector` 是 optional
-Collector；读取失败会记录诊断，但不会创建第二套 fallback 记忆。
+是否读取以及最终 top-k 由统一 `memory.injection` 配置决定。长期检索 query 来自当前
+Short-Term Memory 的 summary/focus，而不是当前消息；缓存键包含 short-term revision、
+fingerprint、scope set 和 retrieval profile。没有缓存时 Prompt 立即使用本地快照，有旧缓存时
+先复用并后台刷新。
+
+`memory.recall.scope_priority` 决定 USER/GROUP/GLOBAL 的启用与冲突优先级；USER 读取绑定
+当前 canonical user，GROUP/GLOBAL 只按稳定 scope key 读取，因此可以消费其他成员在同一群组
+作用域形成的记忆。向量结果水合时会再次校验 owner/scope，避免陈旧索引元数据越界。
+
+Router、Planner、Persona 和 Core 不直接查询 Memory Service，只消费 Prompt target 投影。
+`MemoryCollector` 是 optional Collector；读取失败会记录诊断，但不会创建第二套 fallback 记忆。
 
 ## 主要模块
 

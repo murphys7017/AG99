@@ -65,13 +65,15 @@ class MemoryVectorIndex:
 
     async def search_long_term_memories(
         self,
-        canonical_user_id: str,
+        canonical_user_id: str | None,
         query: str,
         top_k: int,
         metadata_filters: dict | None = None,
     ) -> list[VectorSearchHit]:
         vec_db = await self._ensure_vec_db()
-        filters = {"canonical_user_id": canonical_user_id}
+        filters = {}
+        if canonical_user_id is not None:
+            filters["canonical_user_id"] = canonical_user_id
         if metadata_filters:
             filters.update(metadata_filters)
         results = await vec_db.retrieve(

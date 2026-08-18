@@ -239,6 +239,8 @@ class MemoryRecallConfig:
     enabled: bool = True
     refresh_interval_seconds: float = 300.0
     max_entries: int = 256
+    scope_priority: tuple[str, ...] = ("user", "group", "global")
+    deduplicate_across_scopes: bool = True
 
 
 @dataclass(slots=True)
@@ -520,6 +522,16 @@ def _as_list_of_str(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _load_recall_scope_priority(value: object) -> tuple[str, ...]:
+    supported = {"user", "group", "global"}
+    normalized: list[str] = []
+    for item in _as_list_of_str(value):
+        scope_type = item.lower()
+        if scope_type in supported and scope_type not in normalized:
+            normalized.append(scope_type)
+    return tuple(normalized or ("user", "group", "global"))
+
+
 def _as_dict(value: object) -> dict:
     if isinstance(value, dict):
         return value
@@ -680,6 +692,13 @@ def load_memory_config(
                 300.0,
             ),
             max_entries=_as_int(recall_payload.get("max_entries"), 256),
+            scope_priority=_load_recall_scope_priority(
+                recall_payload.get("scope_priority")
+            ),
+            deduplicate_across_scopes=_as_bool(
+                recall_payload.get("deduplicate_across_scopes"),
+                True,
+            ),
         ),
         injection=MemoryInjectionConfig(
             enabled=_as_bool(injection_payload.get("enabled"), True),
