@@ -72,7 +72,7 @@
 - 距离当前状态 `updated_at` 已达到 `reflection_interval_hours`；首次状态不受该间隔限制。
 - scope 是 USER 且 canonical user 已解析。
 
-Job 的 scope key 使用 canonical user，dedupe key 使用 user + consolidation batch。失败采用 fail-open：
+Job 的 scope key 使用 canonical user，待处理 reflection 按 user scope 去重并保留最新 consolidation payload。失败采用 fail-open：
 只记录诊断，不回滚已经成功的 Short-Term、Experience 或 Long-Term 数据，也不影响用户回复。
 
 ## 原子写入与回滚
