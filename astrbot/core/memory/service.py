@@ -298,24 +298,28 @@ class MemoryService:
             and self.store.config.persona.enabled
             and self.store.config.jobs.persona_reflection_enabled
         ):
-            submitted = await self.job_scheduler.submit(
-                MemoryScopeJob(
-                    owner_id=job.owner_id,
-                    scope_type=job.scope_type,
-                    scope_id=job.scope_id,
-                    conversation_id=job.conversation_id,
-                    umo=job.umo,
-                    kind="persona_reflection",
-                    dedupe_key=f"persona:{insight.insight_id}",
-                    payload=self._build_persona_reflection_payload(
-                        job,
-                        insight,
-                        experiences,
-                    ),
+            current_state = await self.persona_state_service.get_state(job.owner_id)
+            if self.persona_state_service.reflection_due(current_state):
+                submitted = await self.job_scheduler.submit(
+                    MemoryScopeJob(
+                        owner_id=job.owner_id,
+                        scope_type=job.scope_type,
+                        scope_id=job.scope_id,
+                        conversation_id=job.conversation_id,
+                        umo=job.umo,
+                        kind="persona_reflection",
+                        dedupe_key=f"persona:{job.owner_id}",
+                        payload=self._build_persona_reflection_payload(
+                            job,
+                            insight,
+                            experiences,
+                        ),
+                    )
                 )
-            )
-            if submitted:
-                self.persona_state_service.record_submitted()
+                if submitted:
+                    self.persona_state_service.record_submitted()
+                else:
+                    self.persona_state_service.record_skipped()
             else:
                 self.persona_state_service.record_skipped()
         if (
@@ -381,6 +385,9 @@ class MemoryService:
             raise ValueError("persona reflection job payload is incomplete")
 
         current_state = await self.persona_state_service.get_state(canonical_user_id)
+        if not self.persona_state_service.reflection_due(current_state):
+            self.persona_state_service.record_skipped()
+            return
         current_values = (
             self.persona_state_service.neutral_values()
             if current_state is None

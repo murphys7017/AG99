@@ -305,10 +305,10 @@ class MemoryPersonaState(BaseMemoryModel, table=True):
     scope_id: str = Field(nullable=False, index=True, max_length=255)
     persona_id: str | None = Field(default=None, max_length=255)
     familiarity: float = Field(default=0.0, nullable=False)
-    trust: float = Field(default=0.0, nullable=False)
-    warmth: float = Field(default=0.0, nullable=False)
-    formality_preference: float = Field(default=0.0, nullable=False)
-    directness_preference: float = Field(default=0.0, nullable=False)
+    trust: float = Field(default=0.5, nullable=False)
+    warmth: float = Field(default=0.5, nullable=False)
+    formality_preference: float = Field(default=0.5, nullable=False)
+    directness_preference: float = Field(default=0.5, nullable=False)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (

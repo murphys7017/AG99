@@ -115,11 +115,10 @@ class PersonaStateService:
 
         current = await self.get_state(user_id)
         normalized_persona_id = self._normalize_optional_id(persona_id)
-        if current is not None and current.persona_id != normalized_persona_id:
-            raise ValueError(
-                "persona state belongs to a different static persona: "
-                f"current={current.persona_id!r} requested={normalized_persona_id!r}"
-            )
+        if current is not None:
+            # PersonaState is USER-scoped in the first version. Keep the original
+            # attribution when a later turn selects another static Persona.
+            normalized_persona_id = current.persona_id
         current_time = self._normalize_datetime(now or datetime.now(UTC))
         if not self.reflection_due(current, now=current_time):
             return None

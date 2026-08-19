@@ -1021,7 +1021,8 @@ class MemoryStore:
             result = await session.execute(stmt)
             return [self._to_identity_binding(item) for item in result.scalars().all()]
 
-    async def upsert_persona_state(self, state: PersonaState) -> PersonaState:
+    async def _upsert_persona_state(self, state: PersonaState) -> PersonaState:
+        """Persist a state for low-level fixtures; production uses the service."""
         async with self.get_db() as session:
             async with session.begin():
                 result = await session.execute(
@@ -1074,10 +1075,11 @@ class MemoryStore:
             entity = result.scalar_one_or_none()
             return self._to_persona_state(entity) if entity else None
 
-    async def save_persona_evolution_log(
+    async def _save_persona_evolution_log(
         self,
         log: PersonaEvolutionLog,
     ) -> PersonaEvolutionLog:
+        """Persist a log for low-level fixtures; production uses the service."""
         async with self.get_db() as session:
             async with session.begin():
                 result = await session.execute(

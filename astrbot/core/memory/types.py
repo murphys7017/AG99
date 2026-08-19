@@ -260,10 +260,10 @@ class PersonaState:
     scope_id: str
     persona_id: str | None
     familiarity: float = 0.0
-    trust: float = 0.0
-    warmth: float = 0.0
-    formality_preference: float = 0.0
-    directness_preference: float = 0.0
+    trust: float = 0.5
+    warmth: float = 0.5
+    formality_preference: float = 0.5
+    directness_preference: float = 0.5
     updated_at: datetime | None = None
 
 

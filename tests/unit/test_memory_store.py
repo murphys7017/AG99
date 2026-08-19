@@ -391,7 +391,7 @@ async def test_memory_store_round_trip_for_mid_and_long_term_objects(temp_dir: P
                 updated_at=now,
             )
         )
-        saved_state = await store.upsert_persona_state(
+        saved_state = await store._upsert_persona_state(
             PersonaState(
                 state_id="state-1",
                 scope_type=ScopeType.USER,
@@ -405,7 +405,7 @@ async def test_memory_store_round_trip_for_mid_and_long_term_objects(temp_dir: P
                 updated_at=now,
             )
         )
-        saved_log = await store.save_persona_evolution_log(
+        saved_log = await store._save_persona_evolution_log(
             PersonaEvolutionLog(
                 log_id="log-1",
                 scope_type=ScopeType.USER,

@@ -5,7 +5,7 @@
 `PersonaState` 描述 Personal 与当前用户长期互动形成的动态关系和表达偏好，不修改静态 Persona，
 也不替代 Conversation、Short-Term Memory 或长期事实记忆。
 
-第一版必须满足：默认关闭、只处理 USER 作用域、完全后台运行、更新幅度受限、每次变化可审计且可回滚。
+第一版必须满足：默认关闭、只处理 USER 作用域、完全后台运行、更新幅度受限、每次变化可审计且可回滚。USER PersonaState 是用户全局状态，不按静态 Persona 拆分；`persona_id` 只保留为可选归属信息，不参与状态键和 Prompt 内容。
 
 ## 冻结边界
 
@@ -35,7 +35,7 @@
 - 当前 PersonaState 的五个数值；没有状态时使用中性基线。
 - 最新 SessionInsight 的 topic/progress/summary。
 - 本次 consolidation 产生的 Experience category/summary/detail/importance/confidence。
-- 静态 Persona ID 仅作为状态归属校验，不进入普通语义正文。
+- 静态 Persona ID 只作为可选归属信息，不进入普通语义正文，也不改变 USER 状态的唯一键。
 
 输出：
 
@@ -105,16 +105,14 @@ PersonaState 只允许进入：
 ### 6A：持久化与服务边界（已完成）
 
 - 新增 `PersonaStateService`。
-- Persona reflection analyzer 与 `persona_reflection` 后台 Job 已接入 consolidation 成功后的 USER scope 链路。
 - 新增原子 apply、读取 evolution log 和 rollback Store API。
 - 定义中性基线、delta 限幅和 interval 判断。
-- 不接 Provider，不接自动调度。
 
 ### 6B：Analyzer 与后台 Job（已完成）
 
 - 增加 `persona_reflect_v1` prompt、schema contract 和 analysis stage。
 - `MemoryJobScheduler` 增加 `persona_reflection` kind。
-- USER consolidation 成功后按开关和 interval 提交。
+- USER consolidation 成功后按开关和 interval 提交；提交前和 Job 执行前都会再次检查 interval。
 - 默认配置保持全部关闭。
 
 ### 6C：管理与验收（管理部分已完成）

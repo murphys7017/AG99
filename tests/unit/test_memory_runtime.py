@@ -2685,7 +2685,7 @@ async def test_memory_service_snapshot_returns_persona_state_and_long_term_conte
                 updated_at=now,
             )
         )
-        await store.upsert_persona_state(
+        await store._upsert_persona_state(
             PersonaState(
                 state_id="persona-state-1",
                 scope_type=ScopeType.USER,

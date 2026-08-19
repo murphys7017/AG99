@@ -39,7 +39,7 @@ material；普通 Pipeline 则读取官方 Conversation 或当前 Provider 回�
    promotion。
 3. 普通用户回合更新 `TopicState` 与 `ShortTermMemory`，再按 `MemoryScopeContext` 枚举可贡献的 USER/GROUP scope。
 4. 生产 Postprocessor 将每个 scope 提交给 `MemoryJobScheduler`；同一 scope 串行执行，同一 conversation 的重复待处理任务合并。任务内部按阈值运行 consolidation，产生对应的 `SessionInsight` 与 `Experience`；GROUP 会聚合同一群组不同成员的回合。
-5. 每个 scope 的任务继续推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。Recall refresh 与 dirty vector sync 也通过同一 scheduler 托管；PersonaState 已有原子演进与回滚服务，但自动 reflection 尚未接入 scheduler。
+5. 每个 scope 的任务继续推进长期沉淀、文档和向量索引；共享 scope 使用稳定 scope owner key，当前贡献者仍保留在 `platform_user_key`、回合和 source refs 中。Recall refresh、dirty vector sync 和 USER-scoped PersonaState reflection 也通过同一 scheduler 托管。
 
 `MemoryService.update_from_postprocess()` 的生产调用显式使用 `background_jobs=True`，不会等待 analyzer 或整理任务；直接管理调用默认同步执行并传播异常，避免把后台异常吞成同步 API 的假成功。Recall refresh 通过同一 scheduler 提交，但仍由 `RecallSnapshotManager` 保持 stale-while-revalidate 的缓存语义；dirty vector sync 通过 `schedule_dirty_long_term_vector_indexes()` 提交，原有同步修复入口继续保留给管理调用。
 

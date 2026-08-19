@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -662,7 +663,9 @@ def load_memory_config(
     )
     persona_payload = payload.get("persona", {}) if isinstance(payload, dict) else {}
     jobs_payload = payload.get("jobs", {}) if isinstance(payload, dict) else {}
-    analysis_payload = payload.get("analysis", {}) if isinstance(payload, dict) else {}
+    analysis_payload = _merge_analysis_defaults(
+        payload.get("analysis", {}) if isinstance(payload, dict) else {}
+    )
     identity_payload = payload.get("identity", {}) if isinstance(payload, dict) else {}
     loaded_analyzers = _load_analyzer_configs(analysis_payload.get("analyzers"))
     loaded_stages = _load_stage_configs(analysis_payload.get("stages"))
@@ -848,6 +851,37 @@ def load_memory_config(
     )
     ensure_memory_runtime_dirs(config)
     return config
+
+
+def _merge_analysis_defaults(value: object) -> dict:
+    """Keep newly introduced analyzers and stages available in partial configs."""
+    defaults = build_default_memory_config_payload().get("analysis", {})
+    if not isinstance(defaults, dict):
+        return _as_dict(value)
+
+    supplied = _as_dict(value)
+    merged = deepcopy(defaults)
+    for key in (
+        "enabled",
+        "strict",
+        "standard_provider_id",
+        "advanced_provider_id",
+        "prompts_root",
+    ):
+        if key in supplied:
+            merged[key] = supplied[key]
+
+    for section in ("analyzers", "stages"):
+        supplied_section = _as_dict(supplied.get(section))
+        merged_section = _as_dict(merged.get(section))
+        for name, raw_config in supplied_section.items():
+            default_config = merged_section.get(name)
+            if isinstance(raw_config, dict) and isinstance(default_config, dict):
+                merged_section[name] = {**default_config, **raw_config}
+            else:
+                merged_section[name] = raw_config
+        merged[section] = merged_section
+    return merged
 
 
 def ensure_memory_runtime_dirs(config: MemoryConfig) -> None:

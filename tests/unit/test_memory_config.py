@@ -216,9 +216,10 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     assert set(payload) == {
         "enabled",
         "identity",
-        "storage",
-        "short_term",
-        "injection",
+            "storage",
+            "short_term",
+            "recall",
+            "injection",
         "consolidation",
         "long_term",
         "vector_index",
