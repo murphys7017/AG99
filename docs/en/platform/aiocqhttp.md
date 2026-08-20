@@ -42,3 +42,9 @@ Notes:
 
 Go to AstrBot WebUI `Console`. If a blue log appears saying `aiocqhttp(OneBot v11) adapter connected.`, the connection is successful.
 If after a few seconds you see `aiocqhttp adapter has been closed`, it means the connection timed out (failed). Please double-check your configuration.
+
+## 4. Group member names and cache
+
+To avoid synchronous OneBot requests while processing `@` mentions, AstrBot loads the available group list after the adapter connects and refreshes group member name snapshots in the background. Snapshots are kept for 24 hours, and refreshes are concurrency-limited so they do not block message ingestion or reply generation.
+
+When a snapshot is not ready or OneBot temporarily cannot provide the member list, `@` handling falls back to the nickname carried by the message segment, or to the QQ number when no nickname is available. Group member change notices trigger a background refresh for the affected group. When ID whitelisting is enabled, only permitted groups are prewarmed.

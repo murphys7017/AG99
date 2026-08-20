@@ -113,11 +113,12 @@ Persona Runtime 不是第二套回复生成器：普通 Persona 对话与 Core �
 
 Router 与 Core Planner 只共享事实源，不共享模型决策、Prompt 指令或输出结果。
 
-**首回复优先，插件富化尽力而为** — Interaction Prompt 会先形成所有目标共享的基础事实；
+**首回复优先，插件富化策略可配置** — Interaction Prompt 会先形成所有目标共享的基础事实；
 普通插件的 Prompt Extension/Contributor 在后台生成 Persona/Core 富化包。Router 和 Core Planner
-只读基础事实，Persona 只在富化包已经就绪时合并它，不能因为慢插件延迟首回复；需要执行时，
-Core 会等待并复用同一个富化结果。插件若必须影响当前轮的路由或准入，不能把这个需求放在
-Prompt Extension 中。
+只读基础事实；Persona 是否等待富化包由 `interaction_middleware.persona_plugin_context_mode`
+决定：`wait_complete`（默认）等待完整插件上下文，`best_effort` 只消费已经就绪的富化结果，
+未就绪时立即使用基础事实。Core 会等待并复用同一个富化结果。插件若必须影响当前轮的路由
+或准入，不能把这个需求放在 Prompt Extension 中。
 
 持续人格 Runtime 已具备独立的 Observation Intake：内部事实按会话人格解析到同一个
 RuntimeKey，在每个 Runtime 的有界 Inbox 中执行过期清理、显式合并和 1.5 秒聚合窗口，最后
@@ -142,7 +143,7 @@ Cron 和插件显式发送则保持精确投递兼容，不作为 Policy 行动�
 
 - **位置**：复用官方 EventBus、Pipeline、权限与插件过滤，位于这些处理之后、核心 Agent 开始之前
 - **输入侧**：完成 turn state、入站媒体 materialization、STT，由 Prompt Collectors 构建规范 ContextPack；普通显式消息和未被 Handler 接管的群聊候选都并发启动 Personal 与 Router。Personal 不等待 Router 或 Planner，Router 只用 `silent` 仲裁尚未提交的回复并用 `hybrid` 决定是否进入 Core
-- **上下文时延**：基础 ContextPack 是 Router/Persona 的首回复依赖；插件富化在后台预取，Persona 只消费已就绪结果，Core 才等待同一结果。语义 Memory 检索仍属于 Persona 的正式上下文，不会被移出当前轮
+- **上下文时延**：基础 ContextPack 是 Router/Persona 的首回复依赖；插件富化在后台预取，Persona 是否等待完整结果由 `persona_plugin_context_mode` 决定，Core 始终等待并复用同一结果。语义 Memory 检索仍属于 Persona 的正式上下文，不会被移出当前轮
 - **输出侧**：接管 `event.send` / `event.send_streaming` 语义，统一 finalizer、result contributor、TTS、t2i、stream observation、utterance ledger 与 finalized turn material
 - **表达侧**：所有需要拟人化的可见材料进入同一个 Persona Runtime；Output Runtime 不再自行生成另一套文案
 - **流式例外收口**：插件显式选择 `persona` 输出时，流文本先完整收集再执行一次 Persona 表达，避免原文流与改写文案同时发送；`direct` 流保持原有低延迟发送
