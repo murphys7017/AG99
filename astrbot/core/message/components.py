@@ -38,8 +38,8 @@ else:
 
 from astrbot.core import astrbot_config, file_token_service, logger
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.path_util import file_uri_to_path, local_path_to_file_uri
 from astrbot.core.utils.io import download_file, download_image_by_url, file_to_base64
+from astrbot.core.utils.path_util import file_uri_to_path, local_path_to_file_uri
 
 
 class ComponentType(str, Enum):
