@@ -1,7 +1,7 @@
 import re
 
 _SECRET_KEYS = (
-    r"(?:api_?key|access_?token|auth_?token|refresh_?token|session_?id|secret|password)"
+    r"(?:api_?key|access_?token|auth_?token|refresh_?token|session_?id|secret|password|rkey)"
 )
 
 _JSON_FIELD_PATTERN = re.compile(
@@ -14,7 +14,7 @@ _QUERY_FIELD_PATTERN = re.compile(
     rf"(?i)(?P<prefix>{_SECRET_KEYS}\s*=\s*)(?P<value>[^&'\" ]+)"
 )
 _QUERY_PARAM_PATTERN = re.compile(
-    r"(?i)(?P<prefix>[?&](?:api_?key|key|access_?token|auth_?token)=)(?P<value>[^&'\" ]+)"
+    r"(?i)(?P<prefix>[?&](?:api_?key|key|access_?token|auth_?token|rkey)=)(?P<value>[^&'\" ]+)"
 )
 _AUTH_HEADER_PATTERN = re.compile(
     r"(?i)(?P<prefix>\bauthorization\s*:\s*bearer\s+)(?P<token>[A-Za-z0-9._\-]+)"

@@ -34,7 +34,7 @@ async def test_input_status_notice_is_not_converted_to_message():
 
 
 @pytest.mark.asyncio
-async def test_other_notice_events_are_still_converted():
+async def test_only_poke_notice_is_converted_to_message():
     adapter = _adapter_without_starting_platform()
     poke_event = Event(
         {
@@ -57,11 +57,21 @@ async def test_other_notice_events_are_still_converted():
             "group_id": 792615362,
         },
     )
+    group_decrease_event = Event(
+        {
+            "post_type": "notice",
+            "notice_type": "group_decrease",
+            "sub_type": "leave",
+            "self_id": 2762018040,
+            "user_id": 815049548,
+            "group_id": 792615362,
+        },
+    )
 
     poke = await adapter.convert_message(poke_event)
     group_card = await adapter.convert_message(group_card_event)
 
     assert poke is not None
     assert len(poke.message) == 1
-    assert group_card is not None
-    assert group_card.message == []
+    assert group_card is None
+    assert await adapter.convert_message(group_decrease_event) is None

@@ -16,6 +16,7 @@ from asyncio import Queue
 from astrbot.core import logger
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 from astrbot.core.pipeline.scheduler import PipelineScheduler
+from astrbot.core.utils.error_redaction import redact_sensitive_text
 
 from .platform import AstrMessageEvent
 
@@ -106,7 +107,9 @@ class EventBus:
                 f"[{event.get_platform_id()}({event.get_platform_name()})]"
                 == "[alice(aiocqhttp)]"
             ):
-                logger.debug(f"Full event data: {event.message_obj}")
+                logger.debug(
+                    f"Full event data: {redact_sensitive_text(str(event.message_obj))}"
+                )
         # 没有发送者名称: [平台名] 发送者ID: 消息概要
         else:
             logger.info(

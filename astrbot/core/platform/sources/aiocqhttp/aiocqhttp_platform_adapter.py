@@ -22,6 +22,7 @@ from astrbot.api.platform import (
     PlatformMetadata,
 )
 from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.utils.error_redaction import redact_sensitive_text
 
 from ...register import register_platform_adapter
 from .aiocqhttp_message_event import *
@@ -151,7 +152,9 @@ class AiocqhttpAdapter(Platform):
             # Normalize CQ code escaping for downstream consumers.
             event["raw_message"] = html.unescape(raw_message)
 
-        logger.debug(f"[aiocqhttp] RawMessage {event}")
+        logger.debug(
+            f"[aiocqhttp] RawMessage {redact_sensitive_text(str(event))}"
+        )
 
         if event["post_type"] == "message":
             abm = await self._convert_handle_message_event(event)
@@ -195,12 +198,14 @@ class AiocqhttpAdapter(Platform):
         event: Event,
     ) -> AstrBotMessage | None:
         """OneBot V11 通知类事件"""
-        # OneBot's input-status notice describes a user's typing state rather
-        # than a message. Enqueuing it lets continuation logic reuse the last
-        # real message in the session, which can trigger duplicate replies.
+        # Only explicit poke notices have message-like interaction semantics.
+        # Administrative/status notices are handled above for their side
+        # effects, but must not enter the ordinary message pipeline as empty
+        # messages.
         if (
-            event.get("notice_type") == "notify"
-            and event.get("sub_type") == "input_status"
+            event.get("notice_type") != "notify"
+            or event.get("sub_type") != "poke"
+            or event.get("target_id") is None
         ):
             return None
 
@@ -793,7 +798,9 @@ class AiocqhttpAdapter(Platform):
             session_id=message.session_id,
             bot=self.bot,
         )
-        logger.debug(f"Handling message: {message_event.message_obj}")
+        logger.debug(
+            f"Handling message: {redact_sensitive_text(str(message_event.message_obj))}"
+        )
         self.commit_event(message_event)
 
     def get_client(self) -> CQHttp:
