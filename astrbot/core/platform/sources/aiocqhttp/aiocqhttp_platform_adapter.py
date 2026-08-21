@@ -60,6 +60,7 @@ class AiocqhttpAdapter(Platform):
         )
         self._group_member_prewarm_task: asyncio.Task[None] | None = None
         self._group_member_cache_shutdown = False
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
         self.metadata = PlatformMetadata(
             name="aiocqhttp",
@@ -189,8 +190,20 @@ class AiocqhttpAdapter(Platform):
         abm.raw_message = event
         return abm
 
-    async def _convert_handle_notice_event(self, event: Event) -> AstrBotMessage:
+    async def _convert_handle_notice_event(
+        self,
+        event: Event,
+    ) -> AstrBotMessage | None:
         """OneBot V11 通知类事件"""
+        # OneBot's input-status notice describes a user's typing state rather
+        # than a message. Enqueuing it lets continuation logic reuse the last
+        # real message in the session, which can trigger duplicate replies.
+        if (
+            event.get("notice_type") == "notify"
+            and event.get("sub_type") == "input_status"
+        ):
+            return None
+
         abm = AstrBotMessage()
         abm.self_id = str(event.self_id)
         abm.sender = MessageMember(
@@ -449,7 +462,40 @@ class AiocqhttpAdapter(Platform):
         """Start one background refresh for the bot's known groups."""
         if self._group_member_cache_shutdown:
             return
-        if self._group_member_prewarm_task and not self._group_member_prewarm_task.done():
+        loop = self._event_loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # aiocqhttp may invoke connection callbacks from a worker
+                # thread before the adapter has captured its main loop.
+                return
+            self._event_loop = loop
+
+        if loop.is_closed():
+            return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is loop:
+            self._schedule_group_member_prewarm_on_loop()
+        else:
+            # The websocket connection callback is synchronous and aiocqhttp
+            # can run it through Quart's executor. Task creation must happen
+            # on the loop that owns the adapter and its async resources.
+            loop.call_soon_threadsafe(self._schedule_group_member_prewarm_on_loop)
+
+    def _schedule_group_member_prewarm_on_loop(self) -> None:
+        """Create the prewarm task on the adapter's owning event loop."""
+        if self._group_member_cache_shutdown:
+            return
+        if (
+            self._group_member_prewarm_task
+            and not self._group_member_prewarm_task.done()
+        ):
             return
 
         task = asyncio.create_task(
@@ -657,6 +703,7 @@ class AiocqhttpAdapter(Platform):
 
     def run(self) -> Awaitable[Any]:
         self._group_member_cache_shutdown = False
+        self._event_loop = asyncio.get_running_loop()
         if not self.host or not self.port:
             logger.warning(
                 "aiocqhttp: 未配置 ws_reverse_host 或 ws_reverse_port，将使用默认值：http://0.0.0.0:6199",
@@ -692,6 +739,7 @@ class AiocqhttpAdapter(Platform):
         self._group_member_refresh_retry_at.clear()
         self._group_member_prewarm_task = None
         self._group_member_cache.clear()
+        self._event_loop = None
 
         if hasattr(self, "shutdown_event"):
             self.shutdown_event.set()
