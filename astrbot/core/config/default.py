@@ -1222,6 +1222,20 @@ CONFIG_METADATA_2 = {
                         "proxy": "",
                         "custom_headers": {},
                     },
+                    "OpenAI Responses": {
+                        "id": "openai_responses",
+                        "provider": "openai_responses",
+                        "type": "openai_responses",
+                        "provider_type": "chat_completion",
+                        "enable": True,
+                        "key": [],
+                        "api_base": "https://api.openai.com/v1",
+                        "timeout": 120,
+                        "proxy": "",
+                        "custom_headers": {},
+                        "store": False,
+                        "custom_extra_body": {},
+                    },
                     "Google Gemini": {
                         "id": "google_gemini",
                         "provider": "google",
@@ -2101,6 +2115,11 @@ CONFIG_METADATA_2 = {
                         "type": "dict",
                         "items": {},
                         "hint": "此处添加的键值对将被合并到 OpenAI SDK 的 default_headers 中，用于自定义 HTTP 请求头。",
+                    },
+                    "store": {
+                        "description": "保存 Responses 响应",
+                        "type": "bool",
+                        "hint": "是否允许 Responses API 在服务商侧保存响应。关闭后每次请求会发送 store=false。",
                     },
                     "ollama_disable_thinking": {
                         "description": "关闭思考模式",

@@ -2,6 +2,8 @@
 
 AstrBot 适配了 OpenAI、Google GenAI、Anthropic 三种原生 API 格式。您可以接入任意符合这三种 API 格式之一的模型服务提供商。
 
+如果服务商提供的是 OpenAI Responses API（请求路径通常为 `/v1/responses`，请求字段使用 `input` 而不是 `messages`），请在新增服务商时选择 `OpenAI Responses`，不要选择普通的 `OpenAI Compatible`。该适配器支持文本、图片、Responses 工具调用和流式文本事件；自定义请求头填写在 `custom_headers` 中，额外的 Responses 参数可填写在 `custom_extra_body` 中。模板默认使用 `store=false`，如服务商需要保存响应，可在提供商配置中打开 `store`。当前 Responses 适配器不支持音频输入，如需处理音频请使用语音转文本或其他适配器。
+
 > [!NOTE]
 > 如果您位于中国大陆境内，我们强烈建议您使用符合当地法律法规的由**模型厂商官方提供的**或经过备案的模型服务提供商，例如：
 > 
