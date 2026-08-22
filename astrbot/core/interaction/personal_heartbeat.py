@@ -12,6 +12,15 @@ from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from .config import load_interaction_agent_config
 from .observation import RuntimeObservation, RuntimeObservationTarget
 
+_QUIET_IDLE_INITIATION_REASONS = frozenset(
+    {
+        "idle_initiation_no_user_activity",
+        "idle_initiation_not_due",
+        "idle_initiation_already_submitted",
+    }
+)
+
+
 if TYPE_CHECKING:
     from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
     from astrbot.core.star.context import Context
@@ -227,12 +236,20 @@ class PersonalHeartbeatSource:
                 status=idle_result.status.value,
                 reason_codes=idle_result.reason_codes,
             )
-            logger.debug(
-                "Personal Runtime idle initiation submitted: target=%s status=%s reasons=%s",
-                target_key,
-                idle_result.status.value,
-                ",".join(idle_result.reason_codes),
-            )
+            if not (
+                idle_result.status.value == "ignored"
+                and idle_result.reason_codes
+                and set(idle_result.reason_codes).issubset(
+                    _QUIET_IDLE_INITIATION_REASONS
+                )
+            ):
+                logger.debug(
+                    "Personal Runtime idle initiation result: target=%s status=%s "
+                    "reasons=%s",
+                    target_key,
+                    idle_result.status.value,
+                    ",".join(idle_result.reason_codes),
+                )
             results.append(idle_result)
         self._prune_inactive_targets(active_targets)
         return tuple(results)
