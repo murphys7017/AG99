@@ -32,13 +32,14 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
 
     def __init__(self, provider_config, provider_settings) -> None:
         provider_config = dict(provider_config)
-        if (
-            not provider_config.get("custom_headers")
-            and isinstance(provider_config.get("http_headers"), dict)
+        if not provider_config.get("custom_headers") and isinstance(
+            provider_config.get("http_headers"), dict
         ):
             provider_config["custom_headers"] = dict(provider_config["http_headers"])
         super().__init__(provider_config, provider_settings)
-        self.default_params = inspect.signature(self.client.responses.create).parameters.keys()
+        self.default_params = inspect.signature(
+            self.client.responses.create
+        ).parameters.keys()
         self.store_responses = self._resolve_store_setting(provider_config)
 
     @staticmethod
@@ -62,7 +63,9 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
             return "".join(
                 str(part.get("text", ""))
                 for part in content
-                if isinstance(part, dict) and part.get("type") in {
+                if isinstance(part, dict)
+                and part.get("type")
+                in {
                     "text",
                     "input_text",
                     "output_text",
@@ -84,9 +87,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
                 # Historical messages are sent as Responses input items. The
                 # SDK accepts `input_text` for both user and assistant roles;
                 # `output_text` is an output-only content type.
-                parts.append(
-                    {"type": "input_text", "text": str(part.get("text", ""))}
-                )
+                parts.append({"type": "input_text", "text": str(part.get("text", ""))})
             elif part_type == "image_url":
                 image = part.get("image_url")
                 if isinstance(image, dict) and image.get("url"):
@@ -190,9 +191,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
             model=model,
             extra_user_content_parts=extra_user_content_parts,
         )
-        instructions, response_input = self._messages_to_response_input(
-            context_query
-        )
+        instructions, response_input = self._messages_to_response_input(context_query)
         payload = {"model": payloads["model"], "input": response_input}
         if instructions:
             payload["instructions"] = instructions
@@ -218,7 +217,9 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         details = getattr(usage, "input_tokens_details", None)
         cached = getattr(details, "cached_tokens", 0) if details else 0
         return TokenUsage(
-            input_other=max((getattr(usage, "input_tokens", 0) or 0) - (cached or 0), 0),
+            input_other=max(
+                (getattr(usage, "input_tokens", 0) or 0) - (cached or 0), 0
+            ),
             input_cached=cached or 0,
             output=getattr(usage, "output_tokens", 0) or 0,
         )
@@ -247,8 +248,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
                 tool_args.append(cls._parse_arguments(getattr(item, "arguments", "{}")))
                 tool_names.append(getattr(item, "name", ""))
                 tool_ids.append(
-                    getattr(item, "call_id", None)
-                    or getattr(item, "id", "")
+                    getattr(item, "call_id", None) or getattr(item, "id", "")
                 )
         text = getattr(response, "output_text", None) or "".join(text_parts)
         if text:
@@ -286,7 +286,9 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         if isinstance(custom_extra_body, dict):
             request.update(copy.deepcopy(custom_extra_body))
         allowed = set(self.default_params)
-        extra_body = {key: request.pop(key) for key in list(request) if key not in allowed}
+        extra_body = {
+            key: request.pop(key) for key in list(request) if key not in allowed
+        }
         return {**request, "extra_body": extra_body} if extra_body else request
 
     async def _query(
@@ -406,8 +408,15 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         **kwargs,
     ) -> LLMResponse:
         payload, _ = await self._prepare_response_payload(
-            prompt, image_urls, audio_urls, contexts, system_prompt,
-            tool_calls_result, model, extra_user_content_parts, **kwargs
+            prompt,
+            image_urls,
+            audio_urls,
+            contexts,
+            system_prompt,
+            tool_calls_result,
+            model,
+            extra_user_content_parts,
+            **kwargs,
         )
         self.ensure_output_contract_supported(
             output_contract=output_contract,
