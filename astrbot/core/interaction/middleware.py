@@ -1013,6 +1013,13 @@ class InteractionMiddleware:
             return
 
         expression = await persona_task
+        if expression is None:
+            # A Persona hook may intentionally suppress the speculative reply
+            # after the Router has selected the Persona route. Complete this as
+            # a silent turn instead of turning a valid control outcome into a
+            # pipeline failure.
+            await self._complete_silent_or_committed_persona_turn(event, None)
+            return
         await self._complete_persona_only_turn(event, expression)
 
     def _start_speculative_persona_task(

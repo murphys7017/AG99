@@ -939,12 +939,17 @@ class InteractionExpressionAgent:
         ):
             return PersonaExpressionResult()
         result.spoken_reply = str(response_for_hooks.completion_text or "")
-        if await call_event_hook(
-            event,
-            EventType.OnPersonaExpressionResultEvent,
-            result,
-            execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-        ):
+        # Persona result hooks belong to this isolated request lifecycle. Keep
+        # the lifecycle overlay active so a stop on the parent event (for
+        # example, a user interrupt) is not mistaken for a hook-local stop.
+        with prepared.lifecycle.expose_request():
+            hook_stopped = await call_event_hook(
+                event,
+                EventType.OnPersonaExpressionResultEvent,
+                result,
+                execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+            )
+        if hook_stopped:
             return PersonaExpressionResult()
         _normalize_result_speech_cues(result)
         try:
