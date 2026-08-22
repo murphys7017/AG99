@@ -117,11 +117,15 @@ ignore = [
 
 [tool.pyright]
 typeCheckingMode = "basic"
-pythonVersion = "3.10"
+pythonVersion = "3.12"
 reportMissingTypeStubs = false
 reportMissingImports = false
 include = ["astrbot"]
 exclude = ["dashboard", "node_modules", "dist", "data", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["data", ".tmp", "node_modules", "dist"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

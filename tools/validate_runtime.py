@@ -5,7 +5,6 @@ import argparse
 import sys
 from pathlib import Path
 
-
 REQUIRED = [
     "AGENTS.md",
     ".ai/index.md",
@@ -48,7 +47,9 @@ STATE_TERMS = [
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Validate the minimal AI runtime.")
     parser.add_argument("root", nargs="?", default=".")
-    parser.add_argument("--warnings-as-errors", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--warnings-as-errors", action="store_true", help=argparse.SUPPRESS
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()

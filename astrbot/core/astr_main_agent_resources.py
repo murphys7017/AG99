@@ -1,5 +1,9 @@
 import base64
 
+from astrbot.core.prompt.resources import (
+    COMPUTER_USE_DISABLED_SKILLS_PROMPT as COMPUTER_USE_DISABLED_SKILLS_PROMPT,
+)
+
 PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT = (
     "You are an autonomous proactive agent.\n\n"
     "You are awakened by a scheduled cron job, not by a user message.\n"

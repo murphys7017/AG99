@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
-
 
 OutputContractMode = Literal["text", "json_object", "tool_call"]
 OutputContractStrategy = Literal[
@@ -31,7 +30,7 @@ class OutputContract:
         }
 
     @classmethod
-    def from_mapping(cls, value: object) -> "OutputContract | None":
+    def from_mapping(cls, value: object) -> OutputContract | None:
         if value is None:
             return None
         if isinstance(value, OutputContract):

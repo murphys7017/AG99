@@ -1,6 +1,6 @@
 from astrbot.core import logger
 
-from .entities import ProviderMetaData, ProviderType, PromptRendererFamily
+from .entities import PromptRendererFamily, ProviderMetaData, ProviderType
 from .func_tool_manager import FuncCall
 
 provider_registry: list[ProviderMetaData] = []

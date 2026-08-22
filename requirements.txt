@@ -54,3 +54,10 @@ shipyard-neo-sdk>=0.2.0
 packaging>=24.2
 qrcode>=8.2
 python-ripgrep==0.0.8 ; python_version < '3.14'
+crypto>=1.4.1
+edge-tts>=7.2.7
+json-repair>=0.61.0
+pyffmpeg>=2.5.2.3.2
+silero-vad>=6.2.1
+volcengine-python-sdk[ark]>=5.0.17
+whisper>=1.1.10

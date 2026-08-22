@@ -114,6 +114,7 @@ def test_base_prompt_renderer_enables_all_slot_groups():
         "knowledge",
         "capability",
         "memory",
+        "runtime",
         "extension",
     )
 
