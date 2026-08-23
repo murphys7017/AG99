@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 from openai.types.responses.response_input_param import ResponseInputParam
@@ -211,6 +212,20 @@ def test_response_request_options_keep_unknown_fields_in_extra_body():
     assert request["temperature"] == 0.7
     assert request["extra_body"] == {"vendor_flag": True}
     assert request["store"] is False
+
+
+def test_response_request_options_drop_provider_only_abort_signal():
+    provider = _provider()
+    abort_signal = asyncio.Event()
+
+    request = provider._request_options(
+        {"model": "gpt-5", "input": [], "abort_signal": abort_signal},
+        None,
+        "auto",
+    )
+
+    assert "abort_signal" not in request
+    assert "extra_body" not in request
 
 
 def test_response_request_options_translate_disabled_reasoning():

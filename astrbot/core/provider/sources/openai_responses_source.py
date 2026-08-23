@@ -29,6 +29,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
     """OpenAI Responses API adapter kept separate from Chat Completions."""
 
     _MAX_RECOVERY_ATTEMPTS = 3
+    _PROVIDER_ONLY_REQUEST_KEYS = {"abort_signal"}
 
     def __init__(self, provider_config, provider_settings) -> None:
         provider_config = dict(provider_config)
@@ -276,6 +277,8 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         tool_choice: str,
     ) -> dict:
         request = dict(payload)
+        for key in self._PROVIDER_ONLY_REQUEST_KEYS:
+            request.pop(key, None)
         response_tools = self._responses_tools(tools)
         if response_tools:
             request["tools"] = response_tools
