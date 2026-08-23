@@ -4,7 +4,7 @@
 
 AG99 是这个仓库当前对外使用的项目名称，由 YakumoAki 创建并基于 AstrBot 独立演进而来。项目保留 AstrBot 的平台适配器、模型 Provider、插件 API、Dashboard 和 CLI 兼容基础设施，同时重新组织了 Personal Runtime、Router、Core Planner、结构化 Prompt、统一 Persona Expression、Memory 与主动观察链路。`docs/Yakumo` 作为作者的架构文档命名空间继续保留。
 
-[English](./README.md) · [项目身份](./docs/Yakumo/project-identity.md) · [架构文档](./docs/Yakumo/) · [问题反馈](https://github.com/murphys7017/AG99/issues)
+[项目主页](./README.md) · [项目身份](./docs/Yakumo/project-identity.md) · [架构文档](./docs/Yakumo/) · [问题反馈](https://github.com/murphys7017/AG99/issues)
 
 ## AG99 与上游的区别
 

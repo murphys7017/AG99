@@ -1,70 +1,67 @@
 # AG99
 
-> A persona-first, continuously running conversation runtime for multi-platform chats.
+> 由 YakumoAki 创建、基于 AstrBot 独立演进的 Persona-first 多平台对话 Runtime。
 
-AG99 is an independent conversation runtime by YakumoAki, based on AstrBot. It keeps AstrBot's platform adapters, model providers, plugin APIs, dashboard, and CLI compatibility while adding a different interaction runtime: Personal Runtime, Router, Core Planner, structured Prompt, unified Persona Expression, Memory integration, and controlled proactive observation. The `docs/Yakumo` path is retained for the author's architecture notes and implementation records.
+AG99 的目标不是把每条消息简单地交给一个 Agent，而是让一个持续存在的 Persona 管理对话、表达、记忆和受控的主动观察；需要完成实质任务时，再把工作交给 Core 执行层。
 
-[简体中文](./README_zh.md) · [Project identity](./docs/Yakumo/project-identity.md) · [Architecture docs](./docs/Yakumo/) · [Issue tracker](https://github.com/murphys7017/AG99/issues)
+[项目身份](./docs/Yakumo/project-identity.md) · [架构文档](./docs/Yakumo/) · [当前状态](./docs/Yakumo/current-state.md) · [问题反馈](https://github.com/murphys7017/AG99/issues)
 
-## What AG99 Changes
-
-AstrBot's compatible infrastructure remains the foundation, but the main interaction path is now organized around a persistent Persona:
+## 核心流程
 
 ```text
-Platform Adapter
+平台适配器
   -> EventBus / Pipeline / Handler
   -> Interaction Middleware
   -> Personal Runtime + Router
   -> Core Planner
-  -> Core Execution
+  -> Core 执行层
   -> Persona Expression
   -> Output Runtime
   -> Conversation / Memory
 ```
 
-- **Personal Runtime** keeps bounded state across turns and owns admission, session leases, follow-up windows, cooldowns, budgets, and proactive runtime observations.
-- **Router** makes only the lightweight `persona / hybrid / silent` decision. `silent` is available to bounded group-chat candidates and only cancels pending output.
-- **Core Planner** independently decides whether a hybrid turn needs the execution layer. It does not reuse Router's model decision or prompt.
-- **Persona Expression** is the single visible-language boundary. Immediate replies, plugin persona output, and Core results use the same expression path.
-- **Structured Prompt** collects canonical facts once, projects target-specific views, and renders provider requests without making routing decisions or executing tools.
-- **Observation** follows `Observation -> Gate -> Policy -> ActionIntent -> Persona -> Output`; it cannot directly call Core, tools, or Output.
+- **Personal Runtime**：跨 turn 管理人格状态、会话租约、连续对话、冷却、预算和主动观察。
+- **Router**：只判断 `persona / hybrid / silent`；`silent` 仅对有界群聊候选开放，并且只取消尚未发送的表达。
+- **Core Planner**：独立判断是否需要进入 Core，不复用 Router 的模型决策或 Prompt。
+- **Persona Expression**：所有用户可见自然语言统一经过同一个表达入口，即时回复和 Core 结果不会各走一套文案生成器。
+- **Structured Prompt**：通过 `collect -> build -> project -> render -> apply` 形成目标明确的模型上下文。
+- **主动观察**：遵循 `Observation -> Gate -> Policy -> ActionIntent -> Persona -> Output`，不会直接调用 Core、工具或发送消息。
 
-This is not a cosmetic configuration fork. AG99 is a separate runtime direction built on AstrBot code and plugin surfaces, while continuing to follow the upstream project's license and compatibility obligations.
+## 基于 AstrBot，但不是简单 Fork
 
-## Compatibility Boundary
+AG99 基于 AstrBot 代码和生态独立演进，同时保留明确的兼容边界：
 
-The following names intentionally remain stable:
+- Python 包和导入路径继续使用 `astrbot`。
+- CLI 入口继续使用 `astrbot`。
+- 插件前缀继续使用 `astrbot_plugin_`。
+- 平台适配器、Provider、Pipeline Handler、插件 API、Dashboard 和配置体系继续兼容。
 
-- Python package and imports: `astrbot`
-- CLI entry point: `astrbot`
-- Plugin prefix: `astrbot_plugin_`
-- Existing platform adapters, providers, Pipeline handlers, plugin APIs, and dashboard routes
+兼容不代表行为完全相同。AG99 的当前源码和 [Yakumo 架构文档](./docs/Yakumo/) 是本仓库的事实来源；AstrBot 官方文档主要作为共享部署、平台和插件能力的兼容参考。
 
-Compatibility does not mean identical behavior. The current implementation and the Yakumo architecture documents are authoritative for this repository; upstream AstrBot documentation is retained as compatibility material for shared deployment, platform, and plugin concepts.
+## 当前状态
 
-## Current Status
+AG99 仍处于持续开发和真实链路验证阶段：
 
-AG99 is under active development and real-path validation.
-
-| Area | Status |
+| 领域 | 状态 |
 | --- | --- |
-| Interaction Middleware | Main path implemented; edge cases continue to be verified |
-| Personal Runtime | Cross-turn state, observation intake, Gate, Policy boundary, and delivery feedback implemented |
-| Router / Core Planner | Separate responsibilities and bounded fail-closed behavior implemented |
-| Persona Expression | Unified visible-reply path implemented; provider capability fallbacks remain bounded |
-| Structured Prompt | Collect/build/project/render/apply pipeline implemented and still being split into stable modules |
-| AstrBot compatibility | Platform, provider, plugin, and CLI compatibility maintained where explicitly documented |
+| Interaction Middleware | 主链路已实现，边界场景持续验证 |
+| Personal Runtime | 跨 turn 状态、Observation Intake、Gate、Policy 边界和投递反馈已接入 |
+| Router / Core Planner | 职责分离和 fail-closed 边界已接入 |
+| Persona Expression | 统一可见回复链路已接入，Provider 差异仍在收口 |
+| Structured Prompt | 主链路已实现，模块仍在拆分稳定化 |
 
-Do not treat this repository as a drop-in stable replacement for upstream AstrBot without testing your own adapters and plugins.
+请先在自己的平台适配器和插件上完成验证，不要把 AG99 直接视为上游 AstrBot 的稳定替代品。
 
-## Quick Start
+## 快速开始
 
 ```bash
 uv sync
 uv run main.py
 ```
 
-The default WebUI/API endpoint is `http://localhost:6185`. The optional dashboard development server can be started with:
+默认 WebUI/API 地址：`http://localhost:6185`
+
+如需启动 Dashboard 开发服务器：
 
 ```bash
 cd dashboard
@@ -72,18 +69,21 @@ pnpm install
 pnpm dev
 ```
 
-## Documentation
+## 文档入口
 
-- [Project identity](./docs/Yakumo/project-identity.md): name, positioning, compatibility, and terminology.
-- [Yakumo architecture index](./docs/Yakumo/README.md): current boundaries and reading order.
-- [Current state](./docs/Yakumo/current-state.md): implementation facts, not future design.
-- [Interaction Middleware](./docs/Yakumo/modules/interaction.md): turn orchestration and output ownership.
-- [Structured Prompt](./docs/Yakumo/modules/prompt.md): canonical facts and target projections.
-- [Memory design](./docs/Yakumo/dev/memory/index.md): memory boundaries and progress.
-- [Compatibility docs](./docs/): deployment, platform, provider, and plugin guides inherited or adapted from AstrBot.
+- [项目身份](./docs/Yakumo/project-identity.md)：AG99、YakumoAki 与 AstrBot 的关系。
+- [架构索引](./docs/Yakumo/README.md)：当前模块边界和推荐阅读顺序。
+- [当前状态](./docs/Yakumo/current-state.md)：已经实现的代码事实。
+- [Interaction Middleware](./docs/Yakumo/modules/interaction.md)：消息 turn、插件和输出归属。
+- [结构化 Prompt](./docs/Yakumo/modules/prompt.md)：规范事实和目标投影。
+- [Memory 设计](./docs/Yakumo/dev/memory/index.md)：记忆边界与进度。
+- [兼容基础文档](./docs/)：部署、平台、Provider 和插件指南。
 
-The `dev/` and `target-state.md` documents describe plans or design exploration unless they explicitly say otherwise. When documentation and code disagree, follow the code and update the current-state record.
+## 许可证与来源
 
-## License
+AG99 基于 AstrBot 独立演进，继续遵守适用的 AstrBot 兼容说明，并使用 `AGPL-3.0-or-later` 许可证。
 
-AG99 continues to use the upstream project's `AGPL-3.0-or-later` license and retains the applicable AstrBot compatibility notices. See [LICENSE](./LICENSE) and [EULA.md](./EULA.md).
+- [LICENSE](./LICENSE)
+- [EULA](./EULA.md)
+- [AstrBot 上游仓库](https://github.com/AstrBotDevs/AstrBot)
+- [AstrBot 官方文档](https://docs.astrbot.app/)
