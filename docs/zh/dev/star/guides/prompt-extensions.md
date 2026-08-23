@@ -4,7 +4,7 @@ outline: deep
 
 # Prompt Extension
 
-Prompt Extension 是 Yakumo fork 向统一 Prompt 事实管线贡献模型可见上下文的插件接口。它适合提供业务状态、平台能力摘要或当前事件相关资料，不适合注册可执行工具、修改路由结果或发送消息。
+Prompt Extension 是 AG99（作者 YakumoAki）向统一 Prompt 事实管线贡献模型可见上下文的插件接口。它适合提供业务状态、平台能力摘要或当前事件相关资料，不适合注册可执行工具、修改路由结果或发送消息。
 
 ## 它处于哪里
 

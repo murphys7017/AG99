@@ -2,30 +2,54 @@
 outline: deep
 ---
 
-# 👋 I'm AstrBot
+# What is AG99?
 
-## Introduction
+AG99 is the public project name used by this repository. Created by YakumoAki and based on AstrBot, it is a persona-first, continuously running conversation runtime for multi-platform chats: one Persona can retain bounded state across turns and delegate substantial work to a separate Core execution layer when needed.
 
-AstrBot is an open-source, all-in-one Agentic assistant for personal and group chats. It can be deployed across dozens of mainstream instant messaging platforms, such as QQ, Telegram, WeCom, Lark, DingTalk, and Slack. It also includes a lightweight built-in ChatUI (similar to OpenWebUI), providing reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you are building a personal AI companion, an intelligent customer service assistant, an automation bot, or an enterprise knowledge base, AstrBot helps you build AI applications directly inside your IM workflows.
+This page keeps the `what-is-astrbot` path for existing bookmarks and inherited links. The Python package, CLI, plugin prefix, and some configuration keys still use `astrbot` as a compatibility boundary; this repository is not merely an upstream AstrBot configuration fork. See [Project identity](/Yakumo/project-identity) for the full boundary. Yakumo is the author's name, not the project name.
 
-The Yakumo fork in this repository adds Interaction Middleware between the official EventBus/Pipeline and Core Agent. For normal conversations, a Router with no tools or JSON contract selects `silent`, `persona`, or `hybrid`; a hybrid turn is checked by Core Planner before it either delegates to Core or enters the single Persona Runtime, and Core results return through that same expression layer. Plugin LLM lifecycle hooks enhance Persona Expression by default, while executable tools default to Core and enter Persona only through an explicit tool declaration or user override. [Persona Effects](/en/dev/star/guides/persona-effects) add structured presentation output, while [Prompt Extensions](/en/dev/star/guides/prompt-extensions) contribute target-scoped facts to Persona or Core; Router and Core Planner consume only core-owned control-plane facts.
+## Core Flow
 
-## Documentation Overview
+```text
+Platform Adapter
+  -> EventBus / Pipeline / Handler
+  -> Interaction Middleware
+  -> Personal Runtime + Router
+  -> Core Planner
+  -> Core Execution
+  -> Persona Expression
+  -> Output Runtime
+  -> Conversation / Memory
+```
 
-This documentation is divided into the following sections:
+Normal messages and bounded unaddressed group candidates enter Interaction Middleware. Personal Runtime owns turn admission and session state. The Router returns `persona`, `hybrid`, or (for group candidates only) `silent`:
 
-- **Deployment**: multiple ways to quickly deploy AstrBot on local machines or cloud servers.
-- **Messaging Platform Integration**: integration guides for 18+ mainstream instant messaging platforms.
-- **AI Provider Integration**: connect to model providers, use AstrBot's built-in Agent Runner, or integrate third-party Agent Runner services such as Dify, Coze, Alibaba Bailian, and DeerFlow.
-- **Usage Guides**: practical guides for features such as plugins, tool calling, knowledge base, MCP, Skills, and Agent sandbox.
+- `persona`: do not start Core; generate visible language through Persona Expression.
+- `hybrid`: let Core Planner independently decide whether execution is necessary; Core handles tools, knowledge, Skills, and other substantial work.
+- `silent`: cancel Persona output that is still pending, without retracting an expression that was already committed or delivered.
 
-## Quick Start
+Core results never bypass Persona Expression. Immediate replies, plugin persona output, and Core-final results share one visible-language and output boundary.
 
-- Deploy AstrBot: Read the Deployment Guide to quickly deploy AstrBot on your local machine or cloud server.
-- Connect to IM platforms: Follow the instructions to connect AstrBot to your preferred IM platforms such as Discord, Telegram, Slack, etc.
-- Configure AI models: AstrBot supports various AI models. See [Connecting Model Services](/en/providers/start)
+## Plugin Participation
 
-## Notice
+- Pipeline Handlers retain ownership of keywords, commands, and protocol events.
+- Prompt Extensions contribute target-scoped structured facts; they are not LLM Tools.
+- Executable plugin tools default to Core and enter Persona only through explicit declaration or user configuration.
+- Persona Effects are a structured presentation protocol; plugins interpret concrete Motion or Live2D semantics.
+- Runtime Sensors submit bounded, expiring structured observations and cannot submit user text, prompts, tool calls, or final copy.
 
-1. AstrBot is a non-profit project under the AstrBotDevs organization, maintained by open-source contributors worldwide, and protected by the [AGPL-v3](https://www.chinasona.org/gnu/agpl-3.0-cn.html) license. If you modify AstrBot and use it to provide commercial network services, you must open-source your modifications. For details, contact [community@astrbot.app](mailto:community@astrbot.app).
-2. Before using this project, please read the End User License Agreement (EULA): [End User License Agreement](https://github.com/AstrBotDevs/AstrBot/blob/master/EULA.md). If you do not agree to any terms of the agreement, do not use this project.
+## Documentation
+
+- [Project identity](/Yakumo/project-identity)
+- [Yakumo architecture index](/Yakumo/)
+- [Current state](/Yakumo/current-state)
+- [Deployment](/en/deploy/astrbot/package)
+- [Messaging platforms](/en/platform/start)
+- [Model providers](/en/providers/start)
+- [Plugin development](/en/dev/star/plugin-new)
+
+## Current Status
+
+Yakumo is under active development and real-path validation. For runtime behavior, follow the source and [current state](/Yakumo/current-state); `dev/` and `target-state.md` documents marked as plans or designs are not completion claims.
+
+The project continues to use the `AGPL-3.0-or-later` license and follows the applicable AstrBot compatibility notices; see [LICENSE](https://github.com/murphys7017/AG99/blob/codex/unify-prompt-context-pipeline/LICENSE) and [EULA](https://github.com/murphys7017/AG99/blob/codex/unify-prompt-context-pipeline/EULA.md).

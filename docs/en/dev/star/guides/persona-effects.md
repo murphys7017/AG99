@@ -4,7 +4,7 @@ outline: deep
 
 # Persona Effects
 
-Persona Effects are a Yakumo-fork extension for structured persona output. A plugin can let Persona Runtime produce presentation intent, such as a Live2D motion, light state, or client expression, alongside `spoken_reply`.
+Persona Effects are an AG99 extension created by YakumoAki for structured persona output. A plugin can let Persona Runtime produce presentation intent, such as a Live2D motion, light state, or client expression, alongside `spoken_reply`.
 
 A Persona Effect is not an Agent Tool. It never enters the Core Tool Loop and is never exposed to Router. Router only returns `silent`, `persona`, or `hybrid`; it does not register tools, request JSON, or generate `effect_calls`.
 

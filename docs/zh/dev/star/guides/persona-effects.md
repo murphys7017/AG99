@@ -4,7 +4,7 @@ outline: deep
 
 # Persona Effect
 
-Persona Effect 是 Yakumo fork 的拟人输出扩展协议。插件可以让 Persona Runtime 在生成 `spoken_reply` 的同时生成结构化表现意图，例如 Live2D 动作、灯光或客户端表情。
+Persona Effect 是 AG99（作者 YakumoAki）的拟人输出扩展协议。插件可以让 Persona Runtime 在生成 `spoken_reply` 的同时生成结构化表现意图，例如 Live2D 动作、灯光或客户端表情。
 
 Persona Effect 不是 Agent Tool：它不会进入 Core Tool Loop，也不会提供给 Router。Router 始终只返回 `silent`、`persona` 或 `hybrid`，不注册工具、不要求 JSON，也不生成 `effect_calls`。
 

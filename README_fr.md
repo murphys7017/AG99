@@ -1,3 +1,5 @@
+> Note: this translated page is inherited compatibility documentation and may lag behind Yakumo. See [README.md](./README.md) or [README_zh.md](./README_zh.md) for the canonical project overview.
+
 ![AstrBot-Logo-Simplified](https://github.com/user-attachments/assets/ffd99b6b-3272-4682-beaa-6fe74250f7d9)
 
 <div align="center">
@@ -32,7 +34,7 @@
 <a href="https://astrbot.app/">Documentation</a> ｜
 <a href="https://blog.astrbot.app/">Blog</a> ｜
 <a href="https://astrbot.featurebase.app/roadmap">Feuille de route</a> ｜
-<a href="https://github.com/AstrBotDevs/AstrBot/issues">Signaler un problème</a>
+<a href="https://github.com/murphys7017/AG99/issues">Signaler un problème</a>
 <a href="mailto:community@astrbot.app">Email Support</a>
 </div>
 

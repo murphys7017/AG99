@@ -1,6 +1,10 @@
-# AstrBot Development Instructions
+# AG99 Development Instructions
 
-AstrBot is a multi-platform LLM chatbot and development framework written in Python with a Vue.js dashboard. It supports multiple messaging platforms (QQ, Telegram, Discord, etc.) and various LLM providers (OpenAI, Anthropic, Google Gemini, etc.).
+AG99 is the public project name for this repository. It was created by YakumoAki and is a persona-first, continuously running multi-platform conversation runtime based on AstrBot. It keeps AstrBot-compatible platform adapters, providers, plugins, and CLI naming while adding Personal Runtime, Interaction Middleware, Router, Core Planner, structured Prompt, and unified Persona Expression.
+
+`Yakumo` refers to the author identity (`YakumoAki`) and the retained `docs/Yakumo` architecture namespace, not the public project name.
+
+The `astrbot` package, CLI, and `astrbot_plugin_` prefix are intentionally stable compatibility surfaces. Do not rename them during documentation or code changes unless the task explicitly requests a migration.
 
 Always reference these instructions first and fallback to search or bash commands only when you encounter unexpected information that does not match the info here.
 
@@ -55,8 +59,8 @@ Always reference these instructions first and fallback to search or bash command
 - Volume mount required: `./data:/AstrBot/data`
 
 ## Multi-language Support
-- Documentation in Chinese (README.md), English (README_en.md), Japanese (README_ja.md)
+- Documentation in Chinese (`README_zh.md`), English (`README.md`), and inherited compatibility guides under `docs/zh` and `docs/en`
 - UI supports internationalization
 - Default language is Chinese
 
-Remember: This is a production chatbot framework with real users. Always test thoroughly and ensure changes don't break existing functionality.
+Remember: AG99 is an active runtime with real users and an evolving architecture. Read `docs/Yakumo/project-identity.md` and `docs/Yakumo/current-state.md` before changing public behavior, and always test thoroughly so AstrBot compatibility surfaces remain intact.

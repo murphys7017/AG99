@@ -1,34 +1,32 @@
 ---
-# https://vitepress.dev/reference/default-theme-home-page
 layout: home
 
 hero:
-  name: >-
-    <a href="https://trendshift.io/repositories/12875" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12875" alt="Soulter%2FAstrBot | Trendshift" style="width: 250px; height: 55px; margin-bottom: 16px;" width="250" height="55"/></a>
-  text: "Agentic AI assistant for personal and group chats"
-  tagline: Connect any IM / 1000+ plugins / General Agent Orchestration
+  name: AG99
+  text: A continuously running, persona-first conversation runtime based on AstrBot
+  tagline: AstrBot-compatible infrastructure, reorganized around fast expression, Core execution, and persistent interaction state
   actions:
     - theme: brand
       text: Quick Start
       link: /en/what-is-astrbot
     - theme: alt
+      text: Project Identity
+      link: /Yakumo/project-identity
+    - theme: alt
       text: GitHub Repository
-      link: https://github.com/AstrBotDevs/AstrBot
+      link: https://github.com/murphys7017/AG99
 
 features:
-  - icon: ✨
-    title: Multi-Platform Support
-    details: Seamlessly supports multiple messaging platforms including QQ, WeCom, Telegram, Discord, and more with multi-instance deployment.
-  - icon: 😌
-    title: User-Friendly
-    details: Easy deployment via Docker or Windows one-click installer with no complex configuration required. Features a highly visual management dashboard.
+  - icon: 🧠
+    title: Persistent Persona Runtime
+    details: Reuses bounded state across turns and owns session leases, continuation windows, cooldowns, budgets, and observations.
+  - icon: ⚡
+    title: Fast Expression, Separate Core
+    details: The Router selects persona, hybrid, or silent; Core Planner independently decides whether execution is needed, and Core results return through Persona Expression.
   - icon: 🧩
-    title: Highly Extensible
-    details: Built on event bus and pipeline architecture with full modularity. All features can be enabled or disabled, with comprehensive plugin development support.
-  - icon: 🌟
-    title: Large Language Models
-    details: Compatible with multiple model providers including OpenAI, Anthropic, Google, Ollama, Deepseek, and more, supporting diverse LLM integrations.
-  - icon: 🎭
-    title: Persona Runtime
-    details: The Yakumo fork adds unified persona expression; normal plugin LLM hooks and tools enhance that expression by default.
+    title: Structured Prompt
+    details: Canonical facts flow through collect, build, project, render, and apply without putting routing or tool execution inside the Prompt layer.
+  - icon: 🔌
+    title: AstrBot Compatibility
+    details: Platform adapters, providers, plugin APIs, the dashboard, and CLI naming remain available through a documented compatibility boundary.
 ---

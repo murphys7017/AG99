@@ -12,12 +12,12 @@ outline: deep
 欢迎加入我们的开发者专用 QQ 群: `975206796`。
 
 > [!NOTE]
-> Yakumo fork 额外提供 [Persona Effect](./guides/persona-effects) 和 [Prompt Extension](./guides/prompt-extensions)。前者扩展 Persona 的结构化表现输出，后者向统一 Prompt 管线贡献模型可见事实；两者都不是 LLM Tool。
+> AG99（作者 YakumoAki）额外提供 [Persona Effect](./guides/persona-effects) 和 [Prompt Extension](./guides/prompt-extensions)。前者扩展 Persona 的结构化表现输出，后者向统一 Prompt 管线贡献模型可见事实；两者都不是 LLM Tool。
 > Interaction turn 中，普通插件的 LLM 钩子默认增强 Persona Expression，可执行工具默认进入 Core。插件可用 `interaction_runtime_target` 声明生命周期目标、用工具 `tool_targets` 声明工具目标；用户的 `plugin_runtime_targets` 与 `plugin_tool_targets` 配置分别覆盖它们。
 
 ## 先选择插件入口
 
-Yakumo 不会把所有插件自动塞进 Persona。开发前先按插件行为选择入口：
+AG99 不会把所有插件自动塞进 Persona。开发前先按插件行为选择入口：
 
 - **需要命令、关键词、协议或独立业务系统接管消息**：使用官方 Pipeline Handler。Handler 可以直接返回或发送结果，也可以 `yield ProviderRequest` 委托 Core；它不经过 Router/Planner 的再次判断。
 - **需要让 Persona/Core 看到当前状态或输入资料**：使用 [Prompt Extension](./guides/prompt-extensions)。通过 `meta.targets` 选择 `persona` 或 `core`；Router 和 Core Planner 不接收插件扩展。

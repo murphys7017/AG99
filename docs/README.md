@@ -1,29 +1,41 @@
-# AstrBot Docs
+# AG99 文档
 
-这个目录大部分内容仍然来自上游 AstrBot 官方文档，用于保留插件开发、平台接入、部署和功能使用说明。
+这个目录包含两层文档：AG99 当前运行时文档，以及为 AstrBot 兼容基础设施保留的部署、平台、Provider 和插件指南。`docs/Yakumo` 是作者 YakumoAki 保留的架构文档命名空间。
 
-本 fork 自己的架构说明集中在：
+## 先读 AG99
 
-- `docs/Yakumo/`
-- `docs/Yakumo/README.md`
-- `docs/Yakumo/current-state.md`
-- `docs/Yakumo/modules/README.md`
-- `docs/Yakumo/upstream-merge-ledger.md`
+- [项目身份](./Yakumo/project-identity.md)：项目名称、定位、与 AstrBot 的关系和术语边界。
+- [架构索引](./Yakumo/README.md)：当前模块边界与推荐阅读顺序。
+- [当前状态](./Yakumo/current-state.md)：以代码为依据的实现事实。
+- [模块索引](./Yakumo/modules/README.md)：Interaction、Prompt、Runtime 等模块说明。
+- [Memory](./Yakumo/dev/memory/index.md)：记忆系统的边界与进度。
 
-面向插件作者的 fork 扩展 API 已同步到普通中英文开发文档，而不只存在于 Yakumo 笔记：
+`docs/Yakumo` 是 AG99 当前运行时的 canonical 文档入口。`current-state.md` 和模块文档描述已经存在的代码；`dev/`、`target-state.md` 及带有 plan/design 标记的页面描述设计或后续工作。
 
-- `docs/zh/dev/star/guides/persona-effects.md`
-- `docs/en/dev/star/guides/persona-effects.md`
-- `docs/zh/dev/star/guides/prompt-extensions.md`
-- `docs/en/dev/star/guides/prompt-extensions.md`
+## 兼容基础文档
 
-Persona Effect 是 Persona 输出协议，不是 Agent Tool。Router 仍只返回固定分类词，不注册工具，也不接收 effect schema。
+以下内容主要服务于仍然兼容的 AstrBot 基础设施：
 
-Prompt Extension 用于在统一 Prompt 管线中贡献模型可见事实。它不是 LLM Tool。Interaction turn 中，插件的 `on_llm_request` 默认在 Persona Expression 的预工具请求上运行一次，其非工具修改会保留到最终人格表达；`plugin_runtime_targets` 与 `interaction_runtime_target` 只控制插件 LLM 生命周期。插件 LLM 工具独立解析且默认进入 Core；工具自己的 `tool_targets` 可以声明 Persona，用户也可通过 `plugin_tool_targets` 按插件或具体工具覆盖。Persona 工具中的旧式事件输出会作为工具材料交给最终人格表达，富媒体作为最终消息附件投递，而不是直接形成第二条可见回复。它们都不是 Router、Planner 或内部 Persona 工具调用的事实入口，跨目标事实仍应使用 Prompt Extension。
+- `docs/zh`：中文的部署、消息平台、模型 Provider、插件和使用指南。
+- `docs/en`：对应的英文指南。
+- `docs/.vitepress`：文档站点配置与主题。
 
-`docs/Yakumo` 下的 `dev/*`、`target-state.md` 和早期中文详解文档包含历史设计记录，可能落后于当前代码。判断本 fork 与上游差异时，优先看 `README.md`、`docs/Yakumo/current-state.md` 和 `docs/Yakumo/modules/*`。
+这些页面可能沿用 `AstrBot` 的 API、配置项和路径名称。它们不是项目品牌声明；涉及 AG99 行为时，以 `docs/Yakumo` 和源码为准。
 
-如果需要查看上游官方文档，请访问：
+## 插件作者
 
-- https://docs.astrbot.app/
-- https://github.com/AstrBotDevs/AstrBot
+AG99 扩展 API 已同步到普通开发文档：
+
+- [Persona Effect（中文）](./zh/dev/star/guides/persona-effects.md)
+- [Persona Effect（English）](./en/dev/star/guides/persona-effects.md)
+- [Prompt Extension（中文）](./zh/dev/star/guides/prompt-extensions.md)
+- [Prompt Extension（English）](./en/dev/star/guides/prompt-extensions.md)
+
+Persona Effect 是结构化表现协议，不是 Agent Tool。Prompt Extension 是目标明确的事实贡献，也不是 LLM Tool。可执行插件工具默认属于 Core，只有明确声明或配置授权后才进入 Persona。
+
+## 上游参考
+
+本仓库源自 AstrBot，并保留兼容基础设施。需要查看上游项目的原始文档或实现时，请访问：
+
+- [AstrBot 上游仓库](https://github.com/AstrBotDevs/AstrBot)
+- [AstrBot 官方文档](https://docs.astrbot.app/)

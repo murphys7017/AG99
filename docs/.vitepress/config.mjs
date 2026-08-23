@@ -3,16 +3,12 @@ import { head } from "./config/head";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "AstrBot",
-  description: "AstrBot",
+  title: "AG99",
+  description: "AG99 — a persona-first, continuously running multi-platform conversation runtime based on AstrBot",
   head: head,
 
   rewrites: {
     'zh/:rest*': ':rest*'
-  },
-
-  sitemap: {
-    hostname: "https://docs.astrbot.app",
   },
 
   lastUpdated: true,
@@ -24,16 +20,17 @@ export default defineConfig({
       lang: "zh-Hans",
       themeConfig: {
         nav: [
-          { text: "主页", link: "https://astrbot.app" },
-          { text: "博客", link: "https://blog.astrbot.app" },
-          { text: "路线图", link: "https://astrbot.featurebase.app/roadmap" },
-          { text: "HTTP API", link: "https://docs.astrbot.app/scalar.html" },
+          { text: "主页", link: "/" },
+          { text: "AG99 架构", link: "/Yakumo/" },
+          { text: "项目身份", link: "/Yakumo/project-identity" },
+          { text: "HTTP API", link: "/scalar.html" },
         ],
         sidebar: [
           {
             text: "简介",
             items: [
-              { text: "关于 AstrBot", link: "/what-is-astrbot" },
+              { text: "关于 AG99", link: "/what-is-astrbot" },
+              { text: "项目身份", link: "/Yakumo/project-identity" },
               { text: "社区", link: "/community" },
               { text: "常见问题", link: "/faq" },
             ],
@@ -208,11 +205,11 @@ export default defineConfig({
                 link: "/plugin-platform-adapter",
               },
               {
-                text: "AstrBot HTTP API",
+                text: "兼容 HTTP API",
                 link: "/openapi",
               },
               {
-                text: "AstrBot 配置文件",
+                text: "兼容配置文件",
                 link: "/astrbot-config",
               },
             ],
@@ -248,12 +245,12 @@ export default defineConfig({
           next: '下一篇'
         },
         editLink: {
-          pattern: 'https://github.com/AstrBotdevs/AstrBot/edit/master/docs/:path',
+          pattern: 'https://github.com/murphys7017/AG99/edit/codex/unify-prompt-context-pipeline/docs/:path',
           text: '发现文档有问题？在 GitHub 上编辑此页',
         },
         logo: '/logo_prod.png',
         socialLinks: [
-          { icon: "github", link: "https://github.com/AstrBotDevs/AstrBot" },
+          { icon: "github", link: "https://github.com/murphys7017/AG99" },
         ],
         footer: {
           message: 'Deployed on&nbsp' +
@@ -268,16 +265,17 @@ export default defineConfig({
       lang: "en-US",
       themeConfig: {
         nav: [
-          { text: "Home", link: "https://astrbot.app" },
-          { text: "Blog", link: "https://blog.astrbot.app" },
-          { text: "Roadmap", link: "https://astrbot.featurebase.app/roadmap" },
-          { text: "HTTP API", link: "https://docs.astrbot.app/scalar.html" },
+          { text: "Home", link: "/en/" },
+          { text: "AG99 Architecture", link: "/Yakumo/" },
+          { text: "Project Identity", link: "/Yakumo/project-identity" },
+          { text: "HTTP API", link: "/scalar.html" },
         ],
         sidebar: [
           {
             text: "Introduction",
             items: [
-              { text: "What is AstrBot", link: "/en/what-is-astrbot" },
+              { text: "What is AG99", link: "/en/what-is-astrbot" },
+              { text: "Project Identity", link: "/Yakumo/project-identity" },
               { text: "Community", link: "/en/community" },
               { text: "FAQ", link: "/en/faq" },
             ],
@@ -451,11 +449,11 @@ export default defineConfig({
                 link: "/plugin-platform-adapter",
               },
               {
-                text: "AstrBot HTTP API",
+                text: "Compatible HTTP API",
                 link: "/openapi",
               },
               {
-                text: "AstrBot Configuration File",
+                text: "Compatible Configuration",
                 link: "/astrbot-config",
               },
             ],
@@ -487,12 +485,12 @@ export default defineConfig({
           next: 'Next'
         },
         editLink: {
-          pattern: 'https://github.com/AstrBotdevs/AstrBot/edit/master/docs/:path',
+          pattern: 'https://github.com/murphys7017/AG99/edit/codex/unify-prompt-context-pipeline/docs/:path',
           text: 'Edit this page on GitHub',
         },
         logo: '/logo_prod.png',
         socialLinks: [
-          { icon: "github", link: "https://github.com/AstrBotDevs/AstrBot" },
+          { icon: "github", link: "https://github.com/murphys7017/AG99" },
         ],
         footer: {
           message: 'Deployed on&nbsp' +

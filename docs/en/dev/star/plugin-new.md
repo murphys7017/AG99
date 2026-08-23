@@ -10,12 +10,12 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 2. Some experience with Git and GitHub.
 
 > [!NOTE]
-> The Yakumo fork also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
+> AG99, created by YakumoAki, also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
 > In an Interaction turn, normal plugin LLM hooks enhance Persona Expression by default, while executable tools default to Core. Plugins can declare a lifecycle target with `interaction_runtime_target` and a tool target with `tool_targets`; user `plugin_runtime_targets` and `plugin_tool_targets` settings override them independently.
 
 ## Choose a Plugin Entry Point
 
-Yakumo does not automatically put every plugin into Persona. Choose the entry point
+AG99 does not automatically put every plugin into Persona. Choose the entry point
 that matches the plugin's behavior:
 
 - **Commands, keywords, protocols, or an independent business system that must take over a message:** use an official Pipeline Handler. A Handler may return/send a result or `yield ProviderRequest` to Core; it is not routed again by Router/Planner.

@@ -2,38 +2,54 @@
 outline: deep
 ---
 
-# 👋 I'm AstrBot
+# 什么是 AG99？
 
-## 简介
+AG99 是这个仓库当前对外使用的项目名称，由 YakumoAki 创建并基于 AstrBot 独立演进。它是一个以持续人格、低延迟表达和多平台会话为核心的对话 Runtime：同一个 Persona 可以跨 turn 保留受控状态，并在需要时把实质任务交给 Core 执行层。
 
-AstrBot 是一个开源的一站式 Agentic 个人和群聊助手，可在 QQ、Telegram、企业微信、飞书、钉钉、Slack 等数十款主流即时通讯软件上部署，此外还内置类似 OpenWebUI 的轻量化 ChatUI，为个人、开发者和团队打造可靠、可扩展的对话式智能基础设施。无论是个人 AI 伙伴、智能客服、自动化助手，还是企业知识库，AstrBot 都能在你的即时通讯软件平台的工作流中快速构建 AI 应用。
+本页面路径继续使用 `what-is-astrbot`，是为了兼容已有书签和上游文档链接。代码包、CLI、插件前缀和部分配置项仍使用 `astrbot`，这属于兼容边界，不代表本项目仍然只是上游 AstrBot 的配置分支。完整关系见 [项目身份](/Yakumo/project-identity)。Yakumo 是作者名（YakumoAki），不是项目名。
 
-当前仓库的 Yakumo fork 在官方 EventBus / Pipeline 与核心 Agent 之间增加 Interaction Middleware。普通对话先由无工具、无 JSON 契约的 Router 选择 `silent` / `persona` / `hybrid`；`hybrid` 先由 Core Planner 判断是否执行，未委托 Core 的路径直接进入唯一 Persona Runtime，Core 结果也回到该表达层。插件 LLM 生命周期默认增强 Persona Expression，可执行工具默认进入 Core，只有工具声明或用户配置明确允许时才进入 Persona；[Persona Effect](/dev/star/guides/persona-effects) 与 [Prompt Extension](/dev/star/guides/prompt-extensions) 分别扩展结构化表现和 Persona/Core 的目标明确事实，Router 与 Core Planner 只消费核心控制面事实。
+## 核心流程
 
-## 文档概览
+```text
+平台适配器
+  -> EventBus / Pipeline / Handler
+  -> Interaction Middleware
+  -> Personal Runtime + Router
+  -> Core Planner
+  -> Core 执行层
+  -> Persona Expression
+  -> Output Runtime
+  -> Conversation / Memory
+```
 
-本文档分为以下几个部分：
+普通消息和未被 Handler 接管的有界群聊候选会进入 Interaction Middleware。Personal Runtime 负责本轮准入与会话状态，Router 只返回 `persona`、`hybrid` 或（仅群聊候选）`silent`：
 
-- **部署**。我们提供多种方式帮助您把 AstrBot 快速部署到云服务器或本地机器上。
-- **消息平台接入**。我们提供 18+ 主流即时通讯软件的接入指南，帮助您把 AstrBot 连接到您喜欢的 IM 平台。
-- **AI 模型提供商接入**。我们支持各种 AI 模型提供商的接入，您可以选择使用 AstrBot 内置的 Agent 执行器，也可以接入第三方的 Agent 执行器服务，例如 Dify、Coze、阿里云百炼应用、DeerFlow 等，或者自己开发 Agent 执行器。
-- **使用指南**。我们提供了丰富的使用指南，帮助您充分利用 AstrBot 的各种功能，例如插件、工具调用、知识库、MCP、Skills、Agent 沙箱环境等。
+- `persona`：不启动 Core，直接由 Persona Expression 生成可见表达。
+- `hybrid`：由 Core Planner 独立判断是否需要执行；需要时 Core 负责工具、知识库、Skills 等实质工作。
+- `silent`：取消仍处于 pending 的 Persona 输出，不撤回已经提交或送达的表达。
 
-## 快速开始
+Core 的结果不会绕过 Persona 直接发送，而是回到同一个 Persona Expression。这样即时回复、插件人格输出和 Core 最终结果共享一致的表达与输出边界。
 
-> 您也可以使用 [☁️ 雨云部署](/deploy/astrbot/rainyun) 来一键部署 AstrBot，无需自行配置。
+## 插件如何参与
 
-- 部署 AstrBot：阅读部署指南，快速在本地机器或云服务器上部署 AstrBot。
-- 连接 IM 平台：按照说明将 AstrBot 连接到您喜欢的 IM 平台，如 Discord、Telegram、Slack 等。
-- 配置 AI 模型：AstrBot 支持各种 AI 模型。请参阅 [连接模型服务](/providers/start)
+- Pipeline Handler 继续拥有关键词、命令和协议事件的接管权。
+- Prompt Extension 贡献目标明确的结构化事实，不是 LLM Tool。
+- 可执行插件工具默认进入 Core，只有明确声明或用户配置授权后才进入 Persona。
+- Persona Effect 是结构化表现协议，Motion、Live2D 等具体语义由插件解释。
+- Runtime Sensor 只能提交受限、可过期的结构化观察事实，不能提交用户原文、Prompt、工具调用或最终文案。
 
-## 它是如何实现的？
+## 文档导航
 
-下面的拓扑图基本简述了 AstrBot 的架构。
+- [项目身份](/Yakumo/project-identity)
+- [Yakumo 架构索引](/Yakumo/)
+- [当前状态](/Yakumo/current-state)
+- [部署指南](/deploy/astrbot/package)
+- [连接消息平台](/platform/start)
+- [连接模型服务](/providers/start)
+- [插件开发](/dev/star/plugin-new)
 
-![Architecture](https://files.astrbot.app/docs/source/images/what-is-astrbot/image.png)
+## 当前状态
 
-## 说明
+Yakumo 仍处于持续开发和真实链路验证阶段。判断运行时行为时，以源码和 [当前状态](/Yakumo/current-state) 为准；`dev/` 与 `target-state.md` 中标记为 plan/design 的内容不代表已经完成。
 
-- AstrBot 是一个非盈利项目，由全世界热心开源贡献者维护，并受 [AGPL-v3](https://www.chinasona.org/gnu/agpl-3.0-cn.html) 开源许可证保护。如果您对 AstrBot 进行了修改并将其用于提供具有商业盈利性质的网络服务，您必须开源所做的修改。详细联系 [community@astrbot.app](mailto:community@astrbot.app)。
-- 使用此项目前，请务必阅读本项目的最终用户许可协议（EULA）：[最终用户许可协议](https://github.com/AstrBotDevs/AstrBot/blob/master/EULA.md)。如果您不同意该协议的任何条款，请勿使用本项目。
+项目继续使用 `AGPL-3.0-or-later` 许可证，并遵守适用的 AstrBot 兼容说明，详见 [LICENSE](https://github.com/murphys7017/AG99/blob/codex/unify-prompt-context-pipeline/LICENSE) 和 [EULA](https://github.com/murphys7017/AG99/blob/codex/unify-prompt-context-pipeline/EULA.md)。

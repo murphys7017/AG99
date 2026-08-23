@@ -10,7 +10,7 @@ export const head: HeadConfig[] = [
 
     // --- 基础和SEO元数据 ---
     ["link", { rel: "icon", href: "/logo.png" }],
-    ["meta", { name: "description", content: "AstrBot" }],
+    ["meta", { name: "description", content: "AG99 — a persona-first, continuously running multi-platform conversation runtime based on AstrBot" }],
     [
         "meta",
         { name: "viewport", content: "width=device-width, initial-scale=1.0" },
@@ -19,10 +19,10 @@ export const head: HeadConfig[] = [
   /*  // --- Open Graph (OG) 协议元数据 (用于社交媒体分享) ---
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:locale", content: "zh_CN" }],
-    ["meta", { property: "og:title", content: "AstrBot" }],
-    ["meta", { property: "og:description", content: "AstrBot" }],
-    ["meta", { property: "og:url", content: "https://docs.astrbot.app" }],
-    ["meta", { property: "og:site_name", content: "AstrBot" }],
+    ["meta", { property: "og:title", content: "AG99" }],
+    ["meta", { property: "og:description", content: "A persona-first, continuously running multi-platform conversation runtime based on AstrBot" }],
+    ["meta", { property: "og:url", content: "https://github.com/murphys7017/AG99" }],
+    ["meta", { property: "og:site_name", content: "AG99" }],
     [
         "meta",
         {
@@ -32,7 +32,7 @@ export const head: HeadConfig[] = [
     ],
     [
         "meta",
-        { property: "og:image:alt", content: "AstrBot" },
+        { property: "og:image:alt", content: "AG99" },
     ],
     ["meta", { property: "og:image:width", content: "1200" }],
     ["meta", { property: "og:image:height", content: "630" }],

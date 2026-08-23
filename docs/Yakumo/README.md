@@ -1,12 +1,14 @@
 # Yakumo 架构文档
 
-`docs/Yakumo` 只记录这个项目当前有效的架构、稳定接口和下一步计划。官方部署、平台和插件基础用法仍以 `docs/zh`、`docs/en` 及上游 AstrBot 文档为准。
+`docs/Yakumo` 是 AG99 当前运行时的 canonical 文档入口。项目对外名称是 **AG99**，Yakumo 是作者名（YakumoAki）；代码包、CLI、插件前缀和兼容基础设施仍保留 `astrbot` 命名。名称、定位和兼容边界见 [项目身份](./project-identity.md)。
+
+官方部署、平台和插件基础用法仍以 `docs/zh`、`docs/en` 中的兼容基础文档为准，但涉及 Yakumo 交互运行时行为时，以本目录和源码为准。
 
 文档与源码冲突时，以源码为准。已经完成的实施步骤、过渡兼容方案和调查记录不在这里长期保留。
 
 ## 项目目标
 
-Yakumo 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的 Persona Runtime：
+AG99 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的 Persona Runtime：
 
 - `session` 负责平台来源、权限和隔离。
 - `conversation` 是一段对话 episode。

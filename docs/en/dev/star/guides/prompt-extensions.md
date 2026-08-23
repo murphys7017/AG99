@@ -4,7 +4,7 @@ outline: deep
 
 # Prompt Extensions
 
-Prompt Extensions are the Yakumo-fork API for contributing model-visible facts to the unified Prompt pipeline. Use them for business state, concise platform capabilities, or event-scoped context. Do not use them to register executable tools, alter routing decisions, or send messages.
+Prompt Extensions are the AG99 API, created by YakumoAki, for contributing model-visible facts to the unified Prompt pipeline. Use them for business state, concise platform capabilities, or event-scoped context. Do not use them to register executable tools, alter routing decisions, or send messages.
 
 ## Pipeline Position
 

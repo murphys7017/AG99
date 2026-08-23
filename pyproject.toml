@@ -1,12 +1,12 @@
 [project]
 name = "AstrBot"
 version = "4.25.5"
-description = "Easy-to-use multi-platform LLM chatbot and development framework"
+description = "AG99 persona-first multi-platform conversation runtime based on AstrBot"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.12"
 
-keywords = ["AstrBot", "Agent", "Chatbot", "IM"]
+keywords = ["AG99", "Persona", "Runtime", "AstrBot", "Agent", "Chatbot", "IM"]
 
 dependencies = [
   "aiocqhttp>=1.4.4",
@@ -87,7 +87,8 @@ dev = [
 astrbot = "astrbot.cli.__main__:cli"
 
 [project.urls]
-Repository = "https://github.com/murphys7017/AstrBot"
+Repository = "https://github.com/murphys7017/AG99"
+Documentation = "https://github.com/murphys7017/AG99/tree/codex/unify-prompt-context-pipeline/docs"
 Upstream = "https://github.com/AstrBotDevs/AstrBot"
 
 [tool.ruff]

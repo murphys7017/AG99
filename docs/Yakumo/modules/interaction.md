@@ -2,7 +2,7 @@
 
 ## 当前定位
 
-`astrbot/core/interaction/*` 是当前分支新增的 interaction orchestration layer。
+`astrbot/core/interaction/*` 是 Yakumo 的 interaction orchestration layer。
 
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
