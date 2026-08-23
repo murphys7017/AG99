@@ -54,7 +54,7 @@ def test_empty_effect_list_does_not_generate_effect_calls_schema():
 
     assert schema["properties"]["effect_calls"] == {"type": "array", "items": False}
     assert "metadata" not in schema["properties"]
-    assert schema["required"] == ["spoken_reply", "effect_calls"]
+    assert schema["required"] == ["spoken_reply", "speech_cues", "effect_calls"]
 
 
 def test_effect_schema_freezes_effect_call_shape_per_effect():
@@ -73,6 +73,48 @@ def test_effect_schema_freezes_effect_call_shape_per_effect():
     ]
     assert all(variant["additionalProperties"] is False for variant in variants)
     assert all(variant["required"] == ["name", "arguments"] for variant in variants)
+
+
+def test_required_effect_metadata_constrains_call_count():
+    effect = _effect(
+        metadata={
+            "required_per_segment": True,
+            "exactly_one_per_segment": True,
+        }
+    )
+
+    effect_calls = build_persona_expression_tool_parameters([effect])["properties"][
+        "effect_calls"
+    ]
+
+    assert effect_calls["minItems"] == 1
+    assert effect_calls["maxItems"] == 1
+
+
+def test_multiple_required_effects_do_not_create_contradictory_call_bounds():
+    effects = [
+        _effect(
+            "face.expression",
+            metadata={
+                "required_per_segment": True,
+                "exactly_one_per_segment": True,
+            },
+        ),
+        _effect(
+            "body.motion",
+            metadata={
+                "required_per_segment": True,
+                "exactly_one_per_segment": True,
+            },
+        ),
+    ]
+
+    effect_calls = build_persona_expression_tool_parameters(effects)["properties"][
+        "effect_calls"
+    ]
+
+    assert effect_calls["minItems"] == 2
+    assert "maxItems" not in effect_calls
 
 
 def test_effect_schema_does_not_mutate_plugin_parameters_or_include_metadata():

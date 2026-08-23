@@ -285,6 +285,23 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         custom_extra_body = self.provider_config.get("custom_extra_body", {})
         if isinstance(custom_extra_body, dict):
             request.update(copy.deepcopy(custom_extra_body))
+        # Model entries may use the provider-agnostic ``reasoning`` switch.
+        # Responses API expects an object, so translate the explicit disabled
+        # form instead of silently ignoring it. Explicit custom_extra_body
+        # values remain authoritative for provider-specific tuning.
+        if "reasoning" not in request:
+            reasoning = self.provider_config.get("reasoning")
+            if isinstance(reasoning, bool):
+                if reasoning is False:
+                    request["reasoning"] = {"effort": "none"}
+            elif isinstance(reasoning, str):
+                normalized = reasoning.strip().lower()
+                if normalized in {"false", "disabled", "off", "none"}:
+                    request["reasoning"] = {"effort": "none"}
+                elif normalized in {"minimal", "low", "medium", "high", "xhigh"}:
+                    request["reasoning"] = {"effort": normalized}
+            elif isinstance(reasoning, dict):
+                request["reasoning"] = copy.deepcopy(reasoning)
         allowed = set(self.default_params)
         extra_body = {
             key: request.pop(key) for key in list(request) if key not in allowed

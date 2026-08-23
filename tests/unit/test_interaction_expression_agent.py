@@ -367,7 +367,7 @@ def test_persona_expression_defaults_to_strict_tool_call_contract():
     assert contract.strict is True
     assert contract.allow_text_fallback is False
     assert contract.preferred_tool_name == "persona_expression"
-    assert schema["required"] == ["spoken_reply", "effect_calls"]
+    assert schema["required"] == ["spoken_reply", "speech_cues", "effect_calls"]
 
 
 def test_persona_runtime_slots_are_native_system_base_not_extensions():
@@ -898,6 +898,7 @@ async def test_persona_expression_reuses_official_request_and_response_hooks(
         "OnAgentBeginEvent",
         "OnLLMResponseEvent",
         "OnAgentDoneEvent",
+        "OnPersonaExpressionResultEvent",
     ]
     context_text = _provider_context_text(provider.calls[0])
     assert "persona" in context_text
@@ -1042,6 +1043,7 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
         "OnLLMToolRespondEvent",
         "OnLLMResponseEvent",
         "OnAgentDoneEvent",
+        "OnPersonaExpressionResultEvent",
     ]
     assert len(provider.calls) == 2
     assert "工具事实" in _provider_context_text(provider.calls[1])
@@ -1603,4 +1605,5 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
         ("OnAgentBeginEvent", "personal_expression"),
         ("OnLLMResponseEvent", "personal_expression"),
         ("OnAgentDoneEvent", "personal_expression"),
+        ("OnPersonaExpressionResultEvent", "personal_expression"),
     ]

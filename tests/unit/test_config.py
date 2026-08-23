@@ -264,6 +264,37 @@ class TestAstrBotConfigLoad:
         )
         assert verify_dashboard_password(config["dashboard"]["password"], env_password)
 
+    def test_required_password_is_not_rotated_on_reload(self, temp_config_path):
+        password = "ExistingPassword123"
+        default_config = {
+            "dashboard": {
+                "username": "astrbot",
+                "password": "",
+                "pbkdf2_password": "",
+            },
+        }
+        existing = {
+            "dashboard": {
+                "username": "astrbot",
+                "password": hash_legacy_dashboard_password(password),
+                "pbkdf2_password": hash_dashboard_password(password),
+                "password_change_required": True,
+                "password_storage_upgraded": True,
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path,
+            default_config=default_config,
+        )
+
+        assert verify_dashboard_password(
+            config["dashboard"]["pbkdf2_password"], password
+        )
+        assert getattr(config, "_generated_dashboard_password", None) is None
+
     def test_initial_dashboard_password_env_must_be_valid(
         self, temp_config_path, monkeypatch
     ):

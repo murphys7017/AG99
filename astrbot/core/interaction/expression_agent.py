@@ -290,6 +290,20 @@ def build_persona_expression_tool_parameters(
             "type": "array",
             "items": {"oneOf": copy.deepcopy(effect_schemas)},
         }
+        required_per_segment = sum(
+            1
+            for effect in enabled_effects
+            if isinstance(effect.metadata, dict)
+            and effect.metadata.get("required_per_segment") is True
+        )
+        if required_per_segment:
+            properties["effect_calls"]["minItems"] = required_per_segment
+            if required_per_segment == 1 and len(enabled_effects) == 1 and any(
+                isinstance(effect.metadata, dict)
+                and effect.metadata.get("exactly_one_per_segment") is True
+                for effect in enabled_effects
+            ):
+                properties["effect_calls"]["maxItems"] = 1
 
     return {
         "type": "object",

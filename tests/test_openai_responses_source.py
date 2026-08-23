@@ -21,6 +21,7 @@ def _provider() -> ProviderOpenAIResponses:
         "tool_choice",
         "store",
         "temperature",
+        "reasoning",
     }
     return provider
 
@@ -210,3 +211,32 @@ def test_response_request_options_keep_unknown_fields_in_extra_body():
     assert request["temperature"] == 0.7
     assert request["extra_body"] == {"vendor_flag": True}
     assert request["store"] is False
+
+
+def test_response_request_options_translate_disabled_reasoning():
+    provider = _provider()
+    provider.provider_config = {"reasoning": False}
+
+    request = provider._request_options(
+        {"model": "gpt-5.6-luna", "input": []},
+        None,
+        "auto",
+    )
+
+    assert request["reasoning"] == {"effort": "none"}
+
+
+def test_response_request_options_keep_explicit_reasoning_override():
+    provider = _provider()
+    provider.provider_config = {
+        "reasoning": False,
+        "custom_extra_body": {"reasoning": {"effort": "low"}},
+    }
+
+    request = provider._request_options(
+        {"model": "gpt-5.6-luna", "input": []},
+        None,
+        "auto",
+    )
+
+    assert request["reasoning"] == {"effort": "low"}

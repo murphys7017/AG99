@@ -205,6 +205,19 @@ class ProviderAnthropic(Provider):
                 "budget_tokens": self.thinking_config.get("budget"),
                 "type": "enabled",
             }
+        else:
+            # Some Anthropic-compatible providers expose a per-model
+            # ``reasoning: false`` switch instead of anth_thinking_config.
+            # Honor it explicitly so short Persona turns do not inherit the
+            # provider's default extended-thinking behavior.
+            reasoning = self.provider_config.get("reasoning")
+            if isinstance(reasoning, str):
+                reasoning = reasoning.strip().lower()
+            if reasoning is False or (
+                isinstance(reasoning, str)
+                and reasoning in {"false", "disabled", "off", "none"}
+            ):
+                payloads["thinking"] = {"type": "disabled"}
 
     async def _prepare_payload(self, messages: list[dict]):
         """准备 Anthropic API 的请求 payload
