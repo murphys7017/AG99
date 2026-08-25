@@ -35,7 +35,6 @@ from ..register import register_provider_adapter
     "Volcengine Ark Responses API provider adapter",
 )
 class ProviderVolcengineArk(Provider):
-    _PROVIDER_ONLY_REQUEST_KEYS = {"abort_signal"}
     _RESPONSES_CREATE_TOP_LEVEL_KEYS = {
         "input",
         "model",
@@ -272,10 +271,12 @@ class ProviderVolcengineArk(Provider):
 
         dropped_keys: list[str] = []
         extra_body_keys: list[str] = []
+        provider_only_keys = {
+            key for key in request_kwargs if key in self._PROVIDER_ONLY_REQUEST_KEYS
+        }
+        self._drop_provider_only_request_keys(request_kwargs)
+        dropped_keys.extend(sorted(provider_only_keys))
         for key, value in request_kwargs.items():
-            if key in self._PROVIDER_ONLY_REQUEST_KEYS:
-                dropped_keys.append(key)
-                continue
             if key in self._RESPONSES_CREATE_TOP_LEVEL_KEYS:
                 payload[key] = value
                 continue
@@ -304,6 +305,7 @@ class ProviderVolcengineArk(Provider):
                 "Moved unsupported Volcengine Ark kwargs to extra_body: %s",
                 extra_body_keys,
             )
+        self._drop_provider_only_request_keys(extra_body)
 
     def _log_request_exception(
         self,

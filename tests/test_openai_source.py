@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import builtins
 from io import BytesIO
@@ -1393,6 +1394,59 @@ async def test_query_injects_reasoning_effort_none_for_ollama(monkeypatch):
         assert extra_body["reasoning_effort"] == "none"
         assert "reasoning" not in extra_body
         assert extra_body["temperature"] == 0.1
+    finally:
+        await provider.terminate()
+
+
+@pytest.mark.asyncio
+async def test_query_drops_provider_only_abort_signal_from_custom_extra_body(
+    monkeypatch,
+):
+    provider = _make_provider(
+        {
+            "custom_extra_body": {
+                "abort_signal": asyncio.Event(),
+                "vendor_flag": True,
+            }
+        }
+    )
+    try:
+        captured_kwargs = {}
+
+        async def fake_create(**kwargs):
+            captured_kwargs.update(kwargs)
+            return ChatCompletion.model_validate(
+                {
+                    "id": "chatcmpl-test",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-4o-mini",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+            )
+
+        monkeypatch.setattr(provider.client.chat.completions, "create", fake_create)
+        await provider._query(
+            payloads={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            tools=None,
+        )
+
+        assert "abort_signal" not in captured_kwargs
+        assert captured_kwargs["extra_body"] == {"vendor_flag": True}
     finally:
         await provider.terminate()
 

@@ -56,6 +56,7 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
         payloads: dict,
         tools: ToolSet | None,
     ) -> tuple[dict, dict[str, Any], ToolSet | None]:
+        self._drop_provider_only_request_keys(payloads)
         if tools:
             tool_list = tools.get_func_desc_openai_style(
                 omit_empty_parameter_field=False,
@@ -76,6 +77,7 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
         if isinstance(custom_extra_body, dict):
             extra_body.update(custom_extra_body)
         self._apply_provider_specific_request_overrides(payloads, extra_body)
+        self._drop_provider_only_request_keys(extra_body)
 
         if "tool_choice" in payloads:
             extra_body.pop("tool_choice", None)

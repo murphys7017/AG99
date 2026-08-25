@@ -67,6 +67,10 @@ class AbstractProvider(abc.ABC):
 class Provider(AbstractProvider):
     """Chat Provider"""
 
+    # These values are used by AstrBot's orchestration layer and must never
+    # cross the provider boundary as API or ``extra_body`` fields.
+    _PROVIDER_ONLY_REQUEST_KEYS = frozenset({"abort_signal"})
+
     def __init__(
         self,
         provider_config: dict,
@@ -117,6 +121,12 @@ class Provider(AbstractProvider):
         """获得提供商 Key"""
         keys = self.provider_config.get("key", [""])
         return keys or [""]
+
+    @classmethod
+    def _drop_provider_only_request_keys(cls, payload: dict) -> None:
+        """Remove orchestration-only kwargs before serializing a provider request."""
+        for key in cls._PROVIDER_ONLY_REQUEST_KEYS:
+            payload.pop(key, None)
 
     @abc.abstractmethod
     def set_key(self, key: str) -> None:

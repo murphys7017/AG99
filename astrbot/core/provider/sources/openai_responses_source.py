@@ -29,8 +29,6 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
     """OpenAI Responses API adapter kept separate from Chat Completions."""
 
     _MAX_RECOVERY_ATTEMPTS = 3
-    _PROVIDER_ONLY_REQUEST_KEYS = {"abort_signal"}
-
     def __init__(self, provider_config, provider_settings) -> None:
         provider_config = dict(provider_config)
         if not provider_config.get("custom_headers") and isinstance(
@@ -277,8 +275,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         tool_choice: str,
     ) -> dict:
         request = dict(payload)
-        for key in self._PROVIDER_ONLY_REQUEST_KEYS:
-            request.pop(key, None)
+        self._drop_provider_only_request_keys(request)
         response_tools = self._responses_tools(tools)
         if response_tools:
             request["tools"] = response_tools
@@ -288,6 +285,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         custom_extra_body = self.provider_config.get("custom_extra_body", {})
         if isinstance(custom_extra_body, dict):
             request.update(copy.deepcopy(custom_extra_body))
+        self._drop_provider_only_request_keys(request)
         # Model entries may use the provider-agnostic ``reasoning`` switch.
         # Responses API expects an object, so translate the explicit disabled
         # form instead of silently ignoring it. Explicit custom_extra_body
@@ -309,6 +307,7 @@ class ProviderOpenAIResponses(ProviderOpenAIOfficial):
         extra_body = {
             key: request.pop(key) for key in list(request) if key not in allowed
         }
+        self._drop_provider_only_request_keys(extra_body)
         return {**request, "extra_body": extra_body} if extra_body else request
 
     async def _query(

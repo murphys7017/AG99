@@ -228,6 +228,25 @@ def test_response_request_options_drop_provider_only_abort_signal():
     assert "extra_body" not in request
 
 
+def test_response_request_options_drop_provider_only_abort_signal_from_custom_body():
+    provider = _provider()
+    provider.provider_config = {
+        "custom_extra_body": {
+            "abort_signal": asyncio.Event(),
+            "vendor_flag": True,
+        }
+    }
+
+    request = provider._request_options(
+        {"model": "gpt-5", "input": []},
+        None,
+        "auto",
+    )
+
+    assert "abort_signal" not in request
+    assert request["extra_body"] == {"vendor_flag": True}
+
+
 def test_response_request_options_translate_disabled_reasoning():
     provider = _provider()
     provider.provider_config = {"reasoning": False}

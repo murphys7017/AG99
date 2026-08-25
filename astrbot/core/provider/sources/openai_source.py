@@ -614,6 +614,7 @@ class ProviderOpenAIOfficial(Provider):
 
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         payloads = dict(payloads)
+        self._drop_provider_only_request_keys(payloads)
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
@@ -639,6 +640,7 @@ class ProviderOpenAIOfficial(Provider):
         if isinstance(custom_extra_body, dict):
             extra_body.update(custom_extra_body)
         self._apply_provider_specific_request_overrides(payloads, extra_body)
+        self._drop_provider_only_request_keys(extra_body)
 
         model = payloads.get("model", "").lower()
 
@@ -668,6 +670,7 @@ class ProviderOpenAIOfficial(Provider):
     ) -> AsyncGenerator[LLMResponse, None]:
         """流式查询API，逐步返回结果"""
         payloads = dict(payloads)
+        self._drop_provider_only_request_keys(payloads)
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
@@ -694,6 +697,7 @@ class ProviderOpenAIOfficial(Provider):
         for key in to_del:
             del payloads[key]
         self._apply_provider_specific_request_overrides(payloads, extra_body)
+        self._drop_provider_only_request_keys(extra_body)
         self._sanitize_assistant_messages(payloads)
 
         stream = await self.client.chat.completions.create(

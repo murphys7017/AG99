@@ -156,6 +156,7 @@ class ProviderOllamaNative(ProviderOpenAIOfficial):
 
         if self._ollama_disable_thinking_enabled():
             request["think"] = False
+        self._drop_provider_only_request_keys(request)
         return request
 
     @classmethod

@@ -511,6 +511,7 @@ class ProviderAnthropic(Provider):
         return {"type": "auto"}
 
     async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
+        self._drop_provider_only_request_keys(payloads)
         if tools:
             if tool_list := tools.get_func_desc_anthropic_style():
                 payloads["tools"] = tool_list
@@ -519,6 +520,9 @@ class ProviderAnthropic(Provider):
                 )
 
         extra_body = self.provider_config.get("custom_extra_body", {})
+        if isinstance(extra_body, dict):
+            extra_body = dict(extra_body)
+            self._drop_provider_only_request_keys(extra_body)
 
         if "max_tokens" not in payloads:
             payloads["max_tokens"] = 65536
@@ -597,6 +601,7 @@ class ProviderAnthropic(Provider):
         payloads: dict,
         tools: ToolSet | None,
     ) -> AsyncGenerator[LLMResponse, None]:
+        self._drop_provider_only_request_keys(payloads)
         if tools:
             if tool_list := tools.get_func_desc_anthropic_style():
                 payloads["tools"] = tool_list
@@ -612,6 +617,9 @@ class ProviderAnthropic(Provider):
         id = None
         usage = TokenUsage()
         extra_body = self.provider_config.get("custom_extra_body", {})
+        if isinstance(extra_body, dict):
+            extra_body = dict(extra_body)
+            self._drop_provider_only_request_keys(extra_body)
         reasoning_content = ""
         reasoning_signature = ""
 
