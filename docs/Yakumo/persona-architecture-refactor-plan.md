@@ -825,3 +825,22 @@ personal_wake_skipped
 - `compileall`、`git diff --check`：通过
 
 尚未完成的 Phase 0 工作仍包括真实平台日志采样、Policy/Expression/Delivery 的统一终态事件和长期聚合指标；这些工作需要真实运行数据后再决定，不在本批次扩大实现范围。
+
+### 2026-08-28：Phase 1 第一批只读领域模型已落地
+
+本次建立类型边界，不迁移现有状态所有权，也不接管现有 Prompt 调用链：
+
+- 新增不可变 `PersonaDefinition`，从 `PersonaCollector` 的 ContextSlot 输出适配静态人格、分段、开场对话和工具/技能白名单。
+- 新增不可变 `PersonaRelationshipState`，只读适配 Memory 的 `PersonaState`；序列化只保留 `scope_id_hash`，不暴露作用域明文。
+- 新增不可变 `RuntimeControlSnapshot`，由现有 `PersonalStateSnapshot` 适配，不创建第二套可变运行状态。
+- 新增 `EffectivePersonaContext`，显式组合静态人格定义（`definition`）、关系状态和运行控制快照（`runtime`）。
+- 增加 `PersonalPersistentState` 的只读映射适配器、MemorySnapshot 关系适配器和稳定作用域键函数。
+- 所有快照值在构造时深度冻结，序列化结果不携带 Provider、事件或 ContextSlot 元数据。
+
+已验证：
+
+- `tests/unit/test_persona_domain.py`：9 passed（含不可序列化值、非有限浮点和领域状态边界拒绝）
+- 人格/Memory/Personal Runtime/Router/Planner/Expression 相关回归：113 passed
+- Ruff、`compileall`：通过
+
+本批次尚未把 `EffectivePersonaContext` 接入 Persona Expression 或主动观察链路；接入前仍需先完成 Phase 0 的真实 OLV 日志采样和 Phase 1 适配器评审。

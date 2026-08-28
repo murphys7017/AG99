@@ -35,6 +35,18 @@ from .output_modes import (
     PluginOutputRequest,
     temporary_output_origin,
 )
+from .persona_domain import (
+    PERSONA_DOMAIN_SCHEMA_VERSION,
+    EffectivePersonaContext,
+    PersonaDefinition,
+    PersonaRelationshipState,
+    RuntimeControlSnapshot,
+    adapt_memory_snapshot,
+    adapt_persona_collector_slots,
+    adapt_personal_persistent_state,
+    build_effective_persona_context,
+    build_persona_scope_key,
+)
 from .persona_runtime import InteractionPersonaRuntime
 from .personal_heartbeat import PersonalHeartbeatSource
 from .personal_runtime import PersonalRuntimeManager
@@ -108,6 +120,16 @@ __all__ = [
     "InteractionMiddleware",
     "InteractionOutputContribution",
     "InteractionOutputController",
+    "EffectivePersonaContext",
+    "PERSONA_DOMAIN_SCHEMA_VERSION",
+    "PersonaDefinition",
+    "PersonaRelationshipState",
+    "RuntimeControlSnapshot",
+    "adapt_memory_snapshot",
+    "adapt_persona_collector_slots",
+    "adapt_personal_persistent_state",
+    "build_effective_persona_context",
+    "build_persona_scope_key",
     "InteractionOutputDraft",
     "InteractionPromptView",
     "InteractionStreamState",
