@@ -30,6 +30,7 @@ from astrbot.core.prompt.collectors import (
     KnowledgeCollector,
     MemoryCollector,
     PersonaCollector,
+    PersonaRelationshipCollector,
     PolicyCollector,
     SessionCollector,
     SkillsCollector,
@@ -1926,6 +1927,118 @@ async def test_collect_context_pack_memory_skips_empty_snapshot(_patch_memory_se
     assert pack.get_slot("memory.experiences") is None
     assert pack.get_slot("memory.long_term_memories") is None
     assert pack.get_slot("memory.persona_state") is None
+
+
+@pytest.mark.asyncio
+async def test_persona_relationship_collector_reuses_memory_snapshot(
+    _patch_memory_service,
+):
+    event, _ = _make_event()
+    context = _make_context()
+    req = ProviderRequest(prompt="hello")
+    req.conversation = _make_conversation()
+    _patch_memory_service.memory_config.injection.persona_state = True
+    _patch_memory_service.memory_config.injection.include_debug_fields = True
+    _patch_memory_service.get_prompt_snapshot.return_value = MemorySnapshot(
+        umo=event.unified_msg_origin,
+        conversation_id="conv-id",
+        persona_state=PersonaState(
+            state_id="state-1",
+            scope_type="user",
+            scope_id="canonical-user-1",
+            persona_id=None,
+            familiarity=0.4,
+            trust=0.6,
+            warmth=0.7,
+            formality_preference=0.3,
+            directness_preference=0.8,
+            updated_at=datetime(2026, 8, 28, 12, 0, 0, 123456),
+        ),
+    )
+
+    with patch(
+        "astrbot.core.prompt.collectors.persona_relationship_collector.get_memory_config",
+        return_value=_patch_memory_service.memory_config,
+    ):
+        pack = await collect_context_pack(
+            event=event,
+            plugin_context=context,
+            config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+            provider_request=req,
+            collectors=[
+                MemoryCollector(include_persona_state=False),
+                PersonaRelationshipCollector(),
+            ],
+        )
+
+    _patch_memory_service.get_prompt_snapshot.assert_awaited_once()
+    relation_slot = pack.get_slot("memory.persona_state")
+    assert relation_slot is not None
+    assert relation_slot.source == "persona_relationship_state"
+    assert relation_slot.value["trust"] == 0.6
+    assert relation_slot.value["updated_at"] == "2026-08-28T12:00:00"
+
+
+@pytest.mark.asyncio
+async def test_memory_snapshot_cache_respects_recall_read_profile(
+    _patch_memory_service,
+):
+    event, _ = _make_event()
+    context = _make_context()
+    req = ProviderRequest(prompt="hello")
+    req.conversation = _make_conversation()
+    injection = _patch_memory_service.memory_config.injection
+    injection.experiences.enabled = True
+    injection.experiences.top_k = 1
+
+    def make_experience(experience_id: str) -> Experience:
+        return Experience(
+            experience_id=experience_id,
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            platform_user_key="test:user-1",
+            canonical_user_id="canonical-user-1",
+            scope_type="user",
+            scope_id="canonical-user-1",
+            event_time=datetime(2026, 8, 28, 12, 0, 0),
+            category="project_progress",
+            summary=experience_id,
+        )
+
+    first = make_experience("exp-1")
+    second = make_experience("exp-2")
+    _patch_memory_service.get_prompt_snapshot.side_effect = [
+        MemorySnapshot(
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            experiences=[first],
+        ),
+        MemorySnapshot(
+            umo=event.unified_msg_origin,
+            conversation_id="conv-id",
+            experiences=[first, second],
+        ),
+    ]
+
+    first_pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[MemoryCollector()],
+    )
+    injection.experiences.top_k = 2
+    second_pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=req,
+        collectors=[MemoryCollector()],
+    )
+
+    assert first_pack.get_slot("memory.experiences").value["count"] == 1
+    assert second_pack.get_slot("memory.experiences").value["count"] == 2
+    assert _patch_memory_service.get_prompt_snapshot.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from .input_collector import InputCollector
 from .knowledge_collector import KnowledgeCollector
 from .memory_collector import MemoryCollector
 from .persona_collector import PersonaCollector
+from .persona_relationship_collector import PersonaRelationshipCollector
 from .policy_collector import PolicyCollector
 from .runtime_context_collector import RuntimeContextCollector
 from .session_collector import SessionCollector
@@ -30,6 +31,7 @@ __all__ = [
     "MemoryCollector",
     "PolicyCollector",
     "PersonaCollector",
+    "PersonaRelationshipCollector",
     "RuntimeContextCollector",
     "SessionCollector",
     "SkillsCollector",

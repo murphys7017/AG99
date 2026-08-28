@@ -27,6 +27,7 @@ from .collectors.input_collector import InputCollector
 from .collectors.knowledge_collector import KnowledgeCollector
 from .collectors.memory_collector import MemoryCollector
 from .collectors.persona_collector import PersonaCollector
+from .collectors.persona_relationship_collector import PersonaRelationshipCollector
 from .collectors.policy_collector import PolicyCollector
 from .collectors.session_collector import SessionCollector
 from .collectors.skills_collector import SkillsCollector
@@ -113,7 +114,8 @@ def interaction_base_collectors() -> list[ContextCollectorInterface]:
         PersonaCollector(),
         InputCollector(),
         SessionCollector(),
-        MemoryCollector(),
+        MemoryCollector(include_persona_state=False),
+        PersonaRelationshipCollector(),
         ConversationHistoryCollector(),
         ExplicitContextCollector(),
     ]

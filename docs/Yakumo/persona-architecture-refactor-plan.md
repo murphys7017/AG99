@@ -880,3 +880,24 @@ personal_wake_skipped
 已知无关验证缺口：
 
 - 扩展回归中的两个视频附件断言当前失败，预期 `path/to/...`，实际为 `/path/to/...`；差异位于未改动的 InputCollector 附件路径格式链路，与本批 Persona 解析无关。
+
+### 2026-08-28：Phase 2 第三批关系状态收集边界已实现
+
+- 新增 `PersonaRelationshipCollector`，生产 Interaction base 与 Personal Policy 不再由通用 `MemoryCollector` 直接拥有 `memory.persona_state`。
+- `MemoryCollector` 保留兼容参数 `include_persona_state=True`；Native Core 默认路径继续保持旧行为，Interaction/Policy 路径使用独立关系 Collector。
+- 新增事件级 `MemorySnapshot` 复用边界；普通 Memory 与关系 Collector 在同一事件、同一会话下共享已读取快照，避免为关系状态再发起一次 Memory 查询；缓存按 recall 读取规格区分，并优先返回最新的可用快照。
+- `InteractionContextMaterial` 现在保存 `EffectivePersonaContext`，由静态 `PersonaDefinition`、可用关系快照组合；Persona Expression 优先从该领域上下文读取人格 ID。
+- Personal Policy 使用同一关系 Collector，并将有效人格上下文作为 RenderResult 元数据保留，不新增模型可见的重复人格片段。
+
+已验证：
+
+- 关系 Collector 与普通 Memory 快照复用：通过
+- Prompt target、Context Builder、Persona Domain、Personal Policy 相关回归：通过
+- 新增关系边界测试及 Prompt Context 全套：`87 passed`
+- Prompt、Persona、Policy、Expression、Runtime 扩展回归：`216 passed`
+- Ruff、compileall、git diff 检查：通过
+
+仍待下一批处理：
+
+- 主动观察 RuntimeKey 解析仍独立于普通事件缓存；需要单独设计明确的 Runtime-owned PersonaContext 入口。
+- `EffectivePersonaContext` 的关系状态目前通过已缓存 `MemorySnapshot` 适配，尚未替代旧的 `memory.persona_state` 渲染槽位。

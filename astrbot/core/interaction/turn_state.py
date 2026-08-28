@@ -17,7 +17,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from .persona_domain import PersonaDefinition
+    from .persona_domain import EffectivePersonaContext, PersonaDefinition
     from .personal_runtime import PersonalRuntimeKey
 
 INTERACTION_TURN_STATE_EXTRA_KEY = "_interaction_turn_state"
@@ -102,6 +102,7 @@ class InteractionContextMaterial:
     )
     persona_payload: dict[str, Any] = field(default_factory=dict)
     persona_definition: PersonaDefinition | None = None
+    effective_persona_context: EffectivePersonaContext | None = None
     memory_payload: dict[str, Any] = field(default_factory=dict)
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
     input_payload: dict[str, Any] = field(default_factory=dict)

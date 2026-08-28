@@ -14,7 +14,11 @@ from astrbot.core.prompt.collectors import (
     ConversationHistoryCollector,
     MemoryCollector,
     PersonaCollector,
+    PersonaRelationshipCollector,
     RuntimeContextCollector,
+)
+from astrbot.core.prompt.collectors.memory_collector import (
+    get_cached_prompt_memory_snapshot,
 )
 from astrbot.core.prompt.render import (
     PromptRenderEngine,
@@ -26,6 +30,10 @@ from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
 
 from .observation_inbox import ObservationBatch
+from .persona_domain import (
+    adapt_persona_collector_slots,
+    build_effective_persona_context,
+)
 from .personal_gate import ObservationGateResult, ObservationGateSettings
 from .personal_state import PersonalStateSnapshot
 from .prompt_support import (
@@ -520,14 +528,15 @@ class PersonalPolicyAgent:
             collectors=[
                 PersonaCollector(),
                 ConversationHistoryCollector(),
-                MemoryCollector(),
+                MemoryCollector(include_persona_state=False),
+                PersonaRelationshipCollector(),
                 runtime_collector,
             ],
             provider_request=request,
             include_prompt_extensions=False,
             scope="personal_policy",
         )
-        return PromptRenderEngine().render(
+        render_result = PromptRenderEngine().render(
             pack,
             target=PromptTarget.PERSONAL_POLICY,
             event=event,
@@ -541,6 +550,17 @@ class PersonalPolicyAgent:
                 output_contract=build_personal_policy_output_contract(),
             ),
         )
+        definition = adapt_persona_collector_slots(tuple(pack.slots.values()))
+        if definition is not None:
+            render_result.metadata["effective_persona_context"] = build_effective_persona_context(
+                definition=definition,
+                memory_snapshot=get_cached_prompt_memory_snapshot(
+                    event,
+                    provider_request=request,
+                ),
+                runtime_snapshot=state,
+            ).to_dict()
+        return render_result
 
 
 class PersonalPolicyPromptContext:

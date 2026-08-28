@@ -1130,9 +1130,13 @@ class InteractionExpressionAgent:
         set_interaction_turn_persona_id(
             event,
             (
-                material.persona_definition.persona_id
-                if material.persona_definition is not None
-                else material.persona_payload.get("persona_id", "")
+                material.effective_persona_context.definition.persona_id
+                if material.effective_persona_context is not None
+                else (
+                    material.persona_definition.persona_id
+                    if material.persona_definition is not None
+                    else material.persona_payload.get("persona_id", "")
+                )
             ),
         )
         persona_context_pack = await get_or_build_interaction_persona_context_pack(
@@ -1201,6 +1205,10 @@ class InteractionExpressionAgent:
                 _resolve_provider_model(provider),
             )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
+        if material.effective_persona_context is not None:
+            render_result.metadata["effective_persona_context"] = (
+                material.effective_persona_context.to_dict()
+            )
         if req.avoid_previous_reply:
             previous_expression_fingerprint = _latest_assistant_expression_fingerprint(
                 expression_pack

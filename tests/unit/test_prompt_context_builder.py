@@ -84,6 +84,8 @@ async def test_context_material_adapts_persona_definition_snapshot():
 
     assert material.persona_definition is not None
     assert material.persona_definition.persona_id == "ag99"
+    assert material.effective_persona_context is not None
+    assert material.effective_persona_context.definition.persona_id == "ag99"
 
 
 class _PersonaContextEvent:

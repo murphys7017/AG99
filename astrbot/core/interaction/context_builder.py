@@ -8,6 +8,9 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.collectors.memory_collector import (
+    get_cached_prompt_memory_snapshot,
+)
 from astrbot.core.prompt.context_collect import (
     build_prompt_extension_slots,
     interaction_base_collectors,
@@ -24,7 +27,10 @@ from .contributors import (
     InteractionPromptView,
     PromptViewPhase,
 )
-from .persona_domain import adapt_persona_collector_slots
+from .persona_domain import (
+    adapt_persona_collector_slots,
+    build_effective_persona_context,
+)
 from .turn_state import (
     InteractionContextMaterial,
     InteractionTurnState,
@@ -424,11 +430,23 @@ async def _build_interaction_context_material(
         build_config,
     )
     capability_payload = extract_core_capability_payload(prompt_context_pack)
+    persona_definition = adapt_persona_collector_slots(
+        tuple(prompt_context_pack.slots.values())
+    )
     material = InteractionContextMaterial(
         prompt_context_pack=prompt_context_pack,
         persona_payload=extract_persona_payload(prompt_context_pack),
-        persona_definition=adapt_persona_collector_slots(
-            tuple(prompt_context_pack.slots.values())
+        persona_definition=persona_definition,
+        effective_persona_context=(
+            build_effective_persona_context(
+                definition=persona_definition,
+                memory_snapshot=get_cached_prompt_memory_snapshot(
+                    event,
+                    provider_request=event.get_extra("provider_request"),
+                ),
+            )
+            if persona_definition is not None
+            else None
         ),
         memory_payload=extract_memory_payload(prompt_context_pack),
         recent_messages=extract_recent_messages(
