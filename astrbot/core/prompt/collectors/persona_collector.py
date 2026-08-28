@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
@@ -22,6 +24,9 @@ from ..persona_segments import parse_legacy_persona_prompt
 
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
+
+
+_PERSONA_RESOLUTION_CACHE_EXTRA_KEY = "_prompt_persona_resolution_cache"
 
 
 class PersonaCollector(ContextCollectorInterface):
@@ -72,20 +77,32 @@ class PersonaCollector(ContextCollectorInterface):
                 )
                 return slots
 
-            (
-                persona_id,
-                persona,
-                force_applied_persona_id,
-                use_webchat_special_default,
-            ) = await persona_mgr.resolve_selected_persona(
+            resolution_key = _build_resolution_cache_key(
+                event=event,
+                config=config,
+                persona_manager=persona_mgr,
+                conversation_persona_id=conversation_persona_id,
+            )
+            cached_slots = _get_cached_resolution_slots(event, resolution_key)
+            if cached_slots is not None:
+                return cached_slots
+
+            resolution = await persona_mgr.resolve_selected_persona(
                 umo=event.unified_msg_origin,
                 conversation_persona_id=conversation_persona_id,
                 platform_name=event.get_platform_name(),
                 provider_settings=config.provider_settings,
             )
+            (
+                persona_id,
+                persona,
+                force_applied_persona_id,
+                use_webchat_special_default,
+            ) = resolution
 
             if not persona and not use_webchat_special_default:
                 logger.debug(f"No persona resolved (persona_id={persona_id})")
+                _store_resolution_slots(event, resolution_key, slots)
                 return slots
 
             # 步骤 3: 提取并构造 ContextSlot
@@ -211,10 +228,65 @@ class PersonaCollector(ContextCollectorInterface):
                 for slot in slots:
                     slot.meta["use_webchat_special_default"] = True
 
+            _store_resolution_slots(event, resolution_key, slots)
+
         except Exception as e:
             logger.warning(f"Failed to collect persona context: {e}", exc_info=True)
 
         return slots
+
+
+def _build_resolution_cache_key(
+    *,
+    event: AstrMessageEvent,
+    config: MainAgentBuildConfig,
+    persona_manager: object,
+    conversation_persona_id: str | None,
+) -> str:
+    """Build an event-local key that is independent of ProviderRequest identity."""
+    payload = {
+        "event": str(getattr(event, "unified_msg_origin", "") or ""),
+        "platform": str(event.get_platform_name() or ""),
+        "conversation_persona_id": conversation_persona_id or "",
+        "default_personality": _default_personality(config),
+        "persona_manager_identity": id(persona_manager),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _default_personality(config: MainAgentBuildConfig) -> str:
+    provider_settings = getattr(config, "provider_settings", {})
+    if not isinstance(provider_settings, dict):
+        return ""
+    return str(provider_settings.get("default_personality", "") or "")
+
+
+def _get_cached_resolution_slots(
+    event: AstrMessageEvent,
+    key: str,
+) -> list[ContextSlot] | None:
+    cache = event.get_extra(_PERSONA_RESOLUTION_CACHE_EXTRA_KEY, {})
+    if not isinstance(cache, dict) or key not in cache:
+        return None
+    try:
+        return deepcopy(cache[key])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _store_resolution_slots(
+    event: AstrMessageEvent,
+    key: str,
+    slots: list[ContextSlot],
+) -> None:
+    cache = event.get_extra(_PERSONA_RESOLUTION_CACHE_EXTRA_KEY, {})
+    if not isinstance(cache, dict):
+        cache = {}
+    try:
+        cache[key] = deepcopy(slots)
+        event.set_extra(_PERSONA_RESOLUTION_CACHE_EXTRA_KEY, cache)
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to cache resolved persona slots", exc_info=True)
 
 
 def _build_persona_summary(segments: dict[str, object]) -> dict[str, list[str]]:

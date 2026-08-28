@@ -844,3 +844,15 @@ personal_wake_skipped
 - Ruff、`compileall`：通过
 
 本批次尚未把 `EffectivePersonaContext` 接入 Persona Expression 或主动观察链路；接入前仍需先完成 Phase 0 的真实 OLV 日志采样和 Phase 1 适配器评审。
+
+### 2026-08-28：Phase 2 第一批 Persona 解析复用已实现（待审阅）
+
+- 为 `PersonaCollector` 增加事件级解析结果缓存；同一事件内不同 `ProviderRequest` 分支复用已解析并分段的人格槽位。
+- 缓存键只包含解析函数的实际输入：事件作用域、平台、会话人格、`default_personality` 和 PersonaManager 实例；解析失败不写入缓存。
+- 缓存返回值使用深拷贝，避免调用方修改事件级快照；无人格结果也会缓存，避免同一事件重复访问持久化 Session 配置。
+
+已验证：
+
+- PersonaCollector 跨 ProviderRequest 复用及配置变化失效：通过
+- Prompt collect、人格/Memory/Personal Runtime/Router/Planner/Expression 相关回归：197 passed
+- 本轮未修改 `data/cmd_config.json`，也未改变 Persona Expression、Router 或输出行为

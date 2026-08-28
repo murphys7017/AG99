@@ -29,6 +29,7 @@ from astrbot.core.prompt.collectors import (
     InputCollector,
     KnowledgeCollector,
     MemoryCollector,
+    PersonaCollector,
     PolicyCollector,
     SessionCollector,
     SkillsCollector,
@@ -270,6 +271,53 @@ async def test_collect_context_pack_collects_persona_prompt():
     assert segments_slot is not None
     assert summary_slot is not None
     assert segments_slot.value["unparsed_sections"] == ["You are a helpful assistant."]
+
+
+@pytest.mark.asyncio
+async def test_persona_collector_reuses_resolution_across_provider_requests():
+    event, extras = _make_event()
+    context = _make_context()
+    persona = {
+        "name": "persona-a",
+        "prompt": "You are a helpful assistant.",
+        "_begin_dialogs_processed": [],
+        "tools": None,
+        "skills": None,
+    }
+    resolver = AsyncMock(return_value=("persona-a", persona, None, False))
+    context.persona_manager.resolve_selected_persona = resolver
+    first_request = ProviderRequest(prompt="first")
+    second_request = ProviderRequest(prompt="second")
+    extras["provider_request"] = first_request
+
+    collector = PersonaCollector()
+    first_slots = await collector.collect(
+        event,
+        context,
+        ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=first_request,
+    )
+    second_slots = await collector.collect(
+        event,
+        context,
+        ama.MainAgentBuildConfig(tool_call_timeout=60),
+        provider_request=second_request,
+    )
+
+    assert resolver.await_count == 1
+    assert first_slots == second_slots
+
+    changed_config = ama.MainAgentBuildConfig(
+        tool_call_timeout=60,
+        provider_settings={"default_personality": "persona-b"},
+    )
+    await collector.collect(
+        event,
+        context,
+        changed_config,
+        provider_request=second_request,
+    )
+    assert resolver.await_count == 2
 
 
 @pytest.mark.asyncio
