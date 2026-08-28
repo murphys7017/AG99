@@ -122,6 +122,18 @@ class ObservationWakeScheduler(Protocol):
     def cancel(self, key: PersonalRuntimeKey) -> None: ...
 
 
+def _runtime_key_hash(key: PersonalRuntimeKey) -> str:
+    raw = "\x00".join(
+        (
+            key.config_id,
+            key.persona_id,
+            key.audience_key,
+            key.privacy_scope,
+        )
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def _stable_observation_payload_fingerprint(payload: Mapping[str, Any]) -> str:
     """Fingerprint immutable Sensor payloads without retaining their contents."""
 
@@ -754,6 +766,16 @@ class PersonalSessionRuntime:
         if not result.admitted:
             return result
 
+        logger.debug(
+            "Personal Runtime observation admitted: runtime_key_hash=%s "
+            "observation_id=%s kind=%s status=%s pending_count=%s reasons=%s",
+            _runtime_key_hash(self.key),
+            result.observation_id,
+            observation.kind,
+            result.status.value,
+            result.pending_count,
+            ",".join(result.reason_codes),
+        )
         self._remember_observation_material(observation)
         self.idle_since = None
         self.touch(now=now)
@@ -967,6 +989,16 @@ class PersonalSessionRuntime:
             )
             if batch is not None:
                 self.last_observation_batch = batch
+                logger.info(
+                    "Personal Runtime observation batch closed: "
+                    "runtime_key_hash=%s batch_id=%s material_revision=%s "
+                    "observation_count=%s material_count=%s",
+                    _runtime_key_hash(self.key),
+                    batch.batch_id,
+                    batch.material_revision,
+                    len(batch.observations),
+                    batch.material_count,
+                )
                 state_snapshot = self.state.snapshot()
                 features = ObservationFeatureBuilder.build(
                     batch,
@@ -984,6 +1016,16 @@ class PersonalSessionRuntime:
                 )
                 self.last_observation_gate_result = gate_result
                 self.state.record_gate_result(gate_result.reason_code.value)
+                logger.info(
+                    "Personal Runtime observation gate resolved: "
+                    "runtime_key_hash=%s batch_id=%s disposition=%s reason=%s "
+                    "material_revision=%s",
+                    _runtime_key_hash(self.key),
+                    batch.batch_id,
+                    gate_result.disposition.value,
+                    gate_result.reason_code.value,
+                    batch.material_revision,
+                )
                 if gate_result.disposition is ObservationGateDisposition.HOLD:
                     self.observation_inbox.restore(
                         batch,

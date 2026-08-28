@@ -975,7 +975,10 @@ class InteractionExpressionAgent:
         if req.short_reply and result.spoken_reply and len(result.spoken_reply) > 40:
             result.spoken_reply = result.spoken_reply[:40].rstrip("，,。.!！?？")
         logger.info(
-            "Persona expression generated: platform_id=%s session_id=%s phase=%s lifecycle_id=%s length=%s speech_cues=%s effect_calls=%s",
+            "Persona expression generated: turn_id=%s target=persona_expression "
+            "platform_id=%s session_id=%s phase=%s lifecycle_id=%s length=%s "
+            "speech_cues=%s effect_calls=%s",
+            str(event.get_extra("_turn_id", "") or ""),
             event.get_platform_id(),
             event.session_id,
             _describe_expression_request(req),

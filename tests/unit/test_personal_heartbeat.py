@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from astrbot.core.interaction.personal_heartbeat import PersonalHeartbeatSource
+from astrbot.core.interaction.personal_runtime import PersonalRuntimeKey
 from astrbot.core.platform.astr_message_event import MessageSesion
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 
@@ -47,6 +48,13 @@ class _RuntimeManager:
         self.idle_initiations.append((target, kwargs))
         return SimpleNamespace(
             status=SimpleNamespace(value="admitted"),
+            observation_id="idle-observation-1",
+            runtime_key=PersonalRuntimeKey(
+                config_id="default",
+                persona_id="default",
+                audience_key=target.unified_msg_origin,
+                privacy_scope="private",
+            ),
             reason_codes=(),
         )
 
@@ -126,3 +134,9 @@ async def test_heartbeat_submits_explicitly_enabled_idle_initiation():
     assert target["idle_initiation_enabled"] is True
     assert target["idle_initiation_after_seconds"] == 120.0
     assert target["last_idle_initiation_status"] == "admitted"
+    assert target["last_idle_initiation_attempt_id"]
+    assert target["last_idle_initiation_observation_id"] == "idle-observation-1"
+    assert target["idle_initiation_stats"]["attempts"] == 1
+    assert target["idle_initiation_stats"]["admitted"] == 1
+    assert target["idle_initiation_stats"]["last_observation_id"] == "idle-observation-1"
+    assert target["idle_initiation_stats"]["ignored"] == 0

@@ -167,11 +167,12 @@ class InteractionRouterAgent:
             raise InteractionRouterError("disallowed_mode")
         event.set_extra("_interaction_router_result_source", "parsed")
         logger.info(
-            "Interaction router parsed: platform_id=%s session_id=%s mode=%s raw_output=%s",
+            "Interaction router parsed: turn_id=%s target=router platform_id=%s "
+            "session_id=%s mode=%s result_source=parsed",
+            str(event.get_extra("_turn_id", "") or ""),
             event.get_platform_id(),
             event.session_id,
             route.route_mode.value,
-            event.get_extra("_interaction_router_raw_output"),
         )
         return route
 

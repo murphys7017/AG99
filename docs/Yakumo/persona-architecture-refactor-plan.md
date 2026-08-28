@@ -6,7 +6,7 @@
 - **适用项目**：AG99（基于 AstrBot 的持续演进版本）
 - **当前阶段**：已纳入当前代码基线；本文档只列出尚未完成的边界收口，不把已完成工作重复列为重构任务
 - **风险等级**：高。该方案会影响 Interaction、Prompt、Memory、Personal Runtime 和日志协议，但第一阶段只允许做文档与观测准备
-- **提交策略**：本次不提交代码；待方案评审通过后，再按阶段单独提交
+- **提交策略**：方案评审已通过；后续按 Phase 单独提交，每个提交保持可回滚和可验证
 
 这份文档解决的不是“再写一版人格提示词”，而是收口人格相关职责。当前人格能力已经具备较完整的运行链路，但静态人格、关系状态、运行控制、模型决策和最终表达仍分散在多个模块中，导致命名重叠、调用链难以解释、日志难以归因，也使性能优化容易变成局部打补丁。
 
@@ -802,3 +802,26 @@ personal_wake_skipped
 ```
 
 在 Phase 0 和 Phase 1 的边界没有得到确认前，不建议直接大规模移动 `personal_runtime.py`、`expression_agent.py` 或 `persona_state_service.py` 的业务逻辑。先让数据流、状态流和日志流可见，再做物理拆分，才能避免把当前的“散和混乱”搬到一组新名字里。
+
+## 执行记录
+
+### 2026-08-28：Phase 0 第一批诊断已落地
+
+本次只修改诊断和测试，不改变路由、Persona Expression、Personal Policy、Core 或平台发送行为：
+
+- idle initiation 每次调度检查拥有独立的 `initiation_attempt_id`。
+- 诊断区分 `initiation_attempt_id`、真正进入 Inbox 的 `observation_id`，以及后续批次使用的 `batch_id`。
+- Heartbeat diagnostics 增加 idle initiation 的 admitted/coalesced/ignored/expired/failed 聚合计数。
+- Observation 入队、batch 关闭、Gate 终态增加统一的 `runtime_key_hash` 和关联 ID。
+- Router、Core Planner、Persona Expression 的成功日志补充 `turn_id` 和 target；Router 成功日志不再输出模型原始结果。
+- 保留事件内部的截断诊断字段，便于异常分析；该字段不进入普通用户 Prompt。
+
+已验证：
+
+- `tests/unit/test_personal_heartbeat.py`：2 passed
+- `tests/unit/test_personal_policy.py` 与相关 Heartbeat：5 passed
+- Router/Planner/Expression 相关测试：52 passed
+- `tests/unit/test_personal_runtime_capability.py`：44 passed
+- `compileall`、`git diff --check`：通过
+
+尚未完成的 Phase 0 工作仍包括真实平台日志采样、Policy/Expression/Delivery 的统一终态事件和长期聚合指标；这些工作需要真实运行数据后再决定，不在本批次扩大实现范围。

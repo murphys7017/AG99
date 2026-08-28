@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -34,6 +36,55 @@ class _HeartbeatSubmission:
     submitted_at: float
     status: str
     reason_codes: tuple[str, ...]
+    attempt_id: str | None = None
+    observation_id: str | None = None
+
+
+@dataclass(slots=True)
+class _IdleInitiationStats:
+    attempts: int = 0
+    admitted: int = 0
+    coalesced: int = 0
+    ignored: int = 0
+    expired: int = 0
+    failed: int = 0
+    last_attempt_id: str | None = None
+    last_observation_id: str | None = None
+
+    def record(
+        self,
+        *,
+        attempt_id: str,
+        status: str,
+        observation_id: str | None,
+    ) -> None:
+        self.attempts += 1
+        self.last_attempt_id = attempt_id
+        self.last_observation_id = observation_id or None
+        if status == "admitted":
+            self.admitted += 1
+        elif status == "coalesced":
+            self.coalesced += 1
+        elif status == "ignored":
+            self.ignored += 1
+        elif status == "expired":
+            self.expired += 1
+        else:
+            self.failed += 1
+
+
+def _runtime_key_hash(value: object) -> str:
+    fields = (
+        getattr(value, "config_id", None),
+        getattr(value, "persona_id", None),
+        getattr(value, "audience_key", None),
+        getattr(value, "privacy_scope", None),
+    )
+    if all(item is not None for item in fields):
+        raw = "\x00".join(str(item) for item in fields)
+    else:
+        raw = str(value)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 class PersonalHeartbeatSource:
@@ -54,6 +105,7 @@ class PersonalHeartbeatSource:
         self._next_tick_at: dict[str, float] = {}
         self._last_submissions: dict[str, _HeartbeatSubmission] = {}
         self._last_idle_initiation_submissions: dict[str, _HeartbeatSubmission] = {}
+        self._idle_initiation_stats: dict[str, _IdleInitiationStats] = {}
 
     def _prune_inactive_targets(self, active_targets: set[str]) -> None:
         for target_key in tuple(self._next_tick_at):
@@ -65,6 +117,9 @@ class PersonalHeartbeatSource:
         for target_key in tuple(self._last_idle_initiation_submissions):
             if target_key not in active_targets:
                 del self._last_idle_initiation_submissions[target_key]
+        for target_key in tuple(self._idle_initiation_stats):
+            if target_key not in active_targets:
+                del self._idle_initiation_stats[target_key]
 
     def _record_submission(
         self,
@@ -87,12 +142,24 @@ class PersonalHeartbeatSource:
         occurred_at: float,
         status: str,
         reason_codes: tuple[str, ...] = (),
+        attempt_id: str | None = None,
+        observation_id: str | None = None,
     ) -> None:
         self._last_idle_initiation_submissions[target_key] = _HeartbeatSubmission(
             submitted_at=occurred_at,
             status=status,
             reason_codes=reason_codes,
+            attempt_id=attempt_id,
+            observation_id=observation_id,
         )
+        if attempt_id is not None:
+            self._idle_initiation_stats.setdefault(
+                target_key, _IdleInitiationStats()
+            ).record(
+                attempt_id=attempt_id,
+                status=status,
+                observation_id=observation_id,
+            )
 
     async def run(self) -> None:
         while True:
@@ -119,6 +186,7 @@ class PersonalHeartbeatSource:
             if not runtime_settings.personal_heartbeat_enabled:
                 self._next_tick_at.pop(target_key, None)
                 self._last_idle_initiation_submissions.pop(target_key, None)
+                self._idle_initiation_stats.pop(target_key, None)
                 continue
             interval = runtime_settings.personal_heartbeat_interval_seconds
             due_at = self._next_tick_at.get(target_key, occurred_at)
@@ -206,8 +274,10 @@ class PersonalHeartbeatSource:
             results.append(result)
             if not runtime_settings.personal_idle_initiation_enabled:
                 self._last_idle_initiation_submissions.pop(target_key, None)
+                self._idle_initiation_stats.pop(target_key, None)
                 continue
             try:
+                initiation_attempt_id = uuid.uuid4().hex
                 idle_result = await self._runtime_manager.submit_idle_initiation(
                     target,
                     config_id=str(config_info.get("id") or "default"),
@@ -228,13 +298,19 @@ class PersonalHeartbeatSource:
                     occurred_at=occurred_at,
                     status="failed",
                     reason_codes=("submission_failed",),
+                    attempt_id=initiation_attempt_id,
                 )
                 continue
+            observation_id = (
+                str(getattr(idle_result, "observation_id", "") or "") or None
+            )
             self._record_idle_initiation_submission(
                 target_key=target_key,
                 occurred_at=occurred_at,
                 status=idle_result.status.value,
                 reason_codes=idle_result.reason_codes,
+                attempt_id=initiation_attempt_id,
+                observation_id=observation_id,
             )
             if not (
                 idle_result.status.value == "ignored"
@@ -244,10 +320,12 @@ class PersonalHeartbeatSource:
                 )
             ):
                 logger.debug(
-                    "Personal Runtime idle initiation result: target=%s status=%s "
-                    "reasons=%s",
-                    target_key,
+                    "Personal Runtime initiation checked: runtime_key_hash=%s "
+                    "attempt_id=%s status=%s observation_id=%s reasons=%s",
+                    _runtime_key_hash(idle_result.runtime_key),
+                    initiation_attempt_id,
                     idle_result.status.value,
+                    observation_id or "",
                     ",".join(idle_result.reason_codes),
                 )
             results.append(idle_result)
@@ -267,6 +345,7 @@ class PersonalHeartbeatSource:
             if not settings.personal_heartbeat_enabled:
                 self._next_tick_at.pop(target_key, None)
                 self._last_idle_initiation_submissions.pop(target_key, None)
+                self._idle_initiation_stats.pop(target_key, None)
                 continue
             active_due_at.append(
                 self._next_tick_at.setdefault(
@@ -353,6 +432,40 @@ class PersonalHeartbeatSource:
                         last_idle_initiation.reason_codes
                         if last_idle_initiation is not None
                         else ()
+                    ),
+                    "last_idle_initiation_attempt_id": (
+                        last_idle_initiation.attempt_id
+                        if last_idle_initiation is not None
+                        else None
+                    ),
+                    "last_idle_initiation_observation_id": (
+                        last_idle_initiation.observation_id
+                        if last_idle_initiation is not None
+                        else None
+                    ),
+                    "idle_initiation_stats": (
+                        {
+                            "attempts": stats.attempts,
+                            "admitted": stats.admitted,
+                            "coalesced": stats.coalesced,
+                            "ignored": stats.ignored,
+                            "expired": stats.expired,
+                            "failed": stats.failed,
+                            "last_attempt_id": stats.last_attempt_id,
+                            "last_observation_id": stats.last_observation_id,
+                        }
+                        if (stats := self._idle_initiation_stats.get(target_key))
+                        is not None
+                        else {
+                            "attempts": 0,
+                            "admitted": 0,
+                            "coalesced": 0,
+                            "ignored": 0,
+                            "expired": 0,
+                            "failed": 0,
+                            "last_attempt_id": None,
+                            "last_observation_id": None,
+                        }
                     ),
                 }
             )

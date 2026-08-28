@@ -194,7 +194,9 @@ class CorePlannerAgent:
             compiled_output_contract=compiled,
         )
         logger.info(
-            "Core Planner parsed: platform_id=%s session_id=%s decision=%s has_task_spec=%s",
+            "Core Planner parsed: turn_id=%s target=core_planner platform_id=%s "
+            "session_id=%s decision=%s has_task_spec=%s",
+            str(event.get_extra("_turn_id", "") or ""),
             event.get_platform_id(),
             event.session_id,
             decision.action.value,
