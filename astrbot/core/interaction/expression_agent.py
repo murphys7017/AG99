@@ -1129,7 +1129,11 @@ class InteractionExpressionAgent:
         )
         set_interaction_turn_persona_id(
             event,
-            material.persona_payload.get("persona_id", ""),
+            (
+                material.persona_definition.persona_id
+                if material.persona_definition is not None
+                else material.persona_payload.get("persona_id", "")
+            ),
         )
         persona_context_pack = await get_or_build_interaction_persona_context_pack(
             event=event,

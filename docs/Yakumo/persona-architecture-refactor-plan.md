@@ -856,5 +856,11 @@ personal_wake_skipped
 
 - PersonaCollector 跨 ProviderRequest 复用及配置变化失效：通过
 - PersonaCollector 解析异常向上透传：通过
+- InteractionContextMaterial 保留 `PersonaDefinition` 快照，表达阶段优先使用快照人格 ID：通过
 - Prompt collect、人格/Memory/Personal Runtime/Router/Planner/Expression 相关回归：197 passed
 - 本轮未修改 `data/cmd_config.json`，也未改变 Persona Expression、Router 或输出行为
+
+仍待下一批处理：
+
+- `astr_main_agent._prepare_persona_and_subagents()`、CapabilityResolver 和错误表达路径仍可能绕过 PersonaCollector 直接解析人格；需要统一事件级解析适配器后再合并，避免重复访问 Session 配置。
+- `resolve_selected_persona()` 还依赖 `session_service_config` 这一隐藏输入；在事件级缓存扩大到更多调用方前，需要为该配置建立明确的版本或事件快照边界。

@@ -24,6 +24,7 @@ from .contributors import (
     InteractionPromptView,
     PromptViewPhase,
 )
+from .persona_domain import adapt_persona_collector_slots
 from .turn_state import (
     InteractionContextMaterial,
     InteractionTurnState,
@@ -426,6 +427,9 @@ async def _build_interaction_context_material(
     material = InteractionContextMaterial(
         prompt_context_pack=prompt_context_pack,
         persona_payload=extract_persona_payload(prompt_context_pack),
+        persona_definition=adapt_persona_collector_slots(
+            tuple(prompt_context_pack.slots.values())
+        ),
         memory_payload=extract_memory_payload(prompt_context_pack),
         recent_messages=extract_recent_messages(
             prompt_context_pack,
@@ -548,6 +552,17 @@ def extract_persona_payload(pack: ContextPack) -> dict[str, Any]:
         if slot is None:
             continue
         payload[slot_name.split(".", 1)[1]] = slot.value
+
+        if slot_name == "persona.prompt" and isinstance(slot.meta, dict):
+            persona_id = slot.meta.get("persona_id")
+            if persona_id is not None:
+                payload["persona_id"] = str(persona_id)
+            if "force_applied" in slot.meta:
+                payload["force_applied"] = bool(slot.meta["force_applied"])
+            if "use_webchat_special_default" in slot.meta:
+                payload["webchat_special_default"] = bool(
+                    slot.meta["use_webchat_special_default"]
+                )
     return payload
 
 

@@ -1,8 +1,11 @@
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from astrbot.core.interaction.context_builder import (
+    _build_interaction_context_material,
+    extract_persona_payload,
     get_or_build_interaction_persona_context_pack,
 )
 from astrbot.core.interaction.turn_state import InteractionContextMaterial
@@ -25,6 +28,62 @@ def _slot(name: str, value, source: str = "test") -> ContextSlot:
         category="input",
         source=source,
     )
+
+
+def test_extract_persona_payload_keeps_persona_identity_metadata():
+    pack = ContextPack(
+        slots={
+            "persona.prompt": ContextSlot(
+                name="persona.prompt",
+                value="stable persona",
+                category="persona",
+                source="persona_mgr",
+                meta={
+                    "persona_id": "ag99",
+                    "force_applied": True,
+                    "use_webchat_special_default": False,
+                },
+            )
+        }
+    )
+
+    payload = extract_persona_payload(pack)
+
+    assert payload["prompt"] == "stable persona"
+    assert payload["persona_id"] == "ag99"
+    assert payload["force_applied"] is True
+    assert payload["webchat_special_default"] is False
+
+
+@pytest.mark.asyncio
+async def test_context_material_adapts_persona_definition_snapshot():
+    event = _PersonaContextEvent()
+    event.get_extra = lambda key, default=None: default
+    pack = ContextPack(
+        slots={
+            "persona.prompt": ContextSlot(
+                name="persona.prompt",
+                value="stable persona",
+                category="persona",
+                source="persona_mgr",
+                meta={"persona_id": "ag99"},
+            )
+        }
+    )
+
+    with patch(
+        "astrbot.core.interaction.context_builder.build_interaction_context_pack",
+        new=AsyncMock(return_value=pack),
+    ):
+        material = await _build_interaction_context_material(
+            event=event,
+            plugin_context=object(),
+            interaction_config=InteractionAgentConfig(),
+            build_config=InteractionPromptBuildConfig(),
+        )
+
+    assert material.persona_definition is not None
+    assert material.persona_definition.persona_id == "ag99"
 
 
 class _PersonaContextEvent:
