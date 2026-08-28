@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from astrbot.core.persona_resolution import resolve_event_persona
+
 PERSONA_CUSTOM_ERROR_MESSAGE_EXTRA_KEY = "persona_custom_error_message"
 
 
@@ -55,18 +57,13 @@ async def resolve_persona_custom_error_message(
     conversation_persona_id: str | None = None,
 ) -> str | None:
     """Resolve normalized custom error reply text for the selected persona."""
-    (
-        _persona_id,
-        persona,
-        _force_applied_persona_id,
-        _use_webchat_special_default,
-    ) = await persona_manager.resolve_selected_persona(
-        umo=event.unified_msg_origin,
+    resolution = await resolve_event_persona(
+        event=event,
+        persona_manager=persona_manager,
         conversation_persona_id=conversation_persona_id,
-        platform_name=event.get_platform_name(),
         provider_settings=provider_settings,
     )
-    return extract_persona_custom_error_message_from_persona(persona)
+    return extract_persona_custom_error_message_from_persona(resolution.persona)
 
 
 async def resolve_event_conversation_persona_id(

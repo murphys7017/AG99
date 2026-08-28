@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
+from astrbot.core.persona_resolution import (
+    build_event_persona_resolution_key,
+    resolve_event_persona,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.resources import (
     CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
@@ -76,28 +79,26 @@ class PersonaCollector(ContextCollectorInterface):
         if not persona_mgr:
             raise RuntimeError("PersonaManager not available")
 
-        resolution_key = _build_resolution_cache_key(
+        resolution_key = build_event_persona_resolution_key(
             event=event,
-            config=config,
             persona_manager=persona_mgr,
             conversation_persona_id=conversation_persona_id,
+            provider_settings=config.provider_settings,
         )
         cached_slots = _get_cached_resolution_slots(event, resolution_key)
         if cached_slots is not None:
             return cached_slots
 
-        resolution = await persona_mgr.resolve_selected_persona(
-            umo=event.unified_msg_origin,
+        resolution = await resolve_event_persona(
+            event=event,
+            persona_manager=persona_mgr,
             conversation_persona_id=conversation_persona_id,
-            platform_name=event.get_platform_name(),
             provider_settings=config.provider_settings,
         )
-        (
-            persona_id,
-            persona,
-            force_applied_persona_id,
-            use_webchat_special_default,
-        ) = resolution
+        persona_id = resolution.persona_id
+        persona = resolution.persona
+        force_applied_persona_id = resolution.force_applied_persona_id
+        use_webchat_special_default = resolution.use_webchat_special_default
 
         if not persona and not use_webchat_special_default:
             logger.debug(f"No persona resolved (persona_id={persona_id})")
@@ -232,34 +233,9 @@ class PersonaCollector(ContextCollectorInterface):
         return slots
 
 
-def _build_resolution_cache_key(
-    *,
-    event: AstrMessageEvent,
-    config: MainAgentBuildConfig,
-    persona_manager: object,
-    conversation_persona_id: str | None,
-) -> str:
-    """Build an event-local key that is independent of ProviderRequest identity."""
-    payload = {
-        "event": str(getattr(event, "unified_msg_origin", "") or ""),
-        "platform": str(event.get_platform_name() or ""),
-        "conversation_persona_id": conversation_persona_id or "",
-        "default_personality": _default_personality(config),
-        "persona_manager_identity": id(persona_manager),
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-
-
-def _default_personality(config: MainAgentBuildConfig) -> str:
-    provider_settings = getattr(config, "provider_settings", {})
-    if not isinstance(provider_settings, dict):
-        return ""
-    return str(provider_settings.get("default_personality", "") or "")
-
-
 def _get_cached_resolution_slots(
     event: AstrMessageEvent,
-    key: str,
+    key: object,
 ) -> list[ContextSlot] | None:
     cache = event.get_extra(_PERSONA_RESOLUTION_CACHE_EXTRA_KEY, {})
     if not isinstance(cache, dict) or key not in cache:
@@ -272,7 +248,7 @@ def _get_cached_resolution_slots(
 
 def _store_resolution_slots(
     event: AstrMessageEvent,
-    key: str,
+    key: object,
     slots: list[ContextSlot],
 ) -> None:
     cache = event.get_extra(_PERSONA_RESOLUTION_CACHE_EXTRA_KEY, {})

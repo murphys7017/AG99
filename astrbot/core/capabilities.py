@@ -15,6 +15,7 @@ from astrbot.core.agent.tool import (
     ToolSet,
     normalize_tool_targets,
 )
+from astrbot.core.persona_resolution import resolve_event_persona
 from astrbot.core.plugin_runtime import (
     tool_plugin_is_selected,
     tool_supports_runtime_target,
@@ -362,13 +363,13 @@ class CapabilityResolver:
         if persona_manager is None:
             return conversation_persona_id, None
 
-        persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
-            umo=event.unified_msg_origin,
+        resolution = await resolve_event_persona(
+            event=event,
+            persona_manager=persona_manager,
             conversation_persona_id=conversation_persona_id,
-            platform_name=event.get_platform_name(),
             provider_settings=getattr(config, "provider_settings", {}) or {},
         )
-        return persona_id, persona if isinstance(persona, dict) else None
+        return resolution.persona_id, resolution.persona
 
     @staticmethod
     def _request_persona_id(provider_request: object | None) -> str | None:

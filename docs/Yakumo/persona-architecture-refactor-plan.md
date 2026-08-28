@@ -862,5 +862,21 @@ personal_wake_skipped
 
 仍待下一批处理：
 
-- `astr_main_agent._prepare_persona_and_subagents()`、CapabilityResolver 和错误表达路径仍可能绕过 PersonaCollector 直接解析人格；需要统一事件级解析适配器后再合并，避免重复访问 Session 配置。
-- `resolve_selected_persona()` 还依赖 `session_service_config` 这一隐藏输入；在事件级缓存扩大到更多调用方前，需要为该配置建立明确的版本或事件快照边界。
+- `resolve_selected_persona()` 还依赖 `session_service_config` 这一隐藏输入；共享解析目前严格限制在同一事件。若将来需要跨事件缓存，必须先为该配置建立明确版本或快照边界。
+
+### 2026-08-28：Phase 2 第二批事件级 Persona 解析收口已实现
+
+- 新增 `persona_resolution.py`，以 UMO、平台、会话人格、`default_personality` 和 PersonaManager 实例身份建立事件级键。
+- 同一事件的并发解析使用 single-flight；Prompt、主 Agent、CapabilityResolver 与人格自定义错误回复复用已完成结果或同一个进行中的解析任务。
+- 解析异常不进入完成缓存；等待者收到原始异常，后续调用可重新解析。
+- `PersonalRuntimeManager` 的主动观察 RuntimeKey 解析保持独立：该路径没有普通事件生命周期，不能复用事件缓存。
+
+已验证：
+
+- 事件内并发 Persona 解析单飞、失败不缓存：通过
+- PersonaCollector、Prompt Context、主 Agent、Expression、Personal Runtime Capability 相关回归：220 passed
+- Ruff、`compileall`、`git diff --check`：通过
+
+已知无关验证缺口：
+
+- 扩展回归中的两个视频附件断言当前失败，预期 `path/to/...`，实际为 `/path/to/...`；差异位于未改动的 InputCollector 附件路径格式链路，与本批 Persona 解析无关。

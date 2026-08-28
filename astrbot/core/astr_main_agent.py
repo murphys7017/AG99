@@ -45,6 +45,7 @@ from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
     set_persona_custom_error_message_on_event,
 )
+from astrbot.core.persona_resolution import resolve_event_persona
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors.core_execution_history_collector import (
@@ -510,17 +511,14 @@ async def _prepare_persona_and_subagents(
     if not req.conversation:
         return None, frozenset()
 
-    (
-        persona_id,
-        persona,
-        _,
-        _,
-    ) = await plugin_context.persona_manager.resolve_selected_persona(
-        umo=event.unified_msg_origin,
+    resolution = await resolve_event_persona(
+        event=event,
+        persona_manager=plugin_context.persona_manager,
         conversation_persona_id=req.conversation.persona_id,
-        platform_name=event.get_platform_name(),
         provider_settings=cfg,
     )
+    persona_id = resolution.persona_id
+    persona = resolution.persona
 
     set_persona_custom_error_message_on_event(
         event, extract_persona_custom_error_message_from_persona(persona)
