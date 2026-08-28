@@ -321,6 +321,22 @@ async def test_persona_collector_reuses_resolution_across_provider_requests():
 
 
 @pytest.mark.asyncio
+async def test_persona_collector_propagates_resolution_failure():
+    event, _ = _make_event()
+    context = _make_context()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        side_effect=RuntimeError("persona boom")
+    )
+
+    with pytest.raises(RuntimeError, match="persona boom"):
+        await PersonaCollector().collect(
+            event,
+            context,
+            ama.MainAgentBuildConfig(tool_call_timeout=60),
+        )
+
+
+@pytest.mark.asyncio
 async def test_collect_context_pack_collects_webchat_default_persona_prompt():
     event, extras = _make_event()
     event.get_platform_name.return_value = "webchat"

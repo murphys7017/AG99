@@ -62,176 +62,172 @@ class PersonaCollector(ContextCollectorInterface):
         """
         slots: list[ContextSlot] = []
 
-        try:
-            # 步骤 1: 获取 conversation
-            req = provider_request or event.get_extra("provider_request")
-            conversation_persona_id = None
-            if req and hasattr(req, "conversation") and req.conversation:
-                conversation_persona_id = req.conversation.persona_id
+        # Persona is a required collector. Let collection failures reach the
+        # prompt pipeline instead of turning an unavailable persona into an
+        # indistinguishable empty result.
+        # 步骤 1: 获取 conversation
+        req = provider_request or event.get_extra("provider_request")
+        conversation_persona_id = None
+        if req and hasattr(req, "conversation") and req.conversation:
+            conversation_persona_id = req.conversation.persona_id
 
-            # 步骤 2: 调用 persona_manager.resolve_selected_persona()
-            persona_mgr = getattr(plugin_context, "persona_manager", None)
-            if not persona_mgr:
-                logger.warning(
-                    "PersonaManager not available, skipping persona collection"
-                )
-                return slots
+        # 步骤 2: 调用 persona_manager.resolve_selected_persona()
+        persona_mgr = getattr(plugin_context, "persona_manager", None)
+        if not persona_mgr:
+            raise RuntimeError("PersonaManager not available")
 
-            resolution_key = _build_resolution_cache_key(
-                event=event,
-                config=config,
-                persona_manager=persona_mgr,
-                conversation_persona_id=conversation_persona_id,
-            )
-            cached_slots = _get_cached_resolution_slots(event, resolution_key)
-            if cached_slots is not None:
-                return cached_slots
+        resolution_key = _build_resolution_cache_key(
+            event=event,
+            config=config,
+            persona_manager=persona_mgr,
+            conversation_persona_id=conversation_persona_id,
+        )
+        cached_slots = _get_cached_resolution_slots(event, resolution_key)
+        if cached_slots is not None:
+            return cached_slots
 
-            resolution = await persona_mgr.resolve_selected_persona(
-                umo=event.unified_msg_origin,
-                conversation_persona_id=conversation_persona_id,
-                platform_name=event.get_platform_name(),
-                provider_settings=config.provider_settings,
-            )
-            (
-                persona_id,
-                persona,
-                force_applied_persona_id,
-                use_webchat_special_default,
-            ) = resolution
+        resolution = await persona_mgr.resolve_selected_persona(
+            umo=event.unified_msg_origin,
+            conversation_persona_id=conversation_persona_id,
+            platform_name=event.get_platform_name(),
+            provider_settings=config.provider_settings,
+        )
+        (
+            persona_id,
+            persona,
+            force_applied_persona_id,
+            use_webchat_special_default,
+        ) = resolution
 
-            if not persona and not use_webchat_special_default:
-                logger.debug(f"No persona resolved (persona_id={persona_id})")
-                _store_resolution_slots(event, resolution_key, slots)
-                return slots
-
-            # 步骤 3: 提取并构造 ContextSlot
-
-            # persona.prompt
-            if use_webchat_special_default:
-                slots.append(
-                    ContextSlot(
-                        name="persona.prompt",
-                        value=CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
-                        category="persona",
-                        source="persona_mgr",
-                        meta={
-                            "persona_id": persona_id,
-                            "force_applied": force_applied_persona_id is not None,
-                            "use_webchat_special_default": True,
-                        },
-                    )
-                )
-            elif persona and "prompt" in persona and persona["prompt"]:
-                slots.append(
-                    ContextSlot(
-                        name="persona.prompt",
-                        value=persona["prompt"],
-                        category="persona",
-                        source="persona_mgr",
-                        meta={
-                            "persona_id": persona_id,
-                            "force_applied": force_applied_persona_id is not None,
-                        },
-                    )
-                )
-
-            prompt_slot = next(
-                (slot for slot in slots if slot.name == "persona.prompt"), None
-            )
-            if (
-                prompt_slot
-                and isinstance(prompt_slot.value, str)
-                and prompt_slot.value.strip()
-            ):
-                persona_segments = parse_legacy_persona_prompt(prompt_slot.value)
-                slots.append(
-                    ContextSlot(
-                        name="persona.segments",
-                        value=persona_segments,
-                        category="persona",
-                        source="persona_parser",
-                        meta={
-                            "persona_id": persona_id,
-                            "source_slot": "persona.prompt",
-                            "parser": "legacy_prompt_v1",
-                        },
-                    )
-                )
-                slots.append(
-                    ContextSlot(
-                        name="persona.summary",
-                        value=_build_persona_summary(persona_segments),
-                        category="persona",
-                        source="persona_parser",
-                        meta={
-                            "persona_id": persona_id,
-                            "source_slot": "persona.segments",
-                            "format": "persona_summary_v1",
-                        },
-                    )
-                )
-
-            # persona.begin_dialogs
-            if (
-                persona
-                and "_begin_dialogs_processed" in persona
-                and persona["_begin_dialogs_processed"]
-            ):
-                slots.append(
-                    ContextSlot(
-                        name="persona.begin_dialogs",
-                        value=persona["_begin_dialogs_processed"],
-                        category="persona",
-                        source="persona_mgr",
-                        meta={
-                            "persona_id": persona_id,
-                            "raw_begin_dialogs": persona.get("begin_dialogs", []),
-                        },
-                    )
-                )
-
-            # persona.tools_whitelist
-            if persona and "tools" in persona:
-                # tools 可能是 None（使用所有）、[]（不使用）、或列表
-                slots.append(
-                    ContextSlot(
-                        name="persona.tools_whitelist",
-                        value=persona["tools"],
-                        category="persona",
-                        source="persona_mgr",
-                        meta={
-                            "persona_id": persona_id,
-                            "semantics": "None=all, []=none, [...]=specific",
-                        },
-                    )
-                )
-
-            # persona.skills_whitelist
-            if persona and "skills" in persona:
-                # skills 可能是 None（使用所有）、[]（不使用）、或列表
-                slots.append(
-                    ContextSlot(
-                        name="persona.skills_whitelist",
-                        value=persona["skills"],
-                        category="persona",
-                        source="persona_mgr",
-                        meta={
-                            "persona_id": persona_id,
-                            "semantics": "None=all, []=none, [...]=specific",
-                        },
-                    )
-                )
-
-            # 记录 webchat special default
-            if use_webchat_special_default:
-                for slot in slots:
-                    slot.meta["use_webchat_special_default"] = True
-
+        if not persona and not use_webchat_special_default:
+            logger.debug(f"No persona resolved (persona_id={persona_id})")
             _store_resolution_slots(event, resolution_key, slots)
+            return slots
 
-        except Exception as e:
-            logger.warning(f"Failed to collect persona context: {e}", exc_info=True)
+        # 步骤 3: 提取并构造 ContextSlot
+
+        # persona.prompt
+        if use_webchat_special_default:
+            slots.append(
+                ContextSlot(
+                    name="persona.prompt",
+                    value=CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
+                    category="persona",
+                    source="persona_mgr",
+                    meta={
+                        "persona_id": persona_id,
+                        "force_applied": force_applied_persona_id is not None,
+                        "use_webchat_special_default": True,
+                    },
+                )
+            )
+        elif persona and "prompt" in persona and persona["prompt"]:
+            slots.append(
+                ContextSlot(
+                    name="persona.prompt",
+                    value=persona["prompt"],
+                    category="persona",
+                    source="persona_mgr",
+                    meta={
+                        "persona_id": persona_id,
+                        "force_applied": force_applied_persona_id is not None,
+                    },
+                )
+            )
+
+        prompt_slot = next(
+            (slot for slot in slots if slot.name == "persona.prompt"), None
+        )
+        if (
+            prompt_slot
+            and isinstance(prompt_slot.value, str)
+            and prompt_slot.value.strip()
+        ):
+            persona_segments = parse_legacy_persona_prompt(prompt_slot.value)
+            slots.append(
+                ContextSlot(
+                    name="persona.segments",
+                    value=persona_segments,
+                    category="persona",
+                    source="persona_parser",
+                    meta={
+                        "persona_id": persona_id,
+                        "source_slot": "persona.prompt",
+                        "parser": "legacy_prompt_v1",
+                    },
+                )
+            )
+            slots.append(
+                ContextSlot(
+                    name="persona.summary",
+                    value=_build_persona_summary(persona_segments),
+                    category="persona",
+                    source="persona_parser",
+                    meta={
+                        "persona_id": persona_id,
+                        "source_slot": "persona.segments",
+                        "format": "persona_summary_v1",
+                    },
+                )
+            )
+
+        # persona.begin_dialogs
+        if (
+            persona
+            and "_begin_dialogs_processed" in persona
+            and persona["_begin_dialogs_processed"]
+        ):
+            slots.append(
+                ContextSlot(
+                    name="persona.begin_dialogs",
+                    value=persona["_begin_dialogs_processed"],
+                    category="persona",
+                    source="persona_mgr",
+                    meta={
+                        "persona_id": persona_id,
+                        "raw_begin_dialogs": persona.get("begin_dialogs", []),
+                    },
+                )
+            )
+
+        # persona.tools_whitelist
+        if persona and "tools" in persona:
+            # tools 可能是 None（使用所有）、[]（不使用）、或列表
+            slots.append(
+                ContextSlot(
+                    name="persona.tools_whitelist",
+                    value=persona["tools"],
+                    category="persona",
+                    source="persona_mgr",
+                    meta={
+                        "persona_id": persona_id,
+                        "semantics": "None=all, []=none, [...]=specific",
+                    },
+                )
+            )
+
+        # persona.skills_whitelist
+        if persona and "skills" in persona:
+            # skills 可能是 None（使用所有）、[]（不使用）、或列表
+            slots.append(
+                ContextSlot(
+                    name="persona.skills_whitelist",
+                    value=persona["skills"],
+                    category="persona",
+                    source="persona_mgr",
+                    meta={
+                        "persona_id": persona_id,
+                        "semantics": "None=all, []=none, [...]=specific",
+                    },
+                )
+            )
+
+        # 记录 webchat special default
+        if use_webchat_special_default:
+            for slot in slots:
+                slot.meta["use_webchat_special_default"] = True
+
+        _store_resolution_slots(event, resolution_key, slots)
 
         return slots
 
