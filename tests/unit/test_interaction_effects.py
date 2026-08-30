@@ -245,6 +245,38 @@ def test_context_returns_copies_and_unregisters_by_plugin():
     assert ctx.unregister_persona_effects(plugin_id="plugin_a") == 1
     assert ctx.list_persona_effects() == []
 
+
+def test_context_resolves_effect_parameters_for_the_current_event():
+    ctx = _init_effect_registry(_context())
+    ctx.register_persona_effect(
+        PersonaEffectSpec(
+            plugin_id="plugin_a",
+            name="ag99live.motion",
+            description="Live2D motion intent",
+            parameters={"type": "object", "properties": {}},
+            parameters_resolver=lambda event: {
+                "type": "object",
+                "properties": {
+                    "axis_levels": {
+                        "type": "object",
+                        "properties": {event.axis_id: {"type": "integer"}},
+                        "additionalProperties": False,
+                    }
+                },
+            },
+        )
+    )
+
+    event = type("Event", (), {"axis_id": "head_roll"})()
+
+    [effect] = ctx.list_persona_effects(event=event)
+
+    assert effect.parameters["properties"]["axis_levels"]["properties"] == {
+        "head_roll": {"type": "integer"}
+    }
+    assert ctx.list_persona_effects(event=event)[0].parameters is not effect.parameters
+
+
 def test_parse_persona_effect_calls_keeps_valid_calls_and_drops_unknown_or_invalid():
     effect = _effect()
     effect.parameters = {
@@ -279,6 +311,76 @@ def test_parse_persona_effect_calls_keeps_valid_calls_and_drops_unknown_or_inval
             source="persona",
         )
     ]
+
+
+def test_parse_persona_effect_calls_enforces_dynamic_schema_constraints():
+    effect = _effect()
+    effect.parameters = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "intent_tags": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1, "maxLength": 8},
+            },
+            "axis_levels": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"head_roll": {"type": "integer", "enum": [-2, 0, 2]}},
+                "minProperties": 1,
+            },
+            "motion_resource_id": {"type": "string", "enum": ["motion.wave"]},
+        },
+        "required": ["intent_tags"],
+        "oneOf": [
+            {"required": ["axis_levels"]},
+            {"required": ["motion_resource_id"]},
+        ],
+        "allOf": [
+            {
+                "not": {
+                    "required": ["axis_levels", "motion_resource_id"],
+                }
+            }
+        ],
+    }
+
+    calls, issues = parse_persona_effect_calls_with_issues(
+        [
+            {
+                "name": effect.name,
+                "arguments": {
+                    "intent_tags": ["calm"],
+                    "axis_levels": {"head_roll": 2},
+                },
+            },
+            {
+                "name": effect.name,
+                "arguments": {
+                    "intent_tags": ["calm"],
+                    "axis_levels": {"head_roll": 1},
+                },
+            },
+            {"name": effect.name, "arguments": {"intent_tags": ["calm"]}},
+            {
+                "name": effect.name,
+                "arguments": {
+                    "intent_tags": ["calm"],
+                    "axis_levels": {"head_roll": 0},
+                    "motion_resource_id": "motion.wave",
+                },
+            },
+        ],
+        [effect],
+    )
+
+    assert [call.arguments for call in calls] == [
+        {"intent_tags": ["calm"], "axis_levels": {"head_roll": 2}}
+    ]
+    assert [issue.index for issue in issues] == [1, 2, 3]
 
 
 def test_parse_persona_effect_calls_reports_rejection_reasons():

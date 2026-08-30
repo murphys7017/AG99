@@ -482,6 +482,164 @@ def test_direct_reply_keeps_media_slots():
     assert "input.images" in result.metadata["selected_slot_names"]
 
 
+@pytest.mark.asyncio
+async def test_fast_persona_projection_keeps_identity_history_memory_without_waiting(
+    monkeypatch,
+):
+    class Event:
+        session_id = "fast-persona"
+        unified_msg_origin = "webchat:friend:fast-persona"
+
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "webchat"
+
+    class PluginContext:
+        @staticmethod
+        def get_config(**kwargs):
+            del kwargs
+            return {}
+
+        @staticmethod
+        def list_persona_effects(**kwargs):
+            del kwargs
+            return []
+
+    class Provider:
+        provider_config = {}
+
+    pack = ContextPack(
+        slots={
+            "persona.segments": ContextSlot(
+                name="persona.segments",
+                value={"identity": ["Yakumo"]},
+                category="persona",
+                source="test",
+            ),
+            "persona.summary": ContextSlot(
+                name="persona.summary",
+                value={"identity": ["Yakumo"]},
+                category="persona",
+                source="test",
+            ),
+            "conversation.history": ContextSlot(
+                name="conversation.history",
+                value={"turns": []},
+                category="memory",
+                source="test",
+            ),
+            "memory.long_term_memories": ContextSlot(
+                name="memory.long_term_memories",
+                value={"items": ["长期记忆"]},
+                category="memory",
+                source="test",
+            ),
+            "extension.system": ContextSlot(
+                name="extension.system",
+                value={
+                    "format": "prompt_extensions_v1",
+                    "mount": "system",
+                    "items": [
+                        {
+                            "plugin_id": "ag99live",
+                            "title": "Motion Capability",
+                            "value": {"axes": ["head_roll"]},
+                            "meta": {"targets": ["persona", "core"]},
+                        }
+                    ],
+                },
+                category="extension",
+                source="test",
+                render_mode="structured",
+                meta={"targets": ["persona", "core"]},
+            ),
+            "extension.context": ContextSlot(
+                name="extension.context",
+                value={"items": [{"value": "dynamic reference"}]},
+                category="extension",
+                source="test",
+                render_mode="structured",
+                meta={"targets": ["persona", "core"]},
+            ),
+        }
+    )
+
+    class Builder:
+        def __init__(self, *args):
+            del args
+
+        async def build(self, **kwargs):
+            return kwargs["base"]
+
+    base_pack = ContextPack(
+        slots={
+            name: slot
+            for name, slot in pack.slots.items()
+            if not name.startswith("extension.")
+        }
+    )
+
+    agent = InteractionExpressionAgent()
+    material = SimpleNamespace(
+        effective_persona_context=None,
+        persona_definition=None,
+        persona_payload={},
+        prompt_context_pack=base_pack,
+        target_context_packs={},
+    )
+    agent._build_or_reuse_context_material = AsyncMock(return_value=material)
+    get_persona_context_pack = AsyncMock(return_value=pack)
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.PromptContextBuilder",
+        Builder,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.interaction.expression_agent.get_or_build_interaction_persona_context_pack",
+        get_persona_context_pack,
+    )
+
+    result = await agent._prepare_render_result(
+        Event(),
+        PluginContext(),
+        InteractionAgentConfig(),
+        Provider(),
+        req=PersonaExpressionRequest(compact_context=True),
+    )
+
+    selected_slots = set(result.metadata["selected_slot_names"])
+    assert {
+        "persona.segments",
+        "persona.summary",
+        "conversation.history",
+        "memory.long_term_memories",
+    } <= selected_slots
+    assert "extension.system" not in selected_slots
+    assert "extension.context" not in selected_slots
+    get_persona_context_pack.assert_not_awaited()
+
+    material.target_context_packs["plugin"] = pack
+    ready_result = await agent._prepare_render_result(
+        Event(),
+        PluginContext(),
+        InteractionAgentConfig(),
+        Provider(),
+        req=PersonaExpressionRequest(compact_context=True),
+    )
+
+    ready_slots = set(ready_result.metadata["selected_slot_names"])
+    assert "extension.system" in ready_slots
+    assert "extension.context" not in ready_slots
+    get_persona_context_pack.assert_not_awaited()
+
+
 def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
     class Provider:
         provider_config = {"type": "deepseek_chat_completion"}

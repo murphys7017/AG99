@@ -1238,7 +1238,10 @@ class Context:
         *,
         event: AstrMessageEvent | None = None,
     ) -> list[PersonaEffectSpec]:
-        from astrbot.core.interaction.effects import clone_persona_effect_spec
+        from astrbot.core.interaction.effects import (
+            clone_persona_effect_spec,
+            validate_persona_effect_spec,
+        )
 
         registrations = [
             registration
@@ -1253,10 +1256,26 @@ class Context:
                 registration.seq,
             )
         )
-        return [
-            clone_persona_effect_spec(registration.effect)
-            for registration in registrations
-        ]
+        resolved_effects: list[PersonaEffectSpec] = []
+        for registration in registrations:
+            effect = clone_persona_effect_spec(registration.effect)
+            resolver = effect.parameters_resolver
+            if resolver is not None and event is not None:
+                try:
+                    effect.parameters = resolver(event)
+                    validate_persona_effect_spec(effect)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Persona effect parameters resolver failed: plugin_id=%s "
+                        "name=%s error=%s",
+                        effect.plugin_id,
+                        effect.name,
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
+            resolved_effects.append(effect)
+        return resolved_effects
 
     @staticmethod
     def _persona_effect_matches_event(

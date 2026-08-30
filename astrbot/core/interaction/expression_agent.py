@@ -109,7 +109,9 @@ class PersonaExpressionRequest:
 _FAST_PERSONA_HISTORY_TURNS = 8
 _FAST_PERSONA_SLOT_NAMES = frozenset(
     {
+        "persona.segments",
         "persona.summary",
+        "persona.begin_dialogs",
         "input.text",
         "input.quoted_text",
         "input.visible_reply_material",
@@ -118,7 +120,7 @@ _FAST_PERSONA_SLOT_NAMES = frozenset(
         "session.user_info",
         "conversation.history",
         "conversation.group_recent",
-        "memory.persona_state",
+        "extension.system",
     }
 )
 
@@ -1166,8 +1168,14 @@ class InteractionExpressionAgent:
                 )
             ),
         )
-        if req.compact_context and material.prompt_context_pack is not None:
-            persona_context_pack = material.prompt_context_pack
+        if req.compact_context:
+            # The fast stage preserves the same conversational identity, history,
+            # and memory from the base pack. It may reuse a completed plugin pack,
+            # but never waits for plugin enrichment before sending the first reply.
+            persona_context_pack = material.target_context_packs.get(
+                "plugin",
+                material.prompt_context_pack,
+            )
         else:
             persona_context_pack = await get_or_build_interaction_persona_context_pack(
                 event=event,
@@ -1199,7 +1207,7 @@ class InteractionExpressionAgent:
             hidden_slot_names.update(
                 slot_name
                 for slot_name in expression_pack.slots
-                if slot_name not in _FAST_PERSONA_SLOT_NAMES
+                if not _is_fast_persona_slot(slot_name)
             )
             # Legacy personas that do not contain any recognized summary
             # sections still need their original prompt as a correctness
@@ -1409,6 +1417,12 @@ def _has_usable_persona_summary(pack) -> bool:
         isinstance(value, list) and any(str(item).strip() for item in value)
         for value in summary_slot.value.values()
     )
+
+
+def _is_fast_persona_slot(slot_name: str) -> bool:
+    """Keep the conversational identity and memory needed for one early reply."""
+
+    return slot_name in _FAST_PERSONA_SLOT_NAMES or slot_name.startswith("memory.")
 
 
 def _latest_assistant_expression_fingerprint(pack) -> str | None:
