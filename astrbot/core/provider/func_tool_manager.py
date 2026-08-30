@@ -152,7 +152,8 @@ PY_TO_JSON_TYPE = {
     "tuple": "array",
     "set": "array",
 }
-# alias
+
+# Compatibility export for integrations importing the historical type name.
 FuncTool = FunctionTool
 
 
@@ -222,9 +223,9 @@ async def _quick_test_mcp_connection(config: dict) -> tuple[bool, str]:
 
 class FunctionToolManager:
     def __init__(self) -> None:
-        self.func_list: list[FuncTool] = []
+        self.func_list: list[FunctionTool] = []
         """All tools include mcp tools and plugin tools, except astrbot builtin tools."""
-        self.builtin_func_list: dict[type[FuncTool], FuncTool] = {}
+        self.builtin_func_list: dict[type[FunctionTool], FunctionTool] = {}
         """All astrbot builtin tools, keyed by their class. Values are instantiated tool objects, created on demand."""
 
         self._mcp_server_runtime: dict[str, _MCPServerRuntime] = {}
@@ -282,7 +283,7 @@ class FunctionToolManager:
         handler: Callable[..., Awaitable[Any] | AsyncGenerator[Any]],
         *,
         execution_targets: Iterable[str] | str | None = None,
-    ) -> FuncTool:
+    ) -> FunctionTool:
         params = {
             "type": "object",  # hard-coded here
             "properties": {},
@@ -291,7 +292,7 @@ class FunctionToolManager:
             p = copy.deepcopy(param)
             p.pop("name", None)
             params["properties"][param["name"]] = p
-        return FuncTool(
+        return FunctionTool(
             name=name,
             parameters=params,
             description=desc,
@@ -336,7 +337,7 @@ class FunctionToolManager:
                 self.func_list.pop(i)
                 break
 
-    def get_func(self, name, *, target: str | None = None) -> FuncTool | None:
+    def get_func(self, name, *, target: str | None = None) -> FunctionTool | None:
         # 优先返回已激活的工具（后加载的覆盖前面的，与 ToolSet.add_tool 保持一致）
         # 使用 getattr(..., True) 与 ToolSet.add_tool 保持一致：没有 active 属性的工具视为已激活
         if target is not None:
@@ -364,7 +365,7 @@ class FunctionToolManager:
             return builtin_tool
         return None
 
-    def get_builtin_tool(self, tool: str | type[FuncTool]) -> FuncTool:
+    def get_builtin_tool(self, tool: str | type[FunctionTool]) -> FunctionTool:
         ensure_builtin_tools_loaded()
 
         if isinstance(tool, str):
@@ -388,7 +389,7 @@ class FunctionToolManager:
         self.builtin_func_list[tool_cls] = builtin_tool
         return builtin_tool
 
-    def iter_builtin_tools(self) -> list[FuncTool]:
+    def iter_builtin_tools(self) -> list[FunctionTool]:
         ensure_builtin_tools_loaded()
         return [
             self.get_builtin_tool(tool_cls) for tool_cls in iter_builtin_tool_classes()
@@ -1129,5 +1130,5 @@ class FunctionToolManager:
         return str(self.func_list)
 
 
-# alias
+# Compatibility export for integrations importing the historical manager name.
 FuncCall = FunctionToolManager

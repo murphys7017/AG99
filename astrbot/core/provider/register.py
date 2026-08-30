@@ -1,14 +1,14 @@
 from astrbot.core import logger
 
 from .entities import PromptRendererFamily, ProviderMetaData, ProviderType
-from .func_tool_manager import FuncCall
+from .func_tool_manager import FunctionToolManager
 
 provider_registry: list[ProviderMetaData] = []
 """维护了通过装饰器注册的 Provider"""
 provider_cls_map: dict[str, ProviderMetaData] = {}
 """维护了 Provider 类型名称和 ProviderMetadata 的映射"""
 
-llm_tools = FuncCall()
+llm_tools = FunctionToolManager()
 
 
 def register_provider_adapter(
