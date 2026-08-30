@@ -147,18 +147,6 @@ class InteractionTurnFailure:
     postprocess_dispatched: bool = False
     created_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "stage": self.stage,
-            "reason": self.reason,
-            "exception_type": self.exception_type,
-            "message": self.message,
-            "user_visible_action": self.user_visible_action,
-            "material_finalized": self.material_finalized,
-            "postprocess_dispatched": self.postprocess_dispatched,
-            "created_at": self.created_at,
-        }
-
 
 @dataclass(slots=True)
 class TurnExecutionScope:
@@ -469,12 +457,6 @@ def set_interaction_turn_finalized_material(
             state.completion_state.outcome = None
     else:
         state.completion_state.outcome = None
-    event.set_extra("_interaction_finalized_turn_material", normalized)
-    event.set_extra(
-        "_interaction_turn_material_finalized",
-        state.completion_state.material_finalized,
-    )
-
 
 def get_interaction_turn_finalized_material(event) -> dict[str, Any] | None:
     state = get_interaction_turn_state(event)
@@ -617,13 +599,6 @@ def record_interaction_turn_failure(
     record_interaction_turn_completion_failure(event, f"{clean_stage}:{clean_reason}")
 
 
-def get_interaction_turn_failures(event) -> list[dict[str, Any]]:
-    state = get_interaction_turn_state(event)
-    if state is None:
-        return []
-    return [failure.to_dict() for failure in state.failures]
-
-
 def is_interaction_turn_completed(event) -> bool:
     state = get_interaction_turn_state(event)
     if state is not None:
@@ -635,7 +610,6 @@ def set_interaction_turn_immediate_reply(event, reply: str | None) -> None:
     normalized_reply = (reply or "").strip() or None
     state = ensure_interaction_turn_state(event)
     state.immediate_reply = normalized_reply
-    event.set_extra("_interaction_immediate_reply", normalized_reply)
 
 
 def get_interaction_turn_immediate_reply(event) -> str | None:
@@ -689,13 +663,12 @@ def append_interaction_turn_visible_output(
         "memory_relevant": memory_relevant,
     }
     state.visible_outputs.append(item)
-    outputs = [dict(output) for output in state.visible_outputs]
-    event.set_extra("_visible_turn_outputs", outputs)
-    event.set_extra("_postprocess_visible_outputs", outputs)
 
 
 def get_interaction_turn_visible_outputs(event) -> list[dict[str, Any]]:
-    state = ensure_interaction_turn_state(event)
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return []
     return [dict(output) for output in state.visible_outputs]
 
 
@@ -711,7 +684,9 @@ def record_interaction_turn_visible_message_fingerprint(
 
 
 def get_interaction_turn_visible_message_fingerprints(event) -> set[str]:
-    state = ensure_interaction_turn_state(event)
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return set()
     return set(state.visible_message_fingerprints)
 
 
@@ -767,7 +742,9 @@ def remove_interaction_turn_stream_observation_task(
 def get_interaction_turn_stream_observation_tasks(
     event,
 ) -> list[asyncio.Task[Any]]:
-    state = ensure_interaction_turn_state(event)
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return []
     return list(state.stream_state.observation_tasks)
 
 

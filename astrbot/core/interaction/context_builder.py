@@ -289,7 +289,7 @@ async def get_or_build_interaction_persona_context_pack(
     return context_pack
 
 
-async def get_or_build_interaction_core_context_pack(
+async def get_or_build_interaction_core_plugin_context_pack(
     *,
     event,
     plugin_context: Context,
@@ -302,6 +302,12 @@ async def get_or_build_interaction_core_context_pack(
         build_config=build_config,
         material=material,
     )
+
+
+# Keep the historical helper name for integrations that import this module directly.
+get_or_build_interaction_core_context_pack = (
+    get_or_build_interaction_core_plugin_context_pack
+)
 
 
 async def _get_or_build_interaction_plugin_context_pack(
@@ -379,7 +385,7 @@ def _log_persona_context_selection(
     selected_context: str,
     error_type: str = "",
 ) -> None:
-    logger.info(
+    logger.debug(
         "DIAG interaction.persona_context: platform_id=%s session_id=%s plugin_status=%s selected_context=%s error_type=%s",
         event.get_platform_id(),
         event.session_id,
@@ -468,7 +474,7 @@ async def _build_interaction_context_material(
             build_config=build_config,
             material=material,
         )
-    logger.info(
+    logger.debug(
         "DIAG interaction.context_material: platform_id=%s session_id=%s scope=base duration_ms=%.2f slot_count=%s extension_collectors=%s",
         event.get_platform_id(),
         event.session_id,
@@ -513,7 +519,7 @@ async def _build_interaction_plugin_context_pack(
         )
         if collector_name not in base_extension_collectors
     ]
-    logger.info(
+    logger.debug(
         "DIAG interaction.context_material: platform_id=%s session_id=%s scope=plugin duration_ms=%.2f slot_count=%s extension_collectors=%s",
         event.get_platform_id(),
         event.session_id,

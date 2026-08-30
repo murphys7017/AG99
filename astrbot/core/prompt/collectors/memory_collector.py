@@ -27,6 +27,7 @@ from astrbot.core.star.context import Context
 
 from ..context_types import ContextSlot
 from ..interfaces.context_collector_inferface import ContextCollectorInterface
+from .persona_state_projection import serialize_persona_state
 
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
@@ -431,23 +432,10 @@ class MemoryCollector(ContextCollectorInterface):
         if persona_state is None:
             return None
 
-        value: dict[str, object] = {
-            "familiarity": persona_state.familiarity,
-            "trust": persona_state.trust,
-            "warmth": persona_state.warmth,
-            "formality_preference": persona_state.formality_preference,
-            "directness_preference": persona_state.directness_preference,
-        }
-        if include_debug_fields:
-            value.update(
-                {
-                    "state_id": persona_state.state_id,
-                    "scope_type": self._enum_value(persona_state.scope_type),
-                    "scope_id": persona_state.scope_id,
-                    "persona_id": persona_state.persona_id,
-                    "updated_at": self._serialize_datetime(persona_state.updated_at),
-                }
-            )
+        value = serialize_persona_state(
+            persona_state,
+            include_debug_fields=include_debug_fields,
+        )
         return ContextSlot(
             name="memory.persona_state",
             value=value,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -311,10 +312,6 @@ def build_persona_expression_tool_parameters(
         "properties": copy.deepcopy(properties),
         "required": ["spoken_reply", "speech_cues", "effect_calls"],
     }
-
-
-def build_persona_expression_output_contract() -> OutputContract:
-    return build_persona_expression_output_contract_for_effects(())
 
 
 def build_persona_expression_output_contract_for_effects(
@@ -824,7 +821,7 @@ class InteractionExpressionAgent:
                 image_stats.normalized,
                 image_stats.dropped,
             )
-        logger.info(
+        logger.debug(
             "DIAG expression.contract: platform_id=%s session_id=%s phase=%s lifecycle_id=%s provider_type=%s model=%s renderer=%s contract_mode=%s strategy=%s degraded=%s tool_name=%s",
             event.get_platform_id(),
             event.session_id,
@@ -866,7 +863,7 @@ class InteractionExpressionAgent:
                 exc.tool_execution_count,
             )
             raise
-        logger.info(
+        logger.debug(
             "DIAG expression.response_shape: platform_id=%s session_id=%s phase=%s has_tool_calls=%s tool_names=%s text_length=%s",
             event.get_platform_id(),
             event.session_id,
@@ -894,7 +891,7 @@ class InteractionExpressionAgent:
             result.metadata[PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY] = (
                 previous_expression_fingerprint
             )
-        logger.info(
+        logger.debug(
             "DIAG expression.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s effect_parse_issues=%s",
             event.get_platform_id(),
             event.session_id,
@@ -910,7 +907,7 @@ class InteractionExpressionAgent:
                 if isinstance(issue, dict)
             ],
         )
-        logger.info(
+        logger.debug(
             "DIAG expression.speech_cues: platform_id=%s session_id=%s phase=%s cue_count=%s cue_kinds=%s cue_parse_issues=%s",
             event.get_platform_id(),
             event.session_id,
@@ -1010,7 +1007,7 @@ class InteractionExpressionAgent:
         )
         prepared.run_context.tool_execution_surface = TOOL_TARGET_PERSONAL_EXPRESSION
 
-        logger.info(
+        logger.debug(
             "DIAG expression.agent_loop: platform_id=%s session_id=%s lifecycle_id=%s tool_count=%s tool_names=%s terminal_tool=%s",
             event.get_platform_id(),
             event.session_id,
@@ -1197,7 +1194,7 @@ class InteractionExpressionAgent:
             profile=profile,
         )
         if reasoning_marker:
-            logger.info(
+            logger.debug(
                 "DIAG expression.deepseek_reasoning_marker: platform_id=%s session_id=%s phase=%s mode=inner_os applied=True model=%s",
                 event.get_platform_id(),
                 event.session_id,
@@ -1261,6 +1258,9 @@ def _log_persona_prompt_size_diagnostics(
     provider_request: ProviderRequest,
     lifecycle_id: str,
 ) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
     raw_slot_sizes = render_result.metadata.get("prompt_slot_sizes", {})
     slot_sizes = raw_slot_sizes if isinstance(raw_slot_sizes, dict) else {}
 
@@ -1313,7 +1313,7 @@ def _log_persona_prompt_size_diagnostics(
             "truncation_reasons": ["capability_snapshot_selection"],
             "enforced": False,
         }
-    logger.info(
+    logger.debug(
         "DIAG expression.prompt_size: platform_id=%s session_id=%s phase=%s lifecycle_id=%s total_chars=%s estimated_tokens=%s sections=%s tool_count=%s tool_names=%s slots=%s",
         event.get_platform_id(),
         event.session_id,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from astrbot.core import logger
-from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet, normalize_tool_targets
+from astrbot.core.agent.tool import TOOL_TARGET_CORE, normalize_tool_targets
 from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
@@ -89,26 +89,6 @@ class ToolsCollector(ContextCollectorInterface):
             config=config,
             target=self.target,
             provider_request=provider_request,
-        )
-
-    async def resolve_toolset(
-        self,
-        event: AstrMessageEvent,
-        plugin_context: Context,
-        config: MainAgentBuildConfig,
-        provider_request: ProviderRequest | None = None,
-    ) -> tuple[str | None, ToolSet, str]:
-        """Compatibility wrapper for callers not yet migrated to snapshots."""
-        capabilities = await self.resolve_capabilities(
-            event,
-            plugin_context,
-            config,
-            provider_request,
-        )
-        return (
-            capabilities.persona_id,
-            capabilities.to_toolset(),
-            capabilities.selection_mode,
         )
 
     def _build_tools_slot(self, capabilities: CapabilitySnapshot) -> ContextSlot:

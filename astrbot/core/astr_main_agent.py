@@ -30,7 +30,7 @@ from astrbot.core.execution import (
     NativeExecutionAdapter,
 )
 from astrbot.core.interaction.context_builder import (
-    get_or_build_interaction_core_context_pack,
+    get_or_build_interaction_core_plugin_context_pack,
 )
 from astrbot.core.interaction.core_bridge import (
     ensure_interaction_core_execution_prompt,
@@ -1111,7 +1111,7 @@ async def build_main_agent(
     context_material = getattr(turn_state, "context_material", None)
     base_context_pack = None
     if interaction_core and context_material is not None:
-        base_context_pack = await get_or_build_interaction_core_context_pack(
+        base_context_pack = await get_or_build_interaction_core_plugin_context_pack(
             event=event,
             plugin_context=plugin_context,
             build_config=config,

@@ -49,9 +49,12 @@ def build_postprocess_context(
         resolved_turn_id = str(raw_turn_id).strip() if raw_turn_id else None
     resolved_visible_outputs = visible_outputs
     if resolved_visible_outputs is None:
-        raw_visible_outputs = event.get_extra("_visible_turn_outputs", None)
-        if raw_visible_outputs is None:
-            raw_visible_outputs = event.get_extra("_postprocess_visible_outputs", [])
+        from astrbot.core.interaction.turn_state import get_interaction_turn_state
+
+        turn_state = get_interaction_turn_state(event)
+        raw_visible_outputs = (
+            turn_state.visible_outputs if turn_state is not None else None
+        )
         resolved_visible_outputs = (
             list(raw_visible_outputs) if isinstance(raw_visible_outputs, list) else []
         )

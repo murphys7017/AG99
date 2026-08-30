@@ -702,9 +702,6 @@ class InteractionOutputController:
                 if index < len(turn_state.utterances):
                     turn_state.utterances[index].memory_relevant = memory_relevant
 
-            outputs = [dict(output) for output in turn_state.visible_outputs]
-            event.set_extra("_visible_turn_outputs", outputs)
-            event.set_extra("_postprocess_visible_outputs", outputs)
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
 
@@ -1041,27 +1038,6 @@ class InteractionOutputController:
             lambda done_task: self._on_stream_observation_task_done(event, done_task)
         )
 
-    def _schedule_core_stream_observation(
-        self,
-        event: AstrMessageEvent,
-        *,
-        observed_text: str,
-        total_text: str,
-        window_index: int,
-        observation_state: dict[str, Any],
-        chain_type: str | None,
-        is_final: bool,
-    ) -> None:
-        self._schedule_interaction_stream_observation(
-            event,
-            observed_text=observed_text,
-            total_text=total_text,
-            window_index=window_index,
-            observation_state=observation_state,
-            chain_type=chain_type,
-            is_final=is_final,
-        )
-
     async def _observe_interaction_stream_window(
         self,
         event: AstrMessageEvent,
@@ -1103,25 +1079,6 @@ class InteractionOutputController:
                 window_index=window_index,
                 reason=decision.reason,
             )
-
-    async def _observe_core_stream_window(
-        self,
-        event: AstrMessageEvent,
-        *,
-        observed_text: str,
-        total_text: str,
-        window_index: int,
-        observation_state: dict[str, Any],
-        is_final: bool,
-    ) -> None:
-        await self._observe_interaction_stream_window(
-            event,
-            observed_text=observed_text,
-            total_text=total_text,
-            window_index=window_index,
-            observation_state=observation_state,
-            is_final=is_final,
-        )
 
     def _on_stream_observation_task_done(
         self,
@@ -1433,11 +1390,6 @@ class InteractionOutputController:
                 allow_plugin_tools=False,
             ),
         )
-        if result.effect_calls:
-            event.set_extra(
-                "_interaction_final_response_effect_calls",
-                list(result.effect_calls),
-            )
         await self.deliver_prepared_core_reply(message, result, event)
 
     async def deliver_prepared_core_reply(
@@ -1571,13 +1523,6 @@ class InteractionOutputController:
         ]
 
     @staticmethod
-    def _is_core_final_model_result(event: AstrMessageEvent) -> bool:
-        result = event.get_result()
-        if result is None:
-            return False
-        return result.is_model_result()
-
-    @staticmethod
     def _is_already_delivered_streaming_finish(event: AstrMessageEvent) -> bool:
         if not has_interaction_turn_core_streaming_result_consumed(event):
             return False
@@ -1644,7 +1589,7 @@ class InteractionOutputController:
         )
         purpose = "persona_reply" if phase == "immediate" else "core_reply"
         effect_calls = tuple(effect_calls)
-        logger.info(
+        logger.debug(
             "DIAG result_view.effect_calls: platform_id=%s session_id=%s phase=%s payload_present=%s effect_calls=%s",
             event.get_platform_id(),
             event.session_id,
@@ -1766,20 +1711,6 @@ class InteractionOutputController:
         )
         contributions.sort(key=lambda item: (item.priority, item.plugin_id))
         return contributions
-
-    def _list_persona_effects_for_result_view(
-        self,
-        *,
-        phase: str,
-    ):
-        del phase
-        if self.plugin_context is None:
-            return []
-        list_effects = getattr(self.plugin_context, "list_persona_effects", None)
-        if not callable(list_effects):
-            return []
-        effects = list_effects()
-        return effects if isinstance(effects, list) else []
 
     @staticmethod
     def _build_result_final_candidate_material(

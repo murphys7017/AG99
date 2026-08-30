@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from astrbot.core.platform.message_session import MessageSession
-
 
 def configured_runtime_observation_target_values(
     config: Mapping[str, object],
@@ -32,22 +30,6 @@ def configured_runtime_observation_target_values(
         seen.add(normalized)
         result.append(normalized)
     return tuple(result)
-
-
-def configured_runtime_observation_targets(
-    config: Mapping[str, object],
-) -> tuple[MessageSession, ...]:
-    """Parse valid Runtime observation targets while preserving their config order."""
-    targets: list[MessageSession] = []
-    for value in configured_runtime_observation_target_values(config):
-        try:
-            targets.append(MessageSession.from_str(value))
-        except (TypeError, ValueError):
-            continue
-    return tuple(targets)
-
-
 __all__ = [
     "configured_runtime_observation_target_values",
-    "configured_runtime_observation_targets",
 ]

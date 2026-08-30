@@ -298,7 +298,7 @@ class InteractionTurnCoordinator:
                 await module_lease.release()
             raise
 
-        logger.info(
+        logger.debug(
             "DIAG interaction.parallel_start: platform_id=%s session_id=%s "
             "turn_id=%s t0=%.6f plugin_job=%s plugin_window_ms=%.2f",
             event.get_platform_id(),
@@ -364,7 +364,7 @@ class InteractionTurnCoordinator:
             if plugin_result is not None
             else None
         )
-        logger.info(
+        logger.debug(
             "DIAG interaction.parallel_turn: phase=%s platform_id=%s "
             "session_id=%s turn_id=%s t0=%.6f "
             "personal_started_at=%s personal_completed_at=%s "

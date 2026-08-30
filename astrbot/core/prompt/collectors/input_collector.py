@@ -797,31 +797,6 @@ class InputCollector(ContextCollectorInterface):
             return None
         return provider if callable(getattr(provider, "text_chat", None)) else None
 
-    def _resolve_current_provider(
-        self,
-        event: AstrMessageEvent,
-        plugin_context: Context,
-    ) -> Any | None:
-        try:
-            provider = plugin_context.get_using_provider(event.unified_msg_origin)
-        except TypeError:
-            provider = plugin_context.get_using_provider(umo=event.unified_msg_origin)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to resolve current provider for image captioning: %s",
-                exc,
-                exc_info=True,
-            )
-            return None
-        return provider if callable(getattr(provider, "text_chat", None)) else None
-
-    def _resolve_provider_config_id(self, provider: Any) -> str | None:
-        provider_config = getattr(provider, "provider_config", None)
-        if not isinstance(provider_config, dict):
-            return None
-        provider_id = provider_config.get("id")
-        return provider_id if isinstance(provider_id, str) and provider_id else None
-
     def _request_provider_supports_modality(
         self,
         provider_request: ProviderRequest | None,

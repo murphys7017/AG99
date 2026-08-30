@@ -90,11 +90,6 @@ class InteractionPersonaRuntime:
                 preserve_facts=True,
             ),
         )
-        if result.effect_calls:
-            event.set_extra(
-                "_interaction_final_response_effect_calls",
-                list(result.effect_calls),
-            )
         return result.spoken_reply
 
     async def render_stream_interjection(

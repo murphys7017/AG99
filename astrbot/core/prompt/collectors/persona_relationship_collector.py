@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
 
 from astrbot.core.memory.config import (
     MemoryInjectionListConfig,
@@ -18,6 +17,7 @@ from astrbot.core.star.context import Context
 from ..context_types import ContextSlot
 from ..interfaces.context_collector_inferface import ContextCollectorInterface
 from .memory_collector import resolve_prompt_memory_snapshot
+from .persona_state_projection import serialize_persona_state
 
 
 class PersonaRelationshipCollector(ContextCollectorInterface):
@@ -70,23 +70,10 @@ class PersonaRelationshipCollector(ContextCollectorInterface):
         if persona_state is None:
             return []
 
-        value: dict[str, object] = {
-            "familiarity": persona_state.familiarity,
-            "trust": persona_state.trust,
-            "warmth": persona_state.warmth,
-            "formality_preference": persona_state.formality_preference,
-            "directness_preference": persona_state.directness_preference,
-        }
-        if injection.include_debug_fields:
-            value.update(
-                {
-                    "state_id": persona_state.state_id,
-                    "scope_type": self._enum_value(persona_state.scope_type),
-                    "scope_id": persona_state.scope_id,
-                    "persona_id": persona_state.persona_id,
-                    "updated_at": self._serialize_datetime(persona_state.updated_at),
-                }
-            )
+        value = serialize_persona_state(
+            persona_state,
+            include_debug_fields=injection.include_debug_fields,
+        )
 
         return [
             ContextSlot(
@@ -100,16 +87,6 @@ class PersonaRelationshipCollector(ContextCollectorInterface):
                 },
             )
         ]
-
-    @staticmethod
-    def _enum_value(value: object) -> str:
-        return value.value if hasattr(value, "value") else str(value)
-
-    @staticmethod
-    def _serialize_datetime(value: datetime | None) -> str | None:
-        if value is None:
-            return None
-        return value.isoformat(timespec="seconds")
 
 
 __all__ = ["PersonaRelationshipCollector"]

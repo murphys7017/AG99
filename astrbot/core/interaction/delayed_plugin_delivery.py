@@ -561,7 +561,7 @@ class DelayedPluginDeliveryCoordinator:
             }
             for artifact in artifacts
         ]
-        logger.info(
+        logger.debug(
             "DIAG plugin.delayed_delivery: platform_id=%s session_id=%s "
             "parent_turn_id=%s delayed_turn_id=%s job_id=%s group_id=%s "
             "delivery_keys=%s profile=%s status=%s reserved_at=%s "

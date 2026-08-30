@@ -190,11 +190,6 @@ class InteractionMiddleware:
                 exception=exc,
             )
             return
-        if result.effect_calls:
-            event.set_extra(
-                "_interaction_final_response_effect_calls",
-                list(result.effect_calls),
-            )
         await self.output_controller.deliver_prepared_core_reply(
             message,
             result,
@@ -1236,20 +1231,16 @@ class InteractionMiddleware:
         router_failure_reason = str(
             event.get_extra("_interaction_router_failure_reason", "") or ""
         )
-        router_raw_output = str(
-            event.get_extra("_interaction_router_raw_output", "") or ""
-        )
         router_context_nodes = event.get_extra("_interaction_router_context_nodes", [])
         if not isinstance(router_context_nodes, list):
             router_context_nodes = []
         logger.info(
-            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s raw_output=%s context_nodes=%s",
+            "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s context_nodes=%s",
             event.get_platform_id(),
             event.session_id,
             route.route_mode.value,
             router_source,
             router_failure_reason,
-            router_raw_output,
             router_context_nodes,
         )
 
@@ -1538,7 +1529,6 @@ class InteractionMiddleware:
     ) -> bool:
         try:
             await self._emit_immediate_reply(event, expression)
-            event.set_extra("_interaction_immediate_reply_emitted", True)
             return True
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_immediate_reply_failed", True)
@@ -1666,7 +1656,9 @@ class InteractionMiddleware:
         if (
             isinstance(route, InteractionRouteDecision)
             and route.route_mode == InteractionRouteMode.HYBRID
-            and bool(event.get_extra("_interaction_immediate_reply_emitted", False))
+            and turn_state is not None
+            and turn_state.speculative_persona_status
+            is InteractionSpeculativePersonaStatus.EMITTED
             and event._has_send_oper
         ):
             event._has_send_oper = False
@@ -1894,7 +1886,7 @@ class InteractionMiddleware:
             if turn_state.route_decision is not None
             else "none"
         )
-        logger.info(
+        logger.debug(
             "DIAG interaction.turn_resolution: platform_id=%s session_id=%s "
             "turn_id=%s route_mode=%s personal_status=%s turn_outcome=%s",
             event.get_platform_id(),

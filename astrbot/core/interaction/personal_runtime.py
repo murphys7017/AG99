@@ -989,7 +989,7 @@ class PersonalSessionRuntime:
             )
             if batch is not None:
                 self.last_observation_batch = batch
-                logger.info(
+                logger.debug(
                     "Personal Runtime observation batch closed: "
                     "runtime_key_hash=%s batch_id=%s material_revision=%s "
                     "observation_count=%s material_count=%s",
@@ -1016,7 +1016,7 @@ class PersonalSessionRuntime:
                 )
                 self.last_observation_gate_result = gate_result
                 self.state.record_gate_result(gate_result.reason_code.value)
-                logger.info(
+                logger.debug(
                     "Personal Runtime observation gate resolved: "
                     "runtime_key_hash=%s batch_id=%s disposition=%s reason=%s "
                     "material_revision=%s",
@@ -2150,7 +2150,7 @@ class PersonalRuntimeManager:
                 turn.turn_id,
                 exc_info=True,
             )
-        logger.info(
+        logger.debug(
             "DIAG interaction.deadline: turn_id=%s session_id=%s "
             "total_seconds=%.3f elapsed_seconds=%.3f remaining_seconds=%.3f "
             "expired=%s stages=%s",

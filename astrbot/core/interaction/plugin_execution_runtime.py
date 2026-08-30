@@ -492,7 +492,7 @@ class PluginExecutionRuntime:
         job_id: str = "",
     ) -> PluginExecutionRuntimeDiagnostics:
         snapshot = self.snapshot_diagnostics()
-        logger.info(
+        logger.debug(
             "DIAG plugin.runtime: trigger=%s turn_id=%s job_id=%s "
             "active_jobs=%d detached_jobs=%d oldest_job_age_seconds=%.3f "
             "background_completed=%d background_failed=%d "

@@ -221,6 +221,11 @@ class TurnDeliveryCoordinator:
         task_name: str,
         plugin_context: Any,
     ) -> None:
+        from astrbot.core.interaction.turn_state import (
+            get_interaction_turn_finalized_material,
+            get_interaction_turn_state,
+        )
+
         provider_request = self.snapshot_provider_request(
             event.get_extra("provider_request")
         )
@@ -228,6 +233,13 @@ class TurnDeliveryCoordinator:
             provider_request.conversation
             if getattr(provider_request, "conversation", None) is not None
             else event.get_extra("conversation")
+        )
+        turn_material = get_interaction_turn_finalized_material(event)
+        turn_state = get_interaction_turn_state(event)
+        visible_outputs = (
+            [dict(item) for item in turn_state.visible_outputs]
+            if turn_state is not None
+            else []
         )
         task = get_postprocess_manager().schedule(
             dispatch_postprocess(
@@ -237,21 +249,8 @@ class TurnDeliveryCoordinator:
                 provider_request=provider_request,
                 conversation=copy(conversation) if conversation is not None else None,
                 turn_id=str(event.get_extra("_turn_id", "") or ""),
-                visible_outputs=[
-                    dict(item)
-                    for item in event.get_extra("_visible_turn_outputs", [])
-                    if isinstance(item, dict)
-                ],
-                turn_material=(
-                    dict(material)
-                    if isinstance(
-                        material := event.get_extra(
-                            "_interaction_finalized_turn_material"
-                        ),
-                        dict,
-                    )
-                    else None
-                ),
+                visible_outputs=visible_outputs,
+                turn_material=turn_material,
             ),
             name=task_name,
         )

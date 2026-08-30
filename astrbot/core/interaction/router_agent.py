@@ -154,10 +154,6 @@ class InteractionRouterAgent:
         except Exception as exc:  # noqa: BLE001
             raise InteractionRouterError("model_error", str(exc)) from exc
 
-        event.set_extra(
-            "_interaction_router_raw_output",
-            _truncate_router_diagnostic(llm_resp.completion_text),
-        )
         allow_silent = group_conversation_allows_silent(event)
         payload = extract_interaction_route_payload(llm_resp.completion_text)
         route = InteractionRouteDecision.from_mapping(payload)
@@ -226,8 +222,3 @@ class InteractionRouterAgent:
             [str(name) for name in slot_names] if isinstance(slot_names, list) else [],
         )
         return render_result
-
-
-def _truncate_router_diagnostic(value: object, *, limit: int = 160) -> str:
-    text = str(value or "").replace("\n", " ").strip()
-    return text if len(text) <= limit else f"{text[:limit]}..."
