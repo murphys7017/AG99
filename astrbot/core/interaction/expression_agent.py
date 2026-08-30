@@ -192,6 +192,7 @@ def build_persona_runtime_system_prompt() -> str:
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
         "immediate_reply 是本轮之前已经说过的短回复，可参考但不要矛盾或重复。\n"
         "delegated_task_summary 表示执行层已经接受的任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
+        "当 delegated_task_summary 表示执行层正在并行评估或处理时，不要声称相关能力不存在，也不要替执行层给出最终结果。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
         "当 source_text 表示调用失败时，应如实说明失败及可确认原因，不要声称仍在处理，也不要复述原始异常结构或敏感信息。\n"
         "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"

@@ -4,7 +4,6 @@ import typing as T
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from deprecated import deprecated
 from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -28,7 +27,6 @@ from astrbot.core.db.po import (
     Preference,
     ProviderStat,
     SessionProjectRelation,
-    Stats,
     UmoAlias,
     WebChatThread,
 )
@@ -99,25 +97,7 @@ class BaseDatabase(abc.ABC):
         async with self.AsyncSessionLocal() as session:
             yield session
 
-    @deprecated(version="4.0.0", reason="Use get_platform_stats instead")
-    @abc.abstractmethod
-    def get_base_stats(self, offset_sec: int = 86400) -> Stats:
-        """获取基础统计数据"""
-        raise NotImplementedError
-
-    @deprecated(version="4.0.0", reason="Use get_platform_stats instead")
-    @abc.abstractmethod
-    def get_total_message_count(self) -> int:
-        """获取总消息数"""
-        raise NotImplementedError
-
-    @deprecated(version="4.0.0", reason="Use get_platform_stats instead")
-    @abc.abstractmethod
-    def get_grouped_base_stats(self, offset_sec: int = 86400) -> Stats:
-        """获取基础统计数据(合并)"""
-        raise NotImplementedError
-
-    # New methods in v4.0.0
+    # Async platform statistics API.
 
     @abc.abstractmethod
     async def insert_platform_stats(
@@ -138,6 +118,19 @@ class BaseDatabase(abc.ABC):
     @abc.abstractmethod
     async def get_platform_stats(self, offset_sec: int = 86400) -> list[PlatformStat]:
         """Get platform statistics within the specified offset in seconds and group by platform_id."""
+        ...
+
+    @abc.abstractmethod
+    async def get_platform_stats_history(
+        self,
+        offset_sec: int = 86400,
+    ) -> list[PlatformStat]:
+        """Get raw platform statistic rows within the specified offset."""
+        ...
+
+    @abc.abstractmethod
+    async def get_platform_message_count(self) -> int:
+        """Get the all-time message count from platform statistics."""
         ...
 
     @abc.abstractmethod

@@ -231,6 +231,13 @@ class SystemCollector(ContextCollectorInterface):
             if config.tool_schema_mode == "full"
             else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
         )
+        if event.get_extra("_interaction_core_delegated", False):
+            tool_prompt += (
+                " Core is executing this request behind Personal's fast initial "
+                "response; do not send a progress preamble or intermediate status "
+                "message. Call the required tools directly and return only the "
+                "final substantive result."
+            )
         if config.computer_use_runtime == "local":
             workspace_root = await self._get_workspace_root(event, plugin_context)
             tool_prompt += (

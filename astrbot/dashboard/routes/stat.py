@@ -186,7 +186,7 @@ class StatRoute(Route):
         offset_sec = request.args.get("offset_sec", 86400)
         offset_sec = int(offset_sec)
         try:
-            stat = self.db_helper.get_base_stats(offset_sec)
+            platform_rows = await self.db_helper.get_platform_stats_history(offset_sec)
             now = int(time.time())
             start_time = now - offset_sec
             message_time_based_stats = []
@@ -195,14 +195,23 @@ class StatRoute(Route):
             for bucket_end in range(start_time, now, 3600):
                 cnt = 0
                 while (
-                    idx < len(stat.platform)
-                    and stat.platform[idx].timestamp < bucket_end
+                    idx < len(platform_rows)
+                    and int(platform_rows[idx].timestamp.timestamp()) < bucket_end
                 ):
-                    cnt += stat.platform[idx].count
+                    cnt += platform_rows[idx].count
                     idx += 1
                 message_time_based_stats.append([bucket_end, cnt])
 
-            stat_dict = stat.__dict__
+            stat_dict = {
+                "platform": [
+                    {
+                        "name": row.platform_id,
+                        "count": row.count,
+                        "timestamp": int(row.timestamp.timestamp()),
+                    }
+                    for row in platform_rows
+                ],
+            }
 
             process_cpu = await asyncio.to_thread(psutil.Process().cpu_percent, 0.5)
             cpu_percent = process_cpu / (psutil.cpu_count() or 1)
@@ -226,10 +235,17 @@ class StatRoute(Route):
 
             stat_dict.update(
                 {
-                    "platform": self.db_helper.get_grouped_base_stats(
-                        offset_sec,
-                    ).platform,
-                    "message_count": self.db_helper.get_total_message_count() or 0,
+                    "platform": [
+                        {
+                            "name": platform_id,
+                            "count": count,
+                            "timestamp": start_time,
+                        }
+                        for platform_id, count in self._group_platform_rows(
+                            platform_rows,
+                        ).items()
+                    ],
+                    "message_count": await self.db_helper.get_platform_message_count(),
                     "platform_count": len(
                         self.core_lifecycle.platform_manager.get_insts(),
                     ),
@@ -251,6 +267,13 @@ class StatRoute(Route):
         except Exception as e:
             logger.error(traceback.format_exc())
             return Response().error(e.__str__()).__dict__
+
+    @staticmethod
+    def _group_platform_rows(rows) -> dict[str, int]:
+        grouped: dict[str, int] = {}
+        for row in rows:
+            grouped[row.platform_id] = grouped.get(row.platform_id, 0) + row.count
+        return grouped
 
     @staticmethod
     def _ensure_aware_utc(value: datetime) -> datetime:

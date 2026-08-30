@@ -876,6 +876,17 @@ class InteractionMiddleware:
             event,
             turn_id=str(event.get_extra("_turn_id", "") or ""),
         )
+        # The fast Persona branch should acknowledge an active Core candidate,
+        # not claim that the capability is unavailable while Core is evaluating
+        # the same request in parallel. Passive group candidates remain normal
+        # Persona turns unless a handler or explicit wake signal admits Core.
+        event.set_extra(
+            "_interaction_core_candidate",
+            bool(
+                event.is_at_or_wake_command
+                or event.get_extra("activated_handlers", [])
+            ),
+        )
         self._set_speculative_persona_status(
             event,
             InteractionSpeculativePersonaStatus.PENDING,
@@ -1051,7 +1062,17 @@ class InteractionMiddleware:
         expression = await self._generate_expression(
             event,
             interaction_config,
-            request=PersonaExpressionRequest(allow_plugin_tools=True),
+            request=PersonaExpressionRequest(
+                allow_plugin_tools=True,
+                delegated_task_summary=(
+                    "核心执行层也在并行查看本轮请求。"
+                    "如果这是查询、工具调用或其他执行任务，只做简短的开始处理确认，"
+                    "不要声称没有相关能力，也不要给出尚未完成的最终结果；"
+                    "如果只是普通对话，则直接正常回应。"
+                    if event.get_extra("_interaction_core_candidate", False)
+                    else ""
+                ),
+            ),
         )
         turn_state = ensure_interaction_turn_state(event)
         if expression is None or not expression.spoken_reply.strip():
@@ -1648,6 +1669,7 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> None:
         mark_interaction_turn_core_delegated(event)
+        event.set_extra("_interaction_core_delegated", True)
         event.is_wake = True
         event.is_at_or_wake_command = True
         event._extras.pop("provider", None)

@@ -127,10 +127,17 @@ class TurnDeadlineBudget:
         try:
             yield stage_budget
         except BaseException as exc:
-            record["status"] = (
-                "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
-            )
-            record["exception_type"] = type(exc).__name__
+            if isinstance(exc, StopAsyncIteration):
+                # Async iterator exhaustion is a normal stage boundary, not a
+                # failed tool or provider request.
+                record["status"] = "completed"
+            else:
+                record["status"] = (
+                    "cancelled"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else "failed"
+                )
+                record["exception_type"] = type(exc).__name__
             raise
         else:
             record["status"] = "completed"

@@ -1397,6 +1397,7 @@ async def test_skills_like_requery_preserves_original_visible_reply():
     async for response in runner.step():
         responses.append(response)
 
+    assert all(response.type != "llm_result" for response in responses)
     assistant_messages = [
         message for message in runner.run_context.messages if message.role == "assistant"
     ]

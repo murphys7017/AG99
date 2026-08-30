@@ -263,6 +263,10 @@ class ProcessStage(Stage):
             event,
             turn_id=str(event.get_extra("_turn_id", "") or ""),
         )
+        if activated_handlers or event.is_at_or_wake_command:
+            middleware.prepare_parallel_turn_control(event)
+        else:
+            event.set_extra("_interaction_core_candidate", False)
         runtime_config = event.get_extra("_astrbot_config", self.ctx.astrbot_config)
         t1_settled = asyncio.Event()
         branch_result: PluginBranchResult | None = None
