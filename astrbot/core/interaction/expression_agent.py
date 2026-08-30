@@ -103,6 +103,24 @@ class PersonaExpressionRequest:
     allow_empty: bool = False
     allow_plugin_tools: bool = False
     avoid_previous_reply: bool = False
+    compact_context: bool = False
+
+
+_FAST_PERSONA_HISTORY_TURNS = 8
+_FAST_PERSONA_SLOT_NAMES = frozenset(
+    {
+        "persona.summary",
+        "input.text",
+        "input.quoted_text",
+        "input.visible_reply_material",
+        "input.attachment_summary",
+        "session.datetime",
+        "session.user_info",
+        "conversation.history",
+        "conversation.group_recent",
+        "memory.persona_state",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -191,7 +209,7 @@ def build_persona_runtime_system_prompt() -> str:
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
         "immediate_reply 是本轮之前已经说过的短回复，可参考但不要矛盾或重复。\n"
-        "delegated_task_summary 表示执行层已经接受的任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
+        "delegated_task_summary 表示路由或执行层正在评估、处理本轮任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
         "当 delegated_task_summary 表示执行层正在并行评估或处理时，不要声称相关能力不存在，也不要替执行层给出最终结果。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
         "当 source_text 表示调用失败时，应如实说明失败及可确认原因，不要声称仍在处理，也不要复述原始异常结构或敏感信息。\n"
@@ -1137,13 +1155,16 @@ class InteractionExpressionAgent:
                 )
             ),
         )
-        persona_context_pack = await get_or_build_interaction_persona_context_pack(
-            event=event,
-            plugin_context=plugin_context,
-            interaction_config=interaction_config,
-            build_config=build_config,
-            material=material,
-        )
+        if req.compact_context and material.prompt_context_pack is not None:
+            persona_context_pack = material.prompt_context_pack
+        else:
+            persona_context_pack = await get_or_build_interaction_persona_context_pack(
+                event=event,
+                plugin_context=plugin_context,
+                interaction_config=interaction_config,
+                build_config=build_config,
+                material=material,
+            )
         provider_request = build_prompt_render_provider_request(event, provider)
         expression_pack = await PromptContextBuilder(
             event,
@@ -1162,8 +1183,21 @@ class InteractionExpressionAgent:
             provider,
         )
         persona_effect_specs = self._list_persona_effects(plugin_context, event)
-        hidden_slot_names = (
-            frozenset(
+        hidden_slot_names = set()
+        if req.compact_context:
+            hidden_slot_names.update(
+                slot_name
+                for slot_name in expression_pack.slots
+                if slot_name not in _FAST_PERSONA_SLOT_NAMES
+            )
+            # Legacy personas that do not contain any recognized summary
+            # sections still need their original prompt as a correctness
+            # fallback; otherwise the compact projection would erase the
+            # entire personality definition.
+            if not _has_usable_persona_summary(expression_pack):
+                hidden_slot_names.discard("persona.prompt")
+        elif _has_visible_reply_material(req):
+            hidden_slot_names.update(
                 {
                     "input.images",
                     "input.quoted_images",
@@ -1171,19 +1205,23 @@ class InteractionExpressionAgent:
                     "input.quoted_image_captions",
                 }
             )
-            if _has_visible_reply_material(req)
-            else frozenset()
-        )
+        history_turns = max(0, interaction_config.persona_history_window_size)
+        if req.compact_context:
+            history_turns = min(history_turns, _FAST_PERSONA_HISTORY_TURNS)
         profile = PromptRenderProfile(
-            name="interaction_persona_runtime",
+            name=(
+                "interaction_persona_fast"
+                if req.compact_context
+                else "interaction_persona_runtime"
+            ),
             system_prompt=build_persona_runtime_system_prompt(),
             request_prompt=_build_expression_prompt(req),
             output_contract=build_persona_expression_output_contract_for_effects(
                 persona_effect_specs
             ),
             input_text_suffix=reasoning_marker,
-            hidden_slot_names=hidden_slot_names,
-            history_turns=interaction_config.persona_history_window_size,
+            hidden_slot_names=frozenset(hidden_slot_names),
+            history_turns=history_turns,
         )
         render_result = PromptRenderEngine().render(
             expression_pack,
@@ -1349,6 +1387,16 @@ def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:
             req.total_text,
             req.pending_text,
         )
+    )
+
+
+def _has_usable_persona_summary(pack) -> bool:
+    summary_slot = pack.get_slot("persona.summary")
+    if summary_slot is None or not isinstance(summary_slot.value, dict):
+        return False
+    return any(
+        isinstance(value, list) and any(str(item).strip() for item in value)
+        for value in summary_slot.value.values()
     )
 
 

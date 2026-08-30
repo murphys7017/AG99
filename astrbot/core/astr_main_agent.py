@@ -1212,6 +1212,7 @@ async def build_main_agent(
         fallback_providers=fallback_providers,
         deadline=get_interaction_turn_deadline(event),
         tool_result_overflow_dir=get_astrbot_system_tmp_path(),
+        buffer_streaming_tool_steps=interaction_core,
     )
 
     if apply_reset:

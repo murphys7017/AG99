@@ -364,6 +364,7 @@ class BasePromptRenderer:
             body_keys=(
                 "source_text",
                 "immediate_reply",
+                "delegated_task_summary",
                 "observed_text",
                 "total_text",
                 "pending_text",

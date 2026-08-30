@@ -258,6 +258,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         terminal_tool_names: set[str] | frozenset[str] | None = None,
         provider_kwargs: dict[str, T.Any] | None = None,
         deadline: TurnDeadlineBudget | None = None,
+        buffer_streaming_tool_steps: bool = False,
         **kwargs: T.Any,
     ) -> None:
         self.req = request
@@ -283,6 +284,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         )
         self.provider_kwargs = dict(provider_kwargs or {})
         self.deadline = deadline
+        self.buffer_streaming_tool_steps = bool(buffer_streaming_tool_steps)
         self._tool_result_token_counter = EstimateTokenCounter()
         # we will do compress when:
         # 1. before requesting LLM
@@ -798,6 +800,12 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         # 开始处理，转换到运行状态
         self._transition_state(AgentState.RUNNING)
         llm_resp_result = None
+        buffered_streaming_responses: list[AgentResponse] = []
+        buffer_streaming_step = bool(
+            self.buffer_streaming_tool_steps
+            and isinstance(self.req.func_tool, ToolSet)
+            and not self.req.func_tool.empty()
+        )
 
         # do truncate and compress
         token_usage = self.req.conversation.token_usage if self.req.conversation else 0
@@ -810,28 +818,43 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                 if self.stats.time_to_first_token == 0:
                     self.stats.time_to_first_token = time.time() - self.stats.start_time
 
+                streaming_responses: list[AgentResponse] = []
                 if llm_response.reasoning_content:
-                    yield AgentResponse(
-                        type="streaming_delta",
-                        data=AgentResponseData(
-                            chain=MessageChain(type="reasoning").message(
-                                llm_response.reasoning_content,
+                    streaming_responses.append(
+                        AgentResponse(
+                            type="streaming_delta",
+                            data=AgentResponseData(
+                                chain=MessageChain(type="reasoning").message(
+                                    llm_response.reasoning_content,
+                                ),
                             ),
-                        ),
+                        )
                     )
                 if llm_response.result_chain:
-                    yield AgentResponse(
-                        type="streaming_delta",
-                        data=AgentResponseData(chain=llm_response.result_chain),
+                    streaming_responses.append(
+                        AgentResponse(
+                            type="streaming_delta",
+                            data=AgentResponseData(chain=llm_response.result_chain),
+                        )
                     )
                 elif llm_response.completion_text:
-                    yield AgentResponse(
-                        type="streaming_delta",
-                        data=AgentResponseData(
-                            chain=MessageChain().message(llm_response.completion_text),
-                        ),
+                    streaming_responses.append(
+                        AgentResponse(
+                            type="streaming_delta",
+                            data=AgentResponseData(
+                                chain=MessageChain().message(llm_response.completion_text),
+                            ),
+                        )
                     )
+                if buffer_streaming_step:
+                    buffered_streaming_responses.extend(streaming_responses)
+                else:
+                    for streaming_response in streaming_responses:
+                        yield streaming_response
                 if self._is_stop_requested():
+                    for streaming_response in buffered_streaming_responses:
+                        yield streaming_response
+                    buffered_streaming_responses.clear()
                     llm_resp_result = LLMResponse(
                         role="assistant",
                         completion_text=self.USER_INTERRUPTION_MESSAGE,
@@ -850,6 +873,8 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             break  # got final response
 
         if not llm_resp_result:
+            for streaming_response in buffered_streaming_responses:
+                yield streaming_response
             if self._is_stop_requested():
                 llm_resp_result = LLMResponse(role="assistant", completion_text="")
             else:
@@ -879,6 +904,15 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                 ),
             )
             return
+
+        if buffered_streaming_responses and not llm_resp.tools_call_name:
+            for streaming_response in buffered_streaming_responses:
+                yield streaming_response
+        elif buffered_streaming_responses:
+            logger.debug(
+                "Suppressed %d streamed preamble chunks for a tool execution step.",
+                len(buffered_streaming_responses),
+            )
 
         has_terminal_tool_call = any(
             name in self.terminal_tool_names for name in llm_resp.tools_call_name
