@@ -160,14 +160,11 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> None:
         core_result_text = message.get_plain_text()
-        turn_state = get_interaction_turn_state(event)
-        immediate_reply = turn_state.immediate_reply if turn_state is not None else None
         try:
             result = await self._render_visible_reply_via_persona(
                 event,
                 PersonaExpressionRequest(
                     source_text=core_result_text,
-                    immediate_reply=immediate_reply or "",
                     preserve_facts=True,
                     allow_plugin_tools=False,
                 ),

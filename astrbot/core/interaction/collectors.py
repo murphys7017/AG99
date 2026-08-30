@@ -29,11 +29,18 @@ class PersonaVisibleReplyCollector(ContextCollectorInterface):
     ) -> list[ContextSlot]:
         del event, plugin_context, config, provider_request
         request = self.request
+        source_text = str(getattr(request, "source_text", "") or "").strip()
+        preserve_facts = bool(getattr(request, "preserve_facts", False))
+        immediate_reply = str(
+            getattr(request, "immediate_reply", "") or ""
+        ).strip()
+        if source_text and preserve_facts:
+            # A completed Core result is authoritative; the speculative reply
+            # is only a progress utterance and must not enter this material.
+            immediate_reply = ""
         payload = {
-            "source_text": str(getattr(request, "source_text", "") or "").strip(),
-            "immediate_reply": str(
-                getattr(request, "immediate_reply", "") or ""
-            ).strip(),
+            "source_text": source_text,
+            "immediate_reply": immediate_reply,
             "delegated_task_summary": str(
                 getattr(request, "delegated_task_summary", "") or ""
             ).strip(),
@@ -44,7 +51,7 @@ class PersonaVisibleReplyCollector(ContextCollectorInterface):
             "pending_text": str(
                 getattr(request, "pending_text", "") or ""
             ).strip(),
-            "preserve_facts": bool(getattr(request, "preserve_facts", False)),
+            "preserve_facts": preserve_facts,
             "short_reply": bool(getattr(request, "short_reply", False)),
             "allow_empty": bool(getattr(request, "allow_empty", False)),
         }

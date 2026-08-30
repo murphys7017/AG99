@@ -25,8 +25,11 @@ from astrbot.core.interaction.plugin_runtime import (
     tool_supports_runtime_target,
 )
 from astrbot.core.interaction.turn_state import (
+    append_interaction_turn_visible_output,
+    build_interaction_turn_reply,
     ensure_interaction_turn_state,
     get_interaction_turn_state,
+    mark_interaction_turn_core_delegated,
 )
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
@@ -60,6 +63,42 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
         == "best_effort"
     )
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
+
+
+def test_core_delegation_excludes_immediate_reply_from_canonical_history():
+    class Event:
+        def __init__(self):
+            self._extras = {"_turn_id": "turn-core-history"}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    append_interaction_turn_visible_output(
+        event,
+        message_kind="immediate_reply",
+        text="我先看看。",
+    )
+
+    mark_interaction_turn_core_delegated(event)
+    append_interaction_turn_visible_output(
+        event,
+        message_kind="core_reply",
+        text="查到天气了。",
+    )
+
+    state = get_interaction_turn_state(event)
+    assert state is not None
+    assert state.visible_outputs[0]["memory_relevant"] is False
+    assert state.utterances[0].memory_relevant is False
+    assert build_interaction_turn_reply(
+        state.visible_outputs,
+        turn_id=state.turn_id,
+        utterances=state.utterances,
+    ) == "查到天气了。"
 
 
 @pytest.mark.asyncio
@@ -350,6 +389,7 @@ async def test_core_result_returns_through_persona_without_reopening_plugin_tool
     await middleware._handle_core_reply_via_persona(source_message, event)
 
     assert rendered_requests[0].allow_plugin_tools is False
+    assert rendered_requests[0].immediate_reply == ""
     middleware.output_controller.deliver_prepared_core_reply.assert_awaited_once_with(
         source_message,
         PersonaExpressionResult(spoken_reply="人格化后的执行结果"),

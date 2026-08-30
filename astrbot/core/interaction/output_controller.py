@@ -1380,12 +1380,10 @@ class InteractionOutputController:
         event: AstrMessageEvent,
     ) -> None:
         core_result_text = message.get_plain_text()
-        immediate_reply = get_interaction_turn_immediate_reply(event)
         result = await self._render_visible_reply(
             event,
             PersonaExpressionRequest(
                 source_text=core_result_text,
-                immediate_reply=immediate_reply or "",
                 preserve_facts=True,
                 allow_plugin_tools=False,
             ),

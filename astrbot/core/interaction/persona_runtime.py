@@ -78,7 +78,6 @@ class InteractionPersonaRuntime:
         *,
         plugin_context: Context | None,
         interaction_config: InteractionAgentConfig,
-        immediate_reply: str | None = None,
     ) -> str:
         result = await self.express_visible_reply(
             event,
@@ -86,7 +85,6 @@ class InteractionPersonaRuntime:
             interaction_config=interaction_config,
             request=PersonaExpressionRequest(
                 source_text=source_text,
-                immediate_reply=immediate_reply or "",
                 preserve_facts=True,
             ),
         )

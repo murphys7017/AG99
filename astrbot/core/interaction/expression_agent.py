@@ -208,9 +208,10 @@ def build_persona_runtime_system_prompt() -> str:
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
-        "immediate_reply 是本轮之前已经说过的短回复，可参考但不要矛盾或重复。\n"
+        "当 preserve_facts 为 true 且 source_text 非空时，source_text 是本次回应唯一的权威事实来源；不得根据 conversation.history、人格能力声明或任何先前回复否定、替换或拒绝 source_text 已给出的结果。\n"
+        "immediate_reply（如果存在）只是本轮已经发送的非事实性占位，不得用来否定 source_text，也不要重复它。\n"
         "delegated_task_summary 表示路由或执行层正在评估、处理本轮任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
-        "当 delegated_task_summary 表示执行层正在并行评估或处理时，不要声称相关能力不存在，也不要替执行层给出最终结果。\n"
+        "当 delegated_task_summary 表示执行层正在并行评估或处理时，这是硬性约束：spoken_reply 只能确认正在处理，不得声称相关能力不存在、要求用户自行完成，或提前给出最终结果。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
         "当 source_text 表示调用失败时，应如实说明失败及可确认原因，不要声称仍在处理，也不要复述原始异常结构或敏感信息。\n"
         "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
@@ -508,6 +509,16 @@ def extract_persona_expression_result(
 
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
     prompt = "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
+    if req.source_text.strip() and req.preserve_facts:
+        prompt += (
+            "\n【事实优先级】source_text 是唯一权威事实来源；忽略历史对话和任何先前能力声明中与其冲突的内容，"
+            "只在不改变事实的前提下进行人格化表达。"
+        )
+    if req.delegated_task_summary.strip():
+        prompt += (
+            "\n【执行中】执行层正在评估或处理本轮任务。只能给出简短的处理中确认，"
+            "不得说没有相关能力、让用户自己完成，也不得冒充已经得到最终结果。"
+        )
     if req.avoid_previous_reply:
         prompt += (
             "\n这是自主表达。spoken_reply 不得重复 conversation history 中最近一条 "

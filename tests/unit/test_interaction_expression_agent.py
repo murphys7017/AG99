@@ -414,6 +414,22 @@ async def test_visible_reply_material_renders_as_native_input_message_with_strea
     assert "extensions" not in material_text
 
 
+@pytest.mark.asyncio
+async def test_core_visible_reply_material_drops_speculative_immediate_reply():
+    slots = await PersonaVisibleReplyCollector(
+        PersonaExpressionRequest(
+            source_text="核心天气结果",
+            immediate_reply="我没有联网能力",
+            preserve_facts=True,
+        )
+    ).collect(None, None, None)
+
+    assert slots[0].value == {
+        "source_text": "核心天气结果",
+        "preserve_facts": True,
+    }
+
+
 def test_visible_reply_material_profile_hides_redundant_media_slots():
     pack = ContextPack(
         slots={
