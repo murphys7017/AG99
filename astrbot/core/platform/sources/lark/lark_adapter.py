@@ -134,7 +134,19 @@ class LarkPlatformAdapter(Platform):
         bot_self_id: str | None = None,
         bot_name: str | None = None,
     ) -> str:
-        """Build normalized text used by wake-prefix and command matching."""
+        """Build the text projection for parsed Lark message components.
+
+        A leading bot-self mention is omitted when identity information is provided;
+        the original component list is not modified.
+
+        Args:
+            components: Parsed Lark message components.
+            bot_self_id: Bot identifier used to recognize a leading self mention.
+            bot_name: Bot display name used when the mention has no identifier.
+
+        Returns:
+            Normalized text used by wake-prefix and command matching.
+        """
         normalized_self_id = str(bot_self_id or "").strip()
         normalized_bot_name = str(bot_name or "").strip()
         parts: list[str] = []
