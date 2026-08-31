@@ -240,7 +240,6 @@ class InteractionTurnState:
     core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
     core_delegated: bool = False
-    exclude_immediate_reply_from_history: bool = False
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
     personal_emitted_monotonic: float | None = None
@@ -433,15 +432,7 @@ def set_interaction_turn_core_task_spec(
 
 
 def mark_interaction_turn_core_delegated(event) -> None:
-    state = ensure_interaction_turn_state(event)
-    state.core_delegated = True
-    state.exclude_immediate_reply_from_history = True
-    for utterance in state.utterances:
-        if utterance.kind == "immediate_reply":
-            utterance.memory_relevant = False
-    for output in state.visible_outputs:
-        if output.get("kind") == "immediate_reply":
-            output["memory_relevant"] = False
+    ensure_interaction_turn_state(event).core_delegated = True
 
 
 def is_interaction_turn_core_delegated(event) -> bool:
@@ -654,11 +645,6 @@ def append_interaction_turn_visible_output(
     if not clean_text:
         return
     state = ensure_interaction_turn_state(event)
-    if (
-        message_kind == "immediate_reply"
-        and state.exclude_immediate_reply_from_history
-    ):
-        memory_relevant = False
     utterance = materialize_utterance(
         state,
         kind=message_kind,

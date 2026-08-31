@@ -1384,6 +1384,7 @@ class InteractionOutputController:
             event,
             PersonaExpressionRequest(
                 source_text=core_result_text,
+                immediate_reply=get_interaction_turn_immediate_reply(event) or "",
                 preserve_facts=True,
                 allow_plugin_tools=False,
             ),

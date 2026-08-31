@@ -109,9 +109,7 @@ class PersonaExpressionRequest:
 _FAST_PERSONA_HISTORY_TURNS = 8
 _FAST_PERSONA_SLOT_NAMES = frozenset(
     {
-        "persona.segments",
         "persona.summary",
-        "persona.begin_dialogs",
         "input.text",
         "input.quoted_text",
         "input.visible_reply_material",
@@ -195,23 +193,91 @@ _DEEPSEEK_INNER_OS_MARKER = (
 def validate_persona_expression_result(
     req: PersonaExpressionRequest,
     result: PersonaExpressionResult,
+    *,
+    effects: Sequence[PersonaEffectSpec] = (),
 ) -> None:
     if not result.spoken_reply and not req.allow_empty:
         raise InteractionExpressionError("empty_output")
+    required_effects = [
+        effect
+        for effect in effects
+        if isinstance(effect, PersonaEffectSpec)
+        and effect.enabled
+        and isinstance(effect.metadata, dict)
+        and effect.metadata.get("required_per_segment") is True
+    ]
+    if not required_effects:
+        return
+
+    calls_by_name: dict[str, int] = {}
+    for call in result.effect_calls:
+        calls_by_name[call.name] = calls_by_name.get(call.name, 0) + 1
+    parse_issue_names = {
+        str(issue.get("name", "") or "").strip()
+        for issue in (result.metadata.get("effect_parse_issues", []) or [])
+        if isinstance(issue, dict)
+    }
+    for effect in required_effects:
+        call_count = calls_by_name.get(effect.name, 0)
+        if call_count == 0:
+            reason = (
+                "invalid_required_persona_effect"
+                if effect.name in parse_issue_names
+                else "missing_required_persona_effect"
+            )
+            raise InteractionExpressionError(
+                reason,
+                f"required persona effect is not valid: {effect.name}",
+            )
+        if (
+            effect.metadata.get("exactly_one_per_segment") is True
+            and call_count != 1
+        ):
+            raise InteractionExpressionError(
+                "required_persona_effect_count",
+                f"required persona effect must occur exactly once: {effect.name}",
+            )
 
 
-def build_persona_runtime_system_prompt() -> str:
+def build_persona_runtime_system_prompt(
+    effects: Sequence[PersonaEffectSpec] = (),
+) -> str:
+    required_effects = [
+        effect
+        for effect in effects
+        if isinstance(effect, PersonaEffectSpec)
+        and effect.enabled
+        and isinstance(effect.metadata, dict)
+        and effect.metadata.get("required_per_segment") is True
+    ]
+    required_effect_guidance = ""
+    if required_effects:
+        names = ", ".join(effect.name for effect in required_effects)
+        count_guidance = "；".join(
+            (
+                f"{effect.name} 恰好一次"
+                if effect.metadata.get("exactly_one_per_segment") is True
+                else f"{effect.name} 至少一次"
+            )
+            for effect in required_effects
+        )
+        required_effect_guidance = (
+            f"本轮已启用必发 Persona Effect：{names}。effect_calls 必须满足：{count_guidance}。"
+            "即使只是问候、闲聊或中性表达，也不得返回空数组或省略该 effect；"
+            "请始终按对应 schema 提供合法 arguments；动作类 effect 若没有明显动作，再使用其定义的中性值。\n"
+        )
     return (
         "你负责以当前人格对用户表达。\n"
         "根据本次调用提供的 visible_reply_material，生成自然语言表达以及必要的人格 effect 调用。\n"
         "必须按本次输出契约返回只包含 spoken_reply、speech_cues 与 effect_calls 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
+        f"{required_effect_guidance}"
         f"{build_speech_cue_guidance()}\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
         "当 preserve_facts 为 true 且 source_text 非空时，source_text 是本次回应唯一的权威事实来源；不得根据 conversation.history、人格能力声明或任何先前回复否定、替换或拒绝 source_text 已给出的结果。\n"
-        "immediate_reply（如果存在）只是本轮已经发送的非事实性占位，不得用来否定 source_text，也不要重复它。\n"
+        "immediate_reply（如果存在）是同一轮此前已经发送的表达；保持语义连续，必要时自然补充或纠正，但不要机械重复。\n"
         "delegated_task_summary 表示路由或执行层正在评估、处理本轮任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
         "当 delegated_task_summary 表示执行层正在并行评估或处理时，这是硬性约束：spoken_reply 只能确认正在处理，不得声称相关能力不存在、要求用户自行完成，或提前给出最终结果。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
@@ -327,6 +393,19 @@ def build_persona_expression_tool_parameters(
                 for effect in enabled_effects
             ):
                 properties["effect_calls"]["maxItems"] = 1
+            required_names = [
+                effect.name
+                for effect in enabled_effects
+                if isinstance(effect.metadata, dict)
+                and effect.metadata.get("required_per_segment") is True
+            ]
+            if required_names:
+                properties["effect_calls"]["description"] = (
+                    "Required Persona Effects for this segment: "
+                    + ", ".join(required_names)
+                    + ". Never return an empty array; always provide schema-valid "
+                    "arguments (use neutral values only when the effect defines them)."
+                )
 
     return {
         "type": "object",
@@ -996,7 +1075,11 @@ class InteractionExpressionAgent:
             return PersonaExpressionResult()
         _normalize_result_speech_cues(result)
         try:
-            validate_persona_expression_result(req, result)
+            validate_persona_expression_result(
+                req,
+                result,
+                effects=persona_effect_specs,
+            )
         except InteractionExpressionError as exc:
             exc.tool_execution_count = prepared.tool_execution_count
             exc.prepared = prepared
@@ -1233,7 +1316,7 @@ class InteractionExpressionAgent:
                 if req.compact_context
                 else "interaction_persona_runtime"
             ),
-            system_prompt=build_persona_runtime_system_prompt(),
+            system_prompt=build_persona_runtime_system_prompt(persona_effect_specs),
             request_prompt=_build_expression_prompt(req),
             output_contract=build_persona_expression_output_contract_for_effects(
                 persona_effect_specs

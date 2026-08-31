@@ -87,6 +87,81 @@ def test_persona_expression_still_requires_reply_for_first_response_even_with_ef
         )
 
 
+def test_persona_expression_rejects_missing_required_effect():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={"type": "object", "properties": {}},
+        metadata={"required_per_segment": True},
+    )
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            PersonaExpressionRequest(),
+            PersonaExpressionResult(spoken_reply="嗯。"),
+            effects=[effect],
+        )
+
+    assert exc_info.value.reason == "missing_required_persona_effect"
+
+
+def test_persona_expression_rejects_invalid_required_effect():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={"type": "object", "properties": {}},
+        metadata={"required_per_segment": True},
+    )
+    result = PersonaExpressionResult(
+        spoken_reply="嗯。",
+        metadata={
+            "effect_parse_issues": [
+                {"name": "ag99live.motion", "reason": "arguments_invalid"}
+            ]
+        },
+    )
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            PersonaExpressionRequest(),
+            result,
+            effects=[effect],
+        )
+
+    assert exc_info.value.reason == "invalid_required_persona_effect"
+
+
+def test_persona_expression_rejects_duplicate_exactly_one_required_effect():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={"type": "object", "properties": {}},
+        metadata={
+            "required_per_segment": True,
+            "exactly_one_per_segment": True,
+        },
+    )
+    result = PersonaExpressionResult(
+        spoken_reply="嗯。",
+        effect_calls=[
+            PersonaEffectCall(name="ag99live.motion", arguments={}),
+            PersonaEffectCall(name="ag99live.motion", arguments={}),
+        ],
+    )
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            PersonaExpressionRequest(),
+            result,
+            effects=[effect],
+        )
+
+    assert exc_info.value.reason == "required_persona_effect_count"
+
+
 def test_persona_expression_repairs_truncated_json_from_provider():
     text = (
         '{"spoken_reply": "……你倒是说句话啊，发个问号是什么意思。", '
@@ -370,6 +445,28 @@ def test_persona_expression_defaults_to_strict_tool_call_contract():
     assert schema["required"] == ["spoken_reply", "speech_cues", "effect_calls"]
 
 
+def test_persona_expression_tool_requires_exactly_one_required_effect_per_segment():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {"intent_tags": {"type": "array"}},
+            "required": ["intent_tags"],
+        },
+        metadata={
+            "required_per_segment": True,
+            "exactly_one_per_segment": True,
+        },
+    )
+
+    schema = build_persona_expression_tool_parameters([effect])
+
+    assert schema["properties"]["effect_calls"]["minItems"] == 1
+    assert schema["properties"]["effect_calls"]["maxItems"] == 1
+
+
 def test_persona_runtime_slots_are_native_system_base_not_extensions():
     pack = ContextPack()
     result = PromptRenderEngine().render(
@@ -415,7 +512,7 @@ async def test_visible_reply_material_renders_as_native_input_message_with_strea
 
 
 @pytest.mark.asyncio
-async def test_core_visible_reply_material_drops_speculative_immediate_reply():
+async def test_core_visible_reply_material_preserves_immediate_reply_context():
     slots = await PersonaVisibleReplyCollector(
         PersonaExpressionRequest(
             source_text="核心天气结果",
@@ -426,6 +523,7 @@ async def test_core_visible_reply_material_drops_speculative_immediate_reply():
 
     assert slots[0].value == {
         "source_text": "核心天气结果",
+        "immediate_reply": "我没有联网能力",
         "preserve_facts": True,
     }
 
@@ -616,11 +714,12 @@ async def test_fast_persona_projection_keeps_identity_history_memory_without_wai
 
     selected_slots = set(result.metadata["selected_slot_names"])
     assert {
-        "persona.segments",
         "persona.summary",
         "conversation.history",
         "memory.long_term_memories",
     } <= selected_slots
+    assert "persona.segments" not in selected_slots
+    assert "persona.begin_dialogs" not in selected_slots
     assert "extension.system" not in selected_slots
     assert "extension.context" not in selected_slots
     get_persona_context_pack.assert_not_awaited()

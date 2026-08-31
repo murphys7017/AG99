@@ -101,8 +101,8 @@
 群聊的 Conversation 历史只为语义判断提供上下文，不自行扩大 Waking 边界。当前 active turn 的同一
 发送者可立即 follow-up；Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口截止进入候选路径。
 候选保留 Handler 接管语义；未被接管时 Router 与 Persona 同时启动，由 Router 判断
-`silent / persona / hybrid`。`silent` 或 Router 失败只取消 pending Persona；窗口外和其他发送者
-仍需唤醒词、@ 或引用 Bot。
+`silent / persona / hybrid`。群聊候选 Router 失败回退为 `silent`，私聊 Router 失败回退为
+`persona`；只有 `silent` 会取消 pending Persona。窗口外和其他发送者仍需唤醒词、@ 或引用 Bot。
 
 interaction turn 的输出路径与普通事件不同：
 

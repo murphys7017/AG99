@@ -160,11 +160,14 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> None:
         core_result_text = message.get_plain_text()
+        turn_state = get_interaction_turn_state(event)
+        immediate_reply = turn_state.immediate_reply if turn_state is not None else None
         try:
             result = await self._render_visible_reply_via_persona(
                 event,
                 PersonaExpressionRequest(
                     source_text=core_result_text,
+                    immediate_reply=immediate_reply or "",
                     preserve_facts=True,
                     allow_plugin_tools=False,
                 ),
@@ -1051,12 +1054,6 @@ class InteractionMiddleware:
             request=PersonaExpressionRequest(
                 allow_plugin_tools=True,
                 compact_context=True,
-                delegated_task_summary=(
-                    "路由与核心执行链正在并行评估本轮请求。"
-                    "如果这是查询、工具调用或其他执行任务，只做简短的开始处理确认，"
-                    "不要声称没有相关能力，也不要给出尚未完成的最终结果；"
-                    "如果只是普通对话，则直接正常回应。"
-                ),
             ),
         )
         turn_state = ensure_interaction_turn_state(event)
@@ -1324,7 +1321,7 @@ class InteractionMiddleware:
         fallback_mode = (
             InteractionRouteMode.SILENT
             if group_conversation_allows_silent(event)
-            else InteractionRouteMode.HYBRID
+            else InteractionRouteMode.PERSONA
         )
         if self.plugin_context is None:
             event.set_extra("_interaction_router_failed", True)

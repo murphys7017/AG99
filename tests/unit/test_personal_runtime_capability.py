@@ -1291,6 +1291,29 @@ async def test_model_continuation_silent_route_suppresses_pending_persona(
 
 
 @pytest.mark.asyncio
+async def test_private_router_failure_falls_back_to_persona():
+    metadata = _metadata(support_personal_runtime=True)
+    event = _DirectEvent(metadata, message_type=MessageType.FRIEND_MESSAGE)
+    runtime_config = {"interaction_middleware": {"enabled": True}}
+    middleware = InteractionMiddleware(
+        runtime_config,
+        InteractionOutputController(),
+        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
+    )
+    middleware.router_agent.route = AsyncMock(
+        side_effect=RuntimeError("router failed")
+    )
+
+    decision = await middleware._route_interaction(
+        event,
+        middleware.interaction_config,
+    )
+
+    assert decision.route_mode is InteractionRouteMode.PERSONA
+    assert event.get_extra("_interaction_router_failure_reason") == "router failed"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_autonomous_expression_is_suppressed_without_accounting():
     metadata = _metadata(support_personal_runtime=True)
     platform = _RecordingPlatform(metadata)

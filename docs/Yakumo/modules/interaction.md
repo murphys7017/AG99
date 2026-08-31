@@ -369,7 +369,7 @@ Input Runtime / Observation
 - Prompt Collectors：一次收集本轮输入、人格、session、官方对话历史、统一 Memory、执行能力和插件贡献，生成规范 `ContextPack`
 - Router：普通显式唤醒只输出 `persona` / `hybrid`；仅 Personal Runtime 标记的有界群聊模型续接候选开放 `silent`。它不承担用户可见回复、task planning 或 effect 输出，读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
 - Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
-- Router/Persona 协同：普通显式消息和未被 Handler 接管的有界群聊候选同时启动 Router 与 Persona；Router 决定 `persona` / `hybrid`，并只对群聊候选开放 `silent`。`silent` 或 Router 失败会取消 pending Persona；已经提交或送达的表达继续完成，不做撤回。
+- Router/Persona 协同：普通显式消息和未被 Handler 接管的有界群聊候选同时启动 Router 与 Persona；Router 决定 `persona` / `hybrid`，并只对群聊候选开放 `silent`。群聊候选 Router 失败回退为 `silent`，私聊 Router 失败回退为 `persona`；只有 `silent` 会取消 pending Persona，已经提交或送达的表达继续完成，不做撤回。
 - Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
   `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
   lease 释放前统一完成或取消；`TurnDeadlineBudget.enforce()` 统一约束 binding、queue、

@@ -25,11 +25,9 @@ from astrbot.core.interaction.plugin_runtime import (
     tool_supports_runtime_target,
 )
 from astrbot.core.interaction.turn_state import (
-    append_interaction_turn_visible_output,
-    build_interaction_turn_reply,
     ensure_interaction_turn_state,
     get_interaction_turn_state,
-    mark_interaction_turn_core_delegated,
+    set_interaction_turn_immediate_reply,
 )
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
@@ -63,42 +61,6 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
         == "best_effort"
     )
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
-
-
-def test_core_delegation_excludes_immediate_reply_from_canonical_history():
-    class Event:
-        def __init__(self):
-            self._extras = {"_turn_id": "turn-core-history"}
-
-        def get_extra(self, key, default=None):
-            return self._extras.get(key, default)
-
-        def set_extra(self, key, value):
-            self._extras[key] = value
-
-    event = Event()
-    append_interaction_turn_visible_output(
-        event,
-        message_kind="immediate_reply",
-        text="我先看看。",
-    )
-
-    mark_interaction_turn_core_delegated(event)
-    append_interaction_turn_visible_output(
-        event,
-        message_kind="core_reply",
-        text="查到天气了。",
-    )
-
-    state = get_interaction_turn_state(event)
-    assert state is not None
-    assert state.visible_outputs[0]["memory_relevant"] is False
-    assert state.utterances[0].memory_relevant is False
-    assert build_interaction_turn_reply(
-        state.visible_outputs,
-        turn_id=state.turn_id,
-        utterances=state.utterances,
-    ) == "查到天气了。"
 
 
 @pytest.mark.asyncio
@@ -366,11 +328,14 @@ async def test_capability_resolver_applies_exact_override_and_rejects_persona_su
 @pytest.mark.asyncio
 async def test_core_result_returns_through_persona_without_reopening_plugin_tools():
     class Event:
+        def __init__(self):
+            self._extras = {}
+
         def get_extra(self, _key, default=None):
-            return default
+            return self._extras.get(_key, default)
 
         def set_extra(self, _key, _value):
-            pass
+            self._extras[_key] = _value
 
     middleware = object.__new__(InteractionMiddleware)
     rendered_requests = []
@@ -384,12 +349,14 @@ async def test_core_result_returns_through_persona_without_reopening_plugin_tool
         deliver_prepared_core_reply=AsyncMock(),
     )
     event = Event()
+    ensure_interaction_turn_state(event)
+    set_interaction_turn_immediate_reply(event, "我先看看。")
     source_message = MessageChain([Plain("Core execution completed")])
 
     await middleware._handle_core_reply_via_persona(source_message, event)
 
     assert rendered_requests[0].allow_plugin_tools is False
-    assert rendered_requests[0].immediate_reply == ""
+    assert rendered_requests[0].immediate_reply == "我先看看。"
     middleware.output_controller.deliver_prepared_core_reply.assert_awaited_once_with(
         source_message,
         PersonaExpressionResult(spoken_reply="人格化后的执行结果"),
@@ -464,6 +431,7 @@ async def test_persona_route_allows_explicitly_targeted_function_tools():
 
     assert result is None
     assert requests[0].allow_plugin_tools is True
+    assert requests[0].delegated_task_summary == ""
 
 
 @pytest.mark.asyncio
