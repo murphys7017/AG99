@@ -66,11 +66,11 @@ const { t } = useI18n();
 const WORKSPACE_SHORTCUTS: Record<WorkspaceKey, ShortcutDef[]> = {
   persona: [
     { labelKey: 'core.navigation.persona', icon: 'mdi-heart', to: '/persona' },
-    { labelKey: 'core.navigation.config', hintKey: 'core.navigation.configTabs.normal', icon: 'mdi-cog', to: '/config#normal' },
+    { labelKey: 'core.navigation.config', hintKey: 'core.navigation.configTabs.normal', icon: 'mdi-cog', to: '/config?workspace=persona#normal' },
   ],
   intelligence: [
     { labelKey: 'core.navigation.providers', icon: 'mdi-creation', to: '/providers' },
-    { labelKey: 'core.navigation.configTabs.normal', hintKey: 'core.navigation.configTabs.system', icon: 'mdi-cog', to: '/config#normal' },
+    { labelKey: 'core.navigation.configTabs.normal', hintKey: 'core.navigation.configTabs.system', icon: 'mdi-cog', to: '/config?workspace=intelligence#normal' },
   ],
   channels: [
     { labelKey: 'core.navigation.platforms', icon: 'mdi-robot', to: '/platforms' },
@@ -79,7 +79,6 @@ const WORKSPACE_SHORTCUTS: Record<WorkspaceKey, ShortcutDef[]> = {
     { labelKey: 'core.navigation.knowledgeBase', icon: 'mdi-book-open-variant', to: '/knowledge-base' },
   ],
   capabilities: [
-    { labelKey: 'core.navigation.configTabs.extension', icon: 'mdi-tune-variant', to: '/config#extension' },
     { labelKey: 'core.navigation.extensionTabs.installed', icon: 'mdi-puzzle', to: '/extension#installed' },
     { labelKey: 'core.navigation.extensionTabs.mcp', icon: 'mdi-server-network', to: '/extension#mcp' },
     { labelKey: 'core.navigation.extensionTabs.skills', icon: 'mdi-lightning-bolt', to: '/extension#skills' },
@@ -90,7 +89,8 @@ const WORKSPACE_SHORTCUTS: Record<WorkspaceKey, ShortcutDef[]> = {
     { labelKey: 'core.navigation.sessionManagement', icon: 'mdi-pencil-ruler', to: '/session-management' },
   ],
   operations: [
-    { labelKey: 'core.navigation.configTabs.system', icon: 'mdi-cog-outline', to: '/config#system' },
+    { labelKey: 'core.navigation.configTabs.system', icon: 'mdi-cog-outline', to: '/config?workspace=operations#system' },
+    { labelKey: 'core.navigation.configTabs.extension', icon: 'mdi-tune-variant', to: '/config?workspace=operations#extension' },
     { labelKey: 'core.navigation.dashboard', icon: 'mdi-view-dashboard', to: '/dashboard/default' },
     { labelKey: 'core.navigation.conversation', icon: 'mdi-database', to: '/conversation' },
     { labelKey: 'core.navigation.console', icon: 'mdi-console', to: '/console' },

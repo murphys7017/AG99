@@ -32,14 +32,14 @@ const sidebarItem: menu[] = [
     to: '/workspace/persona',
     children: [
       {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/persona'
-      },
-      {
         title: 'core.navigation.persona',
         icon: 'mdi-heart',
         to: '/persona'
+      },
+      {
+        title: 'core.navigation.configTabs.normal',
+        icon: 'mdi-cog',
+        to: '/config?workspace=persona#normal'
       },
     ]
   },
@@ -49,11 +49,6 @@ const sidebarItem: menu[] = [
     to: '/workspace/intelligence',
     children: [
       {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/intelligence'
-      },
-      {
         title: 'core.navigation.providers',
         icon: 'mdi-creation',
         to: '/providers'
@@ -61,7 +56,7 @@ const sidebarItem: menu[] = [
       {
         title: 'core.navigation.configTabs.normal',
         icon: 'mdi-cog',
-        to: '/config#normal'
+        to: '/config?workspace=intelligence#normal'
       }
     ]
   },
@@ -70,11 +65,6 @@ const sidebarItem: menu[] = [
     icon: 'mdi-robot',
     to: '/workspace/channels',
     children: [
-      {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/channels'
-      },
       {
         title: 'core.navigation.platforms',
         icon: 'mdi-robot',
@@ -88,14 +78,14 @@ const sidebarItem: menu[] = [
     to: '/workspace/knowledge',
     children: [
       {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/knowledge'
-      },
-      {
         title: 'core.navigation.knowledgeBase',
         icon: 'mdi-book-open-variant',
         to: '/knowledge-base'
+      },
+      {
+        title: 'core.navigation.configTabs.normal',
+        icon: 'mdi-cog',
+        to: '/config?workspace=knowledge#normal'
       }
     ]
   },
@@ -104,16 +94,6 @@ const sidebarItem: menu[] = [
     icon: 'mdi-puzzle',
     to: '/workspace/capabilities',
     children: [
-      {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/capabilities'
-      },
-      {
-        title: 'core.navigation.configTabs.extension',
-        icon: 'mdi-tune-variant',
-        to: '/config#extension'
-      },
       {
         title: 'core.navigation.extensionTabs.installed',
         icon: 'mdi-puzzle',
@@ -138,6 +118,11 @@ const sidebarItem: menu[] = [
         title: 'core.navigation.extensionTabs.components',
         icon: 'mdi-wrench',
         to: '/extension#components'
+      },
+      {
+        title: 'core.navigation.configTabs.normal',
+        icon: 'mdi-cog',
+        to: '/config?workspace=capabilities#normal'
       }
     ]
   },
@@ -146,11 +131,6 @@ const sidebarItem: menu[] = [
     icon: 'mdi-clock-outline',
     to: '/workspace/automation',
     children: [
-      {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/automation'
-      },
       {
         title: 'core.navigation.cron',
         icon: 'mdi-clock-outline',
@@ -165,6 +145,11 @@ const sidebarItem: menu[] = [
         title: 'core.navigation.sessionManagement',
         icon: 'mdi-pencil-ruler',
         to: '/session-management'
+      },
+      {
+        title: 'core.navigation.configTabs.normal',
+        icon: 'mdi-cog',
+        to: '/config?workspace=automation#normal'
       }
     ]
   },
@@ -174,14 +159,14 @@ const sidebarItem: menu[] = [
     to: '/workspace/operations',
     children: [
       {
-        title: 'core.navigation.workspaces.overview',
-        icon: 'mdi-view-dashboard',
-        to: '/workspace/operations'
-      },
-      {
         title: 'core.navigation.configTabs.system',
         icon: 'mdi-cog-outline',
-        to: '/config#system'
+        to: '/config?workspace=operations#system'
+      },
+      {
+        title: 'core.navigation.configTabs.extension',
+        icon: 'mdi-tune-variant',
+        to: '/config?workspace=operations#extension'
       },
       {
         title: 'core.navigation.dashboard',

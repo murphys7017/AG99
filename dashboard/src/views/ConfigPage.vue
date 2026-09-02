@@ -41,31 +41,8 @@
       </v-slide-y-transition>
       <!-- <v-progress-linear v-if="!fetched" indeterminate color="primary"></v-progress-linear> -->
 
-      <v-slide-y-transition>
-        <div v-if="workspaceOptions.length > 1 && fetched" class="config-workspace-switcher">
-          <v-btn-toggle
-            :model-value="selectedWorkspaceKey"
-            @update:model-value="onWorkspaceSelect"
-            mandatory
-            divided
-            density="compact"
-            variant="outlined"
-          >
-            <v-btn
-              v-for="workspace in workspaceOptions"
-              :key="workspace.key"
-              :value="workspace.key"
-              size="small"
-            >
-              {{ workspace.label }}
-              <span class="workspace-count">{{ workspace.count }}</span>
-            </v-btn>
-          </v-btn-toggle>
-        </div>
-      </v-slide-y-transition>
-
       <v-slide-y-transition mode="out-in">
-        <div v-if="(selectedConfigID || isSystemConfig) && fetched" :key="`${configContentKey}-${selectedWorkspaceKey || 'all'}`" class="config-content" style="width: 100%;">
+        <div v-if="(selectedConfigID || isSystemConfig) && fetched" :key="`${configContentKey}-${activeWorkspaceKey || 'all'}`" class="config-content" style="width: 100%;">
           <!-- 可视化编辑 -->
           <AstrBotCoreConfigWrapper
             :metadata="visibleWorkspaceMetadata"
@@ -349,29 +326,26 @@ export default {
       }
       return this.getConfigSnapshot(this.config_data) !== this.lastSavedConfigSnapshot;
     },
-    workspaceOptions() {
-      const groups = Object.entries(this.metadata || {});
-      const counts = new Map();
-      const labels = new Map();
+    activeWorkspaceKey() {
+      const requestedWorkspaceKey = this.getRouteWorkspaceKey();
+      const availableWorkspaces = new Set(
+        Object.values(this.metadata || {}).map((groupValue) => groupValue?.workspace)
+      );
 
-      for (const [groupKey, groupValue] of groups) {
-        const workspaceKey = groupValue?.workspace || 'operations';
-        counts.set(workspaceKey, (counts.get(workspaceKey) || 0) + 1);
-        if (!labels.has(workspaceKey)) {
-          labels.set(workspaceKey, this.t(`core.navigation.workspaces.${workspaceKey}`));
-        }
+      if (requestedWorkspaceKey && availableWorkspaces.has(requestedWorkspaceKey)) {
+        return requestedWorkspaceKey;
       }
 
-      return CONFIG_WORKSPACE_ORDER
-        .filter((workspaceKey) => counts.has(workspaceKey))
-        .map((workspaceKey) => ({
-          key: workspaceKey,
-          label: labels.get(workspaceKey) || workspaceKey,
-          count: counts.get(workspaceKey) || 0
-        }));
+      if (availableWorkspaces.has(this.defaultWorkspaceKey)) {
+        return this.defaultWorkspaceKey;
+      }
+
+      return Object.values(this.metadata || {}).find(
+        (groupValue) => groupValue?.workspace
+      )?.workspace || null;
     },
     visibleWorkspaceMetadata() {
-      const workspaceKey = this.selectedWorkspaceKey;
+      const workspaceKey = this.activeWorkspaceKey;
       if (!workspaceKey) {
         return this.metadata;
       }
@@ -382,17 +356,10 @@ export default {
         return visible;
       }, {});
     },
-    initialWorkspaceKey() {
-      const routeWorkspaceKey = this.getRouteWorkspaceKey();
-      return this.workspaceOptions.find((workspace) => workspace.key === routeWorkspaceKey)?.key
-        || this.workspaceOptions.find((workspace) => workspace.key === this.defaultWorkspaceKey)?.key
-        || this.workspaceOptions[0]?.key
-        || null;
-    },
     defaultWorkspaceKey() {
       return {
         normal: 'intelligence',
-        extension: 'capabilities',
+        extension: 'operations',
         system: 'operations'
       }[this.configType] || null;
     }
@@ -436,8 +403,6 @@ export default {
       // 配置类型切换
       configType: 'normal', // 'normal', 'system' 或 'extension'
       configSearchKeyword: '',
-      selectedWorkspaceKey: null,
-
       // 系统配置开关
       isSystemConfig: false,
 
@@ -514,7 +479,6 @@ export default {
         return true;
       }
 
-      this.selectWorkspace(this.getRouteWorkspaceKey());
       return false;
     },
     getRouteWorkspaceKey() {
@@ -523,33 +487,6 @@ export default {
       return typeof workspaceKey === 'string' && CONFIG_WORKSPACE_ORDER.includes(workspaceKey)
         ? workspaceKey
         : null;
-    },
-    selectWorkspace(preferredWorkspaceKey = null) {
-      const preferredWorkspace = this.workspaceOptions.find(
-        (workspace) => workspace.key === preferredWorkspaceKey
-      );
-      this.selectedWorkspaceKey = preferredWorkspace?.key || this.initialWorkspaceKey;
-    },
-    async onWorkspaceSelect(workspaceKey) {
-      if (!this.workspaceOptions.some((workspace) => workspace.key === workspaceKey)) {
-        return;
-      }
-
-      this.selectedWorkspaceKey = workspaceKey;
-      if (this.getRouteWorkspaceKey() === workspaceKey) {
-        return;
-      }
-
-      await this.$router.replace({
-        path: this.$route.path,
-        query: {
-          ...this.$route.query,
-          workspace: workspaceKey
-        },
-        hash: this.$route.hash || `#${this.configType}`
-      }).catch((error) => {
-        console.warn('Failed to update config workspace route:', error);
-      });
     },
     getConfigInfoList(abconf_id) {
       // 获取配置列表
@@ -594,12 +531,10 @@ export default {
       axios.get('/api/config/abconf', {
         params: params
       }).then((res) => {
-        const previousWorkspaceKey = this.selectedWorkspaceKey || this.getRouteWorkspaceKey();
         this.config_data = res.data.data.config;
         this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
         this.fetched = true
         this.metadata = this.projectConfigMetadata(res.data.data.metadata);
-        this.selectWorkspace(previousWorkspaceKey);
         this.configContentKey += 1;
         // 获取配置后更新
           this.$nextTick(() => {
@@ -659,7 +594,6 @@ export default {
       await this.refreshSavedConfig();
     },
     async refreshSavedConfig() {
-      const previousWorkspaceKey = this.selectedWorkspaceKey;
       const params = {};
       if (this.isSystemConfig) {
         params.system_config = '1';
@@ -671,7 +605,6 @@ export default {
       this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
       this.originalConfigData = JSON.parse(JSON.stringify(this.config_data));
       this.metadata = this.projectConfigMetadata(res.data.data.metadata);
-      this.selectWorkspace(previousWorkspaceKey);
       this.configContentKey += 1;
     },
 
@@ -952,7 +885,6 @@ export default {
       }
       this.configType = nextConfigType;
       this.isSystemConfig = this.configType === 'system';
-      this.selectedWorkspaceKey = null;
       this.fetched = false; // 重置加载状态
 
       if (this.isSystemConfig) {
@@ -1115,22 +1047,4 @@ export default {
   border-radius: 0 0 16px 16px;
 }
 
-.config-workspace-switcher {
-  width: 100%;
-  margin-bottom: 16px;
-  display: flex;
-  justify-content: flex-start;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.config-workspace-switcher .v-btn-toggle {
-  flex-shrink: 0;
-}
-
-.workspace-count {
-  margin-left: 8px;
-  opacity: 0.65;
-  font-size: 12px;
-}
 </style>

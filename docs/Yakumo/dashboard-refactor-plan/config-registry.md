@@ -68,7 +68,7 @@ interface ConfigFieldMeta {
 | `platform_group` | Channels | adapters/accounts/behavior | platform |
 | `provider_group` | Intelligence | providers/models | profile |
 | `plugin_group` | Capabilities | plugin runtime | system |
-| `ext_group` | Capabilities | extension services | system |
+| `ext_group` | Operations | built-in system extensions | system |
 | `interaction_middleware_group` | Operations | interaction runtime/diagnostics | system |
 | `memory_group` | Knowledge | memory policy/state | profile |
 | `system_group` | Operations | runtime/security/update | system |

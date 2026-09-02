@@ -2,6 +2,7 @@ import {
   EXTENSION_DETAILS_ROUTE_NAME,
   EXTENSION_ROUTE_NAME
 } from './routeConstants.mjs';
+import type { RouteLocationNormalized } from 'vue-router';
 
 const MainRoutes = {
   path: '/main',
@@ -82,8 +83,18 @@ const MainRoutes = {
     {
       name: 'WorkspaceLanding',
       path: '/workspace/:workspaceKey(persona|intelligence|channels|knowledge|capabilities|automation|operations)',
-      component: () => import('@/views/workspace/WorkspaceLandingPage.vue'),
-      props: true
+      redirect: (to: RouteLocationNormalized) => {
+        const workspaceRedirects: Record<string, string> = {
+          persona: '/persona',
+          intelligence: '/providers',
+          channels: '/platforms',
+          knowledge: '/knowledge-base',
+          capabilities: '/extension#installed',
+          automation: '/cron',
+          operations: '/dashboard/default'
+        };
+        return workspaceRedirects[String(to.params.workspaceKey || '')] || '/welcome';
+      }
     },
     {
       name: 'SubAgent',

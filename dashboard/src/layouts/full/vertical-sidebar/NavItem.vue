@@ -2,12 +2,13 @@
 import { useI18n } from '@/i18n/composables';
 import { useCustomizerStore } from '@/stores/customizer';
 import { computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 const props = defineProps({ item: Object, level: Number });
 const { t } = useI18n();
 const customizer = useCustomizerStore();
 const route = useRoute();
+const router = useRouter();
 
 const itemStyle = computed(() => {
   const lvl = props.level ?? 0;
@@ -15,29 +16,31 @@ const itemStyle = computed(() => {
   return { '--indent-padding': indent };
 });
 
-const isItemActive = computed(() => {
-  if (!props.item || props.item.type === 'external' || !props.item.to) return false;
-  if (typeof props.item.to !== 'string') return false;
-  if (props.item.to.includes('#')) {
-    const [path, hash] = props.item.to.split('#');
-    return route.path === path && route.hash === '#' + hash;
+function isNavigationTargetActive(target) {
+  if (typeof target !== 'string') return false;
+
+  const resolved = router.resolve(target);
+  if (route.path !== resolved.path || route.hash !== resolved.hash) {
+    return false;
   }
-  return route.path === props.item.to;
-});
+
+  return Object.entries(resolved.query).every(([key, value]) => (
+    JSON.stringify(route.query[key]) === JSON.stringify(value)
+  ));
+}
+
+const isItemActive = computed(() => (
+  props.item && props.item.type !== 'external'
+    ? isNavigationTargetActive(props.item.to)
+    : false
+));
 
 const isGroupActive = computed(() => {
   if (isItemActive.value) return true;
   if (!props.item?.children?.length) return false;
-  return props.item.children.some((child) => {
-    if (!child || child.type === 'external' || !child.to || typeof child.to !== 'string') {
-      return false;
-    }
-    if (child.to.includes('#')) {
-      const [path, hash] = child.to.split('#');
-      return route.path === path && route.hash === '#' + hash;
-    }
-    return route.path === child.to;
-  });
+  return props.item.children.some((child) => (
+    child && child.type !== 'external' && isNavigationTargetActive(child.to)
+  ));
 });
 
 const itemTitle = computed(() => {
