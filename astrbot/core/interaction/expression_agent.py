@@ -264,7 +264,8 @@ def build_persona_runtime_system_prompt(
         required_effect_guidance = (
             f"本轮已启用必发 Persona Effect：{names}。effect_calls 必须满足：{count_guidance}。"
             "即使只是问候、闲聊或中性表达，也不得返回空数组或省略该 effect；"
-            "请始终按对应 schema 提供合法 arguments；动作类 effect 若没有明显动作，再使用其定义的中性值。\n"
+            "请始终按对应 schema 提供合法、完整的 arguments；语义标签或注释字段不能代替 "
+            "schema 要求的执行形态或其他必填字段，也不要自行编造默认值。\n"
         )
     return (
         "你负责以当前人格对用户表达。\n"
@@ -404,7 +405,9 @@ def build_persona_expression_tool_parameters(
                     "Required Persona Effects for this segment: "
                     + ", ".join(required_names)
                     + ". Never return an empty array; always provide schema-valid "
-                    "arguments (use neutral values only when the effect defines them)."
+                    "and complete arguments. Semantic labels or annotations do not "
+                    "replace an execution shape or other required fields defined by "
+                    "the effect schema; do not invent default values."
                 )
 
     return {

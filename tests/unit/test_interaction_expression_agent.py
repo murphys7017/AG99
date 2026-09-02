@@ -467,6 +467,35 @@ def test_persona_expression_tool_requires_exactly_one_required_effect_per_segmen
     assert schema["properties"]["effect_calls"]["maxItems"] == 1
 
 
+def test_required_effect_guidance_requires_schema_execution_shape_without_defaults():
+    effect = PersonaEffectSpec(
+        plugin_id="plugin_a",
+        name="ag99live.motion",
+        description="Live2D motion",
+        parameters={
+            "type": "object",
+            "properties": {
+                "intent_tags": {"type": "array"},
+                "axis_levels": {"type": "object"},
+            },
+            "required": ["intent_tags"],
+            "oneOf": [{"required": ["axis_levels"]}],
+        },
+        metadata={"required_per_segment": True},
+    )
+
+    prompt = build_persona_runtime_system_prompt([effect])
+    schema = build_persona_expression_tool_parameters([effect])
+    effect_calls_description = schema["properties"]["effect_calls"]["description"]
+
+    assert "语义标签或注释字段不能代替 schema 要求的执行形态" in prompt
+    assert "自行编造默认值" in prompt
+    assert "Semantic labels or annotations do not replace an execution shape" in (
+        effect_calls_description
+    )
+    assert "neutral values" not in effect_calls_description
+
+
 def test_persona_runtime_slots_are_native_system_base_not_extensions():
     pack = ContextPack()
     result = PromptRenderEngine().render(
