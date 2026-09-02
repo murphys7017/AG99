@@ -20,9 +20,24 @@ const isItemActive = computed(() => {
   if (typeof props.item.to !== 'string') return false;
   if (props.item.to.includes('#')) {
     const [path, hash] = props.item.to.split('#');
-    return route.path === path && route.hash === `#${hash}`;
+    return route.path === path && route.hash === '#' + hash;
   }
   return route.path === props.item.to;
+});
+
+const isGroupActive = computed(() => {
+  if (isItemActive.value) return true;
+  if (!props.item?.children?.length) return false;
+  return props.item.children.some((child) => {
+    if (!child || child.type === 'external' || !child.to || typeof child.to !== 'string') {
+      return false;
+    }
+    if (child.to.includes('#')) {
+      const [path, hash] = child.to.split('#');
+      return route.path === path && route.hash === '#' + hash;
+    }
+    return route.path === child.to;
+  });
 });
 
 const itemTitle = computed(() => {
@@ -35,6 +50,7 @@ const itemTitle = computed(() => {
   <v-list-group v-if="item.children" :value="item.title" :class="{ 'group-bordered': customizer.mini_sidebar }">
     <template v-slot:activator="{ props }">
       <v-list-item v-bind="props" rounded class="mb-1" color="secondary" :prepend-icon="item.icon"
+        :active="isGroupActive"
         :style="{ '--indent-padding': '0px' }">
         <v-list-item-title style="font-size: 14px; font-weight: 500; line-height: 1.2; word-break: break-word;">
           {{ itemTitle }}

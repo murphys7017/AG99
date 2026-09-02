@@ -80,6 +80,12 @@ const MainRoutes = {
       component: () => import('@/views/PersonaPage.vue')
     },
     {
+      name: 'WorkspaceLanding',
+      path: '/workspace/:workspaceKey(persona|intelligence|channels|knowledge|capabilities|automation|operations)',
+      component: () => import('@/views/workspace/WorkspaceLandingPage.vue'),
+      props: true
+    },
+    {
       name: 'SubAgent',
       path: '/subagent',
       component: () => import('@/views/SubAgentPage.vue')

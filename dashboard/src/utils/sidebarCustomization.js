@@ -1,6 +1,29 @@
 // Utility for managing sidebar customization in localStorage
 const STORAGE_KEY = 'astrbot_sidebar_customization';
 
+const LEGACY_SIDEBAR_ITEM_MIGRATIONS = {
+  'core.navigation.platforms': 'core.navigation.workspaces.channels',
+  'core.navigation.providers': 'core.navigation.workspaces.intelligence',
+  'core.navigation.config': 'core.navigation.workspaces.intelligence',
+  'core.navigation.extension': 'core.navigation.workspaces.capabilities',
+  'core.navigation.knowledgeBase': 'core.navigation.workspaces.knowledge',
+  'core.navigation.persona': 'core.navigation.workspaces.persona',
+  'core.navigation.conversation': 'core.navigation.workspaces.operations',
+  'core.navigation.sessionManagement': 'core.navigation.workspaces.automation',
+  'core.navigation.cron': 'core.navigation.workspaces.automation',
+  'core.navigation.subagent': 'core.navigation.workspaces.automation',
+  'core.navigation.dashboard': 'core.navigation.workspaces.operations',
+  'core.navigation.console': 'core.navigation.workspaces.operations',
+  'core.navigation.trace': 'core.navigation.workspaces.operations',
+};
+
+function migrateLegacySidebarItemKeys(keys) {
+  if (!Array.isArray(keys)) {
+    return [];
+  }
+  return keys.map((key) => LEGACY_SIDEBAR_ITEM_MIGRATIONS[key] || key);
+}
+
 /**
  * Get the customized sidebar configuration from localStorage
  * @returns {Object|null} The customization config or null if not set
@@ -85,8 +108,12 @@ export function resolveSidebarItems(defaultItems, customization, options = {}) {
   });
 
   const hasCustomization = Boolean(customization);
-  let mainKeys = hasCustomization ? normalizeKeys(customization.mainItems || []) : [...defaultMain];
-  let moreKeys = hasCustomization ? normalizeKeys(customization.moreItems || []) : [...defaultMore];
+  let mainKeys = hasCustomization
+    ? normalizeKeys(migrateLegacySidebarItemKeys(customization.mainItems))
+    : [...defaultMain];
+  let moreKeys = hasCustomization
+    ? normalizeKeys(migrateLegacySidebarItemKeys(customization.moreItems))
+    : [...defaultMore];
 
   if (hasCustomization) {
     mainKeys = mainKeys.filter(title => all.has(title));

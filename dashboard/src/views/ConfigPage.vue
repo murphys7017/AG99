@@ -41,11 +41,34 @@
       </v-slide-y-transition>
       <!-- <v-progress-linear v-if="!fetched" indeterminate color="primary"></v-progress-linear> -->
 
+      <v-slide-y-transition>
+        <div v-if="workspaceOptions.length > 1 && fetched" class="config-workspace-switcher">
+          <v-btn-toggle
+            :model-value="selectedWorkspaceKey"
+            @update:model-value="onWorkspaceSelect"
+            mandatory
+            divided
+            density="compact"
+            variant="outlined"
+          >
+            <v-btn
+              v-for="workspace in workspaceOptions"
+              :key="workspace.key"
+              :value="workspace.key"
+              size="small"
+            >
+              {{ workspace.label }}
+              <span class="workspace-count">{{ workspace.count }}</span>
+            </v-btn>
+          </v-btn-toggle>
+        </div>
+      </v-slide-y-transition>
+
       <v-slide-y-transition mode="out-in">
-        <div v-if="(selectedConfigID || isSystemConfig) && fetched" :key="configContentKey" class="config-content" style="width: 100%;">
+        <div v-if="(selectedConfigID || isSystemConfig) && fetched" :key="`${configContentKey}-${selectedWorkspaceKey || 'all'}`" class="config-content" style="width: 100%;">
           <!-- 可视化编辑 -->
           <AstrBotCoreConfigWrapper
-            :metadata="metadata"
+            :metadata="visibleWorkspaceMetadata"
             :config_data="config_data"
             :search-keyword="configSearchKeyword"
           />
@@ -213,6 +236,7 @@ import WaitingForRestart from '@/components/shared/WaitingForRestart.vue';
 import StandaloneChat from '@/components/chat/StandaloneChat.vue';
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import { useI18n, useModuleI18n } from '@/i18n/composables';
+import { CONFIG_WORKSPACE_ORDER, normalizeConfigMetadata } from '@/composables/useConfigRegistry';
 import { restartAstrBot as restartAstrBotRuntime } from '@/utils/restartAstrBot';
 import {
   askForConfirmation as askForConfirmationDialog,
@@ -324,6 +348,53 @@ export default {
         return false;
       }
       return this.getConfigSnapshot(this.config_data) !== this.lastSavedConfigSnapshot;
+    },
+    workspaceOptions() {
+      const groups = Object.entries(this.metadata || {});
+      const counts = new Map();
+      const labels = new Map();
+
+      for (const [groupKey, groupValue] of groups) {
+        const workspaceKey = groupValue?.workspace || 'operations';
+        counts.set(workspaceKey, (counts.get(workspaceKey) || 0) + 1);
+        if (!labels.has(workspaceKey)) {
+          labels.set(workspaceKey, this.t(`core.navigation.workspaces.${workspaceKey}`));
+        }
+      }
+
+      return CONFIG_WORKSPACE_ORDER
+        .filter((workspaceKey) => counts.has(workspaceKey))
+        .map((workspaceKey) => ({
+          key: workspaceKey,
+          label: labels.get(workspaceKey) || workspaceKey,
+          count: counts.get(workspaceKey) || 0
+        }));
+    },
+    visibleWorkspaceMetadata() {
+      const workspaceKey = this.selectedWorkspaceKey;
+      if (!workspaceKey) {
+        return this.metadata;
+      }
+      return Object.entries(this.metadata || {}).reduce((visible, [groupKey, groupValue]) => {
+        if (groupValue?.workspace === workspaceKey) {
+          visible[groupKey] = groupValue;
+        }
+        return visible;
+      }, {});
+    },
+    initialWorkspaceKey() {
+      const routeWorkspaceKey = this.getRouteWorkspaceKey();
+      return this.workspaceOptions.find((workspace) => workspace.key === routeWorkspaceKey)?.key
+        || this.workspaceOptions.find((workspace) => workspace.key === this.defaultWorkspaceKey)?.key
+        || this.workspaceOptions[0]?.key
+        || null;
+    },
+    defaultWorkspaceKey() {
+      return {
+        normal: 'intelligence',
+        extension: 'capabilities',
+        system: 'operations'
+      }[this.configType] || null;
     }
   },
   watch: {
@@ -331,7 +402,7 @@ export default {
       this.config_data_has_changed = true;
     },
     async '$route.fullPath'(newVal) {
-      await this.syncConfigTypeFromHash(newVal);
+      await this.syncConfigStateFromRoute(newVal);
     },
     initialConfigId(newVal) {
       if (!newVal) {
@@ -365,6 +436,7 @@ export default {
       // 配置类型切换
       configType: 'normal', // 'normal', 'system' 或 'extension'
       configSearchKeyword: '',
+      selectedWorkspaceKey: null,
 
       // 系统配置开关
       isSystemConfig: false,
@@ -435,14 +507,49 @@ export default {
       const cleanHash = rawHash.slice(lastHashIndex + 1);
       return ['system', 'normal', 'extension'].includes(cleanHash) ? cleanHash : null;
     },
-    async syncConfigTypeFromHash(hash) {
+    async syncConfigStateFromRoute(hash) {
       const configType = this.extractConfigTypeFromHash(hash);
-      if (!configType || configType === this.configType) {
-        return false;
+      if (configType && configType !== this.configType) {
+        await this.onConfigTypeToggle(configType);
+        return true;
       }
 
-      await this.onConfigTypeToggle(configType);
-      return true;
+      this.selectWorkspace(this.getRouteWorkspaceKey());
+      return false;
+    },
+    getRouteWorkspaceKey() {
+      const routeValue = this.$route?.query?.workspace;
+      const workspaceKey = Array.isArray(routeValue) ? routeValue[0] : routeValue;
+      return typeof workspaceKey === 'string' && CONFIG_WORKSPACE_ORDER.includes(workspaceKey)
+        ? workspaceKey
+        : null;
+    },
+    selectWorkspace(preferredWorkspaceKey = null) {
+      const preferredWorkspace = this.workspaceOptions.find(
+        (workspace) => workspace.key === preferredWorkspaceKey
+      );
+      this.selectedWorkspaceKey = preferredWorkspace?.key || this.initialWorkspaceKey;
+    },
+    async onWorkspaceSelect(workspaceKey) {
+      if (!this.workspaceOptions.some((workspace) => workspace.key === workspaceKey)) {
+        return;
+      }
+
+      this.selectedWorkspaceKey = workspaceKey;
+      if (this.getRouteWorkspaceKey() === workspaceKey) {
+        return;
+      }
+
+      await this.$router.replace({
+        path: this.$route.path,
+        query: {
+          ...this.$route.query,
+          workspace: workspaceKey
+        },
+        hash: this.$route.hash || `#${this.configType}`
+      }).catch((error) => {
+        console.warn('Failed to update config workspace route:', error);
+      });
     },
     getConfigInfoList(abconf_id) {
       // 获取配置列表
@@ -487,10 +594,12 @@ export default {
       axios.get('/api/config/abconf', {
         params: params
       }).then((res) => {
+        const previousWorkspaceKey = this.selectedWorkspaceKey || this.getRouteWorkspaceKey();
         this.config_data = res.data.data.config;
         this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
         this.fetched = true
-        this.metadata = this.getVisibleMetadata(res.data.data.metadata);
+        this.metadata = this.projectConfigMetadata(res.data.data.metadata);
+        this.selectWorkspace(previousWorkspaceKey);
         this.configContentKey += 1;
         // 获取配置后更新
           this.$nextTick(() => {
@@ -505,31 +614,8 @@ export default {
         this.save_message_success = "error";
       });
     },
-    getVisibleMetadata(metadata) {
-      const hiddenFromNormalConfig = new Set([
-        'ext_group',
-        'interaction_middleware_group',
-        'memory_group',
-      ]);
-      if (this.configType !== 'extension') {
-        return Object.entries(metadata || {}).reduce((visibleMetadata, [groupKey, group]) => {
-          if (!hiddenFromNormalConfig.has(groupKey)) {
-            visibleMetadata[groupKey] = group;
-          }
-          return visibleMetadata;
-        }, {});
-      }
-      const visibleGroupKeys = [
-        'ext_group',
-        'interaction_middleware_group',
-        'memory_group',
-      ];
-      return visibleGroupKeys.reduce((visibleMetadata, groupKey) => {
-        if (metadata?.[groupKey]) {
-          visibleMetadata[groupKey] = metadata[groupKey];
-        }
-        return visibleMetadata;
-      }, {});
+    projectConfigMetadata(metadata) {
+      return normalizeConfigMetadata(metadata, this.configType);
     },
     updateConfig() {
       if (!this.fetched) return;
@@ -573,6 +659,7 @@ export default {
       await this.refreshSavedConfig();
     },
     async refreshSavedConfig() {
+      const previousWorkspaceKey = this.selectedWorkspaceKey;
       const params = {};
       if (this.isSystemConfig) {
         params.system_config = '1';
@@ -583,7 +670,8 @@ export default {
       this.config_data = res.data.data.config;
       this.lastSavedConfigSnapshot = this.getConfigSnapshot(this.config_data);
       this.originalConfigData = JSON.parse(JSON.stringify(this.config_data));
-      this.metadata = this.getVisibleMetadata(res.data.data.metadata);
+      this.metadata = this.projectConfigMetadata(res.data.data.metadata);
+      this.selectWorkspace(previousWorkspaceKey);
       this.configContentKey += 1;
     },
 
@@ -864,6 +952,7 @@ export default {
       }
       this.configType = nextConfigType;
       this.isSystemConfig = this.configType === 'system';
+      this.selectedWorkspaceKey = null;
       this.fetched = false; // 重置加载状态
 
       if (this.isSystemConfig) {
@@ -1024,5 +1113,24 @@ export default {
   overflow: hidden;
   padding: 0;
   border-radius: 0 0 16px 16px;
+}
+
+.config-workspace-switcher {
+  width: 100%;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: flex-start;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.config-workspace-switcher .v-btn-toggle {
+  flex-shrink: 0;
+}
+
+.workspace-count {
+  margin-left: 8px;
+  opacity: 0.65;
+  font-size: 12px;
 }
 </style>

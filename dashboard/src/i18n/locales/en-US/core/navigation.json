@@ -5,6 +5,16 @@
   "providers": "Providers",
   "commands": "Commands",
   "persona": "Persona",
+  "workspaces": {
+    "overview": "Overview",
+    "persona": "Persona",
+    "intelligence": "Intelligence",
+    "channels": "Channels",
+    "knowledge": "Knowledge",
+    "capabilities": "Capabilities",
+    "automation": "Automation",
+    "operations": "Operations"
+  },
   "subagent": "SubAgents",
   "toolUse": "MCP Tools",
   "config": "Config",
@@ -33,7 +43,7 @@
   "github": "GitHub",
   "drag": "Drag",
   "groups": {
-    "more": "More Features"
+    "more": "More"
   },
   "changelogDialog": {
     "title": "Changelog",

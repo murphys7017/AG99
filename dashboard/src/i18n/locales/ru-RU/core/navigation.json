@@ -5,6 +5,16 @@
     "providers": "Провайдеры моделей",
     "commands": "Команды",
     "persona": "Персонажи",
+    "workspaces": {
+        "overview": "Обзор",
+        "persona": "Персонаж",
+        "intelligence": "Интеллект",
+        "channels": "Каналы",
+        "knowledge": "Знания",
+        "capabilities": "Возможности",
+        "automation": "Автоматизация",
+        "operations": "Управление"
+    },
     "subagent": "Субагенты",
     "toolUse": "Инструменты MCP",
     "extension": "Плагины",

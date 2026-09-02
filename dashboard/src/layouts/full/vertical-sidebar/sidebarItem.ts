@@ -27,42 +27,93 @@ const sidebarItem: menu[] = [
     to: '/welcome',
   },
   {
-    title: 'core.navigation.platforms',
-    icon: 'mdi-robot',
-    to: '/platforms',
-  },
-  {
-    title: 'core.navigation.providers',
-    icon: 'mdi-creation',
-    to: '/providers',
-  },
-  {
-    title: 'core.navigation.config',
-    icon: 'mdi-cog',
-    to: '/config#normal',
+    title: 'core.navigation.workspaces.persona',
+    icon: 'mdi-heart',
+    to: '/workspace/persona',
     children: [
+      {
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/persona'
+      },
+      {
+        title: 'core.navigation.persona',
+        icon: 'mdi-heart',
+        to: '/persona'
+      },
+    ]
+  },
+  {
+    title: 'core.navigation.workspaces.intelligence',
+    icon: 'mdi-brain',
+    to: '/workspace/intelligence',
+    children: [
+      {
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/intelligence'
+      },
+      {
+        title: 'core.navigation.providers',
+        icon: 'mdi-creation',
+        to: '/providers'
+      },
       {
         title: 'core.navigation.configTabs.normal',
         icon: 'mdi-cog',
         to: '/config#normal'
+      }
+    ]
+  },
+  {
+    title: 'core.navigation.workspaces.channels',
+    icon: 'mdi-robot',
+    to: '/workspace/channels',
+    children: [
+      {
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/channels'
       },
       {
-        title: 'core.navigation.configTabs.system',
-        icon: 'mdi-cog-outline',
-        to: '/config#system'
+        title: 'core.navigation.platforms',
+        icon: 'mdi-robot',
+        to: '/platforms'
+      }
+    ]
+  },
+  {
+    title: 'core.navigation.workspaces.knowledge',
+    icon: 'mdi-book-open-variant',
+    to: '/workspace/knowledge',
+    children: [
+      {
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/knowledge'
+      },
+      {
+        title: 'core.navigation.knowledgeBase',
+        icon: 'mdi-book-open-variant',
+        to: '/knowledge-base'
+      }
+    ]
+  },
+  {
+    title: 'core.navigation.workspaces.capabilities',
+    icon: 'mdi-puzzle',
+    to: '/workspace/capabilities',
+    children: [
+      {
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/capabilities'
       },
       {
         title: 'core.navigation.configTabs.extension',
         icon: 'mdi-tune-variant',
         to: '/config#extension'
-      }
-    ]
-  },
-  {
-    title: 'core.navigation.extension',
-    icon: 'mdi-puzzle',
-    to: '/extension#installed',
-    children: [
+      },
       {
         title: 'core.navigation.extensionTabs.installed',
         icon: 'mdi-puzzle',
@@ -91,28 +142,14 @@ const sidebarItem: menu[] = [
     ]
   },
   {
-    title: 'core.navigation.knowledgeBase',
-    icon: 'mdi-book-open-variant',
-    to: '/knowledge-base',
-  },
-  {
-    title: 'core.navigation.persona',
-    icon: 'mdi-heart',
-    to: '/persona'
-  },
-  {
-    title: 'core.navigation.groups.more',
-    icon: 'mdi-dots-horizontal',
+    title: 'core.navigation.workspaces.automation',
+    icon: 'mdi-clock-outline',
+    to: '/workspace/automation',
     children: [
       {
-        title: 'core.navigation.conversation',
-        icon: 'mdi-database',
-        to: '/conversation'
-      },
-      {
-        title: 'core.navigation.sessionManagement',
-        icon: 'mdi-pencil-ruler',
-        to: '/session-management'
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/automation'
       },
       {
         title: 'core.navigation.cron',
@@ -125,9 +162,36 @@ const sidebarItem: menu[] = [
         to: '/subagent'
       },
       {
+        title: 'core.navigation.sessionManagement',
+        icon: 'mdi-pencil-ruler',
+        to: '/session-management'
+      }
+    ]
+  },
+  {
+    title: 'core.navigation.workspaces.operations',
+    icon: 'mdi-view-dashboard',
+    to: '/workspace/operations',
+    children: [
+      {
+        title: 'core.navigation.workspaces.overview',
+        icon: 'mdi-view-dashboard',
+        to: '/workspace/operations'
+      },
+      {
+        title: 'core.navigation.configTabs.system',
+        icon: 'mdi-cog-outline',
+        to: '/config#system'
+      },
+      {
         title: 'core.navigation.dashboard',
         icon: 'mdi-view-dashboard',
         to: '/dashboard/default'
+      },
+      {
+        title: 'core.navigation.conversation',
+        icon: 'mdi-database',
+        to: '/conversation'
       },
       {
         title: 'core.navigation.console',
@@ -138,6 +202,22 @@ const sidebarItem: menu[] = [
         title: 'core.navigation.trace',
         icon: 'mdi-timeline-text-outline',
         to: '/trace'
+      },
+      {
+        title: 'core.navigation.settings',
+        icon: 'mdi-cog',
+        to: '/settings'
+      }
+    ]
+  },
+  {
+    title: 'core.navigation.groups.more',
+    icon: 'mdi-dots-horizontal',
+    children: [
+      {
+        title: 'core.navigation.about',
+        icon: 'mdi-information-outline',
+        to: '/about'
       },
     ]
   }
