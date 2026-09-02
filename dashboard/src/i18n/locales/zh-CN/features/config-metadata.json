@@ -1609,7 +1609,19 @@
             "description": "启用记忆分析"
           },
           "analyzers": {
-            "description": "分析器完整配置"
+            "description": "分析器完整配置",
+            "session_insight_v1": {
+              "timeout_seconds": {
+                "description": "会话洞察分析超时",
+                "hint": "后台生成会话洞察时等待模型响应的最长秒数。"
+              }
+            },
+            "experience_extract_v1": {
+              "timeout_seconds": {
+                "description": "经验提取分析超时",
+                "hint": "后台提取经验时等待模型响应的最长秒数；模型响应较慢时可适当提高。"
+              }
+            }
           },
           "stages": {
             "description": "分析阶段完整配置"

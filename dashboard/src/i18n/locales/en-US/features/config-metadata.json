@@ -1607,7 +1607,19 @@
             "description": "Enable Memory Analysis"
           },
           "analyzers": {
-            "description": "Full Analyzer Configuration"
+            "description": "Full Analyzer Configuration",
+            "session_insight_v1": {
+              "timeout_seconds": {
+                "description": "Session Insight Analyzer Timeout",
+                "hint": "Maximum seconds to wait for the model while generating session insights."
+              }
+            },
+            "experience_extract_v1": {
+              "timeout_seconds": {
+                "description": "Experience Extraction Analyzer Timeout",
+                "hint": "Maximum seconds to wait for the model while extracting experiences; increase this for slower models."
+              }
+            }
           },
           "stages": {
             "description": "Full Analysis Stage Configuration"

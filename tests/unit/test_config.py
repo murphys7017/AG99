@@ -982,6 +982,18 @@ class TestConfigMetadataI18n:
             ]
             == "select_provider_embedding"
         )
+        assert (
+            group["metadata"]["advanced"]["items"][
+                "memory.analysis.analyzers.session_insight_v1.timeout_seconds"
+            ]["type"]
+            == "int"
+        )
+        assert (
+            group["metadata"]["advanced"]["items"][
+                "memory.analysis.analyzers.experience_extract_v1.timeout_seconds"
+            ]["type"]
+            == "int"
+        )
 
     def test_memory_defaults_match_exposed_metadata(self):
         """All exposed memory config keys should exist in DEFAULT_CONFIG."""

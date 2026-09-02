@@ -4892,6 +4892,18 @@ CONFIG_METADATA_3 = {
                         "hint": "启动时等待向量索引和 Embedding 模型预热的最长秒数。",
                         "collapsed": True,
                     },
+                    "memory.analysis.analyzers.session_insight_v1.timeout_seconds": {
+                        "description": "会话洞察分析超时",
+                        "type": "int",
+                        "hint": "后台生成会话洞察时等待模型响应的最长秒数。",
+                        "collapsed": True,
+                    },
+                    "memory.analysis.analyzers.experience_extract_v1.timeout_seconds": {
+                        "description": "经验提取分析超时",
+                        "type": "int",
+                        "hint": "后台提取经验时等待模型响应的最长秒数；模型响应较慢时可适当提高。",
+                        "collapsed": True,
+                    },
                     "memory.analysis.analyzers": {
                         "description": "分析器完整配置",
                         "type": "dict",
