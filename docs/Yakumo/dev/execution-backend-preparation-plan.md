@@ -312,7 +312,7 @@ Phase 0 已确认的准备边界：
   `CoreTaskSpec` 兼容投影和 `OnLLMRequest` Hook；只有普通事件输入才从文本、图片和录音
   构建请求。现有 Dify/Coze/DashScope/DeerFlow runners 仍是兼容对象，不是新接口模板。
 
-## 当前进度
+## 当前进度（截至 2026-09-02）
 
 已经完成：
 
@@ -345,16 +345,17 @@ Phase 0 已确认的准备边界：
 - 规范化输入保存 `AssetRef` 元数据和已有图片转述，不复制图片二进制，也不隐式创建
   长期资产缓存。
 - Native Core 已通过 `NativeExecutionAdapter` 消费 `CoreExecutionSpec` 与其后的 Native
-  RenderResult；Token 统计和
-  Core 执行连续性独立持久化，不再依赖可见对话历史，也不绕过 Prompt Renderer 手动追加
-  ProviderRequest 上下文。
+  RenderResult；Token 统计和 Core 执行连续性独立持久化，不再依赖可见对话历史，也不绕过
+  Prompt Renderer 手动追加 ProviderRequest 上下文。这里的 Adapter 仍是 Native 适配边界，
+  不是可替换 Backend 的实现。
 
 当前仍存在、但不应继续扩展的准备阶段边界：
 
 - Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；在统一
   Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
-- Third-party Agent Stage 仍走官方兼容准备链，尚未消费 `CoreExecutionSpec`。它是需要
-  保留的现状，不是新 Backend 的实现模板。
+- Third-party Agent Stage 仍走官方兼容准备链，尚未以 `CoreExecutionSpec` 作为统一输入。
+  它可以复用部分 Core task、Hook 和 capability 授权边界，但仍是需要保留的兼容现状，
+  不是新 Backend 的实现模板。
 - 通用 `Context.send_message()` 保留公开调用方式；纯文本主动消息现在经 Personal Runtime
   排队和 Output Controller 投递。同一 active turn 的 Core 工具消息明确作为 progress，
   跨 session 输出建立独立 proactive turn。纯媒体主动消息尚未形成可持久化语义材料，当前
@@ -418,8 +419,26 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 
 依赖结构图见 `runtime-dependency-structure.mmd`。
 
-下一步继续收口 Execution Event、取消和 Output Port，再评估 Backend Adapter；不直接
-把现有 Third-party Agent SubStage 改名或包装成新执行器接口。
+下一步继续收口 Execution Event、取消、Ledger owner 和 Output Port，再评估 Backend
+Adapter；不直接把现有 Third-party Agent SubStage 改名或包装成新执行器接口。
+
+### 2026-09-02 方案与源码复核结论
+
+当前方案的方向与 `target-state.md`、`current-state.md` 和本流程图一致，但尚未满足
+正式实现可替换 `ExecutionBackend` 的退出条件：
+
+- `CoreExecutionSpec` 已是 Native 的进程内准备事实契约，但仍在 `build_main_agent` 内形成，
+  且 `CoreCapabilitySnapshot.tools` 保留 Native `ToolSet` 实时句柄。
+- Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；统一
+  Execution Event 尚未成为 Native 与 Third-party 的共同回流协议。
+- `event.send()` / `event.send_streaming()` 仍有 MethodType interception 和
+  `_interaction_original_send*` 兼容面，正式 Output Port 尚未完全接管。
+- typed Runtime Context 尚未成为唯一内部事实源，部分 `_interaction_*` extra 仍参与主链协作。
+- 发送回执与 Conversation 提交之间仍存在进程退出窗口，分段部分成功也缺少完整 delivery
+  receipt。
+
+因此当前允许继续做 Execution Preparation 收口和适配边界设计；暂不创建空置的
+`ExecutionBackend` 抽象，也不把现有 Native/Third-party Stage 直接包装成 Backend。
 
 ## 非目标
 

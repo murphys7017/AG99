@@ -105,7 +105,7 @@ flowchart LR
         CTX["Turn-local Context Material single-flight<br/>PromptContextBuilder 构建规范 ContextPack"]
         ROUTER["Router Task<br/>Router Projection → 当前只输出 persona / hybrid"]
         PERSONA["Persona Task<br/>Persona Projection → 结构化 persona_expression<br/>tool call 优先，能力不支持时受控 prompt-only 降级"]
-        ROUTE{"Router 结果<br/>异常时当前代码 fallback hybrid"}
+        ROUTE{"Router 结果<br/>私聊失败→persona；群聊候选失败→silent"}
         PERSONA_ONLY["等待 Persona<br/>完成 visible turn + Finalized Material<br/>停止事件"]
         PLANNER["Core Planner<br/>Core Planner Projection + 结构化输出"]
         PLAN{"execute / not_required"}
