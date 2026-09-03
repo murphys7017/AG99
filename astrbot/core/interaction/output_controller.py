@@ -38,7 +38,11 @@ from .contributors import (
     merge_result_contributions,
 )
 from .core_bridge import get_interaction_route_decision
-from .expression_agent import PersonaExpressionRequest, PersonaExpressionResult
+from .expression_agent import (
+    PersonaExpressionIntent,
+    PersonaExpressionRequest,
+    PersonaExpressionResult,
+)
 from .output_modes import (
     CORE_OUTPUT_DELIVERY_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
@@ -502,6 +506,10 @@ class InteractionOutputController:
                     PersonaExpressionRequest(
                         source_text=plain,
                         preserve_facts=True,
+                        intent=PersonaExpressionIntent(
+                            source="plugin_output",
+                            phase="plugin",
+                        ),
                     ),
                 )
                 if result.effect_calls:
@@ -1174,6 +1182,11 @@ class InteractionOutputController:
                     pending_text=get_interaction_turn_stream_pending_text(event),
                     short_reply=True,
                     allow_empty=True,
+                    intent=PersonaExpressionIntent(
+                        kind="interjection",
+                        source="stream_observation",
+                        phase="interjection",
+                    ),
                 ),
             )
         except Exception as exc:  # noqa: BLE001
@@ -1386,7 +1399,10 @@ class InteractionOutputController:
                 source_text=core_result_text,
                 immediate_reply=get_interaction_turn_immediate_reply(event) or "",
                 preserve_facts=True,
-                allow_plugin_tools=False,
+                intent=PersonaExpressionIntent(
+                    source="core_result",
+                    phase="final",
+                ),
             ),
         )
         await self.deliver_prepared_core_reply(message, result, event)

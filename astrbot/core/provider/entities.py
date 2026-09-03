@@ -133,6 +133,8 @@ class ProviderRequest:
     """Optional structured output contract produced by the prompt pipeline."""
     compiled_output_contract: CompiledOutputContract | None = None
     """Compiled provider-facing structured output binding."""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    """Branch-local metadata for runtime and lifecycle consumers, never sent to providers."""
 
     def __repr__(self) -> str:
         return (

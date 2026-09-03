@@ -11,6 +11,7 @@ from astrbot.core.interaction.effects import PersonaEffectCall, PersonaEffectSpe
 from astrbot.core.interaction.expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
+    PersonaExpressionIntent,
     PersonaExpressionRequest,
     PersonaExpressionResult,
     build_persona_expression_output_contract_for_effects,
@@ -1318,9 +1319,25 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
     )
     observed_hooks = []
 
+    expected_intent = {
+        "kind": "reply",
+        "source": "core_result",
+        "phase": "final",
+    }
+
     async def call_hook(event, hook_type, *args, **kwargs):
-        del event
         assert kwargs["execution_surface"] == "personal_expression"
+        if hook_type.name != "OnPersonaExpressionResultEvent":
+            request = event.get_extra("provider_request")
+            assert (
+                request.metadata["interaction.persona_expression_intent"]
+                == expected_intent
+            )
+            if hook_type.name == "OnLLMRequestEvent":
+                assert (
+                    args[0].metadata["interaction.persona_expression_intent"]
+                    == expected_intent
+                )
         observed_hooks.append(hook_type.name)
         return False
 
@@ -1334,7 +1351,12 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
         event,
         PluginContext(),
         InteractionAgentConfig(expression_provider_id="persona"),
-        PersonaExpressionRequest(allow_plugin_tools=True),
+        PersonaExpressionRequest(
+            intent=PersonaExpressionIntent(
+                source="core_result",
+                phase="final",
+            )
+        ),
     )
 
     assert observed_hooks == [
@@ -1445,7 +1467,7 @@ async def test_persona_request_hook_cannot_inject_core_tools_into_persona(monkey
             get_config=lambda **_kwargs: {},
         ),
         InteractionAgentConfig(expression_provider_id="persona"),
-        PersonaExpressionRequest(allow_plugin_tools=True),
+        PersonaExpressionRequest(),
     )
 
     assert provider.calls[0]["func_tool"] is None
@@ -1540,10 +1562,11 @@ async def test_persona_tools_available_but_unused_need_one_model_call(
             get_provider_by_id=lambda _provider_id: Provider(),
         ),
         InteractionAgentConfig(expression_provider_id="persona"),
-        PersonaExpressionRequest(allow_plugin_tools=True),
+        PersonaExpressionRequest(),
     )
 
     assert len(provider.calls) == 1
+    agent._resolve_personal_expression_capabilities.assert_awaited_once()
     assert result.spoken_reply == "直接人格回复"
 
 
@@ -1664,7 +1687,7 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
                 get_config=lambda **_kwargs: {},
             ),
             InteractionAgentConfig(expression_provider_id="primary"),
-            PersonaExpressionRequest(allow_plugin_tools=True),
+            PersonaExpressionRequest(),
         )
 
     assert execution_count == 1
@@ -1788,7 +1811,7 @@ async def test_persona_request_hook_context_mutation_survives_business_tool_loop
             get_config=lambda **_kwargs: {},
         ),
         InteractionAgentConfig(expression_provider_id="persona"),
-        PersonaExpressionRequest(allow_plugin_tools=True),
+        PersonaExpressionRequest(),
     )
 
     assert len(provider.calls) == 2

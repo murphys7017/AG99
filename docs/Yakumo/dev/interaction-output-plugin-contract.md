@@ -45,7 +45,7 @@ input
 - `turn_id`: 当前 interaction turn。
 - `message_id`: 逻辑输出段 ID；在 contributor、TTS 和物理发送之前分配。
 - `source`: `interaction | core | plugin | system`。
-- `route_mode`: 当前为 `persona | hybrid`；`silent` 类型保留但未向 Router Prompt 开放，协议 Core bypass 不伪造 route。
+- `route_mode`: 普通显式唤醒为 `persona | hybrid`；有界群聊模型续接候选也允许 `silent`，协议 Core bypass 不伪造 route。
 - `phase`: `immediate | final | background`。
 - `text`: 当前阶段的候选用户可见文本。
 - `semantic_text`: 当前阶段的候选语义文本，供 TTS、memory、analytics 或插件表现增强使用。

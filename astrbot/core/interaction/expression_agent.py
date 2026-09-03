@@ -7,7 +7,8 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Literal
 
 try:
     from json_repair import repair_json
@@ -89,6 +90,40 @@ from .turn_state import (
 )
 from .types import InteractionAgentConfig
 
+PersonaExpressionKind = Literal["reply", "proactive", "interjection"]
+PersonaExpressionSource = Literal[
+    "user_message",
+    "core_result",
+    "plugin_output",
+    "runtime_observation",
+    "stream_observation",
+    "direct",
+]
+PersonaExpressionPhase = Literal[
+    "immediate",
+    "final",
+    "proactive",
+    "interjection",
+    "plugin",
+    "standalone",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaExpressionIntent:
+    """Describe one invocation of the shared Persona expression surface."""
+
+    kind: PersonaExpressionKind = "reply"
+    source: PersonaExpressionSource = "direct"
+    phase: PersonaExpressionPhase = "standalone"
+
+    def as_metadata(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "source": self.source,
+            "phase": self.phase,
+        }
+
 
 @dataclass(slots=True)
 class PersonaExpressionRequest:
@@ -101,7 +136,7 @@ class PersonaExpressionRequest:
     preserve_facts: bool = False
     short_reply: bool = False
     allow_empty: bool = False
-    allow_plugin_tools: bool = False
+    intent: PersonaExpressionIntent = field(default_factory=PersonaExpressionIntent)
     avoid_previous_reply: bool = False
     compact_context: bool = False
 
@@ -121,6 +156,9 @@ _FAST_PERSONA_SLOT_NAMES = frozenset(
         "extension.system",
     }
 )
+
+_PERSONA_FUNCTION_TOOL_INTENTS = frozenset({"reply"})
+_PERSONA_EXPRESSION_INTENT_METADATA_KEY = "interaction.persona_expression_intent"
 
 
 @dataclass(slots=True)
@@ -798,6 +836,10 @@ class InteractionExpressionAgent:
 
         provider_request = build_prompt_render_provider_request(event, provider)
         provider_request.session_id = event.session_id
+        provider_request.metadata = dict(provider_request.metadata or {})
+        provider_request.metadata[_PERSONA_EXPRESSION_INTENT_METADATA_KEY] = (
+            MappingProxyType(req.intent.as_metadata())
+        )
         prompt_apply_result = apply_render_result_to_request(
             render_result,
             provider_request,
@@ -819,7 +861,9 @@ class InteractionExpressionAgent:
         capabilities = CapabilitySnapshot.empty(
             target=TOOL_TARGET_PERSONAL_EXPRESSION,
         )
-        if req.allow_plugin_tools and self._provider_supports_tool_calls(provider):
+        if _persona_expression_allows_function_tools(
+            req
+        ) and self._provider_supports_tool_calls(provider):
             capabilities = await self._resolve_personal_expression_capabilities(
                 event,
                 plugin_context,
@@ -843,7 +887,9 @@ class InteractionExpressionAgent:
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
 
-        if req.allow_plugin_tools and isinstance(provider_request.func_tool, ToolSet):
+        if _persona_expression_allows_function_tools(
+            req
+        ) and isinstance(provider_request.func_tool, ToolSet):
             if (
                 _toolset_capability_signature(provider_request.func_tool)
                 != initial_tool_signature
@@ -1195,6 +1241,10 @@ class InteractionExpressionAgent:
         plugin_context: Context,
         interaction_config: InteractionAgentConfig,
     ) -> CapabilitySnapshot:
+        if not callable(getattr(plugin_context, "get_llm_tool_manager", None)):
+            return CapabilitySnapshot.empty(
+                target=TOOL_TARGET_PERSONAL_EXPRESSION,
+            )
         build_config = build_interaction_prompt_build_config(plugin_context, event)
         return await CapabilityResolver().resolve(
             event=event,
@@ -1388,11 +1438,23 @@ class InteractionExpressionAgent:
 
 
 def _describe_expression_request(req: PersonaExpressionRequest) -> str:
+    if req.intent.kind == "proactive":
+        return "proactive"
+    if req.intent.kind == "interjection":
+        return "interjection"
     if req.observed_text.strip():
         return "stream_reply"
     if req.source_text.strip():
         return "material_reply"
     return "direct_reply"
+
+
+def _persona_expression_allows_function_tools(
+    req: PersonaExpressionRequest,
+) -> bool:
+    """Keep FunctionTool admission tied to expression intent, not call sites."""
+
+    return req.intent.kind in _PERSONA_FUNCTION_TOOL_INTENTS
 
 
 def _log_persona_prompt_size_diagnostics(

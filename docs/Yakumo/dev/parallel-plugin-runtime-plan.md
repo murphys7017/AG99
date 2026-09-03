@@ -614,7 +614,9 @@ admission，生成新的 PersonalTurnContext、InteractionTurnState 和 final-ou
 
 1. 将插件事实和必要的原始输入关联构造成 visible_reply_material。
 2. 调用 Personal Expression。
-3. allow_plugin_tools 固定为 false。
+3. 按统一 `personal_expression` capability policy 解析插件 FunctionTool；不再由 delayed
+   调用方通过私有布尔值裁剪能力。若该 profile 不应启动模型工具循环，应改走 direct/media
+   输出模式，而不是伪造第二 Persona target。
 4. 不运行 Router、Planner、普通 Core、Plugin Handler 或 subagent。
 5. Personal target 上已有的 Prompt Extension 和 LLM 生命周期 Hook 仍可按现有规则生效。
 6. 发送后写入 assistant-only 历史。

@@ -326,7 +326,7 @@ async def test_capability_resolver_applies_exact_override_and_rejects_persona_su
 
 
 @pytest.mark.asyncio
-async def test_core_result_returns_through_persona_without_reopening_plugin_tools():
+async def test_core_result_returns_through_unified_persona_expression():
     class Event:
         def __init__(self):
             self._extras = {}
@@ -355,7 +355,9 @@ async def test_core_result_returns_through_persona_without_reopening_plugin_tool
 
     await middleware._handle_core_reply_via_persona(source_message, event)
 
-    assert rendered_requests[0].allow_plugin_tools is False
+    assert rendered_requests[0].intent.kind == "reply"
+    assert rendered_requests[0].intent.source == "core_result"
+    assert rendered_requests[0].intent.phase == "final"
     assert rendered_requests[0].immediate_reply == "我先看看。"
     middleware.output_controller.deliver_prepared_core_reply.assert_awaited_once_with(
         source_message,
@@ -430,7 +432,9 @@ async def test_persona_route_allows_explicitly_targeted_function_tools():
     result = await middleware._generate_and_emit_persona(event, object())
 
     assert result is None
-    assert requests[0].allow_plugin_tools is True
+    assert requests[0].intent.kind == "reply"
+    assert requests[0].intent.source == "user_message"
+    assert requests[0].intent.phase == "immediate"
     assert requests[0].delegated_task_summary == ""
 
 

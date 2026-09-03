@@ -180,7 +180,12 @@ Policy       -> PersonalActionIntent
 PersonaExpressionRequest -> PersonaExpressionResult
 ```
 
-表达平面不得再次判断是否应该参与、是否应该调用工具、是否应该静默。普通 turn 中 Personal Expression 与 Router 可以并行启动；只有 Core-final 和主动 Observation 按各自上游结果进入表达平面。若上游没有表达许可，表达组件不应被调用；若上游已经获得表达许可但材料为空，应返回明确的结构化空结果，而不是生成“无动作回复”。
+表达平面不得再次判断是否应该参与、是否应该静默，也不得由不同调用方通过私有布尔值临时
+改变同一 `personal_expression` 的插件 FunctionTool 授权。普通 turn 中 Personal Expression
+与 Router 可以并行启动；只有 Core-final 和主动 Observation 按各自上游结果进入表达平面。
+即时表达与 Core-final 是同一表达面在不同材料和发送时机下的调用，不建立 `fast_persona`
+或其他第二执行面。若上游没有表达许可，表达组件不应被调用；若上游已经获得表达许可但材料
+为空，应返回明确的结构化空结果，而不是生成“无动作回复”。
 
 ## 4. 领域模型建议
 
@@ -282,6 +287,15 @@ PersonaExpressionRequest(
 - 新代码只读取分组字段。
 - 适配层必须记录 `request_schema_version`，便于定位仍未迁移的调用方。
 - `allow_empty` 只表示协议是否允许空结果，不得用来掩盖上游没有表达许可或没有材料。
+- `ExpressionIntent(kind, source, phase)`（当前源码类型名为 `PersonaExpressionIntent`）记录表达
+  类别、材料来源和 `immediate`、`final`、`proactive`、`interjection` 或插件输出等调用时机；它
+  通过本次 `ProviderRequest.metadata` 暴露给 Persona 插件 LLM 生命周期 Hook，但不改变执行
+  target；所有完整 Persona 表达都属于 `personal_expression`。
+- 插件 FunctionTool 的可见性由统一 Capability Resolver 按声明、用户覆盖和 Persona 白名单
+  解析。调用方不得通过 `allow_plugin_tools` 一类私有字段，让即时表达与 Core-final 得到不同的
+  `personal_expression` 授权结果。主动 Policy 表达与 stream interjection 的不调用工具约束
+  必须由显式 `ExpressionIntent` 统一处理；协议、direct、纯媒体或进度输出则应以显式非
+  Persona-expression 输出模式在上游绕过该入口。
 
 ### 4.5 无动作结果
 
@@ -522,6 +536,9 @@ Plugin Handler
 - 引入分组版 `PersonaExpressionRequest`。
 - 为 `expression_agent.py`、`persona_runtime.py`、`personal_expression_guard.py` 增加新旧字段适配。
 - 将 `first_response`、插件 persona 输出、Core final、stream interjection、Policy express 统一映射到 `ExpressionIntent`。
+- 删除调用方对 `allow_plugin_tools` 的分支控制：即时表达与 Core-final 复用同一
+  `personal_expression` 声明式授权规则与 Capability Resolver；紧凑上下文只影响 Prompt
+  预算，不创建新的能力面。
 - 统一空材料处理：返回结构化 `no_material` 或 `intentional_empty`，不生成占位台词；保留 stream interjection 的合法空结果语义。
 - 将重复检查、effect/TTS 触发、Conversation 写入绑定到 `DeliveryReceipt`。
 

@@ -11,6 +11,7 @@ from astrbot.core.star.context import Context
 from .expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
+    PersonaExpressionIntent,
     PersonaExpressionRequest,
 )
 from .types import InteractionAgentConfig
@@ -59,6 +60,10 @@ class InteractionPersonaRuntime:
             request=PersonaExpressionRequest(
                 source_text=plain,
                 preserve_facts=True,
+                intent=PersonaExpressionIntent(
+                    source="plugin_output",
+                    phase="plugin",
+                ),
             ),
         )
         if result.effect_calls:
@@ -88,6 +93,10 @@ class InteractionPersonaRuntime:
                 source_text=source_text,
                 immediate_reply=immediate_reply or "",
                 preserve_facts=True,
+                intent=PersonaExpressionIntent(
+                    source="core_result",
+                    phase="final",
+                ),
             ),
         )
         return result.spoken_reply
@@ -112,6 +121,11 @@ class InteractionPersonaRuntime:
                 pending_text=pending_text,
                 short_reply=True,
                 allow_empty=True,
+                intent=PersonaExpressionIntent(
+                    kind="interjection",
+                    source="stream_observation",
+                    phase="interjection",
+                ),
             ),
         )
         return result.spoken_reply.strip()

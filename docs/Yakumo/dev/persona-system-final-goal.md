@@ -44,12 +44,32 @@ Personal Runtime 是控制层，负责：
 
 ### Persona Expression
 
-Persona Expression 是唯一拟人层。即时回复、Core 结果、插件 persona 输出和流式插话都以
-“待表达材料”调用同一个入口，不再维护多个文案生成器。
+Persona Expression 是唯一拟人层，也是唯一的 `personal_expression` 执行面。即时回复、
+Core 结果、插件 persona 输出和流式插话都以“待表达材料”调用同一个入口，不再维护多个
+文案生成器或新的 Persona target。
 
-Persona Expression 负责“怎么以这个人格表达”，不负责执行工具、投递平台消息或解释
-插件领域 effect。静态 Persona、动态人格状态、对话历史和 Memory 由 Prompt 系统收集后，
-按 Persona target 渲染。
+即时回复和 Core-final 只是同一表达面在不同材料与不同发送时机下的调用：前者可以使用紧凑
+上下文先接住对话，后者携带 Core 结果完成表达；两者不得因为调用入口不同而得到不同的、
+由调用方临时裁剪的插件 FunctionTool 授权结果。`plugin_tool_targets`、FunctionTool 自身
+`tool_targets` 与 Persona 工具白名单共同决定 `personal_expression` 可见的 FunctionTool；
+它们不派生 `fast_persona` 或其他第二执行面。
+
+主动 Policy 表达和流式插话仍属于同一 `personal_expression`，但它们是不同的表达来源：前者
+必须保持“不触发工具”的主动安全约束，后者是非完整插话，不启动 FunctionTool 循环。这些是
+统一表达面内由明确 `ExpressionIntent` 控制的安全策略，不是新的执行 target，也不影响普通
+即时回复与 Core-final 的一致授权。
+
+每次表达都携带 `ExpressionIntent(kind, source, phase)`；当前源码类型名为
+`PersonaExpressionIntent`。`kind` 表示完整回复、主动表达或插话，`source` 表示用户消息、Core
+结果、插件输出、运行时 observation 或流式 observation，`phase` 明确区分即时、Core-final、
+主动、插话和插件输出。它作为本次 `ProviderRequest.metadata` 的只读语义提供给 Persona 的插件
+LLM 生命周期 Hook，用于避免把同一轮即时与最终表达误判为同一种调用；它不改变
+`personal_expression` target 或 FunctionTool 授权。
+
+Persona Expression 负责“怎么以这个人格表达”，不负责通用任务规划、Core 执行、平台投递或
+解释插件领域 effect。它可以调用已声明并授权给 `personal_expression` 的插件 FunctionTool，
+但所有结果仍必须由 terminal `persona_expression` 协议收口为唯一用户可见表达。静态 Persona、
+动态人格状态、对话历史和 Memory 由 Prompt 系统收集后，按 Persona target 渲染。
 
 ### Router 与 Core Planner
 

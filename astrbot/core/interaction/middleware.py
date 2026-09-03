@@ -27,6 +27,7 @@ from .dialogue import build_canonical_user_message
 from .expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
+    PersonaExpressionIntent,
     PersonaExpressionRequest,
     PersonaExpressionResult,
 )
@@ -169,7 +170,10 @@ class InteractionMiddleware:
                     source_text=core_result_text,
                     immediate_reply=immediate_reply or "",
                     preserve_facts=True,
-                    allow_plugin_tools=False,
+                    intent=PersonaExpressionIntent(
+                        source="core_result",
+                        phase="final",
+                    ),
                 ),
             )
         except TurnDeadlineExceeded as exc:
@@ -490,7 +494,11 @@ class InteractionMiddleware:
                 request=PersonaExpressionRequest(
                     source_text=material,
                     preserve_facts=True,
-                    allow_plugin_tools=False,
+                    intent=PersonaExpressionIntent(
+                        kind="proactive",
+                        source="runtime_observation",
+                        phase="proactive",
+                    ),
                     avoid_previous_reply=is_personal_action,
                 ),
                 fallback_on_error=not is_personal_action,
@@ -1052,8 +1060,11 @@ class InteractionMiddleware:
             event,
             interaction_config,
             request=PersonaExpressionRequest(
-                allow_plugin_tools=True,
                 compact_context=True,
+                intent=PersonaExpressionIntent(
+                    source="user_message",
+                    phase="immediate",
+                ),
             ),
         )
         turn_state = ensure_interaction_turn_state(event)
