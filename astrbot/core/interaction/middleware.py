@@ -1177,7 +1177,6 @@ class InteractionMiddleware:
             is not InteractionSpeculativePersonaStatus.EMITTED
         ):
             return False
-        event.set_extra("_interaction_control_timeout_completed_via_persona", True)
         await self._complete_persona_only_turn(event, expression)
         return True
 
