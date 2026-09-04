@@ -255,6 +255,7 @@ class InteractionTurnState:
     execution_scope: TurnExecutionScope = field(default_factory=TurnExecutionScope)
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
+    assistant_artifacts: list[dict[str, Any]] = field(default_factory=list)
     visible_message_fingerprints: set[str] = field(default_factory=set)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)
     output_segment_counter: int = 0
@@ -689,6 +690,23 @@ def get_interaction_turn_visible_outputs(event) -> list[dict[str, Any]]:
     if state is None:
         return []
     return [dict(output) for output in state.visible_outputs]
+
+
+def append_interaction_turn_assistant_artifacts(
+    event,
+    artifacts: list[dict[str, Any]],
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.assistant_artifacts.extend(
+        dict(artifact) for artifact in artifacts if isinstance(artifact, dict)
+    )
+
+
+def get_interaction_turn_assistant_artifacts(event) -> list[dict[str, Any]]:
+    state = get_interaction_turn_state(event)
+    if state is None:
+        return []
+    return [dict(artifact) for artifact in state.assistant_artifacts]
 
 
 def record_interaction_turn_visible_message_fingerprint(

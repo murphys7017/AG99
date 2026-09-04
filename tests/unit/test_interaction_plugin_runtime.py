@@ -25,7 +25,9 @@ from astrbot.core.interaction.plugin_runtime import (
     tool_supports_runtime_target,
 )
 from astrbot.core.interaction.turn_state import (
+    append_interaction_turn_assistant_artifacts,
     ensure_interaction_turn_state,
+    get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_state,
     set_interaction_turn_config,
@@ -91,6 +93,29 @@ def test_interaction_turn_config_is_frozen_on_first_admission():
 
     controller = InteractionOutputController(interaction_config=later_config)
     assert controller._get_interaction_config(event) is admitted_config
+
+
+def test_interaction_turn_state_owns_assistant_artifacts():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    artifact = {"type": "image", "url": "https://example.invalid/image.png"}
+
+    append_interaction_turn_assistant_artifacts(event, [artifact])
+    artifact["url"] = "mutated"
+
+    assert get_interaction_turn_assistant_artifacts(event) == [
+        {"type": "image", "url": "https://example.invalid/image.png"}
+    ]
+    assert event.get_extra("_interaction_assistant_artifacts") is None
 
 
 def test_coordinated_plugin_path_uses_admitted_turn_config_snapshot():

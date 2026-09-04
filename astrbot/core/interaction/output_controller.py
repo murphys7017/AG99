@@ -55,10 +55,12 @@ from .output_modes import (
 from .turn_state import (
     InteractionFinalOutputStatus,
     add_interaction_turn_stream_observation_task,
+    append_interaction_turn_assistant_artifacts,
     append_interaction_turn_visible_output,
     build_interaction_turn_reply,
     consume_interaction_turn_finalization_pending,
     finish_interaction_turn_final_output,
+    get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
@@ -758,13 +760,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         artifacts: list[dict[str, Any]],
     ) -> None:
-        existing = event.get_extra("_interaction_assistant_artifacts", [])
-        if not isinstance(existing, list):
-            existing = []
-        event.set_extra(
-            "_interaction_assistant_artifacts",
-            [*existing, *artifacts],
-        )
+        append_interaction_turn_assistant_artifacts(event, artifacts)
 
     async def capture_visible_completion(
         self,
@@ -987,12 +983,7 @@ class InteractionOutputController:
     def _materialize_finalized_turn(event: AstrMessageEvent) -> None:
         turn_id = str(event.get_extra("_turn_id", "") or "").strip()
         visible_outputs = get_interaction_turn_visible_outputs(event)
-        assistant_artifacts = event.get_extra(
-            "_interaction_assistant_artifacts",
-            [],
-        )
-        if not isinstance(assistant_artifacts, list):
-            assistant_artifacts = []
+        assistant_artifacts = get_interaction_turn_assistant_artifacts(event)
         turn_state = get_interaction_turn_state(event)
         canonical_reply = build_interaction_turn_reply(
             visible_outputs,

@@ -56,6 +56,7 @@ from .turn_state import (
     build_interaction_turn_reply,
     ensure_interaction_turn_state,
     finish_interaction_turn_final_output,
+    get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
@@ -1731,12 +1732,7 @@ class InteractionMiddleware:
                 utterances=utterances,
             )
         canonical_reply = (canonical_reply or "").strip()
-        assistant_artifacts = event.get_extra(
-            "_interaction_assistant_artifacts",
-            [],
-        )
-        if not isinstance(assistant_artifacts, list):
-            assistant_artifacts = []
+        assistant_artifacts = get_interaction_turn_assistant_artifacts(event)
         if not canonical_reply and not assistant_artifacts:
             return None
         is_observation = isinstance(event, RuntimeObservationEvent)
