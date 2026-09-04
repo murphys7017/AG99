@@ -231,7 +231,8 @@ class SystemCollector(ContextCollectorInterface):
             if config.tool_schema_mode == "full"
             else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
         )
-        if event.get_extra("_interaction_core_delegated", False):
+        turn_state = event.get_extra("_interaction_turn_state")
+        if bool(getattr(turn_state, "core_delegated", False)):
             tool_prompt += (
                 " Core is executing this request behind Personal's fast initial "
                 "response; do not send a progress preamble or intermediate status "

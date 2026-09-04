@@ -1690,7 +1690,6 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> None:
         mark_interaction_turn_core_delegated(event)
-        event.set_extra("_interaction_core_delegated", True)
         event.is_wake = True
         event.is_at_or_wake_command = True
         event._extras.pop("provider", None)

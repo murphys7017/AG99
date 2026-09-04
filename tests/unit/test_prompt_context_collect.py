@@ -11,6 +11,7 @@ from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.agent import Agent
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.interaction.turn_state import InteractionTurnState
 from astrbot.core.memory.config import MemoryConfig
 from astrbot.core.memory.snapshot_builder import MemorySnapshotReadOptions
 from astrbot.core.memory.types import (
@@ -1552,6 +1553,39 @@ async def test_collect_context_pack_collects_full_tool_call_instruction():
     assert instruction_slot is not None
     assert instruction_slot.value == TOOL_CALL_PROMPT
     assert instruction_slot.meta["tool_schema_mode"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_marks_delegated_core_tool_instruction():
+    event, extras = _make_event()
+    extras["_interaction_turn_state"] = InteractionTurnState(
+        turn_id="delegated-turn",
+        core_delegated=True,
+    )
+    context = _make_context()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    context.get_llm_tool_manager.return_value.func_list = [
+        _make_tool("search_docs", description="Search docs.")
+    ]
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            tool_schema_mode="full",
+            computer_use_runtime="none",
+            add_cron_tools=False,
+        ),
+        collectors=[SystemCollector()],
+    )
+
+    instruction_slot = pack.get_slot("system.tool_call_instruction")
+    assert instruction_slot is not None
+    assert "behind Personal's fast initial response" in instruction_slot.value
+    assert extras.get("_interaction_core_delegated") is None
 
 
 @pytest.mark.asyncio
