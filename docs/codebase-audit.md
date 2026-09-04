@@ -389,8 +389,9 @@ targeted tests。
    controller 引用、管线标记、插件产物与诊断；Phase 2 的兼容投影边界尚未完成。
 3. **Core-final 表达：** 正常 callback 与未注入 handler 时的 fallback 已共享 Persona request，
    但仍分别承担部分 failure / delivery 行为；这是清理候选，不是当前已经确认的双重业务 owner。
-4. **运行配置：** session runtime config 每次按 event 获取并合并，未在 turn 开始冻结为单一配置
-   快照；对同一 turn 的配置变更可见性需要明确。
+4. **运行配置：** `InteractionAgentConfig` 已在 turn admission 首次写入 `InteractionTurnState`，
+   Persona、Router/Core、OutputController 复用同一快照；原始 runtime config 仍为官方
+   Pipeline、Provider/TTS 等兼容读取保留，尚未成为完整的 turn config DTO。
 5. **Persona runtime-control snapshot：** `RuntimeControlSnapshot` 镜像 `PersonalStateSnapshot`；
    `EffectivePersonaContext` 则是独立的组合边界，不属于这一重复。
 
@@ -412,7 +413,7 @@ targeted tests。
 4. **在外部 API 复核后，收敛已共享 Core-final request 之上的 fallback transaction。**
 5. **收窄 `RuntimeControlSnapshot` 的全量镜像；保留 `EffectivePersonaContext`。**
 6. **重命名并最终删除 Core context-pack 历史 alias。**
-7. **在 turn admission 冻结运行配置与可观察配置版本，减少跨层动态读取。**
+7. **为已冻结的 Interaction 配置补充可观察版本信息，并逐步减少非兼容路径的跨层动态读取。**
 
 # Potential Delete List
 
