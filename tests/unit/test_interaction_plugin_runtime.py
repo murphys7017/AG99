@@ -26,7 +26,9 @@ from astrbot.core.interaction.plugin_runtime import (
 )
 from astrbot.core.interaction.turn_state import (
     ensure_interaction_turn_state,
+    get_interaction_turn_config,
     get_interaction_turn_state,
+    set_interaction_turn_config,
     set_interaction_turn_immediate_reply,
 )
 from astrbot.core.interaction.types import (
@@ -61,6 +63,33 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
         == "best_effort"
     )
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
+
+
+def test_interaction_turn_config_is_frozen_on_first_admission():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    admitted_config = load_interaction_agent_config(
+        {"interaction_middleware": {"turn_timeout": 15}}
+    )
+    later_config = load_interaction_agent_config(
+        {"interaction_middleware": {"turn_timeout": 90}}
+    )
+
+    assert set_interaction_turn_config(event, admitted_config) is admitted_config
+    assert set_interaction_turn_config(event, later_config) is admitted_config
+    assert get_interaction_turn_config(event) is admitted_config
+
+    controller = InteractionOutputController(interaction_config=later_config)
+    assert controller._get_interaction_config(event) is admitted_config
 
 
 @pytest.mark.asyncio

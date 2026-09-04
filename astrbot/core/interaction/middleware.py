@@ -56,6 +56,7 @@ from .turn_state import (
     build_interaction_turn_reply,
     ensure_interaction_turn_state,
     finish_interaction_turn_final_output,
+    get_interaction_turn_config,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
@@ -70,6 +71,7 @@ from .turn_state import (
     record_interaction_turn_failure,
     reserve_interaction_turn_final_output,
     reserve_interaction_turn_immediate_output,
+    set_interaction_turn_config,
     set_interaction_turn_core_planning_decision,
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
@@ -149,12 +151,15 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         request: PersonaExpressionRequest,
     ) -> PersonaExpressionResult:
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            interaction_config = load_interaction_agent_config(
+                self._get_runtime_config(event)
+            )
         return await self.persona_runtime.express_visible_reply(
             event,
             plugin_context=self.plugin_context,
-            interaction_config=load_interaction_agent_config(
-                self._get_runtime_config(event)
-            ),
+            interaction_config=interaction_config,
             request=request,
         )
 
@@ -267,6 +272,9 @@ class InteractionMiddleware:
         )
 
     def is_enabled_for_event(self, event: AstrMessageEvent) -> bool:
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is not None:
+            return interaction_config.enabled
         return is_middleware_enabled(self._get_runtime_config(event))
 
     def is_parallel_plugin_runtime_eligible(
@@ -311,13 +319,19 @@ class InteractionMiddleware:
         if turn_state is not None and turn_state.pipeline_event_prepared:
             return
         runtime_config = self._get_runtime_config(event)
-        if not is_middleware_enabled(runtime_config):
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            if not is_middleware_enabled(runtime_config):
+                return
+            interaction_config = load_interaction_agent_config(runtime_config)
+        if not interaction_config.enabled:
             return
         self._reject_development_fallback_policy(runtime_config)
         if isinstance(runtime_config, Mapping):
             event.set_extra("_astrbot_config", runtime_config)
         turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
+        set_interaction_turn_config(event, interaction_config)
         self.attach_event_context(event, turn_id=turn_id)
         turn_state.pipeline_event_prepared = True
 
@@ -423,8 +437,7 @@ class InteractionMiddleware:
     async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
         if event.is_stopped() or event.get_extra("_interaction_route_handled", False):
             return
-        runtime_config = self._get_runtime_config(event)
-        if not is_middleware_enabled(runtime_config):
+        if not self.is_enabled_for_event(event):
             return
         self.prepare_pipeline_event(event)
         if not self._has_routeable_user_content(event):
@@ -466,8 +479,12 @@ class InteractionMiddleware:
             )
             return None
 
-        runtime_config = self._get_runtime_config(event)
-        if not is_middleware_enabled(runtime_config):
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            interaction_config = load_interaction_agent_config(
+                self._get_runtime_config(event)
+            )
+        if not interaction_config.enabled:
             event.set_extra(
                 "_interaction_runtime_observation_skipped_reason",
                 "interaction_middleware_disabled",
@@ -475,11 +492,11 @@ class InteractionMiddleware:
             return None
 
         self.prepare_pipeline_event(event)
-        interaction_config = load_interaction_agent_config(runtime_config)
         ensure_interaction_turn_state(
             event,
             turn_id=str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex,
         )
+        interaction_config = set_interaction_turn_config(event, interaction_config)
         event.set_extra("_interaction_runtime_observation_active", True)
         await dispatch_interaction_lifecycle(
             event,
@@ -766,9 +783,14 @@ class InteractionMiddleware:
         self._reject_development_fallback_policy(runtime_config)
         if isinstance(runtime_config, Mapping):
             event.set_extra("_astrbot_config", runtime_config)
-        interaction_config = load_interaction_agent_config(runtime_config)
         turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            interaction_config = set_interaction_turn_config(
+                event,
+                load_interaction_agent_config(runtime_config),
+            )
         await dispatch_interaction_lifecycle(
             event,
             self.plugin_context,

@@ -19,7 +19,12 @@ from .group_reply import (
 )
 from .observation import RuntimeObservation
 from .runtime_event import RuntimeObservationEvent
-from .turn_state import InteractionTurnState, ensure_interaction_turn_state
+from .turn_state import (
+    InteractionTurnState,
+    ensure_interaction_turn_state,
+    get_interaction_turn_config,
+    set_interaction_turn_config,
+)
 
 
 def resolve_privacy_scope(message_type: MessageType) -> str:
@@ -105,13 +110,17 @@ class PlatformTurnContextFactory:
             event,
             turn_id=existing_turn_id or uuid.uuid4().hex,
         )
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            interaction_config = set_interaction_turn_config(
+                event,
+                load_interaction_agent_config(runtime_config),
+            )
         defer_deadline_until_admission = bool(
             event.get_extra("_personal_runtime_deadline_after_admission", False)
         )
         if state.deadline is None and not defer_deadline_until_admission:
-            state.deadline = TurnDeadlineBudget.start(
-                load_interaction_agent_config(runtime_config).turn_timeout
-            )
+            state.deadline = TurnDeadlineBudget.start(interaction_config.turn_timeout)
         session_data = TurnSession(
             platform_id=event.get_platform_id(),
             platform_name=event.get_platform_name(),

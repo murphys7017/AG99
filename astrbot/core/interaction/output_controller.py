@@ -59,6 +59,7 @@ from .turn_state import (
     build_interaction_turn_reply,
     consume_interaction_turn_finalization_pending,
     finish_interaction_turn_final_output,
+    get_interaction_turn_config,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
@@ -233,6 +234,10 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent | None = None,
     ) -> InteractionAgentConfig:
+        if event is not None:
+            interaction_config = get_interaction_turn_config(event)
+            if interaction_config is not None:
+                return interaction_config
         runtime_config = self._get_runtime_config(event)
         if isinstance(runtime_config, Mapping):
             return load_interaction_agent_config(runtime_config)

@@ -12,6 +12,7 @@ from astrbot.core.prompt.context_types import ContextPack
 from .types import (
     CorePlanningDecision,
     CoreTaskSpec,
+    InteractionAgentConfig,
     InteractionRouteDecision,
     InteractionRouteMode,
 )
@@ -228,6 +229,7 @@ class InteractionTurnState:
     turn_id: str
     pipeline_event_prepared: bool = False
     deadline: TurnDeadlineBudget | None = None
+    interaction_config: InteractionAgentConfig | None = None
     persona_id: str = ""
     personal_runtime_key: PersonalRuntimeKey | None = None
     runtime_config_id: str = ""
@@ -349,6 +351,22 @@ def get_interaction_turn_state(event) -> InteractionTurnState | None:
     if isinstance(state, InteractionTurnState):
         return state
     return None
+
+
+def get_interaction_turn_config(event) -> InteractionAgentConfig | None:
+    state = get_interaction_turn_state(event)
+    return state.interaction_config if state is not None else None
+
+
+def set_interaction_turn_config(
+    event,
+    interaction_config: InteractionAgentConfig,
+) -> InteractionAgentConfig:
+    """Freeze the Interaction configuration selected when this turn is admitted."""
+    state = ensure_interaction_turn_state(event)
+    if state.interaction_config is None:
+        state.interaction_config = interaction_config
+    return state.interaction_config
 
 
 def get_interaction_turn_deadline(event) -> TurnDeadlineBudget | None:
