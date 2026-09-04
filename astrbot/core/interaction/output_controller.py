@@ -1395,14 +1395,9 @@ class InteractionOutputController:
         core_result_text = message.get_plain_text()
         result = await self._render_visible_reply(
             event,
-            PersonaExpressionRequest(
-                source_text=core_result_text,
-                immediate_reply=get_interaction_turn_immediate_reply(event) or "",
-                preserve_facts=True,
-                intent=PersonaExpressionIntent(
-                    source="core_result",
-                    phase="final",
-                ),
+            PersonaExpressionRequest.core_final(
+                core_result_text,
+                immediate_reply=get_interaction_turn_immediate_reply(event),
             ),
         )
         await self.deliver_prepared_core_reply(message, result, event)

@@ -166,14 +166,9 @@ class InteractionMiddleware:
         try:
             result = await self._render_visible_reply_via_persona(
                 event,
-                PersonaExpressionRequest(
-                    source_text=core_result_text,
-                    immediate_reply=immediate_reply or "",
-                    preserve_facts=True,
-                    intent=PersonaExpressionIntent(
-                        source="core_result",
-                        phase="final",
-                    ),
+                PersonaExpressionRequest.core_final(
+                    core_result_text,
+                    immediate_reply=immediate_reply,
                 ),
             )
         except TurnDeadlineExceeded as exc:
@@ -307,7 +302,10 @@ class InteractionMiddleware:
         return event.get_extra("action_type") == "live"
 
     def prepare_pipeline_event(self, event: AstrMessageEvent) -> None:
-        if event.is_stopped() or event.get_extra("_interaction_output_prepared", False):
+        if event.is_stopped():
+            return
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is not None and turn_state.pipeline_event_prepared:
             return
         runtime_config = self._get_runtime_config(event)
         if not is_middleware_enabled(runtime_config):
@@ -316,9 +314,9 @@ class InteractionMiddleware:
         if isinstance(runtime_config, Mapping):
             event.set_extra("_astrbot_config", runtime_config)
         turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
-        ensure_interaction_turn_state(event, turn_id=turn_id)
+        turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         self.attach_event_context(event, turn_id=turn_id)
-        event.set_extra("_interaction_output_prepared", True)
+        turn_state.pipeline_event_prepared = True
 
     def attach_event_context(
         self,
@@ -329,7 +327,6 @@ class InteractionMiddleware:
     ) -> None:
         event.set_extra("_interaction_enabled", True)
         event.set_extra("_turn_id", turn_id)
-        event.set_extra("_output_controller", self.output_controller)
         event.set_extra("_interaction_output_controller", self.output_controller)
         self._install_core_output_interceptor(event)
         if route_decision is not None:

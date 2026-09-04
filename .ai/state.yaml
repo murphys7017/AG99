@@ -1,8 +1,8 @@
 task:
-  class: bugfix
+  class: refactor
   risk: high
-  phase: olv_personal_expression_semantics
-  scope: Restore one continuous Persona Expression flow across immediate and Core-final replies, keep fast Persona grounded in summary/history/memory without duplicated full persona material, and enforce the deployed OLV motion effect contract and dynamic axis schema.
+  phase: architecture_audit_remediation_phase_1
+  scope: Converge confirmed internal Interaction state ownership without changing official Event, Pipeline, platform, or plugin compatibility contracts; defer Output Port and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
 context:
   confidence: high
   assumptions:
@@ -39,7 +39,8 @@ context:
     - InteractionTurnState owns the canonical Core-delegation state for ordinary forwarded turns.
     - Prompt branches retain RenderResult locally, and InteractionContextMaterial retains its snapshot in Turn State; unused event-extra render and snapshot mirrors are removed.
     - InteractionStreamState is the sole owner of stream buffers, observations, completion flags, and interjection counts; duplicate Turn State fields and unread event-extra mirrors are removed.
-    - InteractionTurnState is the sole owner of persona, lifecycle, completion, failure, finalization, and output-arbitration state; private event-extra mirrors are removed.
+    - InteractionTurnState is the sole owner of persona, lifecycle, completion, failure, finalization, and output-arbitration state; event extras retain only compatibility flags, references, and diagnostics rather than mirrors of those fields.
+    - Phase 1 removes only confirmed private duplicate Interaction extra mirrors and moves Middleware-owned preparation state into InteractionTurnState; `_interaction_enabled`, `_interaction_output_controller`, Event send interception, and parallel Plugin Job paths remain compatibility boundaries until separately validated.
     - A generic submit_observation boundary writes immutable facts into a per-runtime bounded inbox without EventBus insertion, synthetic user messages, proactive-message capability requirements, or immediate turn-lease acquisition.
     - Personal Policy gets a dedicated read-only Prompt target and continues to use the canonical Collectors -> ContextPack -> projection -> Render Profile -> Renderer pipeline.
     - The Personal Policy Prompt collection adapter is not a send-capable RuntimeObservationEvent and never enters EventBus or Conversation history.

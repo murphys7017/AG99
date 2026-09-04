@@ -89,14 +89,9 @@ class InteractionPersonaRuntime:
             event,
             plugin_context=plugin_context,
             interaction_config=interaction_config,
-            request=PersonaExpressionRequest(
-                source_text=source_text,
-                immediate_reply=immediate_reply or "",
-                preserve_facts=True,
-                intent=PersonaExpressionIntent(
-                    source="core_result",
-                    phase="final",
-                ),
+            request=PersonaExpressionRequest.core_final(
+                source_text,
+                immediate_reply=immediate_reply,
             ),
         )
         return result.spoken_reply

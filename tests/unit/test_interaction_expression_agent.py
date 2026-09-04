@@ -543,14 +543,18 @@ async def test_visible_reply_material_renders_as_native_input_message_with_strea
 
 @pytest.mark.asyncio
 async def test_core_visible_reply_material_preserves_immediate_reply_context():
+    request = PersonaExpressionRequest.core_final(
+        "核心天气结果",
+        immediate_reply="我没有联网能力",
+    )
     slots = await PersonaVisibleReplyCollector(
-        PersonaExpressionRequest(
-            source_text="核心天气结果",
-            immediate_reply="我没有联网能力",
-            preserve_facts=True,
-        )
+        request
     ).collect(None, None, None)
 
+    assert request.intent == PersonaExpressionIntent(
+        source="core_result",
+        phase="final",
+    )
     assert slots[0].value == {
         "source_text": "核心天气结果",
         "immediate_reply": "我没有联网能力",

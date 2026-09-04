@@ -52,11 +52,9 @@ class CountingAsyncIterable:
 
 class TestWebChatMessageEventSend:
     @pytest.mark.asyncio
-    async def test_send_does_not_route_via_output_controller(self, webchat_event):
+    async def test_send_enqueues_payload(self, webchat_event):
         queue = asyncio.Queue()
-        controller = AsyncMock()
         message = MessageChain([Plain("hello")])
-        webchat_event.set_extra("_output_controller", controller)
 
         with (
             patch(
@@ -70,7 +68,6 @@ class TestWebChatMessageEventSend:
         ):
             await webchat_event.send(message)
 
-        controller.capture_message_chain.assert_not_awaited()
         payload = queue.get_nowait()
         assert payload["data"] == "hello"
         assert webchat_event._has_send_oper is True
@@ -116,12 +113,8 @@ class TestWebChatMessageEventSend:
 
 class TestWebChatMessageEventStreaming:
     @pytest.mark.asyncio
-    async def test_send_streaming_does_not_route_via_output_controller(
-        self, webchat_event
-    ):
+    async def test_send_streaming_emits_payload_and_completion(self, webchat_event):
         queue = asyncio.Queue()
-        controller = AsyncMock()
-        webchat_event.set_extra("_output_controller", controller)
 
         async def generator():
             yield MessageChain([Plain("hello")])
@@ -138,7 +131,6 @@ class TestWebChatMessageEventStreaming:
         ):
             await webchat_event.send_streaming(generator())
 
-        controller.capture_streaming.assert_not_awaited()
         assert queue.get_nowait()["data"] == "hello"
         assert queue.get_nowait()["type"] == "complete"
         assert webchat_event._has_send_oper is True

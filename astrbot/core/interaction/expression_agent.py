@@ -140,6 +140,23 @@ class PersonaExpressionRequest:
     avoid_previous_reply: bool = False
     compact_context: bool = False
 
+    @classmethod
+    def core_final(
+        cls,
+        source_text: str,
+        *,
+        immediate_reply: str | None = None,
+    ) -> PersonaExpressionRequest:
+        return cls(
+            source_text=source_text,
+            immediate_reply=immediate_reply or "",
+            preserve_facts=True,
+            intent=PersonaExpressionIntent(
+                source="core_result",
+                phase="final",
+            ),
+        )
+
 
 _FAST_PERSONA_HISTORY_TURNS = 8
 _FAST_PERSONA_SLOT_NAMES = frozenset(

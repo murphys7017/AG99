@@ -297,7 +297,6 @@ class PluginBranchOutputSink:
 _BRANCH_REMOVED_EXTRA_KEYS = frozenset(
     {
         "_interaction_turn_state",
-        "_output_controller",
         "_interaction_output_controller",
         "_interaction_original_send",
         "_interaction_original_send_streaming",

@@ -226,6 +226,7 @@ class TurnExecutionScope:
 @dataclass(slots=True)
 class InteractionTurnState:
     turn_id: str
+    pipeline_event_prepared: bool = False
     deadline: TurnDeadlineBudget | None = None
     persona_id: str = ""
     personal_runtime_key: PersonalRuntimeKey | None = None
