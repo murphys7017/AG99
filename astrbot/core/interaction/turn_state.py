@@ -228,6 +228,7 @@ class TurnExecutionScope:
 class InteractionTurnState:
     turn_id: str
     pipeline_event_prepared: bool = False
+    pipeline_route_handled: bool = False
     deadline: TurnDeadlineBudget | None = None
     interaction_config: InteractionAgentConfig | None = None
     persona_id: str = ""
@@ -357,6 +358,15 @@ def get_interaction_turn_state(event) -> InteractionTurnState | None:
 def get_interaction_turn_config(event) -> InteractionAgentConfig | None:
     state = get_interaction_turn_state(event)
     return state.interaction_config if state is not None else None
+
+
+def is_interaction_turn_pipeline_route_handled(event) -> bool:
+    state = get_interaction_turn_state(event)
+    return bool(state and state.pipeline_route_handled)
+
+
+def mark_interaction_turn_pipeline_route_handled(event) -> None:
+    ensure_interaction_turn_state(event).pipeline_route_handled = True
 
 
 def set_interaction_turn_config(

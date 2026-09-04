@@ -155,9 +155,10 @@ Core Gate 或异常恢复，都必须同时验证 Handler 路径和 coordinated 
 - 每个已准入 turn 的 `InteractionAgentConfig` 已首次写入并冻结在 `InteractionTurnState`；
   ProcessStage 的并行 Plugin 路径选择、Persona、Router/Core 和 OutputController 优先复用该快照，
   原始 runtime config 仍只服务于官方 Pipeline、Provider/TTS 等兼容读取。
-- 本次 Phase 1 已将 Middleware 自己使用的准备完成标记和已投递助手产物迁入
-  `InteractionTurnState.pipeline_event_prepared`、`assistant_artifacts`，并删除无内部 consumer 的
-  `_output_controller`、`_interaction_assistant_artifacts` 重复镜像；`prepare_pipeline_event` 仍写入
+- 本次 Phase 1 已将 Middleware 自己使用的准备完成、路由幂等标记和已投递助手产物迁入
+  `InteractionTurnState.pipeline_event_prepared`、`pipeline_route_handled`、`assistant_artifacts`，并删除
+  无内部 consumer 的 `_output_controller`、`_interaction_route_handled`、
+  `_interaction_assistant_artifacts` 重复镜像；`prepare_pipeline_event` 仍写入
   `_interaction_enabled` 与 `_interaction_output_controller` 等兼容边界 extra。
 - `_interaction_output_controller` 现由
   `platform/astr_message_event.py::INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY` 统一声明；

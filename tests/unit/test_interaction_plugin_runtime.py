@@ -30,6 +30,8 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_state,
+    is_interaction_turn_pipeline_route_handled,
+    mark_interaction_turn_pipeline_route_handled,
     set_interaction_turn_config,
     set_interaction_turn_immediate_reply,
 )
@@ -116,6 +118,26 @@ def test_interaction_turn_state_owns_assistant_artifacts():
         {"type": "image", "url": "https://example.invalid/image.png"}
     ]
     assert event.get_extra("_interaction_assistant_artifacts") is None
+
+
+def test_interaction_turn_state_owns_pipeline_route_guard():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+
+    assert not is_interaction_turn_pipeline_route_handled(event)
+    mark_interaction_turn_pipeline_route_handled(event)
+
+    assert is_interaction_turn_pipeline_route_handled(event)
+    assert event.get_extra("_interaction_route_handled") is None
 
 
 def test_coordinated_plugin_path_uses_admitted_turn_config_snapshot():

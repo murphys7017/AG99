@@ -63,10 +63,12 @@ from .turn_state import (
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     is_interaction_turn_completed,
+    is_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
     mark_interaction_turn_core_delegated,
     mark_interaction_turn_failed,
+    mark_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_postprocess_dispatched,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
@@ -436,13 +438,13 @@ class InteractionMiddleware:
         event.set_extra("_interaction_output_interceptor_installed", True)
 
     async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
-        if event.is_stopped() or event.get_extra("_interaction_route_handled", False):
+        if event.is_stopped() or is_interaction_turn_pipeline_route_handled(event):
             return
         if not self.is_enabled_for_event(event):
             return
         self.prepare_pipeline_event(event)
         if not self._has_routeable_user_content(event):
-            event.set_extra("_interaction_route_handled", True)
+            mark_interaction_turn_pipeline_route_handled(event)
             event.set_extra(
                 "_interaction_route_skipped_reason",
                 "empty_non_content_event",
@@ -455,7 +457,7 @@ class InteractionMiddleware:
             )
             return
         await self._handle_pipeline_turn(event)
-        event.set_extra("_interaction_route_handled", True)
+        mark_interaction_turn_pipeline_route_handled(event)
 
     async def handle_runtime_observation(
         self,
