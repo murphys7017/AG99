@@ -11,7 +11,10 @@ from astrbot.core.message.components import ComponentType
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.output_lifecycle import TurnDeliveryCoordinator
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.astr_message_event import (
+    INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
+    AstrMessageEvent,
+)
 
 from ..context import PipelineContext
 from ..stage import Stage, register_stage
@@ -28,7 +31,7 @@ class RespondStage(Stage):
         )
 
     async def _dispatch_after_message_sent(self, event: AstrMessageEvent) -> bool:
-        controller = event.get_extra("_interaction_output_controller")
+        controller = event.get_extra(INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY)
         complete_visible_delivery = getattr(
             type(controller),
             "complete_visible_delivery",

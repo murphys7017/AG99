@@ -14,7 +14,10 @@ from astrbot.core.interaction.plugin_execution_types import (
 from astrbot.core.interaction.plugin_media_lease import PluginJobMediaLease
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.astr_message_event import (
+    INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
+    AstrMessageEvent,
+)
 from astrbot.core.platform.astrbot_message import AstrBotMessage, Group, MessageMember
 
 
@@ -297,7 +300,7 @@ class PluginBranchOutputSink:
 _BRANCH_REMOVED_EXTRA_KEYS = frozenset(
     {
         "_interaction_turn_state",
-        "_interaction_output_controller",
+        INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
         "_interaction_original_send",
         "_interaction_original_send_streaming",
         "_interaction_original_complete_visible_turn",
@@ -330,7 +333,7 @@ def create_plugin_branch_event(
         branch_message=MessageChain(branch.message_obj.message),
     )
     sink = PluginBranchOutputSink(result)
-    branch.set_extra("_interaction_output_controller", sink)
+    branch.set_extra(INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY, sink)
     branch.set_extra("_interaction_plugin_branch", True)
     original_stop_event = branch.stop_event
 

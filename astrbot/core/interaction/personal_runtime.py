@@ -18,6 +18,9 @@ from astrbot.core.persona_error_reply import (
     resolve_conversation_persona_id,
     resolve_event_conversation_persona_id,
 )
+from astrbot.core.platform.astr_message_event import (
+    INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
+)
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.provider.entities import ProviderRequest
@@ -1887,7 +1890,7 @@ class PersonalRuntimeManager:
             and plugin_branch_event.unified_msg_origin == str(session)
         ):
             controller = plugin_branch_event.get_extra(
-                "_interaction_output_controller"
+                INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY
             )
             capture_plugin_output = getattr(controller, "capture_plugin_output", None)
             if callable(capture_plugin_output):

@@ -156,6 +156,9 @@ Core Gate 或异常恢复，都必须同时验证 Handler 路径和 coordinated 
   `InteractionTurnState.pipeline_event_prepared`，并删除无内部 consumer 的
   `_output_controller` 重复镜像；`prepare_pipeline_event` 仍写入
   `_interaction_enabled` 与 `_interaction_output_controller` 等兼容边界 extra。
+- `_interaction_output_controller` 现由
+  `platform/astr_message_event.py::INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY` 统一声明；
+  Interaction、Pipeline 与平台实现均通过该平台层常量访问，未改变既有 extra 契约。
 - 同模块、`output_controller.py`、`turn_coordinator.py`、`plugin_branch.py` 和平台 Event 类大量以
   `_interaction_*`、`_turn_id`、`_output_*` key 协作。
 - `turn_state.py::InteractionTurnState` 已拥有 route、即时表达、stream、final output、failure、

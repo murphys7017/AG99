@@ -8,7 +8,10 @@ from typing import Any
 
 from astrbot.core import logger
 from astrbot.core.message.message_event_result import MessageEventResult
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.astr_message_event import (
+    INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
+    AstrMessageEvent,
+)
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, StarHandlerMetadata
@@ -141,7 +144,7 @@ class StarRequestSubStage(Stage):
 
     @staticmethod
     def _plugin_artifact_count(event: AstrMessageEvent) -> int:
-        controller = event.get_extra("_interaction_output_controller")
+        controller = event.get_extra(INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY)
         result = getattr(controller, "result", None)
         artifacts = getattr(result, "output_artifacts", None)
         return len(artifacts) if isinstance(artifacts, list) else 0

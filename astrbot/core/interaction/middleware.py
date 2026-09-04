@@ -9,7 +9,10 @@ from astrbot.core.agent.tool_output_capture import get_active_tool_output_captur
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.astr_message_event import (
+    INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
+    AstrMessageEvent,
+)
 from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import ProviderRequest
@@ -327,7 +330,10 @@ class InteractionMiddleware:
     ) -> None:
         event.set_extra("_interaction_enabled", True)
         event.set_extra("_turn_id", turn_id)
-        event.set_extra("_interaction_output_controller", self.output_controller)
+        event.set_extra(
+            INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
+            self.output_controller,
+        )
         self._install_core_output_interceptor(event)
         if route_decision is not None:
             set_interaction_turn_route_decision(event, route_decision)
@@ -1566,7 +1572,7 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> bool:
         try:
-            controller = event.get_extra("_interaction_output_controller")
+            controller = event.get_extra(INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY)
             complete_visible_delivery = getattr(
                 type(controller),
                 "complete_visible_delivery",

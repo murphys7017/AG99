@@ -39,6 +39,8 @@ from .astrbot_message import AstrBotMessage, Group
 from .message_session import MessageSesion, MessageSession  # noqa
 from .platform_metadata import PlatformMetadata
 
+INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY = "_interaction_output_controller"
+
 
 class AstrMessageEvent(abc.ABC):
     _supports_agent_lifecycle_overlay = True
@@ -659,7 +661,7 @@ class AstrMessageEvent(abc.ABC):
         if capture is not None:
             capture.capture(message)
             return
-        controller = self.get_extra("_interaction_output_controller")
+        controller = self.get_extra(INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY)
         if controller is not None:
             await controller.capture_plugin_output(
                 message,
@@ -686,7 +688,7 @@ class AstrMessageEvent(abc.ABC):
         if capture is not None:
             capture.capture(message)
             return
-        controller = self.get_extra("_interaction_output_controller")
+        controller = self.get_extra(INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY)
         if controller is not None:
             await controller.capture_plugin_output(
                 message,

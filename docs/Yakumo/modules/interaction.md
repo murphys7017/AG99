@@ -495,6 +495,9 @@ output intent、诊断和兼容投影；不能为减少 extra 数量而同时维
 - `OUTPUT_ORIGIN_EXTRA_KEY`（`_interaction_output_origin`）
 - `PLUGIN_OUTPUT_MODE_EXTRA_KEY`（`_interaction_plugin_output_mode`）
 - `PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY` / `PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY`（诊断用）
+- `INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY` 位于
+  `platform/astr_message_event.py`，表示 Event 到 Output Controller 的兼容引用。平台、Pipeline
+  和 Interaction 共同消费该常量；它不能定义在 `interaction` 包内，否则平台导入会形成循环依赖。
 
 ### `persona_runtime.py`
 
