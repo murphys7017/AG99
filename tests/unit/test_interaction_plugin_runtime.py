@@ -38,6 +38,7 @@ from astrbot.core.interaction.types import (
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.star.base import Star
 from astrbot.core.star.star import StarMetadata, star_map, star_registry
@@ -90,6 +91,59 @@ def test_interaction_turn_config_is_frozen_on_first_admission():
 
     controller = InteractionOutputController(interaction_config=later_config)
     assert controller._get_interaction_config(event) is admitted_config
+
+
+def test_coordinated_plugin_path_uses_admitted_turn_config_snapshot():
+    class Event:
+        def __init__(self):
+            self._extras = {
+                "_astrbot_config": {
+                    "interaction_middleware": {
+                        "enabled": True,
+                        "parallel_plugin_runtime_enabled": False,
+                    }
+                }
+            }
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    set_interaction_turn_config(
+        event,
+        load_interaction_agent_config(
+            {
+                "interaction_middleware": {
+                    "enabled": True,
+                    "parallel_plugin_runtime_enabled": True,
+                }
+            }
+        ),
+    )
+    middleware = SimpleNamespace(
+        is_parallel_plugin_runtime_eligible=Mock(return_value=True)
+    )
+    stage = ProcessStage()
+    stage.ctx = SimpleNamespace(
+        astrbot_config={"provider_settings": {"enable": True}},
+        interaction_middleware=middleware,
+    )
+    stage.interaction_turn_coordinator = object()
+    stage.plugin_artifact_delivery = object()
+    stage.delayed_plugin_delivery = object()
+    stage.personal_runtime_manager = object()
+
+    assert stage._should_use_coordinated_interaction_runtime(
+        event,
+        is_group_candidate=False,
+    )
+    middleware.is_parallel_plugin_runtime_eligible.assert_called_once_with(
+        event,
+        is_group_candidate=False,
+    )
 
 
 @pytest.mark.asyncio

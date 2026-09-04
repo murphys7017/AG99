@@ -153,8 +153,8 @@ Core Gate 或异常恢复，都必须同时验证 Handler 路径和 coordinated 
 - `InteractionTurnState` 自身保存在 event 的单个 `_interaction_turn_state` extra 中；
   `ensure_interaction_turn_state()` 只向旧 `_turn_id` 做兼容镜像，而不是把全部领域字段双写。
 - 每个已准入 turn 的 `InteractionAgentConfig` 已首次写入并冻结在 `InteractionTurnState`；
-  Persona、Router/Core 和 OutputController 优先复用该快照，原始 runtime config 仍只服务于
-  官方 Pipeline、Provider/TTS 等兼容读取。
+  ProcessStage 的并行 Plugin 路径选择、Persona、Router/Core 和 OutputController 优先复用该快照，
+  原始 runtime config 仍只服务于官方 Pipeline、Provider/TTS 等兼容读取。
 - 本次 Phase 1 已将 Middleware 自己使用的准备完成标记迁入
   `InteractionTurnState.pipeline_event_prepared`，并删除无内部 consumer 的
   `_output_controller` 重复镜像；`prepare_pipeline_event` 仍写入
@@ -389,9 +389,9 @@ targeted tests。
    controller 引用、管线标记、插件产物与诊断；Phase 2 的兼容投影边界尚未完成。
 3. **Core-final 表达：** 正常 callback 与未注入 handler 时的 fallback 已共享 Persona request，
    但仍分别承担部分 failure / delivery 行为；这是清理候选，不是当前已经确认的双重业务 owner。
-4. **运行配置：** `InteractionAgentConfig` 已在 turn admission 首次写入 `InteractionTurnState`，
-   Persona、Router/Core、OutputController 复用同一快照；原始 runtime config 仍为官方
-   Pipeline、Provider/TTS 等兼容读取保留，尚未成为完整的 turn config DTO。
+4. **运行配置：** `InteractionAgentConfig` 已在 turn admission 首次写入 `InteractionTurnState`；
+   并行 Plugin 路径选择、Persona、Router/Core、OutputController 复用同一快照。原始 runtime
+   config 仍为官方 Pipeline、Provider/TTS 等兼容读取保留，尚未成为完整的 turn config DTO。
 5. **Persona runtime-control snapshot：** `RuntimeControlSnapshot` 镜像 `PersonalStateSnapshot`；
    `EffectivePersonaContext` 则是独立的组合边界，不属于这一重复。
 

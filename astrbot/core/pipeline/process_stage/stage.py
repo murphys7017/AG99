@@ -28,6 +28,7 @@ from astrbot.core.interaction.turn_coordinator import (
     PluginJobLaunch,
 )
 from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_config,
     has_interaction_turn_final_output_claimed,
     is_interaction_turn_completed,
     mark_interaction_turn_failed,
@@ -189,8 +190,13 @@ class ProcessStage(Stage):
     ) -> bool:
         if not self.ctx.astrbot_config["provider_settings"].get("enable", True):
             return False
-        runtime_config = event.get_extra("_astrbot_config", self.ctx.astrbot_config)
-        interaction_config = load_interaction_agent_config(runtime_config)
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            runtime_config = event.get_extra(
+                "_astrbot_config",
+                self.ctx.astrbot_config,
+            )
+            interaction_config = load_interaction_agent_config(runtime_config)
         if (
             not interaction_config.enabled
             or not interaction_config.parallel_plugin_runtime_enabled
