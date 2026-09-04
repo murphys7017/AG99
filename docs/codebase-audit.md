@@ -169,6 +169,10 @@ reload、Core 异常与延迟投递的生产验收，再明确是否以 coordina
   `_interaction_route_handled`、`_interaction_core_delegated`、
   `_interaction_assistant_artifacts` 重复镜像，并删除只写不读的
   `_interaction_control_timeout_completed_via_persona`、`_interaction_input_is_observation`；
+  本轮盘点后又移除与 TurnState 完成/失败/输出事实重复、且无内部 consumer 的
+  `_interaction_personal_expression_suppressed`、`_interaction_persona_reply_invalid*`、
+  `_interaction_record_normalize_failed*`、`_interaction_silent_completed` 与
+  `_interaction_plugin_streaming_{consumed,text}`；
   `prepare_pipeline_event` 仍写入
   `_interaction_enabled` 与 `_interaction_output_controller` 等兼容边界 extra。
 - `_interaction_output_controller` 现由

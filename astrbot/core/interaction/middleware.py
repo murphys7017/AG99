@@ -610,7 +610,6 @@ class InteractionMiddleware:
             "_interaction_runtime_observation_skipped_reason",
             reason,
         )
-        event.set_extra("_interaction_personal_expression_suppressed", True)
         if await reserve_interaction_turn_final_output(event):
             await finish_interaction_turn_final_output(
                 event,
@@ -1202,11 +1201,6 @@ class InteractionMiddleware:
         expression: PersonaExpressionResult | None,
     ) -> None:
         if expression is None or not expression.spoken_reply.strip():
-            event.set_extra("_interaction_persona_reply_invalid", True)
-            event.set_extra(
-                "_interaction_persona_reply_invalid_reason",
-                "missing_immediate_reply",
-            )
             record_interaction_turn_failure(
                 event,
                 stage="persona_expression",
@@ -1458,11 +1452,6 @@ class InteractionMiddleware:
                 component.path = record_path
                 message_chain[idx] = component
             except Exception as exc:  # noqa: BLE001
-                event.set_extra("_interaction_record_normalize_failed", True)
-                event.set_extra(
-                    "_interaction_record_normalize_failure_reason",
-                    str(exc),
-                )
                 record_interaction_turn_failure(
                     event,
                     stage="inbound_record_normalize",
@@ -1850,7 +1839,6 @@ class InteractionMiddleware:
             material.get("outcome", InteractionTurnOutcome.REPLIED.value) or ""
         )
         if outcome == InteractionTurnOutcome.SILENT.value:
-            event.set_extra("_interaction_silent_completed", True)
             mark_interaction_turn_completed(event)
             await dispatch_interaction_lifecycle(
                 event,

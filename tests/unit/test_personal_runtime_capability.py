@@ -1282,7 +1282,6 @@ async def test_model_continuation_silent_route_suppresses_pending_persona(
     route.assert_awaited_once()
     middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert event.sent == []
-    assert event.get_extra("_interaction_silent_completed") is True
     assert get_interaction_turn_state(event).speculative_persona_status.value == (
         "suppressed"
     )

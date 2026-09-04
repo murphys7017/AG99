@@ -604,8 +604,6 @@ class InteractionOutputController:
             text = "".join(stream_text_parts).strip()
             event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
             event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, "plugin_persona")
-            event.set_extra("_interaction_plugin_streaming_consumed", True)
-            event.set_extra("_interaction_plugin_streaming_text", text)
             if text:
                 await self.capture_plugin_output(
                     MessageChain([Plain(text)]),
@@ -662,8 +660,6 @@ class InteractionOutputController:
             )
             raise
         text = "".join(stream_text_parts).strip()
-        event.set_extra("_interaction_plugin_streaming_consumed", True)
-        event.set_extra("_interaction_plugin_streaming_text", text)
         if not text:
             return
         self._record_visible_output(
