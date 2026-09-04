@@ -120,6 +120,13 @@ Platform Adapter
   ProviderRequest bridge、T1 window、detached completion。
 - 文档 `docs/Yakumo/README.md` 与
   `docs/Yakumo/dev/parallel-plugin-runtime-plan.md` 明确记录两条路径都仍存在。
+- 2026 年 9 月 4 日的 OLV 私聊 trace 已确认 coordinated 路径可完成
+  `plugin_gate=passed -> router=persona -> Personal emitted`；同日群聊 trace 亦确认
+  Router `silent` 后已提交的 Personal 仍可完成投递。该批 trace 中的 Plugin Job 都在 T1 内
+  正常完成，没有 coordinator timeout、detach 或二次投递迹象。
+- 同一批 OLV trace 的一次“模型服务暂时不可用”来自 Persona 的必发
+  `ag99live.motion` 校验失败，随后 Provider fallback 返回无效 JSON；它发生在
+  `plugin_gate=passed` 之后，不能归因于并行 Plugin Job 编排。
 
 ### Why It Exists
 
@@ -134,10 +141,11 @@ Core Gate 或异常恢复，都必须同时验证 Handler 路径和 coordinated 
 
 ### Recommended Direction
 
-把此项视为有明确退出条件的迁移，而不是长期功能开关：先完成 bounded private/group trace 的
-生产验收，明确是否以 coordinated path 为唯一主路径；若不采用则删除 Job / Gate / branch
-运行时，若采用则把默认 Handler path 缩为该协调器的兼容 adapter。不要继续在两条路径同时添加
-新编排规则。
+把此项视为有明确退出条件的迁移，而不是长期功能开关：已取得基本 private/group trace，但仍须
+完成 Handler 终态输出、yield `ProviderRequest`、HANDLED/STOPPED/DELEGATED、超时 detach、插件
+reload、Core 异常与延迟投递的生产验收，再明确是否以 coordinated path 为唯一主路径；若不采用则
+删除 Job / Gate / branch 运行时，若采用则把默认 Handler path 缩为该协调器的兼容 adapter。
+不要继续在两条路径同时添加新编排规则。
 
 **Canonical owner：** `InteractionTurnCoordinator`（若并行插件能力保留）。
 
@@ -404,6 +412,10 @@ targeted tests。
 - 单条消息目前可由 turn id 和 DIAG 日志大致还原，但无法从一个标准化 record 直接得知：
   “哪一个 wrapper 接管、原始 `event.send` 是否被调用、哪个 output reservation 赢得仲裁、最终
   raw / Persona / plugin direct 选择为何”。
+- `ProcessStage` 已为每个已准入 turn 写入统一的 `DIAG interaction.pipeline_path`，覆盖
+  `default_handler` 与 `coordinated_plugin_runtime`，并记录 Handler 数、群聊候选与本轮冻结的
+  Interaction / parallel-plugin 开关。这解决了两条编排路径没有共同起点记录的问题；它不替代
+  HANDLED/STOPPED/DELEGATED、超时 detach、延迟投递与 Core 失败的真实运行验收。
 - 同一 Persona turn 的 immediate 与 final 现在可从 `ProviderRequest.metadata` 中被 Hook 识别，
   这是已改善项；但日志未见统一输出每段持久关联 `PersonaExpressionIntent` 的明确要求。
 - parallel plugin runtime 有 job diagnostics，但默认关闭路径与启用路径的同一组核心指标没有统一
@@ -433,8 +445,9 @@ targeted tests。
 
 # Refactoring Order
 
-1. **证据补齐，不改行为。** 对默认与并行 Plugin path 采集同格式 trace；枚举所有外部读取的
-   event extra、Persona domain export 和 context-pack alias。
+1. **证据补齐，不改行为。** 已记录 OLV private 和 group-silent 的并行 trace；继续采集默认与
+   并行 Plugin path 的终态 Handler、ProviderRequest、detach、reload、延迟投递和 Core 失败 trace，
+   并枚举所有外部读取的 event extra、Persona domain export 和 context-pack alias。
 2. **状态收敛。** 让 TurnState / Runtime Context 成为内部唯一可写状态，保留经枚举的 event extra
    单向兼容投影和运行时断言。
 3. **输出收敛。** 定义内部 OutputIntent / Envelope，先接入 Core、Plugin Branch、主动输出；

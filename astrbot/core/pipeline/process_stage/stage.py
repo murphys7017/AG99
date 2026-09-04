@@ -236,6 +236,36 @@ class ProcessStage(Stage):
             )
         return True
 
+    def _log_interaction_pipeline_path(
+        self,
+        event: AstrMessageEvent,
+        *,
+        path: str,
+        activated_handler_count: int,
+        is_group_candidate: bool,
+    ) -> None:
+        """Emit one comparable path-selection record for each admitted turn."""
+        interaction_config = get_interaction_turn_config(event)
+        if interaction_config is None:
+            runtime_config = event.get_extra(
+                "_astrbot_config",
+                self.ctx.astrbot_config,
+            )
+            interaction_config = load_interaction_agent_config(runtime_config)
+        logger.info(
+            "DIAG interaction.pipeline_path: platform_id=%s session_id=%s "
+            "turn_id=%s path=%s activated_handler_count=%d group_candidate=%s "
+            "interaction_enabled=%s parallel_plugin_runtime_enabled=%s",
+            event.get_platform_id(),
+            event.session_id,
+            event.get_extra("_turn_id", ""),
+            path,
+            activated_handler_count,
+            is_group_candidate,
+            interaction_config.enabled,
+            interaction_config.parallel_plugin_runtime_enabled,
+        )
+
     async def _run_coordinated_interaction_turn(
         self,
         event: AstrMessageEvent,
@@ -525,20 +555,21 @@ class ProcessStage(Stage):
                 return
             group_candidate_admitted = True
 
-        if self._should_use_coordinated_interaction_runtime(
+        use_coordinated_runtime = self._should_use_coordinated_interaction_runtime(
             event,
             is_group_candidate=is_group_candidate,
-        ):
-            logger.info(
-                "DIAG interaction.parallel_plugin_runtime_selected: "
-                "platform_id=%s session_id=%s turn_id=%s "
-                "activated_handler_count=%d group_candidate=%s",
-                event.get_platform_id(),
-                event.session_id,
-                event.get_extra("_turn_id", ""),
-                len(activated_handlers),
-                is_group_candidate,
-            )
+        )
+        self._log_interaction_pipeline_path(
+            event,
+            path=(
+                "coordinated_plugin_runtime"
+                if use_coordinated_runtime
+                else "default_handler"
+            ),
+            activated_handler_count=len(activated_handlers),
+            is_group_candidate=is_group_candidate,
+        )
+        if use_coordinated_runtime:
             source = self._run_coordinated_interaction_turn(
                 event,
                 activated_handlers=activated_handlers,
