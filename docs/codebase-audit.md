@@ -160,7 +160,8 @@ Core Gate 或异常恢复，都必须同时验证 Handler 路径和 coordinated 
   `assistant_artifacts`，并删除无内部 consumer 的 `_output_controller`、
   `_interaction_route_handled`、`_interaction_core_delegated`、
   `_interaction_assistant_artifacts` 重复镜像，并删除只写不读的
-  `_interaction_control_timeout_completed_via_persona`；`prepare_pipeline_event` 仍写入
+  `_interaction_control_timeout_completed_via_persona`、`_interaction_input_is_observation`；
+  `prepare_pipeline_event` 仍写入
   `_interaction_enabled` 与 `_interaction_output_controller` 等兼容边界 extra。
 - `_interaction_output_controller` 现由
   `platform/astr_message_event.py::INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY` 统一声明；

@@ -55,7 +55,6 @@ class RuntimeObservationEvent(AstrMessageEvent):
         self.observation = observation
         self.set_extra("_runtime_observation_event", True)
         self.set_extra("_runtime_observation", observation)
-        self.set_extra("_interaction_input_is_observation", True)
 
     async def send(self, message: MessageChain) -> None:
         if message is None:
