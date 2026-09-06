@@ -58,27 +58,42 @@ from .turn_state import (
     finish_interaction_turn_final_output,
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
+    get_interaction_turn_delivery_metadata,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
+    get_interaction_turn_router_context_nodes,
+    get_interaction_turn_router_failure_reason,
+    get_interaction_turn_router_result_source,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     is_interaction_turn_completed,
+    is_interaction_turn_pipeline_output_suppressed,
     is_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
     mark_interaction_turn_core_delegated,
+    mark_interaction_turn_core_planner_recovered_via_persona,
     mark_interaction_turn_failed,
     mark_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_postprocess_dispatched,
+    mark_interaction_turn_stt_transcribed,
     record_interaction_turn_completion_failure,
+    record_interaction_turn_core_planner_failure,
+    record_interaction_turn_expression_failure,
     record_interaction_turn_failure,
+    record_interaction_turn_finalization_failure,
+    record_interaction_turn_postprocess_failure,
+    record_interaction_turn_router_failure,
+    record_interaction_turn_stt_failure,
     reserve_interaction_turn_final_output,
     reserve_interaction_turn_immediate_output,
     set_interaction_turn_config,
     set_interaction_turn_core_planning_decision,
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
+    set_interaction_turn_inbound_media_materialized,
     set_interaction_turn_route_decision,
+    set_interaction_turn_router_result_source,
     suppress_interaction_turn_pending_persona,
 )
 from .types import (
@@ -385,10 +400,7 @@ class InteractionMiddleware:
                         "direct",
                     ),
                 )
-            if wrapped_event.get_extra(
-                "_interaction_pipeline_output_suppressed",
-                False,
-            ):
+            if is_interaction_turn_pipeline_output_suppressed(wrapped_event):
                 wrapped_event._has_send_oper = previous_has_send_oper
             else:
                 wrapped_event._has_send_oper = True
@@ -426,16 +438,14 @@ class InteractionMiddleware:
         ) -> None:
             await output_controller.capture_visible_completion(wrapped_event)
 
-        event.set_extra("_interaction_original_send", original_send)
-        event.set_extra("_interaction_original_send_streaming", original_send_streaming)
-        event.set_extra(
-            "_interaction_original_complete_visible_turn",
-            original_complete_visible_turn,
+        event.install_interaction_output_hooks(
+            original_send=original_send,
+            original_send_streaming=original_send_streaming,
+            original_complete_visible_turn=original_complete_visible_turn,
         )
         event.send = MethodType(send_wrapper, event)
         event.send_streaming = MethodType(send_streaming_wrapper, event)
         event.complete_visible_turn = MethodType(complete_visible_turn_wrapper, event)
-        event.set_extra("_interaction_output_interceptor_installed", True)
 
     async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
         if event.is_stopped() or is_interaction_turn_pipeline_route_handled(event):
@@ -1019,9 +1029,8 @@ class InteractionMiddleware:
                     and turn_state.speculative_persona_status
                     is InteractionSpeculativePersonaStatus.EMITTED
                 ):
-                    event.set_extra(
-                        "_interaction_core_planner_recovered_via_persona",
-                        True,
+                    mark_interaction_turn_core_planner_recovered_via_persona(
+                        event
                     )
                     if (
                         turn_state.failures
@@ -1073,9 +1082,8 @@ class InteractionMiddleware:
         interaction_config,
     ) -> PersonaExpressionResult | None:
         if self.plugin_context is None:
-            event.set_extra("_interaction_expression_failed", True)
-            event.set_extra(
-                "_interaction_expression_failure_reason",
+            record_interaction_turn_expression_failure(
+                event,
                 "plugin_context_unavailable",
             )
             self._set_speculative_persona_status(
@@ -1247,8 +1255,7 @@ class InteractionMiddleware:
                 exception=exc,
                 user_visible_action="none",
             )
-            event.set_extra("_interaction_core_planner_failed", True)
-            event.set_extra("_interaction_core_planner_failure_reason", str(exc))
+            record_interaction_turn_core_planner_failure(event, str(exc))
             raise
         set_interaction_turn_core_planning_decision(event, decision)
         if decision.action is CorePlanningAction.EXECUTE:
@@ -1260,15 +1267,9 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         route: InteractionRouteDecision,
     ) -> None:
-        router_source = str(
-            event.get_extra("_interaction_router_result_source", "fallback")
-        )
-        router_failure_reason = str(
-            event.get_extra("_interaction_router_failure_reason", "") or ""
-        )
-        router_context_nodes = event.get_extra("_interaction_router_context_nodes", [])
-        if not isinstance(router_context_nodes, list):
-            router_context_nodes = []
+        router_source = get_interaction_turn_router_result_source(event) or "fallback"
+        router_failure_reason = get_interaction_turn_router_failure_reason(event) or ""
+        router_context_nodes = get_interaction_turn_router_context_nodes(event)
         logger.info(
             "DIAG interaction.route: platform_id=%s session_id=%s route_mode=%s route_source=%s fallback_reason=%s context_nodes=%s",
             event.get_platform_id(),
@@ -1302,9 +1303,8 @@ class InteractionMiddleware:
         if self.plugin_context is None:
             if not fallback_on_error:
                 raise InteractionExpressionError("plugin_context_unavailable")
-            event.set_extra("_interaction_expression_failed", True)
-            event.set_extra(
-                "_interaction_expression_failure_reason",
+            record_interaction_turn_expression_failure(
+                event,
                 "plugin_context_unavailable",
             )
             return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
@@ -1326,8 +1326,7 @@ class InteractionMiddleware:
         if not fallback_on_error:
             raise error
 
-        event.set_extra("_interaction_expression_failed", True)
-        event.set_extra("_interaction_expression_failure_reason", str(error))
+        record_interaction_turn_expression_failure(event, str(error))
         record_interaction_turn_failure(
             event,
             stage="fast_expression",
@@ -1356,12 +1355,11 @@ class InteractionMiddleware:
             else InteractionRouteMode.PERSONA
         )
         if self.plugin_context is None:
-            event.set_extra("_interaction_router_failed", True)
-            event.set_extra(
-                "_interaction_router_failure_reason",
+            record_interaction_turn_router_failure(
+                event,
                 "plugin_context_unavailable",
             )
-            event.set_extra("_interaction_router_result_source", "fallback")
+            set_interaction_turn_router_result_source(event, "fallback")
             return InteractionRouteDecision(route_mode=fallback_mode)
         try:
             return await self.router_agent.route(
@@ -1378,9 +1376,8 @@ class InteractionMiddleware:
             reason = "router_pipeline_error"
             error = exc
 
-        event.set_extra("_interaction_router_failed", True)
-        event.set_extra("_interaction_router_failure_reason", str(error))
-        event.set_extra("_interaction_router_result_source", "fallback")
+        record_interaction_turn_router_failure(event, str(error))
+        set_interaction_turn_router_result_source(event, "fallback")
         record_interaction_turn_failure(
             event,
             stage="router",
@@ -1404,7 +1401,7 @@ class InteractionMiddleware:
         self._apply_inbound_path_mapping(event, runtime_config)
         await self._normalize_inbound_records(event)
         await self._transcribe_inbound_records(event, runtime_config)
-        event.set_extra("_interaction_inbound_media_materialized", True)
+        set_interaction_turn_inbound_media_materialized(event)
 
     def _apply_inbound_path_mapping(
         self,
@@ -1483,11 +1480,7 @@ class InteractionMiddleware:
                 stage="interaction.inbound_stt",
             )
         except VoiceServiceError as exc:
-            event.set_extra("_interaction_stt_failed", True)
-            event.set_extra(
-                "_interaction_stt_failure_reason",
-                exc.reason,
-            )
+            record_interaction_turn_stt_failure(event, exc.reason)
             record_interaction_turn_failure(
                 event,
                 stage="inbound_stt",
@@ -1515,8 +1508,7 @@ class InteractionMiddleware:
                     stage="interaction.inbound_stt",
                 )
             except VoiceServiceError as exc:
-                event.set_extra("_interaction_stt_failed", True)
-                event.set_extra("_interaction_stt_failure_reason", str(exc))
+                record_interaction_turn_stt_failure(event, str(exc))
                 record_interaction_turn_failure(
                     event,
                     stage="inbound_stt",
@@ -1541,7 +1533,7 @@ class InteractionMiddleware:
             event.message_obj.message_str = (
                 f"{event.message_obj.message_str or ''}{result.text}"
             )
-            event.set_extra("_interaction_stt_transcribed", True)
+            mark_interaction_turn_stt_transcribed(event)
 
     async def _emit_immediate_reply(
         self,
@@ -1619,12 +1611,7 @@ class InteractionMiddleware:
         visible_outputs = get_interaction_turn_visible_outputs(event)
         turn_material = get_interaction_turn_finalized_material(event)
         if turn_material is None:
-            event.set_extra("_interaction_turn_postprocess_failed", True)
-            event.set_extra(
-                "_interaction_turn_postprocess_failure_reason",
-                "missing_finalized_turn_material",
-            )
-            record_interaction_turn_completion_failure(
+            record_interaction_turn_postprocess_failure(
                 event,
                 "missing_finalized_turn_material",
             )
@@ -1661,9 +1648,7 @@ class InteractionMiddleware:
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
-            event.set_extra("_interaction_turn_postprocess_failed", True)
-            event.set_extra("_interaction_turn_postprocess_failure_reason", str(exc))
-            record_interaction_turn_completion_failure(event, f"postprocess:{exc}")
+            record_interaction_turn_postprocess_failure(event, str(exc))
             logger.error(
                 "Interaction turn postprocess failed: platform_id=%s session_id=%s turn_id=%s error=%s",
                 event.get_platform_id(),
@@ -1745,9 +1730,9 @@ class InteractionMiddleware:
             material["observation_kind"] = event.observation.kind
             material["observation_source"] = event.observation.source
             material["observation_correlation_id"] = event.observation.correlation_id
-        delivery_metadata = event.get_extra("_interaction_delivery_metadata")
-        if isinstance(delivery_metadata, Mapping):
-            material["assistant_metadata"] = dict(delivery_metadata)
+        delivery_metadata = get_interaction_turn_delivery_metadata(event)
+        if delivery_metadata:
+            material["assistant_metadata"] = delivery_metadata
         set_interaction_turn_finalized_material(event, material)
         return material
 
@@ -1926,8 +1911,7 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
         reason: str,
     ) -> None:
-        event.set_extra("_interaction_turn_finalization_failed", True)
-        event.set_extra("_interaction_turn_finalization_failure_reason", reason)
+        record_interaction_turn_finalization_failure(event, reason)
 
     async def _on_output_persist_requested(
         self,

@@ -88,6 +88,7 @@ from .provider_resolution import resolve_interaction_chat_provider
 from .turn_state import (
     get_interaction_turn_deadline,
     get_interaction_turn_state,
+    record_interaction_turn_expression_fallback,
     set_interaction_turn_persona_id,
 )
 from .types import InteractionAgentConfig
@@ -175,7 +176,6 @@ _FAST_PERSONA_SLOT_NAMES = frozenset(
         "extension.system",
     }
 )
-
 _PERSONA_FUNCTION_TOOL_INTENTS = frozenset({"reply"})
 _PERSONA_EXPRESSION_INTENT_METADATA_KEY = "interaction.persona_expression_intent"
 
@@ -287,10 +287,7 @@ def validate_persona_expression_result(
                 reason,
                 f"required persona effect is not valid: {effect.name}",
             )
-        if (
-            effect.metadata.get("exactly_one_per_segment") is True
-            and call_count != 1
-        ):
+        if effect.metadata.get("exactly_one_per_segment") is True and call_count != 1:
             raise InteractionExpressionError(
                 "required_persona_effect_count",
                 f"required persona effect must occur exactly once: {effect.name}",
@@ -446,10 +443,14 @@ def build_persona_expression_tool_parameters(
         )
         if required_per_segment:
             properties["effect_calls"]["minItems"] = required_per_segment
-            if required_per_segment == 1 and len(enabled_effects) == 1 and any(
-                isinstance(effect.metadata, dict)
-                and effect.metadata.get("exactly_one_per_segment") is True
-                for effect in enabled_effects
+            if (
+                required_per_segment == 1
+                and len(enabled_effects) == 1
+                and any(
+                    isinstance(effect.metadata, dict)
+                    and effect.metadata.get("exactly_one_per_segment") is True
+                    for effect in enabled_effects
+                )
             ):
                 properties["effect_calls"]["maxItems"] = 1
             required_names = [
@@ -767,14 +768,10 @@ class InteractionExpressionAgent:
                 fallback_provider_id = str(
                     candidate.provider_config.get("id", "<unknown>")
                 )
-                event.set_extra("_interaction_expression_fallback_used", True)
-                event.set_extra(
-                    "_interaction_expression_primary_failure_reason",
-                    str(primary_error),
-                )
-                event.set_extra(
-                    "_interaction_expression_fallback_provider_id",
-                    fallback_provider_id,
+                record_interaction_turn_expression_fallback(
+                    event,
+                    primary_failure_reason=str(primary_error),
+                    provider_id=fallback_provider_id,
                 )
                 logger.warning(
                     "Persona expression switched to fallback provider: platform_id=%s session_id=%s lifecycle_id=%s provider_id=%s primary_error=%s",
@@ -907,9 +904,9 @@ class InteractionExpressionAgent:
         provider_request.output_contract = output_contract
         provider_request.compiled_output_contract = compiled_output_contract
 
-        if _persona_expression_allows_function_tools(
-            req
-        ) and isinstance(provider_request.func_tool, ToolSet):
+        if _persona_expression_allows_function_tools(req) and isinstance(
+            provider_request.func_tool, ToolSet
+        ):
             if (
                 _toolset_capability_signature(provider_request.func_tool)
                 != initial_tool_signature

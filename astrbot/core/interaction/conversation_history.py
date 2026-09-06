@@ -5,7 +5,15 @@ from collections.abc import Mapping
 
 from astrbot import logger
 
-from .turn_state import record_interaction_turn_failure
+from .turn_state import (
+    get_interaction_turn_committed_turn_id,
+    get_interaction_turn_fixed_conversation_id,
+    is_interaction_turn_fixed_conversation_required,
+    mark_interaction_turn_conversation_committed,
+    record_interaction_turn_conversation_history_failure,
+    record_interaction_turn_delayed_history_skip,
+    record_interaction_turn_failure,
+)
 
 CONVERSATION_COMMITTED_TURN_ID_EXTRA = (
     "_interaction_conversation_committed_turn_id"
@@ -24,7 +32,7 @@ async def commit_interaction_conversation_turn(
     material_turn_id = str(turn_material.get("turn_id", "") or "").strip()
     if not resolved_turn_id or material_turn_id != resolved_turn_id:
         return False
-    if event.get_extra(CONVERSATION_COMMITTED_TURN_ID_EXTRA) == resolved_turn_id:
+    if get_interaction_turn_committed_turn_id(event) == resolved_turn_id:
         return True
 
     conversation_manager = getattr(plugin_context, "conversation_manager", None)
@@ -46,17 +54,13 @@ async def commit_interaction_conversation_turn(
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            event_extras = event.get_extra(default={})
-            fixed_conversation_required = (
-                isinstance(event_extras, Mapping)
-                and "_interaction_fixed_conversation_id" in event_extras
+            fixed_conversation_id = get_interaction_turn_fixed_conversation_id(event)
+            fixed_conversation_required = is_interaction_turn_fixed_conversation_required(
+                event
             )
-            fixed_conversation_id = str(
-                event.get_extra("_interaction_fixed_conversation_id", "") or ""
-            ).strip()
             if fixed_conversation_required and not fixed_conversation_id:
-                event.set_extra(
-                    "_interaction_delayed_history_skipped_reason",
+                record_interaction_turn_delayed_history_skip(
+                    event,
                     "parent_conversation_unavailable",
                 )
                 return True
@@ -65,8 +69,8 @@ async def commit_interaction_conversation_turn(
             )
             if fixed_conversation_required:
                 if conversation_id != fixed_conversation_id:
-                    event.set_extra(
-                        "_interaction_delayed_history_skipped_reason",
+                    record_interaction_turn_delayed_history_skip(
+                        event,
                         "parent_conversation_changed",
                     )
                     return True
@@ -75,8 +79,8 @@ async def commit_interaction_conversation_turn(
                     fixed_conversation_id,
                 )
                 if parent_conversation is None:
-                    event.set_extra(
-                        "_interaction_delayed_history_skipped_reason",
+                    record_interaction_turn_delayed_history_skip(
+                        event,
                         "parent_conversation_unavailable",
                     )
                     return True
@@ -105,10 +109,10 @@ async def commit_interaction_conversation_turn(
                     user_message=user_message,
                     assistant_message=assistant_message,
                 )
-            event.set_extra(CONVERSATION_COMMITTED_TURN_ID_EXTRA, resolved_turn_id)
-            event.set_extra(
-                "_interaction_committed_conversation_id",
-                conversation_id,
+            mark_interaction_turn_conversation_committed(
+                event,
+                turn_id=resolved_turn_id,
+                conversation_id=conversation_id,
             )
             return True
         except Exception as exc:  # noqa: BLE001
@@ -117,9 +121,8 @@ async def commit_interaction_conversation_turn(
                 await asyncio.sleep(0.05 * (2**attempt))
 
     if last_error is not None:
-        event.set_extra("_interaction_conversation_history_failed", True)
-        event.set_extra(
-            "_interaction_conversation_history_failure_reason",
+        record_interaction_turn_conversation_history_failure(
+            event,
             str(last_error),
         )
         record_interaction_turn_failure(

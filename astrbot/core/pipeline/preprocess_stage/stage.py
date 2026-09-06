@@ -4,6 +4,9 @@ import traceback
 from collections.abc import AsyncGenerator
 
 from astrbot.core import logger
+from astrbot.core.interaction.turn_state import (
+    is_interaction_turn_inbound_media_materialized,
+)
 from astrbot.core.message.components import Image, Plain, Record, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.media_utils import ensure_wav
@@ -52,7 +55,7 @@ class PreProcessStage(Stage):
             except Exception as e:
                 logger.warning(f"{platform} 预回应表情发送失败: {e}")
 
-        if event.get_extra("_interaction_inbound_media_materialized", False):
+        if is_interaction_turn_inbound_media_materialized(event):
             return
 
         # 路径映射

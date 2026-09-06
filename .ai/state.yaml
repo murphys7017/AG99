@@ -2,6 +2,12 @@ task:
   class: refactor
   risk: high
   phase: architecture_audit_remediation_phase_1
+  closure_review:
+    status: complete_for_migrated_turn_state_scope
+    date: '2026-09-06'
+    changes: Clear parent-bound Event output hooks on plugin branch copy and use Event getter for visible completion; synchronize remediation status docs.
+    validation: Branch boundary tests 3 passed; completion and hook tests 6 passed; targeted Ruff and git diff --check passed.
+    gaps: No real platform acceptance or full-suite rerun; Runtime adapter flags and Output Runtime public contracts remain deferred.
   scope: Converge confirmed internal Interaction state ownership without changing official Event, Pipeline, platform, or plugin compatibility contracts; defer Output Port and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
 context:
   confidence: high

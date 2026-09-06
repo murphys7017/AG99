@@ -6,6 +6,8 @@ from astrbot.core.interaction.turn_state import (
     begin_interaction_turn_finalization_deferral,
     cancel_interaction_turn_finalization_deferral,
     get_interaction_turn_state,
+    is_interaction_turn_pipeline_output_suppressed,
+    set_interaction_turn_pipeline_output_suppressed,
 )
 from astrbot.core.message.components import ComponentType
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
@@ -186,8 +188,8 @@ class RespondStage(Stage):
                     result_is_model_result=result.is_model_result(),
                 )
 
-                if event.get_extra("_interaction_pipeline_output_suppressed", False):
-                    event.set_extra("_interaction_pipeline_output_suppressed", False)
+                if is_interaction_turn_pipeline_output_suppressed(event):
+                    set_interaction_turn_pipeline_output_suppressed(event, False)
                     sent_any = False
 
                 if not sent_any:

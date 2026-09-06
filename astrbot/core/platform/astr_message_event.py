@@ -40,6 +40,14 @@ from .message_session import MessageSesion, MessageSession  # noqa
 from .platform_metadata import PlatformMetadata
 
 INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY = "_interaction_output_controller"
+INTERACTION_OUTPUT_INTERCEPTOR_INSTALLED_EXTRA_KEY = (
+    "_interaction_output_interceptor_installed"
+)
+INTERACTION_ORIGINAL_SEND_EXTRA_KEY = "_interaction_original_send"
+INTERACTION_ORIGINAL_SEND_STREAMING_EXTRA_KEY = "_interaction_original_send_streaming"
+INTERACTION_ORIGINAL_COMPLETE_VISIBLE_TURN_EXTRA_KEY = (
+    "_interaction_original_complete_visible_turn"
+)
 
 
 class AstrMessageEvent(abc.ABC):
@@ -65,6 +73,9 @@ class AstrMessageEvent(abc.ABC):
         self.is_at_or_wake_command = False
         """是否是 At 机器人或者带有唤醒词或者是私聊(插件注册的事件监听器会让 is_wake 设为 True, 但是不会让这个属性置为 True)"""
         self._extras: dict[str, Any] = {}
+        # Platform-owned storage for interaction compatibility hooks. The legacy
+        # extra keys remain as a projection for branch events and external callers.
+        self._interaction_output_hooks: dict[str, Any] = {}
         self._force_stopped: bool = False
         """独立的停止标志，不依赖 _result，不会被 clear_result() 重置"""
         message_type = getattr(message_obj, "type", None)
@@ -333,6 +344,60 @@ class AstrMessageEvent(abc.ABC):
         # completion signal, also dispatch the visible-turn postprocess hook with
         # the final visible reply snapshot.
 
+    def install_interaction_output_hooks(
+        self,
+        *,
+        original_send: Any,
+        original_send_streaming: Any,
+        original_complete_visible_turn: Any,
+    ) -> None:
+        """Install interaction output hooks while preserving Event compatibility.
+
+        Interaction middleware still replaces the official Event methods for
+        compatibility. This method owns the original-method references on the
+        platform event and mirrors them to legacy ``extra`` keys for branch
+        events and older integrations.
+        """
+        self._interaction_output_hooks = {
+            INTERACTION_ORIGINAL_SEND_EXTRA_KEY: original_send,
+            INTERACTION_ORIGINAL_SEND_STREAMING_EXTRA_KEY: original_send_streaming,
+            INTERACTION_ORIGINAL_COMPLETE_VISIBLE_TURN_EXTRA_KEY: (
+                original_complete_visible_turn
+            ),
+        }
+        self.set_extra(INTERACTION_ORIGINAL_SEND_EXTRA_KEY, original_send)
+        self.set_extra(
+            INTERACTION_ORIGINAL_SEND_STREAMING_EXTRA_KEY,
+            original_send_streaming,
+        )
+        self.set_extra(
+            INTERACTION_ORIGINAL_COMPLETE_VISIBLE_TURN_EXTRA_KEY,
+            original_complete_visible_turn,
+        )
+        self.set_extra(INTERACTION_OUTPUT_INTERCEPTOR_INSTALLED_EXTRA_KEY, True)
+
+    def get_interaction_original_send(self) -> Any:
+        """Return the pre-interception ``send`` implementation."""
+        return self._get_interaction_output_hook(INTERACTION_ORIGINAL_SEND_EXTRA_KEY)
+
+    def get_interaction_original_send_streaming(self) -> Any:
+        """Return the pre-interception streaming implementation."""
+        return self._get_interaction_output_hook(
+            INTERACTION_ORIGINAL_SEND_STREAMING_EXTRA_KEY
+        )
+
+    def get_interaction_original_complete_visible_turn(self) -> Any:
+        """Return the pre-interception visible-turn completion implementation."""
+        return self._get_interaction_output_hook(
+            INTERACTION_ORIGINAL_COMPLETE_VISIBLE_TURN_EXTRA_KEY
+        )
+
+    def _get_interaction_output_hook(self, key: str) -> Any:
+        """Read a hook with a legacy-extra fallback for copied branch events."""
+        if key in self._interaction_output_hooks:
+            return self._interaction_output_hooks[key]
+        return self.get_extra(key)
+
     def requires_visible_turn_completion(self) -> bool:
         """Return whether the platform needs an explicit visible-turn completion."""
         return False
@@ -354,7 +419,7 @@ class AstrMessageEvent(abc.ABC):
         if capture is not None:
             capture.capture(message)
             return
-        send = self.get_extra("_interaction_original_send")
+        send = self.get_interaction_original_send()
         previous_has_send_oper = self._has_send_oper
         if callable(send):
             try:
@@ -381,7 +446,7 @@ class AstrMessageEvent(abc.ABC):
         if capture is not None:
             await capture.capture_stream(generator)
             return
-        send_streaming = self.get_extra("_interaction_original_send_streaming")
+        send_streaming = self.get_interaction_original_send_streaming()
         if callable(send_streaming):
             await send_streaming(generator, use_fallback=use_fallback)
             return

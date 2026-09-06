@@ -62,6 +62,7 @@ from .turn_state import (
     finish_interaction_turn_final_output,
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
+    get_interaction_turn_delivery_metadata,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
     get_interaction_turn_state,
@@ -75,7 +76,9 @@ from .turn_state import (
     has_interaction_turn_final_output_claimed,
     is_interaction_turn_completed,
     is_interaction_turn_core_streaming_active,
+    is_interaction_turn_emitting_immediate_reply,
     is_interaction_turn_finalization_deferred,
+    is_interaction_turn_pipeline_output_suppressed,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_core_streaming_result_consumed,
     mark_interaction_turn_finalization_pending,
@@ -85,13 +88,16 @@ from .turn_state import (
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
     record_interaction_turn_failure,
+    record_interaction_turn_finalization_failure,
     record_interaction_turn_stream_observation_failure,
     record_interaction_turn_visible_message_fingerprint,
     remove_interaction_turn_stream_observation_task,
     reserve_interaction_turn_final_output,
     set_interaction_turn_core_streaming_active,
+    set_interaction_turn_emitting_immediate_reply,
     set_interaction_turn_finalized_material,
     set_interaction_turn_immediate_reply,
+    set_interaction_turn_pipeline_output_suppressed,
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
@@ -308,7 +314,7 @@ class InteractionOutputController:
         if not reply:
             return
         set_interaction_turn_immediate_reply(event, reply)
-        event.set_extra("_interaction_emitting_immediate_reply", True)
+        set_interaction_turn_emitting_immediate_reply(event)
         try:
             with temporary_output_origin(event, OutputOrigin.CORE.value):
                 await self.capture_message_chain(
@@ -322,7 +328,7 @@ class InteractionOutputController:
                     prepared_expression=result,
                 )
         finally:
-            event.set_extra("_interaction_emitting_immediate_reply", False)
+            set_interaction_turn_emitting_immediate_reply(event, False)
 
     async def capture_message_chain(
         self,
@@ -335,7 +341,7 @@ class InteractionOutputController:
             await self.capture_visible_completion(event)
             return
 
-        is_immediate = bool(event.get_extra("_interaction_emitting_immediate_reply"))
+        is_immediate = is_interaction_turn_emitting_immediate_reply(event)
         outbound_kind = self._classify_outbound_message(event, message, is_immediate)
         if is_immediate:
             semantic_text = message.get_plain_text()
@@ -473,7 +479,7 @@ class InteractionOutputController:
             raise
         final_status = (
             InteractionFinalOutputStatus.SUPPRESSED
-            if event.get_extra("_interaction_pipeline_output_suppressed", False)
+            if is_interaction_turn_pipeline_output_suppressed(event)
             else InteractionFinalOutputStatus.DELIVERED
         )
         await finish_interaction_turn_final_output(event, final_status)
@@ -762,9 +768,7 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
     ) -> None:
-        complete_visible_turn = event.get_extra(
-            "_interaction_original_complete_visible_turn"
-        )
+        complete_visible_turn = event.get_interaction_original_complete_visible_turn()
         if callable(complete_visible_turn):
             await complete_visible_turn()
         else:
@@ -1465,7 +1469,7 @@ class InteractionOutputController:
             result_content_type,
         )
         if final_message is None:
-            event.set_extra("_interaction_pipeline_output_suppressed", True)
+            set_interaction_turn_pipeline_output_suppressed(event)
             mark_interaction_turn_cancelled(event)
             await self._notify_lifecycle(
                 event,
@@ -1786,9 +1790,7 @@ class InteractionOutputController:
         result_contribution: InteractionResultContribution | None = None,
     ) -> dict[str, Any]:
         extras: dict[str, Any] = {}
-        delivery_metadata = event.get_extra("_interaction_delivery_metadata")
-        if isinstance(delivery_metadata, Mapping):
-            extras.update(dict(delivery_metadata))
+        extras.update(get_interaction_turn_delivery_metadata(event))
         if result_contribution is not None:
             extras.update(result_contribution.platform_extras)
             if result_contribution.client_objects:
@@ -2330,9 +2332,9 @@ class InteractionOutputController:
         memory_relevant: bool = True,
     ) -> None:
         resolved_metadata = dict(metadata or {})
-        delivery_metadata = event.get_extra("_interaction_delivery_metadata")
-        if isinstance(delivery_metadata, Mapping):
-            resolved_metadata["delivery_metadata"] = dict(delivery_metadata)
+        delivery_metadata = get_interaction_turn_delivery_metadata(event)
+        if delivery_metadata:
+            resolved_metadata["delivery_metadata"] = delivery_metadata
         append_interaction_turn_visible_output(
             event,
             message_kind=message_kind,
@@ -2356,13 +2358,10 @@ class InteractionOutputController:
             await self._persist_callback(event)
             return
 
-        event.set_extra("_interaction_persist_callback_missing", True)
-        event.set_extra("_interaction_turn_finalization_failed", True)
-        event.set_extra(
-            "_interaction_turn_finalization_failure_reason",
+        record_interaction_turn_finalization_failure(
+            event,
             "missing_persist_callback",
         )
-        record_interaction_turn_completion_failure(event, "missing_persist_callback")
         logger.error(
             "Interaction turn persist requested without middleware callback: platform_id=%s session_id=%s turn_id=%s",
             event.get_platform_id(),

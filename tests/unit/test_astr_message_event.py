@@ -697,6 +697,37 @@ class TestInteractionDelivery:
         original_streaming.assert_awaited_once_with(stream, use_fallback=True)
         wrapped_streaming.assert_not_awaited()
 
+    def test_interaction_output_hooks_keep_legacy_projection(
+        self,
+        astr_message_event,
+    ):
+        original_send = AsyncMock()
+        original_streaming = AsyncMock()
+        original_completion = AsyncMock()
+
+        astr_message_event.install_interaction_output_hooks(
+            original_send=original_send,
+            original_send_streaming=original_streaming,
+            original_complete_visible_turn=original_completion,
+        )
+
+        assert astr_message_event.get_interaction_original_send() is original_send
+        assert (
+            astr_message_event.get_interaction_original_send_streaming()
+            is original_streaming
+        )
+        assert (
+            astr_message_event.get_interaction_original_complete_visible_turn()
+            is original_completion
+        )
+        assert (
+            astr_message_event.get_extra("_interaction_original_send")
+            is original_send
+        )
+        assert astr_message_event.get_extra(
+            "_interaction_output_interceptor_installed"
+        )
+
 
 class TestSendTyping:
     """Tests for send_typing method."""

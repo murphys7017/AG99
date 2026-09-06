@@ -2264,6 +2264,33 @@ async def test_plugin_branch_isolates_input_state_and_visible_output():
 
 
 @pytest.mark.asyncio
+async def test_plugin_branch_stream_does_not_use_parent_platform_hooks():
+    event = _DirectEvent(_metadata())
+
+    async def platform_stream(generator, use_fallback=False):
+        async for message in generator:
+            await event.send(message)
+
+    event.install_interaction_output_hooks(
+        original_send=event.send,
+        original_send_streaming=platform_stream,
+        original_complete_visible_turn=event.complete_visible_turn,
+    )
+    branch, result, _sink = create_plugin_branch_event(event)
+
+    async def chunks():
+        yield MessageChain([Plain("branch stream")])
+
+    await branch.send_interaction_streaming(chunks())
+
+    assert event.sent == []
+    assert len(result.output_artifacts) == 1
+    assert result.output_artifacts[0].message.chain[0].text == "branch stream"
+    await event.send_interaction_streaming(chunks())
+    assert len(event.sent) == 1
+
+
+@pytest.mark.asyncio
 async def test_plugin_branch_owns_temporary_media_until_delivery_finishes(tmp_path):
     source = tmp_path / "input.png"
     source.write_bytes(b"plugin-media")

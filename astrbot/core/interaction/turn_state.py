@@ -135,6 +135,10 @@ class InteractionTurnCompletionState:
     terminal_at: float | None = None
     finalization_deferred: bool = False
     finalization_pending: bool = False
+    finalization_failed: bool = False
+    finalization_failure_reason: str | None = None
+    postprocess_failed: bool = False
+    postprocess_failure_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -229,6 +233,7 @@ class InteractionTurnState:
     turn_id: str
     pipeline_event_prepared: bool = False
     pipeline_route_handled: bool = False
+    emitting_immediate_reply: bool = False
     deadline: TurnDeadlineBudget | None = None
     interaction_config: InteractionAgentConfig | None = None
     persona_id: str = ""
@@ -240,6 +245,31 @@ class InteractionTurnState:
     prompt_build_config: Any | None = None
     context_material: InteractionContextMaterial | None = None
     context_material_task: asyncio.Task[InteractionContextMaterial] | None = None
+    delivery_metadata: dict[str, Any] = field(default_factory=dict)
+    fixed_conversation_required: bool = False
+    fixed_conversation_id: str | None = None
+    committed_turn_id: str | None = None
+    committed_conversation_id: str | None = None
+    delayed_history_skipped_reason: str | None = None
+    conversation_history_failed: bool = False
+    conversation_history_failure_reason: str | None = None
+    pipeline_output_suppressed: bool = False
+    inbound_media_materialized: bool = False
+    stt_transcribed: bool = False
+    stt_failed: bool = False
+    stt_failure_reason: str | None = None
+    router_failed: bool = False
+    router_failure_reason: str | None = None
+    router_result_source: str = ""
+    router_context_nodes: list[str] = field(default_factory=list)
+    core_planner_failed: bool = False
+    core_planner_failure_reason: str | None = None
+    core_planner_recovered_via_persona: bool = False
+    expression_failed: bool = False
+    expression_failure_reason: str | None = None
+    expression_fallback_used: bool = False
+    expression_primary_failure_reason: str | None = None
+    expression_fallback_provider_id: str | None = None
     route_decision: InteractionRouteDecision | None = None
     core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
@@ -410,6 +440,342 @@ def set_interaction_turn_persona_id(event, persona_id: str) -> None:
     state = get_interaction_turn_state(event)
     if state is not None:
         state.persona_id = normalized_persona_id
+
+
+def set_interaction_turn_delivery_metadata(
+    event,
+    metadata: dict[str, Any] | None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.delivery_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    event.set_extra("_interaction_delivery_metadata", dict(state.delivery_metadata))
+
+
+def get_interaction_turn_delivery_metadata(event) -> dict[str, Any]:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return dict(state.delivery_metadata)
+    metadata = event.get_extra("_interaction_delivery_metadata", {})
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def set_interaction_turn_fixed_conversation_id(
+    event,
+    conversation_id: str | None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.fixed_conversation_required = True
+    state.fixed_conversation_id = str(conversation_id or "").strip() or None
+    event.set_extra(
+        "_interaction_fixed_conversation_id",
+        state.fixed_conversation_id,
+    )
+
+
+def get_interaction_turn_fixed_conversation_id(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.fixed_conversation_id
+    conversation_id = event.get_extra("_interaction_fixed_conversation_id")
+    return str(conversation_id).strip() if conversation_id else None
+
+
+def is_interaction_turn_fixed_conversation_required(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.fixed_conversation_required
+    return "_interaction_fixed_conversation_id" in (event.get_extra(default={}) or {})
+
+
+def mark_interaction_turn_conversation_committed(
+    event,
+    *,
+    turn_id: str,
+    conversation_id: str,
+) -> None:
+    state = ensure_interaction_turn_state(event, turn_id=turn_id)
+    state.committed_turn_id = str(turn_id or "").strip() or None
+    state.committed_conversation_id = str(conversation_id or "").strip() or None
+    event.set_extra(
+        "_interaction_conversation_committed_turn_id",
+        state.committed_turn_id,
+    )
+    event.set_extra(
+        "_interaction_committed_conversation_id",
+        state.committed_conversation_id,
+    )
+
+
+def get_interaction_turn_committed_turn_id(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.committed_turn_id
+    value = event.get_extra("_interaction_conversation_committed_turn_id")
+    return str(value).strip() if value else None
+
+
+def get_interaction_turn_committed_conversation_id(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.committed_conversation_id
+    value = event.get_extra("_interaction_committed_conversation_id")
+    return str(value).strip() if value else None
+
+
+def record_interaction_turn_delayed_history_skip(
+    event,
+    reason: str,
+) -> None:
+    clean_reason = str(reason or "").strip() or None
+    state = ensure_interaction_turn_state(event)
+    state.delayed_history_skipped_reason = clean_reason
+    event.set_extra("_interaction_delayed_history_skipped_reason", clean_reason)
+
+
+def get_interaction_turn_delayed_history_skip_reason(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.delayed_history_skipped_reason
+    value = event.get_extra("_interaction_delayed_history_skipped_reason")
+    return str(value).strip() if value else None
+
+
+def record_interaction_turn_conversation_history_failure(
+    event,
+    reason: str,
+) -> None:
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        return
+    state = ensure_interaction_turn_state(event)
+    state.conversation_history_failed = True
+    state.conversation_history_failure_reason = clean_reason
+    event.set_extra("_interaction_conversation_history_failed", True)
+    event.set_extra(
+        "_interaction_conversation_history_failure_reason",
+        clean_reason,
+    )
+
+
+def set_interaction_turn_pipeline_output_suppressed(
+    event,
+    suppressed: bool = True,
+) -> None:
+    """Set the canonical turn-level suppression flag."""
+    state = ensure_interaction_turn_state(event)
+    state.pipeline_output_suppressed = bool(suppressed)
+    # Keep the legacy projection for copied branch and external events.
+    event.set_extra("_interaction_pipeline_output_suppressed", bool(suppressed))
+
+
+def is_interaction_turn_pipeline_output_suppressed(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.pipeline_output_suppressed
+    return bool(event.get_extra("_interaction_pipeline_output_suppressed", False))
+
+
+def set_interaction_turn_emitting_immediate_reply(
+    event,
+    emitting: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.emitting_immediate_reply = bool(emitting)
+    event.set_extra("_interaction_emitting_immediate_reply", bool(emitting))
+
+
+def is_interaction_turn_emitting_immediate_reply(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.emitting_immediate_reply
+    return bool(event.get_extra("_interaction_emitting_immediate_reply", False))
+
+
+def set_interaction_turn_inbound_media_materialized(
+    event,
+    materialized: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.inbound_media_materialized = bool(materialized)
+    event.set_extra("_interaction_inbound_media_materialized", bool(materialized))
+
+
+def is_interaction_turn_inbound_media_materialized(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.inbound_media_materialized
+    return bool(event.get_extra("_interaction_inbound_media_materialized", False))
+
+
+def mark_interaction_turn_stt_transcribed(
+    event,
+    transcribed: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.stt_transcribed = bool(transcribed)
+    event.set_extra("_interaction_stt_transcribed", bool(transcribed))
+
+
+def is_interaction_turn_stt_transcribed(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.stt_transcribed
+    return bool(event.get_extra("_interaction_stt_transcribed", False))
+
+
+def record_interaction_turn_stt_failure(
+    event,
+    reason: str | None = None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.stt_failed = True
+    state.stt_failure_reason = str(reason or "").strip() or None
+    event.set_extra("_interaction_stt_failed", True)
+    if state.stt_failure_reason is not None:
+        event.set_extra(
+            "_interaction_stt_failure_reason",
+            state.stt_failure_reason,
+        )
+
+
+def is_interaction_turn_stt_failed(event) -> bool:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.stt_failed
+    return bool(event.get_extra("_interaction_stt_failed", False))
+
+
+def get_interaction_turn_stt_failure_reason(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.stt_failure_reason
+    reason = event.get_extra("_interaction_stt_failure_reason")
+    return str(reason).strip() if reason else None
+
+
+def record_interaction_turn_router_failure(
+    event,
+    reason: str | None = None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.router_failed = True
+    state.router_failure_reason = str(reason or "").strip() or None
+    event.set_extra("_interaction_router_failed", True)
+    if state.router_failure_reason is not None:
+        event.set_extra(
+            "_interaction_router_failure_reason",
+            state.router_failure_reason,
+        )
+
+
+def set_interaction_turn_router_result_source(event, source: str) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.router_result_source = str(source or "").strip()
+    event.set_extra("_interaction_router_result_source", state.router_result_source)
+
+
+def get_interaction_turn_router_result_source(event) -> str:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.router_result_source
+    return str(event.get_extra("_interaction_router_result_source", "") or "")
+
+
+def set_interaction_turn_router_context_nodes(
+    event,
+    nodes: list[str] | None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.router_context_nodes = [
+        str(node) for node in (nodes or []) if str(node).strip()
+    ]
+    event.set_extra(
+        "_interaction_router_context_nodes",
+        list(state.router_context_nodes),
+    )
+
+
+def get_interaction_turn_router_failure_reason(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.router_failure_reason
+    reason = event.get_extra("_interaction_router_failure_reason")
+    return str(reason).strip() if reason else None
+
+
+def get_interaction_turn_router_context_nodes(event) -> list[str]:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return list(state.router_context_nodes)
+    nodes = event.get_extra("_interaction_router_context_nodes", [])
+    return [str(node) for node in nodes] if isinstance(nodes, list) else []
+
+
+def record_interaction_turn_core_planner_failure(
+    event,
+    reason: str | None = None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.core_planner_failed = True
+    state.core_planner_failure_reason = str(reason or "").strip() or None
+    event.set_extra("_interaction_core_planner_failed", True)
+    if state.core_planner_failure_reason is not None:
+        event.set_extra(
+            "_interaction_core_planner_failure_reason",
+            state.core_planner_failure_reason,
+        )
+
+
+def mark_interaction_turn_core_planner_recovered_via_persona(
+    event,
+    recovered: bool = True,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.core_planner_recovered_via_persona = bool(recovered)
+    event.set_extra(
+        "_interaction_core_planner_recovered_via_persona",
+        bool(recovered),
+    )
+
+
+def record_interaction_turn_expression_failure(
+    event,
+    reason: str | None = None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.expression_failed = True
+    state.expression_failure_reason = str(reason or "").strip() or None
+    event.set_extra("_interaction_expression_failed", True)
+    if state.expression_failure_reason is not None:
+        event.set_extra(
+            "_interaction_expression_failure_reason",
+            state.expression_failure_reason,
+        )
+
+
+def record_interaction_turn_expression_fallback(
+    event,
+    *,
+    primary_failure_reason: str | None,
+    provider_id: str | None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.expression_fallback_used = True
+    state.expression_primary_failure_reason = (
+        str(primary_failure_reason or "").strip() or None
+    )
+    state.expression_fallback_provider_id = str(provider_id or "").strip() or None
+    event.set_extra("_interaction_expression_fallback_used", True)
+    if state.expression_primary_failure_reason is not None:
+        event.set_extra(
+            "_interaction_expression_primary_failure_reason",
+            state.expression_primary_failure_reason,
+        )
+    if state.expression_fallback_provider_id is not None:
+        event.set_extra(
+            "_interaction_expression_fallback_provider_id",
+            state.expression_fallback_provider_id,
+        )
 
 
 def set_interaction_turn_route_decision(
@@ -598,6 +964,36 @@ def record_interaction_turn_completion_failure(
         return
     state = ensure_interaction_turn_state(event)
     state.completion_state.failure_reason = clean_reason
+
+
+def record_interaction_turn_finalization_failure(
+    event,
+    reason: str,
+) -> None:
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        return
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.finalization_failed = True
+    state.completion_state.finalization_failure_reason = clean_reason
+    event.set_extra("_interaction_turn_finalization_failed", True)
+    event.set_extra("_interaction_turn_finalization_failure_reason", clean_reason)
+    record_interaction_turn_completion_failure(event, clean_reason)
+
+
+def record_interaction_turn_postprocess_failure(
+    event,
+    reason: str,
+) -> None:
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        return
+    state = ensure_interaction_turn_state(event)
+    state.completion_state.postprocess_failed = True
+    state.completion_state.postprocess_failure_reason = clean_reason
+    event.set_extra("_interaction_turn_postprocess_failed", True)
+    event.set_extra("_interaction_turn_postprocess_failure_reason", clean_reason)
+    record_interaction_turn_completion_failure(event, f"postprocess:{clean_reason}")
 
 
 def record_interaction_turn_failure(

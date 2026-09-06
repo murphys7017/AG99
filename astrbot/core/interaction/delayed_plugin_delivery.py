@@ -13,7 +13,6 @@ from astrbot import logger
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
-from .conversation_history import CONVERSATION_COMMITTED_TURN_ID_EXTRA
 from .observation import RuntimeObservation, RuntimeObservationTarget
 from .personal_expression_guard import fingerprint_personal_expression
 from .plugin_execution_runtime import PluginExecutionRuntime
@@ -25,8 +24,14 @@ from .plugin_execution_types import (
 )
 from .runtime_event import RuntimeObservationEvent
 from .turn_state import (
+    get_interaction_turn_committed_conversation_id,
+    get_interaction_turn_committed_turn_id,
+    get_interaction_turn_delayed_history_skip_reason,
     get_interaction_turn_visible_message_fingerprints,
     get_interaction_turn_visible_outputs,
+    record_interaction_turn_delayed_history_skip,
+    set_interaction_turn_delivery_metadata,
+    set_interaction_turn_fixed_conversation_id,
 )
 from .visible_message_fingerprint import (
     fingerprint_visible_message,
@@ -80,14 +85,10 @@ class DelayedPluginDeliveryContext:
         )
 
     def resolve_parent_conversation_id(self) -> str | None:
-        committed = str(
-            self.parent_event.get_extra(
-                "_interaction_committed_conversation_id",
-                "",
-            )
-            or ""
-        ).strip()
-        return committed or self.parent_conversation_id
+        return (
+            get_interaction_turn_committed_conversation_id(self.parent_event)
+            or self.parent_conversation_id
+        )
 
 
 @dataclass(slots=True)
@@ -318,17 +319,14 @@ class DelayedPluginDeliveryCoordinator:
             observation=observation,
         )
         event.set_extra("_turn_id", metadata["delayed_turn_id"])
-        event.set_extra("_interaction_delivery_metadata", metadata)
+        set_interaction_turn_delivery_metadata(event, metadata)
 
         def prepare_parent_context(runtime_event: RuntimeObservationEvent) -> None:
             parent_conversation_id = context.resolve_parent_conversation_id()
             metadata["parent_conversation_id"] = parent_conversation_id
-            runtime_event.set_extra(
-                "_interaction_delivery_metadata",
-                dict(metadata),
-            )
-            runtime_event.set_extra(
-                "_interaction_fixed_conversation_id",
+            set_interaction_turn_delivery_metadata(runtime_event, metadata)
+            set_interaction_turn_fixed_conversation_id(
+                runtime_event,
                 parent_conversation_id,
             )
         if profile == "delayed_plugin_direct":
@@ -371,20 +369,11 @@ class DelayedPluginDeliveryCoordinator:
                 profile=profile,
             )
         )
-        history_status = str(
-            event.get_extra("_interaction_delayed_history_skipped_reason", "") or ""
-        )
-        committed_turn_id = str(
-            event.get_extra(CONVERSATION_COMMITTED_TURN_ID_EXTRA, "") or ""
-        )
+        history_status = get_interaction_turn_delayed_history_skip_reason(event) or ""
+        committed_turn_id = get_interaction_turn_committed_turn_id(event) or ""
         if delivered and not committed_turn_id and not history_status:
-            history_status = str(
-                event.get_extra(
-                    "_interaction_turn_finalization_failure_reason",
-                    "history_not_committed",
-                )
-                or "history_not_committed"
-            )
+            history_status = "history_not_committed"
+            record_interaction_turn_delayed_history_skip(event, history_status)
         return delivered, {
             "delayed_turn_id": metadata["delayed_turn_id"],
             "written_to_history": bool(

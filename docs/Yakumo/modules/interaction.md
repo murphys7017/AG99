@@ -462,11 +462,12 @@ runtime config、ProviderRequest 和官方 event 引用。普通平台事件与�
 context，只将事实写入对应 Runtime Inbox。
 
 它尚未成为整个 Interaction 的唯一调用参数。Router、Persona、Planner、Output 和
-RespondStage 仍以 `AstrMessageEvent` 为兼容载体；静态分析在 Interaction 包中确认了
-117 个 literal extra key、225 次 literal get/set 和 22 次动态 key 调用。部分 extra 是
-只读诊断，但 route、output deferral、completion 和兼容回调仍包含可写协调状态。因此当前
-准确描述是“typed admission context + event compatibility state”，不是完整的 typed
-Personal Runtime。
+RespondStage 仍以 `AstrMessageEvent` 为兼容载体。第一阶段已将 route、output deferral、
+completion、输入/STT、规划/表达诊断、Conversation 提交和 delivery metadata 的主事实
+收敛到 `InteractionTurnState`；对应 extra 保留兼容投影和无 typed state 时的回退。
+原始平台方法引用由 Event hook API 持有，分支事件不继承父事件 hook。
+Plugin/Output 专属事务、Runtime 适配标记和兼容拦截仍存在，因此这不是完整的 typed
+Personal Runtime，也不表示所有 extra 都已经迁移。旧静态计数不作为本次完成判据。
 
 task scope 和 immediate/final output reservation 已迁入 typed turn state。后续继续迁移
 output intent、诊断和兼容投影；不能为减少 extra 数量而同时维护一套平行字段。

@@ -27,7 +27,11 @@ from .prompt_support import (
     build_model_context_messages,
 )
 from .provider_resolution import resolve_interaction_chat_provider
-from .turn_state import get_interaction_turn_deadline
+from .turn_state import (
+    get_interaction_turn_deadline,
+    set_interaction_turn_router_context_nodes,
+    set_interaction_turn_router_result_source,
+)
 from .types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
@@ -161,7 +165,7 @@ class InteractionRouterAgent:
             raise InteractionRouterError("invalid_payload")
         if route.route_mode is InteractionRouteMode.SILENT and not allow_silent:
             raise InteractionRouterError("disallowed_mode")
-        event.set_extra("_interaction_router_result_source", "parsed")
+        set_interaction_turn_router_result_source(event, "parsed")
         logger.info(
             "Interaction router parsed: turn_id=%s target=router platform_id=%s "
             "session_id=%s mode=%s result_source=parsed",
@@ -217,8 +221,8 @@ class InteractionRouterAgent:
             else {}
         )
         slot_names = metadata.get("selected_slot_names", [])
-        event.set_extra(
-            "_interaction_router_context_nodes",
+        set_interaction_turn_router_context_nodes(
+            event,
             [str(name) for name in slot_names] if isinstance(slot_names, list) else [],
         )
         return render_result

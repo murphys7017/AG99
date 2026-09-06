@@ -1,5 +1,9 @@
 # Yakumo Current State
 
+2026-09-06 整改进度：第一阶段 Turn state 收敛已完成，范围和验收见
+[架构整改实施记录](架构整改实施记录.md)。兼容 extra、Event 方法拦截和旧串行插件路径
+保留；Output Runtime 公共契约、Agent 拆分及真实平台并行插件验收仍待后续处理。
+
 当前仓库更接近单体式运行时。`main.py` 负责运行环境准备、WebUI 检查和启动入口，真正的系统装配发生在 `astrbot/core/initial_loader.py` 和 `astrbot/core/core_lifecycle.py`。
 
 ## 启动链路

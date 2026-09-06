@@ -30,10 +30,14 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_state,
+    is_interaction_turn_emitting_immediate_reply,
+    is_interaction_turn_pipeline_output_suppressed,
     is_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_pipeline_route_handled,
     set_interaction_turn_config,
+    set_interaction_turn_emitting_immediate_reply,
     set_interaction_turn_immediate_reply,
+    set_interaction_turn_pipeline_output_suppressed,
 )
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
@@ -138,6 +142,60 @@ def test_interaction_turn_state_owns_pipeline_route_guard():
 
     assert is_interaction_turn_pipeline_route_handled(event)
     assert event.get_extra("_interaction_route_handled") is None
+
+
+def test_interaction_turn_state_owns_pipeline_output_suppression():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+
+    assert not is_interaction_turn_pipeline_output_suppressed(event)
+    set_interaction_turn_pipeline_output_suppressed(event)
+
+    state = get_interaction_turn_state(event)
+    assert state is not None
+    assert state.pipeline_output_suppressed is True
+    assert is_interaction_turn_pipeline_output_suppressed(event) is True
+    assert event.get_extra("_interaction_pipeline_output_suppressed") is True
+
+    set_interaction_turn_pipeline_output_suppressed(event, False)
+    assert state.pipeline_output_suppressed is False
+    assert event.get_extra("_interaction_pipeline_output_suppressed") is False
+
+
+def test_interaction_turn_state_owns_immediate_reply_emitting_flag():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+
+    assert not is_interaction_turn_emitting_immediate_reply(event)
+    set_interaction_turn_emitting_immediate_reply(event)
+
+    state = get_interaction_turn_state(event)
+    assert state is not None
+    assert state.emitting_immediate_reply is True
+    assert is_interaction_turn_emitting_immediate_reply(event) is True
+    assert event.get_extra("_interaction_emitting_immediate_reply") is True
+
+    set_interaction_turn_emitting_immediate_reply(event, False)
+    assert state.emitting_immediate_reply is False
+    assert event.get_extra("_interaction_emitting_immediate_reply") is False
 
 
 def test_coordinated_plugin_path_uses_admitted_turn_config_snapshot():
