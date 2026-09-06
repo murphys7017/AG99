@@ -547,9 +547,7 @@ async def test_core_visible_reply_material_preserves_immediate_reply_context():
         "核心天气结果",
         immediate_reply="我没有联网能力",
     )
-    slots = await PersonaVisibleReplyCollector(
-        request
-    ).collect(None, None, None)
+    slots = await PersonaVisibleReplyCollector(request).collect(None, None, None)
 
     assert request.intent == PersonaExpressionIntent(
         source="core_result",
@@ -584,9 +582,7 @@ def test_visible_reply_material_profile_hides_redundant_media_slots():
         pack,
         profile=PromptRenderProfile(
             name="interaction_persona_runtime",
-            hidden_slot_names=frozenset(
-                {"input.images", "input.image_captions"}
-            ),
+            hidden_slot_names=frozenset({"input.images", "input.image_captions"}),
         ),
     )
 
@@ -875,8 +871,10 @@ def test_deepseek_first_turn_reasoning_marker_skips_nonfirst_turn_history():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("needs_correction", [False, True])
 async def test_persona_expression_passes_compiled_contract_and_returns_effect_calls(
     monkeypatch,
+    needs_correction,
 ):
     effect = PersonaEffectSpec(
         plugin_id="plugin_a",
@@ -885,8 +883,9 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
         parameters={
             "type": "object",
             "properties": {"emotion_label": {"type": "string"}},
-            "required": [],
+            "required": ["emotion_label"],
         },
+        metadata={"required_per_segment": True},
     )
 
     class Provider:
@@ -895,6 +894,21 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
 
         async def text_chat(self, **kwargs):
             self.calls.append(kwargs)
+            if needs_correction and len(self.calls) == 1:
+                return LLMResponse(
+                    role="assistant",
+                    completion_text="",
+                    tools_call_name=["persona_expression"],
+                    tools_call_args=[
+                        {
+                            "spoken_reply": "Original reply",
+                            "speech_cues": [],
+                            "effect_calls": [
+                                {"name": "ag99live.motion", "arguments": {}}
+                            ],
+                        }
+                    ],
+                )
             return LLMResponse(
                 role="assistant",
                 completion_text="",
@@ -988,7 +1002,9 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
         PersonaExpressionRequest(),
     )
 
-    assert result.spoken_reply == "嗯，我来看看。"
+    assert result.spoken_reply == (
+        "Original reply" if needs_correction else "嗯，我来看看。"
+    )
     assert result.effect_calls == [
         PersonaEffectCall(
             name="ag99live.motion",
@@ -1001,7 +1017,10 @@ async def test_persona_expression_passes_compiled_contract_and_returns_effect_ca
     assert provider.calls[0]["compiled_output_contract"] is compiled
     assert provider.calls[0]["temperature"] == 0.6
     assert "hello" in _provider_context_text(provider.calls[0])
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == (2 if needs_correction else 1)
+    if needs_correction:
+        assert not provider.calls[1].get("func_tool")
+        assert result.metadata["effect_correction_used"] is True
 
 
 @pytest.mark.asyncio
@@ -1289,6 +1308,7 @@ async def test_persona_expression_dispatches_official_tool_hooks_once(
     )
     tools = ToolSet([tool])
     provider = Provider()
+
     class PluginContext:
         def get_provider_by_id(self, provider_id):
             return provider
@@ -1593,9 +1613,7 @@ async def test_persona_tool_failure_does_not_restart_the_tool_loop(monkeypatch):
                     role="assistant",
                     completion_text="",
                     tools_call_name=["persona_expression"],
-                    tools_call_args=[
-                        {"spoken_reply": "不应回退", "effect_calls": []}
-                    ],
+                    tools_call_args=[{"spoken_reply": "不应回退", "effect_calls": []}],
                 )
             if len(self.calls) == 1:
                 return LLMResponse(
@@ -1794,9 +1812,7 @@ async def test_persona_request_hook_context_mutation_survives_business_tool_loop
     async def call_hook(_event, hook_type, *args, **_kwargs):
         if hook_type.name == "OnLLMRequestEvent":
             args[0].prompt = ""
-            args[0].contexts.append(
-                {"role": "system", "content": "plugin context"}
-            )
+            args[0].contexts.append({"role": "system", "content": "plugin context"})
         return False
 
     monkeypatch.setattr(
@@ -1839,7 +1855,9 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
                 role="assistant",
                 completion_text="",
                 tools_call_name=["persona_expression"],
-                tools_call_args=[{"spoken_reply": "由回退模型完成", "effect_calls": []}],
+                tools_call_args=[
+                    {"spoken_reply": "由回退模型完成", "effect_calls": []}
+                ],
             )
 
     class Event:

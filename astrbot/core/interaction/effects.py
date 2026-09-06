@@ -562,12 +562,12 @@ def _validate_count_bounds(
     minimum = schema.get(minimum_key)
     if isinstance(minimum, int) and not isinstance(minimum, bool) and count < minimum:
         raise PersonaEffectValidationError(
-            f"too few {label} for {_display_schema_path(path)}"
+            f"too few {label} for {_display_schema_path(path)}: got {count}, minimum {minimum}"
         )
     maximum = schema.get(maximum_key)
     if isinstance(maximum, int) and not isinstance(maximum, bool) and count > maximum:
         raise PersonaEffectValidationError(
-            f"too many {label} for {_display_schema_path(path)}"
+            f"too many {label} for {_display_schema_path(path)}: got {count}, maximum {maximum}"
         )
 
 
