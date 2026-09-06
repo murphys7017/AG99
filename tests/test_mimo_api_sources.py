@@ -113,6 +113,19 @@ def test_mimo_tts_user_prompt_returns_seed_text():
         asyncio.run(provider.terminate())
 
 
+@pytest.mark.parametrize("instructions", ["", "  ", "Speak gently with natural pauses."])
+def test_mimo_tts_instructions_preserve_spoken_content(instructions):
+    provider = _make_tts_provider({"mimo-tts-instructions": instructions})
+    try:
+        payload = provider._build_payload("Original words.")
+        assert payload["messages"] == [
+            {"role": "user", "content": instructions.strip() or "seed text"},
+            {"role": "assistant", "content": "Original words."},
+        ]
+    finally:
+        asyncio.run(provider.terminate())
+
+
 def test_mimo_tts_assistant_content_prefixes_style_and_dialect():
     provider = _make_tts_provider(
         {

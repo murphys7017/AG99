@@ -1707,6 +1707,7 @@ CONFIG_METADATA_2 = {
                         "mimo-tts-voice": "mimo_default",
                         "mimo-tts-format": "wav",
                         "mimo-tts-style-prompt": "",
+                        "mimo-tts-instructions": "",
                         "mimo-tts-dialect": "",
                         "mimo-tts-seed-text": "Hello, MiMo, have you had lunch?",
                         "timeout": "20",
@@ -2707,6 +2708,11 @@ CONFIG_METADATA_2 = {
                         "description": "种子文本",
                         "type": "string",
                         "hint": "作为可选的 user 消息发送，用于辅助调节语气和风格，不会拼接到待合成文本中。",
+                    },
+                    "mimo-tts-instructions": {
+                        "description": "自然语言语音指导",
+                        "type": "text",
+                        "hint": "可描述角色声音、语气、语速和停顿，或按角色、场景、指导组织内容。仅作为 MiMo 的 user 消息发送，不作为朗读正文。留空保持原行为；填写后替代种子文本，原有风格标签和方言配置仍然生效。",
                     },
                     "elevenlabs-tts-voice-id": {
                         "description": "音色 ID",
