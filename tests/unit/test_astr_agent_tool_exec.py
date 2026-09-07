@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 import mcp
 import pytest
 
+from astrbot.core.agent.agent import Agent
+from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import TOOL_TARGET_PERSONAL_EXPRESSION, FunctionTool
 from astrbot.core.agent.tool_output_capture import (
@@ -25,6 +27,18 @@ class _DummyEvent:
 
     def get_extra(self, _key: str):
         return None
+
+
+class _InteractionEvent(_DummyEvent):
+    def __init__(self) -> None:
+        super().__init__()
+        self._extras = {
+            "_interaction_enabled": True,
+            "_turn_id": "interaction-turn",
+        }
+
+    def get_extra(self, key: str):
+        return self._extras.get(key)
 
 
 @pytest.mark.asyncio
@@ -237,6 +251,137 @@ async def test_persona_tool_timeout_clears_legacy_event_state():
 
     assert event.get_result() is None
     assert event._force_stopped is False
+
+
+@pytest.mark.asyncio
+async def test_interaction_handoff_background_request_stays_in_current_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    executed: list[str] = []
+
+    async def _fake_execute_handoff(cls, tool, run_context, **tool_args):
+        executed.append("foreground")
+        yield mcp.types.CallToolResult(
+            content=[mcp.types.TextContent(type="text", text="completed")]
+        )
+
+    async def _unexpected_background(cls, *args, **kwargs):
+        raise AssertionError("Interaction handoff must not create a background task")
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_tool_exec.llm_tools._check_tool_permission",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        FunctionToolExecutor,
+        "_execute_handoff",
+        classmethod(_fake_execute_handoff),
+    )
+    monkeypatch.setattr(
+        FunctionToolExecutor,
+        "_execute_handoff_background",
+        classmethod(_unexpected_background),
+    )
+    event = _InteractionEvent()
+    run_context = ContextWrapper(
+        context=SimpleNamespace(event=event, context=SimpleNamespace())
+    )
+    tool = HandoffTool(Agent(name="subagent"))
+
+    results = [
+        result
+        async for result in FunctionToolExecutor.execute(
+            tool,
+            run_context,
+            input="inspect the request",
+            background_task=True,
+        )
+    ]
+
+    assert executed == ["foreground"]
+    assert results[0].content[0].text == "completed"
+
+
+@pytest.mark.asyncio
+async def test_interaction_background_function_tool_stays_in_current_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    executed: list[str] = []
+
+    async def _fake_execute_local(cls, tool, run_context, **tool_args):
+        executed.append("foreground")
+        yield mcp.types.CallToolResult(
+            content=[mcp.types.TextContent(type="text", text="completed")]
+        )
+
+    async def _unexpected_background(cls, *args, **kwargs):
+        raise AssertionError("Interaction FunctionTool must not create a background task")
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_tool_exec.llm_tools._check_tool_permission",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        FunctionToolExecutor,
+        "_execute_local",
+        classmethod(_fake_execute_local),
+    )
+    monkeypatch.setattr(
+        FunctionToolExecutor,
+        "_execute_background",
+        classmethod(_unexpected_background),
+    )
+    event = _InteractionEvent()
+    run_context = ContextWrapper(
+        context=SimpleNamespace(event=event, context=SimpleNamespace())
+    )
+    tool = FunctionTool(
+        name="long_running_tool",
+        description="A legacy background tool.",
+        parameters={"type": "object", "properties": {}},
+        is_background_task=True,
+    )
+
+    results = [
+        result async for result in FunctionToolExecutor.execute(tool, run_context)
+    ]
+
+    assert executed == ["foreground"]
+    assert results[0].content[0].text == "completed"
+
+
+@pytest.mark.asyncio
+async def test_legacy_background_function_tool_still_submits_background_work(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    completed = asyncio.Event()
+
+    async def _fake_execute_background(cls, **_kwargs):
+        completed.set()
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_tool_exec.llm_tools._check_tool_permission",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        FunctionToolExecutor,
+        "_execute_background",
+        classmethod(_fake_execute_background),
+    )
+    run_context = _build_run_context()
+    tool = FunctionTool(
+        name="legacy_background_tool",
+        description="A legacy background tool.",
+        parameters={"type": "object", "properties": {}},
+        is_background_task=True,
+    )
+
+    results = [
+        result async for result in FunctionToolExecutor.execute(tool, run_context)
+    ]
+    await asyncio.wait_for(completed.wait(), timeout=1)
+
+    assert results[0].content[0].text.startswith("Background task submitted.")
 
 
 class _DummyTool:

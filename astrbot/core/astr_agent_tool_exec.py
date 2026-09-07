@@ -158,8 +158,21 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             )
             return
 
+        event = getattr(run_context.context, "event", None)
+        interaction_turn = bool(
+            event is not None and event.get_extra("_interaction_enabled")
+        )
+
         if isinstance(tool, HandoffTool):
             is_bg = tool_args.pop("background_task", False)
+            if is_bg and interaction_turn:
+                logger.info(
+                    "DIAG interaction.background_task_forced_foreground: "
+                    "turn_id=%s tool=%s kind=handoff",
+                    event.get_extra("_turn_id"),
+                    tool.name,
+                )
+                is_bg = False
             if is_bg:
                 async for r in cls._execute_handoff_background(
                     tool, run_context, **tool_args
@@ -175,7 +188,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 yield r
             return
 
-        elif tool.is_background_task:
+        elif tool.is_background_task and not interaction_turn:
             task_id = uuid.uuid4().hex
 
             async def _run_in_background() -> None:
@@ -201,6 +214,13 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
 
             return
         else:
+            if tool.is_background_task:
+                logger.info(
+                    "DIAG interaction.background_task_forced_foreground: "
+                    "turn_id=%s tool=%s kind=function",
+                    event.get_extra("_turn_id"),
+                    tool.name,
+                )
             async for r in cls._execute_local(tool, run_context, **tool_args):
                 yield r
             return

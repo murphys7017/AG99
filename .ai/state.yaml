@@ -478,6 +478,7 @@ runtime:
       - deliver EXPIRED output, post-HANDLED final artifacts, and post-T1 STOPPED final artifacts through low-priority expression or direct T2 profiles
       - bind delayed history to the parent conversation and use one Runtime delivery ledger across T1 and T2
       - keep one canonical base Context Pack for control-plane facts and one single-flight plugin extension Pack prefetched for Persona and awaited by Core
+      - keep Interaction user turns in one output lifecycle: a HandoffTool request or a FunctionTool declared as background executes in the current Core turn instead of creating a Cron completion turn; legacy non-Interaction background behavior remains unchanged
     non_goals:
       - per-plugin claim, timeout, routing model, or mixed old/new Handler execution
       - enabling the global switch by default before real private-chat and target-group trace validation
