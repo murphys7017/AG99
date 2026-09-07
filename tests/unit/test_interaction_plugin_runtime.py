@@ -74,6 +74,27 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
     assert is_middleware_enabled({"interaction_middleware": {"enabled": False}}) is False
 
 
+def test_tool_stage_observer_classifies_research_tools_without_user_arguments():
+    tool = FunctionTool(
+        name="web_search",
+        description="Search current web sources.",
+        parameters={"type": "object", "properties": {}},
+    )
+
+    assert InteractionOutputController._describe_tool_stage(tool, {"query": ""}) == "资料检索"
+    assert (
+        InteractionOutputController._describe_tool_stage(
+            FunctionTool(
+                name="send_message_to_user",
+                description="Send a visible message.",
+                parameters={"type": "object", "properties": {}},
+            ),
+            None,
+        )
+        is None
+    )
+
+
 def test_interaction_turn_config_is_frozen_on_first_admission():
     class Event:
         def __init__(self):

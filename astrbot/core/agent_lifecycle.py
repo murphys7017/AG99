@@ -5,9 +5,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from astrbot import logger
 from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.agent.tool import TOOL_TARGET_CORE, FunctionTool
 from astrbot.core.agent_lifecycle_scope import (
     _MISSING as LIFECYCLE_MISSING,
 )
@@ -210,6 +211,7 @@ class AgentRequestLifecycle:
                 tool_args,
                 execution_surface=self.execution_surface,
             )
+        await self._notify_interaction_tool_stage("start", tool, tool_args)
 
     async def dispatch_tool_end(
         self,
@@ -226,6 +228,31 @@ class AgentRequestLifecycle:
                 tool_args,
                 tool_result,
                 execution_surface=self.execution_surface,
+            )
+        await self._notify_interaction_tool_stage("end", tool, tool_args, tool_result)
+
+    async def _notify_interaction_tool_stage(
+        self,
+        phase: str,
+        tool: FunctionTool,
+        tool_args: dict | None,
+        tool_result=None,
+    ) -> None:
+        """Bridge Core tool lifecycle into Interaction without runner coupling."""
+        if self.execution_surface != TOOL_TARGET_CORE:
+            return
+        controller = self.event.get_extra("_interaction_output_controller")
+        callback = getattr(controller, f"observe_core_tool_{phase}", None)
+        if not callable(callback):
+            return
+        try:
+            await callback(self.event, tool, tool_args, tool_result)
+        except Exception:  # Progress feedback must never affect tool execution.
+            logger.warning(
+                "Interaction tool-stage observer failed: phase=%s tool=%s",
+                phase,
+                getattr(tool, "name", "<unknown>"),
+                exc_info=True,
             )
 
     def _restore_extra(self, key: str, previous: object) -> None:

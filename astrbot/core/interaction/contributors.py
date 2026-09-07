@@ -191,6 +191,7 @@ class InteractionStreamView:
     pending_text: str
     window_index: int
     is_final: bool
+    observation_kind: str = "stream_text"
     utterances: tuple[Any, ...] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -205,6 +206,7 @@ class InteractionStreamView:
                 "pending_text": self.pending_text,
                 "window_index": self.window_index,
                 "is_final": self.is_final,
+                "observation_kind": self.observation_kind,
                 "utterances": freeze_interaction_snapshot(self.utterances),
                 "metadata": freeze_interaction_snapshot(self.metadata),
             }

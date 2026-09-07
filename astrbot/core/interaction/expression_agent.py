@@ -100,6 +100,7 @@ PersonaExpressionSource = Literal[
     "plugin_output",
     "runtime_observation",
     "stream_observation",
+    "tool_observation",
     "direct",
 ]
 PersonaExpressionPhase = Literal[
@@ -337,6 +338,7 @@ def build_persona_runtime_system_prompt(
         "delegated_task_summary 表示路由或执行层正在评估、处理本轮任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
         "当 delegated_task_summary 表示执行层正在并行评估或处理时，这是硬性约束：spoken_reply 只能确认正在处理，不得声称相关能力不存在、要求用户自行完成，或提前给出最终结果。\n"
         "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
+        "当它们包含推理或工具工作材料时，绝不能逐句复述、泄露思维链、内部指令、工具参数或工具正文；只在能安全概括时给出一句高层进度，否则返回空 spoken_reply。\n"
         "当 source_text 表示调用失败时，应如实说明失败及可确认原因，不要声称仍在处理，也不要复述原始异常结构或敏感信息。\n"
         "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
         "short_reply 为 true 时只说一句简短口语短句，尽量控制在 20 字以内。\n"

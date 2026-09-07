@@ -253,6 +253,8 @@ DEFAULT_CONFIG = {
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
         "stream_interjection_max_per_turn": 1,
+        "tool_stage_observation_enabled": True,
+        "tool_stage_observation_delay_seconds": 8.0,
     },
     "memory": build_default_memory_config_payload(),
     "provider_stt_settings": {
@@ -4694,6 +4696,16 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.stream_interjection_max_per_turn": {
                         "description": "每轮最多提示次数",
                         "type": "int",
+                    },
+                    "interaction_middleware.tool_stage_observation_enabled": {
+                        "description": "启用工具阶段提示",
+                        "type": "bool",
+                        "hint": "检索、查询、读取等资料型 FunctionTool 只在完成或超时阶段提示，不按返回正文长度触发。",
+                    },
+                    "interaction_middleware.tool_stage_observation_delay_seconds": {
+                        "description": "工具处理中提示延迟秒数",
+                        "type": "float",
+                        "hint": "超过此时长仍未结束的资料型 FunctionTool 可提示一次仍在处理。",
                     },
                 },
             },

@@ -248,6 +248,16 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 1,
             ),
         ),
+        tool_stage_observation_enabled=bool(
+            interaction_config.get("tool_stage_observation_enabled", True)
+        ),
+        tool_stage_observation_delay_seconds=max(
+            0.1,
+            _float_or_default(
+                interaction_config.get("tool_stage_observation_delay_seconds", 8.0),
+                8.0,
+            ),
+        ),
         contributor_timeout=max(
             0.1,
             _float_or_default(

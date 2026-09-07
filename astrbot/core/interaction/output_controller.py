@@ -10,6 +10,7 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core import file_token_service, html_renderer
+from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_chain_transforms import (
@@ -113,6 +114,7 @@ PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY = (
 PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY = (
     "_interaction_plugin_output_transaction_assistant_artifacts"
 )
+TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY = "_interaction_tool_stage_observation_tasks"
 
 
 def _merge_runtime_config(
@@ -1117,6 +1119,181 @@ class InteractionOutputController:
             return
         await asyncio.gather(*list(tasks), return_exceptions=True)
 
+    async def observe_core_tool_start(
+        self,
+        event: AstrMessageEvent,
+        tool: FunctionTool[Any],
+        tool_args: dict | None,
+        _tool_result: Any = None,
+    ) -> None:
+        """Schedule a bounded status for a long-running research-style tool."""
+        descriptor = self._describe_tool_stage(tool, tool_args)
+        if descriptor is None or not self._tool_stage_observation_allowed(event):
+            return
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None:
+            return
+        record: dict[str, Any] = {
+            "tool": tool,
+            "descriptor": descriptor,
+            "emitted": False,
+        }
+        records = event.get_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, [])
+        if not isinstance(records, list):
+            records = []
+        records.append(record)
+        event.set_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, records)
+
+        async def emit_delayed_stage() -> None:
+            await asyncio.sleep(
+                self._get_interaction_config(event).tool_stage_observation_delay_seconds
+            )
+            if event.is_stopped() or is_interaction_turn_completed(event):
+                return
+            record["stage_attempt_started"] = True
+            emitted = await self._observe_tool_stage(
+                event,
+                descriptor=descriptor,
+                phase="running",
+            )
+            record["emitted"] = emitted
+
+        record["task"] = turn_state.execution_scope.create_task(
+            emit_delayed_stage(),
+            role="tool_stage_observation",
+            name=(
+                "interaction_tool_stage_"
+                f"{event.get_platform_id()}_{getattr(tool, 'name', 'tool')}"
+            ),
+        )
+
+    async def observe_core_tool_end(
+        self,
+        event: AstrMessageEvent,
+        tool: FunctionTool[Any],
+        tool_args: dict | None,
+        _tool_result: Any = None,
+    ) -> None:
+        """Emit one completion-stage update without exposing a tool's raw result."""
+        records = event.get_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, [])
+        if not isinstance(records, list):
+            return
+        record = next(
+            (item for item in reversed(records) if item.get("tool") is tool), None
+        )
+        if record is None:
+            return
+        records.remove(record)
+        event.set_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, records)
+        task = record.get("task")
+        if isinstance(task, asyncio.Task) and not task.done():
+            task.cancel()
+        if (
+            record.get("emitted")
+            or record.get("stage_attempt_started")
+            or not self._tool_stage_observation_allowed(event)
+        ):
+            return
+        await self._observe_tool_stage(
+            event,
+            descriptor=str(record["descriptor"]),
+            phase="completed",
+        )
+
+    def _tool_stage_observation_allowed(self, event: AstrMessageEvent) -> bool:
+        config = self._get_interaction_config(event)
+        return (
+            config.stream_interjection_enabled
+            and config.tool_stage_observation_enabled
+            and config.stream_interjection_max_per_turn > 0
+            and not event.is_stopped()
+            and not is_interaction_turn_completed(event)
+        )
+
+    @staticmethod
+    def _describe_tool_stage(
+        tool: FunctionTool[Any],
+        tool_args: dict | None,
+    ) -> str | None:
+        mode = str(getattr(tool, "interaction_progress_mode", "auto") or "auto").lower()
+        if mode in {"off", "disabled", "none"}:
+            return None
+        name = str(getattr(tool, "name", "") or "").strip()
+        description = str(getattr(tool, "description", "") or "")
+        del tool_args
+        searchable = f"{name} {description}".lower()
+        if mode == "auto":
+            skip_terms = ("send_message", "transfer_to", "handoff", "list_available_agents")
+            if any(term in searchable for term in skip_terms):
+                return None
+            research_terms = (
+                "search",
+                "web",
+                "browser",
+                "crawl",
+                "extract",
+                "query",
+                "knowledge",
+                "read_file",
+                "fetch",
+                "download",
+                "搜索",
+                "检索",
+                "查询",
+                "读取",
+                "抓取",
+            )
+            if not any(term in searchable for term in research_terms):
+                return None
+        if any(term in searchable for term in ("search", "web", "browser", "crawl", "搜索", "检索", "抓取")):
+            return "资料检索"
+        if any(term in searchable for term in ("read", "extract", "fetch", "读取", "提取")):
+            return "资料读取"
+        return "信息查询"
+
+    async def _observe_tool_stage(
+        self,
+        event: AstrMessageEvent,
+        *,
+        descriptor: str,
+        phase: str,
+    ) -> bool:
+        if not self._tool_stage_observation_allowed(event):
+            return False
+        if phase == "running":
+            source_text = f"{descriptor}仍在处理中。只简短告知用户仍在处理，不要猜测或转述任何工具结果。"
+        else:
+            source_text = f"{descriptor}已经完成。只简短告知用户正在整理结果，不要提前宣称整个任务已经完成，也不要转述工具原始内容。"
+        decision = await self._decide_stream_interjection(
+            event,
+            observed_text=source_text,
+            total_text=get_interaction_turn_stream_text(event),
+            window_index=get_interaction_turn_stream_observation_count(event) + 1,
+            source_text=source_text,
+            observation_kind="tool_stage",
+            metadata={"tool_stage": descriptor, "tool_phase": phase},
+        )
+        if not decision.should_interject or not decision.reply:
+            return False
+        turn_state = get_interaction_turn_state(event)
+        lock = turn_state.stream_interjection_lock if turn_state is not None else None
+        if not isinstance(lock, asyncio.Lock):
+            return False
+        async with lock:
+            if (
+                get_interaction_turn_stream_interjections_emitted(event)
+                >= self._get_interaction_config(event).stream_interjection_max_per_turn
+            ):
+                return False
+            window_index = mark_interaction_turn_stream_interjection_emitted(event)
+            await self._emit_stream_interjection(
+                event,
+                decision.reply,
+                window_index=window_index,
+                reason=decision.reason or f"tool_{phase}",
+            )
+        return True
+
     async def _decide_stream_interjection(
         self,
         event: AstrMessageEvent,
@@ -1125,6 +1302,9 @@ class InteractionOutputController:
         total_text: str,
         window_index: int,
         is_final: bool = False,
+        source_text: str = "",
+        observation_kind: str = "stream_text",
+        metadata: Mapping[str, Any] | None = None,
     ) -> StreamObservationDecision:
         interaction_config = self._get_interaction_config(event)
         if not interaction_config.stream_interjection_enabled:
@@ -1136,25 +1316,30 @@ class InteractionOutputController:
             total_text=total_text,
             window_index=window_index,
             is_final=is_final,
+            observation_kind=observation_kind,
+            metadata=metadata,
         )
         if decision is not None:
             if not decision.should_interject:
                 return decision
             return await self._render_stream_interjection_via_persona(
                 event,
-                source_text=(decision.reply or "").strip(),
+                source_text=(decision.reply or source_text).strip(),
                 observed_text=observed_text,
                 total_text=total_text,
                 window_index=window_index,
                 is_final=is_final,
                 reason=decision.reason or "plugin_decider",
+                observation_kind=observation_kind,
             )
         return await self._render_stream_interjection_via_persona(
             event,
+            source_text=source_text,
             observed_text=observed_text,
             total_text=total_text,
             window_index=window_index,
             is_final=is_final,
+            observation_kind=observation_kind,
         )
 
     async def _render_stream_interjection_via_persona(
@@ -1167,6 +1352,7 @@ class InteractionOutputController:
         window_index: int,
         is_final: bool,
         reason: str = "persona_runtime",
+        observation_kind: str = "stream_text",
     ) -> StreamObservationDecision:
         try:
             result = await self._render_visible_reply(
@@ -1180,7 +1366,11 @@ class InteractionOutputController:
                     allow_empty=True,
                     intent=PersonaExpressionIntent(
                         kind="interjection",
-                        source="stream_observation",
+                        source=(
+                            "tool_observation"
+                            if observation_kind == "tool_stage"
+                            else "stream_observation"
+                        ),
                         phase="interjection",
                     ),
                 ),
@@ -1218,6 +1408,8 @@ class InteractionOutputController:
         total_text: str,
         window_index: int,
         is_final: bool,
+        observation_kind: str = "stream_text",
+        metadata: Mapping[str, Any] | None = None,
     ) -> StreamObservationDecision | None:
         if self.plugin_context is None:
             return None
@@ -1234,6 +1426,8 @@ class InteractionOutputController:
             total_text=total_text,
             window_index=window_index,
             is_final=is_final,
+            observation_kind=observation_kind,
+            metadata=metadata,
         ).copy_read_only()
         for decider in list_deciders():
             try:
@@ -1304,6 +1498,8 @@ class InteractionOutputController:
         total_text: str,
         window_index: int,
         is_final: bool,
+        observation_kind: str = "stream_text",
+        metadata: Mapping[str, Any] | None = None,
     ) -> InteractionStreamView:
         turn_state = get_interaction_turn_state(event)
         pending_text = (
@@ -1319,6 +1515,7 @@ class InteractionOutputController:
             pending_text=pending_text,
             window_index=window_index,
             is_final=is_final,
+            observation_kind=observation_kind,
             utterances=utterances,
             metadata={
                 "stream_observation_count": (
@@ -1326,6 +1523,7 @@ class InteractionOutputController:
                     if turn_state is not None
                     else 0
                 ),
+                **dict(metadata or {}),
             },
         )
 
@@ -1539,7 +1737,7 @@ class InteractionOutputController:
 
     @staticmethod
     def _extract_observable_stream_text(chain: MessageChain) -> str:
-        if chain.type in {"reasoning", "break"}:
+        if chain.type == "break":
             return ""
         if chain.type == "audio_chunk":
             for component in chain.chain:

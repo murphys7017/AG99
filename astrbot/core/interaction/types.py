@@ -181,6 +181,8 @@ class InteractionAgentConfig:
     stream_observation_min_chars: int = 200
     stream_interjection_enabled: bool = True
     stream_interjection_max_per_turn: int = 1
+    tool_stage_observation_enabled: bool = True
+    tool_stage_observation_delay_seconds: float = 8.0
     contributor_timeout: float = 1.0
 
 
