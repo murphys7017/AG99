@@ -46,7 +46,10 @@ def build_core_planner_system_prompt() -> str:
         "无需执行器即可直接完成。\n"
         "历史、memory 和其他说话者的任务只能帮助理解，不能单独触发 execute。\n"
         "选择 execute 时，把当前请求整理为简洁、完整、可执行的 CoreTaskSpec；"
-        "不要限制 Core 的能力，也不要编造未提供的事实。\n"
+        "suggested_capabilities 只使用与任务直接相关的能力意图：需要当前轮联网检索时必须填 web_research，"
+        "需要文件处理时填 workspace_io，需要计算时填 computation。"
+        "web_research 表示必须留在当前 Core 回合直接完成，不能转交子 Agent 或后台任务。"
+        "不要编造未提供的事实。\n"
         "不要生成用户可见回复，不要输出人格内容、effect、工具调用参数或思考过程。"
     )
 
@@ -195,12 +198,18 @@ class CorePlannerAgent:
         )
         logger.info(
             "Core Planner parsed: turn_id=%s target=core_planner platform_id=%s "
-            "session_id=%s decision=%s has_task_spec=%s",
+            "session_id=%s decision=%s task_intent=%s suggested_capabilities=%s "
+            "execution_prompt_length=%s direct_web_research=%s",
             str(event.get_extra("_turn_id", "") or ""),
             event.get_platform_id(),
             event.session_id,
             decision.action.value,
-            decision.task_spec is not None,
+            decision.task_spec.task_intent if decision.task_spec else "",
+            decision.task_spec.suggested_capabilities if decision.task_spec else [],
+            len(decision.task_spec.execution_prompt) if decision.task_spec else 0,
+            decision.task_spec.requires_direct_web_research()
+            if decision.task_spec
+            else False,
         )
         return decision
 

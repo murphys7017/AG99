@@ -68,6 +68,55 @@ class CoreTaskSpec:
             "metadata": dict(self.metadata),
         }
 
+    def requires_direct_web_research(self) -> bool:
+        """Whether this turn must use in-turn research instead of a handoff.
+
+        Planner capability labels are advisory.  The execution boundary also
+        recognizes an unambiguous web-research task description so a weaker
+        planner cannot silently re-enable subagent handoff by using a natural
+        language label instead of ``web_research``.
+        """
+        normalized_capabilities = {
+            item.strip().lower().replace("-", "_").replace(" ", "_")
+            for item in self.suggested_capabilities
+        }
+        if normalized_capabilities & {
+            "web_research",
+            "web_search",
+            "online_research",
+            "internet_research",
+            "internet_search",
+            "联网搜索",
+            "网络搜索",
+            "网上搜索",
+            "联网检索",
+            "网络检索",
+            "网上检索",
+        }:
+            return True
+
+        task_text = " ".join(
+            (self.task_intent, self.task_summary, self.execution_prompt)
+        ).lower()
+        has_web_scope = any(
+            marker in task_text
+            for marker in (
+                "联网",
+                "网络",
+                "网上",
+                "互联网",
+                "网站",
+                "web",
+                "online",
+                "internet",
+            )
+        )
+        has_research_action = any(
+            marker in task_text
+            for marker in ("搜索", "检索", "查询", "search", "research", "lookup")
+        )
+        return has_web_scope and has_research_action
+
 
 class CorePlanningAction(str, Enum):
     EXECUTE = "execute"

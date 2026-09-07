@@ -321,17 +321,21 @@ def should_use_interaction_core_profile(event: AstrMessageEvent) -> bool:
 
 def _build_interaction_core_collectors(
     capabilities: CapabilitySnapshot,
+    *,
+    include_subagent_context: bool = True,
 ):
-    return [
+    collectors = [
         SystemCollector(capabilities=capabilities),
         CoreTaskCollector(),
         CoreExecutionHistoryCollector(),
         PolicyCollector(),
         SkillsCollector(),
         ToolsCollector(capabilities=capabilities),
-        SubagentCollector(),
         KnowledgeCollector(),
     ]
+    if include_subagent_context:
+        collectors.insert(-1, SubagentCollector())
+    return collectors
 
 
 def _get_context_pack_slot_value(prompt_context_pack: object, slot_name: str) -> Any:
@@ -1031,6 +1035,10 @@ async def build_main_agent(
         plugin_context,
         event,
     )
+    task_spec = get_core_task_spec(event) if interaction_core else None
+    exclude_handoff_tools = bool(
+        task_spec is not None and task_spec.requires_direct_web_research()
+    )
     _prepare_knowledge_tools(req, plugin_context, config)
 
     if not req.session_id:
@@ -1069,6 +1077,7 @@ async def build_main_agent(
             target=TOOL_TARGET_CORE,
             toolset=req.func_tool or ToolSet(),
             excluded_tool_names=subagent_excluded_tools,
+            exclude_handoff_tools=exclude_handoff_tools,
         )
     else:
         capabilities = await capability_resolver.resolve(
@@ -1080,6 +1089,7 @@ async def build_main_agent(
             persona_selection=persona_selection,
             include_registered_tools=True,
             excluded_tool_names=subagent_excluded_tools,
+            exclude_handoff_tools=exclude_handoff_tools,
         )
     req.func_tool = capabilities.to_toolset()
     try:
@@ -1118,12 +1128,14 @@ async def build_main_agent(
             material=context_material,
         )
     builder = PromptContextBuilder(event, plugin_context, config)
+    interaction_collectors = None
+    if interaction_core and base_context_pack is not None:
+        interaction_collectors = _build_interaction_core_collectors(
+            capabilities,
+            include_subagent_context=not exclude_handoff_tools,
+        )
     prompt_context_pack = await builder.build(
-        collectors=(
-            _build_interaction_core_collectors(capabilities)
-            if interaction_core and base_context_pack is not None
-            else None
-        ),
+        collectors=interaction_collectors,
         provider_request=req,
         capabilities=capabilities,
         include_prompt_extensions=base_context_pack is None,

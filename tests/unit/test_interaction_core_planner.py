@@ -8,7 +8,7 @@ from astrbot.core.interaction.core_planner import (
     build_core_planner_system_prompt,
     extract_core_planning_decision,
 )
-from astrbot.core.interaction.types import CorePlanningAction
+from astrbot.core.interaction.types import CorePlanningAction, CoreTaskSpec
 from astrbot.core.output_contract import CompiledOutputContract
 
 
@@ -46,6 +46,18 @@ def test_core_planner_prompt_is_independent_from_router_decision():
     assert "Router" not in prompt
     assert "上游路由" not in prompt
     assert "插件目录" not in prompt
+    assert "web_research" in prompt
+
+
+def test_core_task_spec_marks_web_research_as_direct_execution():
+    assert CoreTaskSpec(suggested_capabilities=["web_research"]).requires_direct_web_research()
+    assert CoreTaskSpec(
+        task_intent="查询模型评价",
+        task_summary="联网搜索公开测评和用户反馈",
+        execution_prompt="请联网检索并汇总网上资料。",
+        suggested_capabilities=["知识检索"],
+    ).requires_direct_web_research()
+    assert CoreTaskSpec(suggested_capabilities=["workspace_io"]).requires_direct_web_research() is False
 
 
 def test_core_planner_prefers_protocol_tool_call():

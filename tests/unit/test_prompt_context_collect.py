@@ -3,6 +3,7 @@
 from asyncio import Queue
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from astrbot.core.agent.agent import Agent
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.interaction.turn_state import InteractionTurnState
+from astrbot.core.interaction.types import CoreTaskSpec
 from astrbot.core.memory.config import MemoryConfig
 from astrbot.core.memory.snapshot_builder import MemorySnapshotReadOptions
 from astrbot.core.memory.types import (
@@ -2793,6 +2795,34 @@ async def test_collect_context_pack_skips_subagent_slots_when_main_enable_disabl
     }
     context.subagent_orchestrator = MagicMock(
         handoffs=[_make_handoff_tool("planner", description="planner")]
+    )
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(tool_call_timeout=60),
+        collectors=[SubagentCollector()],
+    )
+
+    assert pack.get_slot("capability.subagent_handoff_tools") is None
+    assert pack.get_slot("capability.subagent_router_prompt") is None
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_skips_subagent_context_for_direct_web_research():
+    event, extras = _make_event()
+    extras["_interaction_turn_state"] = SimpleNamespace(
+        core_task_spec=CoreTaskSpec(suggested_capabilities=["web_research"])
+    )
+    context = _make_context()
+    context.get_config.return_value = {
+        "subagent_orchestrator": {
+            "main_enable": True,
+            "router_system_prompt": "Route work to the best subagent.",
+        }
+    }
+    context.subagent_orchestrator = MagicMock(
+        handoffs=[_make_handoff_tool("planner", description="Delegate planning tasks.")]
     )
 
     pack = await collect_context_pack(

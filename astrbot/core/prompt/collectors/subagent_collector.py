@@ -34,9 +34,16 @@ class SubagentCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
-        del event, config, provider_request
+        del config, provider_request
 
         try:
+            task_spec = getattr(
+                event.get_extra("_interaction_turn_state"), "core_task_spec", None
+            )
+            if callable(getattr(task_spec, "requires_direct_web_research", None)) and (
+                task_spec.requires_direct_web_research()
+            ):
+                return []
             orchestrator_config = self._resolve_orchestrator_config(plugin_context)
             if not orchestrator_config.get("main_enable", False):
                 return []

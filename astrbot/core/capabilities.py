@@ -34,6 +34,7 @@ CAPABILITY_REASON_PLUGIN_NOT_SELECTED = "plugin_not_selected"
 CAPABILITY_REASON_PERSONA_NOT_SELECTED = "persona_not_selected"
 CAPABILITY_REASON_SUBAGENT_CORE_ONLY = "subagent_core_only"
 CAPABILITY_REASON_SUBAGENT_OWNED = "subagent_owned"
+CAPABILITY_REASON_EXECUTION_POLICY = "execution_policy"
 CAPABILITY_REASON_UNKNOWN_TOOL = "unknown_tool"
 
 
@@ -147,6 +148,7 @@ class CapabilityResolver:
         persona_selection: tuple[str | None, dict[str, Any] | None] | None = None,
         include_registered_tools: bool = False,
         excluded_tool_names: frozenset[str] = frozenset(),
+        exclude_handoff_tools: bool = False,
     ) -> CapabilitySnapshot:
         request_toolset = (
             provider_request.func_tool if provider_request is not None else None
@@ -158,6 +160,7 @@ class CapabilityResolver:
                 toolset=request_toolset,
                 persona_id=self._request_persona_id(provider_request),
                 excluded_tool_names=excluded_tool_names,
+                exclude_handoff_tools=exclude_handoff_tools,
             )
 
         if persona_selection is None:
@@ -204,6 +207,7 @@ class CapabilityResolver:
             candidates=list(candidate_toolset),
             pre_decisions=pre_decisions,
             excluded_tool_names=excluded_tool_names,
+            exclude_handoff_tools=exclude_handoff_tools,
         )
 
     def resolve_explicit_toolset(
@@ -215,6 +219,7 @@ class CapabilityResolver:
         persona_id: str | None = None,
         selection_mode: str = "provider_request",
         excluded_tool_names: frozenset[str] = frozenset(),
+        exclude_handoff_tools: bool = False,
     ) -> CapabilitySnapshot:
         """Resolve a request-owned candidate set without consulting globals."""
         return self._resolve_candidates(
@@ -225,6 +230,7 @@ class CapabilityResolver:
             candidates=list(toolset),
             pre_decisions=[],
             excluded_tool_names=excluded_tool_names,
+            exclude_handoff_tools=exclude_handoff_tools,
         )
 
     @staticmethod
@@ -292,6 +298,7 @@ class CapabilityResolver:
         candidates: list[FunctionTool],
         pre_decisions: list[CapabilityDecision],
         excluded_tool_names: frozenset[str],
+        exclude_handoff_tools: bool,
     ) -> CapabilitySnapshot:
         selected = ToolSet()
         decisions = list(pre_decisions)
@@ -301,6 +308,7 @@ class CapabilityResolver:
                 tool,
                 target,
                 excluded_tool_names,
+                exclude_handoff_tools,
             )
             included = reason is None
             decisions.append(
@@ -383,7 +391,10 @@ class CapabilityResolver:
         tool: FunctionTool,
         target: str,
         excluded_tool_names: frozenset[str],
+        exclude_handoff_tools: bool,
     ) -> str | None:
+        if exclude_handoff_tools and isinstance(tool, HandoffTool):
+            return CAPABILITY_REASON_EXECUTION_POLICY
         if target == TOOL_TARGET_PERSONAL_EXPRESSION and isinstance(tool, HandoffTool):
             return CAPABILITY_REASON_SUBAGENT_CORE_ONLY
         if tool.name in excluded_tool_names:
@@ -414,6 +425,7 @@ def _serialize_tool(tool: FunctionTool) -> dict[str, Any]:
 
 __all__ = [
     "CAPABILITY_REASON_INACTIVE",
+    "CAPABILITY_REASON_EXECUTION_POLICY",
     "CAPABILITY_REASON_INCLUDED",
     "CAPABILITY_REASON_PERSONA_NOT_SELECTED",
     "CAPABILITY_REASON_PLUGIN_NOT_SELECTED",

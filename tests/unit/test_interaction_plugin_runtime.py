@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from astrbot.core.agent.handoff import HandoffTool
-from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.capabilities import (
+    CAPABILITY_REASON_EXECUTION_POLICY,
     CAPABILITY_REASON_PLUGIN_NOT_SELECTED,
     CAPABILITY_REASON_SUBAGENT_CORE_ONLY,
     CapabilityResolver,
@@ -530,6 +531,29 @@ async def test_capability_resolver_applies_exact_override_and_rejects_persona_su
     assert any(
         decision.tool_name == handoff_tool.name
         and decision.reason == CAPABILITY_REASON_SUBAGENT_CORE_ONLY
+        for decision in snapshot.decisions
+    )
+
+
+def test_capability_resolver_can_exclude_handoff_tools_by_execution_policy():
+    direct_tool = FunctionTool(
+        name="web_search",
+        description="Search the web.",
+        parameters={"type": "object", "properties": {}},
+    )
+    handoff_tool = HandoffTool(agent=SimpleNamespace(name="worker"))
+
+    snapshot = CapabilityResolver().resolve_explicit_toolset(
+        event=SimpleNamespace(get_platform_name=lambda: "test", get_extra=lambda *_: None),
+        target=PLUGIN_RUNTIME_TARGET_CORE,
+        toolset=ToolSet([direct_tool, handoff_tool]),
+        exclude_handoff_tools=True,
+    )
+
+    assert snapshot.names() == ["web_search"]
+    assert any(
+        decision.tool_name == handoff_tool.name
+        and decision.reason == CAPABILITY_REASON_EXECUTION_POLICY
         for decision in snapshot.decisions
     )
 
