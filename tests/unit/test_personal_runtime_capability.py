@@ -1181,7 +1181,9 @@ async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
         assert control.route is state.route_decision
     finally:
         release_plugin.set()
-        await turn.event.get_extra("_interaction_turn_state").execution_scope.close()
+        state = get_interaction_turn_state(turn.event)
+        assert state is not None
+        await state.execution_scope.close()
         await plugin_runtime.shutdown()
 
 
