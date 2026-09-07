@@ -29,7 +29,9 @@ class CoreTaskCollector(ContextCollectorInterface):
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
         del plugin_context, config, provider_request
-        turn_state = event.get_extra("_interaction_turn_state")
+        from astrbot.core.interaction.turn_state import get_interaction_turn_state
+
+        turn_state = get_interaction_turn_state(event)
         task_spec = getattr(turn_state, "core_task_spec", None)
         if task_spec is None:
             return []

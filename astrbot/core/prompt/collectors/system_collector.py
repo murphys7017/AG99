@@ -217,6 +217,8 @@ class SystemCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None,
     ) -> ContextSlot | None:
+        from astrbot.core.interaction.turn_state import get_interaction_turn_state
+
         has_tools = await self._has_tool_capability(
             event=event,
             plugin_context=plugin_context,
@@ -231,7 +233,7 @@ class SystemCollector(ContextCollectorInterface):
             if config.tool_schema_mode == "full"
             else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
         )
-        turn_state = event.get_extra("_interaction_turn_state")
+        turn_state = get_interaction_turn_state(event)
         if bool(getattr(turn_state, "core_delegated", False)):
             tool_prompt += (
                 " Core is executing this request behind Personal's fast initial "

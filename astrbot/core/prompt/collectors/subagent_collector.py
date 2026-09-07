@@ -35,10 +35,11 @@ class SubagentCollector(ContextCollectorInterface):
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
         del config, provider_request
+        from astrbot.core.interaction.turn_state import get_interaction_turn_state
 
         try:
             task_spec = getattr(
-                event.get_extra("_interaction_turn_state"), "core_task_spec", None
+                get_interaction_turn_state(event), "core_task_spec", None
             )
             if callable(getattr(task_spec, "requires_direct_web_research", None)) and (
                 task_spec.requires_direct_web_research()

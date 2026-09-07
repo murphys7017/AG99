@@ -3,7 +3,6 @@
 from asyncio import Queue
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2811,8 +2810,9 @@ async def test_collect_context_pack_skips_subagent_slots_when_main_enable_disabl
 @pytest.mark.asyncio
 async def test_collect_context_pack_skips_subagent_context_for_direct_web_research():
     event, extras = _make_event()
-    extras["_interaction_turn_state"] = SimpleNamespace(
-        core_task_spec=CoreTaskSpec(suggested_capabilities=["web_research"])
+    extras["_interaction_turn_state"] = InteractionTurnState(
+        turn_id="direct-web-research-turn",
+        core_task_spec=CoreTaskSpec(suggested_capabilities=["web_research"]),
     )
     context = _make_context()
     context.get_config.return_value = {

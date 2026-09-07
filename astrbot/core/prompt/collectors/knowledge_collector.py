@@ -69,6 +69,8 @@ class KnowledgeCollector(ContextCollectorInterface):
         event: AstrMessageEvent,
         provider_request: ProviderRequest | None,
     ) -> tuple[str | None, str | None]:
+        from astrbot.core.interaction.turn_state import get_interaction_turn_state
+
         if provider_request and isinstance(provider_request.prompt, str):
             prompt = provider_request.prompt.strip()
             if prompt:
@@ -81,7 +83,7 @@ class KnowledgeCollector(ContextCollectorInterface):
                 return message_text, "event.message_str"
 
         task_spec = getattr(
-            event.get_extra("_interaction_turn_state"),
+            get_interaction_turn_state(event),
             "core_task_spec",
             None,
         )

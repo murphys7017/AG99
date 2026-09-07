@@ -38,6 +38,7 @@ from astrbot.core.interaction.core_bridge import (
 )
 from astrbot.core.interaction.turn_state import (
     get_interaction_turn_deadline,
+    get_interaction_turn_state,
     is_interaction_turn_core_delegated,
 )
 from astrbot.core.message.components import File, Image, Record, Reply, Video
@@ -1117,7 +1118,7 @@ async def build_main_agent(
         asyncio.create_task(_handle_webchat(event, req, provider))
 
     prompt_target = PromptTarget.CORE if interaction_core else None
-    turn_state = event.get_extra("_interaction_turn_state")
+    turn_state = get_interaction_turn_state(event)
     context_material = getattr(turn_state, "context_material", None)
     base_context_pack = None
     if interaction_core and context_material is not None:
