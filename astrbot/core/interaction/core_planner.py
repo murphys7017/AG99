@@ -17,6 +17,8 @@ from astrbot.core.star.context import Context
 from .context_builder import (
     build_prompt_render_provider_request,
     get_or_build_interaction_context_material,
+    get_or_build_interaction_media_context_pack,
+    provider_supports_modality,
 )
 from .prompt_support import (
     build_interaction_prompt_build_config,
@@ -48,6 +50,8 @@ def build_core_planner_system_prompt() -> str:
         "选择 execute 时，把当前请求整理为简洁、完整、可执行的 CoreTaskSpec；"
         "suggested_capabilities 只使用与任务直接相关的能力意图：需要当前轮联网检索时必须填 web_research，"
         "需要文件处理时填 workspace_io，需要计算时填 computation。"
+        "当前消息或引用图片的视觉理解不是 workspace_io；它应由 "
+        "requires_visual_understanding 表达，且只有真正需要读取、写入或处理工作区文件时才填 workspace_io。"
         "web_research 表示必须留在当前 Core 回合直接完成，不能转交子 Agent 或后台任务。"
         "不要编造未提供的事实。\n"
         "不要生成用户可见回复，不要输出人格内容、effect、工具调用参数或思考过程。"
@@ -70,12 +74,14 @@ def build_core_planner_output_contract() -> OutputContract:
                 "type": "array",
                 "items": {"type": "string"},
             },
+            "requires_visual_understanding": {"type": "boolean"},
         },
         "required": [
             "task_intent",
             "task_summary",
             "execution_prompt",
             "suggested_capabilities",
+            "requires_visual_understanding",
         ],
     }
     return OutputContract(
@@ -177,7 +183,10 @@ class CorePlannerAgent:
             async with timeout_context:
                 response = await provider.text_chat(
                     prompt=render_result.request_prompt or "",
-                    contexts=build_model_context_messages(render_result.messages),
+                    contexts=build_model_context_messages(
+                        render_result.messages,
+                        provider=provider,
+                    ),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.planner_temperature,
                     tool_choice="required",
@@ -199,13 +208,17 @@ class CorePlannerAgent:
         logger.info(
             "Core Planner parsed: turn_id=%s target=core_planner platform_id=%s "
             "session_id=%s decision=%s task_intent=%s suggested_capabilities=%s "
-            "execution_prompt_length=%s direct_web_research=%s",
+            "requires_visual_understanding=%s execution_prompt_length=%s "
+            "direct_web_research=%s",
             str(event.get_extra("_turn_id", "") or ""),
             event.get_platform_id(),
             event.session_id,
             decision.action.value,
             decision.task_spec.task_intent if decision.task_spec else "",
             decision.task_spec.suggested_capabilities if decision.task_spec else [],
+            decision.task_spec.requires_visual_understanding
+            if decision.task_spec
+            else False,
             len(decision.task_spec.execution_prompt) if decision.task_spec else 0,
             decision.task_spec.requires_direct_web_research()
             if decision.task_spec
@@ -237,8 +250,22 @@ class CorePlannerAgent:
                 interaction_config=interaction_config,
                 build_config=build_config,
             )
+        planner_pack = await get_or_build_interaction_media_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=build_config,
+            material=material,
+            base_context_pack=material.prompt_context_pack,
+            provider=provider,
+            cache_key="core_planner",
+        )
+        hidden_slot_names = (
+            frozenset({"input.images", "input.quoted_images"})
+            if not provider_supports_modality(provider, "image")
+            else frozenset()
+        )
         render_result = PromptRenderEngine().render(
-            material.prompt_context_pack,
+            planner_pack,
             target=PromptTarget.CORE_PLANNER,
             event=event,
             plugin_context=plugin_context,
@@ -249,6 +276,7 @@ class CorePlannerAgent:
                 system_prompt=build_core_planner_system_prompt(),
                 request_prompt=build_core_planner_prompt(),
                 output_contract=build_core_planner_output_contract(),
+                hidden_slot_names=hidden_slot_names,
             ),
         )
         return render_result

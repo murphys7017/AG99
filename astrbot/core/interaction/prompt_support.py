@@ -3,6 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from astrbot.core.provider.modalities import (
+    log_context_sanitize_stats,
+    sanitize_contexts_by_modalities,
+)
 from astrbot.core.star.context import Context
 
 from .types import InteractionPromptBuildConfig
@@ -67,6 +71,8 @@ def build_interaction_prompt_build_config(
 
 def build_model_context_messages(
     rendered_messages: list[dict[str, Any]],
+    *,
+    provider: object | None = None,
 ) -> list[dict[str, Any]]:
     contexts: list[dict[str, Any]] = []
     for message in rendered_messages:
@@ -75,6 +81,11 @@ def build_model_context_messages(
         context_message = deepcopy(message)
         context_message.pop("_no_save", None)
         contexts.append(context_message)
+    provider_config = getattr(provider, "provider_config", None)
+    modalities = provider_config.get("modalities") if isinstance(provider_config, dict) else None
+    if isinstance(modalities, list):
+        contexts, stats = sanitize_contexts_by_modalities(contexts, modalities)
+        log_context_sanitize_stats(stats)
     return contexts
 
 

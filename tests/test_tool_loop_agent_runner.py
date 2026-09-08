@@ -445,6 +445,27 @@ def test_sanitize_malformed_tool_call_names():
     ]
 
 
+def test_extra_user_content_parts_are_sanitized_for_text_only_provider():
+    runner = ToolLoopAgentRunner()
+    runner.provider = MockProvider()
+    runner.provider.provider_config["modalities"] = ["text", "tool_use"]
+    image_part = ImageURLPart(
+        image_url=ImageURLPart.ImageURL(url="https://example.com/image.png")
+    )
+
+    sanitized = runner._extra_user_content_parts_for_provider([image_part])
+
+    assert len(sanitized) == 1
+    assert isinstance(sanitized[0], TextPart)
+    assert sanitized[0].text == "[Image]"
+
+    sanitized_dict = runner._extra_user_content_parts_for_provider(
+        [{"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}]
+    )
+    assert isinstance(sanitized_dict[0], TextPart)
+    assert sanitized_dict[0].text == "[Image]"
+
+
 @pytest.mark.asyncio
 async def test_max_step_limit_functionality(
     runner, mock_provider, provider_request, mock_tool_executor, mock_hooks

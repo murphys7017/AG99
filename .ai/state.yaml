@@ -1,16 +1,27 @@
 task:
   class: refactor
   risk: high
-  phase: architecture_audit_remediation_phase_3_proactive_core_turn
+  phase: multimodal_turn_context_remediation
   closure_review:
-    status: complete_for_migrated_turn_state_scope
-    date: '2026-09-06'
-    changes: Clear parent-bound Event output hooks on plugin branch copy and use Event getter for visible completion; synchronize remediation status docs.
-    validation: Branch boundary tests 3 passed; completion and hook tests 6 passed; targeted Ruff and git diff --check passed.
-    gaps: No real platform acceptance or full-suite rerun; Runtime adapter flags and Output Runtime public contracts remain deferred.
-  scope: Converge the Core-final Persona delivery transaction, isolate official Event output interception behind an explicit adapter, deep-copy the full Interaction runtime configuration at admission for Middleware, PersonalTurnContext, Output, Core build, Handoff, and web-search reads, snapshot the Core Provider ID on delegation, and share the synthetic Core execution lifecycle for Cron and detached background results without changing Event, Pipeline, platform, or plugin compatibility contracts; defer OutputIntent migration, configuration version/source observability, and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
+    status: implementation_complete_pending_real_platform_regression
+    date: '2026-09-08'
+    changes: Restore provider-aware multimodal Interaction context boundaries, preserve unified Persona history, add Planner visual contract, and synchronize Prompt documentation.
+    validation: Interaction, Planner, Prompt, and Tool Loop boundary tests 145 passed; compileall, targeted Ruff, and git diff --check passed. The legacy subagent handoff test remains independently failing because its MockEvent lacks get_extra.
+    gaps: No real platform acceptance or full-suite rerun; typed visual-media failure semantics and broader audio/file policy remain deferred.
+  scope: Restore the Prompt Pipeline media boundary for Interaction turns: build pure base input facts without Provider-dependent captioning or file extraction; derive branch-local media facts through PromptContextBuilder; keep Router text-only; let the one Persona Expression surface, Planner, and Core receive original images only when their actual Provider supports them; use caption fallback only for a consuming non-vision branch; add a provider-aware media projection and final request safety gate; encode visual understanding independently from workspace I/O. Preserve the unified Persona Expression model, its long configurable history, Output Controller ownership, Event/Pipeline/plugin compatibility boundaries, and existing user documentation changes. Defer general document/OCR redesign, audio policy redesign, Provider replacement, AG99live changes, and execution-backend decoupling.
 context:
   confidence: high
+  verified:
+    - Interaction base InputCollector no longer performs media enrichment when building the shared facts pack.
+    - Non-vision media enrichment is branch-local and vision Providers retain original image slots.
+    - Router, Planner, Persona, and Core projections preserve their documented separation; direct Interaction Provider calls sanitize context modalities.
+    - Unified Persona Expression keeps configured persona history and no longer uses a fixed fast-persona history/slot split.
+    - Core Planner carries requires_visual_understanding independently from workspace_io.
+    - Persona Provider fallback preserves original image references before normalization and derives captions for a text-only fallback without replaying lifecycle hooks.
+    - Targeted validation passed: 145 tests, compileall, Ruff, and git diff --check.
+  open:
+    - Run real OLV/platform regression with vision and text-only Providers.
+    - Decide whether unavailable visual fallback should become a typed Core failure rather than existing empty-enrichment behavior.
   assumptions:
     - Personal Runtime currently prioritizes proactive expression; Policy actions are limited to ignore, observe, express, and defer until a separately reviewed background-execution permission model exists.
     - Deferred, cooldown-held, and quiet-hours-held Observation batches must retain their facts and be re-evaluated by one lifecycle-owned wake scheduler without synthetic user messages or per-runtime polling loops.

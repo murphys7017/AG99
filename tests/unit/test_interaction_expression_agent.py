@@ -22,6 +22,7 @@ from astrbot.core.interaction.expression_agent import (
     validate_persona_expression_result,
 )
 from astrbot.core.interaction.types import InteractionAgentConfig
+from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
@@ -611,7 +612,7 @@ def test_direct_reply_keeps_media_slots():
 
 
 @pytest.mark.asyncio
-async def test_fast_persona_projection_keeps_identity_history_memory_without_waiting(
+async def test_persona_projection_keeps_identity_history_memory_without_waiting(
     monkeypatch,
 ):
     class Event:
@@ -748,7 +749,7 @@ async def test_fast_persona_projection_keeps_identity_history_memory_without_wai
         "conversation.history",
         "memory.long_term_memories",
     } <= selected_slots
-    assert "persona.segments" not in selected_slots
+    assert "persona.segments" in selected_slots
     assert "persona.begin_dialogs" not in selected_slots
     assert "extension.system" not in selected_slots
     assert "extension.context" not in selected_slots
@@ -764,6 +765,7 @@ async def test_fast_persona_projection_keeps_identity_history_memory_without_wai
     )
 
     ready_slots = set(ready_result.metadata["selected_slot_names"])
+    assert "persona.segments" in ready_slots
     assert "extension.system" in ready_slots
     assert "extension.context" not in ready_slots
     get_persona_context_pack.assert_not_awaited()
@@ -1842,8 +1844,12 @@ async def test_persona_request_hook_context_mutation_survives_business_tool_loop
 @pytest.mark.asyncio
 async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeypatch):
     class Provider:
-        def __init__(self, provider_id, *, fails=False):
-            self.provider_config = {"id": provider_id, "type": "test"}
+        def __init__(self, provider_id, *, fails=False, modalities=None):
+            self.provider_config = {
+                "id": provider_id,
+                "type": "test",
+                "modalities": modalities or ["text", "tool_use"],
+            }
             self.fails = fails
             self.calls = []
 
@@ -1860,6 +1866,10 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
                 ],
             )
 
+    class CaptionProvider:
+        async def text_chat(self, **_kwargs):
+            return LLMResponse(role="assistant", completion_text="A test image.")
+
     class Event:
         session_id = "session-1"
         unified_msg_origin = "webchat:friend:session-1"
@@ -1867,6 +1877,10 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
 
         def __init__(self):
             self._extras = {}
+            self.message_str = "What is this image?"
+            self.message_obj = SimpleNamespace(
+                message=[Image(file="https://example.com/image.png")]
+            )
 
         def get_extra(self, key, default=None):
             return self._extras.get(key, default)
@@ -1880,14 +1894,21 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
         def is_stopped(self):
             return False
 
-    primary = Provider("primary", fails=True)
+    primary = Provider("primary", fails=True, modalities=["text", "image", "tool_use"])
     fallback = Provider("fallback")
+    caption_provider = CaptionProvider()
     plugin_context = type(
         "PluginContext",
         (),
         {
-            "get_provider_by_id": lambda self, provider_id: primary,
-            "get_config": lambda self, **kwargs: {},
+            "get_provider_by_id": lambda self, provider_id: (
+                caption_provider if provider_id == "caption" else primary
+            ),
+            "get_config": lambda self, **kwargs: {
+                "provider_settings": {
+                    "default_image_caption_provider_id": "caption",
+                }
+            },
         },
     )()
     contract = build_persona_expression_output_contract_for_effects([])
@@ -1906,11 +1927,27 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
         "astrbot.core.interaction.expression_agent.resolve_fallback_chat_providers",
         lambda *args: [fallback],
     )
+    monkeypatch.setattr(
+        "astrbot.core.prompt.collectors.input_collector.InputCollector._request_image_caption",
+        AsyncMock(return_value="A test image."),
+    )
     agent._prepare_render_result = AsyncMock(
         return_value=RenderResult(
             system_prompt="persona",
-            request_prompt="reply naturally",
-            messages=[{"role": "user", "content": "hello"}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "hello"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/image.png"
+                            },
+                        },
+                    ],
+                }
+            ],
             output_contract=contract,
             compiled_output_contract=compiled,
             metadata={"persona_effect_specs": []},
@@ -1945,6 +1982,9 @@ async def test_persona_expression_fallback_does_not_repeat_request_hooks(monkeyp
     fallback_context = _provider_context_text(fallback.calls[0])
     assert "persona" in fallback_context
     assert "plugin context" in fallback_context
+    fallback_extra_parts = fallback.calls[0]["extra_user_content_parts"]
+    assert len(fallback_extra_parts) == 1
+    assert fallback_extra_parts[0].text == "[Image descriptions]\nA test image."
     assert response_provider_ids == ["fallback"]
     assert hooks == [
         ("OnWaitingLLMRequestEvent", "personal_expression"),

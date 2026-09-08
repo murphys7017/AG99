@@ -112,7 +112,7 @@ def interaction_base_collectors() -> list[ContextCollectorInterface]:
     return [
         SystemCollector(base_only=True),
         PersonaCollector(),
-        InputCollector(),
+        InputCollector(include_media_enrichment=False),
         SessionCollector(),
         MemoryCollector(include_persona_state=False),
         PersonaRelationshipCollector(),

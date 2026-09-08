@@ -60,6 +60,22 @@ def test_core_task_spec_marks_web_research_as_direct_execution():
     assert CoreTaskSpec(suggested_capabilities=["workspace_io"]).requires_direct_web_research() is False
 
 
+def test_core_task_spec_keeps_visual_requirement_out_of_workspace_io():
+    payload = _execute_payload()["core_task_spec"]
+    payload["requires_visual_understanding"] = True
+
+    task_spec = CoreTaskSpec.from_mapping(payload)
+
+    assert task_spec is not None
+    assert task_spec.requires_visual_understanding is True
+    assert task_spec.suggested_capabilities == ["time"]
+
+    payload["suggested_capabilities"] = ["workspace_io"]
+    task_spec = CoreTaskSpec.from_mapping(payload)
+    assert task_spec is not None
+    assert task_spec.suggested_capabilities == []
+
+
 def test_core_planner_prefers_protocol_tool_call():
     contract, compiled = _compiled("protocol_tool_call")
     response = SimpleNamespace(

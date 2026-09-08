@@ -8,6 +8,9 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.collectors.input_collector import (
+    InputMediaEnrichmentCollector,
+)
 from astrbot.core.prompt.collectors.memory_collector import (
     get_cached_prompt_memory_snapshot,
 )
@@ -553,6 +556,111 @@ def build_prompt_render_provider_request(event, provider) -> ProviderRequest:
     request = copy(source) if isinstance(source, ProviderRequest) else ProviderRequest()
     request.provider = provider
     return request
+
+
+def provider_supports_modality(provider: object, modality: str) -> bool:
+    """Return a conservative capability answer for one concrete Provider."""
+
+    provider_config = getattr(provider, "provider_config", None)
+    if not isinstance(provider_config, dict):
+        return False
+    modalities = provider_config.get("modalities")
+    return isinstance(modalities, list) and modality in modalities
+
+
+async def get_or_build_interaction_media_context_pack(
+    *,
+    event,
+    plugin_context: Context,
+    build_config: object,
+    material: InteractionContextMaterial,
+    base_context_pack: ContextPack,
+    provider: object,
+    cache_key: str,
+    include_file_extracts: bool = False,
+) -> ContextPack:
+    """Return a branch-local media-derived Pack for a non-vision consumer.
+
+    Interaction base facts intentionally never invoke caption or file-extract
+    providers. A branch that cannot consume images can opt into this explicit
+    derived snapshot after it has selected its actual Provider.
+    """
+
+    if provider_supports_modality(provider, "image") and not include_file_extracts:
+        return base_context_pack
+
+    target = f"media:{cache_key}"
+    cached = material.target_context_packs.get(target)
+    if cached is not None:
+        return cached
+
+    async def build() -> ContextPack:
+        started_at = time.monotonic()
+        provider_request = build_prompt_render_provider_request(event, provider)
+        media_pack = await PromptContextBuilder(
+            event,
+            plugin_context,
+            build_config,
+        ).build(
+            provider_request=provider_request,
+            collectors=[
+                InputMediaEnrichmentCollector(
+                    base_context_pack,
+                    include_file_extracts=include_file_extracts,
+                )
+            ],
+            include_prompt_extensions=False,
+            base=base_context_pack,
+            scope="interaction_media_enrichment",
+        )
+        material.target_context_packs[target] = media_pack
+        logger.debug(
+            "DIAG interaction.context_material: platform_id=%s session_id=%s "
+            "scope=media duration_ms=%.2f cache_key=%s image_supported=%s "
+            "include_file_extracts=%s slot_count=%s",
+            event.get_platform_id(),
+            event.session_id,
+            (time.monotonic() - started_at) * 1000,
+            cache_key,
+            provider_supports_modality(provider, "image"),
+            include_file_extracts,
+            len(media_pack.slots),
+        )
+        return media_pack
+
+    target_context_tasks = getattr(material, "target_context_tasks", None)
+    if not isinstance(target_context_tasks, dict):
+        target_context_tasks = {}
+        try:
+            material.target_context_tasks = target_context_tasks
+        except AttributeError:
+            # Lightweight test/adaptor materials may expose only the pack cache.
+            # They cannot share an in-flight task, but still retain the completed
+            # branch-local pack through target_context_packs below.
+            pass
+
+    build_task = target_context_tasks.get(target)
+    if build_task is None:
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None:
+            return await build()
+        build_task = turn_state.execution_scope.create_task(
+            build(),
+            role="context_media_enrichment",
+            name=(
+                f"interaction_context_media_{event.get_platform_id()}_"
+                f"{turn_state.turn_id}"
+            ),
+        )
+        target_context_tasks[target] = build_task
+        build_task.add_done_callback(
+            lambda done_task: _finish_context_target_task(
+                material,
+                target,
+                done_task,
+            )
+        )
+    return await asyncio.shield(build_task)
 
 
 def extract_recent_messages(

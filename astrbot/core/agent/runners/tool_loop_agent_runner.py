@@ -390,6 +390,9 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             request,
             image_urls=request.image_urls if supports_image else [],
             audio_urls=request.audio_urls if supports_audio else [],
+            extra_user_content_parts=self._extra_user_content_parts_for_provider(
+                request.extra_user_content_parts,
+            ),
         )
         context = await adjusted_request.assemble_context()
         content = context.get("content")
@@ -408,6 +411,47 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                 content_blocks.append({"type": "text", "text": "[Audio]"})
 
         return {"role": "user", "content": content_blocks}
+
+    def _extra_user_content_parts_for_provider(self, parts):
+        """Keep extra media parts consistent with the concrete Provider modes."""
+
+        if not isinstance(parts, list):
+            return []
+        modalities = self.provider.provider_config.get("modalities", None)
+        if not isinstance(modalities, list):
+            return list(parts)
+
+        supports_image = "image" in modalities
+        supports_audio = "audio" in modalities
+        sanitized = []
+        fixed_images = 0
+        fixed_audios = 0
+        for part in parts:
+            part_type = (
+                "image_url"
+                if isinstance(part, ImageURLPart)
+                else getattr(part, "type", None)
+            )
+            if isinstance(part, dict):
+                part_type = part.get("type")
+            if part_type in {"image_url", "image"} and not supports_image:
+                sanitized.append(TextPart(text="[Image]"))
+                fixed_images += 1
+                continue
+            if part_type in {"audio_url", "input_audio"} and not supports_audio:
+                sanitized.append(TextPart(text="[Audio]"))
+                fixed_audios += 1
+                continue
+            sanitized.append(part)
+
+        if fixed_images or fixed_audios:
+            logger.debug(
+                "extra user content modality fix applied: fixed_image_parts=%s, "
+                "fixed_audio_parts=%s",
+                fixed_images,
+                fixed_audios,
+            )
+        return sanitized
 
     async def _write_tool_result_overflow_file(
         self,
@@ -512,7 +556,9 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
             "contexts": self._sanitize_contexts_for_provider(self.run_context.messages),
             "func_tool": self._func_tool_for_provider(),
             "session_id": self.req.session_id,
-            "extra_user_content_parts": self.req.extra_user_content_parts,  # list[ContentPart]
+            "extra_user_content_parts": self._extra_user_content_parts_for_provider(
+                self.req.extra_user_content_parts
+            ),
             "output_contract": self.req.output_contract,
             "compiled_output_contract": self.req.compiled_output_contract,
             "abort_signal": self._abort_signal,
@@ -1438,7 +1484,9 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                     func_tool=param_subset,
                     model=self.req.model,
                     session_id=self.req.session_id,
-                    extra_user_content_parts=self.req.extra_user_content_parts,
+                    extra_user_content_parts=self._extra_user_content_parts_for_provider(
+                        self.req.extra_user_content_parts
+                    ),
                     tool_choice="required",
                     abort_signal=self._abort_signal,
                 )
@@ -1465,7 +1513,9 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                         func_tool=param_subset,
                         model=self.req.model,
                         session_id=self.req.session_id,
-                        extra_user_content_parts=self.req.extra_user_content_parts,
+                        extra_user_content_parts=self._extra_user_content_parts_for_provider(
+                            self.req.extra_user_content_parts
+                        ),
                         tool_choice="required",
                         abort_signal=self._abort_signal,
                     )

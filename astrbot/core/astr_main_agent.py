@@ -55,6 +55,7 @@ from astrbot.core.prompt.collectors.core_execution_history_collector import (
     CoreExecutionHistoryCollector,
 )
 from astrbot.core.prompt.collectors.core_task_collector import CoreTaskCollector
+from astrbot.core.prompt.collectors.input_collector import InputMediaEnrichmentCollector
 from astrbot.core.prompt.collectors.knowledge_collector import KnowledgeCollector
 from astrbot.core.prompt.collectors.policy_collector import PolicyCollector
 from astrbot.core.prompt.collectors.skills_collector import SkillsCollector
@@ -329,6 +330,8 @@ def _build_interaction_core_collectors(
     capabilities: CapabilitySnapshot,
     *,
     include_subagent_context: bool = True,
+    input_context_pack=None,
+    include_media_enrichment: bool = False,
 ):
     collectors = [
         SystemCollector(capabilities=capabilities),
@@ -339,6 +342,11 @@ def _build_interaction_core_collectors(
         ToolsCollector(capabilities=capabilities),
         KnowledgeCollector(),
     ]
+    if include_media_enrichment and input_context_pack is not None:
+        collectors.insert(
+            2,
+            InputMediaEnrichmentCollector(input_context_pack),
+        )
     if include_subagent_context:
         collectors.insert(-1, SubagentCollector())
     return collectors
@@ -1178,6 +1186,11 @@ async def build_main_agent(
         interaction_collectors = _build_interaction_core_collectors(
             capabilities,
             include_subagent_context=not exclude_handoff_tools,
+            input_context_pack=base_context_pack,
+            include_media_enrichment=bool(
+                get_core_task_spec(event)
+                and get_core_task_spec(event).requires_visual_understanding
+            ),
         )
     prompt_context_pack = await builder.build(
         collectors=interaction_collectors,

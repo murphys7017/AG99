@@ -67,6 +67,8 @@ Collector 只返回事实：
 
 Interaction 当前使用两层 single-flight。`interaction_base` 收集 system、persona、input、session、memory、history、附件摘要和官方群聊上下文等可信控制面事实；Router、Core Planner 与 Persona 的首个请求在这一层完成后即可渲染。`interaction_plugin_context` 随即在后台收集普通 Prompt Extension 与 Interaction Prompt Contributor，每轮只执行一次并按 `meta.targets` 投影。Persona 只在该 Pack 已就绪时尽力使用，否则立即回退 base；Core 等待并复用同一个 task。两层都来自同一基础事实源，业务模块不得重新查询历史、memory、输入或 session，也不得把插件扩展重新塞回 Router / Planner。
 
+媒体事实遵循同一边界：基础 `InputCollector` 只记录原始图片、引用图片、媒体内容块和文件记录，不调用图片转述或文件提取服务。非视觉 Persona、Planner 或 Core 在绑定实际 Provider 后，才通过 `PromptContextBuilder(base=...)` 派生本地媒体事实；视觉 Provider 直接消费原始图片。Router 永远不接收图片、音频或转述结果，也不等待媒体 enrichment。Provider 调用前的模态门同时检查上下文消息和额外内容块，避免只清理 `image_urls` 造成绕过。
+
 ## 目标投影
 
 `project_context_pack(...)` 从 Pack 深拷贝出隔离视图。所有模型渲染都会先排除 `llm_exposure="never"`；显式目标还会同时执行固定代码规则和 slot 级 `meta.targets`。无 target 的普通 Main Agent 不套用 Core 白名单，但仍执行 exposure 过滤。敏感事实仍应在 Collector 产生前最小化，不能把渲染过滤当作日志或进程内保密机制。

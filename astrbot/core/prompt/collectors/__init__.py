@@ -8,7 +8,7 @@ from .conversation_history_collector import ConversationHistoryCollector
 from .core_execution_history_collector import CoreExecutionHistoryCollector
 from .core_task_collector import CoreTaskCollector
 from .explicit_context_collector import ExplicitContextCollector
-from .input_collector import InputCollector
+from .input_collector import InputCollector, InputMediaEnrichmentCollector
 from .knowledge_collector import KnowledgeCollector
 from .memory_collector import MemoryCollector
 from .persona_collector import PersonaCollector
@@ -27,6 +27,7 @@ __all__ = [
     "CoreExecutionHistoryCollector",
     "ExplicitContextCollector",
     "InputCollector",
+    "InputMediaEnrichmentCollector",
     "KnowledgeCollector",
     "MemoryCollector",
     "PolicyCollector",

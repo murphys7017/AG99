@@ -147,7 +147,10 @@ class InteractionRouterAgent:
             async with timeout_context:
                 llm_resp = await provider.text_chat(
                     prompt=render_result.request_prompt or "",
-                    contexts=build_model_context_messages(render_result.messages),
+                    contexts=build_model_context_messages(
+                        render_result.messages,
+                        provider=provider,
+                    ),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.router_temperature,
                 )

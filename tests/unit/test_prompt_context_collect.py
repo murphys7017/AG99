@@ -26,9 +26,11 @@ from astrbot.core.memory.types import (
     TurnRecord,
 )
 from astrbot.core.message.components import File, Image, Plain, Reply
+from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors import (
     ConversationHistoryCollector,
     InputCollector,
+    InputMediaEnrichmentCollector,
     KnowledgeCollector,
     MemoryCollector,
     PersonaCollector,
@@ -1590,6 +1592,73 @@ async def test_collect_context_pack_marks_delegated_core_tool_instruction():
     assert "briefly explain the purpose" not in instruction_slot.value
     assert extras.get("_interaction_core_delegated") is None
 
+
+@pytest.mark.asyncio
+async def test_interaction_base_input_facts_skip_media_enrichment_without_conversation():
+    event, _extras = _make_event()
+    event.message_obj.message = [Image(file="https://example.com/image.png")]
+    context = _make_context()
+    caption_provider = MagicMock()
+    caption_provider.text_chat = AsyncMock(
+        return_value=MagicMock(completion_text="Should not be used.")
+    )
+    context.get_provider_by_id.return_value = caption_provider
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            provider_settings={
+                "default_image_caption_provider_id": "caption-provider",
+            },
+        ),
+        provider_request=ProviderRequest(prompt="describe this"),
+        collectors=[InputCollector(include_media_enrichment=False)],
+    )
+
+    assert pack.get_slot("input.images") is not None
+    assert pack.get_slot("input.image_captions") is None
+    caption_provider.text_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_media_enrichment_collector_resolves_caption_without_conversation():
+    event, _extras = _make_event()
+    event.message_obj.message = [Image(file="https://example.com/image.png")]
+    context = _make_context()
+    caption_provider = MagicMock()
+    caption_provider.text_chat = AsyncMock(
+        return_value=MagicMock(completion_text="A scenic test image.")
+    )
+    context.get_provider_by_id.return_value = caption_provider
+    config = ama.MainAgentBuildConfig(
+        tool_call_timeout=60,
+        provider_settings={
+            "default_image_caption_provider_id": "caption-provider",
+            "image_caption_prompt": "Please describe the image.",
+        },
+    )
+    request = ProviderRequest(prompt="describe this")
+    request.provider = MagicMock(provider_config={"modalities": ["text"]})
+
+    base = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=config,
+        provider_request=request,
+        collectors=[InputCollector(include_media_enrichment=False)],
+    )
+    derived = await PromptContextBuilder(event, context, config).build(
+        provider_request=request,
+        collectors=[InputMediaEnrichmentCollector(base, include_file_extracts=False)],
+        base=base,
+    )
+
+    captions_slot = derived.get_slot("input.image_captions")
+    assert captions_slot is not None
+    assert captions_slot.value[0]["caption"] == "A scenic test image."
+    caption_provider.text_chat.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_collect_context_pack_marks_missing_direct_web_research_capability():

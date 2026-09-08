@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     repair_json = None
 
 from astrbot import logger
+from astrbot.core.agent.message import ImageURLPart, TextPart
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import (
@@ -46,6 +47,11 @@ from astrbot.core.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
 )
 from astrbot.core.prompt.builder import PromptContextBuilder
+from astrbot.core.prompt.collectors.input_collector import (
+    InputCollector,
+    InputMediaEnrichmentCollector,
+)
+from astrbot.core.prompt.context_types import ContextPack, ContextSlot
 from astrbot.core.prompt.render import (
     PromptRenderEngine,
     PromptRenderProfile,
@@ -69,7 +75,9 @@ from .collectors import PersonaVisibleReplyCollector
 from .context_builder import (
     build_prompt_render_provider_request,
     get_or_build_interaction_context_material,
+    get_or_build_interaction_media_context_pack,
     get_or_build_interaction_persona_context_pack,
+    provider_supports_modality,
 )
 from .effects import (
     PersonaEffectCall,
@@ -162,23 +170,10 @@ class PersonaExpressionRequest:
         )
 
 
-_FAST_PERSONA_HISTORY_TURNS = 8
-_FAST_PERSONA_SLOT_NAMES = frozenset(
-    {
-        "persona.summary",
-        "input.text",
-        "input.quoted_text",
-        "input.visible_reply_material",
-        "input.attachment_summary",
-        "session.datetime",
-        "session.user_info",
-        "conversation.history",
-        "conversation.group_recent",
-        "extension.system",
-    }
-)
 _PERSONA_FUNCTION_TOOL_INTENTS = frozenset({"reply"})
 _PERSONA_EXPRESSION_INTENT_METADATA_KEY = "interaction.persona_expression_intent"
+_FALLBACK_IMAGE_REFS_METADATA_KEY = "interaction.fallback_image_refs"
+_FALLBACK_EXTRA_PARTS_METADATA_KEY = "interaction.fallback_extra_parts"
 
 
 @dataclass(slots=True)
@@ -856,6 +851,8 @@ class InteractionExpressionAgent:
             prepared = await self._prepare_fallback_persona_expression(
                 provider,
                 prepared,
+                event=event,
+                plugin_context=plugin_context,
             )
             return await self._complete_persona_expression(
                 event,
@@ -978,6 +975,9 @@ class InteractionExpressionAgent:
         self,
         provider: Provider,
         previous: _PreparedPersonaExpression,
+        *,
+        event=None,
+        plugin_context: Context | None = None,
     ) -> _PreparedPersonaExpression:
         """Rebind one frozen, already-hooked request to a fallback provider."""
         provider_request = previous.provider_request
@@ -997,6 +997,16 @@ class InteractionExpressionAgent:
             if self._provider_supports_tool_calls(provider)
             else ToolSet()
         )
+        if (
+            event is not None
+            and plugin_context is not None
+            and not provider_supports_modality(provider, "image")
+        ):
+            await _replace_fallback_images_with_captions(
+                event=event,
+                plugin_context=plugin_context,
+                provider_request=provider_request,
+            )
         previous.lifecycle.bind_request(provider_request)
         return previous
 
@@ -1018,6 +1028,7 @@ class InteractionExpressionAgent:
         provider_config = getattr(provider, "provider_config", {})
         if not isinstance(provider_config, dict):
             provider_config = {}
+        _remember_fallback_image_refs(provider_request)
         image_stats = await normalize_provider_request_images(provider_request)
         if image_stats.changed:
             logger.debug(
@@ -1486,9 +1497,9 @@ class InteractionExpressionAgent:
             ),
         )
         if req.compact_context:
-            # The fast stage preserves the same conversational identity, history,
-            # and memory from the base pack. It may reuse a completed plugin pack,
-            # but never waits for plugin enrichment before sending the first reply.
+            # A direct expression may avoid waiting for pending plugin enrichment,
+            # but it remains the same Persona Expression surface and keeps the
+            # configured history, memory, and current input facts.
             persona_context_pack = material.target_context_packs.get(
                 "plugin",
                 material.prompt_context_pack,
@@ -1501,6 +1512,19 @@ class InteractionExpressionAgent:
                 build_config=build_config,
                 material=material,
             )
+        persona_context_pack = await get_or_build_interaction_media_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=build_config,
+            material=material,
+            base_context_pack=persona_context_pack,
+            provider=provider,
+            cache_key=(
+                "persona_plugin"
+                if persona_context_pack is material.target_context_packs.get("plugin")
+                else "persona_base"
+            ),
+        )
         provider_request = build_prompt_render_provider_request(event, provider)
         expression_pack = await PromptContextBuilder(
             event,
@@ -1520,36 +1544,16 @@ class InteractionExpressionAgent:
         )
         persona_effect_specs = self._list_persona_effects(plugin_context, event)
         hidden_slot_names = set()
-        if req.compact_context:
-            hidden_slot_names.update(
-                slot_name
-                for slot_name in expression_pack.slots
-                if not _is_fast_persona_slot(slot_name)
-            )
-            # Legacy personas that do not contain any recognized summary
-            # sections still need their original prompt as a correctness
-            # fallback; otherwise the compact projection would erase the
-            # entire personality definition.
-            if not _has_usable_persona_summary(expression_pack):
-                hidden_slot_names.discard("persona.prompt")
-        elif _has_visible_reply_material(req):
+        if not provider_supports_modality(provider, "image"):
             hidden_slot_names.update(
                 {
                     "input.images",
                     "input.quoted_images",
-                    "input.image_captions",
-                    "input.quoted_image_captions",
                 }
             )
         history_turns = max(0, interaction_config.persona_history_window_size)
-        if req.compact_context:
-            history_turns = min(history_turns, _FAST_PERSONA_HISTORY_TURNS)
         profile = PromptRenderProfile(
-            name=(
-                "interaction_persona_fast"
-                if req.compact_context
-                else "interaction_persona_runtime"
-            ),
+            name="interaction_persona_runtime",
             system_prompt=build_persona_runtime_system_prompt(persona_effect_specs),
             request_prompt=_build_expression_prompt(req),
             output_contract=build_persona_expression_output_contract_for_effects(
@@ -1616,6 +1620,168 @@ class InteractionExpressionAgent:
             interaction_config=interaction_config,
             build_config=build_config,
         )
+
+
+async def _replace_fallback_images_with_captions(
+    *,
+    event,
+    plugin_context: Context,
+    provider_request: ProviderRequest,
+) -> None:
+    """Project current-turn images to text after a non-vision Provider fallback.
+
+    The original ProviderRequest has already passed public lifecycle hooks.  We
+    deliberately enrich only its media facts here, rather than rebuilding the
+    prompt or replaying those hooks for the fallback Provider.
+    """
+
+    remembered_refs = provider_request.metadata.get(_FALLBACK_IMAGE_REFS_METADATA_KEY, [])
+    if not isinstance(remembered_refs, list):
+        remembered_refs = []
+    image_part_count = sum(
+        1
+        for part in provider_request.extra_user_content_parts or []
+        if _is_image_content_part(part)
+    )
+    image_refs = [
+        str(ref).strip()
+        for ref in remembered_refs
+        if isinstance(ref, str) and ref.strip()
+    ]
+    image_count = max(
+        len(provider_request.image_urls or []) + image_part_count,
+        len(image_refs),
+    )
+    if image_count == 0:
+        return
+
+    build_config = build_interaction_prompt_build_config(plugin_context, event)
+    input_collector = InputCollector(include_media_enrichment=False)
+    input_slots = await input_collector.collect(
+        event,
+        plugin_context,
+        build_config,
+        provider_request=provider_request,
+    )
+    if image_refs and not any(slot.name == "input.images" for slot in input_slots):
+        input_slots.append(
+            ContextSlot(
+                name="input.images",
+                value=[
+                    {"ref": ref, "source": "fallback_metadata"}
+                    for ref in image_refs
+                ],
+                category="input",
+                source="fallback_metadata",
+                meta={"count": len(image_refs)},
+            )
+        )
+    input_pack = ContextPack(slots={slot.name: slot for slot in input_slots})
+    enrichment_slots = await InputMediaEnrichmentCollector(
+        input_pack,
+        include_file_extracts=False,
+    ).collect(
+        event,
+        plugin_context,
+        build_config,
+        provider_request=provider_request,
+    )
+    captions = _fallback_image_caption_text(enrichment_slots)
+
+    original_extra_parts = provider_request.metadata.get(
+        _FALLBACK_EXTRA_PARTS_METADATA_KEY,
+        provider_request.extra_user_content_parts or [],
+    )
+    if not isinstance(original_extra_parts, list):
+        original_extra_parts = []
+    provider_request.image_urls = []
+    provider_request.extra_user_content_parts = [
+        copy.deepcopy(part)
+        for part in original_extra_parts
+        if not _is_image_content_part(part)
+    ]
+    if captions:
+        provider_request.extra_user_content_parts.append(
+            TextPart(text=f"[Image descriptions]\n{captions}")
+        )
+        return
+    provider_request.extra_user_content_parts.extend(
+        TextPart(text="[Image]") for _ in range(image_count)
+    )
+
+
+def _is_image_content_part(part: object) -> bool:
+    if isinstance(part, ImageURLPart):
+        return True
+    if isinstance(part, dict):
+        return str(part.get("type", "")).lower() in {"image", "image_url"}
+    return str(getattr(part, "type", "")).lower() in {"image", "image_url"}
+
+
+def _image_content_part_ref(part: object) -> str | None:
+    if isinstance(part, ImageURLPart):
+        return str(part.image_url.url)
+    if not isinstance(part, dict):
+        return None
+    if str(part.get("type", "")).lower() == "image_url":
+        payload = part.get("image_url")
+        if isinstance(payload, dict):
+            value = payload.get("url")
+            return value if isinstance(value, str) and value else None
+    if str(part.get("type", "")).lower() == "image":
+        source = part.get("source")
+        if isinstance(source, dict):
+            value = source.get("url") or source.get("data")
+            return value if isinstance(value, str) and value else None
+    return None
+
+
+def _remember_fallback_image_refs(provider_request: ProviderRequest) -> None:
+    refs: list[str] = []
+    refs.extend(
+        str(ref).strip()
+        for ref in provider_request.image_urls or []
+        if isinstance(ref, str) and ref.strip()
+    )
+    refs.extend(
+        ref
+        for part in provider_request.extra_user_content_parts or []
+        if (ref := _image_content_part_ref(part))
+    )
+    for message in provider_request.contexts or []:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            continue
+        refs.extend(
+            ref
+            for part in message["content"]
+            if (ref := _image_content_part_ref(part))
+        )
+    provider_request.metadata[_FALLBACK_IMAGE_REFS_METADATA_KEY] = list(
+        dict.fromkeys(refs)
+    )
+    provider_request.metadata[_FALLBACK_EXTRA_PARTS_METADATA_KEY] = copy.deepcopy(
+        provider_request.extra_user_content_parts or []
+    )
+
+
+def _fallback_image_caption_text(slots: Sequence[object]) -> str:
+    captions: list[str] = []
+    for slot in slots:
+        if getattr(slot, "name", "") not in {
+            "input.image_captions",
+            "input.quoted_image_captions",
+        }:
+            continue
+        records = getattr(slot, "value", None)
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            caption = record.get("caption")
+            if isinstance(caption, str) and caption.strip():
+                captions.append(caption.strip())
+    return "\n".join(captions)
 
 
 def _describe_expression_request(req: PersonaExpressionRequest) -> str:
@@ -1723,35 +1889,6 @@ def _serialized_size(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False, default=str))
     except (TypeError, ValueError):
         return len(str(value or ""))
-
-
-def _has_visible_reply_material(req: PersonaExpressionRequest) -> bool:
-    return any(
-        value.strip()
-        for value in (
-            req.source_text,
-            req.delegated_task_summary,
-            req.observed_text,
-            req.total_text,
-            req.pending_text,
-        )
-    )
-
-
-def _has_usable_persona_summary(pack) -> bool:
-    summary_slot = pack.get_slot("persona.summary")
-    if summary_slot is None or not isinstance(summary_slot.value, dict):
-        return False
-    return any(
-        isinstance(value, list) and any(str(item).strip() for item in value)
-        for value in summary_slot.value.values()
-    )
-
-
-def _is_fast_persona_slot(slot_name: str) -> bool:
-    """Keep the conversational identity and memory needed for one early reply."""
-
-    return slot_name in _FAST_PERSONA_SLOT_NAMES or slot_name.startswith("memory.")
 
 
 def _latest_assistant_expression_fingerprint(pack) -> str | None:

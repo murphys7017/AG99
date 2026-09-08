@@ -17,23 +17,29 @@ class CoreTaskSpec:
     task_summary: str = ""
     execution_prompt: str = ""
     suggested_capabilities: list[str] = field(default_factory=list)
+    requires_visual_understanding: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, payload: object) -> CoreTaskSpec | None:
         if not isinstance(payload, dict):
             return None
-        if set(payload) != {
+        expected_keys = {
             "task_intent",
             "task_summary",
             "execution_prompt",
             "suggested_capabilities",
-        }:
+        }
+        if set(payload) not in (
+            expected_keys,
+            expected_keys | {"requires_visual_understanding"},
+        ):
             return None
         task_intent = payload["task_intent"]
         task_summary = payload["task_summary"]
         execution_prompt = payload["execution_prompt"]
         suggested_capabilities = payload["suggested_capabilities"]
+        requires_visual_understanding = payload.get("requires_visual_understanding", False)
         if not all(
             isinstance(value, str)
             for value in (task_intent, task_summary, execution_prompt)
@@ -48,15 +54,26 @@ class CoreTaskSpec:
             isinstance(item, str) for item in suggested_capabilities
         ):
             return None
+        if not isinstance(requires_visual_understanding, bool):
+            return None
+        normalized_capabilities = [
+            item.strip()
+            for item in suggested_capabilities
+            if item.strip()
+        ]
+        # Seeing the current turn's image is an input requirement, not a
+        # workspace file operation. Preserve workspace_io only when the
+        # Planner also requested another concrete capability.
+        if requires_visual_understanding and normalized_capabilities == [
+            "workspace_io"
+        ]:
+            normalized_capabilities = []
         return cls(
             task_intent=task_intent.strip(),
             task_summary=task_summary.strip(),
             execution_prompt=execution_prompt.strip(),
-            suggested_capabilities=[
-                item.strip()
-                for item in suggested_capabilities
-                if item.strip()
-            ],
+            suggested_capabilities=normalized_capabilities,
+            requires_visual_understanding=requires_visual_understanding,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +82,7 @@ class CoreTaskSpec:
             "task_summary": self.task_summary,
             "execution_prompt": self.execution_prompt,
             "suggested_capabilities": list(self.suggested_capabilities),
+            "requires_visual_understanding": self.requires_visual_understanding,
             "metadata": dict(self.metadata),
         }
 

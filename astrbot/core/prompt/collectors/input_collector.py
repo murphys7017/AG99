@@ -29,7 +29,7 @@ from astrbot.core.utils.quoted_message_parser import (
 )
 from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
-from ..context_types import ContextSlot
+from ..context_types import ContextPack, ContextSlot
 from ..input_annotations import (
     INPUT_ITEM_ANNOTATIONS_EXTRA_KEY,
     INPUT_QUOTED_TEXT_ANNOTATION_KEY,
@@ -62,6 +62,9 @@ class _ReplyPayload:
 
 class InputCollector(ContextCollectorInterface):
     """Collect the current user input into prompt context slots."""
+
+    def __init__(self, *, include_media_enrichment: bool = True) -> None:
+        self.include_media_enrichment = include_media_enrichment
 
     async def collect(
         self,
@@ -139,24 +142,6 @@ class InputCollector(ContextCollectorInterface):
                 annotations=input_annotations,
             )
 
-            current_image_captions = await self._collect_current_image_captions(
-                event=event,
-                plugin_context=plugin_context,
-                provider_request=provider_request,
-                provider_settings=provider_settings,
-                current_images=current_images,
-            )
-            if current_image_captions:
-                slots.append(
-                    ContextSlot(
-                        name="input.image_captions",
-                        value=current_image_captions,
-                        category="input",
-                        source="image_caption_provider",
-                        meta={"count": len(current_image_captions)},
-                    )
-                )
-
             if reply_payload.texts:
                 slots.append(
                     ContextSlot(
@@ -187,24 +172,6 @@ class InputCollector(ContextCollectorInterface):
                     )
                 )
 
-            quoted_image_captions = await self._collect_quoted_image_captions(
-                event=event,
-                plugin_context=plugin_context,
-                provider_request=provider_request,
-                provider_settings=provider_settings,
-                quoted_images=reply_payload.images,
-            )
-            if quoted_image_captions:
-                slots.append(
-                    ContextSlot(
-                        name="input.quoted_image_captions",
-                        value=quoted_image_captions,
-                        category="input",
-                        source="image_caption_provider",
-                        meta={"count": len(quoted_image_captions)},
-                    )
-                )
-
             all_files = [*current_files, *reply_payload.files]
             if all_files:
                 slots.append(
@@ -217,21 +184,104 @@ class InputCollector(ContextCollectorInterface):
                     )
                 )
 
-            file_extracts = await self._collect_file_extracts(event, config)
-            if file_extracts:
-                slots.append(
-                    ContextSlot(
-                        name="input.file_extracts",
-                        value=file_extracts,
-                        category="input",
-                        source="file_extract_provider",
-                        meta={"count": len(file_extracts)},
+            if self.include_media_enrichment:
+                slots.extend(
+                    await self.collect_media_enrichment(
+                        event=event,
+                        plugin_context=plugin_context,
+                        config=config,
+                        provider_request=provider_request,
+                        current_images=current_images,
+                        quoted_images=reply_payload.images,
                     )
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to collect input context: %s", exc, exc_info=True)
 
         return slots
+
+    async def collect_media_enrichment(
+        self,
+        *,
+        event: AstrMessageEvent,
+        plugin_context: Context,
+        config: MainAgentBuildConfig,
+        provider_request: ProviderRequest | None,
+        current_images: list[dict[str, Any]],
+        quoted_images: list[dict[str, Any]],
+        include_file_extracts: bool = True,
+    ) -> list[ContextSlot]:
+        """Resolve optional media-derived facts for one concrete consumer.
+
+        The base input collector deliberately avoids this method. Image captions
+        and file extraction can call external providers and therefore belong in
+        an explicit derived ContextPack with an already-bound ProviderRequest.
+        """
+
+        try:
+            provider_settings = self._resolve_provider_settings(
+                event=event,
+                plugin_context=plugin_context,
+                config=config,
+            )
+            slots: list[ContextSlot] = []
+            current_image_captions = await self._collect_current_image_captions(
+                event=event,
+                plugin_context=plugin_context,
+                provider_request=provider_request,
+                provider_settings=provider_settings,
+                current_images=current_images,
+            )
+            if current_image_captions:
+                slots.append(
+                    ContextSlot(
+                        name="input.image_captions",
+                        value=current_image_captions,
+                        category="input",
+                        source="image_caption_provider",
+                        meta={"count": len(current_image_captions)},
+                    )
+                )
+
+            quoted_image_captions = await self._collect_quoted_image_captions(
+                event=event,
+                plugin_context=plugin_context,
+                provider_request=provider_request,
+                provider_settings=provider_settings,
+                quoted_images=quoted_images,
+            )
+            if quoted_image_captions:
+                slots.append(
+                    ContextSlot(
+                        name="input.quoted_image_captions",
+                        value=quoted_image_captions,
+                        category="input",
+                        source="image_caption_provider",
+                        meta={"count": len(quoted_image_captions)},
+                    )
+                )
+
+            if include_file_extracts:
+                file_extracts = await self._collect_file_extracts(event, config)
+                if file_extracts:
+                    slots.append(
+                        ContextSlot(
+                            name="input.file_extracts",
+                            value=file_extracts,
+                            category="input",
+                            source="file_extract_provider",
+                            meta={"count": len(file_extracts)},
+                        )
+                    )
+            return slots
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to collect media enrichment context: %s",
+                exc,
+                exc_info=True,
+            )
+            return []
+
 
     def _load_input_annotations(
         self,
@@ -680,10 +730,7 @@ class InputCollector(ContextCollectorInterface):
         provider_id = provider_settings.get("default_image_caption_provider_id")
         if not current_images or not isinstance(provider_id, str) or not provider_id:
             return []
-        if (
-            provider_request is None
-            or getattr(provider_request, "conversation", None) is None
-        ):
+        if provider_request is None:
             return []
         if self._request_provider_supports_modality(provider_request, "image"):
             logger.debug(
@@ -1108,3 +1155,43 @@ class InputCollector(ContextCollectorInterface):
         if image_ref.startswith("file://"):
             return "file"
         return "resolved_path"
+
+
+class InputMediaEnrichmentCollector(ContextCollectorInterface):
+    """Build optional media-derived slots from an existing input fact snapshot."""
+
+    def __init__(
+        self,
+        source_pack: ContextPack,
+        *,
+        include_file_extracts: bool = True,
+    ) -> None:
+        self.source_pack = source_pack
+        self.include_file_extracts = include_file_extracts
+
+    async def collect(
+        self,
+        event: AstrMessageEvent,
+        plugin_context: Context,
+        config: MainAgentBuildConfig,
+        provider_request: ProviderRequest | None = None,
+    ) -> list[ContextSlot]:
+        current_images = self._image_records("input.images")
+        quoted_images = self._image_records("input.quoted_images")
+        return await InputCollector(
+            include_media_enrichment=False
+        ).collect_media_enrichment(
+            event=event,
+            plugin_context=plugin_context,
+            config=config,
+            provider_request=provider_request,
+            current_images=current_images,
+            quoted_images=quoted_images,
+            include_file_extracts=self.include_file_extracts,
+        )
+
+    def _image_records(self, slot_name: str) -> list[dict[str, Any]]:
+        slot = self.source_pack.get_slot(slot_name)
+        if slot is None or not isinstance(slot.value, list):
+            return []
+        return [dict(item) for item in slot.value if isinstance(item, dict)]
