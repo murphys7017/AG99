@@ -62,6 +62,7 @@ from .turn_state import (
     get_interaction_turn_router_context_nodes,
     get_interaction_turn_router_failure_reason,
     get_interaction_turn_router_result_source,
+    get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     is_interaction_turn_completed,
@@ -86,11 +87,13 @@ from .turn_state import (
     reserve_interaction_turn_immediate_output,
     set_interaction_turn_config,
     set_interaction_turn_core_planning_decision,
+    set_interaction_turn_core_provider_id,
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
     set_interaction_turn_inbound_media_materialized,
     set_interaction_turn_route_decision,
     set_interaction_turn_router_result_source,
+    set_interaction_turn_runtime_config,
     suppress_interaction_turn_pending_persona,
 )
 from .types import (
@@ -178,6 +181,10 @@ class InteractionMiddleware:
         )
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
+        if event is not None:
+            admitted_config = get_interaction_turn_runtime_config(event)
+            if admitted_config is not None:
+                return admitted_config
         if self.plugin_context is None:
             return self.config
         get_config = getattr(self.plugin_context, "get_config", None)
@@ -192,6 +199,17 @@ class InteractionMiddleware:
         if not isinstance(runtime_config, Mapping):
             return self.config
         return _merge_runtime_config(self.config, runtime_config)
+
+    @staticmethod
+    def _admit_runtime_config(
+        event: AstrMessageEvent,
+        runtime_config: Any,
+    ) -> Any:
+        if not isinstance(runtime_config, Mapping):
+            return runtime_config
+        snapshot = set_interaction_turn_runtime_config(event, runtime_config)
+        event.set_extra("_astrbot_config", snapshot)
+        return snapshot
 
     def refresh_interaction_config(
         self,
@@ -261,7 +279,10 @@ class InteractionMiddleware:
         turn_state = get_interaction_turn_state(event)
         if turn_state is not None and turn_state.pipeline_event_prepared:
             return
-        runtime_config = self._get_runtime_config(event)
+        runtime_config = self._admit_runtime_config(
+            event,
+            self._get_runtime_config(event),
+        )
         interaction_config = get_interaction_turn_config(event)
         if interaction_config is None:
             if not is_middleware_enabled(runtime_config):
@@ -270,8 +291,6 @@ class InteractionMiddleware:
         if not interaction_config.enabled:
             return
         self._reject_development_fallback_policy(runtime_config)
-        if isinstance(runtime_config, Mapping):
-            event.set_extra("_astrbot_config", runtime_config)
         turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         set_interaction_turn_config(event, interaction_config)
@@ -343,11 +362,13 @@ class InteractionMiddleware:
             )
             return None
 
+        runtime_config = self._admit_runtime_config(
+            event,
+            self._get_runtime_config(event),
+        )
         interaction_config = get_interaction_turn_config(event)
         if interaction_config is None:
-            interaction_config = load_interaction_agent_config(
-                self._get_runtime_config(event)
-            )
+            interaction_config = load_interaction_agent_config(runtime_config)
         if not interaction_config.enabled:
             event.set_extra(
                 "_interaction_runtime_observation_skipped_reason",
@@ -508,9 +529,10 @@ class InteractionMiddleware:
         """Deliver an admitted proactive plugin output through the turn runtime."""
         if turn.event is not event or turn.observation is not event.observation:
             raise ValueError("Runtime output does not match the admitted turn")
-        runtime_config = self._get_runtime_config(event)
-        if isinstance(runtime_config, Mapping):
-            event.set_extra("_astrbot_config", runtime_config)
+        self._admit_runtime_config(
+            event,
+            self._get_runtime_config(event),
+        )
         self.prepare_pipeline_event(event)
         await dispatch_interaction_lifecycle(
             event,
@@ -642,10 +664,11 @@ class InteractionMiddleware:
         event: AstrMessageEvent,
     ) -> InteractionAgentConfig | None:
         """Prepare one turn and return config only when Router/Personal should run."""
-        runtime_config = self._get_runtime_config(event)
+        runtime_config = self._admit_runtime_config(
+            event,
+            self._get_runtime_config(event),
+        )
         self._reject_development_fallback_policy(runtime_config)
-        if isinstance(runtime_config, Mapping):
-            event.set_extra("_astrbot_config", runtime_config)
         turn_id = str(event.get_extra("_turn_id", "") or "") or uuid.uuid4().hex
         turn_state = ensure_interaction_turn_state(event, turn_id=turn_id)
         interaction_config = get_interaction_turn_config(event)
@@ -1513,6 +1536,19 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
     ) -> None:
+        selected_provider = event.get_extra("selected_provider")
+        provider_id = str(selected_provider).strip() if selected_provider else ""
+        if not provider_id and self.plugin_context is not None:
+            try:
+                provider = self.plugin_context.get_using_provider(
+                    umo=event.unified_msg_origin
+                )
+            except ValueError:
+                provider = None
+            provider_id = str(
+                getattr(provider, "provider_config", {}).get("id", "")
+            ).strip()
+        set_interaction_turn_core_provider_id(event, provider_id)
         mark_interaction_turn_core_delegated(event)
         event.is_wake = True
         event.is_at_or_wake_command = True

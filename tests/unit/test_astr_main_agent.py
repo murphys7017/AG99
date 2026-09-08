@@ -9,6 +9,7 @@ from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.conversation_mgr import Conversation
+from astrbot.core.interaction.turn_state import set_interaction_turn_core_provider_id
 from astrbot.core.message.components import Image, Plain, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
@@ -276,6 +277,32 @@ class TestSelectProvider:
 
         assert result == mock_provider
         mock_context.get_provider_by_id.assert_called_once_with("test-provider")
+
+    def test_select_provider_prefers_admitted_core_provider(
+        self,
+        mock_context,
+        mock_provider,
+    ):
+        class Event:
+            unified_msg_origin = "test_platform:private:session123"
+
+            def __init__(self):
+                self._extras = {"selected_provider": "later-provider"}
+
+            def get_extra(self, key, default=None):
+                return self._extras.get(key, default)
+
+            def set_extra(self, key, value):
+                self._extras[key] = value
+
+        event = Event()
+        set_interaction_turn_core_provider_id(event, "admitted-provider")
+        mock_context.get_provider_by_id.return_value = mock_provider
+
+        result = ama._select_provider(event, mock_context)
+
+        assert result is mock_provider
+        mock_context.get_provider_by_id.assert_called_once_with("admitted-provider")
 
     def test_select_provider_not_found(self, mock_event, mock_context):
         """Test selecting provider when ID is not found."""

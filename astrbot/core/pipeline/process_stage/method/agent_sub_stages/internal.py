@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from dataclasses import replace
 
 from sqlalchemy.exc import OperationalError
@@ -33,7 +33,10 @@ from astrbot.core.execution import (
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
-from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
+from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_runtime_config,
+    is_interaction_turn_core_delegated,
+)
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -162,6 +165,159 @@ class InternalAgentSubStage(Stage):
             max_quoted_fallback_images=settings.get("max_quoted_fallback_images", 20),
         )
 
+    def _build_turn_main_agent_config(
+        self,
+        event: AstrMessageEvent,
+        *,
+        provider_wake_prefix: str,
+        streaming_response: bool,
+    ) -> tuple[MainAgentBuildConfig, Mapping[str, object]]:
+        """Project an admitted Interaction configuration into the Core boundary."""
+        runtime_config = get_interaction_turn_runtime_config(event)
+        if not isinstance(runtime_config, Mapping):
+            return (
+                replace(
+                    self.main_agent_cfg,
+                    provider_wake_prefix=provider_wake_prefix,
+                    streaming_response=streaming_response,
+                ),
+                self.main_agent_cfg.provider_settings,
+            )
+
+        settings = runtime_config.get("provider_settings", {})
+        if not isinstance(settings, Mapping):
+            settings = {}
+        file_extract = settings.get("file_extract", {})
+        if not isinstance(file_extract, Mapping):
+            file_extract = {}
+        sandbox_cfg = settings.get("sandbox", {})
+        if not isinstance(sandbox_cfg, Mapping):
+            sandbox_cfg = {}
+        proactive_cfg = settings.get("proactive_capability", {})
+        if not isinstance(proactive_cfg, Mapping):
+            proactive_cfg = {}
+        max_context_length = settings.get(
+            "max_context_length", self.main_agent_cfg.max_context_length
+        )
+        try:
+            max_context_length = int(max_context_length)
+        except (TypeError, ValueError):
+            max_context_length = self.main_agent_cfg.max_context_length
+        dequeue_context_length = settings.get(
+            "dequeue_context_length", self.main_agent_cfg.dequeue_context_length
+        )
+        try:
+            dequeue_context_length = min(
+                max(1, int(dequeue_context_length)), max_context_length - 1
+            )
+        except (TypeError, ValueError):
+            dequeue_context_length = self.main_agent_cfg.dequeue_context_length
+        if dequeue_context_length <= 0:
+            dequeue_context_length = 1
+
+        subagent_orchestrator = runtime_config.get(
+            "subagent_orchestrator",
+            self.main_agent_cfg.subagent_orchestrator,
+        )
+        if not isinstance(subagent_orchestrator, Mapping):
+            subagent_orchestrator = self.main_agent_cfg.subagent_orchestrator
+
+        return (
+            replace(
+                self.main_agent_cfg,
+                tool_call_timeout=settings.get(
+                    "tool_call_timeout", self.main_agent_cfg.tool_call_timeout
+                ),
+                tool_schema_mode=settings.get(
+                    "tool_schema_mode", self.main_agent_cfg.tool_schema_mode
+                ),
+                provider_wake_prefix=provider_wake_prefix,
+                streaming_response=streaming_response,
+                sanitize_context_by_modalities=bool(
+                    settings.get(
+                        "sanitize_context_by_modalities",
+                        self.main_agent_cfg.sanitize_context_by_modalities,
+                    )
+                ),
+                kb_agentic_mode=bool(
+                    runtime_config.get(
+                        "kb_agentic_mode", self.main_agent_cfg.kb_agentic_mode
+                    )
+                ),
+                file_extract_enabled=bool(
+                    file_extract.get(
+                        "enable", self.main_agent_cfg.file_extract_enabled
+                    )
+                ),
+                file_extract_prov=str(
+                    file_extract.get("provider", self.main_agent_cfg.file_extract_prov)
+                ),
+                file_extract_msh_api_key=str(
+                    file_extract.get(
+                        "moonshotai_api_key",
+                        self.main_agent_cfg.file_extract_msh_api_key,
+                    )
+                ),
+                context_limit_reached_strategy=str(
+                    settings.get(
+                        "context_limit_reached_strategy",
+                        self.main_agent_cfg.context_limit_reached_strategy,
+                    )
+                ),
+                llm_compress_instruction=str(
+                    settings.get(
+                        "llm_compress_instruction",
+                        self.main_agent_cfg.llm_compress_instruction,
+                    )
+                ),
+                llm_compress_keep_recent=settings.get(
+                    "llm_compress_keep_recent",
+                    self.main_agent_cfg.llm_compress_keep_recent,
+                ),
+                llm_compress_keep_recent_ratio=settings.get(
+                    "llm_compress_keep_recent_ratio",
+                    self.main_agent_cfg.llm_compress_keep_recent_ratio,
+                ),
+                llm_compress_provider_id=str(
+                    settings.get(
+                        "llm_compress_provider_id",
+                        self.main_agent_cfg.llm_compress_provider_id,
+                    )
+                ),
+                max_context_length=max_context_length,
+                dequeue_context_length=dequeue_context_length,
+                fallback_max_context_tokens=settings.get(
+                    "fallback_max_context_tokens",
+                    self.main_agent_cfg.fallback_max_context_tokens,
+                ),
+                llm_safety_mode=bool(
+                    settings.get("llm_safety_mode", self.main_agent_cfg.llm_safety_mode)
+                ),
+                safety_mode_strategy=str(
+                    settings.get(
+                        "safety_mode_strategy", self.main_agent_cfg.safety_mode_strategy
+                    )
+                ),
+                computer_use_runtime=str(
+                    settings.get(
+                        "computer_use_runtime", self.main_agent_cfg.computer_use_runtime
+                    )
+                ),
+                sandbox_cfg=dict(sandbox_cfg),
+                add_cron_tools=bool(
+                    proactive_cfg.get("add_cron_tools", self.main_agent_cfg.add_cron_tools)
+                ),
+                provider_settings=dict(settings),
+                subagent_orchestrator=dict(subagent_orchestrator),
+                timezone=runtime_config.get("timezone", self.main_agent_cfg.timezone),
+                max_quoted_fallback_images=settings.get(
+                    "max_quoted_fallback_images",
+                    self.main_agent_cfg.max_quoted_fallback_images,
+                ),
+            ),
+            settings,
+        )
+
     async def _send_llm_error_message(
         self, event: AstrMessageEvent, message: object
     ) -> None:
@@ -174,9 +330,50 @@ class InternalAgentSubStage(Stage):
         agent_runner: AgentRunner | None = None
         req: ProviderRequest | None = None
         try:
-            streaming_response = self.streaming_response
+            runtime_config = get_interaction_turn_runtime_config(event)
+            runtime_settings = (
+                runtime_config.get("provider_settings", {})
+                if isinstance(runtime_config, Mapping)
+                else {}
+            )
+            if not isinstance(runtime_settings, Mapping):
+                runtime_settings = {}
+            streaming_response = runtime_settings.get(
+                "streaming_response",
+                getattr(self, "streaming_response", self.main_agent_cfg.streaming_response),
+            )
             if (enable_streaming := event.get_extra("enable_streaming")) is not None:
                 streaming_response = bool(enable_streaming)
+            unsupported_streaming_strategy = runtime_settings.get(
+                "unsupported_streaming_strategy",
+                getattr(self, "unsupported_streaming_strategy", "turn_off"),
+            )
+            default_max_step = getattr(self, "max_step", 30)
+            max_step = runtime_settings.get("max_agent_step", default_max_step)
+            if isinstance(max_step, bool):
+                max_step = default_max_step
+            show_tool_use = bool(
+                runtime_settings.get(
+                    "show_tool_use_status", getattr(self, "show_tool_use", True)
+                )
+            )
+            show_tool_call_result = bool(
+                runtime_settings.get(
+                    "show_tool_call_result",
+                    getattr(self, "show_tool_call_result", False),
+                )
+            )
+            show_reasoning = bool(
+                runtime_settings.get(
+                    "display_reasoning_text", getattr(self, "show_reasoning", False)
+                )
+            )
+            buffer_intermediate_messages = bool(
+                runtime_settings.get(
+                    "buffer_intermediate_messages",
+                    getattr(self, "buffer_intermediate_messages", False),
+                )
+            )
 
             has_provider_request = event.get_extra("provider_request") is not None
             has_valid_message = bool(event.message_str and event.message_str.strip())
@@ -220,10 +417,10 @@ class InternalAgentSubStage(Stage):
 
             runner_registered = False
             try:
-                build_cfg = replace(
-                    self.main_agent_cfg,
+                build_cfg, _ = self._build_turn_main_agent_config(
+                    event,
                     provider_wake_prefix=provider_wake_prefix,
-                    streaming_response=streaming_response,
+                    streaming_response=bool(streaming_response),
                 )
 
                 build_result: MainAgentBuildResult | None = await build_main_agent(
@@ -265,7 +462,7 @@ class InternalAgentSubStage(Stage):
                         return
 
                 stream_to_general = (
-                    self.unsupported_streaming_strategy == "turn_off"
+                    unsupported_streaming_strategy == "turn_off"
                     and not event.platform_meta.support_streaming_message
                 )
 
@@ -342,11 +539,11 @@ class InternalAgentSubStage(Stage):
                             run_live_agent(
                                 agent_runner,
                                 tts_provider,
-                                self.max_step,
-                                self.show_tool_use,
-                                self.show_tool_call_result,
-                                show_reasoning=self.show_reasoning,
-                                buffer_intermediate_messages=self.buffer_intermediate_messages,
+                                max_step,
+                                show_tool_use,
+                                show_tool_call_result,
+                                show_reasoning=show_reasoning,
+                                buffer_intermediate_messages=buffer_intermediate_messages,
                             ),
                         ),
                     )
@@ -373,11 +570,11 @@ class InternalAgentSubStage(Stage):
                         .set_async_stream(
                             run_agent(
                                 agent_runner,
-                                self.max_step,
-                                self.show_tool_use,
-                                self.show_tool_call_result,
-                                show_reasoning=self.show_reasoning,
-                                buffer_intermediate_messages=self.buffer_intermediate_messages,
+                                max_step,
+                                show_tool_use,
+                                show_tool_call_result,
+                                show_reasoning=show_reasoning,
+                                buffer_intermediate_messages=buffer_intermediate_messages,
                             ),
                         ),
                     )
@@ -403,12 +600,12 @@ class InternalAgentSubStage(Stage):
                 else:
                     async for _ in run_agent(
                         agent_runner,
-                        self.max_step,
-                        self.show_tool_use,
-                        self.show_tool_call_result,
+                        max_step,
+                        show_tool_use,
+                        show_tool_call_result,
                         stream_to_general,
-                        show_reasoning=self.show_reasoning,
-                        buffer_intermediate_messages=self.buffer_intermediate_messages,
+                        show_reasoning=show_reasoning,
+                        buffer_intermediate_messages=buffer_intermediate_messages,
                     ):
                         yield
 

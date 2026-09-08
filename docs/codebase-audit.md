@@ -248,11 +248,14 @@ Change risk：High。Confidence：基础重复已收敛；是否所有结果都�
 
 ### Evidence
 
-- interaction/config.py:20-110 将 mapping 转为 InteractionAgentConfig；middleware.py:255-347 的
-  _get_runtime_config、prepare_pipeline_event 和 prepare_routable_pipeline_turn 仍重复读取、合并和校验。
-- output_controller.py 的 Interaction turn 已优先读取 admission 写入的 `_astrbot_config`，不再重新
-  合并 plugin_context 的动态配置；非 Interaction 兼容路径与 Core builder 仍会读取运行配置。
-- Turn admission 已将 InteractionAgentConfig 写入 TurnState，但平台/Provider 兼容读取仍可绕过快照。
+- interaction/config.py:20-110 将 mapping 转为 InteractionAgentConfig；Middleware 在四个
+  Interaction admission 点已合并会话覆盖并将完整配置深拷贝为独立快照到
+  `InteractionTurnState.runtime_config_snapshot`。
+- `PersonalTurnContext`、Output Controller 和 InternalAgentSubStage 已优先读取该 typed
+  快照；Core builder 将其投影为当轮 `MainAgentBuildConfig`，网页搜索、子代理装配和 Handoff
+  也使用该投影。`_astrbot_config` 仅保留同一快照的兼容投影。
+- Core 委派时的 Provider ID 已写入 TurnState 并由 `build_main_agent()` 优先使用；非 Interaction
+  兼容路径，以及快照版本/来源诊断仍未收敛。
 
 ### Why It Exists
 
@@ -260,16 +263,18 @@ Change risk：High。Confidence：基础重复已收敛；是否所有结果都�
 
 ### Why It Is Dangerous
 
-输出层的重读漂移已消除，但 Core、平台和其他兼容入口仍可能在同一轮读取不同 timeout、context mode、
-工具开关或 Provider，故障日志也难证明实际生效配置。
+Interaction 的 Middleware、Persona、Output、Core 构建、Core Provider 和网页搜索运行时的配置
+重读漂移已消除，但平台及其他非 Interaction 兼容入口仍可能读取不同运行设置，故障日志也难证明
+实际生效配置。
 
 ### Recommended Direction
 
-在 turn admission 形成带版本和来源的冻结配置快照；将其使用范围从 Output 扩展到 Persona、Core 和
-平台兼容层，避免各自重新合并。
+保留现有 admission 快照，将其使用范围继续扩展到平台兼容层；补充版本和来源，避免各自重新合并。
 
-Canonical owner：InteractionTurnState 的 interaction_config 快照及 admission builder。
-Change risk：Medium-High。Confidence：Confirmed partial convergence（Output 已收敛）。
+Canonical owner：InteractionTurnState 的 `interaction_config` 与 `runtime_config_snapshot`，由
+admission builder 写入。
+Change risk：Medium-High。Confidence：Confirmed partial convergence（Interaction 的 Core 构建
+配置和 Provider 选择已收敛）。
 
 ## P3: Context pack 历史 alias 制造 Persona/Core 双实体错觉
 

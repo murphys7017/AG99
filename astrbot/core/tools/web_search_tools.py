@@ -1,6 +1,7 @@
 import asyncio
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass as std_dataclass
 from dataclasses import field
 
@@ -159,7 +160,20 @@ def normalize_legacy_web_search_config(cfg) -> None:
 def _get_runtime(context) -> tuple[dict, dict, str]:
     agent_ctx = context.context
     event = agent_ctx.event
-    cfg = agent_ctx.context.get_config(umo=event.unified_msg_origin)
+    # Keep an admitted Interaction Core turn on its configuration snapshot.
+    # The lazy import avoids making general builtin-tool initialization depend on
+    # the Interaction package.
+    from astrbot.core.interaction.turn_state import (
+        get_interaction_turn_runtime_config,
+    )
+
+    cfg = (
+        get_interaction_turn_runtime_config(event)
+        if callable(getattr(event, "get_extra", None))
+        else None
+    )
+    if not isinstance(cfg, Mapping):
+        cfg = agent_ctx.context.get_config(umo=event.unified_msg_origin)
     provider_settings = cfg.get("provider_settings", {})
     return cfg, provider_settings, event.unified_msg_origin
 

@@ -1,9 +1,11 @@
 # Yakumo Current State
 
-2026-09-08 整改进度：第一阶段 Turn state 收敛已完成，范围和验收见
+2026-09-08 整改进度：第一阶段 Turn state 收敛已完成，Interaction turn 的完整运行配置也在
+准入时深拷贝为独立快照并由 TurnState 统一提供，范围和验收见
 [架构整改实施记录](架构整改实施记录.md)。兼容 extra、Event 方法拦截和旧串行插件路径
-保留；Prompt/Core 主链路已统一通过 typed helper 读取 TurnState。Output Runtime 公共契约、
-Agent 拆分及真实平台并行插件验收仍待后续处理。
+保留；Prompt/Core 主链路已统一通过 typed helper 读取 TurnState，Core 构建配置、Core Provider
+选择及网页搜索工具运行时也会投影当轮快照。Output Runtime 公共契约、Agent 拆分、配置版本/来源
+可观测性及真实平台并行插件验收仍待后续处理。
 
 当前仓库更接近单体式运行时。`main.py` 负责运行环境准备、WebUI 检查和启动入口，真正的系统装配发生在 `astrbot/core/initial_loader.py` 和 `astrbot/core/core_lifecycle.py`。
 

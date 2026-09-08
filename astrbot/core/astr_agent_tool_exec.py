@@ -61,6 +61,15 @@ from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 
 class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
+    @staticmethod
+    def _get_admitted_runtime_config(event: object) -> T.Mapping[str, T.Any] | None:
+        """Read an Interaction snapshot lazily to avoid an import-time cycle."""
+        from astrbot.core.interaction.turn_state import (
+            get_interaction_turn_runtime_config,
+        )
+
+        return get_interaction_turn_runtime_config(event)
+
     @classmethod
     def _collect_image_urls_from_args(cls, image_urls_raw: T.Any) -> list[str]:
         if image_urls_raw is None:
@@ -287,7 +296,9 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
     ) -> ToolSet | None:
         ctx = run_context.context.context
         event = run_context.context.event
-        cfg = ctx.get_config(umo=event.unified_msg_origin)
+        cfg = cls._get_admitted_runtime_config(event)
+        if cfg is None:
+            cfg = ctx.get_config(umo=event.unified_msg_origin)
         provider_settings = cfg.get("provider_settings", {})
         runtime = str(provider_settings.get("computer_use_runtime", "local"))
         tool_mgr = (
@@ -406,7 +417,12 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 except Exception:
                     continue
 
-        prov_settings: dict = ctx.get_config(umo=umo).get("provider_settings", {})
+        runtime_config = cls._get_admitted_runtime_config(event)
+        prov_settings: dict = (
+            runtime_config.get("provider_settings", {})
+            if runtime_config is not None
+            else ctx.get_config(umo=umo).get("provider_settings", {})
+        )
         agent_max_step = int(prov_settings.get("max_agent_step", 30))
         stream = prov_settings.get("streaming_response", False)
         llm_resp = await ctx.tool_loop_agent(

@@ -8,7 +8,7 @@ task:
     changes: Clear parent-bound Event output hooks on plugin branch copy and use Event getter for visible completion; synchronize remediation status docs.
     validation: Branch boundary tests 3 passed; completion and hook tests 6 passed; targeted Ruff and git diff --check passed.
     gaps: No real platform acceptance or full-suite rerun; Runtime adapter flags and Output Runtime public contracts remain deferred.
-  scope: Converge the Core-final Persona delivery transaction, isolate official Event output interception behind an explicit adapter, freeze Interaction output reads to the admitted config snapshot, and share the synthetic Core execution lifecycle for Cron and detached background results without changing Event, Pipeline, platform, or plugin compatibility contracts; defer OutputIntent migration and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
+  scope: Converge the Core-final Persona delivery transaction, isolate official Event output interception behind an explicit adapter, deep-copy the full Interaction runtime configuration at admission for Middleware, PersonalTurnContext, Output, Core build, Handoff, and web-search reads, snapshot the Core Provider ID on delegation, and share the synthetic Core execution lifecycle for Cron and detached background results without changing Event, Pipeline, platform, or plugin compatibility contracts; defer OutputIntent migration, configuration version/source observability, and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
 context:
   confidence: high
   assumptions:

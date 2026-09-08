@@ -37,7 +37,9 @@ from astrbot.core.interaction.core_bridge import (
     get_core_task_spec,
 )
 from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_core_provider_id,
     get_interaction_turn_deadline,
+    get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     is_interaction_turn_core_delegated,
 )
@@ -214,7 +216,9 @@ def _select_provider(
     event: AstrMessageEvent, plugin_context: Context
 ) -> Provider | None:
     """Select chat provider for the event."""
-    sel_provider = event.get_extra("selected_provider")
+    sel_provider = get_interaction_turn_core_provider_id(event)
+    if sel_provider is None:
+        sel_provider = event.get_extra("selected_provider")
     if sel_provider and isinstance(sel_provider, str):
         provider = plugin_context.get_provider_by_id(sel_provider)
         if not provider:
@@ -512,6 +516,7 @@ async def _prepare_persona_and_subagents(
     cfg: dict,
     plugin_context: Context,
     event: AstrMessageEvent,
+    subagent_orchestrator: dict | None = None,
 ) -> tuple[tuple[str | None, dict | None] | None, frozenset[str]]:
     """Resolve the current persona and prepare Core-only subagent candidates."""
     if not req.conversation:
@@ -533,7 +538,7 @@ async def _prepare_persona_and_subagents(
     tmgr = plugin_context.get_llm_tool_manager()
 
     excluded_tool_names: set[str] = set()
-    orch_cfg = plugin_context.get_config().get("subagent_orchestrator", {})
+    orch_cfg = subagent_orchestrator or {}
     so = plugin_context.subagent_orchestrator
     if orch_cfg.get("main_enable", False) and so:
         remove_dup = bool(orch_cfg.get("remove_main_duplicate_tools", False))
@@ -898,10 +903,14 @@ async def _apply_web_search_tools(
     event: AstrMessageEvent,
     req: ProviderRequest,
     plugin_context: Context,
+    provider_settings: dict | None = None,
 ) -> None:
-    cfg = plugin_context.get_config(umo=event.unified_msg_origin)
-    normalize_legacy_web_search_config(cfg)
-    prov_settings = cfg.get("provider_settings", {})
+    if provider_settings is None:
+        cfg = plugin_context.get_config(umo=event.unified_msg_origin)
+        normalize_legacy_web_search_config(cfg)
+        prov_settings = cfg.get("provider_settings", {})
+    else:
+        prov_settings = provider_settings
 
     if not prov_settings.get("web_search", False):
         return
@@ -1028,14 +1037,19 @@ async def build_main_agent(
         else:
             return None
 
-    provider_settings = config.provider_settings or plugin_context.get_config(
-        umo=event.unified_msg_origin
-    ).get("provider_settings", {})
+    admitted_runtime_config = get_interaction_turn_runtime_config(event)
+    if admitted_runtime_config is not None:
+        provider_settings = config.provider_settings
+    else:
+        provider_settings = config.provider_settings or plugin_context.get_config(
+            umo=event.unified_msg_origin
+        ).get("provider_settings", {})
     persona_selection, subagent_excluded_tools = await _prepare_persona_and_subagents(
         req,
         provider_settings,
         plugin_context,
         event,
+        config.subagent_orchestrator if admitted_runtime_config is not None else None,
     )
     task_spec = get_core_task_spec(event) if interaction_core else None
     exclude_handoff_tools = bool(
@@ -1046,7 +1060,15 @@ async def build_main_agent(
     if not req.session_id:
         req.session_id = event.unified_msg_origin
 
-    await _apply_web_search_tools(event, req, plugin_context)
+    if admitted_runtime_config is None:
+        await _apply_web_search_tools(event, req, plugin_context)
+    else:
+        await _apply_web_search_tools(
+            event,
+            req,
+            plugin_context,
+            provider_settings=provider_settings,
+        )
 
     if config.computer_use_runtime == "sandbox":
         _apply_sandbox_tools(config, req, req.session_id)

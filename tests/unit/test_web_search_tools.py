@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from astrbot.core.interaction.turn_state import set_interaction_turn_runtime_config
 from astrbot.core.tools import web_search_tools as tools
 
 
@@ -33,6 +34,28 @@ def test_normalize_legacy_web_search_config_migrates_exa_key():
 
     assert config["provider_settings"]["websearch_exa_key"] == ["exa-key"]
     assert config.saved is True
+
+
+def test_web_search_runtime_prefers_admitted_interaction_snapshot():
+    event = SimpleNamespace(unified_msg_origin="test:private:session", _extras={})
+    event.get_extra = lambda key, default=None: event._extras.get(key, default)
+    event.set_extra = lambda key, value: event._extras.__setitem__(key, value)
+    set_interaction_turn_runtime_config(
+        event,
+        {"provider_settings": {"websearch_tavily_key": ["admitted-key"]}},
+    )
+    context = SimpleNamespace(
+        context=SimpleNamespace(
+            get_config=lambda _umo: {
+                "provider_settings": {"websearch_tavily_key": ["reloaded-key"]}
+            },
+        ),
+        event=event,
+    )
+
+    _, provider_settings, _ = tools._get_runtime(SimpleNamespace(context=context))
+
+    assert provider_settings["websearch_tavily_key"] == ["admitted-key"]
 
 
 @pytest.mark.parametrize(

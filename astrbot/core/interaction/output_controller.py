@@ -68,6 +68,7 @@ from .turn_state import (
     get_interaction_turn_delivery_metadata,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
+    get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     get_interaction_turn_stream_interjections_emitted,
     get_interaction_turn_stream_observation_count,
@@ -213,10 +214,11 @@ class InteractionOutputController:
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
         if event is not None:
+            admitted_config = get_interaction_turn_runtime_config(event)
+            if admitted_config is not None:
+                return admitted_config
             event_config = event.get_extra("_astrbot_config")
             if isinstance(event_config, Mapping):
-                if get_interaction_turn_config(event) is not None:
-                    return event_config
                 plugin_config = self._get_plugin_runtime_config(event)
                 if isinstance(plugin_config, Mapping):
                     return _merge_runtime_config(event_config, plugin_config)

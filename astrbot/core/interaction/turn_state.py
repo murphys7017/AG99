@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -236,6 +238,7 @@ class InteractionTurnState:
     emitting_immediate_reply: bool = False
     deadline: TurnDeadlineBudget | None = None
     interaction_config: InteractionAgentConfig | None = None
+    runtime_config_snapshot: Mapping[str, Any] | None = None
     persona_id: str = ""
     personal_runtime_key: PersonalRuntimeKey | None = None
     runtime_config_id: str = ""
@@ -274,6 +277,7 @@ class InteractionTurnState:
     core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
     core_delegated: bool = False
+    core_provider_id: str | None = None
     finalized_turn_material: dict[str, Any] | None = None
     immediate_reply: str | None = None
     personal_emitted_monotonic: float | None = None
@@ -390,6 +394,11 @@ def get_interaction_turn_config(event) -> InteractionAgentConfig | None:
     return state.interaction_config if state is not None else None
 
 
+def get_interaction_turn_runtime_config(event) -> Mapping[str, Any] | None:
+    state = get_interaction_turn_state(event)
+    return state.runtime_config_snapshot if state is not None else None
+
+
 def is_interaction_turn_pipeline_route_handled(event) -> bool:
     state = get_interaction_turn_state(event)
     return bool(state and state.pipeline_route_handled)
@@ -408,6 +417,17 @@ def set_interaction_turn_config(
     if state.interaction_config is None:
         state.interaction_config = interaction_config
     return state.interaction_config
+
+
+def set_interaction_turn_runtime_config(
+    event,
+    runtime_config: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Deep-copy the runtime configuration selected when this turn is admitted."""
+    state = ensure_interaction_turn_state(event)
+    if state.runtime_config_snapshot is None:
+        state.runtime_config_snapshot = deepcopy(dict(runtime_config))
+    return state.runtime_config_snapshot
 
 
 def get_interaction_turn_deadline(event) -> TurnDeadlineBudget | None:
@@ -829,6 +849,22 @@ def set_interaction_turn_core_task_spec(
 
 def mark_interaction_turn_core_delegated(event) -> None:
     ensure_interaction_turn_state(event).core_delegated = True
+
+
+def get_interaction_turn_core_provider_id(event) -> str | None:
+    state = get_interaction_turn_state(event)
+    return state.core_provider_id if state is not None else None
+
+
+def set_interaction_turn_core_provider_id(
+    event,
+    provider_id: str | None,
+) -> str | None:
+    state = ensure_interaction_turn_state(event)
+    if state.core_provider_id is None:
+        normalized = str(provider_id or "").strip()
+        state.core_provider_id = normalized or None
+    return state.core_provider_id
 
 
 def is_interaction_turn_core_delegated(event) -> bool:

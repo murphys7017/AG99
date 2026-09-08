@@ -23,7 +23,9 @@ from .turn_state import (
     InteractionTurnState,
     ensure_interaction_turn_state,
     get_interaction_turn_config,
+    get_interaction_turn_runtime_config,
     set_interaction_turn_config,
+    set_interaction_turn_runtime_config,
 )
 
 
@@ -110,6 +112,10 @@ class PlatformTurnContextFactory:
             event,
             turn_id=existing_turn_id or uuid.uuid4().hex,
         )
+        runtime_snapshot = get_interaction_turn_runtime_config(event)
+        if runtime_snapshot is None:
+            runtime_snapshot = set_interaction_turn_runtime_config(event, runtime_config)
+        runtime_config = runtime_snapshot
         interaction_config = get_interaction_turn_config(event)
         if interaction_config is None:
             interaction_config = set_interaction_turn_config(

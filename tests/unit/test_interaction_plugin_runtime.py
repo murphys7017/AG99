@@ -5,6 +5,7 @@ import pytest
 
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.astr_main_agent import MainAgentBuildConfig
 from astrbot.core.capabilities import (
     CAPABILITY_REASON_EXECUTION_POLICY,
     CAPABILITY_REASON_PLUGIN_NOT_SELECTED,
@@ -32,6 +33,7 @@ from astrbot.core.interaction.turn_state import (
     ensure_interaction_turn_state,
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
+    get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     is_interaction_turn_emitting_immediate_reply,
     is_interaction_turn_pipeline_output_suppressed,
@@ -41,6 +43,7 @@ from astrbot.core.interaction.turn_state import (
     set_interaction_turn_emitting_immediate_reply,
     set_interaction_turn_immediate_reply,
     set_interaction_turn_pipeline_output_suppressed,
+    set_interaction_turn_runtime_config,
 )
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
@@ -49,6 +52,9 @@ from astrbot.core.interaction.types import (
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.context_utils import call_event_hook
+from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import (
+    InternalAgentSubStage,
+)
 from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.star.base import Star
@@ -201,6 +207,10 @@ def test_interaction_turn_config_is_frozen_on_first_admission():
         "interaction_middleware": {"turn_timeout": 15},
     }
     event.set_extra("_astrbot_config", admitted_runtime_config)
+    admitted_runtime_config = set_interaction_turn_runtime_config(
+        event,
+        admitted_runtime_config,
+    )
     controller = InteractionOutputController(
         interaction_config=later_config,
         plugin_context=SimpleNamespace(
@@ -209,6 +219,80 @@ def test_interaction_turn_config_is_frozen_on_first_admission():
     )
     assert controller._get_interaction_config(event) is admitted_config
     assert controller._get_runtime_config(event) is admitted_runtime_config
+
+
+def test_interaction_turn_runtime_config_is_deeply_frozen_on_admission():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    runtime_config = {
+        "reply_prefix": "before",
+        "provider_tts_settings": {"trigger_probability": 0.25},
+    }
+
+    snapshot = set_interaction_turn_runtime_config(event, runtime_config)
+    runtime_config["reply_prefix"] = "after"
+    runtime_config["provider_tts_settings"]["trigger_probability"] = 0.75
+
+    assert snapshot["reply_prefix"] == "before"
+    assert snapshot["provider_tts_settings"]["trigger_probability"] == 0.25
+    assert get_interaction_turn_runtime_config(event) is snapshot
+
+
+def test_core_config_uses_admitted_interaction_runtime_snapshot():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    stage = object.__new__(InternalAgentSubStage)
+    stage.main_agent_cfg = MainAgentBuildConfig(
+        tool_call_timeout=60,
+        streaming_response=True,
+        computer_use_runtime="local",
+        provider_settings={"web_search": False},
+    )
+    event = Event()
+    set_interaction_turn_runtime_config(
+        event,
+        {
+            "kb_agentic_mode": True,
+            "timezone": "Asia/Shanghai",
+            "provider_settings": {
+                "tool_call_timeout": 12,
+                "streaming_response": False,
+                "computer_use_runtime": "sandbox",
+                "web_search": True,
+            },
+        },
+    )
+
+    config, settings = stage._build_turn_main_agent_config(
+        event,
+        provider_wake_prefix="/ask",
+        streaming_response=False,
+    )
+
+    assert config.tool_call_timeout == 12
+    assert config.streaming_response is False
+    assert config.computer_use_runtime == "sandbox"
+    assert config.kb_agentic_mode is True
+    assert config.timezone == "Asia/Shanghai"
+    assert config.provider_settings["web_search"] is True
+    assert settings["web_search"] is True
 
 
 def test_interaction_turn_state_owns_assistant_artifacts():
