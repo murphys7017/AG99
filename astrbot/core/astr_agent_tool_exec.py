@@ -30,7 +30,6 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.astr_main_agent_resources import (
     BACKGROUND_TASK_RESULT_WOKE_SYSTEM_PROMPT,
 )
-from astrbot.core.cron.events import CronMessageEvent
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import (
     CommandResult,
@@ -39,7 +38,7 @@ from astrbot.core.message.message_event_result import (
 )
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.plugin_runtime import tool_supports_runtime_target
-from astrbot.core.provider.entites import ProviderRequest
+from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
 from astrbot.core.provider.register import llm_tools
 from astrbot.core.tools.computer_tools import (
     CuaKeyboardTypeTool,
@@ -55,7 +54,6 @@ from astrbot.core.tools.computer_tools import (
     LocalPythonTool,
     PythonTool,
 )
-from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.history_saver import persist_agent_history
 from astrbot.core.utils.image_ref_utils import is_supported_image_ref
@@ -570,11 +568,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         summary_name: str,
         extra_result_fields: dict[str, T.Any] | None = None,
     ) -> None:
-        from astrbot.core.astr_main_agent import (
-            MainAgentBuildConfig,
-            _get_session_conv,
-            build_main_agent,
-        )
+        from astrbot.core.astr_main_agent import MainAgentBuildConfig
 
         event = run_context.context.event
         ctx = run_context.context.context
@@ -590,14 +584,6 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         extras = {"background_task_result": task_result}
 
         session = MessageSession.from_str(event.unified_msg_origin)
-        cron_event = CronMessageEvent(
-            context=ctx,
-            session=session,
-            message=note,
-            extras=extras,
-            message_type=session.message_type,
-        )
-        cron_event.role = event.role
         cfg = ctx.get_config(umo=event.unified_msg_origin) or {}
         provider_settings = cfg.get("provider_settings") or {}
         config = MainAgentBuildConfig(
@@ -606,49 +592,33 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             provider_settings=provider_settings,
         )
 
-        req = ProviderRequest()
-        conv = await _get_session_conv(event=cron_event, plugin_context=ctx)
-        req.conversation = conv
-        context = json.loads(conv.history)
-        if context:
-            req.contexts = context
-            context_dump = req._print_friendly_context()
-            req.contexts = []
-            req.system_prompt += (
-                "\n\nBellow is you and user previous conversation history:\n"
-                f"{context_dump}"
-            )
-
         bg = json.dumps(extras["background_task_result"], ensure_ascii=False)
-        req.system_prompt += BACKGROUND_TASK_RESULT_WOKE_SYSTEM_PROMPT.format(
-            background_task_result=bg
+        turn = await run_proactive_agent_turn(
+            context=ctx,
+            session=session,
+            message=note,
+            extras=extras,
+            role=event.role,
+            config=config,
+            system_prompt=BACKGROUND_TASK_RESULT_WOKE_SYSTEM_PROMPT.format(
+                background_task_result=bg
+            ),
+            prompt=(
+                "Proceed according to your system instructions. "
+                "Output using same language as previous conversation. "
+                "If you need to deliver the result to the user immediately, "
+                "you MUST use `send_message_to_user` tool to send the message directly to the user, "
+                "otherwise the user will not see the result. "
+                "After completing your task, summarize and output your actions and results. "
+            ),
+            require_delivery_tool=True,
+            include_history_fences=False,
         )
-        req.prompt = (
-            "Proceed according to your system instructions. "
-            "Output using same language as previous conversation. "
-            "If you need to deliver the result to the user immediately, "
-            "you MUST use `send_message_to_user` tool to send the message directly to the user, "
-            "otherwise the user will not see the result. "
-            "After completing your task, summarize and output your actions and results. "
-        )
-        if not req.func_tool:
-            req.func_tool = ToolSet()
-        req.func_tool.add_tool(
-            ctx.get_llm_tool_manager().get_builtin_tool(SendMessageToUserTool)
-        )
-
-        result = await build_main_agent(
-            event=cron_event, plugin_context=ctx, config=config, req=req
-        )
-        if not result:
+        if turn is None:
             logger.error(f"Failed to build main agent for background task {tool_name}.")
             return
 
-        runner = result.agent_runner
-        async for _ in runner.step_until_done(30):
-            # agent will send message to user via using tools
-            pass
-        llm_resp = runner.get_final_llm_resp()
+        llm_resp = turn.response
         task_meta = extras.get("background_task_result", {})
         summary_note = (
             f"[BackgroundTask] {summary_name} "
@@ -661,8 +631,8 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             )
         await persist_agent_history(
             ctx.conversation_manager,
-            event=cron_event,
-            req=req,
+            event=turn.event,
+            req=turn.request,
             summary_note=summary_note,
         )
         if not llm_resp:

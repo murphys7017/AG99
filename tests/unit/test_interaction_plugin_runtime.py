@@ -19,7 +19,9 @@ from astrbot.core.interaction.config import (
 from astrbot.core.interaction.contributors import InteractionResultContribution
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
 from astrbot.core.interaction.middleware import InteractionMiddleware
+from astrbot.core.interaction.output_adapter import InteractionEventOutputAdapter
 from astrbot.core.interaction.output_controller import InteractionOutputController
+from astrbot.core.interaction.output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from astrbot.core.interaction.plugin_runtime import (
     PLUGIN_RUNTIME_TARGET_CORE,
     PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
@@ -96,6 +98,81 @@ def test_tool_stage_observer_classifies_research_tools_without_user_arguments():
     )
 
 
+@pytest.mark.asyncio
+async def test_event_output_adapter_owns_event_send_routing():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+            self._has_send_oper = False
+            self.send = AsyncMock()
+            self.send_streaming = AsyncMock()
+            self.complete_visible_turn = AsyncMock()
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def install_interaction_output_hooks(
+            self,
+            *,
+            original_send,
+            original_send_streaming,
+            original_complete_visible_turn,
+        ):
+            self.set_extra("_interaction_original_send", original_send)
+            self.set_extra("_interaction_original_send_streaming", original_send_streaming)
+            self.set_extra(
+                "_interaction_original_complete_visible_turn",
+                original_complete_visible_turn,
+            )
+            self.set_extra("_interaction_output_interceptor_installed", True)
+
+    event = Event()
+    platform_send = event.send
+    controller = SimpleNamespace(
+        capture_message_chain=AsyncMock(),
+        capture_plugin_output=AsyncMock(),
+        capture_streaming=AsyncMock(),
+        capture_plugin_streaming=AsyncMock(),
+        capture_visible_completion=AsyncMock(),
+    )
+    InteractionEventOutputAdapter.install(event, controller)
+
+    message = MessageChain([Plain("core reply")])
+    event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin.CORE.value)
+    await event.send(message)
+
+    controller.capture_message_chain.assert_awaited_once_with(message, event)
+    platform_send.assert_not_awaited()
+    assert event._has_send_oper is True
+
+    event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, "plugin")
+    event.set_extra("_interaction_plugin_output_mode", "persona")
+    await event.send(message)
+    controller.capture_plugin_output.assert_awaited_once_with(
+        message,
+        event,
+        mode="persona",
+    )
+
+    async def chunks():
+        yield MessageChain([Plain("chunk")])
+
+    stream = chunks()
+    event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin.CORE.value)
+    await event.send_streaming(stream, use_fallback=True)
+    controller.capture_streaming.assert_awaited_once_with(
+        stream,
+        event,
+        use_fallback=True,
+    )
+
+    await event.complete_visible_turn()
+    controller.capture_visible_completion.assert_awaited_once_with(event)
+
+
 def test_interaction_turn_config_is_frozen_on_first_admission():
     class Event:
         def __init__(self):
@@ -119,8 +196,19 @@ def test_interaction_turn_config_is_frozen_on_first_admission():
     assert set_interaction_turn_config(event, later_config) is admitted_config
     assert get_interaction_turn_config(event) is admitted_config
 
-    controller = InteractionOutputController(interaction_config=later_config)
+    admitted_runtime_config = {
+        "reply_prefix": "admitted",
+        "interaction_middleware": {"turn_timeout": 15},
+    }
+    event.set_extra("_astrbot_config", admitted_runtime_config)
+    controller = InteractionOutputController(
+        interaction_config=later_config,
+        plugin_context=SimpleNamespace(
+            get_config=lambda **_kwargs: {"reply_prefix": "reloaded"}
+        ),
+    )
     assert controller._get_interaction_config(event) is admitted_config
+    assert controller._get_runtime_config(event) is admitted_runtime_config
 
 
 def test_interaction_turn_state_owns_assistant_artifacts():
@@ -144,6 +232,42 @@ def test_interaction_turn_state_owns_assistant_artifacts():
         {"type": "image", "url": "https://example.invalid/image.png"}
     ]
     assert event.get_extra("_interaction_assistant_artifacts") is None
+
+
+def test_visible_output_records_structured_transaction_trace():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+            self.trace = Mock()
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    event = Event()
+    state = ensure_interaction_turn_state(event, turn_id="output-trace")
+    event.set_extra("_interaction_output_origin", "core")
+
+    InteractionOutputController._record_visible_output(
+        event,
+        message_kind="core_reply",
+        text="not included in trace",
+        message_id="output-trace::segment::core_reply::0001",
+        delivered_message_ids=["platform-message-1"],
+    )
+
+    event.trace.record.assert_called_once_with(
+        "interaction_output_segment",
+        turn_id="output-trace",
+        origin="core",
+        message_kind="core_reply",
+        output_segment_id="output-trace::segment::core_reply::0001",
+        delivered_message_ids=["platform-message-1"],
+        final_output_status=state.final_output_status.value,
+        completion_status=state.completion_state.status.value,
+    )
 
 
 def test_interaction_turn_state_owns_pipeline_route_guard():
@@ -570,29 +694,28 @@ async def test_core_result_returns_through_unified_persona_expression():
         def set_extra(self, _key, _value):
             self._extras[_key] = _value
 
-    middleware = object.__new__(InteractionMiddleware)
     rendered_requests = []
 
     async def render_visible_reply(_event, request):
         rendered_requests.append(request)
         return PersonaExpressionResult(spoken_reply="人格化后的执行结果")
 
-    middleware._render_visible_reply_via_persona = render_visible_reply
-    middleware.output_controller = SimpleNamespace(
-        deliver_prepared_core_reply=AsyncMock(),
+    controller = InteractionOutputController(
+        visible_reply_renderer=render_visible_reply,
     )
+    controller.deliver_prepared_core_reply = AsyncMock()
     event = Event()
     ensure_interaction_turn_state(event)
     set_interaction_turn_immediate_reply(event, "我先看看。")
     source_message = MessageChain([Plain("Core execution completed")])
 
-    await middleware._handle_core_reply_via_persona(source_message, event)
+    await controller._deliver_core_reply(source_message, event)
 
     assert rendered_requests[0].intent.kind == "reply"
     assert rendered_requests[0].intent.source == "core_result"
     assert rendered_requests[0].intent.phase == "final"
     assert rendered_requests[0].immediate_reply == "我先看看。"
-    middleware.output_controller.deliver_prepared_core_reply.assert_awaited_once_with(
+    controller.deliver_prepared_core_reply.assert_awaited_once_with(
         source_message,
         PersonaExpressionResult(spoken_reply="人格化后的执行结果"),
         event,
@@ -611,21 +734,18 @@ async def test_core_persona_failure_falls_back_to_raw_core_output():
         def set_extra(self, key, value):
             self._extras[key] = value
 
-    middleware = object.__new__(InteractionMiddleware)
-    middleware._render_visible_reply_via_persona = AsyncMock(
-        side_effect=RuntimeError("provider unavailable")
+    controller = InteractionOutputController(
+        visible_reply_renderer=AsyncMock(side_effect=RuntimeError("provider unavailable")),
     )
-    middleware.output_controller = SimpleNamespace(
-        deliver_prepared_core_reply=AsyncMock(),
-        deliver_raw_core_reply=AsyncMock(),
-    )
+    controller.deliver_prepared_core_reply = AsyncMock()
+    controller.deliver_raw_core_reply = AsyncMock()
     event = Event()
     source_message = MessageChain([Plain("Core execution completed")])
 
-    await middleware._handle_core_reply_via_persona(source_message, event)
+    await controller._deliver_core_reply(source_message, event)
 
-    middleware.output_controller.deliver_prepared_core_reply.assert_not_awaited()
-    middleware.output_controller.deliver_raw_core_reply.assert_awaited_once_with(
+    controller.deliver_prepared_core_reply.assert_not_awaited()
+    controller.deliver_raw_core_reply.assert_awaited_once_with(
         source_message,
         event,
     )

@@ -109,6 +109,7 @@ from astrbot.core.tools.knowledge_base_tools import (
 )
 from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.tools.web_search_tools import (
+    WEB_SEARCH_TOOL_NAMES,
     BaiduWebSearchTool,
     BochaWebSearchTool,
     BraveWebSearchTool,
@@ -1093,6 +1094,27 @@ async def build_main_agent(
             exclude_handoff_tools=exclude_handoff_tools,
         )
     req.func_tool = capabilities.to_toolset()
+    if exclude_handoff_tools:
+        web_tool_names = sorted(
+            set(capabilities.names()).intersection(WEB_SEARCH_TOOL_NAMES)
+        )
+        logger.info(
+            "DIAG interaction.direct_web_research_capability: turn_id=%s "
+            "platform_id=%s session_id=%s available=%s tool_names=%s",
+            str(event.get_extra("_turn_id", "") or ""),
+            event.get_platform_id(),
+            event.session_id,
+            bool(web_tool_names),
+            web_tool_names,
+        )
+        try:
+            event.trace.record(
+                "interaction_direct_web_research_capability",
+                available=bool(web_tool_names),
+                tool_names=web_tool_names,
+            )
+        except Exception:
+            pass
     try:
         event.trace.record(
             "sel_persona",

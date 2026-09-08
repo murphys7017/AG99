@@ -4,7 +4,14 @@
     <div v-if="selectedConfigID || isSystemConfig" class="mt-4 config-panel"
       style="display: flex; flex-direction: column; align-items: start;">
 
-      <div class="config-toolbar d-flex flex-row pr-4"
+      <header class="config-workspace-header">
+        <div class="config-workspace-heading">
+          <div class="config-workspace-eyebrow">{{ workspaceTitle }}</div>
+          <h1 class="config-workspace-title">{{ workspaceConfigTitle }}</h1>
+        </div>
+      </header>
+
+      <div class="config-toolbar d-flex flex-row"
         style="margin-bottom: 16px; align-items: center; gap: 12px; width: 100%; justify-content: space-between;">
         <div class="config-toolbar-controls d-flex flex-row align-center" style="gap: 12px;">
           <v-select class="config-select" style="min-width: 130px;" :model-value="selectedConfigID" :items="configSelectItems" item-title="name" :disabled="initialConfigId !== null"
@@ -26,6 +33,45 @@
           />
           <!-- <a style="color: inherit;" href="https://blog.astrbot.app/posts/what-is-changed-in-4.0.0/#%E5%A4%9A%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6" target="_blank"><v-btn icon="mdi-help-circle" size="small" variant="plain"></v-btn></a> -->
 
+        </div>
+        <div v-if="(selectedConfigID || isSystemConfig) && fetched" class="config-toolbar-actions">
+          <v-tooltip :text="tm('actions.save')" location="bottom">
+            <template v-slot:activator="{ props }">
+              <v-btn
+                v-bind="props"
+                icon="mdi-content-save"
+                variant="tonal"
+                color="primary"
+                :disabled="!hasUnsavedChanges"
+                :aria-label="tm('actions.save')"
+                @click="updateConfig"
+              />
+            </template>
+          </v-tooltip>
+
+          <v-tooltip :text="tm('codeEditor.title')" location="bottom">
+            <template v-slot:activator="{ props }">
+              <v-btn
+                v-bind="props"
+                icon="mdi-code-json"
+                variant="text"
+                :aria-label="tm('codeEditor.title')"
+                @click="configToString(); codeEditorDialog = true"
+              />
+            </template>
+          </v-tooltip>
+
+          <v-tooltip text="测试当前配置" location="bottom" v-if="!isSystemConfig">
+            <template v-slot:activator="{ props }">
+              <v-btn
+                v-bind="props"
+                icon="mdi-chat-processing"
+                variant="text"
+                aria-label="测试当前配置"
+                @click="openTestChat"
+              />
+            </template>
+          </v-tooltip>
         </div>
       </div>
       <v-slide-y-transition>
@@ -51,34 +97,6 @@
           />
         </div>
       </v-slide-y-transition>
-
-      <!-- 浮动按钮放在 transition 外部 -->
-      <template v-if="(selectedConfigID || isSystemConfig) && fetched">
-        <v-tooltip :text="tm('actions.save')" location="left">
-          <template v-slot:activator="{ props }">
-            <v-btn v-bind="props" icon="mdi-content-save" size="x-large" style="position: fixed; right: 52px; bottom: 52px;"
-              color="darkprimary" @click="updateConfig">
-            </v-btn>
-          </template>
-        </v-tooltip>
-
-        <v-tooltip :text="tm('codeEditor.title')" location="left">
-          <template v-slot:activator="{ props }">
-            <v-btn v-bind="props" icon="mdi-code-json" size="x-large" style="position: fixed; right: 52px; bottom: 124px;" color="primary"
-              @click="configToString(); codeEditorDialog = true">
-            </v-btn>
-          </template>
-        </v-tooltip>
-
-        <v-tooltip text="测试当前配置" location="left" v-if="!isSystemConfig">
-          <template v-slot:activator="{ props }">
-            <v-btn v-bind="props" icon="mdi-chat-processing" size="x-large"
-              style="position: fixed; right: 52px; bottom: 196px;" color="secondary"
-              @click="openTestChat">
-            </v-btn>
-          </template>
-        </v-tooltip>
-      </template>
 
     </div>
   </div>
@@ -355,6 +373,30 @@ export default {
         }
         return visible;
       }, {});
+    },
+    workspaceTitle() {
+      const workspaceKey = this.activeWorkspaceKey;
+      return workspaceKey
+        ? this.t(`core.navigation.workspaces.${workspaceKey}`)
+        : this.t('core.navigation.config');
+    },
+    workspaceConfigTitle() {
+      if (this.configType === 'system') {
+        return this.t('core.navigation.configTabs.system');
+      }
+      if (this.configType === 'extension') {
+        return this.t('core.navigation.configTabs.extension');
+      }
+
+      const titleKey = {
+        persona: 'core.navigation.workspaceSettings.persona',
+        intelligence: 'core.navigation.workspaceSettings.intelligence',
+        knowledge: 'core.navigation.workspaceSettings.knowledge',
+        capabilities: 'core.navigation.workspaceSettings.capabilities',
+        automation: 'core.navigation.workspaceSettings.automation'
+      }[this.activeWorkspaceKey];
+
+      return titleKey ? this.t(titleKey) : this.t('core.navigation.config');
     },
     defaultWorkspaceKey() {
       return {
@@ -869,7 +911,11 @@ export default {
         if (saveAndSwitch === 'close') {
           // 恢复路由
           const originalHash = `#${previousConfigType}`;
-          this.$router.replace('/config' + originalHash);
+          this.$router.replace({
+            path: '/config',
+            query: this.$route.query,
+            hash: originalHash
+          });
           this.configType = previousConfigType;
           this.isSystemConfig = previousIsSystemConfig;
           return;
@@ -878,7 +924,11 @@ export default {
           await this.updateConfig();
           // 系统配置保存后不跳转
           if (this.isSystemConfig) {
-            this.$router.replace('/config#system');
+            this.$router.replace({
+              path: '/config',
+              query: { ...this.$route.query, workspace: 'operations' },
+              hash: '#system'
+            });
             return;
           }
         }
@@ -955,6 +1005,37 @@ export default {
   margin-bottom: 6px;
 }
 
+.config-workspace-header {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.config-workspace-eyebrow {
+  color: rgba(var(--v-theme-on-surface), 0.58);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.config-workspace-title {
+  margin: 2px 0 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.config-toolbar-controls {
+  flex: 1;
+  min-width: 0;
+}
+
+.config-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
 /* 按钮切换样式优化 */
 .v-btn-toggle .v-btn {
   transition: all 0.3s ease !important;
@@ -990,7 +1071,7 @@ export default {
 
 @media (min-width: 768px) {
   .config-panel {
-    width: 750px;
+    width: min(100%, 960px);
   }
 }
 
@@ -1010,6 +1091,23 @@ export default {
   .config-toolbar-controls {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .config-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .config-toolbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .config-workspace-header {
+    margin-bottom: 8px;
+  }
+
+  .config-workspace-title {
+    font-size: 22px;
   }
 
   .config-select,

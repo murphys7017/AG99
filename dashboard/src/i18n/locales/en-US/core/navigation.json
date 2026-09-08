@@ -6,7 +6,6 @@
   "commands": "Commands",
   "persona": "Persona",
   "workspaces": {
-    "overview": "Overview",
     "persona": "Persona",
     "intelligence": "Intelligence",
     "channels": "Channels",
@@ -14,6 +13,13 @@
     "capabilities": "Capabilities",
     "automation": "Automation",
     "operations": "Operations"
+  },
+  "workspaceSettings": {
+    "persona": "Persona & Expression",
+    "intelligence": "Execution & Models",
+    "knowledge": "Retrieval & Memory",
+    "capabilities": "Tools & Capabilities",
+    "automation": "Automation Policy"
   },
   "subagent": "SubAgents",
   "toolUse": "MCP Tools",

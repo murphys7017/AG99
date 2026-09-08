@@ -1,11 +1,9 @@
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Mapping
-from types import MethodType
+from collections.abc import Mapping
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.agent.tool_output_capture import get_active_tool_output_capture
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
@@ -36,8 +34,8 @@ from .expression_agent import (
 )
 from .group_reply import group_conversation_allows_silent
 from .lifecycle import dispatch_interaction_lifecycle
+from .output_adapter import InteractionEventOutputAdapter
 from .output_controller import InteractionOutputController
-from .output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from .persona_runtime import InteractionPersonaRuntime
 from .personal_action import PersonalActionIntent
 from .personal_expression_guard import (
@@ -67,7 +65,6 @@ from .turn_state import (
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
     is_interaction_turn_completed,
-    is_interaction_turn_pipeline_output_suppressed,
     is_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_completed,
@@ -145,7 +142,6 @@ class InteractionMiddleware:
         self.output_controller.visible_reply_renderer = (
             self._render_visible_reply_via_persona
         )
-        self.output_controller.core_reply_handler = self._handle_core_reply_via_persona
         self.output_controller.lifecycle_callback = self._emit_lifecycle_from_output
     async def _emit_lifecycle_from_output(
         self,
@@ -180,77 +176,6 @@ class InteractionMiddleware:
             interaction_config=interaction_config,
             request=request,
         )
-
-    async def _handle_core_reply_via_persona(
-        self,
-        message: MessageChain,
-        event: AstrMessageEvent,
-    ) -> None:
-        core_result_text = message.get_plain_text()
-        turn_state = get_interaction_turn_state(event)
-        immediate_reply = turn_state.immediate_reply if turn_state is not None else None
-        try:
-            result = await self._render_visible_reply_via_persona(
-                event,
-                PersonaExpressionRequest.core_final(
-                    core_result_text,
-                    immediate_reply=immediate_reply,
-                ),
-            )
-        except TurnDeadlineExceeded as exc:
-            await self._deliver_core_result_without_persona(
-                message,
-                event,
-                stage=exc.stage,
-                reason=exc.reason,
-                exception=exc,
-            )
-            return
-        except Exception as exc:  # noqa: BLE001
-            await self._deliver_core_result_without_persona(
-                message,
-                event,
-                stage="core_persona_render",
-                reason=str(getattr(exc, "reason", "") or "exception"),
-                exception=exc,
-            )
-            return
-        await self.output_controller.deliver_prepared_core_reply(
-            message,
-            result,
-            event,
-        )
-
-    async def _deliver_core_result_without_persona(
-        self,
-        message: MessageChain,
-        event: AstrMessageEvent,
-        *,
-        stage: str,
-        reason: str,
-        exception: BaseException,
-    ) -> None:
-        """Deliver the completed Core result when Persona rendering is unavailable."""
-        record_interaction_turn_failure(
-            event,
-            stage=stage,
-            reason=reason,
-            exception=exception,
-            user_visible_action="deliver_core_result_without_persona",
-        )
-        logger.warning(
-            "Core result Persona rendering failed; delivering the existing Core "
-            "result without another model call: turn_id=%s stage=%s reason=%s",
-            event.get_extra("_turn_id"),
-            stage,
-            reason,
-        )
-        fallback_message = message
-        if not fallback_message.chain:
-            fallback_message = message.derive(
-                [Plain(LOCAL_FAST_EXPRESSION_FALLBACK_RESULT.spoken_reply)]
-            )
-        await self.output_controller.deliver_raw_core_reply(fallback_message, event)
 
     def _get_runtime_config(self, event: AstrMessageEvent | None = None) -> Any:
         if self.plugin_context is None:
@@ -371,81 +296,7 @@ class InteractionMiddleware:
             set_interaction_turn_route_decision(event, route_decision)
 
     def _install_core_output_interceptor(self, event: AstrMessageEvent) -> None:
-        if event.get_extra("_interaction_output_interceptor_installed", False):
-            return
-
-        original_send = event.send
-        original_send_streaming = event.send_streaming
-        original_complete_visible_turn = event.complete_visible_turn
-        output_controller = self.output_controller
-
-        async def send_wrapper(
-            wrapped_event: AstrMessageEvent,
-            message: MessageChain | None,
-        ) -> None:
-            capture = get_active_tool_output_capture()
-            if capture is not None:
-                capture.capture(message)
-                return
-            previous_has_send_oper = wrapped_event._has_send_oper
-            origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
-            if origin == OutputOrigin.CORE.value:
-                await output_controller.capture_message_chain(message, wrapped_event)
-            else:
-                await output_controller.capture_plugin_output(
-                    message,
-                    wrapped_event,
-                    mode=wrapped_event.get_extra(
-                        "_interaction_plugin_output_mode",
-                        "direct",
-                    ),
-                )
-            if is_interaction_turn_pipeline_output_suppressed(wrapped_event):
-                wrapped_event._has_send_oper = previous_has_send_oper
-            else:
-                wrapped_event._has_send_oper = True
-
-        async def send_streaming_wrapper(
-            wrapped_event: AstrMessageEvent,
-            generator: AsyncGenerator[MessageChain, None],
-            use_fallback: bool = False,
-        ) -> None:
-            capture = get_active_tool_output_capture()
-            if capture is not None:
-                await capture.capture_stream(generator)
-                return
-            origin = wrapped_event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
-            if origin == OutputOrigin.CORE.value:
-                await output_controller.capture_streaming(
-                    generator,
-                    wrapped_event,
-                    use_fallback=use_fallback,
-                )
-            else:
-                await output_controller.capture_plugin_streaming(
-                    generator,
-                    wrapped_event,
-                    mode=wrapped_event.get_extra(
-                        "_interaction_plugin_output_mode",
-                        "direct",
-                    ),
-                    use_fallback=use_fallback,
-                )
-            wrapped_event._has_send_oper = True
-
-        async def complete_visible_turn_wrapper(
-            wrapped_event: AstrMessageEvent,
-        ) -> None:
-            await output_controller.capture_visible_completion(wrapped_event)
-
-        event.install_interaction_output_hooks(
-            original_send=original_send,
-            original_send_streaming=original_send_streaming,
-            original_complete_visible_turn=original_complete_visible_turn,
-        )
-        event.send = MethodType(send_wrapper, event)
-        event.send_streaming = MethodType(send_streaming_wrapper, event)
-        event.complete_visible_turn = MethodType(complete_visible_turn_wrapper, event)
+        InteractionEventOutputAdapter.install(event, self.output_controller)
 
     async def handle_pipeline_event(self, event: AstrMessageEvent) -> None:
         if event.is_stopped() or is_interaction_turn_pipeline_route_handled(event):
@@ -1326,7 +1177,7 @@ class InteractionMiddleware:
         if not fallback_on_error:
             raise error
 
-        record_interaction_turn_expression_failure(event, str(error))
+        record_interaction_turn_expression_failure(event, reason)
         record_interaction_turn_failure(
             event,
             stage="fast_expression",

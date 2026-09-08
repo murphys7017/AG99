@@ -95,6 +95,20 @@ Agent 拆分及真实平台并行插件验收仍待后续处理。
   visible output snapshot 复用 utterance 的 `message_id` / `delivered_message_ids`
 - PERSONA / HYBRID 主链路由 Personal Runtime 持有 admission、session lease 和 turn task scope；middleware 负责本轮编排。`silent` 只在群聊模型续接候选上开放
 - interaction outbound phase 已迁入 `InteractionOutputController`
+- `InteractionEventOutputAdapter` 已接管官方 `event.send*` / visible-completion 的私有
+  `MethodType` 兼容拦截；Middleware 只负责 attach Interaction context。该 adapter 尚未替代
+  官方 Event API，`_interaction_original_*` 仍是平台兼容投影。
+- Core final 的 Persona 表达、Persona 失败后的 raw Core 回退和最终投递现在由
+  `InteractionOutputController` 作为同一输出事务处理，不再经由 Middleware 的
+  `core_reply_handler` callback 回跳。每个可见输出段向 trace 写入不含正文的
+  `interaction_output_segment` 记录，关联 turn、origin、逻辑段、平台消息 ID 与终态。
+- Cron 与非 Interaction 的后台任务结果现在共用 `run_proactive_agent_turn`：统一创建
+  `CronMessageEvent`、恢复会话历史、挂载可选 `send_message_to_user`、构建 Core 和运行
+  runner；调用方仍各自保留业务 Prompt、权限、是否需要直接投递和 summary 持久化规则。
+  这只收敛无普通平台 Event 的 Core 生命周期，尚未把主动输出迁入 Interaction Persona/Output
+  事务。
+- 已准入的 Interaction turn 中，`InteractionOutputController` 只读取 admission 时写入 Event 的
+  `_astrbot_config` 快照，不再为当前输出重新合并插件的动态配置；非 Interaction 兼容路径保留动态读取。
 - 响应安全与旧 `OnDecoratingResultEvent` 已收口到共享 `PreOutputProcessor`；
   普通 Pipeline 与 Interaction Core final 复用同一个安全评估器和装饰钩子实现，后者不再
   通过 `event.extra` 保存绑定回调

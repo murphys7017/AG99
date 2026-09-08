@@ -13,6 +13,8 @@ from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.db import BaseDatabase
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.prompt.resources import (
+    CORE_DELEGATED_TOOL_CALL_PROMPT,
+    CORE_DELEGATED_TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
     LIVE_MODE_SYSTEM_PROMPT,
     TOOL_CALL_PROMPT,
     TOOL_CALL_PROMPT_SKILLS_LIKE_MODE,
@@ -225,22 +227,49 @@ class SystemCollector(ContextCollectorInterface):
             config=config,
             provider_request=provider_request,
         )
-        if not has_tools:
+        turn_state = get_interaction_turn_state(event)
+        core_delegated = bool(getattr(turn_state, "core_delegated", False))
+        task_spec = getattr(turn_state, "core_task_spec", None)
+        direct_web_research = core_delegated and callable(
+            getattr(task_spec, "requires_direct_web_research", None)
+        ) and task_spec.requires_direct_web_research()
+        if not has_tools and not direct_web_research:
             return None
 
-        tool_prompt = (
-            TOOL_CALL_PROMPT
-            if config.tool_schema_mode == "full"
-            else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
-        )
-        turn_state = get_interaction_turn_state(event)
-        if bool(getattr(turn_state, "core_delegated", False)):
-            tool_prompt += (
-                " Core is executing this request behind Personal's fast initial "
-                "response; do not send a progress preamble or intermediate status "
-                "message. Call the required tools directly and return only the "
-                "final substantive result."
+        if core_delegated:
+            tool_prompt = (
+                CORE_DELEGATED_TOOL_CALL_PROMPT
+                if config.tool_schema_mode == "full"
+                else CORE_DELEGATED_TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
             )
+        else:
+            tool_prompt = (
+                TOOL_CALL_PROMPT
+                if config.tool_schema_mode == "full"
+                else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
+            )
+
+        if direct_web_research:
+            if self.capabilities is not None:
+                tool_names = set(self.capabilities.names())
+            else:
+                tools = provider_request.func_tool if provider_request is not None else None
+                tool_names = set(tools.names()) if tools is not None else set()
+            from astrbot.core.tools.web_search_tools import WEB_SEARCH_TOOL_NAMES
+
+            if tool_names.intersection(WEB_SEARCH_TOOL_NAMES):
+                tool_prompt += (
+                    " This task requires direct web research in the current Core "
+                    "turn. Use an authorized web-search tool; do not hand it off "
+                    "or create a background task."
+                )
+            else:
+                tool_prompt += (
+                    " This task requires direct web research, but this Core turn has "
+                    "no authorized web-search tool. Do not hand it off or claim that "
+                    "research was completed; return a concise execution-unavailable "
+                    "result so the Persona layer can inform the user."
+                )
         if config.computer_use_runtime == "local":
             workspace_root = await self._get_workspace_root(event, plugin_context)
             tool_prompt += (

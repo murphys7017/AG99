@@ -11,13 +11,11 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 from astrbot import logger
-from astrbot.core.agent.tool import ToolSet
-from astrbot.core.cron.events import CronMessageEvent
 from astrbot.core.db import BaseDatabase
 from astrbot.core.db.po import CronJob
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
-from astrbot.core.provider.entites import ProviderRequest
+from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
 from astrbot.core.utils.history_saver import persist_agent_history
 
 if TYPE_CHECKING:
@@ -373,15 +371,10 @@ class CronJobManager:
         delivery_session_str: str = "",
     ) -> None:
         """Woke the main agent to handle the cron job message."""
-        from astrbot.core.astr_main_agent import (
-            MainAgentBuildConfig,
-            _get_session_conv,
-            build_main_agent,
-        )
+        from astrbot.core.astr_main_agent import MainAgentBuildConfig
         from astrbot.core.astr_main_agent_resources import (
             PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT,
         )
-        from astrbot.core.tools.message_tools import SendMessageToUserTool
 
         try:
             session = (
@@ -393,24 +386,18 @@ class CronJobManager:
             logger.error(f"Invalid session for cron job: {e}")
             return
 
-        cron_event = CronMessageEvent(
-            context=self.ctx,
-            session=session,
-            message=message,
-            extras=extras or {},
-            message_type=session.message_type,
-        )
-
         # judge user's role
-        umo = cron_event.unified_msg_origin
+        umo = str(session)
         cfg = self.ctx.get_config(umo=umo)
         cron_payload = extras.get("cron_payload", {}) if extras else {}
         sender_id = cron_payload.get("sender_id")
         admin_ids = cfg.get("admins_id", [])
         if admin_ids:
-            cron_event.role = "admin" if sender_id in admin_ids else "member"
+            role = "admin" if sender_id in admin_ids else "member"
+        else:
+            role = None
         if cron_payload.get("origin", "tool") == "api":
-            cron_event.role = "admin"
+            role = "admin"
 
         tool_call_timeout = cfg.get("provider_settings", {}).get(
             "tool_call_timeout", 120
@@ -420,50 +407,31 @@ class CronJobManager:
             llm_safety_mode=False,
             streaming_response=False,
         )
-        req = ProviderRequest()
-        conv = await _get_session_conv(event=cron_event, plugin_context=self.ctx)
-        req.conversation = conv
-        # finetine the messages
-        context = json.loads(conv.history)
-        if context:
-            req.contexts = context
-            context_dump = req._print_friendly_context()
-            req.contexts = []
-            req.system_prompt += (
-                "\n\nBellow is you and user previous conversation history:\n"
-                f"---\n"
-                f"{context_dump}\n"
-                f"---\n"
-            )
         cron_job_str = json.dumps(extras.get("cron_job", {}), ensure_ascii=False)
-        req.system_prompt += PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT.format(
-            cron_job=cron_job_str
+        turn = await run_proactive_agent_turn(
+            context=self.ctx,
+            session=session,
+            message=message,
+            extras=extras or {},
+            role=role,
+            config=config,
+            system_prompt=PROACTIVE_AGENT_CRON_WOKE_SYSTEM_PROMPT.format(
+                cron_job=cron_job_str
+            ),
+            prompt=(
+                "You are now responding to a scheduled task. "
+                "Proceed according to your system instructions. "
+                "Output using same language as previous conversation. "
+                "After completing your task, summarize and output your actions and results."
+            ),
+            require_delivery_tool=bool(delivery_session_str),
+            include_history_fences=True,
         )
-        req.prompt = (
-            "You are now responding to a scheduled task. "
-            "Proceed according to your system instructions. "
-            "Output using same language as previous conversation. "
-            "After completing your task, summarize and output your actions and results."
-        )
-        if delivery_session_str:
-            if not req.func_tool:
-                req.func_tool = ToolSet()
-            req.func_tool.add_tool(
-                self.ctx.get_llm_tool_manager().get_builtin_tool(SendMessageToUserTool)
-            )
-
-        result = await build_main_agent(
-            event=cron_event, plugin_context=self.ctx, config=config, req=req
-        )
-        if not result:
+        if turn is None:
             logger.error("Failed to build main agent for cron job.")
             return
 
-        runner = result.agent_runner
-        async for _ in runner.step_until_done(30):
-            # agent will send message to user via using tools
-            pass
-        llm_resp = runner.get_final_llm_resp()
+        llm_resp = turn.response
         cron_meta = extras.get("cron_job", {}) if extras else {}
         summary_note = (
             f"[CronJob] {cron_meta.get('name') or cron_meta.get('id', 'unknown')}: {cron_meta.get('description', '')} "
@@ -476,8 +444,8 @@ class CronJobManager:
 
         await persist_agent_history(
             self.ctx.conversation_manager,
-            event=cron_event,
-            req=req,
+            event=turn.event,
+            req=turn.request,
             summary_note=summary_note,
         )
         if not llm_resp:

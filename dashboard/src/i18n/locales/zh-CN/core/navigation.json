@@ -6,7 +6,6 @@
   "commands": "指令管理",
   "persona": "人格设定",
   "workspaces": {
-    "overview": "总览",
     "persona": "人格",
     "intelligence": "智能",
     "channels": "通道",
@@ -14,6 +13,13 @@
     "capabilities": "能力",
     "automation": "自动化",
     "operations": "运维"
+  },
+  "workspaceSettings": {
+    "persona": "人格与表达",
+    "intelligence": "执行与模型",
+    "knowledge": "检索与记忆",
+    "capabilities": "工具与能力",
+    "automation": "自动化策略"
   },
   "subagent": "子代理编排",
   "toolUse": "MCP",

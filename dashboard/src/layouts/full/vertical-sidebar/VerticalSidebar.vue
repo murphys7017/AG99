@@ -331,9 +331,6 @@ function openChangelogDialog() {
         </template>
       </v-list>
       <div class="sidebar-footer" v-if="!customizer.mini_sidebar">
-        <v-btn class="sidebar-footer-btn" size="small" variant="tonal" color="primary" to="/settings" prepend-icon="mdi-cog">
-          {{ t('core.navigation.settings') }}
-        </v-btn>
         <v-btn class="sidebar-footer-btn" size="small" variant="text" prepend-icon="mdi-note-text-outline"
           @click="openChangelogDialog">
           {{ t('core.navigation.changelog') }}

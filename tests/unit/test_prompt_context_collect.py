@@ -64,6 +64,7 @@ from astrbot.core.prompt.render import (
 )
 from astrbot.core.prompt.resources import (
     CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
+    CORE_DELEGATED_TOOL_CALL_PROMPT,
     LIVE_MODE_SYSTEM_PROMPT,
     LLM_SAFETY_MODE_SYSTEM_PROMPT,
     SANDBOX_MODE_PROMPT,
@@ -1585,8 +1586,75 @@ async def test_collect_context_pack_marks_delegated_core_tool_instruction():
 
     instruction_slot = pack.get_slot("system.tool_call_instruction")
     assert instruction_slot is not None
-    assert "behind Personal's fast initial response" in instruction_slot.value
+    assert instruction_slot.value == CORE_DELEGATED_TOOL_CALL_PROMPT
+    assert "briefly explain the purpose" not in instruction_slot.value
     assert extras.get("_interaction_core_delegated") is None
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_marks_missing_direct_web_research_capability():
+    event, extras = _make_event()
+    extras["_interaction_turn_state"] = InteractionTurnState(
+        turn_id="direct-web-turn",
+        core_delegated=True,
+        core_task_spec=CoreTaskSpec(suggested_capabilities=["web_research"]),
+    )
+    context = _make_context()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+    tool = _make_tool("search_docs", description="Search docs.")
+    context.get_llm_tool_manager.return_value.func_list = [tool]
+    req = ProviderRequest(prompt="research", func_tool=ToolSet([tool]))
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            tool_schema_mode="full",
+            computer_use_runtime="none",
+            add_cron_tools=False,
+        ),
+        provider_request=req,
+        collectors=[SystemCollector()],
+    )
+
+    instruction_slot = pack.get_slot("system.tool_call_instruction")
+    assert instruction_slot is not None
+    assert "no authorized web-search tool" in instruction_slot.value
+    assert "Do not hand it off" in instruction_slot.value
+
+
+@pytest.mark.asyncio
+async def test_collect_context_pack_keeps_direct_web_constraint_without_tools():
+    event, extras = _make_event()
+    extras["_interaction_turn_state"] = InteractionTurnState(
+        turn_id="direct-web-without-tools",
+        core_delegated=True,
+        core_task_spec=CoreTaskSpec(suggested_capabilities=["web_research"]),
+    )
+    context = _make_context()
+    context.persona_manager.resolve_selected_persona = AsyncMock(
+        return_value=(None, None, None, False)
+    )
+
+    pack = await collect_context_pack(
+        event=event,
+        plugin_context=context,
+        config=ama.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            tool_schema_mode="full",
+            computer_use_runtime="none",
+            add_cron_tools=False,
+        ),
+        provider_request=ProviderRequest(prompt="research"),
+        collectors=[SystemCollector()],
+    )
+
+    instruction_slot = pack.get_slot("system.tool_call_instruction")
+    assert instruction_slot is not None
+    assert "no authorized web-search tool" in instruction_slot.value
 
 
 @pytest.mark.asyncio

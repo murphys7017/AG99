@@ -798,6 +798,35 @@ class InteractionExpressionAgent:
                 last_error = exc
                 if isinstance(exc.prepared, _PreparedPersonaExpression):
                     prepared = exc.prepared
+                failure_prepared = exc.prepared
+                log_method = (
+                    logger.warning
+                    if exc.tool_execution_count > 0
+                    or index + 1 >= len(candidates)
+                    else logger.debug
+                )
+                log_method(
+                    "DIAG expression.%s: turn_id=%s platform_id=%s session_id=%s "
+                    "phase=%s lifecycle_id=%s reason=%s tool_execution_count=%s "
+                    "correction_attempted=%s",
+                    "failed"
+                    if exc.tool_execution_count > 0 or index + 1 >= len(candidates)
+                    else "provider_candidate_failed",
+                    str(event.get_extra("_turn_id", "") or ""),
+                    event.get_platform_id(),
+                    event.session_id,
+                    _describe_expression_request(
+                        failure_prepared.req if failure_prepared is not None else req
+                    ),
+                    failure_prepared.lifecycle.lifecycle_id
+                    if failure_prepared is not None
+                    else "",
+                    exc.reason,
+                    exc.tool_execution_count,
+                    bool(
+                        getattr(failure_prepared, "correction_attempted", False)
+                    ),
+                )
                 if primary_error is None:
                     primary_error = exc
                 if exc.tool_execution_count > 0:

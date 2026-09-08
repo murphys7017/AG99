@@ -11,6 +11,7 @@ from typing import Any
 from astrbot import logger
 from astrbot.core import file_token_service, html_renderer
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.message.components import Image, Json, Plain, Record
 from astrbot.core.message.message_chain_delivery import deliver_message_chain
 from astrbot.core.message.message_chain_transforms import (
@@ -46,6 +47,7 @@ from .expression_agent import (
 )
 from .output_modes import (
     CORE_OUTPUT_DELIVERY_EXTRA_KEY,
+    OUTPUT_ORIGIN_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
     PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
     CoreOutputDelivery,
@@ -115,6 +117,7 @@ PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY = (
     "_interaction_plugin_output_transaction_assistant_artifacts"
 )
 TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY = "_interaction_tool_stage_observation_tasks"
+CORE_REPLY_FALLBACK_TEXT = "模型服务暂时不可用，请稍后再试。"
 
 
 def _merge_runtime_config(
@@ -156,9 +159,6 @@ class InteractionOutputController:
             ]
             | None
         ) = None,
-        core_reply_handler: (
-            Callable[[MessageChain, AstrMessageEvent], Awaitable[None]] | None
-        ) = None,
         lifecycle_callback: (
             Callable[[AstrMessageEvent, str, dict[str, Any] | None], Awaitable[None]]
             | None
@@ -171,7 +171,6 @@ class InteractionOutputController:
         self.platform_settings = platform_settings or {}
         self._persist_callback = persist_callback
         self.visible_reply_renderer = visible_reply_renderer
-        self.core_reply_handler = core_reply_handler
         self.lifecycle_callback = lifecycle_callback
         self.pre_output_processor = pre_output_processor or PreOutputProcessor()
         self.delivery_coordinator = delivery_coordinator or TurnDeliveryCoordinator()
@@ -216,6 +215,8 @@ class InteractionOutputController:
         if event is not None:
             event_config = event.get_extra("_astrbot_config")
             if isinstance(event_config, Mapping):
+                if get_interaction_turn_config(event) is not None:
+                    return event_config
                 plugin_config = self._get_plugin_runtime_config(event)
                 if isinstance(plugin_config, Mapping):
                     return _merge_runtime_config(event_config, plugin_config)
@@ -469,10 +470,7 @@ class InteractionOutputController:
             return
         full_message = self._get_full_core_final_message(event, message)
         try:
-            if self.core_reply_handler is not None:
-                await self.core_reply_handler(full_message, event)
-            else:
-                await self._deliver_core_reply(full_message, event)
+            await self._deliver_core_reply(full_message, event)
         except BaseException:
             await finish_interaction_turn_final_output(
                 event,
@@ -1587,14 +1585,62 @@ class InteractionOutputController:
         event: AstrMessageEvent,
     ) -> None:
         core_result_text = message.get_plain_text()
-        result = await self._render_visible_reply(
-            event,
-            PersonaExpressionRequest.core_final(
-                core_result_text,
-                immediate_reply=get_interaction_turn_immediate_reply(event),
-            ),
-        )
+        try:
+            result = await self._render_visible_reply(
+                event,
+                PersonaExpressionRequest.core_final(
+                    core_result_text,
+                    immediate_reply=get_interaction_turn_immediate_reply(event),
+                ),
+            )
+        except TurnDeadlineExceeded as exc:
+            await self._deliver_core_result_without_persona(
+                message,
+                event,
+                stage=exc.stage,
+                reason=exc.reason,
+                exception=exc,
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            await self._deliver_core_result_without_persona(
+                message,
+                event,
+                stage="core_persona_render",
+                reason=str(getattr(exc, "reason", "") or "exception"),
+                exception=exc,
+            )
+            return
         await self.deliver_prepared_core_reply(message, result, event)
+
+    async def _deliver_core_result_without_persona(
+        self,
+        message: MessageChain,
+        event: AstrMessageEvent,
+        *,
+        stage: str,
+        reason: str,
+        exception: BaseException,
+    ) -> None:
+        """Finish the current output transaction without another Persona call."""
+        record_interaction_turn_failure(
+            event,
+            stage=stage,
+            reason=reason,
+            exception=exception,
+            user_visible_action="deliver_core_result_without_persona",
+        )
+        logger.warning(
+            "Core result Persona rendering failed; delivering the existing Core "
+            "result without another model call: turn_id=%s stage=%s reason=%s",
+            event.get_extra("_turn_id"),
+            stage,
+            reason,
+        )
+        fallback_message = message
+        if not fallback_message.chain:
+            fallback_message = message.derive([Plain(CORE_REPLY_FALLBACK_TEXT)])
+        await self.deliver_raw_core_reply(fallback_message, event)
 
     async def deliver_prepared_core_reply(
         self,
@@ -2546,6 +2592,26 @@ class InteractionOutputController:
             metadata=resolved_metadata,
             memory_relevant=memory_relevant,
         )
+        turn_state = get_interaction_turn_state(event)
+        if turn_state is None:
+            return
+        try:
+            event.trace.record(
+                "interaction_output_segment",
+                turn_id=turn_state.turn_id,
+                origin=str(event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY, "") or ""),
+                message_kind=message_kind,
+                output_segment_id=str(message_id or ""),
+                delivered_message_ids=list(delivered_message_ids or []),
+                final_output_status=turn_state.final_output_status.value,
+                completion_status=turn_state.completion_state.status.value,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to record interaction output segment trace: turn_id=%s",
+                turn_state.turn_id,
+                exc_info=True,
+            )
 
     async def _persist_interaction_turn(
         self,

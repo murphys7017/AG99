@@ -6,7 +6,6 @@
     "commands": "Команды",
     "persona": "Персонажи",
     "workspaces": {
-        "overview": "Обзор",
         "persona": "Персонаж",
         "intelligence": "Интеллект",
         "channels": "Каналы",
@@ -14,6 +13,13 @@
         "capabilities": "Возможности",
         "automation": "Автоматизация",
         "operations": "Управление"
+    },
+    "workspaceSettings": {
+        "persona": "Персонаж и выражение",
+        "intelligence": "Исполнение и модели",
+        "knowledge": "Поиск и память",
+        "capabilities": "Инструменты и возможности",
+        "automation": "Политика автоматизации"
     },
     "subagent": "Субагенты",
     "toolUse": "Инструменты MCP",

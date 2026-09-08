@@ -32,6 +32,26 @@ TOOL_CALL_PROMPT_SKILLS_LIKE_MODE = (
     " Keep the role-play and style consistent throughout the conversation."
 )
 
+# A delegated Core turn does not speak to the user directly. The enclosing
+# Persona Runtime owns both the immediate acknowledgement and final expression.
+CORE_DELEGATED_TOOL_CALL_PROMPT = (
+    "When using tools for a delegated Core task: "
+    "never return an empty internal result; "
+    "do not explain tool usage, send a progress update, or otherwise address the user; "
+    "follow the tool schema exactly and do not invent parameters; "
+    "after execution, return only the factual substantive result for the Persona layer."
+)
+
+CORE_DELEGATED_TOOL_CALL_PROMPT_SKILLS_LIKE_MODE = (
+    "You MUST NOT return an empty internal result after invoking a tool. "
+    "This is a delegated Core task: do not provide a preamble, progress update, "
+    "or other user-visible message. Tool schemas are provided in two stages: first "
+    "only name and description; if you decide to use a tool, the full parameter "
+    "schema will be provided in a follow-up step. Do not guess arguments before "
+    "you see the schema. After the tool call, return only the factual substantive "
+    "result for the Persona layer."
+)
+
 COMPUTER_USE_DISABLED_SKILLS_PROMPT = (
     "User has not enabled the Computer Use feature. "
     "You cannot use shell or Python to perform skills. "

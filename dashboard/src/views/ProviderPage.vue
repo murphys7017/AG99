@@ -309,12 +309,12 @@
       <v-card>
         <v-card-title class="text-h3 d-flex align-center">
           <v-icon start class="me-2">mdi-information</v-icon>
-          请前往「配置文件」页测试 Agent 执行器
+          请前往「智能配置」测试 Agent 执行器
         </v-card-title>
         <v-card-text class="py-4 text-body-1 text-medium-emphasis">
-          Agent 执行器的测试请在「配置文件」页进行。
+          Agent 执行器的测试请在「智能配置」中进行。
           <ol class="ml-4 mt-4 mb-4">
-            <li>找到对应的配置文件并打开。</li>
+            <li>选择对应的配置。</li>
             <li>找到 Agent 执行方式部分，修改执行器后点击保存。</li>
             <li>点击右下角的 💬 聊天按钮进行测试。</li>
           </ol>
@@ -726,7 +726,7 @@ function getStatusText(status) {
 }
 
 function goToConfigPage() {
-  router.push('/config')
+  router.push('/config?workspace=intelligence#normal')
   showAgentRunnerDialog.value = false
 }
 </script>

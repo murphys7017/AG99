@@ -1,14 +1,14 @@
 task:
   class: refactor
   risk: high
-  phase: architecture_audit_remediation_phase_1
+  phase: architecture_audit_remediation_phase_3_proactive_core_turn
   closure_review:
     status: complete_for_migrated_turn_state_scope
     date: '2026-09-06'
     changes: Clear parent-bound Event output hooks on plugin branch copy and use Event getter for visible completion; synchronize remediation status docs.
     validation: Branch boundary tests 3 passed; completion and hook tests 6 passed; targeted Ruff and git diff --check passed.
     gaps: No real platform acceptance or full-suite rerun; Runtime adapter flags and Output Runtime public contracts remain deferred.
-  scope: Converge confirmed internal Interaction state ownership without changing official Event, Pipeline, platform, or plugin compatibility contracts; defer Output Port and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
+  scope: Converge the Core-final Persona delivery transaction, isolate official Event output interception behind an explicit adapter, freeze Interaction output reads to the admitted config snapshot, and share the synthetic Core execution lifecycle for Cron and detached background results without changing Event, Pipeline, platform, or plugin compatibility contracts; defer OutputIntent migration and parallel Plugin Job end-state decisions until real runtime traces are reviewed.
 context:
   confidence: high
   assumptions:

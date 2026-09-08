@@ -29,7 +29,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.persona',
     icon: 'mdi-heart',
-    to: '/workspace/persona',
     children: [
       {
         title: 'core.navigation.persona',
@@ -37,7 +36,7 @@ const sidebarItem: menu[] = [
         to: '/persona'
       },
       {
-        title: 'core.navigation.configTabs.normal',
+        title: 'core.navigation.workspaceSettings.persona',
         icon: 'mdi-cog',
         to: '/config?workspace=persona#normal'
       },
@@ -46,7 +45,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.intelligence',
     icon: 'mdi-brain',
-    to: '/workspace/intelligence',
     children: [
       {
         title: 'core.navigation.providers',
@@ -54,7 +52,7 @@ const sidebarItem: menu[] = [
         to: '/providers'
       },
       {
-        title: 'core.navigation.configTabs.normal',
+        title: 'core.navigation.workspaceSettings.intelligence',
         icon: 'mdi-cog',
         to: '/config?workspace=intelligence#normal'
       }
@@ -63,7 +61,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.channels',
     icon: 'mdi-robot',
-    to: '/workspace/channels',
     children: [
       {
         title: 'core.navigation.platforms',
@@ -75,7 +72,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.knowledge',
     icon: 'mdi-book-open-variant',
-    to: '/workspace/knowledge',
     children: [
       {
         title: 'core.navigation.knowledgeBase',
@@ -83,7 +79,7 @@ const sidebarItem: menu[] = [
         to: '/knowledge-base'
       },
       {
-        title: 'core.navigation.configTabs.normal',
+        title: 'core.navigation.workspaceSettings.knowledge',
         icon: 'mdi-cog',
         to: '/config?workspace=knowledge#normal'
       }
@@ -92,7 +88,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.capabilities',
     icon: 'mdi-puzzle',
-    to: '/workspace/capabilities',
     children: [
       {
         title: 'core.navigation.extensionTabs.installed',
@@ -120,7 +115,7 @@ const sidebarItem: menu[] = [
         to: '/extension#components'
       },
       {
-        title: 'core.navigation.configTabs.normal',
+        title: 'core.navigation.workspaceSettings.capabilities',
         icon: 'mdi-cog',
         to: '/config?workspace=capabilities#normal'
       }
@@ -129,7 +124,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.automation',
     icon: 'mdi-clock-outline',
-    to: '/workspace/automation',
     children: [
       {
         title: 'core.navigation.cron',
@@ -147,7 +141,7 @@ const sidebarItem: menu[] = [
         to: '/session-management'
       },
       {
-        title: 'core.navigation.configTabs.normal',
+        title: 'core.navigation.workspaceSettings.automation',
         icon: 'mdi-cog',
         to: '/config?workspace=automation#normal'
       }
@@ -156,7 +150,6 @@ const sidebarItem: menu[] = [
   {
     title: 'core.navigation.workspaces.operations',
     icon: 'mdi-view-dashboard',
-    to: '/workspace/operations',
     children: [
       {
         title: 'core.navigation.configTabs.system',
