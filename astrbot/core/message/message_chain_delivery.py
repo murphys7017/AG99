@@ -4,6 +4,7 @@ import asyncio
 import math
 import random
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import astrbot.core.message.components as Comp
@@ -49,6 +50,20 @@ _SEGMENTATION_DISABLED_PLATFORMS = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class MessageChainDeliveryResult:
+    """Outcome of delivering every physical chain for one logical message."""
+
+    sent_any: bool = False
+    all_succeeded: bool = False
+    attempted_count: int = 0
+    failed_count: int = 0
+
+    def __bool__(self) -> bool:
+        """Preserve the legacy truth value: at least one chain was delivered."""
+        return self.sent_any
+
+
 async def deliver_message_chain(
     event: AstrMessageEvent,
     message: MessageChain,
@@ -58,7 +73,7 @@ async def deliver_message_chain(
     result_is_model_result: bool = False,
     allow_segmented_reply: bool = True,
     preserve_record_delivery_groups: bool = False,
-) -> bool:
+) -> MessageChainDeliveryResult:
     working_chain = list(message.chain)
     _apply_path_mapping(working_chain, platform_settings or {})
 
@@ -67,7 +82,7 @@ async def deliver_message_chain(
             logger.debug(
                 "Message chain is empty after delivery validation; skipping send."
             )
-            return False
+            return MessageChainDeliveryResult()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Message chain empty check failed: %s", exc, exc_info=True)
 
@@ -79,7 +94,7 @@ async def deliver_message_chain(
         )
     ]
     if not working_chain:
-        return False
+        return MessageChainDeliveryResult()
 
     if _is_segmented_reply_required(
         event,
@@ -122,7 +137,7 @@ async def _deliver_segmented_message_chain(
     working_chain: list[BaseMessageComponent],
     send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
     platform_settings: dict[str, Any],
-) -> bool:
+) -> MessageChainDeliveryResult:
     header_comps = _extract_comp(
         working_chain,
         _HEADER_COMPONENT_TYPES,
@@ -132,11 +147,14 @@ async def _deliver_segmented_message_chain(
         logger.warning(
             "Actual message chain is empty after extracting header components; skipping send."
         )
-        return False
+        return MessageChainDeliveryResult()
 
     sent_any = False
+    attempted_count = 0
+    failed_count = 0
     for comp in working_chain:
         await _sleep_before_segment(comp, platform_settings)
+        attempted_count += 1
         try:
             if comp.type in _RECORD_COMPONENT_TYPES:
                 await _send_with_delivery_metadata(message.derive([comp]), send_message)
@@ -148,13 +166,19 @@ async def _deliver_segmented_message_chain(
                 header_comps.clear()
             sent_any = True
         except Exception as exc:  # noqa: BLE001
+            failed_count += 1
             logger.error(
                 "Failed to send segmented message chain: chain=%s error=%s",
                 MessageChain([comp]),
                 exc,
                 exc_info=True,
             )
-    return sent_any
+    return MessageChainDeliveryResult(
+        sent_any=sent_any,
+        all_succeeded=sent_any and failed_count == 0,
+        attempted_count=attempted_count,
+        failed_count=failed_count,
+    )
 
 
 async def _deliver_regular_message_chain(
@@ -163,24 +187,28 @@ async def _deliver_regular_message_chain(
     send_message: Callable[[MessageChain, dict[str, Any]], Awaitable[None]],
     *,
     preserve_record_delivery_groups: bool,
-) -> bool:
+) -> MessageChainDeliveryResult:
     if all(comp.type in _HEADER_COMPONENT_TYPES for comp in working_chain):
         logger.warning(
             "Message chain contains only Reply and At components; skipping send."
         )
-        return False
+        return MessageChainDeliveryResult()
 
     sent_any = False
+    attempted_count = 0
+    failed_count = 0
     sep_comps = _extract_standalone_records(
         working_chain,
         preserve_delivery_groups=preserve_record_delivery_groups,
     )
     for comp in sep_comps:
         chain = message.derive([comp])
+        attempted_count += 1
         try:
             await _send_with_delivery_metadata(chain, send_message)
             sent_any = True
         except Exception as exc:  # noqa: BLE001
+            failed_count += 1
             logger.error(
                 "Failed to send standalone message component: chain=%s error=%s",
                 chain,
@@ -189,22 +217,34 @@ async def _deliver_regular_message_chain(
             )
 
     if not working_chain:
-        return sent_any
+        return MessageChainDeliveryResult(
+            sent_any=sent_any,
+            all_succeeded=sent_any and failed_count == 0,
+            attempted_count=attempted_count,
+            failed_count=failed_count,
+        )
 
     groups = _partition_delivery_groups(working_chain)
     for group in groups:
         chain = message.derive(group)
+        attempted_count += 1
         try:
             await _send_with_delivery_metadata(chain, send_message)
             sent_any = True
         except Exception as exc:  # noqa: BLE001
+            failed_count += 1
             logger.error(
                 "Failed to send message chain: chain=%s error=%s",
                 chain,
                 exc,
                 exc_info=True,
             )
-    return sent_any
+    return MessageChainDeliveryResult(
+        sent_any=sent_any,
+        all_succeeded=sent_any and failed_count == 0,
+        attempted_count=attempted_count,
+        failed_count=failed_count,
+    )
 
 
 async def _send_with_delivery_metadata(

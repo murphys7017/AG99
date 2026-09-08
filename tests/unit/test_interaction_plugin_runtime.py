@@ -986,6 +986,42 @@ async def test_visible_message_completion_follows_all_physical_deliveries():
 
 
 @pytest.mark.asyncio
+async def test_visible_message_partial_delivery_does_not_complete_logical_message():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        async def complete_visible_message(self, *, message_id):
+            completed.append(message_id)
+
+    completed = []
+    controller = InteractionOutputController()
+    controller._notify_lifecycle = AsyncMock()
+    controller.build_platform_output_extras = lambda *_args, **_kwargs: {}
+
+    async def send_platform_message(message, _event, **_kwargs):
+        if any(isinstance(component, Plain) for component in message.chain):
+            raise RuntimeError("caption delivery failed")
+
+    controller._send_platform_message = send_platform_message
+
+    await controller._deliver_visible_message(
+        Event(),
+        MessageChain([Record(file="reply.wav"), Plain("caption")]),
+        message_kind="core_reply",
+        output_segment_id="logical-message",
+    )
+
+    assert completed == []
+
+
+@pytest.mark.asyncio
 async def test_respond_stage_delegates_interaction_completion_once():
     class Controller:
         def __init__(self):

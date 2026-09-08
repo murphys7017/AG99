@@ -2519,7 +2519,7 @@ class InteractionOutputController:
             if visible_message_id:
                 delivered_message_ids.append(visible_message_id)
 
-        sent = await deliver_message_chain(
+        delivery = await deliver_message_chain(
             event,
             message,
             send_message=_send,
@@ -2531,11 +2531,11 @@ class InteractionOutputController:
                 and supports_personal_runtime(event.platform_meta)
             ),
         )
-        if not sent:
+        if not delivery.sent_any:
             raise RuntimeError(
                 f"Interaction output was not delivered: {message_kind}"
             )
-        if output_segment_id:
+        if output_segment_id and delivery.all_succeeded:
             await event.complete_visible_message(
                 message_id=output_segment_id,
             )

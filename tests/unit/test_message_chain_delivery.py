@@ -140,3 +140,25 @@ async def test_composite_tts_option_keeps_untracked_records_standalone():
         [Record],
         [Plain],
     ]
+
+
+@pytest.mark.asyncio
+async def test_delivery_reports_partial_failure_without_claiming_complete_success():
+    calls = 0
+
+    async def send_with_extras(_chain, _extras):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("platform rejected second chain")
+
+    result = await deliver_message_chain(
+        MagicMock(),
+        MessageChain([Record(file="reply.wav"), Plain("caption")]),
+        send_message=send_with_extras,
+    )
+
+    assert result.sent_any is True
+    assert result.all_succeeded is False
+    assert result.attempted_count == 2
+    assert result.failed_count == 1

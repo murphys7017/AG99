@@ -173,7 +173,7 @@ class RespondStage(Stage):
             output_origin = self._result_output_origin(result)
             deferred = self._begin_interaction_finalization_deferral(event)
             try:
-                sent_any = await deliver_message_chain(
+                delivery = await deliver_message_chain(
                     event,
                     result.derive(result.chain),
                     send_message=lambda chain, extras: (
@@ -187,6 +187,7 @@ class RespondStage(Stage):
                     platform_settings=self.platform_settings,
                     result_is_model_result=result.is_model_result(),
                 )
+                sent_any = delivery.sent_any
 
                 if is_interaction_turn_pipeline_output_suppressed(event):
                     set_interaction_turn_pipeline_output_suppressed(event, False)
