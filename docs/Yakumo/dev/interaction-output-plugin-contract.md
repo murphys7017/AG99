@@ -130,6 +130,11 @@ output_segment.tts.failure_code        稳定失败码
 
 `audio_attachment=present | absent` 描述当前物理发送是否携带音频，不得用它覆盖逻辑段的 TTS 终态。AstrBot 不定义任何前端专属 turn ID；Adapter 可以在入站 event 上设置通用 `output_correlation_id`，AstrBot 会将其只读透传为 `external_correlation_id`。
 
+`InteractionOutputController` 已在交付返回后调用
+`event.complete_visible_message(message_id=output_segment.message_id)`。消息级完成契约要求该调用只发生在
+一条逻辑消息的全部物理 `MessageChain` 发送成功之后；`complete_visible_turn()` 仍只表示整轮不再产生可见输出。
+部分物理发送成功不等于逻辑消息完成，不得触发该回调。
+
 ## Effect 规则
 
 - effect 名称和参数 schema 由注册插件拥有，Core 不为具体插件增加专用字段。

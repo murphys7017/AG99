@@ -2539,10 +2539,11 @@ class InteractionOutputController:
             await event.complete_visible_message(
                 message_id=output_segment_id,
             )
-        record_interaction_turn_visible_message_fingerprint(
-            event,
-            fingerprint_visible_message(message),
-        )
+        if delivery.all_succeeded:
+            record_interaction_turn_visible_message_fingerprint(
+                event,
+                fingerprint_visible_message(message),
+            )
         return delivered_message_ids
 
     async def _notify_lifecycle(

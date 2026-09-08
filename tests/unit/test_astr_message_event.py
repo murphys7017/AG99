@@ -128,6 +128,31 @@ class TestAstrMessageEventVisibleCompletion:
 
         assert astr_message_event.get_extra("_visible_turn_completion_sent") is None
 
+    @pytest.mark.asyncio
+    async def test_complete_visible_message_delegates_to_legacy_adapter_hook(
+        self,
+        platform_meta,
+        astrbot_message,
+    ):
+        class LegacyCompletionEvent(ConcreteAstrMessageEvent):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self.completed_message_ids = []
+
+            async def complete_output_segment_delivery(self, *, message_id):
+                self.completed_message_ids.append(message_id)
+
+        event = LegacyCompletionEvent(
+            message_str="Hello world",
+            message_obj=astrbot_message,
+            platform_meta=platform_meta,
+            session_id="session123",
+        )
+
+        await event.complete_visible_message(message_id="logical-message")
+
+        assert event.completed_message_ids == ["logical-message"]
+
 
 class TestUnifiedMsgOrigin:
     """Tests for unified_msg_origin property."""

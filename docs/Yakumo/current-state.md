@@ -104,6 +104,9 @@
   `InteractionOutputController` 作为同一输出事务处理，不再经由 Middleware 的
   `core_reply_handler` callback 回跳。每个可见输出段向 trace 写入不含正文的
   `interaction_output_segment` 记录，关联 turn、origin、逻辑段、平台消息 ID 与终态。
+- `InteractionOutputController` 已接入 `complete_visible_message(message_id)`；需要原子段的 Adapter 可立即发布该逻辑消息。
+  该回调的契约要求全部物理 `MessageChain` 已发送成功，`complete_visible_turn()` 仍只关闭整轮可见输出。
+  部分物理发送不能被当作逻辑消息完成。
 - Cron 与非 Interaction 的后台任务结果现在共用 `run_proactive_agent_turn`：统一创建
   `CronMessageEvent`、恢复会话历史、挂载可选 `send_message_to_user`、构建 Core 和运行
   runner；调用方仍各自保留业务 Prompt、权限、是否需要直接投递和 summary 持久化规则。

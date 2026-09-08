@@ -352,6 +352,15 @@ class AstrMessageEvent(abc.ABC):
         platforms do not need an acknowledgement, while adapters with atomic
         client-side message protocols may override it.
         """
+        await self.complete_output_segment_delivery(message_id=message_id)
+
+    async def complete_output_segment_delivery(self, *, message_id: str) -> None:
+        """Deprecated compatibility hook for visible-message completion.
+
+        New adapters should override :meth:`complete_visible_message`. Keeping
+        this no-op hook lets existing adapters receive the new Core callback
+        until they migrate.
+        """
         del message_id
 
     def install_interaction_output_hooks(

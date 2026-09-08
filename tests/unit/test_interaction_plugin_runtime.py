@@ -35,6 +35,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_config,
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
+    get_interaction_turn_visible_message_fingerprints,
     is_interaction_turn_emitting_immediate_reply,
     is_interaction_turn_pipeline_output_suppressed,
     is_interaction_turn_pipeline_route_handled,
@@ -1011,14 +1012,18 @@ async def test_visible_message_partial_delivery_does_not_complete_logical_messag
 
     controller._send_platform_message = send_platform_message
 
+    event = Event()
+    message = MessageChain([Record(file="reply.wav"), Plain("caption")])
+
     await controller._deliver_visible_message(
-        Event(),
-        MessageChain([Record(file="reply.wav"), Plain("caption")]),
+        event,
+        message,
         message_kind="core_reply",
         output_segment_id="logical-message",
     )
 
     assert completed == []
+    assert get_interaction_turn_visible_message_fingerprints(event) == set()
 
 
 @pytest.mark.asyncio
