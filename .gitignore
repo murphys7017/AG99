@@ -15,6 +15,13 @@ botpy.log
 logs/
 temp
 cookies.json
+.tmp-*.txt
+.tmp-*.log
+.vite-*.log
+dashboard/.vite-*.log
+dashboard/.playwright-cli/
+docs/debug.log
+docs/**/debug.log
 
 # Data files
 data_v2.db

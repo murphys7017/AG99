@@ -4,6 +4,7 @@
 import { ref, computed, type Ref } from 'vue';
 import type { CommandItem, FilterState } from '../types';
 import { normalizeTextInput } from '@/utils/inputValue';
+import { isCommandEffectivelyEnabled } from '@/utils/commandState.mjs';
 
 export function useCommandFilters(commands: Ref<CommandItem[]>) {
   // 过滤状态
@@ -77,8 +78,8 @@ export function useCommandFilters(commands: Ref<CommandItem[]>) {
 
     // 状态过滤
     if (statusFilter.value !== 'all') {
-      if (statusFilter.value === 'enabled' && !cmd.enabled) return false;
-      if (statusFilter.value === 'disabled' && cmd.enabled) return false;
+      if (statusFilter.value === 'enabled' && !isCommandEffectivelyEnabled(cmd)) return false;
+      if (statusFilter.value === 'disabled' && isCommandEffectivelyEnabled(cmd)) return false;
       if (statusFilter.value === 'conflict' && !cmd.has_conflict) return false;
     }
 

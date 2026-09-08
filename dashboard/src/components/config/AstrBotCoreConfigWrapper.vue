@@ -1,7 +1,19 @@
 <template>
     <div :class="$vuetify.display.mobile ? '' : 'd-flex'">
-        <v-tabs v-model="tab" :direction="$vuetify.display.mobile ? 'horizontal' : 'vertical'"
-            :align-tabs="$vuetify.display.mobile ? 'left' : 'start'" color="deep-purple-accent-4" class="config-tabs">
+        <v-select
+            v-if="$vuetify.display.mobile"
+            v-model="tab"
+            :items="mobileSectionItems"
+            item-title="title"
+            item-value="key"
+            :label="tmConfig('configSelection.selectSection')"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="config-section-select"
+        />
+        <v-tabs v-else v-model="tab" direction="vertical" align-tabs="start"
+            color="deep-purple-accent-4" class="config-tabs">
             <v-tab v-for="section in visibleSections" :key="section.key" :value="section.key"
                 style="font-weight: 1000; font-size: 15px">
                 {{ tm(section.value['name']) }}
@@ -84,7 +96,8 @@ export default {
     };
     
     return {
-      tm
+      tm,
+      tmConfig
     };
   },
   data() {
@@ -105,6 +118,12 @@ export default {
         return allSections;
       }
       return allSections.filter((section) => this.sectionHasSearchMatch(section.value));
+    },
+    mobileSectionItems() {
+      return this.visibleSections.map((section) => ({
+        key: section.key,
+        title: this.tm(section.value['name'])
+      }));
     }
   },
   watch: {
@@ -169,7 +188,7 @@ export default {
 }
 
 @media (max-width: 767px) {
-  .config-tabs {
+  .config-section-select {
     width: 100%;
   }
 

@@ -67,6 +67,7 @@
   },
   "configSelection": {
     "selectConfig": "Select Configuration",
+    "selectSection": "Configuration section",
     "normalConfig": "Basic",
     "systemConfig": "System"
   },

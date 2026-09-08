@@ -67,6 +67,7 @@
     },
     "configSelection": {
         "selectConfig": "Выбор конфигурации",
+        "selectSection": "Раздел конфигурации",
         "normalConfig": "Обычная",
         "systemConfig": "Системная"
     },

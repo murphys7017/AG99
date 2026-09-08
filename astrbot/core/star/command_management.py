@@ -250,6 +250,15 @@ async def list_command_conflicts() -> list[dict[str, Any]]:
 # Internal helpers ----------------------------------------------------------
 
 
+def _is_plugin_activated(desc: CommandDescriptor) -> bool:
+    plugin_meta = star_map.get(desc.module_path)
+    return bool(plugin_meta.activated) if plugin_meta else True
+
+
+def is_command_effectively_enabled(command: dict[str, Any]) -> bool:
+    return bool(command.get("enabled")) and command.get("plugin_activated") is not False
+
+
 def _collect_descriptors(include_sub_commands: bool) -> list[CommandDescriptor]:
     """收集指令，按需包含子指令。"""
     descriptors: list[CommandDescriptor] = []
@@ -464,7 +473,7 @@ def _group_conflicts(
 ) -> dict[str, list[CommandDescriptor]]:
     conflicts: dict[str, list[CommandDescriptor]] = defaultdict(list)
     for desc in descriptors:
-        if desc.effective_command and desc.enabled:
+        if desc.effective_command and desc.enabled and _is_plugin_activated(desc):
             conflicts[desc.effective_command].append(desc)
     return {k: v for k, v in conflicts.items() if len(v) > 1}
 
@@ -530,6 +539,7 @@ def _descriptor_to_dict(desc: CommandDescriptor) -> dict[str, Any]:
         "aliases": desc.aliases,
         "permission": desc.permission,
         "enabled": desc.enabled,
+        "plugin_activated": _is_plugin_activated(desc),
         "is_group": desc.is_group,
         "has_conflict": desc.has_conflict,
         "reserved": desc.reserved,

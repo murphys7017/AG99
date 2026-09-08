@@ -1,6 +1,7 @@
 from quart import request
 
 from astrbot.core.star.command_management import (
+    is_command_effectively_enabled,
     list_command_conflicts,
     list_commands,
 )
@@ -34,7 +35,9 @@ class CommandRoute(Route):
         commands = await list_commands()
         summary = {
             "total": len(commands),
-            "disabled": len([cmd for cmd in commands if not cmd["enabled"]]),
+            "disabled": len(
+                [cmd for cmd in commands if not is_command_effectively_enabled(cmd)]
+            ),
             "conflicts": len([cmd for cmd in commands if cmd.get("has_conflict")]),
         }
         config_id = request.args.get("config_id", "").strip()

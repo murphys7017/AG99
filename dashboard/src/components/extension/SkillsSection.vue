@@ -53,20 +53,92 @@
         </div>
 
         <div v-else class="skills-list pb-3">
-          <OutlinedActionListItem
-            v-for="skill in skills"
-            :key="skill.name"
-            :title="skill.name"
-            clickable
-            @click="openSkillEditor(skill)"
-          >
+          <div class="skills-list-actions">
+            <template v-if="batchSelectionEnabled">
+              <v-tooltip :text="allDeletableSelected ? tm('skills.clearSelection') : tm('skills.selectAll')" location="top">
+                <template #activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    :icon="allDeletableSelected ? 'mdi-checkbox-multiple-blank-outline' : 'mdi-checkbox-multiple-marked-outline'"
+                    variant="text"
+                    size="small"
+                    :disabled="batchDeleting"
+                    :aria-label="allDeletableSelected ? tm('skills.clearSelection') : tm('skills.selectAll')"
+                    @click="toggleSelectAll"
+                  />
+                </template>
+              </v-tooltip>
+              <v-tooltip :text="tm('skills.deleteSelected', { count: selectedSkillNames.length })" location="top">
+                <template #activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    icon="mdi-delete-outline"
+                    color="error"
+                    variant="tonal"
+                    size="small"
+                    :disabled="selectedSkillNames.length === 0 || batchDeleting"
+                    :aria-label="tm('skills.deleteSelected', { count: selectedSkillNames.length })"
+                    @click="confirmBatchDelete"
+                  />
+                </template>
+              </v-tooltip>
+              <v-tooltip :text="tm('skills.cancel')" location="top">
+                <template #activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    icon="mdi-close"
+                    variant="text"
+                    size="small"
+                    :disabled="batchDeleting"
+                    :aria-label="tm('skills.cancel')"
+                    @click="cancelBatchSelection"
+                  />
+                </template>
+              </v-tooltip>
+            </template>
+            <v-tooltip v-else :text="tm('skills.select')" location="top">
+              <template #activator="{ props }">
+                <v-btn
+                  v-bind="props"
+                  icon="mdi-select-multiple"
+                  variant="text"
+                  size="small"
+                  :disabled="deletableSkills.length === 0"
+                  :aria-label="tm('skills.select')"
+                  @click="startBatchSelection"
+                />
+              </template>
+            </v-tooltip>
+          </div>
+
+          <div class="skills-list-items">
+            <OutlinedActionListItem
+              v-for="skill in skills"
+              :key="skill.name"
+              :title="skill.name"
+              :class="{ 'skill-list-item--selected': batchSelectionEnabled && selectedSkillNames.includes(skill.name) }"
+              :clickable="!batchSelectionEnabled"
+              @click="openSkillEditor(skill)"
+            >
+            <template #title-prepend>
+              <v-checkbox-btn
+                v-if="batchSelectionEnabled && !isReadOnlySourceSkill(skill)"
+                v-model="selectedSkillNames"
+                :value="skill.name"
+                density="compact"
+                hide-details
+                :disabled="batchDeleting"
+                :aria-label="tm('skills.selectSkill', { name: skill.name })"
+                @click.stop
+              />
+            </template>
             <template #title-extra>
               <v-chip
                 size="x-small"
                 variant="tonal"
                 :color="sourceTypeColor(skill.source_type)"
               >
-                {{ sourceTypeLabel(skill.source_type) }}
+                {{ sourceTypeLabel(skill) }}
               </v-chip>
             </template>
 
@@ -79,7 +151,7 @@
               {{ tm("skills.path") }}: {{ skill.path }}
             </div>
 
-            <template #actions>
+            <template v-if="!batchSelectionEnabled" #actions>
               <v-tooltip :text="tm('skills.download')" location="top">
                 <template #activator="{ props }">
                   <v-btn
@@ -91,7 +163,7 @@
                     :disabled="
                       itemLoading[skill.name] ||
                       false ||
-                      isSandboxPresetSkill(skill)
+                      isReadOnlySourceSkill(skill)
                     "
                     @click.stop="downloadSkill(skill)"
                   />
@@ -106,14 +178,14 @@
                     variant="text"
                     size="small"
                     class="list-action-icon-btn"
-                    :disabled="itemLoading[skill.name] || isSandboxPresetSkill(skill)"
+                    :disabled="itemLoading[skill.name] || isReadOnlySourceSkill(skill)"
                     @click.stop="confirmDelete(skill)"
                   />
                 </template>
               </v-tooltip>
             </template>
 
-            <template #control>
+            <template v-if="!batchSelectionEnabled" #control>
               <v-tooltip location="top">
                 <template #activator="{ props }">
                   <v-switch
@@ -124,7 +196,7 @@
                     inset
                     :model-value="skill.active"
                     :loading="itemLoading[skill.name] || false"
-                    :disabled="itemLoading[skill.name] || isSandboxPresetSkill(skill)"
+                    :disabled="itemLoading[skill.name] || isReadOnlySourceSkill(skill)"
                     @click.stop
                     @update:model-value="toggleSkill(skill)"
                   />
@@ -136,7 +208,8 @@
                 }}</span>
               </v-tooltip>
             </template>
-          </OutlinedActionListItem>
+            </OutlinedActionListItem>
+          </div>
         </div>
       </template>
 
@@ -597,8 +670,47 @@
     </v-dialog>
 
     <v-dialog
+      v-model="batchDeleteDialog"
+      max-width="520px"
+      :persistent="batchDeleting"
+    >
+      <v-card>
+        <v-card-title class="text-h5 pa-5 pb-0">
+          {{ tm("skills.batchDeleteTitle") }}
+        </v-card-title>
+        <v-card-text>
+          <p>{{ tm("skills.batchDeleteMessage", { count: batchDeleteTargets.length }) }}</p>
+          <v-list class="batch-delete-targets mt-3" density="compact">
+            <v-list-item
+              v-for="name in batchDeleteTargets"
+              :key="name"
+              class="batch-delete-target"
+              :title="name"
+              prepend-icon="mdi-puzzle-outline"
+            />
+          </v-list>
+        </v-card-text>
+        <v-card-actions class="justify-end px-5 pb-4">
+          <v-btn variant="text" :disabled="batchDeleting" @click="batchDeleteDialog = false">
+            {{ tm("skills.cancel") }}
+          </v-btn>
+          <v-btn
+            icon="mdi-delete-outline"
+            color="error"
+            variant="tonal"
+            :loading="batchDeleting"
+            :disabled="batchDeleteTargets.length === 0"
+            :aria-label="tm('skills.batchDeleteConfirm', { count: batchDeleteTargets.length })"
+            @click="deleteSelectedSkills"
+          />
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog
       v-model="editorDialog.show"
       max-width="1180px"
+      :fullscreen="$vuetify.display.mdAndDown"
       :persistent="editorDialog.saving"
     >
       <v-card class="skill-editor-dialog">
@@ -793,6 +905,11 @@ export default {
     const deleteDialog = ref(false);
     const deleting = ref(false);
     const skillToDelete = ref(null);
+    const batchSelectionEnabled = ref(false);
+    const selectedSkillNames = ref([]);
+    const batchDeleteTargets = ref([]);
+    const batchDeleteDialog = ref(false);
+    const batchDeleting = ref(false);
     const snackbar = reactive({ show: false, message: "", color: "success" });
 
     const neoLoading = ref(false);
@@ -846,6 +963,16 @@ export default {
 
     const activeReleaseCount = computed(
       () => neoReleases.value.filter((item) => item?.is_active).length,
+    );
+    const deletableSkills = computed(() =>
+      skills.value.filter((skill) => !isReadOnlySourceSkill(skill)),
+    );
+    const allDeletableSelected = computed(
+      () =>
+        deletableSkills.value.length > 0 &&
+        deletableSkills.value.every((skill) =>
+          selectedSkillNames.value.includes(skill.name),
+        ),
     );
     const editorLanguage = computed(() => {
       const path = String(editorDialog.filePath || "").toLowerCase();
@@ -948,20 +1075,32 @@ export default {
       return payload.skills || [];
     };
 
-    const sourceTypeLabel = (sourceType) => {
-      if (sourceType === "sandbox_only") return tm("skills.sourceSandboxOnly");
-      if (sourceType === "both") return tm("skills.sourceBoth");
+    const sourceTypeLabel = (skill) => {
+      if (skill?.source_type === "sandbox_only") return tm("skills.sourceSandboxOnly");
+      if (skill?.source_type === "both") return tm("skills.sourceBoth");
+      if (skill?.source_type === "plugin") {
+        return tm("skills.sourcePlugin", {
+          plugin: skill.plugin_name || skill.source_label || tm("skills.readonly"),
+        });
+      }
       return tm("skills.sourceLocalOnly");
     };
 
     const sourceTypeColor = (sourceType) => {
       if (sourceType === "sandbox_only") return "indigo";
       if (sourceType === "both") return "success";
+      if (sourceType === "plugin") return "secondary";
       return "primary";
     };
 
     const isSandboxPresetSkill = (skill) =>
       skill?.source_type === "sandbox_only";
+    const isPluginProvidedSkill = (skill) =>
+      skill?.source_type === "plugin";
+    const isReadOnlySourceSkill = (skill) =>
+      skill?.readonly === true ||
+      isSandboxPresetSkill(skill) ||
+      isPluginProvidedSkill(skill);
 
     const normalizeNeoItemsPayload = (res) => {
       const payload = res?.data?.data || [];
@@ -1153,8 +1292,21 @@ export default {
       try {
         const res = await axios.get("/api/skills");
         skills.value = normalizeSkillsPayload(res);
+        const deletableNames = new Set(
+          skills.value
+            .filter((skill) => !isReadOnlySourceSkill(skill))
+            .map((skill) => skill.name),
+        );
+        selectedSkillNames.value = selectedSkillNames.value.filter((name) =>
+          deletableNames.has(name),
+        );
+        if (batchSelectionEnabled.value && deletableNames.size === 0) {
+          batchSelectionEnabled.value = false;
+        }
+        return true;
       } catch (_err) {
         showMessage(tm("skills.loadFailed"), "error");
+        return false;
       } finally {
         loading.value = false;
       }
@@ -1232,8 +1384,11 @@ export default {
     };
 
     const toggleSkill = async (skill) => {
-      if (isSandboxPresetSkill(skill)) {
-        showMessage(tm("skills.sandboxPresetReadonly"), "warning");
+      if (isReadOnlySourceSkill(skill)) {
+        showMessage(
+          tm(isPluginProvidedSkill(skill) ? "skills.pluginReadonly" : "skills.sandboxPresetReadonly"),
+          "warning",
+        );
         return;
       }
       const nextActive = !skill.active;
@@ -1259,12 +1414,90 @@ export default {
     };
 
     const confirmDelete = (skill) => {
-      if (isSandboxPresetSkill(skill)) {
-        showMessage(tm("skills.sandboxPresetReadonly"), "warning");
+      if (isReadOnlySourceSkill(skill)) {
+        showMessage(
+          tm(isPluginProvidedSkill(skill) ? "skills.pluginReadonly" : "skills.sandboxPresetReadonly"),
+          "warning",
+        );
         return;
       }
       skillToDelete.value = skill;
       deleteDialog.value = true;
+    };
+
+    const startBatchSelection = () => {
+      selectedSkillNames.value = [];
+      batchDeleteTargets.value = [];
+      batchSelectionEnabled.value = true;
+    };
+
+    const cancelBatchSelection = () => {
+      if (batchDeleting.value) return;
+      batchSelectionEnabled.value = false;
+      selectedSkillNames.value = [];
+      batchDeleteTargets.value = [];
+      batchDeleteDialog.value = false;
+    };
+
+    const toggleSelectAll = () => {
+      selectedSkillNames.value = allDeletableSelected.value
+        ? []
+        : deletableSkills.value.map((skill) => skill.name);
+    };
+
+    const confirmBatchDelete = () => {
+      const selectedNames = new Set(selectedSkillNames.value);
+      batchDeleteTargets.value = deletableSkills.value
+        .filter((skill) => selectedNames.has(skill.name))
+        .map((skill) => skill.name);
+      if (batchDeleteTargets.value.length > 0) {
+        batchDeleteDialog.value = true;
+      }
+    };
+
+    const deleteSelectedSkills = async () => {
+      if (batchDeleting.value || batchDeleteTargets.value.length === 0) return;
+
+      const targets = [...batchDeleteTargets.value];
+      const failed = [];
+      let succeeded = 0;
+      batchDeleting.value = true;
+
+      try {
+        for (const name of targets) {
+          try {
+            const res = await axios.post("/api/skills/delete", { name });
+            if (res?.data?.status === "ok") {
+              succeeded += 1;
+            } else {
+              failed.push(name);
+            }
+          } catch (_err) {
+            failed.push(name);
+          }
+        }
+
+        const refreshed = await fetchSkills();
+        batchDeleteDialog.value = false;
+        batchDeleteTargets.value = [];
+        if (!refreshed) return;
+
+        if (failed.length === 0) {
+          batchSelectionEnabled.value = false;
+          showMessage(tm("skills.batchDeleteSuccess", { count: succeeded }));
+        } else {
+          selectedSkillNames.value = failed;
+          showMessage(
+            tm("skills.batchDeletePartial", {
+              succeeded,
+              failed: failed.length,
+            }),
+            "warning",
+          );
+        }
+      } finally {
+        batchDeleting.value = false;
+      }
     };
 
     const deleteSkill = async () => {
@@ -1291,8 +1524,11 @@ export default {
     };
 
     const downloadSkill = async (skill) => {
-      if (isSandboxPresetSkill(skill)) {
-        showMessage(tm("skills.sandboxPresetReadonly"), "warning");
+      if (isReadOnlySourceSkill(skill)) {
+        showMessage(
+          tm(isPluginProvidedSkill(skill) ? "skills.pluginReadonly" : "skills.sandboxPresetReadonly"),
+          "warning",
+        );
         return;
       }
       itemLoading[skill.name] = true;
@@ -1392,8 +1628,11 @@ export default {
     };
 
     const openSkillEditor = async (skill) => {
-      if (isSandboxPresetSkill(skill)) {
-        showMessage(tm("skills.sandboxPresetReadonly"), "warning");
+      if (isReadOnlySourceSkill(skill)) {
+        showMessage(
+          tm(isPluginProvidedSkill(skill) ? "skills.pluginReadonly" : "skills.sandboxPresetReadonly"),
+          "warning",
+        );
         return;
       }
       resetEditorDialog();
@@ -1733,6 +1972,7 @@ export default {
 
     watch(mode, async (nextMode) => {
       if (nextMode === "neo") {
+        cancelBatchSelection();
         await loadNeoAvailability();
         if (neoEnabled.value) {
           await fetchNeoData();
@@ -1773,6 +2013,11 @@ export default {
       itemLoading,
       deleteDialog,
       deleting,
+      batchSelectionEnabled,
+      selectedSkillNames,
+      batchDeleteTargets,
+      batchDeleteDialog,
+      batchDeleting,
       snackbar,
       neoEnabled,
       neoUnavailableMessage,
@@ -1783,6 +2028,8 @@ export default {
       candidateStatusItems,
       releaseStageItems,
       activeReleaseCount,
+      deletableSkills,
+      allDeletableSelected,
       candidateHeaders,
       releaseHeaders,
       payloadDialog,
@@ -1811,6 +2058,11 @@ export default {
       toggleSkill,
       confirmDelete,
       deleteSkill,
+      startBatchSelection,
+      cancelBatchSelection,
+      toggleSelectAll,
+      confirmBatchDelete,
+      deleteSelectedSkills,
       evaluateCandidate,
       promoteCandidate,
       isCandidatePromoteLoading,
@@ -1825,6 +2077,8 @@ export default {
       sourceTypeLabel,
       sourceTypeColor,
       isSandboxPresetSkill,
+      isPluginProvidedSkill,
+      isReadOnlySourceSkill,
     };
   },
 };
@@ -1835,6 +2089,40 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.skills-list-actions {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.skills-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skill-list-item--selected {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+  background: rgba(var(--v-theme-primary), 0.06);
+}
+
+.batch-delete-targets {
+  background: transparent;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.batch-delete-target {
+  background: rgba(var(--v-theme-on-surface), 0.05);
+  border-radius: 8px;
+}
+
+.batch-delete-target + .batch-delete-target {
+  margin-top: 6px;
 }
 
 .list-action-icon-btn {
@@ -2318,6 +2606,25 @@ export default {
 }
 
 @media (max-width: 860px) {
+  .skill-editor-dialog {
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .skill-editor {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .skill-editor__files {
+    max-height: 20vh;
+  }
+
+  .skill-editor__monaco {
+    min-height: 40vh;
+  }
+
   .skills-upload-capabilities {
     grid-template-columns: 1fr;
   }

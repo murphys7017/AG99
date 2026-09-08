@@ -67,6 +67,7 @@
   },
   "configSelection": {
     "selectConfig": "选择配置文件",
+    "selectSection": "配置分区",
     "normalConfig": "普通",
     "systemConfig": "系统"
   },
