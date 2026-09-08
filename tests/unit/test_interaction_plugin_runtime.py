@@ -49,7 +49,7 @@ from astrbot.core.interaction.types import (
     InteractionRouteDecision,
     InteractionRouteMode,
 )
-from astrbot.core.message.components import Image, Plain
+from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import (
@@ -938,6 +938,51 @@ async def test_persona_materializes_turn_before_delivery_completion():
 
     assert order == ["materialize", "complete", "finalize"]
     event.stop_event.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_visible_message_completion_follows_all_physical_deliveries():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, _key, default=None):
+            return self._extras.get(_key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        async def complete_visible_message(self, *, message_id):
+            order.append(("complete", message_id))
+
+    order = []
+    controller = InteractionOutputController()
+    controller._notify_lifecycle = AsyncMock()
+    controller.build_platform_output_extras = lambda *_args, **_kwargs: {}
+
+    async def send_platform_message(message, _event, **_kwargs):
+        order.append(("send", [type(component).__name__ for component in message.chain]))
+
+    controller._send_platform_message = send_platform_message
+
+    await controller._deliver_visible_message(
+        Event(),
+        MessageChain(
+            [
+                Record(file="reply.wav"),
+                Plain("caption"),
+                Image("reply.png"),
+            ]
+        ),
+        message_kind="core_reply",
+        output_segment_id="logical-message",
+    )
+
+    assert order == [
+        ("send", ["Record"]),
+        ("send", ["Plain", "Image"]),
+        ("complete", "logical-message"),
+    ]
 
 
 @pytest.mark.asyncio

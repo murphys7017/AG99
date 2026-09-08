@@ -2536,7 +2536,7 @@ class InteractionOutputController:
                 f"Interaction output was not delivered: {message_kind}"
             )
         if output_segment_id:
-            await event.complete_output_segment_delivery(
+            await event.complete_visible_message(
                 message_id=output_segment_id,
             )
         record_interaction_turn_visible_message_fingerprint(

@@ -119,6 +119,15 @@ class TestAstrMessageEventVisibleCompletion:
         assert astr_message_event.get_extra("_visible_turn_completion_sent") is None
         assert astr_message_event.requires_visible_turn_completion() is False
 
+    @pytest.mark.asyncio
+    async def test_complete_visible_message_is_noop_for_generic_event(
+        self,
+        astr_message_event,
+    ):
+        await astr_message_event.complete_visible_message(message_id="logical-message")
+
+        assert astr_message_event.get_extra("_visible_turn_completion_sent") is None
+
 
 class TestUnifiedMsgOrigin:
     """Tests for unified_msg_origin property."""

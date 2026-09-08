@@ -344,13 +344,13 @@ class AstrMessageEvent(abc.ABC):
         # completion signal, also dispatch the visible-turn postprocess hook with
         # the final visible reply snapshot.
 
-    async def complete_output_segment_delivery(self, *, message_id: str) -> None:
-        """Mark one logical output segment's physical delivery as complete.
+    async def complete_visible_message(self, *, message_id: str) -> None:
+        """Mark one logical visible message's physical delivery as complete.
 
-        Output controllers invoke this after every component belonging to the
-        logical ``message_id`` has been handed to the platform. Most platforms
-        do not need an acknowledgement, while adapters with atomic client-side
-        segment protocols may override it.
+        Output controllers invoke this after every physical chain belonging to
+        one logical ``message_id`` has been handed to the platform. Most
+        platforms do not need an acknowledgement, while adapters with atomic
+        client-side message protocols may override it.
         """
         del message_id
 
