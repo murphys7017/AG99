@@ -92,6 +92,41 @@ Platform / Internal Event
   选择直接调用、MCP、RPC、CLI 或其他桥接。
 - 不为了文件变小而拆类；只有所有权、生命周期或测试边界发生变化时才拆模块。
 
+## 执行器解耦的契约原则
+
+独立执行器的解耦需要明确任务委托、生命周期、进度和产物交付，但当前不预设远程协议、
+部署形态或实现技术。以下原则用于约束未来的执行边界，而不是替代本地 Runtime 的总线。
+
+可以借鉴的原则：
+
+- 将一次用户对话、一次 Core 执行、一次插件调用和一个可交付产物严格区分。推荐父子关系为
+  `InteractionTurn -> CoreExecution -> PluginInvocation / BackendTask -> OutputArtifact`；各层有
+  自己的 identity、终态和审计记录，不能通过 `event.extra` 或后台回调隐式互相替代。
+- 远程或独立执行器只接收经过授权和脱敏的执行请求，内部模型、工具、记忆和推理过程保持黑盒；
+  AstrBot 只拥有任务提交、取消、进度接收、结果归一化和最终输出编排权。
+- 执行过程应回流为结构化 `ExecutionEvent`，至少能表达 `submitted`、`working`、
+  `progress`、`input_required`、`artifact_ready`、`completed`、`failed` 和 `canceled`。原始
+  token、搜索材料或执行器日志不是用户可见输出；Persona 根据事件语义决定是否表达和如何表达。
+- 执行结果以规范化 artifact 返回，再进入 Persona Expression 和 Output Runtime。任何 Backend
+  或远程 Agent 都不能绕过这两个边界，直接取得平台发送、TTS、effect 或 AG99live 输出权限。
+- 执行器的能力声明、某轮任务的授权和实际执行句柄是三个不同概念。未来可登记支持的输入输出、
+  流式进度、取消、补输入、文件、网络和沙箱能力；本轮能否使用仍由 Capability Snapshot、权限与
+  策略决定。
+- 取消、超时、重试、重启恢复和重复投递必须围绕稳定 `execution_id` 设计，并保留明确的终态，
+  不能依赖进程内 task handle 是否还存在。
+
+明确不做的事：
+
+- 不把 Persona、Router、Core Planner、本地插件或 `FunctionTool` 全部抽象成互相通信的 Agent。
+- 不让执行器能力登记或远程发现绕过管理员配置、会话权限、Capability Snapshot 或网络边界。
+- 不把执行器的消息或 artifact 直接映射为平台消息；它们先是执行事实，是否形成用户表达仍由
+  Persona 和 Output Runtime 决定。
+
+若未来出现第二个经实际验证的执行 Backend，应保持
+`CoreExecutionSpec -> Backend Adapter -> Backend Task -> normalized ExecutionEvent / Artifact`
+这一单向边界。在统一 Execution Event、取消、Ledger owner、Output Port 和跨进程可传输的
+Capability contract 尚未完成前，不创建远程 adapter 或能力发现入口。
+
 ## Phase 0：过渡结构清单与运行事实
 
 状态：已完成。无入口的 pre-Pipeline 路径、影子 Interaction Memory、重复能力摘要和

@@ -359,6 +359,13 @@ Backend 选择之前。Personal Runtime 已拥有 session lease、turn task scop
 需要收口的边界。目标态不得把这些现状固化为各 Backend 各自维护的
 兼容实现。
 
+未来第二个真实 Backend 出现后，远程执行边界只承接受控任务委托、状态/取消和 artifact 回流，
+而不是新的内部总线。其任务状态、能力声明和 artifact 契约应约束 AG99 的
+`InteractionTurn`、`CoreExecution`、插件调用与输出产物边界；远程进度先归一化为
+`ExecutionEvent`，再由 Persona 决定是否可见表达。远程执行器不获得 Persona、Memory、平台
+Event 或 Output Runtime 的直接控制权。只有 Execution Event、取消、Ledger owner、Output Port
+和可跨进程的 capability contract 已稳定，且存在第二个真实 Backend 时，才评估实现对应 adapter。
+
 SubAgent handoff 当前只作为 Native 官方兼容能力保留，不再拥有通用 Capability Snapshot
 字段；Native ContextPack/ToolSet 暂时仍携带其兼容信息。未来 Backend 不承担 AstrBot
 SubAgent 兼容义务，新的专业执行能力优先通过插件 Tool 暴露。
