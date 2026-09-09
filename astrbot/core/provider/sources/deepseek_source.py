@@ -21,6 +21,18 @@ from .openai_source import ProviderOpenAIOfficial
 )
 class ProviderDeepSeek(ProviderOpenAIOfficial):
     @staticmethod
+    def _parse_reasoning_enabled(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "enabled", "on", "1"}:
+                return True
+            if normalized in {"false", "disabled", "off", "none", "0"}:
+                return False
+        return None
+
+    @staticmethod
     def _extract_thinking_type(source: Any) -> str | None:
         if not isinstance(source, dict):
             return None
@@ -38,6 +50,14 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
         payloads: dict,
         extra_body: dict[str, Any] | None = None,
     ) -> bool:
+        configured_reasoning = self._parse_reasoning_enabled(
+            self.provider_config.get("reasoning")
+        )
+        if configured_reasoning is not None:
+            return configured_reasoning
+
+        # Keep existing provider entries working while they migrate from the
+        # provider-native field to the model-level reasoning switch.
         for source in (
             payloads,
             extra_body,
@@ -79,8 +99,18 @@ class ProviderDeepSeek(ProviderOpenAIOfficial):
         self._apply_provider_specific_request_overrides(payloads, extra_body)
         self._drop_provider_only_request_keys(extra_body)
 
-        if "tool_choice" in payloads:
-            extra_body.pop("tool_choice", None)
+        thinking_enabled = self._is_thinking_enabled(payloads, extra_body)
+        if self._parse_reasoning_enabled(self.provider_config.get("reasoning")) is not None:
+            extra_body["thinking"] = {
+                "type": "enabled" if thinking_enabled else "disabled"
+            }
+
+        # DeepSeek thinking requests cannot rely on forced tool selection on
+        # every compatible endpoint. The output contract remains enforced by
+        # AstrBot after the model response is parsed.
+        if thinking_enabled:
+            payloads.pop("tool_choice", None)
+        extra_body.pop("tool_choice", None)
         self._sanitize_assistant_messages(payloads)
         return payloads, extra_body, tools
 

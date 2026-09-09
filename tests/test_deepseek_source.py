@@ -49,11 +49,12 @@ def test_deepseek_uses_protocol_tool_call_output_contract():
     assert result.compiled_output_contract.degraded is False
 
 
-def test_deepseek_thinking_mode_keeps_tool_choice():
+def test_deepseek_reasoning_enabled_maps_to_thinking_and_omits_tool_choice():
     provider = _make_provider(
         {
+            "reasoning": True,
             "custom_extra_body": {
-                "thinking": {"type": "enabled"},
+                "thinking": {"type": "disabled"},
                 "tool_choice": "required",
             }
         }
@@ -67,14 +68,38 @@ def test_deepseek_thinking_mode_keeps_tool_choice():
 
         normalized_payloads, extra_body, _ = provider._prepare_request(payloads, None)
 
-        assert normalized_payloads["tool_choice"] == "required"
+        assert "tool_choice" not in normalized_payloads
         assert "tool_choice" not in extra_body
         assert extra_body["thinking"]["type"] == "enabled"
     finally:
         asyncio.run(provider.terminate())
 
 
-def test_deepseek_non_thinking_mode_keeps_tool_choice():
+def test_deepseek_reasoning_disabled_maps_to_thinking_and_keeps_tool_choice():
+    provider = _make_provider(
+        {
+            "reasoning": "false",
+            "custom_extra_body": {
+                "thinking": {"type": "enabled"},
+            }
+        }
+    )
+    try:
+        payloads = {
+            "model": "deepseek-v4-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tool_choice": "required",
+        }
+
+        normalized_payloads, extra_body, _ = provider._prepare_request(payloads, None)
+
+        assert normalized_payloads["tool_choice"] == "required"
+        assert extra_body["thinking"]["type"] == "disabled"
+    finally:
+        asyncio.run(provider.terminate())
+
+
+def test_deepseek_legacy_thinking_config_is_used_without_reasoning_setting():
     provider = _make_provider(
         {
             "custom_extra_body": {
@@ -97,7 +122,7 @@ def test_deepseek_non_thinking_mode_keeps_tool_choice():
         asyncio.run(provider.terminate())
 
 
-def test_deepseek_default_thinking_mode_keeps_tool_choice():
+def test_deepseek_default_thinking_mode_omits_tool_choice():
     provider = _make_provider()
     try:
         payloads = {
@@ -109,7 +134,7 @@ def test_deepseek_default_thinking_mode_keeps_tool_choice():
         normalized_payloads, extra_body, _ = provider._prepare_request(payloads, None)
 
         assert provider._is_thinking_enabled(normalized_payloads, extra_body) is True
-        assert normalized_payloads["tool_choice"] == "required"
+        assert "tool_choice" not in normalized_payloads
         assert "tool_choice" not in extra_body
     finally:
         asyncio.run(provider.terminate())
@@ -118,9 +143,8 @@ def test_deepseek_default_thinking_mode_keeps_tool_choice():
 def test_deepseek_non_thinking_payload_does_not_inject_empty_reasoning_content():
     provider = ProviderDeepSeek.__new__(ProviderDeepSeek)
     provider.provider_config = {
-        "custom_extra_body": {
-            "thinking": {"type": "disabled"},
-        }
+        "reasoning": False,
+        "custom_extra_body": {},
     }
     provider.client = SimpleNamespace(base_url=SimpleNamespace(host="api.deepseek.com"))
 
@@ -137,9 +161,8 @@ def test_deepseek_non_thinking_payload_does_not_inject_empty_reasoning_content()
 def test_deepseek_non_thinking_payload_removes_existing_reasoning_content():
     provider = ProviderDeepSeek.__new__(ProviderDeepSeek)
     provider.provider_config = {
-        "custom_extra_body": {
-            "thinking": {"type": "disabled"},
-        }
+        "reasoning": False,
+        "custom_extra_body": {},
     }
     provider.client = SimpleNamespace(base_url=SimpleNamespace(host="api.deepseek.com"))
 
@@ -163,9 +186,8 @@ def test_deepseek_non_thinking_payload_removes_existing_reasoning_content():
 def test_deepseek_thinking_payload_keeps_empty_reasoning_content_for_history():
     provider = ProviderDeepSeek.__new__(ProviderDeepSeek)
     provider.provider_config = {
-        "custom_extra_body": {
-            "thinking": {"type": "enabled"},
-        }
+        "reasoning": True,
+        "custom_extra_body": {},
     }
     provider.client = SimpleNamespace(base_url=SimpleNamespace(host="api.deepseek.com"))
 
@@ -182,9 +204,8 @@ def test_deepseek_thinking_payload_keeps_empty_reasoning_content_for_history():
 def test_deepseek_thinking_tool_call_preserves_reasoning_content_for_next_request():
     provider = ProviderDeepSeek.__new__(ProviderDeepSeek)
     provider.provider_config = {
-        "custom_extra_body": {
-            "thinking": {"type": "enabled"},
-        }
+        "reasoning": True,
+        "custom_extra_body": {},
     }
     provider.client = SimpleNamespace(base_url=SimpleNamespace(host="api.deepseek.com"))
 
