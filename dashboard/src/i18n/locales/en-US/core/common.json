@@ -92,7 +92,13 @@
     "addEntry": "Add Entry",
     "empty": "No entries yet, pick a template to add",
     "missingTemplate": "Template not found, please remove and add again.",
-    "unknownTemplate": "Template not specified"
+    "unknownTemplate": "Template not specified",
+    "selectEntry": "Select entry",
+    "editEntry": "Edit entry",
+    "deleteEntry": "Delete entry",
+    "createEntry": "Add entry",
+    "save": "Save",
+    "cancel": "Cancel"
   },
   "list": {
     "addItemPlaceholder": "Add new item, press Enter to confirm",
