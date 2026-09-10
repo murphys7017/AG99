@@ -1072,6 +1072,11 @@
           "description": "Plugin Turn Arbitration Window Seconds",
           "hint": "Measured from the shared t0 of Personal, Router, and the Plugin Job. Expiry only stops the current turn from waiting; it does not cancel the background plugin. Core waits for the plugin decision, not full plugin completion."
         },
+        "persona_plugin_context_mode": {
+          "description": "Persona First-Reply Plugin Context Strategy",
+          "labels": ["Wait for Plugin Context", "Use Base Context Immediately"],
+          "hint": "Controls whether ordinary prompt extensions and contributors block Persona's first request."
+        },
         "plugin_runtime_targets": {
           "description": "Plugin LLM Hook Execution Path",
           "hint": "Controls only LLM lifecycle hooks, not commands, message handlers, event listeners, or FunctionTools. User configuration overrides the plugin declaration; undeclared plugins default to Persona Expression."
@@ -1237,6 +1242,14 @@
         },
         "stream_interjection_max_per_turn": {
           "description": "Max Prompts Per Turn"
+        },
+        "tool_stage_observation_delay_seconds": {
+          "description": "Tool Processing Prompt Delay (Seconds)",
+          "hint": "A research-oriented tool that exceeds this duration may show one in-progress prompt."
+        },
+        "tool_stage_observation_enabled": {
+          "description": "Enable Tool-Stage Prompts",
+          "hint": "Research-oriented tools such as search, query, and read only prompt at completion or timeout."
         }
       }
     }
@@ -1674,6 +1687,14 @@
           },
           "root_dir": {
             "description": "Vector Index Directory"
+          },
+          "prewarm": {
+            "description": "Prewarm Memory Vector Index at Startup",
+            "hint": "Prewarms the vector index and embedding model after provider initialization to avoid first-query cold-start latency."
+          },
+          "prewarm_timeout_seconds": {
+            "description": "Memory Vector Prewarm Timeout",
+            "hint": "Maximum seconds to wait for vector-index and embedding-model prewarming during startup."
           }
         },
         "storage": {

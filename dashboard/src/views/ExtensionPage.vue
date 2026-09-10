@@ -86,6 +86,7 @@ const {
   sortBy,
   sortOrder,
   randomPluginNames,
+  getMarketPluginKey,
   normalizeStr,
   toPinyinText,
   toInitials,
@@ -179,6 +180,7 @@ const selectedMarketPlugin = computed(() => {
   const installedPlugin = selectedInstalledPlugin.value;
   const repo = installedPlugin?.repo?.toLowerCase();
   return (
+    market.find((item) => getMarketPluginKey(item) === selectedPluginId.value) ||
     market.find((item) => item.name === selectedPluginId.value) ||
     market.find((item) => repo && item.repo?.toLowerCase() === repo) ||
     null

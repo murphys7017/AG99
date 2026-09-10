@@ -644,6 +644,42 @@ class TestConfigSchemaToDefault:
         assert config.nested["field1"] == ""
         assert config.nested["field2"] == 0
 
+    def test_dict_schema_preserves_user_defined_entries(self, temp_config_path):
+        """Free-form dict schemas retain user-defined entries on reload."""
+        schema = {
+            "headers": {
+                "type": "dict",
+                "default": {"X-Default": "default"},
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(
+                {"headers": {"X-Default": "override", "X-User": "value"}},
+                f,
+            )
+
+        config = AstrBotConfig(config_path=temp_config_path, schema=schema)
+
+        assert config["headers"] == {
+            "X-Default": "override",
+            "X-User": "value",
+        }
+
+    def test_dict_schema_replaces_non_mapping_values(self, temp_config_path):
+        """Free-form dict schemas still reject invalid non-mapping values."""
+        schema = {
+            "headers": {
+                "type": "dict",
+                "default": {"X-Default": "default"},
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump({"headers": "invalid"}, f)
+
+        config = AstrBotConfig(config_path=temp_config_path, schema=schema)
+
+        assert config["headers"] == {"X-Default": "default"}
+
 
 class TestConfigMetadataI18n:
     """Tests for i18n utils."""

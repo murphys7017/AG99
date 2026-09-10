@@ -392,14 +392,26 @@ export const useExtensionPage = () => {
   });
   
   const RANDOM_PLUGINS_COUNT = 3;
+
+  const getMarketPluginKey = (plugin) => {
+    const marketPluginId = String(plugin?.market_plugin_id || "").trim();
+    if (marketPluginId) return marketPluginId;
+
+    const repo = String(plugin?.repo || "").trim();
+    if (repo) return repo;
+
+    return String(plugin?.name || "").trim();
+  };
   
   const randomPlugins = computed(() => {
     const allPlugins = pluginMarketData.value;
     if (allPlugins.length === 0) return [];
   
-    const pluginsByName = new Map(allPlugins.map((plugin) => [plugin.name, plugin]));
+    const pluginsByKey = new Map(
+      allPlugins.map((plugin) => [getMarketPluginKey(plugin), plugin]),
+    );
     const selected = randomPluginNames.value
-      .map((name) => pluginsByName.get(name))
+      .map((key) => pluginsByKey.get(key))
       .filter(Boolean);
   
     if (selected.length > 0) {
@@ -422,7 +434,7 @@ export const useExtensionPage = () => {
     const shuffled = shufflePlugins(pluginMarketData.value);
     randomPluginNames.value = shuffled
       .slice(0, Math.min(RANDOM_PLUGINS_COUNT, shuffled.length))
-      .map((plugin) => plugin.name);
+      .map((plugin) => getMarketPluginKey(plugin));
   };
   
   // 分页计算属性
@@ -1663,6 +1675,7 @@ export const useExtensionPage = () => {
     sortBy,
     sortOrder,
     randomPluginNames,
+    getMarketPluginKey,
     normalizeStr,
     toPinyinText,
     toInitials,

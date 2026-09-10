@@ -131,6 +131,12 @@ class RespondStage(Stage):
         if result.result_content_type == ResultContentType.STREAMING_FINISH:
             event.set_extra("_streaming_finished", True)
             return
+        if (
+            not result.chain
+            and result.result_content_type != ResultContentType.STREAMING_RESULT
+        ):
+            # An empty chain has no visible content to deliver or finalize.
+            return
         if self._is_current_session_send_message_duplicate(result, event):
             logger.info(
                 "send_message_to_user already delivered the same text in this session; skipping duplicate respond-stage delivery.",

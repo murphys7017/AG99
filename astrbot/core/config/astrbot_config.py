@@ -102,7 +102,7 @@ class AstrBotConfig(dict):
                 stripped_memory_analyzer_models = True
 
         # 检查配置完整性，并插入
-        has_new = self.check_config_integrity(default_config, conf)
+        has_new = self.check_config_integrity(default_config, conf, schema=schema)
         reset_dashboard_password = self._consume_reset_dashboard_password_flag()
         if reset_dashboard_password and "dashboard" in conf:
             self._reset_generated_dashboard_password(conf)
@@ -182,7 +182,9 @@ class AstrBotConfig(dict):
 
         return conf
 
-    def check_config_integrity(self, refer_conf: dict, conf: dict, path=""):
+    def check_config_integrity(
+        self, refer_conf: dict, conf: dict, path="", schema: dict | None = None
+    ):
         """检查配置完整性，如果有新的配置项或顺序不一致则返回 True"""
         has_new = False
 
@@ -191,6 +193,7 @@ class AstrBotConfig(dict):
 
         # 先按照参考配置的顺序添加配置项
         for key, value in refer_conf.items():
+            child_schema = schema.get(key) if schema else None
             if key not in conf:
                 # 配置项不存在，插入默认值
                 logger.info("检查到配置项不存在，已插入默认值")
@@ -206,12 +209,24 @@ class AstrBotConfig(dict):
                     # 类型不匹配，使用默认值
                     new_conf[key] = value
                     has_new = True
+                elif (
+                    isinstance(child_schema, dict)
+                    and child_schema.get("type") == "dict"
+                ):
+                    # Free-form mappings retain user-defined keys.
+                    new_conf[key] = conf[key]
                 else:
                     # 递归检查并同步顺序
                     child_has_new = self.check_config_integrity(
                         value,
                         conf[key],
                         path + "." + key if path else key,
+                        schema=(
+                            child_schema.get("items")
+                            if isinstance(child_schema, dict)
+                            and isinstance(child_schema.get("items"), dict)
+                            else None
+                        ),
                     )
                     new_conf[key] = conf[key]
                     has_new |= child_has_new

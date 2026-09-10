@@ -80,6 +80,7 @@ const {
   sortBy,
   sortOrder,
   randomPluginNames,
+  getMarketPluginKey,
   marketCategoryFilter,
   marketCategoryItems,
   normalizeStr,
@@ -176,10 +177,11 @@ const marketCategorySelectItems = computed(() =>
 );
 
 const openMarketPluginDetail = (plugin) => {
-  if (!plugin?.name) return;
+  const pluginKey = getMarketPluginKey(plugin);
+  if (!pluginKey) return;
   router.push({
     name: "ExtensionDetails",
-    params: { pluginId: plugin.name },
+    params: { pluginId: pluginKey },
     hash: "#market",
   });
 };
@@ -330,7 +332,7 @@ const openMarketPluginDetail = (plugin) => {
               <v-row style="min-height: 26rem" dense>
                 <v-col
                   v-for="plugin in paginatedPlugins"
-                  :key="plugin.name"
+                  :key="getMarketPluginKey(plugin)"
                   cols="12"
                   md="6"
                   lg="4"
@@ -381,7 +383,7 @@ const openMarketPluginDetail = (plugin) => {
                   <v-row class="mb-6" dense>
                     <v-col
                       v-for="plugin in randomPlugins"
-                      :key="`random-${plugin.name}`"
+                      :key="`random-${getMarketPluginKey(plugin)}`"
                       cols="12"
                       md="6"
                       lg="4"

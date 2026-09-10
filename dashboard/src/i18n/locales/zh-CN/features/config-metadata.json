@@ -1074,6 +1074,11 @@
           "description": "插件当前轮仲裁窗口秒数",
           "hint": "从 Personal、Router、Plugin Job 的共同 t0 开始计时。窗口到期只让当前轮停止等待插件，不取消后台插件；Core 等待插件作出决定，不等待插件完整执行。"
         },
+        "persona_plugin_context_mode": {
+          "description": "Persona 首回复的插件上下文策略",
+          "labels": ["等待插件上下文完成", "不等待，直接使用基础上下文"],
+          "hint": "控制普通 Prompt Extension 和 Contributor 是否阻塞 Persona 首次请求。"
+        },
         "plugin_runtime_targets": {
           "description": "插件对话钩子生效链路",
           "hint": "只控制插件对模型请求、响应等环节的增强（LLM 生命周期 Hook），不影响命令、消息 Handler、事件监听器或模型可调用工具；配置优先于插件声明，未声明时默认在人格表达链路生效。"
@@ -1239,6 +1244,14 @@
         },
         "stream_interjection_max_per_turn": {
           "description": "每轮最多提示次数"
+        },
+        "tool_stage_observation_delay_seconds": {
+          "description": "工具处理中提示延迟秒数",
+          "hint": "超过此时长仍未结束的资料型工具可提示一次仍在处理。"
+        },
+        "tool_stage_observation_enabled": {
+          "description": "启用工具阶段提示",
+          "hint": "检索、查询、读取等资料型工具只在完成或超时阶段提示。"
         }
       }
     }
@@ -1676,6 +1689,14 @@
           },
           "root_dir": {
             "description": "向量索引目录"
+          },
+          "prewarm": {
+            "description": "启动时预热记忆向量索引",
+            "hint": "Provider 初始化后预热向量索引和 Embedding 模型，避免首轮记忆检索承担冷启动延迟。"
+          },
+          "prewarm_timeout_seconds": {
+            "description": "记忆向量预热超时",
+            "hint": "启动时等待向量索引和 Embedding 模型预热的最长秒数。"
           }
         },
         "storage": {

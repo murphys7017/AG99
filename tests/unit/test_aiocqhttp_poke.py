@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 import astrbot.core.message.components as Comp
+from astrbot.core.message.message_chain_delivery import _is_empty_message_chain
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -19,10 +19,9 @@ def test_poke_to_dict_matches_onebot_v11_segment_format():
 
 
 @pytest.mark.asyncio
-async def test_respond_stage_treats_poke_with_target_as_non_empty():
-    stage = RespondStage()
+async def test_delivery_validation_treats_poke_with_target_as_non_empty():
     chain = [Comp.Poke(type="126", id=2003)]
-    assert await stage._is_empty_message_chain(chain) is False
+    assert await _is_empty_message_chain(chain) is False
 
 
 @pytest.mark.asyncio
