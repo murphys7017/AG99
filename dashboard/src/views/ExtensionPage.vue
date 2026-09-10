@@ -178,13 +178,29 @@ const selectedInstalledPlugin = computed(() => {
 const selectedMarketPlugin = computed(() => {
   const market = Array.isArray(pluginMarketData.value) ? pluginMarketData.value : [];
   const installedPlugin = selectedInstalledPlugin.value;
-  const repo = installedPlugin?.repo?.toLowerCase();
-  return (
-    market.find((item) => getMarketPluginKey(item) === selectedPluginId.value) ||
-    market.find((item) => item.name === selectedPluginId.value) ||
-    market.find((item) => repo && item.repo?.toLowerCase() === repo) ||
-    null
-  );
+  const repo = String(installedPlugin?.repo || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+  const marketPluginByKey =
+    market.find((item) => getMarketPluginKey(item) === selectedPluginId.value) || null;
+  const marketPluginByName =
+    market.find((item) => item.name === selectedPluginId.value) || null;
+  const marketPluginByRepo =
+    market.find(
+      (item) =>
+        repo &&
+        String(item?.repo || "")
+          .trim()
+          .replace(/\/+$/, "")
+          .toLowerCase() === repo,
+    ) || null;
+
+  if (selectedDetailTab.value === "installed") {
+    return marketPluginByRepo || marketPluginByKey || marketPluginByName;
+  }
+
+  return marketPluginByKey || marketPluginByName || marketPluginByRepo;
 });
 
 const selectedDetailPlugin = computed(() => {
