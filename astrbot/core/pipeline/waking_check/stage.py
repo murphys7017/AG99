@@ -135,9 +135,9 @@ async def _discover_activated_handlers(
                     break
             except Exception as exc:
                 await event.send(
-                    MessageEventResult().message(
-                        f"插件 {star_map[handler.handler_module_path].name}: {exc}",
-                    ),
+                    MessageEventResult()
+                    .message(f"插件 {star_map[handler.handler_module_path].name}: {exc}")
+                    .use_markdown(False),
                 )
                 event.stop_event()
                 passed = False
