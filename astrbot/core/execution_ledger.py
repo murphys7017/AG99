@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
 from astrbot.core.db import BaseDatabase
 from astrbot.core.db.po import CoreExecutionRecord
+
+if TYPE_CHECKING:
+    from astrbot.core.execution import CoreExecutionSpec
 
 
 class CoreExecutionLedger:
@@ -37,6 +40,37 @@ class CoreExecutionLedger:
         if last_error is not None:
             raise last_error
         return False
+
+    async def append_execution(
+        self,
+        *,
+        execution_spec: CoreExecutionSpec,
+        conversation_id: str,
+        executor_id: str,
+        status: str,
+        messages: list[dict[str, Any]] | None = None,
+        result: str | None = None,
+        error: str | None = None,
+        token_usage: dict[str, Any] | None = None,
+    ) -> bool:
+        """Materialize and persist one executor attempt from Core facts."""
+
+        record = CoreExecutionRecord(
+            execution_id=execution_spec.execution_id,
+            conversation_id=conversation_id,
+            turn_id=execution_spec.turn_id,
+            core_task_id=execution_spec.core_task_id,
+            parent_execution_id=execution_spec.parent_execution_id,
+            attempt=execution_spec.attempt,
+            executor_id=executor_id,
+            status=status,
+            task_spec=execution_spec.task_spec,
+            messages=messages,
+            result=result,
+            error=error,
+            token_usage=token_usage,
+        )
+        return await self.append(record)
 
     async def recent(
         self,

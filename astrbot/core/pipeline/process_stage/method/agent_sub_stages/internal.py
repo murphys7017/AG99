@@ -24,7 +24,6 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildResult,
     build_main_agent,
 )
-from astrbot.core.db.po import CoreExecutionRecord as CoreExecutionLedgerRecord
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
@@ -903,16 +902,11 @@ class InternalAgentSubStage(Stage):
         ledger = self.ctx.plugin_manager.context.core_execution_ledger
         if ledger is None:
             return
-        record = CoreExecutionLedgerRecord(
-            execution_id=execution_spec.execution_id,
+        await ledger.append_execution(
+            execution_spec=execution_spec,
             conversation_id=req.conversation.cid,
-            turn_id=execution_spec.turn_id,
-            core_task_id=execution_spec.core_task_id,
-            parent_execution_id=execution_spec.parent_execution_id,
-            attempt=execution_spec.attempt,
             executor_id="native",
             status="aborted" if user_aborted else "completed",
-            task_spec=execution_spec.task_spec,
             messages=messages,
             result=(
                 llm_response.completion_text
@@ -923,7 +917,6 @@ class InternalAgentSubStage(Stage):
                 runner_stats.token_usage.__dict__ if runner_stats is not None else None
             ),
         )
-        await ledger.append(record)
         event.set_extra(
             "_core_execution_ledger_recorded_id",
             execution_spec.execution_id,
@@ -953,24 +946,18 @@ class InternalAgentSubStage(Stage):
                 )
             except Exception:  # noqa: BLE001
                 messages = []
-        record = CoreExecutionLedgerRecord(
-            execution_id=execution_spec.execution_id,
-            conversation_id=req.conversation.cid,
-            turn_id=execution_spec.turn_id,
-            core_task_id=execution_spec.core_task_id,
-            parent_execution_id=execution_spec.parent_execution_id,
-            attempt=execution_spec.attempt,
-            executor_id="native",
-            status="failed",
-            task_spec=execution_spec.task_spec,
-            messages=messages,
-            error=str(error),
-        )
         try:
             ledger = self.ctx.plugin_manager.context.core_execution_ledger
             if ledger is None:
                 return
-            await ledger.append(record)
+            await ledger.append_execution(
+                execution_spec=execution_spec,
+                conversation_id=req.conversation.cid,
+                executor_id="native",
+                status="failed",
+                messages=messages,
+                error=str(error),
+            )
         except Exception:  # noqa: BLE001
             logger.warning("Failed to persist Core execution failure", exc_info=True)
 

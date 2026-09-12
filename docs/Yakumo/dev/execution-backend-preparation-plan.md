@@ -471,8 +471,9 @@ Core Head 内部契约；没有新增远程协议、跨进程队列或第二套�
   归一化内部事件的第一块事实基础。下一步先统一取消/超时 owner 和 Ledger 写入归属，再在
   Core 内部建立 CoreExecutionSession 与 Native Executor Adapter。
 
-- Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；在统一
-  Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
+- Core Execution Ledger 现在从 `CoreExecutionSpec` 自行构造成功、失败和中止记录，并保留
+  既有追加、重试和留存策略；`InternalAgentSubStage` 仍负责 Native 运行证据提取、终态选择和
+  调用时机。取消/超时与最终 Ledger 调用 owner 尚未迁移到统一执行生命周期。
 - Third-party Agent Stage 仍走官方兼容准备链，尚未以 `CoreExecutionSpec` 作为统一输入。
   它可以复用部分 Core task、Hook 和 capability 授权边界，但仍是需要保留的兼容现状，
   不是新 Executor Body 的实现模板。
@@ -584,6 +585,17 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   入口会通过 Session 统一校验、编号，再保留原有 journal/trace 行为。该切片不改变 Personal
   输出、turn lease、执行和 Ledger 行为，也不创建真实队列或新的 Executor Body。下一步才是
   将这个临时 adapter 收口为明确的 Core Head lifecycle owner。
+
+### 2026-09-12 Phase 9 第二个实现切片
+
+- `CoreExecutionLedger.append_execution()` 现在以 `CoreExecutionSpec`、会话 ID、执行器 ID、
+  状态和 Native 已提取的证据构造 `CoreExecutionRecord`，随后复用既有 `append()` 的唯一 ID、
+  SQLite 重试与按会话留存行为。数据库 schema、读取投影和可见对话历史均未改变。
+- `InternalAgentSubStage` 不再导入或直接构造持久化对象；它只保留 Native runner 的消息证据
+  提取和 completed/failed/aborted 状态选择。这是 Ledger 的记录材料归属收口，不代表 Stage
+  已不再参与生命周期，也不代表取消/超时 owner 或新的 Executor Body 已落地。
+- 下一步仍应先定义明确的 Core Head lifecycle owner，再迁移取消、超时和最终 Ledger 调用；
+  不在此阶段引入传输队列、远程协议或输出路径变更。
 
 ## 非目标
 
