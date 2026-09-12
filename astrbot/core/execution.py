@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 CORE_EXECUTION_SPEC_EXTRA_KEY = "_core_execution_spec"
 CORE_EXECUTION_SESSION_EXTRA_KEY = "_core_execution_session"
+CORE_EXECUTION_LIFECYCLE_EXTRA_KEY = "_core_execution_lifecycle"
 
 
 class CoreExecutionEventKind(str, Enum):
@@ -333,6 +334,108 @@ class CoreExecutionSession:
             raise ValueError(f"{kind.value} event is invalid in {self.status.value} state")
 
 
+@dataclass(slots=True)
+class CoreExecutionLifecycle:
+    """Own one in-process Core execution session's command and event boundary.
+
+    This lifecycle owner deliberately does not run an executor, persist records,
+    or send platform output. It provides the stable Core-side coordination point
+    that Native lifecycle adaptation can use while those responsibilities remain
+    in their existing owners.
+    """
+
+    session: CoreExecutionSession
+    _submit_command_id: str | None = field(default=None, init=False, repr=False)
+
+    @property
+    def spec(self) -> CoreExecutionSpec:
+        return self.session.spec
+
+    def start(self) -> bool:
+        """Accept the one initial submit command for this execution."""
+
+        if self._submit_command_id is not None:
+            return False
+        if self.session.status is not CoreExecutionSessionStatus.CREATED:
+            return False
+        command = CoreCommand(
+            execution_id=self.spec.execution_id,
+            turn_id=self.spec.turn_id,
+            kind=CoreCommandKind.SUBMIT,
+            execution_spec=self.spec,
+        )
+        accepted = self.accept_command(command)
+        if accepted:
+            self._submit_command_id = command.command_id
+        return accepted
+
+    def accept_command(self, command: CoreCommand) -> bool:
+        """Accept an external command through the owning Core session."""
+
+        return self.session.accept_command(command)
+
+    def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
+        """Sequence an executor fact through the owning Core session."""
+
+        return self.session.record_event(execution_event)
+
+    def ledger_status(self, *, user_aborted: bool = False) -> str | None:
+        """Project the terminal Core fact to the existing Ledger status value."""
+
+        terminal = self.session.terminal_event
+        if terminal is None:
+            return None
+        if terminal.kind is CoreExecutionEventKind.COMPLETED:
+            return "completed"
+        if terminal.kind is CoreExecutionEventKind.FAILED:
+            return "failed"
+        if terminal.kind is CoreExecutionEventKind.CANCELLED:
+            return "aborted" if user_aborted else "cancelled"
+        return None
+
+
+def bind_core_execution_lifecycle(
+    event: AstrMessageEvent,
+    spec: CoreExecutionSpec,
+) -> CoreExecutionLifecycle:
+    """Bind the event bridge to the Core-owned lifecycle for one execution."""
+
+    existing = event.get_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY)
+    if isinstance(existing, CoreExecutionLifecycle):
+        if (
+            existing.spec.execution_id == spec.execution_id
+            and existing.spec.turn_id == spec.turn_id
+        ):
+            return existing
+        raise ValueError("CoreExecutionLifecycle is already bound to another execution")
+
+    existing_session = event.get_extra(CORE_EXECUTION_SESSION_EXTRA_KEY)
+    if isinstance(existing_session, CoreExecutionSession):
+        if (
+            existing_session.spec.execution_id != spec.execution_id
+            or existing_session.spec.turn_id != spec.turn_id
+        ):
+            raise ValueError("CoreExecutionSession is already bound to another execution")
+        lifecycle = CoreExecutionLifecycle(session=existing_session)
+    else:
+        lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+        event.set_extra(CORE_EXECUTION_SESSION_EXTRA_KEY, lifecycle.session)
+
+    event.set_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY, lifecycle)
+    return lifecycle
+
+
+def start_core_execution_lifecycle(
+    event: AstrMessageEvent,
+    spec: CoreExecutionSpec,
+) -> CoreExecutionLifecycle:
+    """Bind and submit one execution through the in-process Core lifecycle."""
+
+    lifecycle = bind_core_execution_lifecycle(event, spec)
+    lifecycle.start()
+    return lifecycle
+
+
 def bind_core_execution_session(
     event: AstrMessageEvent,
     spec: CoreExecutionSpec,
@@ -344,17 +447,16 @@ def bind_core_execution_session(
     Interaction turn ownership of that session.
     """
 
-    existing = event.get_extra(CORE_EXECUTION_SESSION_EXTRA_KEY)
-    if isinstance(existing, CoreExecutionSession):
-        if (
-            existing.spec.execution_id == spec.execution_id
-            and existing.spec.turn_id == spec.turn_id
-        ):
-            return existing
-        raise ValueError("CoreExecutionSession is already bound to another execution")
-    session = CoreExecutionSession(spec=spec)
-    event.set_extra(CORE_EXECUTION_SESSION_EXTRA_KEY, session)
-    return session
+    return bind_core_execution_lifecycle(event, spec).session
+
+
+def get_core_execution_lifecycle(
+    event: AstrMessageEvent,
+) -> CoreExecutionLifecycle | None:
+    """Return the Core lifecycle owner bound to the current event bridge."""
+
+    lifecycle = event.get_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY)
+    return lifecycle if isinstance(lifecycle, CoreExecutionLifecycle) else None
 
 
 def get_core_execution_session(event: AstrMessageEvent) -> CoreExecutionSession | None:
@@ -599,12 +701,14 @@ def _slot_value(pack: ContextPack, name: str) -> Any:
 __all__ = [
     "CORE_EXECUTION_SPEC_EXTRA_KEY",
     "CORE_EXECUTION_SESSION_EXTRA_KEY",
+    "CORE_EXECUTION_LIFECYCLE_EXTRA_KEY",
     "CoreCapabilitySnapshot",
     "CoreCommand",
     "CoreCommandKind",
     "CoreEvent",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
+    "CoreExecutionLifecycle",
     "CoreExecutionSession",
     "CoreExecutionSessionStatus",
     "CoreExecutionSpec",
@@ -612,6 +716,9 @@ __all__ = [
     "NativeExecutionInput",
     "bind_effective_core_request",
     "bind_effective_core_capabilities",
+    "bind_core_execution_lifecycle",
     "bind_core_execution_session",
+    "get_core_execution_lifecycle",
     "get_core_execution_session",
+    "start_core_execution_lifecycle",
 ]

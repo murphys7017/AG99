@@ -402,11 +402,12 @@ Phase 0 已确认的准备边界：
   身份、命令幂等、会话状态和终态冲突保护。这些类型只管理协调事实，不创建队列、不运行
   Executor，也不访问平台输出。
 - 当前 Native 生命周期已经在最终 `CoreExecutionSpec` 形成后，由 `InternalAgentSubStage`
-  建立 event-scoped `CoreExecutionSession`；既有执行事实经过 Session 校验并获得递增序号，
-  再写入 turn journal 和 trace。该 attachment 只是现有 Native lifecycle adapter，不将
-  Session 放入 Personal turn state，也不代表 Core Head 已完成。
-- 后续将 `CoreExecutionSession` 移入明确的 Core Head lifecycle owner，补齐取消句柄和
-  artifact 汇总的实际归属；当前类型只覆盖身份、状态、命令幂等和事件序号。
+  启动 event-scoped `CoreExecutionLifecycle`。它接受一次 `submit` 命令并成为执行事件写入
+  `CoreExecutionSession` 的唯一协调点；既有事实再写入 turn journal 和 trace。event extra
+  仅是当前 Native/Interaction 的桥接，不将 Lifecycle 放入 Personal turn state，也不代表
+  完整的 Core Head 已完成。
+- 后续将取消句柄、超时收口、artifact 汇总和最终 Ledger 调用迁入该 lifecycle owner；当前
+  owner 只覆盖提交命令、身份、状态、命令幂等和事件序号。
 - 将 `CoreCommand` 与 `CoreEvent` 接入进程内双向通信：Personal 只向 Core Head 发送任务/
   补充输入/取消，Core Head 向 Personal 发布状态/进度/产物/终态；具体队列和消费策略仍待
   生命周期 owner 明确后实现。
@@ -423,7 +424,7 @@ Phase 0 已确认的准备边界：
 状态、取消、结果和错误均通过统一事件回流；Native Executor 与未来 Executor 使用相同的
 Core Head 内部契约；没有新增远程协议、跨进程队列或第二套对外输出路径。
 
-## 当前进度（截至 2026-09-12）
+## 当前进度（截至 2026-09-13）
 
 已经完成：
 
@@ -594,8 +595,23 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - `InternalAgentSubStage` 不再导入或直接构造持久化对象；它只保留 Native runner 的消息证据
   提取和 completed/failed/aborted 状态选择。这是 Ledger 的记录材料归属收口，不代表 Stage
   已不再参与生命周期，也不代表取消/超时 owner 或新的 Executor Body 已落地。
-- 下一步仍应先定义明确的 Core Head lifecycle owner，再迁移取消、超时和最终 Ledger 调用；
-  不在此阶段引入传输队列、远程协议或输出路径变更。
+- 该切片完成前，下一阶段是定义明确的 Core Head lifecycle owner；其后才迁移取消、超时和
+  最终 Ledger 调用，且不引入传输队列、远程协议或输出路径变更。
+
+### 2026-09-13 Phase 9 第三个实现切片
+
+- `CoreExecutionLifecycle` 成为一个 execution-scoped 的进程内协调 owner：它只接受一次
+  `submit` 命令，并让 Native 的 `submitted`、`working`、progress、artifact 与终态事实通过
+  同一 Session 排序和校验。重复启动兼容地无操作，避免旧 Session bridge 造成二次提交异常。
+- Lifecycle 还从 Session 的唯一终态归一化现有 Ledger 状态：`completed`、`failed` 和
+  `cancelled`，用户主动停止保留兼容的 `aborted` 标记。这样 Native runner 内部已失败、但未向
+  Stage 抛异常时，不会再被普通收尾路径错误记作 `completed`。
+- `InteractionTurnState` 的既有 journal/trace 投影现在通过 Lifecycle 写入，而非直接操作
+  `CoreExecutionSession`；`InternalAgentSubStage` 只负责在最终 Spec 形成后启动 Lifecycle。
+  Ledger 的最终调用位置尚在 Stage，但其状态依据 Lifecycle 终态而非 Stage 局部推断；当前没有
+  迁移 executor runner、取消句柄或任何平台输出职责。
+- 下一步仍是将取消、超时、artifact 汇总和最终 Ledger 调用移动到这个 owner；先以 Native
+  实际生命周期验证，不提前创建队列、可替换 Executor 接口或远程通信层。
 
 ## 非目标
 

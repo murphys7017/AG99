@@ -29,8 +29,9 @@ from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreExecutionEventKind,
     CoreExecutionSpec,
-    bind_core_execution_session,
     bind_effective_core_request,
+    get_core_execution_lifecycle,
+    start_core_execution_lifecycle,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -491,7 +492,7 @@ class InternalAgentSubStage(Stage):
                         CORE_EXECUTION_SPEC_EXTRA_KEY,
                         effective_execution_spec,
                     )
-                    bind_core_execution_session(event, effective_execution_spec)
+                    start_core_execution_lifecycle(event, effective_execution_spec)
                     record_interaction_turn_core_execution_event(
                         event,
                         kind=CoreExecutionEventKind.SUBMITTED,
@@ -902,17 +903,24 @@ class InternalAgentSubStage(Stage):
         ledger = self.ctx.plugin_manager.context.core_execution_ledger
         if ledger is None:
             return
+        lifecycle = get_core_execution_lifecycle(event)
+        status = (
+            lifecycle.ledger_status(user_aborted=user_aborted)
+            if lifecycle is not None
+            else None
+        )
+        status = status or ("aborted" if user_aborted else "completed")
+        completion_text = str(
+            llm_response.completion_text if llm_response is not None else ""
+        )
         await ledger.append_execution(
             execution_spec=execution_spec,
             conversation_id=req.conversation.cid,
             executor_id="native",
-            status="aborted" if user_aborted else "completed",
+            status=status,
             messages=messages,
-            result=(
-                llm_response.completion_text
-                if llm_response is not None
-                else ""
-            ),
+            result=completion_text if status != "failed" else None,
+            error=(completion_text or None) if status == "failed" else None,
             token_usage=(
                 runner_stats.token_usage.__dict__ if runner_stats is not None else None
             ),

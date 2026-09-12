@@ -14,6 +14,7 @@ from astrbot.core.execution import (
     CoreExecutionEvent,
     CoreExecutionEventKind,
     CoreExecutionSpec,
+    get_core_execution_lifecycle,
     get_core_execution_session,
 )
 from astrbot.core.prompt.context_types import ContextPack
@@ -1037,8 +1038,13 @@ def record_interaction_turn_core_execution_event(
     ):
         return None
 
+    execution_lifecycle = get_core_execution_lifecycle(event)
     execution_session = get_core_execution_session(event)
-    if execution_session is not None:
+    if execution_lifecycle is not None:
+        envelope = execution_lifecycle.record_event(execution_event)
+        if envelope.execution is not execution_event:
+            return None
+    elif execution_session is not None:
         envelope = execution_session.record_event(execution_event)
         if envelope.execution is not execution_event:
             return None
@@ -1066,7 +1072,9 @@ def record_interaction_turn_core_execution_event(
                 executor_id=execution_event.executor_id,
                 kind=execution_event.kind.value,
                 sequence=(
-                    envelope.sequence if execution_session is not None else None
+                    envelope.sequence
+                    if execution_lifecycle is not None or execution_session is not None
+                    else None
                 ),
                 metadata=execution_event.metadata_for_trace(),
             )

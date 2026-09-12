@@ -7,11 +7,14 @@ from astrbot.core.execution import (
     CoreEvent,
     CoreExecutionEvent,
     CoreExecutionEventKind,
+    CoreExecutionLifecycle,
     CoreExecutionSession,
     CoreExecutionSessionStatus,
     CoreExecutionSpec,
     bind_core_execution_session,
+    get_core_execution_lifecycle,
     get_core_execution_session,
+    start_core_execution_lifecycle,
 )
 from astrbot.core.interaction.turn_state import (
     MAX_CORE_EXECUTION_EVENTS_PER_TURN,
@@ -160,6 +163,68 @@ def test_core_execution_journal_uses_bound_session_sequence():
     assert [item.sequence for item in session.events] == [1, 2]
     assert all(isinstance(item, CoreEvent) for item in session.events)
     assert event.trace.records[-1][1]["sequence"] == 2
+
+
+def test_core_execution_lifecycle_accepts_native_submit_once():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+
+    lifecycle = start_core_execution_lifecycle(event, spec)
+
+    assert get_core_execution_lifecycle(event) is lifecycle
+    assert get_core_execution_session(event) is lifecycle.session
+    assert lifecycle.start() is False
+
+    submitted = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    assert submitted is not None
+    assert lifecycle.session.status is CoreExecutionSessionStatus.SUBMITTED
+    assert [item.sequence for item in lifecycle.session.events] == [1]
+    assert lifecycle.start() is False
+
+
+def test_core_execution_lifecycle_normalizes_terminal_ledger_status():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    failed = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    assert failed.start() is True
+    failed.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    failed.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.FAILED,
+            executor_id="native",
+        )
+    )
+    assert failed.ledger_status() == "failed"
+
+    cancelled_spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-2",
+    )
+    cancelled = CoreExecutionLifecycle(
+        session=CoreExecutionSession(spec=cancelled_spec)
+    )
+    cancelled.record_event(
+        CoreExecutionEvent.from_spec(
+            cancelled_spec,
+            kind=CoreExecutionEventKind.CANCELLED,
+            executor_id="native",
+        )
+    )
+    assert cancelled.ledger_status() == "cancelled"
+    assert cancelled.ledger_status(user_aborted=True) == "aborted"
 
 
 def test_core_execution_session_orders_events_and_accepts_commands_once():
