@@ -67,7 +67,7 @@ class AstrBotConfig(dict):
         object.__setattr__(self, "default_config", default_config)
         object.__setattr__(self, "schema", schema)
 
-        if schema:
+        if schema is not None:
             default_config = self._config_schema_to_default_config(schema)
 
         if not self.check_exist():
@@ -265,6 +265,7 @@ class AstrBotConfig(dict):
         if replace_config:
             self.update(replace_config)
         directory = os.path.dirname(os.path.abspath(self.config_path)) or "."
+        os.makedirs(directory, exist_ok=True)
         fd, temp_path = tempfile.mkstemp(
             dir=directory,
             prefix=f".{os.path.basename(self.config_path)}.",

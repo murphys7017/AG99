@@ -7,7 +7,7 @@ task:
     date: '2026-09-12'
     changes: Introduce a provider-neutral Core execution event journal for Interaction Native execution, without changing output delivery, Ledger persistence, or Backend selection.
     validation: Focused execution-event and Core bridge tests passed; compileall, targeted Ruff, and git diff --check passed.
-    gaps: No post-change real platform execution trace yet; the active AstrBot processes started on 2026-09-11 and have not loaded this working tree slice. Third-party runner, persisted execution-event history, cancellation ownership, and Output Port migration remain deferred.
+    gaps: No post-change real platform execution trace yet. The active AstrBot instance was restarted from this working tree, but the local Dashboard default credentials are unavailable, so no authenticated WebChat smoke message was injected. Third-party runner, persisted execution-event history, cancellation ownership, and Output Port migration remain deferred.
   scope: Start execution-backend preparation with the smallest shared lifecycle fact boundary. Native Interaction Core emits submitted, working, progress, artifact-ready, completed, failed, or cancelled events into its owning turn journal. Preserve existing Persona, Output Runtime, Core Ledger, Event/Pipeline/plugin compatibility, and Native-only execution behavior. Do not create a Backend abstraction, remote protocol, persistent event store, or change visible output policy.
 context:
   confidence: high

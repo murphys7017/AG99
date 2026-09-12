@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import mimetypes
 import os
 import socket
 from datetime import datetime
@@ -40,6 +41,9 @@ from .routes.route import Response, RouteContext
 from .routes.session_management import SessionManagementRoute
 from .routes.subagent import SubAgentRoute
 from .routes.t2i import T2iRoute
+
+if os.name == "nt":
+    mimetypes.add_type("image/svg+xml", ".svg", strict=True)
 
 
 class _AddrWithPort(Protocol):

@@ -232,7 +232,6 @@ def test_build_default_memory_config_payload_contains_expected_sections():
     assert payload["storage"]["sqlite_path"] == "data/memory/memory.db"
     assert payload["storage"]["docs_root"] == "data/memory/long_term"
     assert payload["storage"]["projections_root"] == "data/memory/projections"
-    assert payload["identity"]["mappings_path"] == "data/memory/identity_mappings.yaml"
     assert payload["identity"]["bindings"] == []
     assert payload["vector_index"]["root_dir"] == "data/memory/vector_index"
     assert payload["keyword_extraction"]["enabled"] is True

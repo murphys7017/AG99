@@ -110,9 +110,9 @@ Memory 配置已进入 AstrBot 统一配置，不存在 `data/memory/config.yaml
 - `data/memory/long_term/`：长期记忆正文。
 - `data/memory/projections/`：可审阅投影。
 - `data/memory/vector_index/`：向量索引。
-- `data/memory/identity_mappings.yaml`：显式身份映射输入。
 
-这些路径可通过统一 `memory.storage`、`memory.vector_index` 和 `memory.identity` 配置覆盖。
+这些路径可通过统一 `memory.storage` 和 `memory.vector_index` 配置覆盖。跨平台身份映射
+仅由当前 AstrBot 配置档中的 `memory.identity.bindings` 管理；Dashboard 显示的列表即运行时使用的映射。
 
 ## 边界约束
 

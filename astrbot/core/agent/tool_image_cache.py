@@ -91,8 +91,8 @@ class ToolImageCache:
         file_name = f"{tool_call_id}_{index}{ext}"
         file_path = os.path.join(self._cache_dir, file_name)
 
-        # Decode and save the image
         try:
+            os.makedirs(self._cache_dir, exist_ok=True)
             image_bytes = base64.b64decode(base64_data)
             with open(file_path, "wb") as f:
                 f.write(image_bytes)

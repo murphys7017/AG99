@@ -237,9 +237,6 @@ Consolidated experiences:
 """,
 }
 
-DEFAULT_IDENTITY_MAPPINGS_PAYLOAD: dict[str, list[dict[str, str]]] = {"bindings": []}
-
-
 @dataclass(slots=True)
 class MemoryStorageConfig:
     sqlite_path: Path
@@ -251,11 +248,6 @@ class MemoryStorageConfig:
 class MemoryIdentityConfig:
     enabled: bool = True
     bindings: list[dict[str, str]] | None = None
-    mappings_path: Path = field(
-        default_factory=lambda: resolve_memory_path(
-            "data/memory/identity_mappings.yaml"
-        )
-    )
 
 
 @dataclass(slots=True)
@@ -421,10 +413,6 @@ class MemoryConfig:
     analysis: MemoryAnalysisConfig = field(default_factory=MemoryAnalysisConfig)
 
 
-def get_default_identity_mappings_path() -> Path:
-    return resolve_memory_path("data/memory/identity_mappings.yaml")
-
-
 def _build_default_analysis_analyzers() -> dict[str, MemoryAnalyzerConfig]:
     analyzers: dict[str, MemoryAnalyzerConfig] = {}
     for analyzer_name, (
@@ -500,28 +488,6 @@ def ensure_memory_config_file(
         encoding="utf-8",
     )
     return config_path
-
-
-def ensure_identity_mappings_file(
-    path: Path | None = None,
-    *,
-    overwrite: bool = False,
-) -> Path:
-    mappings_path = path or get_default_identity_mappings_path()
-    mappings_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if mappings_path.exists() and not overwrite:
-        return mappings_path
-
-    mappings_path.write_text(
-        yaml.safe_dump(
-            DEFAULT_IDENTITY_MAPPINGS_PAYLOAD,
-            allow_unicode=False,
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    return mappings_path
 
 
 def _as_bool(value: object, default: bool) -> bool:
@@ -682,12 +648,6 @@ def load_memory_config(
                 identity_payload.get("bindings")
                 if isinstance(identity_payload.get("bindings"), list)
                 else None
-            ),
-            mappings_path=resolve_memory_path(
-                _as_str(
-                    identity_payload.get("mappings_path"),
-                    "data/memory/identity_mappings.yaml",
-                )
             ),
         ),
         storage=MemoryStorageConfig(
@@ -888,11 +848,9 @@ def ensure_memory_runtime_dirs(config: MemoryConfig) -> None:
     config.storage.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     config.storage.docs_root.mkdir(parents=True, exist_ok=True)
     config.storage.projections_root.mkdir(parents=True, exist_ok=True)
-    config.identity.mappings_path.parent.mkdir(parents=True, exist_ok=True)
     config.vector_index.root_dir.mkdir(parents=True, exist_ok=True)
     config.analysis.prompts_root.mkdir(parents=True, exist_ok=True)
     ensure_default_memory_prompt_files(config.analysis.prompts_root)
-    ensure_identity_mappings_file(config.identity.mappings_path)
 
 
 def ensure_default_memory_prompt_files(

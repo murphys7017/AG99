@@ -1267,7 +1267,7 @@ CONFIG_METADATA_2 = {
                         "provider_type": "chat_completion",
                         "enable": True,
                         "key": [],
-                        "api_base": "https://api.anthropic.com/v1",
+                        "api_base": "https://api.anthropic.com",
                         "timeout": 120,
                         "proxy": "",
                         "custom_headers": {},
@@ -4930,11 +4930,6 @@ CONFIG_METADATA_3 = {
                     "memory.analysis.stages": {
                         "description": "分析阶段完整配置",
                         "type": "dict",
-                        "collapsed": True,
-                    },
-                    "memory.identity.mappings_path": {
-                        "description": "身份映射文件路径",
-                        "type": "string",
                         "collapsed": True,
                     },
                     "memory.storage.sqlite_path": {

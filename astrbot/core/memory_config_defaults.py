@@ -34,7 +34,6 @@ def build_default_memory_config_payload() -> dict:
         "identity": {
             "enabled": True,
             "bindings": [],
-            "mappings_path": "data/memory/identity_mappings.yaml",
         },
         "storage": {
             "sqlite_path": "data/memory/memory.db",

@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-
-import yaml
 
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
-from .config import MemoryConfig, ensure_identity_mappings_file, get_memory_config
+from .config import MemoryConfig, get_memory_config
 from .store import MemoryStore
 from .types import MemoryIdentity, MemoryIdentityBinding
 
@@ -27,7 +24,6 @@ class MemoryIdentityMappingService:
     ) -> None:
         self.store = store
         self.config = config or store.config or get_memory_config()
-        self.mappings_path = Path(self.config.identity.mappings_path)
 
     async def resolve_canonical_user_id(self, platform_user_key: str) -> str | None:
         binding = await self.store.get_identity_mapping(platform_user_key)
@@ -35,155 +31,18 @@ class MemoryIdentityMappingService:
             return None
         return binding.canonical_user_id
 
-    async def reload_from_yaml(self) -> int:
+    async def reload_from_config(self) -> int:
         if not self.config.identity.enabled:
             return await self.store.sync_identity_mappings([])
         bindings = self.load_bindings()
         return await self.store.sync_identity_mappings(bindings)
 
     def load_bindings(self) -> list[MemoryIdentityBinding]:
-        if self._has_configured_bindings(self.config.identity.bindings):
-            return self._parse_bindings_payload(
-                {"bindings": self._filter_empty_template_bindings(
-                    self.config.identity.bindings
-                )}
-            )
-        return self.load_bindings_from_yaml()
-
-    def load_bindings_from_yaml(self) -> list[MemoryIdentityBinding]:
-        payload = self._load_yaml_payload()
-        return self._parse_bindings_payload(payload)
-
-    def validate_yaml(self) -> list[MemoryIdentityBinding]:
-        return self.load_bindings_from_yaml()
-
-    def write_bindings_to_yaml(
-        self,
-        bindings: list[MemoryIdentityBinding],
-    ) -> None:
-        serialized_bindings = [
-            {
-                "platform_id": binding.platform_id,
-                "sender_user_id": binding.sender_user_id,
-                "canonical_user_id": binding.canonical_user_id,
-                **(
-                    {"nickname_hint": binding.nickname_hint}
-                    if binding.nickname_hint
-                    else {}
-                ),
-            }
-            for binding in sorted(
-                bindings,
-                key=lambda item: (
-                    item.platform_id,
-                    item.sender_user_id,
-                    item.canonical_user_id,
-                    item.platform_user_key,
-                ),
-            )
-        ]
-        self.mappings_path.parent.mkdir(parents=True, exist_ok=True)
-        self.mappings_path.write_text(
-            yaml.safe_dump(
-                {"bindings": serialized_bindings},
-                allow_unicode=False,
-                sort_keys=False,
-            ),
-            encoding="utf-8",
+        return self._parse_bindings_payload(
+            {"bindings": self._filter_empty_template_bindings(
+                self.config.identity.bindings
+            )}
         )
-
-    def upsert_binding_in_yaml(
-        self,
-        platform_id: str,
-        sender_user_id: str,
-        canonical_user_id: str,
-        nickname_hint: str | None = None,
-    ) -> MemoryIdentityBinding:
-        if self._has_configured_bindings(self.config.identity.bindings):
-            raise RuntimeError(
-                "memory identity mappings are configured in Web config; "
-                "edit memory.identity.bindings instead of the YAML file"
-            )
-        binding = self._build_binding(
-            platform_id=platform_id,
-            sender_user_id=sender_user_id,
-            canonical_user_id=canonical_user_id,
-            nickname_hint=nickname_hint,
-        )
-        bindings = self.load_bindings_from_yaml()
-        updated = False
-        for index, existing in enumerate(bindings):
-            if existing.platform_user_key != binding.platform_user_key:
-                continue
-            bindings[index] = binding
-            updated = True
-            break
-        if not updated:
-            bindings.append(binding)
-        self.write_bindings_to_yaml(bindings)
-        return binding
-
-    def remove_binding_from_yaml(self, platform_user_key: str) -> bool:
-        if self._has_configured_bindings(self.config.identity.bindings):
-            raise RuntimeError(
-                "memory identity mappings are configured in Web config; "
-                "edit memory.identity.bindings instead of the YAML file"
-            )
-        bindings = self.load_bindings_from_yaml()
-        filtered = [
-            binding
-            for binding in bindings
-            if binding.platform_user_key != platform_user_key
-        ]
-        if len(filtered) == len(bindings):
-            return False
-        self.write_bindings_to_yaml(filtered)
-        return True
-
-    async def bind_platform_user(
-        self,
-        platform_id: str,
-        sender_user_id: str,
-        canonical_user_id: str,
-        nickname_hint: str | None = None,
-    ) -> MemoryIdentityBinding:
-        binding = self.upsert_binding_in_yaml(
-            platform_id,
-            sender_user_id,
-            canonical_user_id,
-            nickname_hint=nickname_hint,
-        )
-        await self.reload_from_yaml()
-        loaded = await self.store.get_identity_mapping(binding.platform_user_key)
-        if loaded is None:
-            raise RuntimeError(
-                "memory identity mapping reload finished but binding was not persisted"
-            )
-        return loaded
-
-    async def unbind_platform_user(self, platform_user_key: str) -> bool:
-        removed = self.remove_binding_from_yaml(platform_user_key)
-        if not removed:
-            return False
-        await self.reload_from_yaml()
-        return True
-
-    async def list_bindings_for_canonical_user(
-        self,
-        canonical_user_id: str,
-    ) -> list[MemoryIdentityBinding]:
-        return await self.store.list_identity_mappings_for_canonical_user(
-            canonical_user_id
-        )
-
-    def _load_yaml_payload(self) -> dict[str, Any]:
-        ensure_identity_mappings_file(self.mappings_path)
-        loaded = yaml.safe_load(self.mappings_path.read_text(encoding="utf-8"))
-        if loaded is None:
-            return {"bindings": []}
-        if not isinstance(loaded, dict):
-            raise ValueError("memory identity mappings must be a mapping object")
-        return loaded
 
     def _parse_bindings_payload(
         self,
@@ -227,14 +86,6 @@ class MemoryIdentityMappingService:
             seen_keys.add(binding.platform_user_key)
             bindings.append(binding)
         return bindings
-
-    def _has_configured_bindings(
-        self,
-        raw_bindings: list[dict[str, str]] | None,
-    ) -> bool:
-        if not raw_bindings:
-            return False
-        return any(not self._is_empty_template_binding(item) for item in raw_bindings)
 
     def _filter_empty_template_bindings(
         self,

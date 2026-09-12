@@ -12,9 +12,33 @@ class FakeEvent:
     """Minimal message event used by the rate-limit stage tests."""
 
     session_id = "test-session"
+    unified_msg_origin = "test-platform:GroupMessage:test-session"
 
     def stop_event(self) -> None:
         """Stop event propagation for discard-strategy compatibility."""
+
+
+@pytest.mark.asyncio
+async def test_different_platforms_do_not_share_rate_limit_state():
+    limiter = rate_limit_stage.RateLimitStage()
+    limiter.rate_limit_count = 1
+    limiter.rate_limit_time = timedelta(seconds=60)
+    limiter.rl_strategy = "discard"
+
+    first_event = FakeEvent()
+    first_event.session_id = "same-session"
+    first_event.unified_msg_origin = "platform-a:GroupMessage:same-session"
+    second_event = FakeEvent()
+    second_event.session_id = "same-session"
+    second_event.unified_msg_origin = "platform-b:GroupMessage:same-session"
+
+    await limiter.process(first_event)
+    await limiter.process(second_event)
+
+    assert set(limiter.event_timestamps) == {
+        first_event.unified_msg_origin,
+        second_event.unified_msg_origin,
+    }
 
 
 @pytest.mark.asyncio
@@ -52,5 +76,5 @@ async def test_stalled_concurrent_events_use_current_time_after_lock(monkeypatch
 
     expected_stall = limiter.rate_limit_time.total_seconds() + 0.3
     assert sleep_durations == pytest.approx([expected_stall, expected_stall])
-    timestamps = list(limiter.event_timestamps[FakeEvent.session_id])
+    timestamps = list(limiter.event_timestamps[FakeEvent.unified_msg_origin])
     assert timestamps == sorted(timestamps)

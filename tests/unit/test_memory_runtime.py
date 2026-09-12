@@ -2082,7 +2082,6 @@ async def test_memory_store_migrates_platform_user_key_to_nullable(
 @pytest.mark.asyncio
 async def test_memory_identity_resolver_uses_event_and_mapping(temp_dir: Path):
     config_path = temp_dir / "memory-config.yaml"
-    mappings_path = (temp_dir / "identity_mappings.yaml").as_posix()
     sqlite_path = (temp_dir / "memory.db").as_posix()
     docs_root = (temp_dir / "long_term").as_posix()
     projections_root = (temp_dir / "projections").as_posix()
@@ -2092,7 +2091,11 @@ async def test_memory_identity_resolver_uses_event_and_mapping(temp_dir: Path):
                 "enabled: true",
                 "identity:",
                 "  enabled: true",
-                f'  mappings_path: "{mappings_path}"',
+                "  bindings:",
+                f'    - platform_id: "{TEST_PLATFORM_ID}"',
+                '      sender_user_id: "user-1"',
+                f'      canonical_user_id: "{TEST_CANONICAL_USER_ID}"',
+                '      nickname_hint: "tester"',
                 "storage:",
                 f'  sqlite_path: "{sqlite_path}"',
                 f'  docs_root: "{docs_root}"',
@@ -2112,12 +2115,7 @@ async def test_memory_identity_resolver_uses_event_and_mapping(temp_dir: Path):
     event.get_sender_name.return_value = "tester"
 
     try:
-        await mapping_service.bind_platform_user(
-            TEST_PLATFORM_ID,
-            "user-1",
-            TEST_CANONICAL_USER_ID,
-            nickname_hint="tester",
-        )
+        await mapping_service.reload_from_config()
         identity = await resolver.resolve_from_event(event)
     finally:
         await store.close()

@@ -33,7 +33,6 @@ from .types import (
     LongTermMemoryIndex,
     LongTermVectorSyncStatus,
     MemoryIdentity,
-    MemoryIdentityBinding,
     MemorySnapshot,
     MemoryUpdateRequest,
     PersonaEvolutionLog,
@@ -100,7 +99,7 @@ class MemoryService:
             if self._initialized:
                 return
             if self.identity_mapping_service is not None:
-                count = await self.identity_mapping_service.reload_from_yaml()
+                count = await self.identity_mapping_service.reload_from_config()
                 logger.info(
                     "memory identity mappings synchronized: count=%s",
                     count,
@@ -622,46 +621,10 @@ class MemoryService:
         )
         return persisted_insight, persisted_experiences
 
-    async def bind_platform_user(
-        self,
-        platform_id: str,
-        sender_user_id: str,
-        canonical_user_id: str,
-        nickname_hint: str | None = None,
-    ) -> MemoryIdentityBinding:
-        await self.initialize()
-        if self.identity_mapping_service is None:
-            raise RuntimeError("memory identity mapping service is unavailable")
-        return await self.identity_mapping_service.bind_platform_user(
-            platform_id,
-            sender_user_id,
-            canonical_user_id,
-            nickname_hint=nickname_hint,
-        )
-
-    async def unbind_platform_user(self, platform_user_key: str) -> bool:
-        await self.initialize()
-        if self.identity_mapping_service is None:
-            raise RuntimeError("memory identity mapping service is unavailable")
-        return await self.identity_mapping_service.unbind_platform_user(
-            platform_user_key
-        )
-
-    async def list_bindings_for_canonical_user(
-        self,
-        canonical_user_id: str,
-    ) -> list[MemoryIdentityBinding]:
-        await self.initialize()
-        if self.identity_mapping_service is None:
-            raise RuntimeError("memory identity mapping service is unavailable")
-        return await self.identity_mapping_service.list_bindings_for_canonical_user(
-            canonical_user_id
-        )
-
     async def reload_identity_mappings(self) -> int:
         if self.identity_mapping_service is None:
             raise RuntimeError("memory identity mapping service is unavailable")
-        count = await self.identity_mapping_service.reload_from_yaml()
+        count = await self.identity_mapping_service.reload_from_config()
         self._initialized = True
         logger.info("memory identity mappings reloaded: count=%s", count)
         return count
