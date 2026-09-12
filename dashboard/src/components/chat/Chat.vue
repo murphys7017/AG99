@@ -161,7 +161,8 @@
             <v-menu
               location="end"
               offset="8"
-              open-on-hover
+              :open-on-hover="!isTouchDevice"
+              :open-on-click="isTouchDevice"
               :close-on-content-click="true"
             >
               <template #activator="{ props: transportMenuProps }">
@@ -213,7 +214,8 @@
             <v-menu
               location="end"
               offset="8"
-              open-on-hover
+              :open-on-hover="!isTouchDevice"
+              :open-on-click="isTouchDevice"
               :close-on-content-click="true"
             >
               <template #activator="{ props: languageMenuProps }">
@@ -753,7 +755,20 @@ const chatInputReplyTarget = computed(() =>
 
 provide("isDark", isDark);
 
+const isTouchDevice = ref(false);
+let pointerMediaQuery: MediaQueryList | undefined;
+
+function syncTouchDevice() {
+  isTouchDevice.value = pointerMediaQuery?.matches ?? false;
+}
+
 onMounted(async () => {
+  if (typeof window.matchMedia === "function") {
+    pointerMediaQuery = window.matchMedia("(pointer: coarse)");
+    syncTouchDevice();
+    pointerMediaQuery.addEventListener("change", syncTouchDevice);
+  }
+
   loadingSessions.value = true;
   try {
     await Promise.all([getSessions(), getProjects()]);
@@ -769,6 +784,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  pointerMediaQuery?.removeEventListener("change", syncTouchDevice);
   cleanupMediaCache();
 });
 
