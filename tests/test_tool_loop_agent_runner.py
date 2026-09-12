@@ -334,6 +334,12 @@ class MockHooks(BaseAgentRunHooks):
         self.agent_done_called = True
 
 
+class ClearingAgentBeginHooks(MockHooks):
+    async def on_agent_begin(self, run_context):
+        self.agent_begin_called = True
+        run_context.messages.clear()
+
+
 class MockEvent:
     def __init__(self, umo: str, sender_id: str):
         self.unified_msg_origin = umo
@@ -424,6 +430,37 @@ def runner():
 
 def _make_large_tool_result_text() -> str:
     return "x" * 100000
+
+
+@pytest.mark.asyncio
+async def test_empty_messages_after_on_agent_begin_skip_provider(
+    runner,
+    mock_provider,
+    provider_request,
+    mock_tool_executor,
+):
+    hooks = ClearingAgentBeginHooks()
+
+    await runner.reset(
+        provider=mock_provider,
+        request=provider_request,
+        run_context=ContextWrapper(context=None),
+        tool_executor=mock_tool_executor,
+        agent_hooks=hooks,
+        streaming=False,
+    )
+
+    responses = [response async for response in runner.step_until_done(2)]
+
+    assert mock_provider.call_count == 0
+    assert runner.done()
+    assert not runner.was_aborted()
+    assert runner.run_context.messages == []
+    assert responses[-1].type == "err"
+    final_response = runner.get_final_llm_resp()
+    assert final_response is not None
+    assert final_response.role == "err"
+    assert final_response.completion_text == "No messages remain for the LLM request."
 
 
 def test_sanitize_malformed_tool_call_names():

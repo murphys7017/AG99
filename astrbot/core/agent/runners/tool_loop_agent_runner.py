@@ -551,6 +551,17 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
         include_model: bool = True,
     ) -> T.AsyncGenerator[LLMResponse, None]:
         """Yields chunks *and* a final LLMResponse."""
+        if not self.run_context.messages:
+            logger.warning(
+                "Skipping LLM request because no messages remain after agent/request "
+                "hooks and context processing."
+            )
+            yield LLMResponse(
+                role="err",
+                completion_text="No messages remain for the LLM request.",
+            )
+            return
+
         payload = {
             **self.provider_kwargs,
             "contexts": self._sanitize_contexts_for_provider(self.run_context.messages),
