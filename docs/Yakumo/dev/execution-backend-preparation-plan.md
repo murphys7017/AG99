@@ -105,7 +105,7 @@ Platform / Internal Event
 - 远程或独立执行器只接收经过授权和脱敏的执行请求，内部模型、工具、记忆和推理过程保持黑盒；
   AstrBot 只拥有任务提交、取消、进度接收、结果归一化和最终输出编排权。
 - 执行过程应回流为结构化 `ExecutionEvent`，至少能表达 `submitted`、`working`、
-  `progress`、`input_required`、`artifact_ready`、`completed`、`failed` 和 `canceled`。原始
+  `progress`、`input_required`、`artifact_ready`、`completed`、`failed` 和 `cancelled`。原始
   token、搜索材料或执行器日志不是用户可见输出；Persona 根据事件语义决定是否表达和如何表达。
 - 执行结果以规范化 artifact 返回，再进入 Persona Expression 和 Output Runtime。任何 Backend
   或远程 Agent 都不能绕过这两个边界，直接取得平台发送、TTS、effect 或 AG99live 输出权限。
@@ -385,6 +385,13 @@ Phase 0 已确认的准备边界：
   不是可替换 Backend 的实现。
 
 当前仍存在、但不应继续扩展的准备阶段边界：
+
+- 2026-09-12：Native Interaction 已落地首个进程内执行事件切片。它基于既有
+  `CoreExecutionSpec`，在所属 turn 的有界 journal 中记录 `submitted`、`working`、
+  可见 Core progress、`artifact_ready` 和三种终态；事件元数据是不可变快照，终态首写获胜，
+  并写入现有运行 trace。该切片不改变可见输出、不替代 Core Execution Ledger，也不构成
+  Backend、远程协议或 Third-party Agent 的适配层。下一步先用真实 Core 工具调用验证事件顺序，
+  再统一取消/超时 owner 和 Ledger 写入归属。
 
 - Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；在统一
   Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。

@@ -1,17 +1,20 @@
 task:
   class: refactor
   risk: high
-  phase: multimodal_turn_context_remediation
+  phase: execution_event_foundation
   closure_review:
-    status: implementation_complete_pending_real_platform_regression
-    date: '2026-09-08'
-    changes: Restore provider-aware multimodal Interaction context boundaries, preserve unified Persona history, add Planner visual contract, and synchronize Prompt documentation.
-    validation: Interaction, Planner, Prompt, and Tool Loop boundary tests 145 passed; compileall, targeted Ruff, and git diff --check passed. The legacy subagent handoff test remains independently failing because its MockEvent lacks get_extra.
-    gaps: No real platform acceptance or full-suite rerun; typed visual-media failure semantics and broader audio/file policy remain deferred.
-  scope: Restore the Prompt Pipeline media boundary for Interaction turns: build pure base input facts without Provider-dependent captioning or file extraction; derive branch-local media facts through PromptContextBuilder; keep Router text-only; let the one Persona Expression surface, Planner, and Core receive original images only when their actual Provider supports them; use caption fallback only for a consuming non-vision branch; add a provider-aware media projection and final request safety gate; encode visual understanding independently from workspace I/O. Preserve the unified Persona Expression model, its long configurable history, Output Controller ownership, Event/Pipeline/plugin compatibility boundaries, and existing user documentation changes. Defer general document/OCR redesign, audio policy redesign, Provider replacement, AG99live changes, and execution-backend decoupling.
+    status: first_slice_implemented_pending_runtime_validation
+    date: '2026-09-12'
+    changes: Introduce a provider-neutral Core execution event journal for Interaction Native execution, without changing output delivery, Ledger persistence, or Backend selection.
+    validation: Focused execution-event and Core bridge tests passed; compileall, targeted Ruff, and git diff --check passed.
+    gaps: No post-change real platform execution trace yet; the active AstrBot processes started on 2026-09-11 and have not loaded this working tree slice. Third-party runner, persisted execution-event history, cancellation ownership, and Output Port migration remain deferred.
+  scope: Start execution-backend preparation with the smallest shared lifecycle fact boundary. Native Interaction Core emits submitted, working, progress, artifact-ready, completed, failed, or cancelled events into its owning turn journal. Preserve existing Persona, Output Runtime, Core Ledger, Event/Pipeline/plugin compatibility, and Native-only execution behavior. Do not create a Backend abstraction, remote protocol, persistent event store, or change visible output policy.
 context:
   confidence: high
   verified:
+    - Core execution events are immutable, bounded, non-visible facts attached to the owning Interaction turn and keyed by the existing CoreExecutionSpec identity.
+    - Native Interaction execution emits submitted, working, visible-progress, artifact-ready, completed, failed, and cancelled facts at existing lifecycle boundaries; terminal first-write wins and retained progress is evicted first when the journal reaches its bound.
+    - Focused Core execution-event and bridge tests passed, along with targeted Ruff, compileall, and git diff --check.
     - Interaction base InputCollector no longer performs media enrichment when building the shared facts pack.
     - Non-vision media enrichment is branch-local and vision Providers retain original image slots.
     - Router, Planner, Persona, and Core projections preserve their documented separation; direct Interaction Provider calls sanitize context modalities.
@@ -20,6 +23,8 @@ context:
     - Persona Provider fallback preserves original image references before normalization and derives captions for a text-only fallback without replaying lifecycle hooks.
     - Targeted validation passed: 145 tests, compileall, Ruff, and git diff --check.
   open:
+    - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Backend adapter.
+    - Define the next owner migration for cancellation and execution Ledger persistence; do not infer it from the current event journal.
     - Run real OLV/platform regression with vision and text-only Providers.
     - Decide whether unavailable visual fallback should become a typed Core failure rather than existing empty-enrichment behavior.
   assumptions:

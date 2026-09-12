@@ -9,6 +9,12 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from astrbot.core.deadline import TurnDeadlineBudget
+from astrbot.core.execution import (
+    CORE_EXECUTION_SPEC_EXTRA_KEY,
+    CoreExecutionEvent,
+    CoreExecutionEventKind,
+    CoreExecutionSpec,
+)
 from astrbot.core.prompt.context_types import ContextPack
 
 from .types import (
@@ -24,6 +30,7 @@ if TYPE_CHECKING:
     from .personal_runtime import PersonalRuntimeKey
 
 INTERACTION_TURN_STATE_EXTRA_KEY = "_interaction_turn_state"
+MAX_CORE_EXECUTION_EVENTS_PER_TURN = 64
 
 
 class InteractionTurnStatus(str, Enum):
@@ -297,6 +304,7 @@ class InteractionTurnState:
     visible_message_counter: int = 0
     lifecycle_stage: InteractionLifecycleStage | None = None
     lifecycle_transitions: list[dict[str, Any]] = field(default_factory=list)
+    core_execution_events: list[CoreExecutionEvent] = field(default_factory=list)
     completion_state: InteractionTurnCompletionState = field(
         default_factory=InteractionTurnCompletionState
     )
@@ -989,6 +997,79 @@ def transition_interaction_lifecycle(
     state.lifecycle_stage = stage
     state.lifecycle_transitions.append(transition)
     return previous_stage, transition
+
+
+def record_interaction_turn_core_execution_event(
+    event,
+    *,
+    kind: CoreExecutionEventKind,
+    executor_id: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> CoreExecutionEvent | None:
+    """Append one non-visible Native execution fact to the current turn journal."""
+
+    if not event.get_extra("_interaction_enabled", False):
+        return None
+    state = get_interaction_turn_state(event)
+    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    if state is None or not isinstance(execution_spec, CoreExecutionSpec):
+        return None
+    if execution_spec.turn_id != state.turn_id:
+        return None
+
+    execution_event = CoreExecutionEvent.from_spec(
+        execution_spec,
+        kind=kind,
+        executor_id=executor_id,
+        metadata=metadata,
+    )
+    existing = state.core_execution_events
+    if execution_event.kind is not CoreExecutionEventKind.PROGRESS and any(
+        item.execution_id == execution_event.execution_id
+        and item.kind is execution_event.kind
+        for item in existing
+    ):
+        return None
+    if execution_event.is_terminal and any(
+        item.execution_id == execution_event.execution_id and item.is_terminal
+        for item in existing
+    ):
+        return None
+
+    if len(existing) >= MAX_CORE_EXECUTION_EVENTS_PER_TURN:
+        for index, item in enumerate(existing):
+            if (
+                item.execution_id == execution_event.execution_id
+                and item.kind is CoreExecutionEventKind.PROGRESS
+            ):
+                del existing[index]
+                break
+        else:
+            return None
+    existing.append(execution_event)
+    trace = getattr(event, "trace", None)
+    record = getattr(trace, "record", None)
+    if callable(record):
+        try:
+            record(
+                "core_execution_event",
+                execution_id=execution_event.execution_id,
+                core_task_id=execution_event.core_task_id,
+                turn_id=execution_event.turn_id,
+                executor_id=execution_event.executor_id,
+                kind=execution_event.kind.value,
+                metadata=execution_event.metadata_for_trace(),
+            )
+        except Exception:
+            pass
+    return execution_event
+
+
+def get_interaction_turn_core_execution_events(
+    event,
+) -> list[CoreExecutionEvent]:
+    state = get_interaction_turn_state(event)
+    return list(state.core_execution_events) if state is not None else []
 
 
 def record_interaction_turn_completion_failure(

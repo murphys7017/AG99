@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from enum import Enum
+from time import time
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -21,6 +25,101 @@ if TYPE_CHECKING:
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 CORE_EXECUTION_SPEC_EXTRA_KEY = "_core_execution_spec"
+
+
+class CoreExecutionEventKind(str, Enum):
+    """One lifecycle fact emitted by a Core executor."""
+
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    PROGRESS = "progress"
+    ARTIFACT_READY = "artifact_ready"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+_TERMINAL_CORE_EXECUTION_EVENT_KINDS = frozenset(
+    {
+        CoreExecutionEventKind.COMPLETED,
+        CoreExecutionEventKind.FAILED,
+        CoreExecutionEventKind.CANCELLED,
+    }
+)
+
+
+def _freeze_execution_event_metadata(value: Any) -> Any:
+    """Create an immutable snapshot without retaining caller-owned containers."""
+
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {
+                deepcopy(key): _freeze_execution_event_metadata(item)
+                for key, item in value.items()
+            }
+        )
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_execution_event_metadata(item) for item in value)
+    if isinstance(value, set | frozenset):
+        return frozenset(_freeze_execution_event_metadata(item) for item in value)
+    return deepcopy(value)
+
+
+def _copy_execution_event_metadata(value: Any) -> Any:
+    """Restore immutable metadata to ordinary containers for diagnostics."""
+
+    if isinstance(value, Mapping):
+        return {key: _copy_execution_event_metadata(item) for key, item in value.items()}
+    if isinstance(value, tuple | frozenset):
+        return [_copy_execution_event_metadata(item) for item in value]
+    return deepcopy(value)
+
+
+@dataclass(frozen=True, slots=True)
+class CoreExecutionEvent:
+    """Provider-neutral, non-visible lifecycle fact for one Core execution."""
+
+    execution_id: str
+    core_task_id: str
+    turn_id: str
+    executor_id: str
+    kind: CoreExecutionEventKind
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    occurred_at: float = field(default_factory=time)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "metadata",
+            _freeze_execution_event_metadata(self.metadata),
+        )
+
+    def metadata_for_trace(self) -> dict[str, Any]:
+        """Return a detached, diagnostics-safe copy of the event metadata."""
+
+        return _copy_execution_event_metadata(self.metadata)
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.kind in _TERMINAL_CORE_EXECUTION_EVENT_KINDS
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: CoreExecutionSpec,
+        *,
+        kind: CoreExecutionEventKind,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent:
+        return cls(
+            execution_id=spec.execution_id,
+            core_task_id=spec.core_task_id,
+            turn_id=spec.turn_id,
+            executor_id=str(executor_id or "unknown"),
+            kind=kind,
+            metadata=metadata or {},
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +357,8 @@ def _slot_value(pack: ContextPack, name: str) -> Any:
 __all__ = [
     "CORE_EXECUTION_SPEC_EXTRA_KEY",
     "CoreCapabilitySnapshot",
+    "CoreExecutionEvent",
+    "CoreExecutionEventKind",
     "CoreExecutionSpec",
     "NativeExecutionAdapter",
     "NativeExecutionInput",

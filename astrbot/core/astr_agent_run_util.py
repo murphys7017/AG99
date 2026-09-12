@@ -9,11 +9,15 @@ from astrbot.core.agent.message import Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.deadline import TurnDeadlineExceeded
+from astrbot.core.execution import CoreExecutionEventKind
 from astrbot.core.interaction.output_modes import (
     CoreOutputDelivery,
     OutputOrigin,
     temporary_core_output_delivery,
     temporary_output_origin,
+)
+from astrbot.core.interaction.turn_state import (
+    record_interaction_turn_core_execution_event,
 )
 from astrbot.core.message.components import BaseMessageComponent, Json, Plain
 from astrbot.core.message.message_event_result import (
@@ -43,6 +47,17 @@ async def _send_core_event_message(
     with temporary_output_origin(astr_event, OutputOrigin.CORE.value):
         with temporary_core_output_delivery(astr_event, delivery.value):
             await astr_event.send(message)
+    if delivery is CoreOutputDelivery.PROGRESS:
+        record_interaction_turn_core_execution_event(
+            astr_event,
+            kind=CoreExecutionEventKind.PROGRESS,
+            executor_id="native",
+            metadata={
+                "source": "visible_core_progress",
+                "message_type": str(message.type or ""),
+                "component_count": len(message.chain),
+            },
+        )
 
 
 def _truncate_tool_result(text: str, limit: int = 70) -> str:
@@ -141,6 +156,12 @@ async def run_agent(
 ) -> AsyncGenerator[MessageChain | None, None]:
     step_idx = 0
     astr_event = agent_runner.run_context.context.event
+    record_interaction_turn_core_execution_event(
+        astr_event,
+        kind=CoreExecutionEventKind.WORKING,
+        executor_id="native",
+        metadata={"streaming": bool(agent_runner.streaming)},
+    )
     tool_name_by_call_id: dict[str, str] = {}
     buffered_llm_chains: list[MessageChain] = []
     can_buffer_llm_result = _should_buffer_llm_result(
@@ -195,6 +216,12 @@ async def run_agent(
                             pass
                     astr_event.set_extra("agent_user_aborted", True)
                     astr_event.set_extra("agent_stop_requested", False)
+                    record_interaction_turn_core_execution_event(
+                        astr_event,
+                        kind=CoreExecutionEventKind.CANCELLED,
+                        executor_id="native",
+                        metadata={"reason": "agent_aborted"},
+                    )
                     return
 
                 if _should_stop_agent(astr_event):
@@ -339,6 +366,20 @@ async def run_agent(
                 break
 
         except TurnDeadlineExceeded:
+            record_interaction_turn_core_execution_event(
+                astr_event,
+                kind=CoreExecutionEventKind.CANCELLED,
+                executor_id="native",
+                metadata={"reason": "deadline_exceeded"},
+            )
+            raise
+        except asyncio.CancelledError:
+            record_interaction_turn_core_execution_event(
+                astr_event,
+                kind=CoreExecutionEventKind.CANCELLED,
+                executor_id="native",
+                metadata={"reason": "task_cancelled"},
+            )
             raise
         except Exception as e:
             if "stop_watcher" in locals() and not stop_watcher.done():
@@ -376,7 +417,48 @@ async def run_agent(
                 yield MessageChain().message(err_msg)
             else:
                 astr_event.set_result(MessageEventResult().message(err_msg))
+            record_interaction_turn_core_execution_event(
+                astr_event,
+                kind=CoreExecutionEventKind.FAILED,
+                executor_id="native",
+                metadata={"error_type": type(e).__name__},
+            )
             return
+
+        final_response = agent_runner.get_final_llm_resp()
+        if agent_runner.done() and final_response is not None:
+            completion_text = str(final_response.completion_text or "")
+            result_chain = final_response.result_chain
+            record_interaction_turn_core_execution_event(
+                astr_event,
+                kind=CoreExecutionEventKind.ARTIFACT_READY,
+                executor_id="native",
+                metadata={
+                    "artifact_kind": (
+                        "text"
+                        if completion_text
+                        else "message_chain"
+                        if result_chain is not None
+                        else "empty"
+                    ),
+                    "text_length": len(completion_text),
+                    "component_count": (
+                        len(result_chain.chain) if result_chain is not None else 0
+                    ),
+                },
+            )
+        record_interaction_turn_core_execution_event(
+            astr_event,
+            kind=(
+                CoreExecutionEventKind.COMPLETED
+                if agent_runner.done()
+                else CoreExecutionEventKind.FAILED
+            ),
+            executor_id="native",
+            metadata=(
+                {} if agent_runner.done() else {"reason": "max_steps_exhausted"}
+            ),
+        )
 
 
 async def _watch_agent_stop_signal(agent_runner: AgentRunner, astr_event) -> None:

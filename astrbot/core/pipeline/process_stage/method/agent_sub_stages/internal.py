@@ -28,6 +28,7 @@ from astrbot.core.db.po import CoreExecutionRecord as CoreExecutionLedgerRecord
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
+    CoreExecutionEventKind,
     CoreExecutionSpec,
     bind_effective_core_request,
 )
@@ -36,6 +37,7 @@ from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output
 from astrbot.core.interaction.turn_state import (
     get_interaction_turn_runtime_config,
     is_interaction_turn_core_delegated,
+    record_interaction_turn_core_execution_event,
 )
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
@@ -489,6 +491,18 @@ class InternalAgentSubStage(Stage):
                         CORE_EXECUTION_SPEC_EXTRA_KEY,
                         effective_execution_spec,
                     )
+                    record_interaction_turn_core_execution_event(
+                        event,
+                        kind=CoreExecutionEventKind.SUBMITTED,
+                        executor_id="native",
+                        metadata={
+                            "provider_id": str(
+                                provider.provider_config.get("id", "") or ""
+                            ),
+                            "provider_model": str(provider.get_model() or ""),
+                            "streaming": bool(streaming_response),
+                        },
+                    )
 
                 # apply reset
                 if reset_coro:
@@ -652,9 +666,29 @@ class InternalAgentSubStage(Stage):
                         runtime_manager.unregister_active_runner(event, agent_runner)
 
         except TurnDeadlineExceeded:
+            record_interaction_turn_core_execution_event(
+                event,
+                kind=CoreExecutionEventKind.CANCELLED,
+                executor_id="native",
+                metadata={"reason": "deadline_exceeded"},
+            )
+            raise
+        except asyncio.CancelledError:
+            record_interaction_turn_core_execution_event(
+                event,
+                kind=CoreExecutionEventKind.CANCELLED,
+                executor_id="native",
+                metadata={"reason": "stage_cancelled"},
+            )
             raise
         except Exception as e:
             logger.error(f"Error occurred while processing agent: {e}")
+            record_interaction_turn_core_execution_event(
+                event,
+                kind=CoreExecutionEventKind.FAILED,
+                executor_id="native",
+                metadata={"error_type": type(e).__name__},
+            )
             await self._save_failed_interaction_core_state(
                 event,
                 req,
