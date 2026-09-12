@@ -1,14 +1,14 @@
 task:
   class: refactor
   risk: high
-  phase: execution_event_foundation
+  phase: core_head_session_foundation
   closure_review:
     status: first_slice_implemented_pending_runtime_validation
     date: '2026-09-12'
-    changes: Introduce a provider-neutral Core execution event journal for Interaction Native execution, without changing output delivery, Ledger persistence, or Backend selection.
-    validation: Focused execution-event and Core bridge tests passed; compileall, targeted Ruff, and git diff --check passed.
-    gaps: No post-change real platform execution trace yet. The active AstrBot instance was restarted from this working tree, but the local Dashboard default credentials are unavailable, so no authenticated WebChat smoke message was injected. Third-party runner, persisted execution-event history, cancellation ownership, and Output Port migration remain deferred.
-  scope: Start execution-backend preparation with the smallest shared lifecycle fact boundary. Native Interaction Core emits submitted, working, progress, artifact-ready, completed, failed, or cancelled events into its owning turn journal. Preserve existing Persona, Output Runtime, Core Ledger, Event/Pipeline/plugin compatibility, and Native-only execution behavior. Do not create a Backend abstraction, remote protocol, persistent event store, or change visible output policy.
+    changes: Introduce a provider-neutral Core execution event journal for Interaction Native execution, then establish the first in-process Core Head session contract (CoreCommand, CoreEvent, CoreExecutionSession) without changing output delivery, Ledger persistence, Executor selection, or the Personal turn lifecycle.
+    validation: Focused execution-event and Core bridge tests passed; compileall, targeted Ruff, and git diff --check passed. A real OLV tool-call trace exposed and corrected premature max-step failure recording before Native runner finalization; the post-fix trace completed with submitted, working, progress, artifact_ready, and completed in order.
+    gaps: The pre-fix failed event remains in historical trace as expected. Third-party runner, persisted execution-event history, cancellation ownership, and Output Port migration remain deferred.
+  scope: Continue execution-backend preparation with a bounded in-process Core Head session contract. Native Interaction Core continues to emit submitted, working, progress, artifact-ready, completed, failed, or cancelled facts into its owning turn journal. CoreCommand/CoreEvent/CoreExecutionSession define directional command, sequenced event, identity, idempotence, and terminal-state facts only. Preserve existing Persona, Output Runtime, Core Ledger, Event/Pipeline/plugin compatibility, Personal turn lifecycle, and Native-only execution behavior. Do not create a Backend abstraction, remote protocol, transport queue, persistent event store, or change visible output policy.
 context:
   confidence: high
   verified:
@@ -23,7 +23,8 @@ context:
     - Persona Provider fallback preserves original image references before normalization and derives captions for a text-only fallback without replaying lifecycle hooks.
     - Targeted validation passed: 145 tests, compileall, Ruff, and git diff --check.
   open:
-    - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Backend adapter.
+    - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Core Head Executor adapter.
+    - Define Personal/Core Head communication messages and CoreExecution session ownership without coupling them to Personal turn locks or directly releasing a Personal turn on delegation.
     - Define the next owner migration for cancellation and execution Ledger persistence; do not infer it from the current event journal.
     - Run real OLV/platform regression with vision and text-only Providers.
     - Decide whether unavailable visual fallback should become a typed Core failure rather than existing empty-enrichment behavior.
@@ -96,7 +97,8 @@ context:
     - Existing Dify, Coze, DashScope, and DeerFlow runners are compatibility targets rather than templates for the future Backend interface.
     - Execution Preparation owns TaskSpec, Context/Prompt projection, normalized current input, CapabilitySnapshot, and runtime identity before backend selection; adapters own protocol projection, remote thread state, streaming, cancellation/close, and error translation.
     - Official OnLLMRequest remains after final low-level request projection and before execution; Agent/LLM/Tool hooks are preserved only where the backend exposes the corresponding lifecycle.
-    - Execution Backend decoupling is deliberately last; current work first replaces transitional structures before execution preparation.
+    - Executor Body decoupling is deliberately last and remains inside Core Head; current work first replaces transitional structures before execution preparation.
+    - Personal is the sole owner of unified external output; Core Head owns task coordination and normalized execution facts, while Executor Body only performs delegated complex work.
     - Compatibility protects official public plugin, Pipeline, platform, configuration, and data boundaries, not internal event method replacement, extra mirrors, parallel Agent SubStages, or private callback wiring.
     - Each migration establishes one new owner and removes the replaced internal write path; long-lived dual main paths are not an accepted compatibility strategy.
     - Personal Runtime is the control layer; InteractionPersonaRuntime is the Personal Expression facade and delegates expression-scoped plugin tool execution to the shared ToolLoopAgentRunner rather than owning a second tool loop.

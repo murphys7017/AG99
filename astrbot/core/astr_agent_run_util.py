@@ -425,42 +425,6 @@ async def run_agent(
             )
             return
 
-        final_response = agent_runner.get_final_llm_resp()
-        if agent_runner.done() and final_response is not None:
-            completion_text = str(final_response.completion_text or "")
-            result_chain = final_response.result_chain
-            record_interaction_turn_core_execution_event(
-                astr_event,
-                kind=CoreExecutionEventKind.ARTIFACT_READY,
-                executor_id="native",
-                metadata={
-                    "artifact_kind": (
-                        "text"
-                        if completion_text
-                        else "message_chain"
-                        if result_chain is not None
-                        else "empty"
-                    ),
-                    "text_length": len(completion_text),
-                    "component_count": (
-                        len(result_chain.chain) if result_chain is not None else 0
-                    ),
-                },
-            )
-        record_interaction_turn_core_execution_event(
-            astr_event,
-            kind=(
-                CoreExecutionEventKind.COMPLETED
-                if agent_runner.done()
-                else CoreExecutionEventKind.FAILED
-            ),
-            executor_id="native",
-            metadata=(
-                {} if agent_runner.done() else {"reason": "max_steps_exhausted"}
-            ),
-        )
-
-
 async def _watch_agent_stop_signal(agent_runner: AgentRunner, astr_event) -> None:
     while not agent_runner.done():
         if _should_stop_agent(astr_event):

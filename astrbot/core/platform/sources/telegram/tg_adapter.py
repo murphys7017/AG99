@@ -586,6 +586,24 @@ class TelegramPlatformAdapter(Platform):
             record.path = path_wav
             message.message = [record]
 
+        elif update.message.audio:
+            file = await update.message.audio.get_file()
+            file_path = file.file_path
+            if file_path is None:
+                logger.warning("Telegram audio file_path is None, cannot save the file.")
+                return message
+
+            file_basename = os.path.basename(file_path)
+            temp_dir = get_astrbot_temp_path()
+            temp_path = os.path.join(temp_dir, file_basename)
+            await download_file(file_path, path=temp_path)
+            path_wav = await convert_audio_to_wav(temp_path)
+
+            record = Comp.Record(file=path_wav, url=path_wav)
+            record.path = path_wav
+            message.message.append(record)
+            _apply_caption()
+
         elif update.message.photo:
             photo = update.message.photo[-1]  # get the largest photo
             file = await photo.get_file()
@@ -626,6 +644,16 @@ class TelegramPlatformAdapter(Platform):
             else:
                 message.message.append(Comp.Video(file=file_path, path=file.file_path))
                 _apply_caption()
+
+        elif update.message.video_note:
+            file = await update.message.video_note.get_file()
+            file_path = file.file_path
+            if file_path is None:
+                logger.warning(
+                    "Telegram video note file_path is None, cannot save the file."
+                )
+            else:
+                message.message.append(Comp.Video(file=file_path, path=file_path))
 
         return message
 

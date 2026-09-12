@@ -39,6 +39,14 @@ class CoreExecutionEventKind(str, Enum):
     CANCELLED = "cancelled"
 
 
+class CoreCommandKind(str, Enum):
+    """Commands accepted by the in-process Core Head boundary."""
+
+    SUBMIT = "submit"
+    PROVIDE_INPUT = "provide_input"
+    CANCEL = "cancel"
+
+
 _TERMINAL_CORE_EXECUTION_EVENT_KINDS = frozenset(
     {
         CoreExecutionEventKind.COMPLETED,
@@ -120,6 +128,208 @@ class CoreExecutionEvent:
             kind=kind,
             metadata=metadata or {},
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CoreCommand:
+    """A directed command sent to one Core execution session."""
+
+    execution_id: str
+    turn_id: str
+    kind: CoreCommandKind
+    command_id: str = field(default_factory=lambda: uuid4().hex)
+    execution_spec: CoreExecutionSpec | None = None
+    payload: Mapping[str, Any] = field(default_factory=dict)
+    reason: str | None = None
+    issued_at: float = field(default_factory=time)
+
+    def __post_init__(self) -> None:
+        execution_id = str(self.execution_id or "").strip()
+        turn_id = str(self.turn_id or "").strip()
+        command_id = str(self.command_id or "").strip()
+        if not execution_id or not turn_id or not command_id:
+            raise ValueError("CoreCommand requires execution_id, turn_id, and command_id")
+        object.__setattr__(self, "execution_id", execution_id)
+        object.__setattr__(self, "turn_id", turn_id)
+        object.__setattr__(self, "command_id", command_id)
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_execution_event_metadata(self.payload),
+        )
+        if self.execution_spec is not None and (
+            self.execution_spec.execution_id != execution_id
+            or self.execution_spec.turn_id != turn_id
+        ):
+            raise ValueError("CoreCommand execution identity does not match execution_spec")
+
+
+@dataclass(frozen=True, slots=True)
+class CoreEvent:
+    """Sequenced event envelope exchanged inside the Core Head."""
+
+    sequence: int
+    execution: CoreExecutionEvent
+
+    def __post_init__(self) -> None:
+        if self.sequence < 1:
+            raise ValueError("CoreEvent sequence must be positive")
+
+    @property
+    def execution_id(self) -> str:
+        return self.execution.execution_id
+
+    @property
+    def turn_id(self) -> str:
+        return self.execution.turn_id
+
+    @property
+    def kind(self) -> CoreExecutionEventKind:
+        return self.execution.kind
+
+    def metadata_for_trace(self) -> dict[str, Any]:
+        return self.execution.metadata_for_trace()
+
+
+class CoreExecutionSessionStatus(str, Enum):
+    """Lifecycle state owned by one Core Head execution session."""
+
+    CREATED = "created"
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {
+            CoreExecutionSessionStatus.COMPLETED,
+            CoreExecutionSessionStatus.FAILED,
+            CoreExecutionSessionStatus.CANCELLED,
+        }
+
+
+@dataclass(slots=True)
+class CoreExecutionSession:
+    """Own execution identity, command idempotence, state, and event ordering.
+
+    This is deliberately an in-process coordination boundary. It does not run an
+    executor, send platform output, or provide a transport queue.
+    """
+
+    spec: CoreExecutionSpec
+    status: CoreExecutionSessionStatus = CoreExecutionSessionStatus.CREATED
+    _events: list[CoreEvent] = field(default_factory=list, init=False, repr=False)
+    _accepted_command_ids: set[str] = field(default_factory=set, init=False, repr=False)
+
+    def accept_command(self, command: CoreCommand) -> bool:
+        """Accept a command once, rejecting identity or lifecycle violations."""
+
+        if (
+            command.execution_id != self.spec.execution_id
+            or command.turn_id != self.spec.turn_id
+        ):
+            raise ValueError("CoreCommand execution identity does not match session")
+        if command.command_id in self._accepted_command_ids:
+            return False
+        if self.status.is_terminal:
+            raise ValueError("CoreExecutionSession is already terminal")
+        if command.kind is CoreCommandKind.SUBMIT:
+            if self.status is not CoreExecutionSessionStatus.CREATED:
+                raise ValueError("submit is only valid for a new CoreExecutionSession")
+            if command.execution_spec is None:
+                raise ValueError("submit requires execution_spec")
+        elif command.kind is CoreCommandKind.PROVIDE_INPUT:
+            if self.status is CoreExecutionSessionStatus.CREATED:
+                raise ValueError("provide_input requires a submitted CoreExecutionSession")
+        elif command.kind is CoreCommandKind.CANCEL:
+            pass
+        else:
+            raise ValueError(f"unsupported CoreCommand kind: {command.kind!r}")
+        self._accepted_command_ids.add(command.command_id)
+        return True
+
+    def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
+        """Append a validated event and advance the session state.
+
+        Repeated non-progress facts and repeated terminal facts are idempotent;
+        conflicting terminal facts are rejected.
+        """
+
+        if (
+            execution_event.execution_id != self.spec.execution_id
+            or execution_event.turn_id != self.spec.turn_id
+        ):
+            raise ValueError("CoreExecutionEvent execution identity does not match session")
+
+        for existing in self._events:
+            if (
+                existing.kind is execution_event.kind
+                and execution_event.kind is not CoreExecutionEventKind.PROGRESS
+            ):
+                return existing
+        if self.status.is_terminal:
+            raise ValueError("cannot append an event after terminal state")
+        self._advance_status(execution_event.kind)
+        envelope = CoreEvent(sequence=len(self._events) + 1, execution=execution_event)
+        self._events.append(envelope)
+        return envelope
+
+    @property
+    def events(self) -> tuple[CoreEvent, ...]:
+        return tuple(self._events)
+
+    @property
+    def terminal_event(self) -> CoreEvent | None:
+        return next((event for event in reversed(self._events) if event.kind in _TERMINAL_CORE_EXECUTION_EVENT_KINDS), None)
+
+    def _advance_status(self, kind: CoreExecutionEventKind) -> None:
+        if kind is CoreExecutionEventKind.SUBMITTED:
+            if self.status is not CoreExecutionSessionStatus.CREATED:
+                raise ValueError("submitted event is only valid for a new session")
+            self.status = CoreExecutionSessionStatus.SUBMITTED
+            return
+        if kind in {
+            CoreExecutionEventKind.WORKING,
+            CoreExecutionEventKind.PROGRESS,
+            CoreExecutionEventKind.ARTIFACT_READY,
+        }:
+            if self.status not in {
+                CoreExecutionSessionStatus.SUBMITTED,
+                CoreExecutionSessionStatus.WORKING,
+            }:
+                raise ValueError(f"{kind.value} event is invalid in {self.status.value} state")
+            self.status = CoreExecutionSessionStatus.WORKING
+            return
+        if kind is CoreExecutionEventKind.COMPLETED:
+            self._require_active_state(kind)
+            self.status = CoreExecutionSessionStatus.COMPLETED
+            return
+        if kind is CoreExecutionEventKind.FAILED:
+            self._require_terminal_source_state(kind)
+            self.status = CoreExecutionSessionStatus.FAILED
+            return
+        if kind is CoreExecutionEventKind.CANCELLED:
+            self._require_terminal_source_state(kind)
+            self.status = CoreExecutionSessionStatus.CANCELLED
+            return
+        raise ValueError(f"unsupported CoreExecutionEvent kind: {kind!r}")
+
+    def _require_active_state(self, kind: CoreExecutionEventKind) -> None:
+        if self.status not in {
+            CoreExecutionSessionStatus.SUBMITTED,
+            CoreExecutionSessionStatus.WORKING,
+        }:
+            raise ValueError(f"{kind.value} event is invalid in {self.status.value} state")
+
+    def _require_terminal_source_state(self, kind: CoreExecutionEventKind) -> None:
+        if self.status not in {
+            CoreExecutionSessionStatus.CREATED,
+            CoreExecutionSessionStatus.SUBMITTED,
+            CoreExecutionSessionStatus.WORKING,
+        }:
+            raise ValueError(f"{kind.value} event is invalid in {self.status.value} state")
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,8 +567,13 @@ def _slot_value(pack: ContextPack, name: str) -> Any:
 __all__ = [
     "CORE_EXECUTION_SPEC_EXTRA_KEY",
     "CoreCapabilitySnapshot",
+    "CoreCommand",
+    "CoreCommandKind",
+    "CoreEvent",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
+    "CoreExecutionSession",
+    "CoreExecutionSessionStatus",
     "CoreExecutionSpec",
     "NativeExecutionAdapter",
     "NativeExecutionInput",

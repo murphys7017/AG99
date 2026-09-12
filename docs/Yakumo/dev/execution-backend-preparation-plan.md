@@ -1,8 +1,8 @@
 # Personal Runtime 前置主链清理计划
 
-本文记录 Yakumo 下一阶段的总体实施计划。当前优先级不是实现可替换
-`ExecutionBackend`，而是把执行阶段之前仍然存在的过渡结构清理为稳定的 Personal
-Runtime 主链。只有这些边界完成后，Native、Claude Code、OpenCode 等执行后台才进入
+本文记录 Yakumo 下一阶段的总体实施计划。当前优先级不是实现可替换 Executor Body，
+而是把执行阶段之前仍然存在的过渡结构清理为稳定的 Personal Runtime 主链。只有这些
+边界完成后，Native、Claude Code、OpenCode 等 Executor Body 才进入
 设计和实现。
 
 本文是目标和实施顺序，不代表所述能力已经完成。当前运行事实以
@@ -17,10 +17,41 @@ Runtime 主链。只有这些边界完成后，Native、Claude Code、OpenCode �
    和插件的长期 owner。
 2. 清理已经完成使命的过渡状态、旁路、镜像和反向回调。
 3. 让官方插件与平台能力通过稳定边界继续工作。
-4. 最后才从稳定的 Execution Preparation 接入不同 Backend。
+4. 最后才从稳定的 Execution Preparation 接入不同 Executor Body。
 
-执行后台是最后一段替换点，不是当前架构工作的中心。前置主链完成后，Backend 应只
+执行后台是最后一段替换点，不是当前架构工作的中心。前置主链完成后，Executor Body 应只
 负责“如何执行”，不再重新实现 Prompt、知识库、工具、插件、会话和输出。
+
+## 边界校正：Personal、Core Head 与 Executor Body
+
+后续设计统一采用以下职责模型：
+
+```text
+Personal Agent
+    <-> Core Head
+          +-- Planner
+          +-- CoreExecution 会话与状态机
+          +-- Core 内部任务调度/队列
+          +-- Executor 选择与生命周期协调
+          +-- ExecutionEvent / Artifact 归一化
+          +-- 可替换 Executor Body
+```
+
+- `Personal` 负责统一的对外沟通、快速响应、人格表达和最终用户可见输出。
+- `Core Head` 是稳定的核心控制面，负责接收任务、规划、执行会话、状态、取消、重试、
+  事件归一化和结果汇总。
+- `Executor Body` 是 Core Head 内部的可替换执行实现。Native Agent Runner 是当前
+  实现，未来可以增加其他执行器，但它们不直接接触 Personal、平台 Event 或 Output。
+- Personal 与 Core Head 之间是同一进程内的异步双向通信；消息对象和事件对象用于隔离
+  生命周期，不代表网络协议、跨进程协议或分布式部署。
+- “委派”只建立或更新一条 `CoreExecution` 通信会话，不等于释放 Personal turn、转移
+  Personal 输出所有权，也不等于 Core 可以直接向平台发言。
+- `CoreExecution` 会话与 Personal turn 是关联但独立的生命周期：前者可继续执行、接收
+  取消或产生事件，后者始终由 Personal 持有其会话准入、对外表达和完成语义。
+
+因此，Core 内部可以有队列、worker、取消和事件订阅；Personal/Core 边界暂不引入
+分布式消息系统或远程 Agent 发现。只有未来确实需要跨进程执行时，才在 Core Head 内部
+增加相应 Adapter，而不是改变 Personal 的职责。
 
 ## 兼容边界
 
@@ -59,11 +90,14 @@ Platform / Internal Event
             -> Observation / active conversational turn
             -> Router
                 -> persona -> Personal Expression
-                -> hybrid -> Core Planner
-                    -> execute -> ContextSnapshot + CapabilitySnapshot
-                        -> Execution Preparation
-                        -> Execution Backend (last phase)
-                        -> Execution Events -> Personal Expression
+                -> hybrid -> Core Head
+                    -> CoreExecution session
+                    -> Planner / internal scheduling
+                    -> ContextSnapshot + CapabilitySnapshot
+                    -> Execution Preparation
+                    -> replaceable Executor Body
+                    -> normalized Execution Events / Artifacts
+                    -> Core Head -> Personal Expression
                     -> not_required -> Personal Expression
        -> Output Dispatcher
   -> Official Platform Sink
@@ -80,7 +114,10 @@ Platform / Internal Event
 - Prompt 系统收集事实并按目标投影；Planner 不构建执行上下文。
 - Capability 系统是 Knowledge、Tools、Skills 和 Plugins 的唯一通用能力来源；SubAgent 仅作为 Native 兼容能力保留。
 - Output Dispatcher 是所有可见输出的唯一内部出口。
-- Backend 只消费准备好的 Execution Request，并返回统一 Execution Events。
+- Core Head 是 Personal 委派的唯一接收者；Executor Body 只由 Core Head 调度和监督。
+- Executor Body 只消费准备好的 Execution Request，并向 Core Head 返回统一 Execution Events；
+  Personal 不直接选择或调用 Executor。Core Head 负责任务提交、取消、进度接收和结果归一化；
+  Personal 保留最终是否表达、如何表达和何时表达的唯一决定权。
 
 ## 实施原则
 
@@ -88,28 +125,30 @@ Platform / Internal Event
 - 一次只迁移一个 owner；新 owner 接管后删除旧 owner 的写入路径。
 - 新旧路径短暂并存时只能有一个主写者，另一条只能做只读校验或边界适配。
 - Router、Planner 和 Personal Expression 保持独立，但消费同一事实快照的不同投影。
-- 不把所有官方能力转换成 MCP；内部先形成统一 Capability，再由未来 Backend Adapter
-  选择直接调用、MCP、RPC、CLI 或其他桥接。
+- 不把所有官方能力转换成 MCP；内部先形成统一 Capability，再由 Core Head 为 Executor
+  Body 选择直接调用、MCP、RPC、CLI 或其他桥接。
 - 不为了文件变小而拆类；只有所有权、生命周期或测试边界发生变化时才拆模块。
 
 ## 执行器解耦的契约原则
 
-独立执行器的解耦需要明确任务委托、生命周期、进度和产物交付，但当前不预设远程协议、
-部署形态或实现技术。以下原则用于约束未来的执行边界，而不是替代本地 Runtime 的总线。
+Executor Body 的解耦需要明确任务委托、生命周期、进度和产物交付，但当前只设计进程
+内的 Core Head 边界，不预设远程协议、部署形态或分布式实现。以下原则用于约束 Core
+内部的执行边界，而不是替代 Personal/Core 的本地通信总线。
 
 可以借鉴的原则：
 
 - 将一次用户对话、一次 Core 执行、一次插件调用和一个可交付产物严格区分。推荐父子关系为
-  `InteractionTurn -> CoreExecution -> PluginInvocation / BackendTask -> OutputArtifact`；各层有
+  `InteractionTurn -> CoreExecution -> PluginInvocation / ExecutorTask -> OutputArtifact`；各层有
   自己的 identity、终态和审计记录，不能通过 `event.extra` 或后台回调隐式互相替代。
-- 远程或独立执行器只接收经过授权和脱敏的执行请求，内部模型、工具、记忆和推理过程保持黑盒；
-  AstrBot 只拥有任务提交、取消、进度接收、结果归一化和最终输出编排权。
+- Executor Body 只接收经过授权和脱敏的执行请求，内部模型、工具、记忆和推理过程保持黑盒；
+  Core Head 拥有任务提交、取消、进度接收和结果归一化，Personal 拥有最终对外表达决定权。
 - 执行过程应回流为结构化 `ExecutionEvent`，至少能表达 `submitted`、`working`、
   `progress`、`input_required`、`artifact_ready`、`completed`、`failed` 和 `cancelled`。原始
   token、搜索材料或执行器日志不是用户可见输出；Persona 根据事件语义决定是否表达和如何表达。
-- 执行结果以规范化 artifact 返回，再进入 Persona Expression 和 Output Runtime。任何 Backend
-  或远程 Agent 都不能绕过这两个边界，直接取得平台发送、TTS、effect 或 AG99live 输出权限。
-- 执行器的能力声明、某轮任务的授权和实际执行句柄是三个不同概念。未来可登记支持的输入输出、
+- 执行结果以规范化 artifact 返回，再进入 Persona Expression 和 Output Runtime。任何
+  Executor Body 或未来远程 Adapter 都不能绕过这两个边界，直接取得平台发送、TTS、effect
+  或 AG99live 输出权限。
+- Executor Body 的能力声明、某轮任务的授权和实际执行句柄是三个不同概念。未来可登记支持的输入输出、
   流式进度、取消、补输入、文件、网络和沙箱能力；本轮能否使用仍由 Capability Snapshot、权限与
   策略决定。
 - 取消、超时、重试、重启恢复和重复投递必须围绕稳定 `execution_id` 设计，并保留明确的终态，
@@ -118,14 +157,15 @@ Platform / Internal Event
 明确不做的事：
 
 - 不把 Persona、Router、Core Planner、本地插件或 `FunctionTool` 全部抽象成互相通信的 Agent。
-- 不让执行器能力登记或远程发现绕过管理员配置、会话权限、Capability Snapshot 或网络边界。
+- 不让 Executor Body 的能力登记或未来远程 Adapter 绕过管理员配置、会话权限、Capability Snapshot 或网络边界。
 - 不把执行器的消息或 artifact 直接映射为平台消息；它们先是执行事实，是否形成用户表达仍由
   Persona 和 Output Runtime 决定。
 
-若未来出现第二个经实际验证的执行 Backend，应保持
-`CoreExecutionSpec -> Backend Adapter -> Backend Task -> normalized ExecutionEvent / Artifact`
-这一单向边界。在统一 Execution Event、取消、Ledger owner、Output Port 和跨进程可传输的
-Capability contract 尚未完成前，不创建远程 adapter 或能力发现入口。
+若未来出现第二个经实际验证的 Executor Body，应保持
+`Core Head -> Executor Adapter -> Executor Task -> normalized ExecutionEvent / Artifact`
+这一 Core 内部单向边界。Personal 仍只与 Core Head 通信。在统一 Execution Event、取消、
+Ledger owner、Output Port 和可传输的 Capability contract 尚未完成前，不创建远程 Adapter
+或能力发现入口。
 
 ## Phase 0：过渡结构清单与运行事实
 
@@ -139,7 +179,7 @@ Capability contract 尚未完成前，不创建远程 adapter 或能力发现入
   流式、Core 错误、主动消息、Subagent 前台和后台的运行事实。
 - 记录每条路径的状态 owner、输出 owner、完成 owner、Prompt 版本和能力来源。
 - 盘点所有 `_interaction_*` extra，区分公开诊断、兼容镜像和内部状态。
-- 盘点 Local/Third-party 路径差异，但不在本阶段设计 Backend。
+- 盘点 Local/Third-party 路径差异，但不在本阶段设计 Executor Body。
 
 退出条件：每个现有过渡结构都有明确去向，不再把“当前可用”当作“目标保留”。
 
@@ -305,49 +345,81 @@ AgentRunner 才能被发现。
 
 ## Phase 8：Execution Preparation 就绪复核
 
-这一阶段仍不以接入新 Backend 为目标，只验证前置主链是否已经稳定。
+这一阶段仍不以接入新的 Executor Body 为目标，只验证 Personal 与 Core Head 的前置
+通信边界和 Core 内部准备链是否已经稳定。
 
 需要确认：
 
 - ContextSnapshot、CapabilitySnapshot 和 CoreTaskSpec 均有唯一 owner。
 - Personal Runtime 能形成完整、不可变的 Execution Preparation 输入。
 - Native 当前使用的 Prompt、工具、知识库、Skills 和插件均能从前置边界获得，不要求
-  Backend 自行查询；SubAgent handoff 由 Native 兼容路径自行持有，不属于此验收条件。
+  Executor Body 自行查询；SubAgent handoff 由 Native 兼容路径自行持有，不属于此验收条件。
 - Output、错误、取消、进度和完成通过统一事件返回 Personal Runtime。
 - Local/Third-party 平行准备链可以被删除，而不是继续扩展。
 
 当前已经建立 `CoreExecutionSpec`，它只保存统一 ContextPack、CoreTaskSpec、执行历史、
 通用能力快照和执行身份，不保存目标渲染结果或 ProviderRequest。Spec 形成时深拷贝所有
 事实数据，只有 Native `ToolSet` 作为明确的实时执行句柄保留。Native 在 Spec 形成后执行
-目标投影和渲染，再通过 `NativeExecutionAdapter` 转换为官方 `ProviderRequest`；这不是完整的
-`ExecutionBackend` 接口，而且 Spec 当前仍在 Native `build_main_agent` 内形成。Claude Code、OpenCode 等只有在
-Output、取消和 Execution Event 边界稳定后才接入；Dify/Coze/DashScope/DeerFlow 继续作为
+目标投影和渲染，再通过 `NativeExecutionAdapter` 转换为官方 `ProviderRequest`；这仍是 Core
+内部的 Native Executor 适配边界，不是 Personal/Core 之间的远程接口，而且 Spec 当前仍在
+Native `build_main_agent` 内形成。其他 Executor Body 只有在 Output、取消和 Execution Event
+边界稳定后才接入；Dify/Coze/DashScope/DeerFlow 继续作为
 官方兼容路径。
 
-这里的 `CoreExecutionSpec` 是单次进程内的事实契约，不是可持久化或可跨进程传输的
-Backend 协议。当前 `CoreCapabilitySnapshot.tools` 仍保留 Native `ToolSet` 运行时对象，
-同时提供规范化 tool schema；后续 Backend 契约只能消费规范化能力描述或显式 capability
-handle，不能依赖 `FunctionTool`、`AgentRunner` 或 `ProviderRequest` 对象。
+这里的 `CoreExecutionSpec` 是单次进程内、由 Core Head 交给 Executor Body 的事实契约，
+不是 Personal/Core 通信协议，也不是可持久化或可跨进程传输的 wire contract。当前
+`CoreCapabilitySnapshot.tools` 仍保留 Native `ToolSet` 运行时对象，同时提供规范化 tool
+schema；后续 Executor Adapter 只能消费规范化能力描述或显式 capability handle，不能依赖
+`FunctionTool`、`AgentRunner` 或 `ProviderRequest` 对象。
 
 `CoreCapabilitySnapshot` 不再为 SubAgent 设置独立字段。Native 继续通过 `SubagentCollector`、
 `SubAgentOrchestrator` 和 `HandoffTool` 保持官方兼容，因此当前 Native ContextPack/ToolSet
-仍携带 handoff 信息；该绑定应在 Capability Resolver 阶段分离。其他 Backend 不承担该能力，
+仍携带 handoff 信息；该绑定应在 Capability Resolver 阶段分离。其他 Executor Body 不承担该能力，
 新增场景优先通过插件 Tool 表达。
 
 Phase 0 已确认的准备边界：
 
 - 官方 `ProviderRequest` 是必须保留的插件兼容输入，不是未来统一执行契约。
-- TaskSpec、Context/Prompt Projection、规范化附件和 CapabilitySnapshot 必须在选择
-  Backend Adapter 之前形成。
-- Adapter 只负责后台能力校验、协议字段投影、远端 thread、stream、cancel/close 和错误
-  翻译，不重新收集 Prompt、人格、知识库或插件事实。
+- TaskSpec、Context/Prompt Projection、规范化附件和 CapabilitySnapshot 必须在 Core Head
+  选择 Executor Adapter 之前形成。
+- Executor Adapter 只负责执行能力校验、协议字段投影、任务句柄、stream、cancel/close
+  和错误翻译，不重新收集 Prompt、人格、知识库或插件事实。
 - 官方 `OnLLMRequest` 保留在最终低层 request projection 之后、实际执行之前；其他
   Agent/LLM/Tool Hook 按后台可观测能力映射，不伪造后台未暴露的工具生命周期。
 - Third-party Stage 丢弃插件 `ProviderRequest` 的兼容缺口已经修复：显式请求直接进入
   `CoreTaskSpec` 兼容投影和 `OnLLMRequest` Hook；只有普通事件输入才从文本、图片和录音
   构建请求。现有 Dify/Coze/DashScope/DeerFlow runners 仍是兼容对象，不是新接口模板。
 
-## 当前进度（截至 2026-09-02）
+## Phase 9：Core Head 与 Executor Body 内部解耦（进行中：通信状态边界）
+
+这一阶段才开始实现可替换执行器，但仍限定在 Core 内部，不改变 Personal 的对外职责，
+也不引入分布式部署。
+
+实施内容：
+
+- 已建立进程内最小通信类型：`CoreCommand` 明确 Personal 到 Core Head 的提交、补充输入
+  和取消方向；`CoreEvent` 为执行事实增加单会话递增序号；`CoreExecutionSession` 持有执行
+  身份、命令幂等、会话状态和终态冲突保护。这些类型只管理协调事实，不创建队列、不运行
+  Executor，也不访问平台输出。
+- 将 `CoreExecutionSession` 接入 Core Head 的生命周期 owner，补齐父 turn、取消句柄和
+  artifact 汇总的实际归属；当前类型只覆盖身份、状态、命令幂等和事件序号。
+- 将 `CoreCommand` 与 `CoreEvent` 接入进程内双向通信：Personal 只向 Core Head 发送任务/
+  补充输入/取消，Core Head 向 Personal 发布状态/进度/产物/终态；具体队列和消费策略仍待
+  生命周期 owner 明确后实现。
+- 将 Planner、Executor 选择、内部任务队列、重试、取消、Ledger 和事件归一化归入 Core
+  Head；Personal 不直接选择或调用 Executor Body。
+- 为 Executor Body 建立最小内部 Adapter 边界，先接入当前 Native Agent Runner；Adapter
+  返回统一 `ExecutionEvent` 和规范化 Artifact。
+- 保持 Output Dispatcher 和 Personal Expression 为唯一对外输出路径；Core Head 不直接
+  调用平台发送接口。
+- 为旧 Core 事件与新 Personal turn 建立 execution/turn 相关性判断，避免旧任务结果覆盖
+  新对话；这属于通信消费策略，不改变 Personal turn lease 的定义。
+
+退出条件：Core Head 可以在不修改 Personal 主链的情况下替换 Executor Body；同一任务的
+状态、取消、结果和错误均通过统一事件回流；Native Executor 与未来 Executor 使用相同的
+Core Head 内部契约；没有新增远程协议、跨进程队列或第二套对外输出路径。
+
+## 当前进度（截至 2026-09-12）
 
 已经完成：
 
@@ -382,22 +454,24 @@ Phase 0 已确认的准备边界：
 - Native Core 已通过 `NativeExecutionAdapter` 消费 `CoreExecutionSpec` 与其后的 Native
   RenderResult；Token 统计和 Core 执行连续性独立持久化，不再依赖可见对话历史，也不绕过
   Prompt Renderer 手动追加 ProviderRequest 上下文。这里的 Adapter 仍是 Native 适配边界，
-  不是可替换 Backend 的实现。
+  不是可替换 Executor Body 的实现。
 
 当前仍存在、但不应继续扩展的准备阶段边界：
 
 - 2026-09-12：Native Interaction 已落地首个进程内执行事件切片。它基于既有
   `CoreExecutionSpec`，在所属 turn 的有界 journal 中记录 `submitted`、`working`、
   可见 Core progress、`artifact_ready` 和三种终态；事件元数据是不可变快照，终态首写获胜，
-  并写入现有运行 trace。该切片不改变可见输出、不替代 Core Execution Ledger，也不构成
-  Backend、远程协议或 Third-party Agent 的适配层。下一步先用真实 Core 工具调用验证事件顺序，
-  再统一取消/超时 owner 和 Ledger 写入归属。
+  并写入现有运行 trace。成功终态只在 Native Stage 取得稳定 runner 最终状态后写入，避免
+  工具回流与最终完成之间的短暂状态误判。该切片不改变可见输出、不替代 Core Execution Ledger，
+  也不构成 Executor Body、远程协议或 Third-party Agent 的适配层。它是未来 Core Head
+  归一化内部事件的第一块事实基础。下一步先统一取消/超时 owner 和 Ledger 写入归属，再在
+  Core 内部建立 CoreExecutionSession 与 Native Executor Adapter。
 
 - Core Execution Ledger 的成功、失败和取消记录仍由 `InternalAgentSubStage` 收尾；在统一
   Execution Event 建立后，应由执行生命周期 owner 记录，而不是由 Native Stage 私有持有。
 - Third-party Agent Stage 仍走官方兼容准备链，尚未以 `CoreExecutionSpec` 作为统一输入。
   它可以复用部分 Core task、Hook 和 capability 授权边界，但仍是需要保留的兼容现状，
-  不是新 Backend 的实现模板。
+  不是新 Executor Body 的实现模板。
 - 通用 `Context.send_message()` 保留公开调用方式；纯文本主动消息现在经 Personal Runtime
   排队和 Output Controller 投递。同一 active turn 的 Core 工具消息明确作为 progress，
   跨 session 输出建立独立 proactive turn。纯媒体主动消息尚未形成可持久化语义材料，当前
@@ -440,7 +514,7 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   因此系统已有最小主动表达能力；其他 Runtime Sensor 与未来后台执行仍未完成。
 - Native 已消费 `CoreExecutionSpec`，Third-party 仍是官方兼容请求链。两者的上下文、
   capability、execution identity、ledger 和错误状态尚未统一，暂不适合直接抽象成等价
-  Backend。
+  Executor。
 - EventBus 在逐事件任务创建前的配置解析与 scheduler 查找缺少异常隔离。该问题属于官方
   调度基础设施风险，不应在 Interaction 内打补丁，但后续吸收上游或修改官方边界时需要
   单独处理。
@@ -455,19 +529,19 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - Provider 的 output-contract tool adapter 已迁入 Provider 协议层，不再反向依赖 Prompt。
 - Interaction 使用 `agent.tool` 描述 Persona 工具，能力契约尚未从 Native Agent 包中独立。
 - `CoreCapabilitySnapshot` 仍携带 Native `ToolSet` 运行时对象，只是浅层 frozen，不是
-  可跨 backend 或跨进程的不可变契约。
+  可跨 Executor 或跨进程的不可变契约。
 - `PersonalTurnContext` 已建立，但平台主链仍通过 117 个 literal event extra key 协作；
   typed context 还不是实际唯一事实源。
 
 依赖结构图见 `runtime-dependency-structure.mmd`。
 
-下一步继续收口 Execution Event、取消、Ledger owner 和 Output Port，再评估 Backend
-Adapter；不直接把现有 Third-party Agent SubStage 改名或包装成新执行器接口。
+下一步继续收口 Execution Event、取消、Ledger owner 和 Output Port；随后在 Core 内部
+建立稳定的 Core Head，不直接把现有 Third-party Agent SubStage 改名或包装成新执行器接口。
 
 ### 2026-09-02 方案与源码复核结论
 
 当前方案的方向与 `target-state.md`、`current-state.md` 和本流程图一致，但尚未满足
-正式实现可替换 `ExecutionBackend` 的退出条件：
+正式实现 Core 内部可替换 Executor Body 的退出条件：
 
 - `CoreExecutionSpec` 已是 Native 的进程内准备事实契约，但仍在 `build_main_agent` 内形成，
   且 `CoreCapabilitySnapshot.tools` 保留 Native `ToolSet` 实时句柄。
@@ -479,13 +553,36 @@ Adapter；不直接把现有 Third-party Agent SubStage 改名或包装成新执
 - 发送回执与 Conversation 提交之间仍存在进程退出窗口，分段部分成功也缺少完整 delivery
   receipt。
 
-因此当前允许继续做 Execution Preparation 收口和适配边界设计；暂不创建空置的
-`ExecutionBackend` 抽象，也不把现有 Native/Third-party Stage 直接包装成 Backend。
+因此当前允许继续做 Execution Preparation 收口和 Core Head 通信边界设计；暂不创建空置的
+`ExecutionBackend` 抽象，也不把现有 Native/Third-party Stage 直接包装成 Executor。
+
+### 2026-09-12 Personal/Core/Executor 复核结论
+
+- 已提交的 `1b40f151d` 只建立 Native Core 执行事件事实记录；它没有引入 Personal 与 Core
+  的远程边界，也没有决定 Executor 的部署形态，符合当前阶段目标。
+- 当前未提交的 Native 终态收口修复把成功、产物和失败事件移动到稳定的 runner 最终状态处，
+  解决了工具回流阶段的过早 `max_steps_exhausted` 误判；它属于 Native Executor 内部修复，
+  不应被解释为 Core Head 已经完成。
+- Personal 与 Core Head 的消息/事件结构、CoreExecution 会话和 Core 内部 Executor 调度
+  目前仍是设计项，尚未进入代码实现；不能通过现有 `event.extra`、turn lock 或直接回调
+  隐式替代。
+- 后续实现必须保持三条边界：Personal 统一对外输出；Core Head 持有任务与事件协调；
+  Executor Body 只负责被 Core Head 调度的复杂执行。委派只建立通信会话，不改变 Personal
+  turn 的生命周期或输出所有权。
+
+### 2026-09-12 Phase 9 首个实现切片
+
+- `CoreCommand`、`CoreEvent` 和 `CoreExecutionSession` 已以纯进程内类型进入
+  `astrbot.core.execution`。Session 只接受匹配 `execution_id` 与 `turn_id` 的命令和事件，
+  提交命令按 `command_id` 去重，非 progress 事件可幂等重放，终态首写后拒绝冲突终态。
+- Session 目前未被 Personal Runtime、Pipeline 或 Native Runner 调用；这刻意保留了现有
+  输出、turn lease、执行和 Ledger 行为。下一小步是明确 Core Head 的生命周期 owner，令既有
+  Native 事件通过 Session 归一化，但仍不创建真实队列或新的 Executor Body。
 
 ## 非目标
 
-- 当前不实现 Claude Code、OpenCode 或新的 Backend。
-- 当前不创建空置 ExecutionBackend、Capability Gateway 或远程协议。
+- 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
+- 当前不创建空置的 Executor 接口、Capability Gateway、远程协议或分布式队列。
 - 不把所有插件转换成 MCP。
 - 不为了旧内部过渡结构保留双轨主链。
 - 不移动官方插件 Handler 到 Router 或 Personal Expression 之后。
@@ -502,4 +599,4 @@ Adapter；不直接把现有 Third-party Agent SubStage 改名或包装成新执
 6. Conversation/Memory 收口与迁移说明。
 7. 插件、主动任务和 Subagent 生命周期基线。
 8. 前置主链就绪报告。
-9. 经单独确认的 Backend 实现计划。
+9. Core Head 内部 Executor Body 的实现计划。

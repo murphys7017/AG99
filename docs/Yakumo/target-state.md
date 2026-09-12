@@ -44,7 +44,8 @@ Base Persona
 - `Effective Persona` 是本轮真正参与响应生成的人格结果，不应直接覆盖原始 persona 配置。
 
 Interaction middleware 在这个目标里应定位为 `Persona Runtime Shell`：它不是 persona
-数据本体，也不是 memory / provider / capability 的所有者，而是一次交互中人格接收、判断、委派和表达的运行外壳。
+数据本体，也不是 memory / provider / capability 的所有者，而是一次交互中人格接收、判断、
+与 Core Head 通信和表达的运行外壳。
 
 Prompt Pipeline 是 Persona Runtime、Core Planner 和可替换执行器共享的模型输入边界：Collector 汇总事实，Builder 生成规范快照，Projection 生成目标视图，Profile 提供目标局部指令，Layout/Renderer 生成具体模型请求。它不应拥有 persona state、memory 写入、路由模型决策、工具执行或输出发送。未来替换执行器时，应复用同一事实与投影协议，再由执行器适配器消费，而不是为每个执行器重新查询和拼接上下文。
 
@@ -109,7 +110,7 @@ Interaction middleware 的职责不是替代 persona，而是承载一次 intera
 - observation / route decision
 - route decision
 - turn owner
-- core delegation
+- Core Head communication
 - output materialization
 - finalized material
 - postprocess handoff
@@ -190,6 +191,10 @@ Desktop Body Output 是普通聊天输出之外的表现通道，用于本地可
 - 认证、配置、观测、状态管理
 
 这一层负责“输入隔离、人格解析、人格运行、决策、编排、路由和输出调度”，不负责承载所有具体能力实现。
+
+当前阶段的 Core Head 与 Executor Body 仍在同一 AstrBot 进程内运行。Executor Body 的可替换
+性是 Core 内部的模块边界，不要求把 Core 拆成独立服务；Personal 只通过 Core Head 的内部
+通信对象和事件接收任务状态与结果。
 
 ### 2. Capability Platforms
 
@@ -348,24 +353,26 @@ Dispatcher，确定 Prompt Snapshot、Capability Snapshot、Conversation/Memory 
 
 统一 Execution Preparation 已经以 `CoreExecutionSpec` 接入 Native；它将可见 Dialogue
 History、独立 Core Execution Ledger、能力快照和任务说明保持为不同事实，并与目标渲染结果
-分离，再由 `NativeExecutionAdapter` 负责官方 `ProviderRequest` 转换。Claude Code、OpenCode 等 Backend
-仍等待 Execution Event 与取消边界稳定后再接入。详细阶段和验收条件见
+分离，再由 Core 内部的 `NativeExecutionAdapter` 负责官方 `ProviderRequest` 转换。Personal
+只与稳定的 Core Head 通信；Native、Claude Code、OpenCode 等都是 Core 内部可替换的
+Executor Body，仍等待 Execution Event 与取消边界稳定后再接入。详细阶段和验收条件见
 [Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)。
 
-`CoreExecutionSpec` 当前只是进程内事实边界，不是最终 Backend wire contract，也尚未移到统一
-Backend 选择之前。Personal Runtime 已拥有 session lease、turn task scope、主动纯文本输出、
+`CoreExecutionSpec` 当前只是 Core Head 到 Native Executor 的进程内事实边界，不是 Personal/Core
+通信协议，也不是最终 wire contract。Personal Runtime 已拥有 session lease、turn task scope、主动纯文本输出、
 受控 Observation / Policy 表达和 immediate/final 仲裁，并已提供经 Adapter 能力校验的默认主动消息
 目标；Native 工具对象、统一 Execution Event、纯媒体主动输出和 Conversation 提交窗口仍属于下一阶段
-需要收口的边界。目标态不得把这些现状固化为各 Backend 各自维护的
+需要收口的边界。目标态不得把这些现状固化为各 Executor Body 各自维护的
 兼容实现。
 
-未来第二个真实 Backend 出现后，远程执行边界只承接受控任务委托、状态/取消和 artifact 回流，
-而不是新的内部总线。其任务状态、能力声明和 artifact 契约应约束 AG99 的
-`InteractionTurn`、`CoreExecution`、插件调用与输出产物边界；远程进度先归一化为
-`ExecutionEvent`，再由 Persona 决定是否可见表达。远程执行器不获得 Persona、Memory、平台
-Event 或 Output Runtime 的直接控制权。只有 Execution Event、取消、Ledger owner、Output Port
-和可跨进程的 capability contract 已稳定，且存在第二个真实 Backend 时，才评估实现对应 adapter。
+未来第二个真实 Executor Body 出现后，若确有跨进程需求，远程执行边界也只由 Core Head
+承接受控任务委托、状态/取消和 artifact 回流，而不是新的 Personal/Core 总线。其任务状态、
+能力声明和 artifact 契约应约束 AG99 的 `InteractionTurn`、`CoreExecution`、插件调用与输出
+产物边界；远程进度先归一化为 `ExecutionEvent`，再由 Personal 决定是否可见表达。远程
+执行器不获得 Persona、Memory、平台 Event 或 Output Runtime 的直接控制权。只有 Execution
+Event、取消、Ledger owner、Output Port 和可跨进程的 capability contract 已稳定，且存在第二个
+真实 Executor Body 时，才评估实现对应 adapter。
 
 SubAgent handoff 当前只作为 Native 官方兼容能力保留，不再拥有通用 Capability Snapshot
-字段；Native ContextPack/ToolSet 暂时仍携带其兼容信息。未来 Backend 不承担 AstrBot
+字段；Native ContextPack/ToolSet 暂时仍携带其兼容信息。未来 Executor Body 不承担 AstrBot
 SubAgent 兼容义务，新的专业执行能力优先通过插件 Tool 暴露。

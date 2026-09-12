@@ -98,7 +98,9 @@ def create_mock_update(
     video: MagicMock | None = None,
     document: MagicMock | None = None,
     voice: MagicMock | None = None,
+    audio: MagicMock | None = None,
     sticker: MagicMock | None = None,
+    video_note: MagicMock | None = None,
     reply_to_message: MagicMock | None = None,
     caption: str | None = None,
     entities: list | None = None,
@@ -156,7 +158,9 @@ def create_mock_update(
     message.video = video
     message.document = document
     message.voice = voice
+    message.audio = audio
     message.sticker = sticker
+    message.video_note = video_note
     message.reply_to_message = reply_to_message
     message.caption = caption
     message.entities = entities

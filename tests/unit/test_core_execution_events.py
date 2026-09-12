@@ -2,7 +2,12 @@ import pytest
 
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
+    CoreCommand,
+    CoreCommandKind,
+    CoreExecutionEvent,
     CoreExecutionEventKind,
+    CoreExecutionSession,
+    CoreExecutionSessionStatus,
     CoreExecutionSpec,
 )
 from astrbot.core.interaction.turn_state import (
@@ -126,3 +131,83 @@ def test_core_execution_journal_requires_matching_interaction_turn():
         is None
     )
     assert get_interaction_turn_core_execution_events(event) == []
+
+
+def test_core_execution_session_orders_events_and_accepts_commands_once():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    session = CoreExecutionSession(spec=spec)
+    submit = CoreCommand(
+        execution_id=spec.execution_id,
+        turn_id=spec.turn_id,
+        kind=CoreCommandKind.SUBMIT,
+        command_id="submit-1",
+        execution_spec=spec,
+    )
+
+    assert session.accept_command(submit) is True
+    assert session.accept_command(submit) is False
+    submitted = session.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    working = session.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.WORKING,
+            executor_id="native",
+        )
+    )
+    completed = session.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.COMPLETED,
+            executor_id="native",
+        )
+    )
+
+    assert [submitted.sequence, working.sequence, completed.sequence] == [1, 2, 3]
+    assert session.status is CoreExecutionSessionStatus.COMPLETED
+    assert session.terminal_event is completed
+    assert session.record_event(completed.execution) is completed
+    with pytest.raises(ValueError, match="terminal"):
+        session.record_event(
+            CoreExecutionEvent.from_spec(
+                spec,
+                kind=CoreExecutionEventKind.FAILED,
+                executor_id="native",
+            )
+        )
+
+
+def test_core_execution_session_allows_cancellation_before_submission():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    session = CoreExecutionSession(spec=spec)
+
+    assert session.accept_command(
+        CoreCommand(
+            execution_id=spec.execution_id,
+            turn_id=spec.turn_id,
+            kind=CoreCommandKind.CANCEL,
+            command_id="cancel-before-submit",
+        )
+    )
+    cancelled = session.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.CANCELLED,
+            executor_id="native",
+            metadata={"reason": "cancelled_before_submit"},
+        )
+    )
+
+    assert cancelled.sequence == 1
+    assert session.status is CoreExecutionSessionStatus.CANCELLED

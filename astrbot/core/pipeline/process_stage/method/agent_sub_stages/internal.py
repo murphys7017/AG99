@@ -625,6 +625,51 @@ class InternalAgentSubStage(Stage):
 
                 final_resp = agent_runner.get_final_llm_resp()
 
+                if agent_runner.done() and (
+                    final_resp is None or final_resp.role != "err"
+                ):
+                    if final_resp is not None:
+                        completion_text = str(final_resp.completion_text or "")
+                        result_chain = final_resp.result_chain
+                        record_interaction_turn_core_execution_event(
+                            event,
+                            kind=CoreExecutionEventKind.ARTIFACT_READY,
+                            executor_id="native",
+                            metadata={
+                                "artifact_kind": (
+                                    "text"
+                                    if completion_text
+                                    else "message_chain"
+                                    if result_chain is not None
+                                    else "empty"
+                                ),
+                                "text_length": len(completion_text),
+                                "component_count": (
+                                    len(result_chain.chain)
+                                    if result_chain is not None
+                                    else 0
+                                ),
+                            },
+                        )
+                    record_interaction_turn_core_execution_event(
+                        event,
+                        kind=CoreExecutionEventKind.COMPLETED,
+                        executor_id="native",
+                    )
+                else:
+                    record_interaction_turn_core_execution_event(
+                        event,
+                        kind=CoreExecutionEventKind.FAILED,
+                        executor_id="native",
+                        metadata={
+                            "reason": (
+                                "runner_error"
+                                if agent_runner.done()
+                                else "runner_not_completed"
+                            )
+                        },
+                    )
+
                 event.trace.record(
                     "astr_agent_complete",
                     request_lifecycle_id=request_lifecycle.lifecycle_id,
@@ -642,7 +687,9 @@ class InternalAgentSubStage(Stage):
                 )
 
                 # 检查事件是否被停止，如果被停止则不保存历史记录
-                if not event.is_stopped() or agent_runner.was_aborted():
+                if (
+                    not event.is_stopped() or agent_runner.was_aborted()
+                ):
                     await self._save_to_history(
                         event,
                         req,

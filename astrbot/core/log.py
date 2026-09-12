@@ -192,6 +192,7 @@ class LogManager:
     _ENRICH_FILTER_FLAG = "_astrbot_enrich_filter"
 
     _configured = False
+    _configured_log_level: int | None = None
     _console_sink_id: int | None = None
     _file_sink_id: int | None = None
     _trace_sink_id: int | None = None
@@ -242,7 +243,7 @@ class LogManager:
             handler = _LoguruInterceptHandler()
             setattr(handler, cls._LOGGER_HANDLER_FLAG, True)
             root_logger.addHandler(handler)
-        root_logger.setLevel(logging.DEBUG)
+        root_logger.setLevel(cls._configured_log_level or logging.DEBUG)
         for name, level in cls._NOISY_LOGGER_LEVELS.items():
             logging.getLogger(name).setLevel(level)
 
@@ -366,6 +367,28 @@ class LogManager:
                 logger.setLevel(level)
             except Exception:
                 logger.setLevel(logging.INFO)
+            cls._configured_log_level = logger.level
+
+            try:
+                configured_level = logging.getLevelName(logger.level)
+                if isinstance(configured_level, str):
+                    new_sink_id = _loguru.add(
+                        sys.stdout,
+                        level=configured_level,
+                        colorize=True,
+                        filter=lambda record: not record["extra"].get(
+                            "is_trace", False
+                        ),
+                        format=_format_console_record,
+                    )
+                    cls._remove_sink(cls._console_sink_id)
+                    cls._console_sink_id = new_sink_id
+            except Exception:
+                pass
+
+            logging.getLogger().setLevel(logger.level)
+            for name, noisy_level in cls._NOISY_LOGGER_LEVELS.items():
+                logging.getLogger(name).setLevel(noisy_level)
 
         if "log_file" in config:
             file_conf = config.get("log_file") or {}

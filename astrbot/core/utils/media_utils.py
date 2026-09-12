@@ -218,7 +218,10 @@ async def convert_audio_format(
     Returns:
         转换后的音频文件路径
     """
-    if audio_path.lower().endswith(f".{output_format}"):
+    source_path = Path(audio_path)
+    if source_path.suffix.lower() == f".{output_format}" and (
+        not source_path.exists() or _get_audio_magic_type(audio_path) == output_format
+    ):
         return audio_path
 
     if output_path is None:
