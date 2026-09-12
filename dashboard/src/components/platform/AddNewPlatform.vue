@@ -1331,4 +1331,10 @@ export default {
 .registration-platform-id-field {
   width: 300px;
 }
+
+.creation-mode-title {
+  color: rgba(var(--v-theme-on-surface), 0.88);
+  font-size: 14px;
+  font-weight: 600;
+}
 </style>
