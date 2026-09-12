@@ -169,11 +169,12 @@ class ProviderAnthropic(Provider):
         """Create an HTTP client with optional proxy and system SSL trust store.
 
         The Anthropic SDK validates ``http_client`` with
-        ``isinstance(..., httpx.AsyncClient)`` against its own ``httpx`` import.
+        ``isinstance(..., httpx.AsyncClient)`` against its own HTTP module.
         When multiple ``httpx`` installations are present on ``sys.path``
         (e.g. bundled Python + system Python), constructing the client from a
         different ``httpx`` module makes that check fail. We therefore prefer
-        the SDK's own ``httpx`` module when available.
+        the SDK's own module when available. Anthropic 1.0 renamed that
+        module from ``httpx`` to ``httpx2``.
         """
         proxy = provider_config.get("proxy", "")
         if not proxy:
@@ -182,7 +183,11 @@ class ProviderAnthropic(Provider):
         try:
             from anthropic import _base_client as anthropic_base_client
 
-            httpx_module = getattr(anthropic_base_client, "httpx", httpx)
+            httpx_module = getattr(
+                anthropic_base_client,
+                "httpx",
+                getattr(anthropic_base_client, "httpx2", httpx),
+            )
         except ImportError:
             pass
         return create_proxy_client(

@@ -1,5 +1,7 @@
 import builtins
+import sys
 from io import BytesIO
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -145,7 +147,42 @@ def test_create_http_client_uses_anthropic_httpx_module(monkeypatch):
     assert captured["provider_label"] == "Anthropic"
     assert captured["proxy"] == "http://127.0.0.1:7890"
     assert captured["headers"] == {"X-Trace-Id": "trace-1"}
-    assert captured["httpx_module"] is anthropic_base_client.httpx
+    expected_httpx_module = getattr(
+        anthropic_base_client,
+        "httpx",
+        getattr(anthropic_base_client, "httpx2", None),
+    )
+    assert captured["httpx_module"] is expected_httpx_module
+
+
+def test_create_http_client_uses_anthropic_httpx2_module(monkeypatch):
+    captured: dict[str, object] = {}
+    sdk_httpx_module = object()
+
+    def fake_create_proxy_client(
+        provider_label: str,
+        proxy: str | None = None,
+        headers: dict[str, str] | None = None,
+        verify=None,
+        httpx_module=None,
+    ):
+        captured["httpx_module"] = httpx_module
+        return object()
+
+    fake_anthropic_module = ModuleType("anthropic")
+    fake_anthropic_module._base_client = SimpleNamespace(httpx2=sdk_httpx_module)
+    monkeypatch.setitem(sys.modules, "anthropic", fake_anthropic_module)
+    monkeypatch.setattr(
+        anthropic_source, "create_proxy_client", fake_create_proxy_client
+    )
+
+    provider = anthropic_source.ProviderAnthropic.__new__(
+        anthropic_source.ProviderAnthropic
+    )
+    provider.custom_headers = None
+    provider._create_http_client({"proxy": "http://127.0.0.1:7890"})
+
+    assert captured["httpx_module"] is sdk_httpx_module
 
 
 def test_create_http_client_falls_back_to_global_httpx_module(monkeypatch):
