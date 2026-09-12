@@ -382,24 +382,22 @@ const installDialogPluginLogo = computed(() => {
   </v-row>
 
   <!-- 配置对话框 -->
-  <v-dialog v-model="configDialog" max-width="900">
+  <v-dialog v-model="configDialog" max-width="900" scrollable>
     <v-card>
       <v-card-title class="text-h2 pa-4 pl-6 pb-0">{{
         tm("dialogs.config.title")
       }}</v-card-title>
       <v-card-text>
-        <div style="max-height: 60vh; overflow-y: auto; padding-right: 8px">
-          <AstrBotConfig
-            v-if="extension_config.metadata"
-            :metadata="extension_config.metadata"
-            :iterable="extension_config.config"
-            :metadataKey="curr_namespace"
-            :pluginName="curr_namespace"
-            :pluginI18n="extension_config.i18n"
-            enable-default-reset
-          />
-          <p v-else>{{ tm("dialogs.config.noConfig") }}</p>
-        </div>
+        <AstrBotConfig
+          v-if="extension_config.metadata"
+          :metadata="extension_config.metadata"
+          :iterable="extension_config.config"
+          :metadataKey="curr_namespace"
+          :pluginName="curr_namespace"
+          :pluginI18n="extension_config.i18n"
+          enable-default-reset
+        />
+        <p v-else>{{ tm("dialogs.config.noConfig") }}</p>
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
