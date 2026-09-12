@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 CORE_EXECUTION_SPEC_EXTRA_KEY = "_core_execution_spec"
+CORE_EXECUTION_SESSION_EXTRA_KEY = "_core_execution_session"
 
 
 class CoreExecutionEventKind(str, Enum):
@@ -332,6 +333,37 @@ class CoreExecutionSession:
             raise ValueError(f"{kind.value} event is invalid in {self.status.value} state")
 
 
+def bind_core_execution_session(
+    event: AstrMessageEvent,
+    spec: CoreExecutionSpec,
+) -> CoreExecutionSession:
+    """Bind the current Native lifecycle adapter to one Core execution session.
+
+    The event-scoped attachment is transitional: it lets the existing Native
+    runner report facts through the Core session without granting the
+    Interaction turn ownership of that session.
+    """
+
+    existing = event.get_extra(CORE_EXECUTION_SESSION_EXTRA_KEY)
+    if isinstance(existing, CoreExecutionSession):
+        if (
+            existing.spec.execution_id == spec.execution_id
+            and existing.spec.turn_id == spec.turn_id
+        ):
+            return existing
+        raise ValueError("CoreExecutionSession is already bound to another execution")
+    session = CoreExecutionSession(spec=spec)
+    event.set_extra(CORE_EXECUTION_SESSION_EXTRA_KEY, session)
+    return session
+
+
+def get_core_execution_session(event: AstrMessageEvent) -> CoreExecutionSession | None:
+    """Return the execution session owned by the current Core lifecycle adapter."""
+
+    session = event.get_extra(CORE_EXECUTION_SESSION_EXTRA_KEY)
+    return session if isinstance(session, CoreExecutionSession) else None
+
+
 @dataclass(frozen=True, slots=True)
 class CoreCapabilitySnapshot:
     """Framework-owned capabilities exposed to an executor."""
@@ -566,6 +598,7 @@ def _slot_value(pack: ContextPack, name: str) -> Any:
 
 __all__ = [
     "CORE_EXECUTION_SPEC_EXTRA_KEY",
+    "CORE_EXECUTION_SESSION_EXTRA_KEY",
     "CoreCapabilitySnapshot",
     "CoreCommand",
     "CoreCommandKind",
@@ -579,4 +612,6 @@ __all__ = [
     "NativeExecutionInput",
     "bind_effective_core_request",
     "bind_effective_core_capabilities",
+    "bind_core_execution_session",
+    "get_core_execution_session",
 ]

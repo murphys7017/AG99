@@ -10,6 +10,7 @@ from astrbot.core.agent.tool import ToolSet
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.tools.message_tools import SendMessageToUserTool
+from astrbot.core.utils.config_number import coerce_int_config
 
 if TYPE_CHECKING:
     from astrbot.core.cron.events import CronMessageEvent
@@ -93,7 +94,14 @@ async def run_proactive_agent_turn(
     if result is None:
         return None
 
-    async for _ in result.agent_runner.step_until_done(30):
+    provider_settings = getattr(config, "provider_settings", {}) or {}
+    agent_max_step = coerce_int_config(
+        provider_settings.get("max_agent_step", 30),
+        default=30,
+        min_value=1,
+        field_name="provider_settings.max_agent_step",
+    )
+    async for _ in result.agent_runner.step_until_done(agent_max_step):
         pass
     return ProactiveAgentTurnResult(
         event=event,

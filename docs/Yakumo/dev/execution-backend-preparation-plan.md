@@ -401,7 +401,11 @@ Phase 0 已确认的准备边界：
   和取消方向；`CoreEvent` 为执行事实增加单会话递增序号；`CoreExecutionSession` 持有执行
   身份、命令幂等、会话状态和终态冲突保护。这些类型只管理协调事实，不创建队列、不运行
   Executor，也不访问平台输出。
-- 将 `CoreExecutionSession` 接入 Core Head 的生命周期 owner，补齐父 turn、取消句柄和
+- 当前 Native 生命周期已经在最终 `CoreExecutionSpec` 形成后，由 `InternalAgentSubStage`
+  建立 event-scoped `CoreExecutionSession`；既有执行事实经过 Session 校验并获得递增序号，
+  再写入 turn journal 和 trace。该 attachment 只是现有 Native lifecycle adapter，不将
+  Session 放入 Personal turn state，也不代表 Core Head 已完成。
+- 后续将 `CoreExecutionSession` 移入明确的 Core Head lifecycle owner，补齐取消句柄和
   artifact 汇总的实际归属；当前类型只覆盖身份、状态、命令幂等和事件序号。
 - 将 `CoreCommand` 与 `CoreEvent` 接入进程内双向通信：Personal 只向 Core Head 发送任务/
   补充输入/取消，Core Head 向 Personal 发布状态/进度/产物/终态；具体队列和消费策略仍待
@@ -575,9 +579,11 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - `CoreCommand`、`CoreEvent` 和 `CoreExecutionSession` 已以纯进程内类型进入
   `astrbot.core.execution`。Session 只接受匹配 `execution_id` 与 `turn_id` 的命令和事件，
   提交命令按 `command_id` 去重，非 progress 事件可幂等重放，终态首写后拒绝冲突终态。
-- Session 目前未被 Personal Runtime、Pipeline 或 Native Runner 调用；这刻意保留了现有
-  输出、turn lease、执行和 Ledger 行为。下一小步是明确 Core Head 的生命周期 owner，令既有
-  Native 事件通过 Session 归一化，但仍不创建真实队列或新的 Executor Body。
+- 当前 `InternalAgentSubStage` 作为 Native lifecycle adapter，在 Hook 后形成的最终 Spec
+  上绑定 Session。`run_agent`、Stage 收尾和异常路径仍通过既有 event journal 入口记录事实；
+  入口会通过 Session 统一校验、编号，再保留原有 journal/trace 行为。该切片不改变 Personal
+  输出、turn lease、执行和 Ledger 行为，也不创建真实队列或新的 Executor Body。下一步才是
+  将这个临时 adapter 收口为明确的 Core Head lifecycle owner。
 
 ## 非目标
 

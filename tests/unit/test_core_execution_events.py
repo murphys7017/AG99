@@ -4,11 +4,14 @@ from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreCommand,
     CoreCommandKind,
+    CoreEvent,
     CoreExecutionEvent,
     CoreExecutionEventKind,
     CoreExecutionSession,
     CoreExecutionSessionStatus,
     CoreExecutionSpec,
+    bind_core_execution_session,
+    get_core_execution_session,
 )
 from astrbot.core.interaction.turn_state import (
     MAX_CORE_EXECUTION_EVENTS_PER_TURN,
@@ -131,6 +134,32 @@ def test_core_execution_journal_requires_matching_interaction_turn():
         is None
     )
     assert get_interaction_turn_core_execution_events(event) == []
+
+
+def test_core_execution_journal_uses_bound_session_sequence():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+
+    assert get_core_execution_session(event) is None
+    session = bind_core_execution_session(event, spec)
+    assert get_core_execution_session(event) is session
+
+    submitted = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    working = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.WORKING,
+        executor_id="native",
+    )
+
+    assert submitted is not None
+    assert working is not None
+    assert [item.sequence for item in session.events] == [1, 2]
+    assert all(isinstance(item, CoreEvent) for item in session.events)
+    assert event.trace.records[-1][1]["sequence"] == 2
 
 
 def test_core_execution_session_orders_events_and_accepts_commands_once():

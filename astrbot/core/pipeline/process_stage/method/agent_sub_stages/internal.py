@@ -30,6 +30,7 @@ from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreExecutionEventKind,
     CoreExecutionSpec,
+    bind_core_execution_session,
     bind_effective_core_request,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
@@ -491,6 +492,7 @@ class InternalAgentSubStage(Stage):
                         CORE_EXECUTION_SPEC_EXTRA_KEY,
                         effective_execution_spec,
                     )
+                    bind_core_execution_session(event, effective_execution_spec)
                     record_interaction_turn_core_execution_event(
                         event,
                         kind=CoreExecutionEventKind.SUBMITTED,
