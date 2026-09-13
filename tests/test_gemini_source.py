@@ -8,7 +8,6 @@ from PIL import Image
 from google.genai import types
 
 import astrbot.core.provider.sources.gemini_source as gemini_source
-import astrbot.core.provider.sources.request_retry as request_retry
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.provider.sources.gemini_source import ProviderGoogleGenAI
