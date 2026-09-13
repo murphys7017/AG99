@@ -606,8 +606,8 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         srv_send_msg: bool = False,
         file_name: str | None = None,
         **kwargs,
-    ) -> Media | None:
-        """上传媒体文件"""
+    ) -> Media:
+        """上传群聊或私聊媒体，失败时向调用方传播异常。"""
         # 构建基础payload
         payload: dict = {"file_type": file_type, "srv_send_msg": srv_send_msg}
         if file_name:
@@ -636,7 +636,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 group_openid=kwargs["group_openid"],
             )
         else:
-            return None
+            raise ValueError("Invalid upload parameters")
 
         @_qqofficial_retry()
         async def _do_upload():
@@ -647,25 +647,24 @@ class QQOfficialMessageEvent(AstrMessageEvent):
 
         try:
             result = await _do_upload()
-
-            if result:
-                if not isinstance(result, dict):
-                    logger.error(f"上传文件响应格式错误: {result}")
-                    return None
-
-                return Media(
-                    file_uuid=result["file_uuid"],
-                    file_info=result["file_info"],
-                    ttl=result.get("ttl", 0),
-                )
         except APIReturnNoneError:
-            logger.warning(f"上传文件API返回None，共尝试5次后放弃: {file_source}")
+            logger.warning("Media upload API returned None after retries: %s", file_source)
+            raise
         except (botpy.errors.ServerError, botpy.errors.SequenceNumberError):
-            logger.error(f"上传媒体文件失败，共尝试5次后放弃: {file_source}")
-        except Exception as e:
-            logger.error(f"上传请求错误: {e}")
+            logger.error("Media upload failed after retries: %s", file_source)
+            raise
+        except Exception as exc:
+            logger.error("Media upload request failed: %s", exc)
+            raise
 
-        return None
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Failed to upload media, response is not dict: {result}")
+
+        return Media(
+            file_uuid=result["file_uuid"],
+            file_info=result["file_info"],
+            ttl=result.get("ttl", 0),
+        )
 
     async def post_c2c_message(
         self,
