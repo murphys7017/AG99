@@ -4,6 +4,7 @@ import axios from "axios";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import defaultPluginIcon from "@/assets/images/plugin_icon.png";
+import { useI18n } from "@/i18n/composables";
 import { usePluginI18n } from "@/utils/pluginI18n";
 import PluginPlatformChip from "@/components/shared/PluginPlatformChip.vue";
 
@@ -27,6 +28,7 @@ const props = defineProps({
 });
 
 const { tm, router } = props.state;
+const { locale } = useI18n();
 const { pluginName, pluginDesc: resolvePluginDesc } = usePluginI18n();
 
 const markdown = new MarkdownIt({
@@ -173,6 +175,29 @@ const starsDisplay = computed(() => {
   return value === undefined ? "" : String(value);
 });
 
+const updatedAtDisplay = computed(() => {
+  if (!isMarketDetail.value) return "";
+
+  const value = firstPresentValue(
+    props.plugin?.updated_at,
+    props.marketPlugin?.updated_at,
+  );
+  if (!value) return "";
+
+  const updatedAt = new Date(value);
+  if (Number.isNaN(updatedAt.getTime())) return "";
+
+  return new Intl.DateTimeFormat(locale.value, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(updatedAt);
+});
+
 const tagsDisplay = computed(() => {
   const tags = firstPresentValue(props.plugin.tags, props.marketPlugin?.tags);
   if (!Array.isArray(tags)) return [];
@@ -200,6 +225,11 @@ const infoRows = computed(() => {
     { label: tm("detail.info.author"), value: authorDisplay.value },
     { label: tm("detail.info.category"), value: categoryDisplay.value, optional: true },
     { label: tm("detail.info.stars"), value: starsDisplay.value, optional: true },
+    {
+      label: tm("detail.info.updatedAt"),
+      value: updatedAtDisplay.value,
+      optional: true,
+    },
     {
       label: tm("detail.info.tags"),
       value: tagsDisplay.value,
