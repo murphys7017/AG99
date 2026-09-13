@@ -50,7 +50,8 @@ class TestNormalizeMcpInputSchema:
             not in normalized["properties"]["server"]["properties"]["stock_code"]
         )
         assert (
-            "required" not in normalized["properties"]["server"]["properties"]["market"]
+            "required"
+            not in normalized["properties"]["server"]["properties"]["market"]
         )
 
     def test_preserves_parent_required_flag_for_nested_object_properties(self):
@@ -115,3 +116,15 @@ class TestMCPToolSchemaNormalization:
         assert tool.parameters["required"] == ["stock_code"]
         assert "required" not in tool.parameters["properties"]["stock_code"]
         assert "required" not in tool.parameters["properties"]["market"]
+
+    def test_mcp_tool_sanitizes_llm_name_but_keeps_original_for_call(self):
+        mcp_tool = SimpleNamespace(
+            name="t_drive.create_doc",
+            description="Create a doc",
+            inputSchema={"type": "object", "properties": {}},
+        )
+
+        tool = MCPTool(mcp_tool, MagicMock(), "tencent-docs")
+
+        assert tool.name == "t_drive_create_doc"
+        assert tool.mcp_tool.name == "t_drive.create_doc"

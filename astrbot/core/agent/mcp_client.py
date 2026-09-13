@@ -655,8 +655,11 @@ class MCPTool(FunctionTool, Generic[TContext]):
     def __init__(
         self, mcp_tool: mcp.Tool, mcp_client: MCPClient, mcp_server_name: str, **kwargs
     ) -> None:
+        # LLM providers restrict tool names to [a-zA-Z0-9_-], while MCP
+        # servers may expose names containing characters such as '.'.
+        llm_tool_name = re.sub(r"[^A-Za-z0-9_-]+", "_", mcp_tool.name)
         super().__init__(
-            name=mcp_tool.name,
+            name=llm_tool_name,
             description=mcp_tool.description or "",
             parameters=_normalize_mcp_input_schema(mcp_tool.inputSchema),
         )
