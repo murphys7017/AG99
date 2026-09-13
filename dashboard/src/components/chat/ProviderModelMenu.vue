@@ -207,7 +207,7 @@ defineExpose({
 }
 
 .provider-menu-item.v-list-item--active {
-    background-color: rgba(103, 58, 183, 0.1);
+    background-color: rgba(var(--v-theme-primary), 0.08);
 }
 
 .provider-subtitle {
