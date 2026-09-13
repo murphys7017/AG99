@@ -181,33 +181,18 @@ class DocumentStorage:
             if if_not_exists
             else "CREATE VIRTUAL TABLE"
         )
-        try:
-            await executor.execute(
-                text(
-                    f"""
-                    {create_clause} {FTS_TABLE_NAME}
-                    USING fts5(
-                        search_text,
-                        content='',
-                        contentless_delete=1,
-                        tokenize='unicode61'
-                    )
-                    """,
-                ),
-            )
-        except Exception:
-            await executor.execute(
-                text(
-                    f"""
-                    {create_clause} {FTS_TABLE_NAME}
-                    USING fts5(
-                        search_text,
-                        content='',
-                        tokenize='unicode61'
-                    )
-                    """,
-                ),
-            )
+        await executor.execute(
+            text(
+                f"""
+                {create_clause} {FTS_TABLE_NAME}
+                USING fts5(
+                    search_text,
+                    content='',
+                    tokenize='unicode61'
+                )
+                """,
+            ),
+        )
 
     async def _inspect_fts5_table(self, executor) -> tuple[bool, bool]:
         schema_result = await executor.execute(
