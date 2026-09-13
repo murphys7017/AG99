@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+import mimetypes
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
@@ -312,7 +313,10 @@ class ChatRoute(Route):
             if filename_ext == ".wav":
                 return await send_file(real_file_path, mimetype="audio/wav")
             if filename_ext[1:] in self.supported_imgs:
-                return await send_file(real_file_path, mimetype="image/jpeg")
+                return await send_file(
+                    real_file_path,
+                    mimetype=mimetypes.types_map.get(filename_ext, "image/jpeg"),
+                )
             return await send_file(real_file_path)
 
         except (FileNotFoundError, OSError):
