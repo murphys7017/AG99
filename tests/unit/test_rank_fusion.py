@@ -38,6 +38,7 @@ def make_sparse_result(
     kb_id: str = "kb",
     doc_id: str | None = None,
     content: str | None = None,
+    rank: int | None = None,
 ) -> SparseResult:
     return SparseResult(
         chunk_index=0,
@@ -46,6 +47,7 @@ def make_sparse_result(
         kb_id=kb_id,
         content=content or chunk_id,
         score=score,
+        rank=rank,
     )
 
 
@@ -112,3 +114,27 @@ async def test_rank_fusion_keeps_low_scoring_single_kb_result_last():
 
     assert [result.chunk_id for result in results] == ["strong", "moderate", "weak"]
     assert results[-1].score == pytest.approx(0.1)
+
+
+@pytest.mark.asyncio
+async def test_rank_fusion_uses_local_sparse_rank_for_rrf_ties():
+    dense_results = [
+        make_dense_result("small-exact", 0.99, kb_id="small"),
+        make_dense_result("large-first", 0.99, kb_id="large"),
+    ]
+    sparse_results = [
+        make_sparse_result("large-first", 12.0, kb_id="large", rank=1),
+        make_sparse_result("large-second", 10.0, kb_id="large", rank=2),
+        make_sparse_result("small-exact", 0.00001, kb_id="small", rank=1),
+    ]
+
+    results = await RankFusion(kb_db=None).fuse(
+        dense_results=dense_results,
+        sparse_results=sparse_results,
+    )
+
+    assert [result.chunk_id for result in results] == [
+        "small-exact",
+        "large-first",
+        "large-second",
+    ]
