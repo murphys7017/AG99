@@ -57,10 +57,11 @@ async def test_gemini_37_minimal_thinking_level_falls_back_to_medium():
     }
 
 
-def test_gemini_prepare_conversation_removes_leading_model_content():
+@pytest.mark.asyncio
+async def test_gemini_prepare_conversation_removes_leading_model_content():
     provider = ProviderGoogleGenAI.__new__(ProviderGoogleGenAI)
 
-    contents = provider._prepare_conversation(
+    contents = await provider._prepare_conversation(
         {
             "messages": [
                 {"role": "assistant", "content": "stale assistant turn"},
@@ -75,10 +76,11 @@ def test_gemini_prepare_conversation_removes_leading_model_content():
     assert contents[0].parts[-1].text == "current user turn"
 
 
-def test_gemini_prepare_conversation_keeps_normal_user_first_history():
+@pytest.mark.asyncio
+async def test_gemini_prepare_conversation_keeps_normal_user_first_history():
     provider = ProviderGoogleGenAI.__new__(ProviderGoogleGenAI)
 
-    contents = provider._prepare_conversation(
+    contents = await provider._prepare_conversation(
         {
             "messages": [
                 {"role": "user", "content": "first user turn"},
@@ -97,10 +99,11 @@ def test_gemini_prepare_conversation_keeps_normal_user_first_history():
     assert contents[-1].parts[-1].text == "current user turn"
 
 
-def test_gemini_prepare_conversation_preserves_user_model_history():
+@pytest.mark.asyncio
+async def test_gemini_prepare_conversation_preserves_user_model_history():
     provider = ProviderGoogleGenAI.__new__(ProviderGoogleGenAI)
 
-    contents = provider._prepare_conversation(
+    contents = await provider._prepare_conversation(
         {
             "messages": [
                 {"role": "user", "content": "user turn"},
