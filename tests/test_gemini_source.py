@@ -1,5 +1,6 @@
 import base64
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
