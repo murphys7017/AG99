@@ -492,7 +492,11 @@ class InternalAgentSubStage(Stage):
                         CORE_EXECUTION_SPEC_EXTRA_KEY,
                         effective_execution_spec,
                     )
-                    start_core_execution_lifecycle(event, effective_execution_spec)
+                    lifecycle = start_core_execution_lifecycle(
+                        event,
+                        effective_execution_spec,
+                    )
+                    lifecycle.bind_executor_stop_callback(agent_runner.request_stop)
                     record_interaction_turn_core_execution_event(
                         event,
                         kind=CoreExecutionEventKind.SUBMITTED,

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from time import time
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
@@ -346,6 +346,11 @@ class CoreExecutionLifecycle:
 
     session: CoreExecutionSession
     _submit_command_id: str | None = field(default=None, init=False, repr=False)
+    _executor_stop_callback: Callable[[], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def spec(self) -> CoreExecutionSpec:
@@ -378,6 +383,53 @@ class CoreExecutionLifecycle:
         """Sequence an executor fact through the owning Core session."""
 
         return self.session.record_event(execution_event)
+
+    def bind_executor_stop_callback(self, callback: Callable[[], None]) -> None:
+        """Bind the active executor's idempotent stop request for this session."""
+
+        if self.session.status.is_terminal:
+            raise ValueError("cannot bind an executor callback after terminal state")
+        if self._executor_stop_callback is not None:
+            if self._executor_stop_callback == callback:
+                return
+            raise ValueError("CoreExecutionLifecycle already has an executor callback")
+        self._executor_stop_callback = callback
+
+    def cancel(
+        self,
+        *,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreEvent:
+        """Accept cancellation and record its terminal fact once."""
+
+        terminal = self.session.terminal_event
+        if terminal is not None:
+            if terminal.kind is CoreExecutionEventKind.CANCELLED:
+                return terminal
+            raise ValueError("cannot cancel a completed CoreExecutionSession")
+
+        details = metadata or {}
+        self.accept_command(
+            CoreCommand(
+                execution_id=self.spec.execution_id,
+                turn_id=self.spec.turn_id,
+                kind=CoreCommandKind.CANCEL,
+                payload=details,
+                reason=str(details.get("reason", "") or "cancelled"),
+            )
+        )
+        cancelled = self.record_event(
+            CoreExecutionEvent.from_spec(
+                self.spec,
+                kind=CoreExecutionEventKind.CANCELLED,
+                executor_id=executor_id,
+                metadata=details,
+            )
+        )
+        if self._executor_stop_callback is not None:
+            self._executor_stop_callback()
+        return cancelled
 
     def ledger_status(self, *, user_aborted: bool = False) -> str | None:
         """Project the terminal Core fact to the existing Ledger status value."""

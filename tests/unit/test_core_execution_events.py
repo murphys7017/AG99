@@ -227,6 +227,83 @@ def test_core_execution_lifecycle_normalizes_terminal_ledger_status():
     assert cancelled.ledger_status(user_aborted=True) == "aborted"
 
 
+def test_core_execution_lifecycle_cancellation_accepts_command_once():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+
+    cancelled = lifecycle.cancel(
+        executor_id="native",
+        metadata={"reason": "deadline_exceeded"},
+    )
+
+    assert cancelled.kind is CoreExecutionEventKind.CANCELLED
+    assert cancelled.execution.metadata == {"reason": "deadline_exceeded"}
+    assert lifecycle.session.status is CoreExecutionSessionStatus.CANCELLED
+    assert lifecycle.cancel(executor_id="native") is cancelled
+
+
+def test_core_execution_lifecycle_cancellation_stops_bound_executor_once():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    stops = []
+    lifecycle.bind_executor_stop_callback(lambda: stops.append("stop"))
+
+    cancelled = lifecycle.cancel(executor_id="native")
+
+    assert cancelled.kind is CoreExecutionEventKind.CANCELLED
+    assert stops == ["stop"]
+    assert lifecycle.cancel(executor_id="native") is cancelled
+    assert stops == ["stop"]
+
+
+def test_core_execution_lifecycle_rebinding_same_executor_method_is_idempotent():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+
+    class _Executor:
+        def request_stop(self):
+            return None
+
+    executor = _Executor()
+    lifecycle.bind_executor_stop_callback(executor.request_stop)
+    lifecycle.bind_executor_stop_callback(executor.request_stop)
+
+
+def test_core_execution_journal_routes_cancellation_through_lifecycle():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    lifecycle = start_core_execution_lifecycle(event, spec)
+    record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+
+    cancelled = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.CANCELLED,
+        executor_id="native",
+        metadata={"reason": "stage_cancelled"},
+    )
+
+    assert cancelled is not None
+    assert cancelled.metadata == {"reason": "stage_cancelled"}
+    assert lifecycle.session.status is CoreExecutionSessionStatus.CANCELLED
+    assert [item.kind for item in lifecycle.session.events] == [
+        CoreExecutionEventKind.SUBMITTED,
+        CoreExecutionEventKind.CANCELLED,
+    ]
+
+
 def test_core_execution_session_orders_events_and_accepts_commands_once():
     spec = CoreExecutionSpec.from_context_pack(
         context_pack=ContextPack(),

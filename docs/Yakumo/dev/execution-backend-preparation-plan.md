@@ -406,8 +406,9 @@ Phase 0 已确认的准备边界：
   `CoreExecutionSession` 的唯一协调点；既有事实再写入 turn journal 和 trace。event extra
   仅是当前 Native/Interaction 的桥接，不将 Lifecycle 放入 Personal turn state，也不代表
   完整的 Core Head 已完成。
-- 后续将取消句柄、超时收口、artifact 汇总和最终 Ledger 调用迁入该 lifecycle owner；当前
-  owner 只覆盖提交命令、身份、状态、命令幂等和事件序号。
+- Lifecycle 当前已接受 `cancel` 命令并生成唯一的 `cancelled` 终态；Native runner、deadline
+  和 Stage 仍保留请求停止、超时抛出与错误传播等实际副作用。后续再迁移取消句柄、超时收口、
+  artifact 汇总和最终 Ledger 调用。
 - 将 `CoreCommand` 与 `CoreEvent` 接入进程内双向通信：Personal 只向 Core Head 发送任务/
   补充输入/取消，Core Head 向 Personal 发布状态/进度/产物/终态；具体队列和消费策略仍待
   生命周期 owner 明确后实现。
@@ -610,8 +611,27 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   `CoreExecutionSession`；`InternalAgentSubStage` 只负责在最终 Spec 形成后启动 Lifecycle。
   Ledger 的最终调用位置尚在 Stage，但其状态依据 Lifecycle 终态而非 Stage 局部推断；当前没有
   迁移 executor runner、取消句柄或任何平台输出职责。
-- 下一步仍是将取消、超时、artifact 汇总和最终 Ledger 调用移动到这个 owner；先以 Native
-  实际生命周期验证，不提前创建队列、可替换 Executor 接口或远程通信层。
+- 下一步仍是将超时、artifact 汇总和最终 Ledger 调用移动到这个 owner；先以 Native 实际
+  生命周期验证，不提前创建队列、可替换 Executor 接口或远程通信层。
+
+### 2026-09-13 Phase 9 第四个实现切片
+
+- 所有已经通过既有 `record_interaction_turn_core_execution_event()` 记录的 `cancelled` 事实，
+  在存在 `CoreExecutionLifecycle` 时都会先进入 `CoreExecutionLifecycle.cancel()`：它接受一条
+  `CoreCommand.cancel`，写入一次 `cancelled` 终态，再由 Interaction 继续投影到既有 journal 和
+  trace。重复取消保持幂等；完成或失败后的取消仍被拒绝。
+- Native runner 的 `request_stop()`、deadline 的异常传播、Stage 的 cleanup 和 Personal turn
+  lease 均未迁移。此次仅收拢取消的 Core 会话语义与事件来源，不改变何时请求停止或谁发送输出。
+
+### 2026-09-13 Phase 9 第五个实现切片
+
+- `CoreExecutionLifecycle` 现在可在启动后的 active Native runner 上绑定一次幂等停止回调。
+  它仅在成功写入唯一 `cancelled` 终态后请求 runner 停止；重复取消复用已有终态，不会重复
+  调用回调，已完成或失败的执行仍拒绝取消。Core Head 因而拥有取消命令到 Executor Body 停止
+  请求的单向通信点，但不拥有 runner 的轮询、异常传播或 cleanup。
+- Native Stage 仍构造、运行和清理 `AgentRunner`，并在 runner 已创建、最终 Spec 已确定后绑定
+  `agent_runner.request_stop`。这保持当前同进程边界和既有 stop watcher，不改变 Personal 对外
+  输出和 turn 生命周期；后续才评估 timeout、artifact 汇总与 Ledger 最终调用的迁移。
 
 ## 非目标
 

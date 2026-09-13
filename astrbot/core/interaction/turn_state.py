@@ -1041,9 +1041,16 @@ def record_interaction_turn_core_execution_event(
     execution_lifecycle = get_core_execution_lifecycle(event)
     execution_session = get_core_execution_session(event)
     if execution_lifecycle is not None:
-        envelope = execution_lifecycle.record_event(execution_event)
-        if envelope.execution is not execution_event:
-            return None
+        if kind is CoreExecutionEventKind.CANCELLED:
+            envelope = execution_lifecycle.cancel(
+                executor_id=executor_id,
+                metadata=metadata,
+            )
+            execution_event = envelope.execution
+        else:
+            envelope = execution_lifecycle.record_event(execution_event)
+            if envelope.execution is not execution_event:
+                return None
     elif execution_session is not None:
         envelope = execution_session.record_event(execution_event)
         if envelope.execution is not execution_event:
