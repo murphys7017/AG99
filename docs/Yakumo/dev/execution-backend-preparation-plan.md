@@ -633,6 +633,19 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   `agent_runner.request_stop`。这保持当前同进程边界和既有 stop watcher，不改变 Personal 对外
   输出和 turn 生命周期；后续才评估 timeout、artifact 汇总与 Ledger 最终调用的迁移。
 
+### 2026-09-13 Phase 9 第六个实现切片
+
+- Native adapter 的 `TurnDeadlineExceeded`、外层 task cancellation 和 runner 内部异常现在都会
+  收敛为已经排序的 Session 终态后，再写入同一个 `CoreExecutionLedger` 投影。deadline 在
+  `asyncio.CancelledError` 形式穿过 runner 时会保留为 `deadline_exceeded`，不再退化成笼统的
+  `stage_cancelled`；取消记录保留工具证据和终止原因，但不写入可见对话历史或 Conversation token。
+- runner 内部异常会携带受限长度的实际错误文本进入 failed 终态，Ledger 优先保留该证据；外层
+  Native 异常也走相同投影。执行记录继续按 execution_id 保持一次性写入，Stage 仍是当前 SQLite
+  调用位置，Lifecycle 只提供终态与终止证据，不直接依赖数据库。
+- 可替换 Executor 的 stop callback 若抛出普通异常，取消终态和 turn journal 仍会完成，并额外
+  写入 `core_execution_stop_callback_failed` trace 事实。Native `request_stop()` 不会触发此路径；
+  callback 的重试策略、timeout owner、artifact 汇总和最终 Ledger owner 仍留待后续切片。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

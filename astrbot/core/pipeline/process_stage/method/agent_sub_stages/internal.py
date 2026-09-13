@@ -36,6 +36,7 @@ from astrbot.core.execution import (
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_deadline,
     get_interaction_turn_runtime_config,
     is_interaction_turn_core_delegated,
     record_interaction_turn_core_execution_event,
@@ -663,17 +664,22 @@ class InternalAgentSubStage(Stage):
                         executor_id="native",
                     )
                 else:
+                    failure_metadata = {
+                        "reason": (
+                            "runner_error"
+                            if agent_runner.done()
+                            else "runner_not_completed"
+                        )
+                    }
+                    if final_resp is not None and final_resp.completion_text:
+                        failure_metadata["error"] = str(
+                            final_resp.completion_text
+                        )[:2000]
                     record_interaction_turn_core_execution_event(
                         event,
                         kind=CoreExecutionEventKind.FAILED,
                         executor_id="native",
-                        metadata={
-                            "reason": (
-                                "runner_error"
-                                if agent_runner.done()
-                                else "runner_not_completed"
-                            )
-                        },
+                        metadata=failure_metadata,
                     )
 
                 event.trace.record(
@@ -719,19 +725,38 @@ class InternalAgentSubStage(Stage):
                         runtime_manager.unregister_active_runner(event, agent_runner)
 
         except TurnDeadlineExceeded:
+            cancellation_reason = "deadline_exceeded"
             record_interaction_turn_core_execution_event(
                 event,
                 kind=CoreExecutionEventKind.CANCELLED,
                 executor_id="native",
-                metadata={"reason": "deadline_exceeded"},
+                metadata={"reason": cancellation_reason},
+            )
+            await self._save_cancelled_interaction_core_state(
+                event,
+                req,
+                agent_runner,
+                cancellation_reason=cancellation_reason,
             )
             raise
         except asyncio.CancelledError:
+            deadline = get_interaction_turn_deadline(event)
+            cancellation_reason = (
+                "deadline_exceeded"
+                if deadline is not None and deadline.expired()
+                else "stage_cancelled"
+            )
             record_interaction_turn_core_execution_event(
                 event,
                 kind=CoreExecutionEventKind.CANCELLED,
                 executor_id="native",
-                metadata={"reason": "stage_cancelled"},
+                metadata={"reason": cancellation_reason},
+            )
+            await self._save_cancelled_interaction_core_state(
+                event,
+                req,
+                agent_runner,
+                cancellation_reason=cancellation_reason,
             )
             raise
         except Exception as e:
@@ -740,7 +765,10 @@ class InternalAgentSubStage(Stage):
                 event,
                 kind=CoreExecutionEventKind.FAILED,
                 executor_id="native",
-                metadata={"error_type": type(e).__name__},
+                metadata={
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:2000],
+                },
             )
             await self._save_failed_interaction_core_state(
                 event,
@@ -872,6 +900,9 @@ class InternalAgentSubStage(Stage):
         runner_stats: AgentStats | None,
         *,
         user_aborted: bool,
+        terminal_error: str | None = None,
+        status_override: str | None = None,
+        update_conversation_token_usage: bool = True,
     ) -> None:
         """Persist Core telemetry and execution continuity, never visible dialogue."""
         if not req or not req.conversation:
@@ -891,7 +922,7 @@ class InternalAgentSubStage(Stage):
             if llm_response is not None and llm_response.usage is not None
             else None
         )
-        if token_usage is not None:
+        if token_usage is not None and update_conversation_token_usage:
             try:
                 await self.conv_manager.update_conversation(
                     event.unified_msg_origin,
@@ -908,15 +939,27 @@ class InternalAgentSubStage(Stage):
         if ledger is None:
             return
         lifecycle = get_core_execution_lifecycle(event)
-        status = (
+        lifecycle_status = (
             lifecycle.ledger_status(user_aborted=user_aborted)
             if lifecycle is not None
             else None
         )
+        # Once the Core session has a terminal fact, it is the authoritative
+        # persistence outcome. Overrides only cover failures before binding.
+        status = lifecycle_status or status_override
         status = status or ("aborted" if user_aborted else "completed")
         completion_text = str(
             llm_response.completion_text if llm_response is not None else ""
         )
+        lifecycle_terminal_error = (
+            lifecycle.terminal_error() if lifecycle is not None else None
+        )
+        terminal_error = lifecycle_terminal_error or terminal_error
+        error = None
+        if status == "failed":
+            error = terminal_error or completion_text
+        elif status in {"cancelled", "aborted"}:
+            error = terminal_error
         await ledger.append_execution(
             execution_spec=execution_spec,
             conversation_id=req.conversation.cid,
@@ -924,7 +967,7 @@ class InternalAgentSubStage(Stage):
             status=status,
             messages=messages,
             result=completion_text if status != "failed" else None,
-            error=(completion_text or None) if status == "failed" else None,
+            error=error,
             token_usage=(
                 runner_stats.token_usage.__dict__ if runner_stats is not None else None
             ),
@@ -933,6 +976,55 @@ class InternalAgentSubStage(Stage):
             "_core_execution_ledger_recorded_id",
             execution_spec.execution_id,
         )
+
+    async def _save_cancelled_interaction_core_state(
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest | None,
+        agent_runner: AgentRunner | None,
+        *,
+        cancellation_reason: str,
+    ) -> None:
+        """Persist a cancelled interaction execution without mutating dialogue history."""
+
+        if (
+            not event.get_extra("_interaction_enabled", False)
+            or req is None
+            or req.conversation is None
+        ):
+            return
+        messages: list[Message] = []
+        final_response = None
+        runner_stats = None
+        user_aborted = False
+        if agent_runner is not None:
+            try:
+                messages = agent_runner.run_context.messages
+            except Exception:  # noqa: BLE001
+                messages = []
+            try:
+                final_response = agent_runner.get_final_llm_resp()
+                runner_stats = agent_runner.stats
+                user_aborted = agent_runner.was_aborted()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            await self._save_interaction_core_state(
+                event,
+                req,
+                final_response,
+                messages,
+                runner_stats,
+                user_aborted=user_aborted,
+                terminal_error=cancellation_reason,
+                status_override="cancelled",
+                update_conversation_token_usage=False,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to persist cancelled Core execution",
+                exc_info=True,
+            )
 
     async def _save_failed_interaction_core_state(
         self,
@@ -950,25 +1042,32 @@ class InternalAgentSubStage(Stage):
         execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
         if not isinstance(execution_spec, CoreExecutionSpec):
             return
-        messages: list[dict] = []
+        messages: list[Message] = []
+        final_response = None
+        runner_stats = None
+        user_aborted = False
         if agent_runner is not None:
             try:
-                messages = _extract_core_execution_messages(
-                    agent_runner.run_context.messages
-                )
+                messages = agent_runner.run_context.messages
             except Exception:  # noqa: BLE001
                 messages = []
+            try:
+                final_response = agent_runner.get_final_llm_resp()
+                runner_stats = agent_runner.stats
+                user_aborted = agent_runner.was_aborted()
+            except Exception:  # noqa: BLE001
+                pass
         try:
-            ledger = self.ctx.plugin_manager.context.core_execution_ledger
-            if ledger is None:
-                return
-            await ledger.append_execution(
-                execution_spec=execution_spec,
-                conversation_id=req.conversation.cid,
-                executor_id="native",
-                status="failed",
-                messages=messages,
-                error=str(error),
+            await self._save_interaction_core_state(
+                event,
+                req,
+                final_response,
+                messages,
+                runner_stats,
+                user_aborted=user_aborted,
+                terminal_error=str(error)[:2000],
+                status_override="failed",
+                update_conversation_token_usage=False,
             )
         except Exception:  # noqa: BLE001
             logger.warning("Failed to persist Core execution failure", exc_info=True)

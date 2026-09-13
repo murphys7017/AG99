@@ -17,6 +17,7 @@ from astrbot.core.interaction.output_modes import (
     temporary_output_origin,
 )
 from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_deadline,
     record_interaction_turn_core_execution_event,
 )
 from astrbot.core.message.components import BaseMessageComponent, Json, Plain
@@ -36,6 +37,13 @@ AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
 
 def _should_stop_agent(astr_event) -> bool:
     return astr_event.is_stopped() or bool(astr_event.get_extra("agent_stop_requested"))
+
+
+def _cancellation_reason(astr_event, *, fallback: str) -> str:
+    deadline = get_interaction_turn_deadline(astr_event)
+    if deadline is not None and deadline.expired():
+        return "deadline_exceeded"
+    return fallback
 
 
 async def _send_core_event_message(
@@ -378,7 +386,12 @@ async def run_agent(
                 astr_event,
                 kind=CoreExecutionEventKind.CANCELLED,
                 executor_id="native",
-                metadata={"reason": "task_cancelled"},
+                metadata={
+                    "reason": _cancellation_reason(
+                        astr_event,
+                        fallback="task_cancelled",
+                    )
+                },
             )
             raise
         except Exception as e:
@@ -421,7 +434,10 @@ async def run_agent(
                 astr_event,
                 kind=CoreExecutionEventKind.FAILED,
                 executor_id="native",
-                metadata={"error_type": type(e).__name__},
+                metadata={
+                    "error_type": type(e).__name__,
+                    "error": str(e)[:2000],
+                },
             )
             return
 

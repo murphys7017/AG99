@@ -1085,6 +1085,17 @@ def record_interaction_turn_core_execution_event(
                 ),
                 metadata=execution_event.metadata_for_trace(),
             )
+            if (
+                execution_lifecycle is not None
+                and execution_lifecycle.executor_stop_error is not None
+            ):
+                record(
+                    "core_execution_stop_callback_failed",
+                    execution_id=execution_event.execution_id,
+                    turn_id=execution_event.turn_id,
+                    executor_id=execution_event.executor_id,
+                    error=execution_lifecycle.executor_stop_error,
+                )
         except Exception:
             pass
     return execution_event

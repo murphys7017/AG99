@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from time import time
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
@@ -351,6 +351,7 @@ class CoreExecutionLifecycle:
         init=False,
         repr=False,
     )
+    _executor_stop_error: str | None = field(default=None, init=False, repr=False)
 
     @property
     def spec(self) -> CoreExecutionSpec:
@@ -427,9 +428,36 @@ class CoreExecutionLifecycle:
                 metadata=details,
             )
         )
-        if self._executor_stop_callback is not None:
-            self._executor_stop_callback()
+        self._request_executor_stop()
         return cancelled
+
+    @property
+    def executor_stop_error(self) -> str | None:
+        """Return the last non-fatal executor stop callback failure, if any."""
+
+        return self._executor_stop_error
+
+    def terminal_error(self) -> str | None:
+        """Project the terminal failure or cancellation evidence for persistence."""
+
+        terminal = self.session.terminal_event
+        if terminal is None:
+            return None
+        metadata = terminal.execution.metadata
+        for key in ("error", "reason", "error_type"):
+            value = metadata.get(key)
+            text = str(value or "").strip()
+            if text:
+                return text
+        return None
+
+    def _request_executor_stop(self) -> None:
+        if self._executor_stop_callback is None:
+            return
+        try:
+            self._executor_stop_callback()
+        except Exception as exc:  # noqa: BLE001
+            self._executor_stop_error = f"{type(exc).__name__}: {exc}"
 
     def ledger_status(self, *, user_aborted: bool = False) -> str | None:
         """Project the terminal Core fact to the existing Ledger status value."""

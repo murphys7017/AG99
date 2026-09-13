@@ -227,6 +227,25 @@ def test_core_execution_lifecycle_normalizes_terminal_ledger_status():
     assert cancelled.ledger_status(user_aborted=True) == "aborted"
 
 
+def test_core_execution_lifecycle_projects_terminal_failure_evidence():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    lifecycle.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.FAILED,
+            executor_id="native",
+            metadata={"error_type": "RuntimeError", "error": "provider unavailable"},
+        )
+    )
+
+    assert lifecycle.ledger_status() == "failed"
+    assert lifecycle.terminal_error() == "provider unavailable"
+
+
 def test_core_execution_lifecycle_cancellation_accepts_command_once():
     spec = CoreExecutionSpec.from_context_pack(
         context_pack=ContextPack(),
@@ -260,6 +279,28 @@ def test_core_execution_lifecycle_cancellation_stops_bound_executor_once():
     assert stops == ["stop"]
     assert lifecycle.cancel(executor_id="native") is cancelled
     assert stops == ["stop"]
+
+
+def test_core_execution_lifecycle_preserves_terminal_state_when_stop_fails():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+
+    def fail_stop() -> None:
+        raise RuntimeError("executor unavailable")
+
+    lifecycle.bind_executor_stop_callback(fail_stop)
+    cancelled = lifecycle.cancel(
+        executor_id="native",
+        metadata={"reason": "deadline_exceeded"},
+    )
+
+    assert cancelled.kind is CoreExecutionEventKind.CANCELLED
+    assert lifecycle.session.status is CoreExecutionSessionStatus.CANCELLED
+    assert lifecycle.executor_stop_error == "RuntimeError: executor unavailable"
+    assert lifecycle.terminal_error() == "deadline_exceeded"
 
 
 def test_core_execution_lifecycle_rebinding_same_executor_method_is_idempotent():
@@ -301,6 +342,28 @@ def test_core_execution_journal_routes_cancellation_through_lifecycle():
     assert [item.kind for item in lifecycle.session.events] == [
         CoreExecutionEventKind.SUBMITTED,
         CoreExecutionEventKind.CANCELLED,
+    ]
+
+
+def test_core_execution_journal_records_executor_stop_callback_failure():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    lifecycle = start_core_execution_lifecycle(event, spec)
+
+    def fail_stop() -> None:
+        raise RuntimeError("executor unavailable")
+
+    lifecycle.bind_executor_stop_callback(fail_stop)
+    cancelled = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.CANCELLED,
+        executor_id="native",
+    )
+
+    assert cancelled is not None
+    assert [name for name, _ in event.trace.records] == [
+        "core_execution_event",
+        "core_execution_stop_callback_failed",
     ]
 
 
