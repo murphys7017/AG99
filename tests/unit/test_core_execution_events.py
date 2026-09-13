@@ -246,6 +246,24 @@ def test_core_execution_lifecycle_projects_terminal_failure_evidence():
     assert lifecycle.terminal_error() == "provider unavailable"
 
 
+def test_core_execution_lifecycle_bounds_terminal_failure_evidence():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    lifecycle.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.FAILED,
+            executor_id="native",
+            metadata={"error": "x" * 2001},
+        )
+    )
+
+    assert lifecycle.terminal_error() == "x" * 2000
+
+
 def test_core_execution_lifecycle_cancellation_accepts_command_once():
     spec = CoreExecutionSpec.from_context_pack(
         context_pack=ContextPack(),

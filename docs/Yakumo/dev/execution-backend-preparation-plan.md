@@ -645,6 +645,10 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - 可替换 Executor 的 stop callback 若抛出普通异常，取消终态和 turn journal 仍会完成，并额外
   写入 `core_execution_stop_callback_failed` trace 事实。Native `request_stop()` 不会触发此路径；
   callback 的重试策略、timeout owner、artifact 汇总和最终 Ledger owner 仍留待后续切片。
+- 外层 deadline/task cancellation 固定投影为 `cancelled`，不会因 runner 同时携带 stop 标记而
+  误分类为用户 `aborted`。终态错误在 Lifecycle 投影处统一限制为 2000 字符；正常、取消和失败
+  的 Ledger 写入失败都会留下同一组 event diagnostics 及
+  `core_execution_ledger_persist_failed` trace，供后续运行验证定位。
 
 ## 非目标
 

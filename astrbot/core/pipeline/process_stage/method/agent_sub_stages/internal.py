@@ -811,8 +811,7 @@ class InternalAgentSubStage(Stage):
                     user_aborted=user_aborted,
                 )
             except Exception as exc:  # noqa: BLE001
-                event.set_extra("_core_execution_ledger_failed", True)
-                event.set_extra("_core_execution_ledger_failure_reason", str(exc))
+                self._record_interaction_core_ledger_failure(event, exc)
                 logger.error(
                     "Core execution ledger persistence failed after execution: turn_id=%s error=%s",
                     event.get_extra("_turn_id"),
@@ -977,6 +976,28 @@ class InternalAgentSubStage(Stage):
             execution_spec.execution_id,
         )
 
+    @staticmethod
+    def _record_interaction_core_ledger_failure(
+        event: AstrMessageEvent,
+        error: Exception,
+    ) -> None:
+        """Expose a terminal Ledger write failure to the owning turn diagnostics."""
+
+        error_text = str(error)[:2000]
+        event.set_extra("_core_execution_ledger_failed", True)
+        event.set_extra("_core_execution_ledger_failure_reason", error_text)
+        trace = getattr(event, "trace", None)
+        record = getattr(trace, "record", None)
+        if callable(record):
+            try:
+                record(
+                    "core_execution_ledger_persist_failed",
+                    error_type=type(error).__name__,
+                    error=error_text,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _save_cancelled_interaction_core_state(
         self,
         event: AstrMessageEvent,
@@ -996,7 +1017,6 @@ class InternalAgentSubStage(Stage):
         messages: list[Message] = []
         final_response = None
         runner_stats = None
-        user_aborted = False
         if agent_runner is not None:
             try:
                 messages = agent_runner.run_context.messages
@@ -1005,7 +1025,6 @@ class InternalAgentSubStage(Stage):
             try:
                 final_response = agent_runner.get_final_llm_resp()
                 runner_stats = agent_runner.stats
-                user_aborted = agent_runner.was_aborted()
             except Exception:  # noqa: BLE001
                 pass
         try:
@@ -1015,12 +1034,16 @@ class InternalAgentSubStage(Stage):
                 final_response,
                 messages,
                 runner_stats,
-                user_aborted=user_aborted,
+                # This path is entered only for an outer task cancellation or
+                # deadline. A runner stop signal must not recategorize it as a
+                # user-aborted execution.
+                user_aborted=False,
                 terminal_error=cancellation_reason,
                 status_override="cancelled",
                 update_conversation_token_usage=False,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            self._record_interaction_core_ledger_failure(event, exc)
             logger.warning(
                 "Failed to persist cancelled Core execution",
                 exc_info=True,
@@ -1069,7 +1092,8 @@ class InternalAgentSubStage(Stage):
                 status_override="failed",
                 update_conversation_token_usage=False,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            self._record_interaction_core_ledger_failure(event, exc)
             logger.warning("Failed to persist Core execution failure", exc_info=True)
 
 

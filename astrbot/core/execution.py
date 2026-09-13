@@ -56,6 +56,7 @@ _TERMINAL_CORE_EXECUTION_EVENT_KINDS = frozenset(
         CoreExecutionEventKind.CANCELLED,
     }
 )
+_CORE_EXECUTION_TERMINAL_ERROR_MAX_LENGTH = 2000
 
 
 def _freeze_execution_event_metadata(value: Any) -> Any:
@@ -448,7 +449,7 @@ class CoreExecutionLifecycle:
             value = metadata.get(key)
             text = str(value or "").strip()
             if text:
-                return text
+                return text[:_CORE_EXECUTION_TERMINAL_ERROR_MAX_LENGTH]
         return None
 
     def _request_executor_stop(self) -> None:
