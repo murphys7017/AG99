@@ -298,6 +298,42 @@ async def test_telegram_video_note_creates_video_component():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("is_animated", "is_video", "expected_url"),
+    [
+        (False, False, "https://api.telegram.org/file/test/sticker.webp"),
+        (True, False, "https://api.telegram.org/file/test/thumb.webp"),
+        (False, True, "https://api.telegram.org/file/test/thumb.webp"),
+    ],
+)
+async def test_telegram_sticker_uses_thumbnail_for_non_bitmap_stickers(
+    is_animated,
+    is_video,
+    expected_url,
+):
+    TelegramPlatformAdapter = _load_telegram_adapter()
+    adapter = TelegramPlatformAdapter(
+        make_platform_config("telegram"),
+        {},
+        asyncio.Queue(),
+    )
+    sticker = create_mock_file("https://api.telegram.org/file/test/sticker.webp")
+    sticker.is_animated = is_animated
+    sticker.is_video = is_video
+    sticker.thumbnail = create_mock_file("https://api.telegram.org/file/test/thumb.webp")
+    sticker.emoji = ":)"
+    update = create_mock_update(message_text=None, sticker=sticker)
+
+    result = await adapter.convert_message(update, _build_context())
+
+    assert result is not None
+    images = [item for item in result.message if isinstance(item, Comp.Image)]
+    assert len(images) == 1
+    assert images[0].url == expected_url
+    assert result.message_str == "Sticker: :)"
+
+
+@pytest.mark.asyncio
 async def test_telegram_final_segment_splits_long_markdown_messages():
     TelegramPlatformEvent = _load_telegram_platform_event()
     client = MagicMock()
