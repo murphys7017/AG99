@@ -995,6 +995,10 @@ async function selectSession(sessionId: string, pushRoute = true) {
   await focusChatInput();
 }
 
+function getSelectedProviderSelection() {
+  return inputRef.value?.getCurrentSelection();
+}
+
 async function sendCurrentMessage() {
   if (!canSend.value) return;
 
@@ -1022,7 +1026,7 @@ async function sendCurrentMessage() {
     const text = draft.value.trim();
     const messageId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     const outgoingParts = buildOutgoingParts(text);
-    const selection = inputRef.value?.getCurrentSelection();
+    const selection = getSelectedProviderSelection();
     const { userRecord, botRecord } = createLocalExchange({
       sessionId,
       messageId,
@@ -1137,7 +1141,7 @@ async function saveMessageEdit() {
     cancelMessageEdit();
 
     if (result.needsRegenerate && result.truncatedAfterMessage) {
-      const selection = inputRef.value?.getCurrentSelection();
+      const selection = getSelectedProviderSelection();
       continueEditedMessage({
         sessionId: currSessionId.value,
         sourceRecord: target,
@@ -1170,11 +1174,12 @@ async function handleRegenerateMessage(
 ) {
   if (!currSessionId.value || isUserMessage(message)) return;
   message.threads = [];
+  const effectiveSelection = selection ?? getSelectedProviderSelection();
   await regenerateMessage(
     currSessionId.value,
     message,
-    selection?.providerId || "",
-    selection?.modelName || "",
+    effectiveSelection?.providerId || "",
+    effectiveSelection?.modelName || "",
   );
 }
 
