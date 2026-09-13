@@ -97,8 +97,9 @@ class BailianRerankProvider(RerankProvider):
         """
         normalized_model = self.model.strip().lower()
         normalized_top_n = top_n if top_n is not None and top_n > 0 else None
+        is_compatible_api = self._uses_compatible_api()
 
-        if normalized_model == self.QWEN3_RERANK_MODEL and self._uses_compatible_api():
+        if normalized_model == self.QWEN3_RERANK_MODEL and is_compatible_api:
             payload = {
                 "model": self.model,
                 "query": query,
