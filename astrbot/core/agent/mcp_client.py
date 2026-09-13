@@ -656,8 +656,15 @@ class MCPTool(FunctionTool, Generic[TContext]):
         self, mcp_tool: mcp.Tool, mcp_client: MCPClient, mcp_server_name: str, **kwargs
     ) -> None:
         # LLM providers restrict tool names to [a-zA-Z0-9_-], while MCP
-        # servers may expose names containing characters such as '.'.
-        llm_tool_name = re.sub(r"[^A-Za-z0-9_-]+", "_", mcp_tool.name)
+        # servers may expose names containing other characters. Escape every
+        # non-alphanumeric character (including '_') so distinct MCP names
+        # cannot collapse into the same LLM-facing tool name.
+        llm_tool_name = "".join(
+            char if char.isascii() and (char.isalnum() or char == "-") else
+            "__" if char == "_" else
+            "".join(f"_x{byte:02x}" for byte in char.encode("utf-8"))
+            for char in mcp_tool.name
+        )
         super().__init__(
             name=llm_tool_name,
             description=mcp_tool.description or "",

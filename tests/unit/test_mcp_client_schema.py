@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from astrbot.core.agent.mcp_client import MCPTool, _normalize_mcp_input_schema
+from astrbot.core.agent.tool import ToolSet
 
 
 class TestNormalizeMcpInputSchema:
@@ -117,7 +118,7 @@ class TestMCPToolSchemaNormalization:
         assert "required" not in tool.parameters["properties"]["stock_code"]
         assert "required" not in tool.parameters["properties"]["market"]
 
-    def test_mcp_tool_sanitizes_llm_name_but_keeps_original_for_call(self):
+    def test_mcp_tool_escapes_llm_name_but_keeps_original_for_call(self):
         mcp_tool = SimpleNamespace(
             name="t_drive.create_doc",
             description="Create a doc",
@@ -126,5 +127,32 @@ class TestMCPToolSchemaNormalization:
 
         tool = MCPTool(mcp_tool, MagicMock(), "tencent-docs")
 
-        assert tool.name == "t_drive_create_doc"
+        assert tool.name == "t__drive_x2ecreate__doc"
         assert tool.mcp_tool.name == "t_drive.create_doc"
+
+    def test_mcp_tool_escaping_keeps_distinct_names_separate(self):
+        client = MagicMock()
+        dotted_tool = MCPTool(
+            SimpleNamespace(
+                name="docs.create",
+                description="Create a document",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            client,
+            "docs",
+        )
+        underscored_tool = MCPTool(
+            SimpleNamespace(
+                name="docs_create",
+                description="Create a document",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            client,
+            "docs",
+        )
+
+        tool_set = ToolSet()
+        tool_set.add_tool(dotted_tool)
+        tool_set.add_tool(underscored_tool)
+
+        assert tool_set.names() == ["docs_x2ecreate", "docs__create"]
