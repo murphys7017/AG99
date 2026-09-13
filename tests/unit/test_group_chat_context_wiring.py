@@ -1,11 +1,12 @@
 import asyncio
+import json
 from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from astrbot.api.message_components import Image, Plain, Reply
+from astrbot.api.message_components import Image, Json, Plain, Reply
 from astrbot.api.platform import MessageType
 from astrbot.builtin_stars.astrbot.group_chat_context import (
     GROUP_CONTEXT_RAW_IDX_EXTRA,
@@ -231,6 +232,26 @@ async def test_group_chat_context_formats_reply_message_content():
 
     assert "[Quote(Bob: quoted content)]" in text
     assert "new message" in text
+
+
+@pytest.mark.asyncio
+async def test_group_chat_context_formats_shared_json_card():
+    context = MagicMock()
+    context.get_config.return_value = make_config()
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+    event.message_obj.message = [
+        Json(data={"data": json.dumps({"meta": {"news": {
+            "title": "Shared article",
+            "desc": "Useful details",
+            "jumpUrl": "https://example.com/article",
+        }}})})
+    ]
+    event.get_messages.return_value = event.message_obj.message
+
+    text = await group_context._format_message(event, group_context.cfg(event))
+
+    assert "[Shared Card: Title: Shared article; Description: Useful details; URL: https://example.com/article]" in text
 
 
 @pytest.mark.asyncio

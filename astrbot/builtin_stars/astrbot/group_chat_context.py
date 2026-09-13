@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import hashlib
 import uuid
 from collections import OrderedDict, defaultdict, deque
@@ -16,6 +17,7 @@ from astrbot.api.message_components import (
     File,
     Forward,
     Image,
+    Json,
     Plain,
     Record,
     Reply,
@@ -492,6 +494,34 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                         include_image_captions=include_image_captions,
                     )
                 )
+            elif isinstance(comp, Json):
+                card_data = comp.data
+                if isinstance(card_data, dict) and isinstance(card_data.get("data"), str):
+                    try:
+                        nested_data = json.loads(card_data["data"])
+                        if isinstance(nested_data, dict):
+                            card_data = nested_data
+                    except json.JSONDecodeError:
+                        pass
+
+                detail = {}
+                if isinstance(card_data, dict) and isinstance(card_data.get("meta"), dict):
+                    meta = card_data["meta"]
+                    candidate = meta.get("detail_1") or meta.get("news")
+                    if isinstance(candidate, dict):
+                        detail = candidate
+
+                fields = []
+                for label, value in (
+                    ("Title", detail.get("title")),
+                    ("Description", detail.get("desc")),
+                    ("URL", detail.get("qqdocurl") or detail.get("jumpUrl")),
+                ):
+                    if isinstance(value, str) and value.strip():
+                        normalized = " ".join(value.split())
+                        fields.append(f"{label}: {_truncate_reply_text(normalized)}")
+                suffix = f": {'; '.join(fields)}" if fields else ""
+                parts.append(f" [Shared Card{suffix}]")
             elif isinstance(comp, At):
                 is_at_self = str(comp.qq) in (event.get_self_id(), "all")
                 if is_at_self:
