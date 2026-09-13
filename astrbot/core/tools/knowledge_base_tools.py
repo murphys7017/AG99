@@ -16,7 +16,13 @@ _KNOWLEDGE_BASE_RETRIEVAL_CACHE_EXTRA_KEY = "knowledge_base_retrieval_cache"
 
 
 def check_all_kb(kb_list: list[KBHelper | None]) -> bool:
-    """检查是否所有的知识库都为空"""
+    """检查是否所有的知识库都为空或不存在。"""
+    missing_count = sum(kb is None for kb in kb_list)
+    if missing_count:
+        logger.warning(
+            f"[知识库] {missing_count}/{len(kb_list)} 个知识库未找到或未加载，"
+            "请检查配置中的知识库名称或 ID 是否正确"
+        )
     return not any(
         kb and (kb.kb.doc_count != 0 or kb.kb.chunk_count != 0) for kb in kb_list
     )

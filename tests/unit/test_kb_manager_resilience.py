@@ -90,6 +90,29 @@ def mock_embedding_provider():
 
 
 @pytest.mark.asyncio
+async def test_get_kb_by_name_prefers_name_then_falls_back_to_uuid(
+    stub_provider_manager_module,
+):
+    """Configured KB names remain preferred while UUIDs support old configs."""
+    from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
+
+    name_match = MagicMock()
+    name_match.kb.kb_name = "shared-name"
+    uuid_match = MagicMock()
+    uuid_match.kb.kb_name = "other-name"
+
+    kb_mgr = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
+    kb_mgr.kb_insts = {
+        "kb-uuid": uuid_match,
+        "other-uuid": name_match,
+    }
+
+    assert await kb_mgr.get_kb_by_name("shared-name") is name_match
+    assert await kb_mgr.get_kb_by_name("kb-uuid") is uuid_match
+    assert await kb_mgr.get_kb_by_name("missing") is None
+
+
+@pytest.mark.asyncio
 async def test_update_kb_preserves_old_instance_when_reinit_fails(
     stub_provider_manager_module,
     mock_provider_manager,

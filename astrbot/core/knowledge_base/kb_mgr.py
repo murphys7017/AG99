@@ -146,10 +146,12 @@ class KnowledgeBaseManager:
             return self.kb_insts[kb_id]
 
     async def get_kb_by_name(self, kb_name: str) -> KBHelper | None:
-        """通过名称获取知识库实例"""
+        """通过名称或 UUID 获取知识库实例。"""
         for kb_helper in self.kb_insts.values():
             if kb_helper.kb.kb_name == kb_name:
                 return kb_helper
+        if kb_name in self.kb_insts:
+            return self.kb_insts[kb_name]
         return None
 
     async def delete_kb(self, kb_id: str) -> bool:
