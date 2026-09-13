@@ -45,6 +45,11 @@ def _is_safe_command(command: str) -> bool:
     return not any(pat in cmd for pat in _BLOCKED_COMMAND_PATTERNS)
 
 
+def resolve_windows_shell() -> str:
+    """Return the preferred PowerShell executable for the local runtime."""
+    return "pwsh.exe" if shutil.which("pwsh") else "powershell.exe"
+
+
 def _decode_bytes_with_fallback(
     output: bytes | None,
     *,
