@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Any
 from astrbot.core.deadline import TurnDeadlineBudget
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
+    CoreEvent,
     CoreExecutionEvent,
     CoreExecutionEventKind,
+    CoreExecutionHead,
     CoreExecutionSpec,
     get_core_execution_head,
     get_core_execution_lifecycle,
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from .personal_runtime import PersonalRuntimeKey
 
 INTERACTION_TURN_STATE_EXTRA_KEY = "_interaction_turn_state"
+INTERACTION_CORE_EXECUTION_JOURNAL_HEAD_EXTRA_KEY = "_interaction_core_execution_journal_head"
 MAX_CORE_EXECUTION_EVENTS_PER_TURN = 64
 
 
@@ -1002,6 +1005,144 @@ def transition_interaction_lifecycle(
     return previous_stage, transition
 
 
+def _project_core_execution_event_to_interaction_turn(
+    event,
+    envelope: CoreEvent | None,
+) -> CoreExecutionEvent | None:
+    """Project one Head fact into the owning Interaction journal and trace."""
+
+    if envelope is None or not event.get_extra("_interaction_enabled", False):
+        return None
+    state = get_interaction_turn_state(event)
+    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    if state is None or not isinstance(execution_spec, CoreExecutionSpec):
+        return None
+    execution_event = envelope.execution
+    if (
+        execution_spec.turn_id != state.turn_id
+        or execution_event.execution_id != execution_spec.execution_id
+        or execution_event.turn_id != state.turn_id
+    ):
+        return None
+
+    existing = state.core_execution_events
+    replay_key = execution_event.replay_key
+    if replay_key is not None and any(
+        item.execution_id == execution_event.execution_id
+        and item.replay_key == replay_key
+        for item in existing
+    ):
+        return None
+    if execution_event.is_terminal and any(
+        item.execution_id == execution_event.execution_id and item.is_terminal
+        for item in existing
+    ):
+        return None
+
+    if not _make_interaction_turn_core_execution_journal_room(
+        existing,
+        execution_event,
+    ):
+        return None
+    existing.append(execution_event)
+    trace = getattr(event, "trace", None)
+    record = getattr(trace, "record", None)
+    if callable(record):
+        try:
+            record(
+                "core_execution_event",
+                execution_id=execution_event.execution_id,
+                core_task_id=execution_event.core_task_id,
+                turn_id=execution_event.turn_id,
+                executor_id=execution_event.executor_id,
+                kind=execution_event.kind.value,
+                sequence=envelope.sequence,
+                metadata=execution_event.metadata_for_trace(),
+            )
+        except Exception:
+            pass
+    return execution_event
+
+
+def _make_interaction_turn_core_execution_journal_room(
+    existing: list[CoreExecutionEvent],
+    execution_event: CoreExecutionEvent,
+) -> bool:
+    """Keep terminal facts while bounding the local Interaction projection."""
+
+    if len(existing) < MAX_CORE_EXECUTION_EVENTS_PER_TURN:
+        return True
+    eviction_kinds = [CoreExecutionEventKind.PROGRESS]
+    if execution_event.is_terminal:
+        eviction_kinds.append(CoreExecutionEventKind.ARTIFACT_READY)
+    for eviction_kind in eviction_kinds:
+        for index, item in enumerate(existing):
+            if (
+                item.execution_id == execution_event.execution_id
+                and item.kind is eviction_kind
+            ):
+                del existing[index]
+                return True
+    return False
+
+
+def _record_interaction_turn_core_execution_stop_callback_failure(
+    event,
+    execution_event: CoreExecutionEvent,
+    *,
+    error: str | None,
+) -> None:
+    """Record a non-fatal stop failure after the terminal event is projected."""
+
+    if not error:
+        return
+    trace = getattr(event, "trace", None)
+    record = getattr(trace, "record", None)
+    if not callable(record):
+        return
+    try:
+        record(
+            "core_execution_stop_callback_failed",
+            execution_id=execution_event.execution_id,
+            turn_id=execution_event.turn_id,
+            executor_id=execution_event.executor_id,
+            error=error,
+        )
+    except Exception:
+        pass
+
+
+def bind_interaction_turn_core_execution_journal(
+    event,
+    execution_head: CoreExecutionHead,
+) -> bool:
+    """Attach the Interaction journal as the Head's local event projection."""
+
+    if not event.get_extra("_interaction_enabled", False):
+        return False
+    state = get_interaction_turn_state(event)
+    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    if (
+        state is None
+        or not isinstance(execution_spec, CoreExecutionSpec)
+        or execution_spec.turn_id != state.turn_id
+        or execution_head.spec.execution_id != execution_spec.execution_id
+        or execution_head.spec.turn_id != state.turn_id
+    ):
+        return False
+    bound_head = event.get_extra(INTERACTION_CORE_EXECUTION_JOURNAL_HEAD_EXTRA_KEY)
+    if bound_head is execution_head:
+        return True
+    if bound_head is not None:
+        raise ValueError("Interaction Core execution journal is already bound to another Head")
+
+    execution_head.subscribe(
+        lambda envelope: _project_core_execution_event_to_interaction_turn(event, envelope)
+    )
+    event.set_extra(INTERACTION_CORE_EXECUTION_JOURNAL_HEAD_EXTRA_KEY, execution_head)
+    return True
+
+
 def record_interaction_turn_core_execution_event(
     event,
     *,
@@ -1009,7 +1150,7 @@ def record_interaction_turn_core_execution_event(
     executor_id: str,
     metadata: Mapping[str, Any] | None = None,
 ) -> CoreExecutionEvent | None:
-    """Append one non-visible Native execution fact to the current turn journal."""
+    """Record one non-visible execution fact through the current Core boundary."""
 
     if not event.get_extra("_interaction_enabled", False):
         return None
@@ -1040,79 +1181,69 @@ def record_interaction_turn_core_execution_event(
     ):
         return None
 
-    execution_lifecycle = get_core_execution_lifecycle(event)
     execution_head = get_core_execution_head(event)
-    execution_session = get_core_execution_session(event)
     if execution_head is not None:
+        bind_interaction_turn_core_execution_journal(event, execution_head)
         if kind is CoreExecutionEventKind.CANCELLED:
             envelope = execution_head.cancel(
                 executor_id=executor_id,
                 metadata=metadata,
             )
-            execution_event = envelope.execution
+            _record_interaction_turn_core_execution_stop_callback_failure(
+                event,
+                envelope.execution,
+                error=execution_head.executor_stop_error,
+            )
         else:
             envelope = execution_head.record_event(execution_event)
-            if envelope.execution is not execution_event:
-                return None
-    elif execution_lifecycle is not None:
+        return envelope.execution
+
+    execution_lifecycle = get_core_execution_lifecycle(event)
+    execution_session = get_core_execution_session(event)
+    if execution_lifecycle is not None:
         if kind is CoreExecutionEventKind.CANCELLED:
             envelope = execution_lifecycle.cancel(
                 executor_id=executor_id,
                 metadata=metadata,
             )
-            execution_event = envelope.execution
         else:
             envelope = execution_lifecycle.record_event(execution_event)
-            if envelope.execution is not execution_event:
-                return None
     elif execution_session is not None:
         envelope = execution_session.record_event(execution_event)
-        if envelope.execution is not execution_event:
-            return None
+    else:
+        envelope = CoreEvent(sequence=len(state.core_execution_events) + 1, execution=execution_event)
 
-    if len(existing) >= MAX_CORE_EXECUTION_EVENTS_PER_TURN:
-        for index, item in enumerate(existing):
-            if (
-                item.execution_id == execution_event.execution_id
-                and item.kind is CoreExecutionEventKind.PROGRESS
-            ):
-                del existing[index]
-                break
-        else:
-            return None
-    existing.append(execution_event)
-    trace = getattr(event, "trace", None)
-    record = getattr(trace, "record", None)
-    if callable(record):
-        try:
-            record(
-                "core_execution_event",
-                execution_id=execution_event.execution_id,
-                core_task_id=execution_event.core_task_id,
-                turn_id=execution_event.turn_id,
-                executor_id=execution_event.executor_id,
-                kind=execution_event.kind.value,
-                sequence=(
-                    envelope.sequence
-                    if execution_lifecycle is not None or execution_session is not None
-                    else None
-                ),
-                metadata=execution_event.metadata_for_trace(),
-            )
-            if (
-                execution_lifecycle is not None
-                and execution_lifecycle.executor_stop_error is not None
-            ):
-                record(
-                    "core_execution_stop_callback_failed",
-                    execution_id=execution_event.execution_id,
-                    turn_id=execution_event.turn_id,
-                    executor_id=execution_event.executor_id,
-                    error=execution_lifecycle.executor_stop_error,
-                )
-        except Exception:
-            pass
-    return execution_event
+    return (
+        _project_interaction_turn_core_execution_event_from_legacy_bridge(
+            event,
+            envelope,
+            execution_event,
+            kind=kind,
+            lifecycle=execution_lifecycle,
+        )
+    )
+
+
+def _project_interaction_turn_core_execution_event_from_legacy_bridge(
+    event,
+    envelope: CoreEvent,
+    execution_event: CoreExecutionEvent,
+    *,
+    kind: CoreExecutionEventKind,
+    lifecycle,
+) -> CoreExecutionEvent | None:
+    """Retain diagnostics for the compatibility path without a Head binding."""
+
+    if envelope.execution is not execution_event:
+        return None
+    projected = _project_core_execution_event_to_interaction_turn(event, envelope)
+    if kind is CoreExecutionEventKind.CANCELLED and lifecycle is not None:
+        _record_interaction_turn_core_execution_stop_callback_failure(
+            event,
+            envelope.execution,
+            error=lifecycle.executor_stop_error,
+        )
+    return projected
 
 
 def get_interaction_turn_core_execution_events(

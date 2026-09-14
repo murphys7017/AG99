@@ -666,16 +666,50 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   API 继续保留并转发到 Head，Native Interaction 主路径改用 Head 入口。这样后续可以先迁移
   Core Head 的 owner，再逐步接入命令/事件消费，而不需要一次性改写现有调用者。
 
+### 2026-09-14 Phase 9 第八个实现切片
+
+- Lifecycle 的旧事件入口与 Head 共享同一发布路径；Head 订阅者逐个隔离异常，单个观察者失败
+  不会阻断执行状态、其他订阅者或 Interaction turn journal。
+- 绑定时校验 `CoreExecutionHead`、`CoreExecutionLifecycle` 与 `CoreExecutionSession` 的对象和
+  执行身份一致，拒绝残留或错配的 event extra，避免事件写入错误会话。
+- 事件重放键从“所有非 progress 事件按类型唯一”收紧为：状态事件按类型首写、progress 保留
+  每次观察、artifact 按稳定 `artifact_id` 去重；Native 最终结果使用 `final_response` 作为聚合
+  artifact ID。
+
+### 2026-09-14 Phase 9 第九个实现切片
+
+- Interaction turn 的 bounded execution journal 与 trace 现在作为 `CoreExecutionHead` 的明确本地
+  event consumer 绑定。Head 或旧 Lifecycle 入口产生的事件均先由 Session 校验和编号，再经 Head
+  发布并投影到既有 journal/trace；Native Stage 只在启动 Head 后完成一次绑定。
+- 既有 `record_interaction_turn_core_execution_event()` 保留为 Native 兼容入口，但在存在 Head 时
+  只负责提交事实，不再自行维护第二套 journal 写入路径。没有 Head 的旧桥接仍保留原有投影行为。
+- `cancelled` 终态会先通过 Head 发布并投影，再请求已绑定 Executor 停止；stop callback 失败会
+  作为紧随终态的独立 trace 诊断记录，因此不阻断或延迟 Core Session 的取消收敛。
+- 当本地 journal 达到上限时优先淘汰最旧 progress；若新事实为终态且没有 progress，则淘汰最旧
+  artifact，保证终态和对应 trace 不会因 artifact 饱和而丢失。
+- 此处的 consumer 仍是同步、进程内的投影，不是命令/事件队列、Personal 消费协议或平台输出通道。
+
+### 2026-09-14 Phase 9 第十个实现切片
+
+- `CoreExecutionOutcome` 由 Lifecycle/Head 根据唯一终态和已确认的 `artifact_ready` 事实生成，提供
+  后续 Ledger 投影所需的 status、受限 terminal error、terminal event 与 artifact 汇总；它不携带
+  Runner 的消息、最终文本或 token usage。
+- Native Stage 继续拥有 Runner 证据提取及现有 SQLite Ledger 调用，但不再分别向 Head/Lifecycle
+  询问状态和终止错误，而是消费同一份 Outcome。这是 final Ledger preparation 的收口，不是 Ledger
+  owner 或数据库依赖迁移。
+- timeout owner、取消 cleanup、持久化端口、队列和 Executor Adapter 都没有随本切片提前引入。
+
 ### Phase 9 当前复核结论
 
-截至本次复核，Phase 9 已完成七个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
-协调、Ledger 材料归属、取消命令、Executor stop callback、deadline/异常/取消终态与证据收口，
-以及显式 `CoreExecutionHead` 同步入口。它已经提供了 Core Head 后续扩展可使用的进程内事实
-边界，但当前仍由 `InternalAgentSubStage` 创建和运行 Native Runner。
+截至本次复核，Phase 9 已完成十个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
+协调、Ledger 材料归属、取消命令、Executor stop callback、deadline/异常/取消终态与证据收口、
+显式 `CoreExecutionHead` 同步入口，以及 Interaction journal/trace 的本地事件消费。它已经提供了
+Core Head 后续扩展可使用的进程内事实边界，但当前仍由 `InternalAgentSubStage` 创建和运行 Native Runner。
 
 因此当前状态应表述为：
 
-- **已具备**：统一的执行身份、事件序号、命令幂等、终态保护、取消入口和受限终止证据；
+- **已具备**：统一的执行身份、事件序号、命令幂等、终态保护、取消入口、受限终止证据与
+  生命周期拥有的 Outcome 汇总；
 - **尚未具备**：Core Head 的完整生命周期 owner、命令/事件队列、Executor Adapter、统一 Artifact
   回流、第三方 Runner 迁移和可替换 Executor Body；
 - **明确不做**：Personal/Core 远程化、分布式消息系统、第二套对外输出路径。

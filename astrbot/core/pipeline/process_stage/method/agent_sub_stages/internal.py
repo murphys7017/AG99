@@ -37,6 +37,7 @@ from astrbot.core.execution import (
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
+    bind_interaction_turn_core_execution_journal,
     get_interaction_turn_deadline,
     get_interaction_turn_runtime_config,
     is_interaction_turn_core_delegated,
@@ -498,6 +499,7 @@ class InternalAgentSubStage(Stage):
                         event,
                         effective_execution_spec,
                     )
+                    bind_interaction_turn_core_execution_journal(event, execution_head)
                     execution_head.bind_executor_stop_callback(agent_runner.request_stop)
                     record_interaction_turn_core_execution_event(
                         event,
@@ -945,28 +947,23 @@ class InternalAgentSubStage(Stage):
             if execution_head is not None
             else get_core_execution_lifecycle(event)
         )
-        lifecycle_status = (
-            execution_head.ledger_status(user_aborted=user_aborted)
+        outcome = (
+            execution_head.outcome(user_aborted=user_aborted)
             if execution_head is not None
-            else lifecycle.ledger_status(user_aborted=user_aborted)
+            else lifecycle.outcome(user_aborted=user_aborted)
             if lifecycle is not None
             else None
         )
         # Once the Core session has a terminal fact, it is the authoritative
         # persistence outcome. Overrides only cover failures before binding.
-        status = lifecycle_status or status_override
+        status = outcome.status if outcome is not None else status_override
         status = status or ("aborted" if user_aborted else "completed")
         completion_text = str(
             llm_response.completion_text if llm_response is not None else ""
         )
-        lifecycle_terminal_error = (
-            execution_head.terminal_error()
-            if execution_head is not None
-            else lifecycle.terminal_error()
-            if lifecycle is not None
-            else None
-        )
-        terminal_error = lifecycle_terminal_error or terminal_error
+        terminal_error = (
+            outcome.terminal_error if outcome is not None else terminal_error
+        ) or terminal_error
         error = None
         if status == "failed":
             error = terminal_error or completion_text

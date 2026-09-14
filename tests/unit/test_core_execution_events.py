@@ -24,6 +24,7 @@ from astrbot.core.execution import (
 from astrbot.core.interaction.turn_state import (
     MAX_CORE_EXECUTION_EVENTS_PER_TURN,
     InteractionTurnState,
+    bind_interaction_turn_core_execution_journal,
     get_interaction_turn_core_execution_events,
     record_interaction_turn_core_execution_event,
 )
@@ -244,6 +245,66 @@ def test_legacy_lifecycle_event_entry_publishes_through_head():
     assert [item.sequence for item in observed] == [1]
 
 
+def test_head_direct_event_projects_to_bound_interaction_journal():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+
+    assert bind_interaction_turn_core_execution_journal(event, head) is True
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+
+    assert [item.kind for item in get_interaction_turn_core_execution_events(event)] == [
+        CoreExecutionEventKind.SUBMITTED
+    ]
+    assert event.trace.records[-1][1]["sequence"] == 1
+
+
+def test_head_journal_keeps_terminal_event_when_artifacts_fill_its_bound():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+
+    assert bind_interaction_turn_core_execution_journal(event, head) is True
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    for index in range(MAX_CORE_EXECUTION_EVENTS_PER_TURN - 1):
+        head.record_event(
+            CoreExecutionEvent.from_spec(
+                spec,
+                kind=CoreExecutionEventKind.ARTIFACT_READY,
+                executor_id="native",
+                metadata={"artifact_id": str(index)},
+            )
+        )
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.COMPLETED,
+            executor_id="native",
+        )
+    )
+
+    events = get_interaction_turn_core_execution_events(event)
+    assert len(events) == MAX_CORE_EXECUTION_EVENTS_PER_TURN
+    assert events[0].kind is CoreExecutionEventKind.SUBMITTED
+    assert events[-1].kind is CoreExecutionEventKind.COMPLETED
+    assert sum(item.kind is CoreExecutionEventKind.ARTIFACT_READY for item in events) == (
+        MAX_CORE_EXECUTION_EVENTS_PER_TURN - 2
+    )
+    assert event.trace.records[-1][1]["kind"] == "completed"
+
+
 def test_core_execution_head_isolates_subscriber_failure_from_turn_journal(monkeypatch):
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
@@ -399,6 +460,48 @@ def test_core_execution_lifecycle_projects_terminal_failure_evidence():
     assert lifecycle.terminal_error() == "provider unavailable"
 
 
+def test_core_execution_outcome_aggregates_terminal_and_artifact_facts():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    head = CoreExecutionHead(
+        lifecycle=CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    )
+    head.start()
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.ARTIFACT_READY,
+            executor_id="native",
+            metadata={"artifact_id": "summary"},
+        )
+    )
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.FAILED,
+            executor_id="native",
+            metadata={"error": "provider unavailable"},
+        )
+    )
+
+    outcome = head.outcome()
+
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.terminal_error == "provider unavailable"
+    assert outcome.terminal_event.kind is CoreExecutionEventKind.FAILED
+    assert [item.metadata["artifact_id"] for item in outcome.artifacts] == ["summary"]
+
+
 def test_core_execution_lifecycle_bounds_terminal_failure_evidence():
     spec = CoreExecutionSpec.from_context_pack(
         context_pack=ContextPack(),
@@ -441,15 +544,15 @@ def test_core_execution_lifecycle_cancellation_stops_bound_executor_once():
         turn_id="turn-1",
     )
     lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
-    stops = []
-    lifecycle.bind_executor_stop_callback(lambda: stops.append("stop"))
+    states = []
+    lifecycle.bind_executor_stop_callback(lambda: states.append(lifecycle.session.status))
 
     cancelled = lifecycle.cancel(executor_id="native")
 
     assert cancelled.kind is CoreExecutionEventKind.CANCELLED
-    assert stops == ["stop"]
+    assert states == [CoreExecutionSessionStatus.CANCELLED]
     assert lifecycle.cancel(executor_id="native") is cancelled
-    assert stops == ["stop"]
+    assert states == [CoreExecutionSessionStatus.CANCELLED]
 
 
 def test_core_execution_lifecycle_preserves_terminal_state_when_stop_fails():

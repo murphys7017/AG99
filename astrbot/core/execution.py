@@ -156,6 +156,23 @@ class CoreExecutionEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class CoreExecutionOutcome:
+    """Read-only terminal summary prepared by the Core lifecycle owner.
+
+    The summary deliberately contains execution facts only. The caller that owns
+    persistence still supplies runner-specific evidence such as messages, final
+    text, and token usage.
+    """
+
+    execution_id: str
+    turn_id: str
+    status: str
+    terminal_event: CoreEvent
+    terminal_error: str | None
+    artifacts: tuple[CoreExecutionEvent, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CoreCommand:
     """A directed command sent to one Core execution session."""
 
@@ -489,6 +506,26 @@ class CoreExecutionLifecycle:
                 return text[:_CORE_EXECUTION_TERMINAL_ERROR_MAX_LENGTH]
         return None
 
+    def outcome(self, *, user_aborted: bool = False) -> CoreExecutionOutcome | None:
+        """Prepare the terminal facts needed by a later Ledger projection."""
+
+        terminal = self.session.terminal_event
+        status = self.ledger_status(user_aborted=user_aborted)
+        if terminal is None or status is None:
+            return None
+        return CoreExecutionOutcome(
+            execution_id=self.spec.execution_id,
+            turn_id=self.spec.turn_id,
+            status=status,
+            terminal_event=terminal,
+            terminal_error=self.terminal_error(),
+            artifacts=tuple(
+                envelope.execution
+                for envelope in self.session.events
+                if envelope.kind is CoreExecutionEventKind.ARTIFACT_READY
+            ),
+        )
+
     def _request_executor_stop(self) -> None:
         if self._executor_stop_callback is None:
             return
@@ -614,6 +651,11 @@ class CoreExecutionHead:
 
     def terminal_error(self) -> str | None:
         return self.lifecycle.terminal_error()
+
+    def outcome(self, *, user_aborted: bool = False) -> CoreExecutionOutcome | None:
+        """Return the lifecycle-owned terminal summary for this execution."""
+
+        return self.lifecycle.outcome(user_aborted=user_aborted)
 
     def ledger_status(self, *, user_aborted: bool = False) -> str | None:
         return self.lifecycle.ledger_status(user_aborted=user_aborted)
@@ -1006,6 +1048,7 @@ __all__ = [
     "CoreExecutionEventKind",
     "CoreExecutionHead",
     "CoreExecutionLifecycle",
+    "CoreExecutionOutcome",
     "CoreExecutionSession",
     "CoreExecutionSessionStatus",
     "CoreExecutionSpec",
