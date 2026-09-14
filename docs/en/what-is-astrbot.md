@@ -16,7 +16,7 @@ Platform Adapter
   -> Interaction Middleware
   -> Personal Runtime + Router
   -> Core Planner
-  -> Core Execution
+  -> Core Head / Core Execution
   -> Persona Expression
   -> Output Runtime
   -> Conversation / Memory
@@ -28,7 +28,7 @@ Normal messages and bounded unaddressed group candidates enter Interaction Middl
 - `hybrid`: let Core Planner independently decide whether execution is necessary; Core handles tools, knowledge, Skills, and other substantial work.
 - `silent`: cancel Persona output that is still pending, without retracting an expression that was already committed or delivered.
 
-Core results never bypass Persona Expression. Immediate replies, plugin persona output, and Core-final results share one visible-language and output boundary.
+The Core Head coordinates task, event, cancellation, and execution lifecycle in-process. It is currently a synchronous entry point: it does not create a separate queue or send platform messages directly. Core results never bypass Persona Expression. Immediate replies, plugin persona output, and Core-final results share one visible-language and output boundary.
 
 ## Plugin Participation
 

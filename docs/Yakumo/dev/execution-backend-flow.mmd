@@ -151,6 +151,7 @@ flowchart LR
         CAP["注入现有能力<br/>插件工具 / Skills / Knowledge / SubAgent / Web Search / Sandbox / Cron"]
         CORE_PACK["PromptContextBuilder<br/>Interaction Core 复用共享 Pack 并增量加入 CoreTaskSpec 与执行能力"]
         EXEC_SPEC["CoreExecutionSpec（当前为进程内事实契约）<br/>Execution identity / TaskSpec / ContextPack / execution history / CapabilitySnapshot<br/>不包含 RenderResult / ProviderRequest；无独立 SubAgent 字段"]
+        CORE_LIFECYCLE["CoreExecutionHead 持有 Session / Lifecycle<br/>Phase 9 过渡边界：事件排序、命令幂等、取消、终态证据<br/>同步入口，不创建队列、不发送平台输出"]
         PROMPT["Native 目标渲染<br/>Interaction Core：Core Projection<br/>普通 Core：LLM exposure filter<br/>→ Layout / PromptTree → Provider-neutral RenderResult"]
         NATIVE_ADAPTER["NativeExecutionAdapter<br/>RenderResult → official ProviderRequest"]
         CORE_NOTE["Core system context<br/>告知存在独立 Persona 快速回复分支<br/>不注入 Persona 状态或已发送文本"]
@@ -172,7 +173,7 @@ flowchart LR
         TASK -. "CoreTaskSpec" .-> CORE_PACK
         TASK -. "启用固定 Persona 协同提示" .-> CORE_NOTE
         CORE_NOTE --> PROMPT
-        CORE_PACK --> EXEC_SPEC --> PROMPT --> NATIVE_ADAPTER --> LLM_HOOK --> ARUN --> RESULT
+        CORE_PACK --> EXEC_SPEC --> PROMPT --> NATIVE_ADAPTER --> LLM_HOOK --> CORE_LIFECYCLE --> ARUN --> RESULT
         ARUN -. "Agent 完成后的最终 LLMResponse" .-> LLM_POST
 
         RUNNER_TYPE -->|"third-party"| THIRD0 --> THIRD_REQ --> BRIDGE --> THIRD_HOOK --> THIRD_RUN --> RESULT

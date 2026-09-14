@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from astrbot.core import logger
 from astrbot.core.agent.tool import TOOL_TARGET_CORE, ToolSet
 from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 CORE_EXECUTION_SPEC_EXTRA_KEY = "_core_execution_spec"
 CORE_EXECUTION_SESSION_EXTRA_KEY = "_core_execution_session"
 CORE_EXECUTION_LIFECYCLE_EXTRA_KEY = "_core_execution_lifecycle"
+CORE_EXECUTION_HEAD_EXTRA_KEY = "_core_execution_head"
 
 
 class CoreExecutionEventKind(str, Enum):
@@ -113,6 +115,26 @@ class CoreExecutionEvent:
     @property
     def is_terminal(self) -> bool:
         return self.kind in _TERMINAL_CORE_EXECUTION_EVENT_KINDS
+
+    @property
+    def replay_key(self) -> tuple[CoreExecutionEventKind, str] | None:
+        """Return the idempotence key for replay-safe execution facts.
+
+        Progress facts intentionally retain every observation. Artifact facts may
+        repeat for one execution, so their producer must provide a stable
+        ``artifact_id`` before they can be deduplicated.
+        """
+
+        if self.kind is CoreExecutionEventKind.PROGRESS:
+            return None
+        if self.kind is CoreExecutionEventKind.ARTIFACT_READY:
+            artifact_id = str(self.metadata.get("artifact_id", "") or "").strip()
+            return (
+                (self.kind, artifact_id)
+                if artifact_id
+                else None
+            )
+        return (self.kind, "")
 
     @classmethod
     def from_spec(
@@ -256,8 +278,9 @@ class CoreExecutionSession:
     def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
         """Append a validated event and advance the session state.
 
-        Repeated non-progress facts and repeated terminal facts are idempotent;
-        conflicting terminal facts are rejected.
+        State facts are idempotent by kind, artifact facts by ``artifact_id``,
+        and progress facts retain every observation. Conflicting terminal facts
+        are rejected.
         """
 
         if (
@@ -266,12 +289,11 @@ class CoreExecutionSession:
         ):
             raise ValueError("CoreExecutionEvent execution identity does not match session")
 
-        for existing in self._events:
-            if (
-                existing.kind is execution_event.kind
-                and execution_event.kind is not CoreExecutionEventKind.PROGRESS
-            ):
-                return existing
+        replay_key = execution_event.replay_key
+        if replay_key is not None:
+            for existing in self._events:
+                if existing.execution.replay_key == replay_key:
+                    return existing
         if self.status.is_terminal:
             raise ValueError("cannot append an event after terminal state")
         self._advance_status(execution_event.kind)
@@ -353,6 +375,11 @@ class CoreExecutionLifecycle:
         repr=False,
     )
     _executor_stop_error: str | None = field(default=None, init=False, repr=False)
+    _event_publisher: Callable[[CoreEvent], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def spec(self) -> CoreExecutionSpec:
@@ -384,7 +411,17 @@ class CoreExecutionLifecycle:
     def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
         """Sequence an executor fact through the owning Core session."""
 
-        return self.session.record_event(execution_event)
+        envelope = self.session.record_event(execution_event)
+        if self._event_publisher is not None:
+            self._event_publisher(envelope)
+        return envelope
+
+    def bind_event_publisher(self, callback: Callable[[CoreEvent], None]) -> None:
+        """Bind the Head's one local publication path for this lifecycle."""
+
+        if self._event_publisher is not None:
+            raise ValueError("CoreExecutionLifecycle already has an event publisher")
+        self._event_publisher = callback
 
     def bind_executor_stop_callback(self, callback: Callable[[], None]) -> None:
         """Bind the active executor's idempotent stop request for this session."""
@@ -475,35 +512,207 @@ class CoreExecutionLifecycle:
         return None
 
 
+@dataclass(slots=True)
+class CoreExecutionHead:
+    """Own the in-process command and event entry point for one execution.
+
+    This is the first explicit Core Head boundary. It deliberately remains a
+    synchronous coordinator: command queues, background consumption, executor
+    selection, and artifact persistence are later responsibilities.
+    """
+
+    lifecycle: CoreExecutionLifecycle
+    _published_sequences: set[int] = field(default_factory=set, init=False, repr=False)
+    _event_subscribers: list[Callable[[CoreEvent], None]] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        # A Head may be attached after a legacy Lifecycle has recorded facts.
+        # Those facts are historical, so they must not be re-published on a
+        # later duplicate call.
+        self._published_sequences.update(
+            event.sequence for event in self.lifecycle.session.events
+        )
+        self.lifecycle.bind_event_publisher(self._publish)
+
+    @property
+    def session(self) -> CoreExecutionSession:
+        return self.lifecycle.session
+
+    @property
+    def spec(self) -> CoreExecutionSpec:
+        return self.lifecycle.spec
+
+    def start(self) -> bool:
+        """Accept the initial submit command through the Head boundary."""
+
+        return self.lifecycle.start()
+
+    def accept_command(self, command: CoreCommand) -> bool:
+        """Accept a Personal/Core command for this execution."""
+
+        return self.lifecycle.accept_command(command)
+
+    def bind_executor_stop_callback(self, callback: Callable[[], None]) -> None:
+        """Bind the active Executor Body stop request."""
+
+        self.lifecycle.bind_executor_stop_callback(callback)
+
+    def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
+        """Record and publish one sequenced execution fact."""
+
+        return self.lifecycle.record_event(execution_event)
+
+    def cancel(
+        self,
+        *,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreEvent:
+        """Accept cancellation and publish the resulting terminal event once."""
+
+        return self.lifecycle.cancel(executor_id=executor_id, metadata=metadata)
+
+    def subscribe(self, callback: Callable[[CoreEvent], None]) -> None:
+        """Register a local observer for newly published Core events."""
+
+        if callback not in self._event_subscribers:
+            self._event_subscribers.append(callback)
+
+    def _publish(self, envelope: CoreEvent) -> None:
+        if envelope.sequence in self._published_sequences:
+            return
+        self._published_sequences.add(envelope.sequence)
+        for callback in tuple(self._event_subscribers):
+            try:
+                callback(envelope)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Core execution event subscriber failed: execution_id=%s "
+                    "turn_id=%s sequence=%s kind=%s",
+                    envelope.execution_id,
+                    envelope.turn_id,
+                    envelope.sequence,
+                    envelope.kind.value,
+                    exc_info=True,
+                )
+
+    @property
+    def events(self) -> tuple[CoreEvent, ...]:
+        return self.session.events
+
+    @property
+    def terminal_event(self) -> CoreEvent | None:
+        return self.session.terminal_event
+
+    @property
+    def executor_stop_error(self) -> str | None:
+        return self.lifecycle.executor_stop_error
+
+    def terminal_error(self) -> str | None:
+        return self.lifecycle.terminal_error()
+
+    def ledger_status(self, *, user_aborted: bool = False) -> str | None:
+        return self.lifecycle.ledger_status(user_aborted=user_aborted)
+
+
 def bind_core_execution_lifecycle(
     event: AstrMessageEvent,
     spec: CoreExecutionSpec,
 ) -> CoreExecutionLifecycle:
     """Bind the event bridge to the Core-owned lifecycle for one execution."""
 
-    existing = event.get_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY)
-    if isinstance(existing, CoreExecutionLifecycle):
-        if (
-            existing.spec.execution_id == spec.execution_id
-            and existing.spec.turn_id == spec.turn_id
-        ):
-            return existing
-        raise ValueError("CoreExecutionLifecycle is already bound to another execution")
-
+    existing_lifecycle = event.get_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY)
     existing_session = event.get_extra(CORE_EXECUTION_SESSION_EXTRA_KEY)
-    if isinstance(existing_session, CoreExecutionSession):
-        if (
-            existing_session.spec.execution_id != spec.execution_id
-            or existing_session.spec.turn_id != spec.turn_id
-        ):
+    existing_head = event.get_extra(CORE_EXECUTION_HEAD_EXTRA_KEY)
+
+    def matches_spec(session: CoreExecutionSession) -> bool:
+        return (
+            session.spec.execution_id == spec.execution_id
+            and session.spec.turn_id == spec.turn_id
+        )
+
+    if isinstance(existing_head, CoreExecutionHead):
+        if not matches_spec(existing_head.session):
+            raise ValueError("CoreExecutionHead is already bound to another execution")
+        if isinstance(existing_lifecycle, CoreExecutionLifecycle):
+            if not matches_spec(existing_lifecycle.session):
+                raise ValueError(
+                    "CoreExecutionLifecycle is already bound to another execution"
+                )
+            if existing_head.lifecycle is not existing_lifecycle:
+                raise ValueError(
+                    "CoreExecutionHead and CoreExecutionLifecycle are inconsistent"
+                )
+        if isinstance(existing_session, CoreExecutionSession):
+            if not matches_spec(existing_session):
+                raise ValueError(
+                    "CoreExecutionSession is already bound to another execution"
+                )
+            if existing_head.session is not existing_session:
+                raise ValueError(
+                    "CoreExecutionHead and CoreExecutionSession are inconsistent"
+                )
+        event.set_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY, existing_head.lifecycle)
+        event.set_extra(CORE_EXECUTION_SESSION_EXTRA_KEY, existing_head.session)
+        return existing_head.lifecycle
+
+    if isinstance(existing_lifecycle, CoreExecutionLifecycle):
+        if not matches_spec(existing_lifecycle.session):
+            raise ValueError("CoreExecutionLifecycle is already bound to another execution")
+        if existing_lifecycle._event_publisher is not None:
+            raise ValueError(
+                "CoreExecutionLifecycle has an event publisher but CoreExecutionHead is missing"
+            )
+        if isinstance(existing_session, CoreExecutionSession):
+            if not matches_spec(existing_session):
+                raise ValueError(
+                    "CoreExecutionSession is already bound to another execution"
+                )
+            if existing_lifecycle.session is not existing_session:
+                raise ValueError(
+                    "CoreExecutionLifecycle and CoreExecutionSession are inconsistent"
+                )
+        lifecycle = existing_lifecycle
+    elif isinstance(existing_session, CoreExecutionSession):
+        if not matches_spec(existing_session):
             raise ValueError("CoreExecutionSession is already bound to another execution")
         lifecycle = CoreExecutionLifecycle(session=existing_session)
     else:
         lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
-        event.set_extra(CORE_EXECUTION_SESSION_EXTRA_KEY, lifecycle.session)
 
+    head = CoreExecutionHead(lifecycle)
+    event.set_extra(CORE_EXECUTION_SESSION_EXTRA_KEY, lifecycle.session)
     event.set_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY, lifecycle)
+    event.set_extra(CORE_EXECUTION_HEAD_EXTRA_KEY, head)
     return lifecycle
+
+
+def bind_core_execution_head(
+    event: AstrMessageEvent,
+    spec: CoreExecutionSpec,
+) -> CoreExecutionHead:
+    """Bind and return the in-process Core Head for one execution."""
+
+    bind_core_execution_lifecycle(event, spec)
+    head = get_core_execution_head(event)
+    if head is None:  # pragma: no cover - defensive guard for custom event bridges
+        raise RuntimeError("CoreExecutionHead was not bound to the event")
+    return head
+
+
+def start_core_execution_head(
+    event: AstrMessageEvent,
+    spec: CoreExecutionSpec,
+) -> CoreExecutionHead:
+    """Bind and submit one execution through the explicit Core Head boundary."""
+
+    head = bind_core_execution_head(event, spec)
+    head.start()
+    return head
 
 
 def start_core_execution_lifecycle(
@@ -512,9 +721,7 @@ def start_core_execution_lifecycle(
 ) -> CoreExecutionLifecycle:
     """Bind and submit one execution through the in-process Core lifecycle."""
 
-    lifecycle = bind_core_execution_lifecycle(event, spec)
-    lifecycle.start()
-    return lifecycle
+    return start_core_execution_head(event, spec).lifecycle
 
 
 def bind_core_execution_session(
@@ -538,6 +745,13 @@ def get_core_execution_lifecycle(
 
     lifecycle = event.get_extra(CORE_EXECUTION_LIFECYCLE_EXTRA_KEY)
     return lifecycle if isinstance(lifecycle, CoreExecutionLifecycle) else None
+
+
+def get_core_execution_head(event: AstrMessageEvent) -> CoreExecutionHead | None:
+    """Return the explicit Core Head bound to the current event bridge."""
+
+    head = event.get_extra(CORE_EXECUTION_HEAD_EXTRA_KEY)
+    return head if isinstance(head, CoreExecutionHead) else None
 
 
 def get_core_execution_session(event: AstrMessageEvent) -> CoreExecutionSession | None:
@@ -783,12 +997,14 @@ __all__ = [
     "CORE_EXECUTION_SPEC_EXTRA_KEY",
     "CORE_EXECUTION_SESSION_EXTRA_KEY",
     "CORE_EXECUTION_LIFECYCLE_EXTRA_KEY",
+    "CORE_EXECUTION_HEAD_EXTRA_KEY",
     "CoreCapabilitySnapshot",
     "CoreCommand",
     "CoreCommandKind",
     "CoreEvent",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
+    "CoreExecutionHead",
     "CoreExecutionLifecycle",
     "CoreExecutionSession",
     "CoreExecutionSessionStatus",
@@ -798,8 +1014,11 @@ __all__ = [
     "bind_effective_core_request",
     "bind_effective_core_capabilities",
     "bind_core_execution_lifecycle",
+    "bind_core_execution_head",
     "bind_core_execution_session",
     "get_core_execution_lifecycle",
+    "get_core_execution_head",
     "get_core_execution_session",
     "start_core_execution_lifecycle",
+    "start_core_execution_head",
 ]

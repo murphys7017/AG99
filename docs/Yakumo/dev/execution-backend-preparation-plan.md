@@ -1,5 +1,9 @@
 # Personal Runtime 前置主链清理计划
 
+当前复核基线：2026-09-13。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
+Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完整 Core Head、统一队列或
+可替换 Executor Body。本文的“已完成”只表示源码中已经存在的边界，不表示后续目标已经实现。
+
 本文记录 Yakumo 下一阶段的总体实施计划。当前优先级不是实现可替换 Executor Body，
 而是把执行阶段之前仍然存在的过渡结构清理为稳定的 Personal Runtime 主链。只有这些
 边界完成后，Native、Claude Code、OpenCode 等 Executor Body 才进入
@@ -570,18 +574,20 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - 当前未提交的 Native 终态收口修复把成功、产物和失败事件移动到稳定的 runner 最终状态处，
   解决了工具回流阶段的过早 `max_steps_exhausted` 误判；它属于 Native Executor 内部修复，
   不应被解释为 Core Head 已经完成。
-- Personal 与 Core Head 的消息/事件结构、CoreExecution 会话和 Core 内部 Executor 调度
-  目前仍是设计项，尚未进入代码实现；不能通过现有 `event.extra`、turn lock 或直接回调
-  隐式替代。
+- 在这次 2026-09-12 的复核时，Personal 与 Core Head 的完整消息/事件通信、Core 内部
+  Executor 调度仍是设计项，不能通过当时的 `event.extra`、turn lock 或直接回调隐式替代。
+  后续同日的 Phase 9 切片已经实现 `CoreExecutionSession` 与 Lifecycle 基础；完整通信和
+  调度边界仍未落地。
 - 后续实现必须保持三条边界：Personal 统一对外输出；Core Head 持有任务与事件协调；
   Executor Body 只负责被 Core Head 调度的复杂执行。委派只建立通信会话，不改变 Personal
   turn 的生命周期或输出所有权。
 
 ### 2026-09-12 Phase 9 首个实现切片
 
-- `CoreCommand`、`CoreEvent` 和 `CoreExecutionSession` 已以纯进程内类型进入
+- `CoreCommand`、`CoreEvent`、`CoreExecutionHead` 和 `CoreExecutionSession` 已以纯进程内类型进入
   `astrbot.core.execution`。Session 只接受匹配 `execution_id` 与 `turn_id` 的命令和事件，
-  提交命令按 `command_id` 去重，非 progress 事件可幂等重放，终态首写后拒绝冲突终态。
+  提交命令按 `command_id` 去重；状态事件按类型首写，progress 保留每次观察，artifact 则按稳定
+  `artifact_id` 去重，因此同一执行可携带多个不同 artifact。终态首写后拒绝冲突终态。
 - 当前 `InternalAgentSubStage` 作为 Native lifecycle adapter，在 Hook 后形成的最终 Spec
   上绑定 Session。`run_agent`、Stage 收尾和异常路径仍通过既有 event journal 入口记录事实；
   入口会通过 Session 统一校验、编号，再保留原有 journal/trace 行为。该切片不改变 Personal
@@ -649,6 +655,34 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   误分类为用户 `aborted`。终态错误在 Lifecycle 投影处统一限制为 2000 字符；正常、取消和失败
   的 Ledger 写入失败都会留下同一组 event diagnostics 及
   `core_execution_ledger_persist_failed` trace，供后续运行验证定位。
+
+### 2026-09-13 Phase 9 第七个实现切片
+
+- 增加显式 `CoreExecutionHead`，作为一个 execution-scoped 的进程内同步入口，统一承接
+  初始提交、Core command、执行事件记录、取消和本地事件订阅。Head 通过事件序号保证同一
+  事实不会向订阅者重复发布，且单个订阅者失败只留下诊断、不影响执行状态或其他订阅者；它不
+  创建后台队列、不选择 Executor、不持有平台输出，也不改变 Personal turn 的生命周期。
+- 增加 `bind_core_execution_head()` / `start_core_execution_head()`；旧的 Lifecycle 绑定和启动
+  API 继续保留并转发到 Head，Native Interaction 主路径改用 Head 入口。这样后续可以先迁移
+  Core Head 的 owner，再逐步接入命令/事件消费，而不需要一次性改写现有调用者。
+
+### Phase 9 当前复核结论
+
+截至本次复核，Phase 9 已完成七个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
+协调、Ledger 材料归属、取消命令、Executor stop callback、deadline/异常/取消终态与证据收口，
+以及显式 `CoreExecutionHead` 同步入口。它已经提供了 Core Head 后续扩展可使用的进程内事实
+边界，但当前仍由 `InternalAgentSubStage` 创建和运行 Native Runner。
+
+因此当前状态应表述为：
+
+- **已具备**：统一的执行身份、事件序号、命令幂等、终态保护、取消入口和受限终止证据；
+- **尚未具备**：Core Head 的完整生命周期 owner、命令/事件队列、Executor Adapter、统一 Artifact
+  回流、第三方 Runner 迁移和可替换 Executor Body；
+- **明确不做**：Personal/Core 远程化、分布式消息系统、第二套对外输出路径。
+
+下一步先把 `CoreExecutionLifecycle` 收口为 Core Head 内部 owner，再迁移超时、Artifact 汇总和
+最终 Ledger 调用；只有这一步稳定后，才建立 Native Executor Adapter。不得把现有 Lifecycle
+直接更名为 `ExecutionBackend`，也不得先接入第二个执行器来反向逼迫接口设计。
 
 ## 非目标
 

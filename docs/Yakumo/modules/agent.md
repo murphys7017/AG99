@@ -23,6 +23,7 @@ Main Agent 仍拥有运行时能力装配，Prompt 系统只描述模型输入�
 | `ProviderRequest.system_prompt/contexts/prompt/media/output_contract` | Prompt Render + Adapter |
 | `ProviderRequest.func_tool` | Main Agent / Capability 装配 |
 | `CoreExecutionSpec` | Core Execution Preparation facts |
+| `CoreExecutionHead` / `CoreExecutionLifecycle` | Core execution command/event coordination |
 | Native `ProviderRequest` 转换 | `NativeExecutionAdapter` |
 | Waiting/Request/Agent/Response/Tool Hook 状态 | `AgentRequestLifecycle` |
 | provider、conversation、runner、sandbox 环境 | Main Agent |
@@ -43,7 +44,12 @@ Native Core、Persona 和第三方 Runner 现在复用 `AgentRequestLifecycle`�
 
 Native Agent 完成后把有限工具证据、结果、错误和 token usage 写入独立 Core Execution Ledger。后续 Core Prompt 通过专用 Collector 读取最近记录；Router、Persona 和普通 Conversation API 不读取该 ledger。
 
-当前 ledger 记录仍由 `InternalAgentSubStage` 生成，因此这只是 Native 执行准备和连续性边界，不是完整的 `ExecutionBackend` / `ExecutionEvent` 实现。取消、进度、错误翻译和第三方执行器回流仍需后续统一。
+当前 Ledger 的最终持久化调用仍位于 `InternalAgentSubStage`，但 Native 已通过
+`CoreExecutionLifecycle` 将 submitted、working、progress、artifact-ready、completed、
+failed 和 cancelled 等事实统一排序并投影到 Ledger。它仍只是 Native 执行准备和进程内
+生命周期边界，不是完整的 `ExecutionBackend` / 可替换 Executor 实现；当前 `CoreExecutionHead`
+只是同步入口，Core Head 队列、
+超时 owner、Artifact 汇总、错误翻译和第三方执行器回流仍需后续统一。
 
 ## Agent 上下文
 

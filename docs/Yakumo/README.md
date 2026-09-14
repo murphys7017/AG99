@@ -24,7 +24,7 @@ AG99 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的 P
 ## 当前稳定边界
 
 - Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Interaction 先形成 canonical base facts，再后台预取 Persona/Core 共用的 plugin enrichment。Persona 只消费已就绪结果，Router 与 Planner 不等待普通插件扩展，Core 等待并复用同一 task。
-- Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；第三方 Backend 尚未接入这一边界。
+- Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；Phase 9 已在其上建立进程内 `CoreExecutionHead` 入口以及 `CoreExecutionSession` / `CoreExecutionLifecycle` 事实边界，但第三方 Backend 尚未接入这一边界。
 - Personal Runtime 在 Plugin Handler body 执行前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。默认兼容路径仍先保留 Handler 接管机会；默认关闭的并行插件路径会在 discovery 后从同一 `t0` 启动 Personal、Router 和 Plugin Job。
   reservation 同时启动一个 `TurnDeadlineBudget`；binding、queue、Router、Planner、Persona、
   Core、Provider fallback 与工具循环共享默认 120 秒的单调递减总预算。
@@ -48,7 +48,7 @@ Platform Adapter
             Router persona --------------------+-> complete
             Router hybrid -> Core Planner
                  -> not_required ---------------+-> complete
-                 -> execute: CoreExecutionSpec -> Native Core Executor
+                 -> execute: CoreExecutionSpec -> Core Head / execution lifecycle -> Native Core Executor
                              -> Persona Expression -> final Output
 
   bounded unaddressed group candidate -> Router first -> silent or admitted path
@@ -71,7 +71,7 @@ Collectors
 
 Collector 负责收集事实，Projection 决定 Router、Planner、Personal Policy、Persona 和 Core 各自可见的内容，Renderer 只负责编译 Provider 格式。Prompt 系统不负责路由、工具执行、Memory 写入或消息发送。Router 和 Planner 只消费 base facts；Persona 只在 enrichment 已就绪时合并，Core 在需要执行时等待并复用同一 enrichment task。因此普通插件 Prompt 贡献是尽力增强，不是首回复的硬依赖。
 
-可见 Dialogue History 与 Core Execution Ledger 是两个事实源：Conversation 保存规范用户输入、最终 Persona 表达和明确的 assistant-only 主动表达；后者会作为 `TurnRecord` 保留并供 Prompt 理解上下文，但不会更新抽象 Memory 状态或反向产生自主表达材料。Ledger 保存 Core task、工具证据、结果和错误，并且只投影给 Core。当前 Native 已接入执行准备边界，完整 Backend/Event/取消协议仍属于后续工作。
+可见 Dialogue History 与 Core Execution Ledger 是两个事实源：Conversation 保存规范用户输入、最终 Persona 表达和明确的 assistant-only 主动表达；后者会作为 `TurnRecord` 保留并供 Prompt 理解上下文，但不会更新抽象 Memory 状态或反向产生自主表达材料。Ledger 保存 Core task、工具证据、结果和错误，并且只投影给 Core。当前 Native 已接入执行准备边界、过渡性的 Core Head 入口和第一版进程内执行生命周期；完整 Head owner、统一 Backend/Event/取消协议和第三方 Executor 接入仍属于后续工作。
 
 主动消息目标复用统一 `platform_id:message_type:session_id`。未携带 session 的通用
 `Context.send_message(None, ...)` 和无目标主动 Cron 使用基础设置中的默认目标；已经明确

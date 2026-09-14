@@ -1,19 +1,24 @@
 import pytest
 
 from astrbot.core.execution import (
+    CORE_EXECUTION_HEAD_EXTRA_KEY,
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreCommand,
     CoreCommandKind,
     CoreEvent,
     CoreExecutionEvent,
     CoreExecutionEventKind,
+    CoreExecutionHead,
     CoreExecutionLifecycle,
     CoreExecutionSession,
     CoreExecutionSessionStatus,
     CoreExecutionSpec,
+    bind_core_execution_head,
     bind_core_execution_session,
+    get_core_execution_head,
     get_core_execution_lifecycle,
     get_core_execution_session,
+    start_core_execution_head,
     start_core_execution_lifecycle,
 )
 from astrbot.core.interaction.turn_state import (
@@ -184,6 +189,154 @@ def test_core_execution_lifecycle_accepts_native_submit_once():
     assert lifecycle.session.status is CoreExecutionSessionStatus.SUBMITTED
     assert [item.sequence for item in lifecycle.session.events] == [1]
     assert lifecycle.start() is False
+
+
+def test_core_execution_head_publishes_each_event_once_and_routes_cancel():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    observed = []
+    head.subscribe(observed.append)
+
+    submitted = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    assert submitted is not None
+    assert [item.sequence for item in observed] == [1]
+
+    duplicate = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    assert duplicate is None
+    assert [item.sequence for item in observed] == [1]
+
+    cancelled = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.CANCELLED,
+        executor_id="native",
+        metadata={"reason": "user_cancelled"},
+    )
+    assert cancelled is not None
+    assert [item.sequence for item in observed] == [1, 2]
+    assert isinstance(get_core_execution_head(event), CoreExecutionHead)
+    assert get_core_execution_lifecycle(event) is head.lifecycle
+
+
+def test_legacy_lifecycle_event_entry_publishes_through_head():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    lifecycle = start_core_execution_lifecycle(event, spec)
+    observed = []
+    get_core_execution_head(event).subscribe(observed.append)
+
+    lifecycle.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+
+    assert [item.sequence for item in observed] == [1]
+
+
+def test_core_execution_head_isolates_subscriber_failure_from_turn_journal(monkeypatch):
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    observed = []
+    warnings = []
+
+    monkeypatch.setattr(
+        "astrbot.core.execution.logger.warning",
+        lambda *args, **kwargs: warnings.append((args, kwargs)),
+    )
+
+    def fail_subscriber(_event):
+        raise RuntimeError("observer unavailable")
+
+    head.subscribe(fail_subscriber)
+    head.subscribe(observed.append)
+
+    submitted = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+
+    assert submitted is not None
+    assert [item.sequence for item in observed] == [1]
+    assert [item.kind for item in get_interaction_turn_core_execution_events(event)] == [
+        CoreExecutionEventKind.SUBMITTED
+    ]
+    assert warnings[0][0][0].startswith("Core execution event subscriber failed")
+
+
+def test_core_execution_binding_rejects_inconsistent_head_and_lifecycle():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    start_core_execution_head(event, spec)
+    inconsistent_lifecycle = CoreExecutionLifecycle(
+        session=CoreExecutionSession(spec=spec)
+    )
+    event.set_extra(
+        CORE_EXECUTION_HEAD_EXTRA_KEY,
+        CoreExecutionHead(inconsistent_lifecycle),
+    )
+
+    with pytest.raises(ValueError, match="Head and CoreExecutionLifecycle are inconsistent"):
+        bind_core_execution_head(event, spec)
+
+
+def test_core_execution_binding_rejects_lifecycle_that_lost_its_head():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    start_core_execution_head(event, spec)
+    event.set_extra(CORE_EXECUTION_HEAD_EXTRA_KEY, None)
+
+    with pytest.raises(ValueError, match="event publisher but CoreExecutionHead is missing"):
+        bind_core_execution_head(event, spec)
+
+
+def test_artifact_events_deduplicate_by_artifact_id():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    start_core_execution_head(event, spec)
+    record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+
+    first = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.ARTIFACT_READY,
+        executor_id="native",
+        metadata={"artifact_id": "one"},
+    )
+    second = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.ARTIFACT_READY,
+        executor_id="native",
+        metadata={"artifact_id": "two"},
+    )
+    duplicate = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.ARTIFACT_READY,
+        executor_id="native",
+        metadata={"artifact_id": "one"},
+    )
+
+    assert first is not None
+    assert second is not None
+    assert duplicate is None
+    assert [item.execution.metadata["artifact_id"] for item in get_core_execution_head(
+        event
+    ).events if item.kind is CoreExecutionEventKind.ARTIFACT_READY] == ["one", "two"]
 
 
 def test_core_execution_lifecycle_normalizes_terminal_ledger_status():

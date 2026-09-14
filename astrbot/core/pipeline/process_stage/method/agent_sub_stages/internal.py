@@ -30,8 +30,9 @@ from astrbot.core.execution import (
     CoreExecutionEventKind,
     CoreExecutionSpec,
     bind_effective_core_request,
+    get_core_execution_head,
     get_core_execution_lifecycle,
-    start_core_execution_lifecycle,
+    start_core_execution_head,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -493,11 +494,11 @@ class InternalAgentSubStage(Stage):
                         CORE_EXECUTION_SPEC_EXTRA_KEY,
                         effective_execution_spec,
                     )
-                    lifecycle = start_core_execution_lifecycle(
+                    execution_head = start_core_execution_head(
                         event,
                         effective_execution_spec,
                     )
-                    lifecycle.bind_executor_stop_callback(agent_runner.request_stop)
+                    execution_head.bind_executor_stop_callback(agent_runner.request_stop)
                     record_interaction_turn_core_execution_event(
                         event,
                         kind=CoreExecutionEventKind.SUBMITTED,
@@ -643,6 +644,7 @@ class InternalAgentSubStage(Stage):
                             kind=CoreExecutionEventKind.ARTIFACT_READY,
                             executor_id="native",
                             metadata={
+                                "artifact_id": "final_response",
                                 "artifact_kind": (
                                     "text"
                                     if completion_text
@@ -937,9 +939,16 @@ class InternalAgentSubStage(Stage):
         ledger = self.ctx.plugin_manager.context.core_execution_ledger
         if ledger is None:
             return
-        lifecycle = get_core_execution_lifecycle(event)
+        execution_head = get_core_execution_head(event)
+        lifecycle = (
+            execution_head.lifecycle
+            if execution_head is not None
+            else get_core_execution_lifecycle(event)
+        )
         lifecycle_status = (
-            lifecycle.ledger_status(user_aborted=user_aborted)
+            execution_head.ledger_status(user_aborted=user_aborted)
+            if execution_head is not None
+            else lifecycle.ledger_status(user_aborted=user_aborted)
             if lifecycle is not None
             else None
         )
@@ -951,7 +960,11 @@ class InternalAgentSubStage(Stage):
             llm_response.completion_text if llm_response is not None else ""
         )
         lifecycle_terminal_error = (
-            lifecycle.terminal_error() if lifecycle is not None else None
+            execution_head.terminal_error()
+            if execution_head is not None
+            else lifecycle.terminal_error()
+            if lifecycle is not None
+            else None
         )
         terminal_error = lifecycle_terminal_error or terminal_error
         error = None

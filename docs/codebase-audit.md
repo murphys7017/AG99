@@ -1,10 +1,15 @@
 # Executive Summary
 
-审计日期：2026-09-08。范围为当前工作区的 AstrBot/AG99 Runtime、Interaction、Persona、Core
+审计日期：2026-09-13。范围为当前工作区的 AstrBot/AG99 Runtime、Interaction、Persona、Core
 执行、Prompt、插件编排、主动唤醒、输出边界，以及相邻 Cron、平台 Event 和 Dashboard 入口。
 原始审计阶段只读，不修改业务代码、配置、测试或治理文件。随后开始的整改已单独记录在
 `docs/Yakumo/架构整改实施记录.md`；本报告同步反映当前工作区的已收敛边界与仍待验证的问题。
 工作区已有用户未提交改动仍视为当前状态背景，不将无关改动误记为本轮修复结果。
+
+2026-09-13 复核补充：Core 已建立过渡性的 `CoreExecutionHead` 同步入口，承接 Native
+执行的提交、事件记录、取消和本地订阅；它仍不拥有后台队列、Executor 选择、Artifact 汇总
+或最终 Ledger。完整 Core Head 与可替换 Executor Body 仍按
+`docs/Yakumo/dev/execution-backend-preparation-plan.md` 的 Phase 9 推进。
 
 系统主意图是连贯的：Persona Agent 负责快速初期响应和最终拟人化表达，Core Agent 负责工作与
 工具执行，Router/Planner 只负责控制决策。主要腐化发生在这个模型与 AstrBot 旧 Event、Handler、
@@ -45,7 +50,8 @@ InteractionMiddleware 启动 Persona 与 Router。Router 返回 persona、hybrid
 Core Planner 仅在 hybrid 时决定工作。Persona 负责即时表达，Core 结果再经 Persona 生成最终表达。
 
 Core 链为 InternalAgentSubStage -> build_main_agent()。后者负责 Provider、能力解析、PromptContext、
-CoreExecutionSpec、渲染适配和 AgentRunner。Prompt 采用 base Context Material single-flight，再共享
+CoreExecutionSpec、渲染适配和 AgentRunner；最终请求绑定过渡性的 CoreExecutionHead，由 Head
+承接进程内命令/事件入口。Prompt 采用 base Context Material single-flight，再共享
 plugin enrichment；Persona 可等待或 best-effort，Core 等待同一 enrichment task。
 
 Interaction 可见输出主要由 InteractionOutputController 物化、仲裁、持久化并交给平台。官方 event.send*

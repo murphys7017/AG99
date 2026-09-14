@@ -353,15 +353,18 @@ Dispatcher，确定 Prompt Snapshot、Capability Snapshot、Conversation/Memory 
 
 统一 Execution Preparation 已经以 `CoreExecutionSpec` 接入 Native；它将可见 Dialogue
 History、独立 Core Execution Ledger、能力快照和任务说明保持为不同事实，并与目标渲染结果
-分离，再由 Core 内部的 `NativeExecutionAdapter` 负责官方 `ProviderRequest` 转换。Personal
-只与稳定的 Core Head 通信；Native、Claude Code、OpenCode 等都是 Core 内部可替换的
-Executor Body，仍等待 Execution Event 与取消边界稳定后再接入。详细阶段和验收条件见
+分离，再由 Core 内部的 `NativeExecutionAdapter` 负责官方 `ProviderRequest` 转换。当前已建立
+第一版进程内 `CoreExecutionHead` / `CoreExecutionSession` / `CoreExecutionLifecycle`，用于承载
+执行入口、事件排序、命令幂等、取消和终态证据。Personal 最终只与稳定的 Core Head 通信；Native、Claude Code、
+OpenCode 等都是 Core 内部可替换的 Executor Body，仍等待完整 Core Head、统一事件回流和
+取消 owner 稳定后再接入。详细阶段和验收条件见
 [Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)。
 
 `CoreExecutionSpec` 当前只是 Core Head 到 Native Executor 的进程内事实边界，不是 Personal/Core
-通信协议，也不是最终 wire contract。Personal Runtime 已拥有 session lease、turn task scope、主动纯文本输出、
+通信协议，也不是最终 wire contract。`CoreExecutionSession` / `CoreExecutionLifecycle` 目前仍是
+Native 适配阶段的执行事实 owner，不代表完整 Core Head 或真实双向队列已经落地。Personal Runtime 已拥有 session lease、turn task scope、主动纯文本输出、
 受控 Observation / Policy 表达和 immediate/final 仲裁，并已提供经 Adapter 能力校验的默认主动消息
-目标；Native 工具对象、统一 Execution Event、纯媒体主动输出和 Conversation 提交窗口仍属于下一阶段
+目标；跨执行器统一 Execution Event、Native 工具对象、纯媒体主动输出和 Conversation 提交窗口仍属于下一阶段
 需要收口的边界。目标态不得把这些现状固化为各 Executor Body 各自维护的
 兼容实现。
 

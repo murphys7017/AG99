@@ -14,7 +14,7 @@ AG99 的目标不是把每条消息简单地交给一个 Agent，而是让一个
   -> Interaction Middleware
   -> Personal Runtime + Router
   -> Core Planner
-  -> Core 执行层
+  -> Core Head / Core 执行层
   -> Persona Expression
   -> Output Runtime
   -> Conversation / Memory
@@ -47,6 +47,7 @@ AG99 仍处于持续开发和真实链路验证阶段：
 | Interaction Middleware | 主链路已实现，边界场景持续验证 |
 | Personal Runtime | 跨 turn 状态、Observation Intake、Gate、Policy 边界和投递反馈已接入 |
 | Router / Core Planner | 职责分离和 fail-closed 边界已接入 |
+| Core Head / Executor Body | 已建立进程内同步 Head、事件排序和取消边界；队列与可替换执行器仍在推进 |
 | Persona Expression | 统一可见回复链路已接入，Provider 差异仍在收口 |
 | Structured Prompt | 主链路已实现，模块仍在拆分稳定化 |
 

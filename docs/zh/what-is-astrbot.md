@@ -16,7 +16,7 @@ AG99 是这个仓库当前对外使用的项目名称，由 YakumoAki 创建并�
   -> Interaction Middleware
   -> Personal Runtime + Router
   -> Core Planner
-  -> Core 执行层
+  -> Core Head / Core 执行层
   -> Persona Expression
   -> Output Runtime
   -> Conversation / Memory
@@ -28,7 +28,7 @@ AG99 是这个仓库当前对外使用的项目名称，由 YakumoAki 创建并�
 - `hybrid`：由 Core Planner 独立判断是否需要执行；需要时 Core 负责工具、知识库、Skills 等实质工作。
 - `silent`：取消仍处于 pending 的 Persona 输出，不撤回已经提交或送达的表达。
 
-Core 的结果不会绕过 Persona 直接发送，而是回到同一个 Persona Expression。这样即时回复、插件人格输出和 Core 最终结果共享一致的表达与输出边界。
+Core Head 负责在进程内协调任务、事件、取消和执行生命周期；当前仍是同步入口，不创建独立队列，也不直接发送平台消息。Core 的结果不会绕过 Persona 直接发送，而是回到同一个 Persona Expression。这样即时回复、插件人格输出和 Core 最终结果共享一致的表达与输出边界。
 
 ## 插件如何参与
 

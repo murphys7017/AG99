@@ -14,6 +14,7 @@ from astrbot.core.execution import (
     CoreExecutionEvent,
     CoreExecutionEventKind,
     CoreExecutionSpec,
+    get_core_execution_head,
     get_core_execution_lifecycle,
     get_core_execution_session,
 )
@@ -1026,9 +1027,10 @@ def record_interaction_turn_core_execution_event(
         metadata=metadata,
     )
     existing = state.core_execution_events
-    if execution_event.kind is not CoreExecutionEventKind.PROGRESS and any(
+    replay_key = execution_event.replay_key
+    if replay_key is not None and any(
         item.execution_id == execution_event.execution_id
-        and item.kind is execution_event.kind
+        and item.replay_key == replay_key
         for item in existing
     ):
         return None
@@ -1039,8 +1041,20 @@ def record_interaction_turn_core_execution_event(
         return None
 
     execution_lifecycle = get_core_execution_lifecycle(event)
+    execution_head = get_core_execution_head(event)
     execution_session = get_core_execution_session(event)
-    if execution_lifecycle is not None:
+    if execution_head is not None:
+        if kind is CoreExecutionEventKind.CANCELLED:
+            envelope = execution_head.cancel(
+                executor_id=executor_id,
+                metadata=metadata,
+            )
+            execution_event = envelope.execution
+        else:
+            envelope = execution_head.record_event(execution_event)
+            if envelope.execution is not execution_event:
+                return None
+    elif execution_lifecycle is not None:
         if kind is CoreExecutionEventKind.CANCELLED:
             envelope = execution_lifecycle.cancel(
                 executor_id=executor_id,

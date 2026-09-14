@@ -6,8 +6,8 @@ flowchart LR
     EVENT["Platform / EventBus / Pipeline<br/>官方消息接入与 Stage 调度"]
     RUNTIME["Personal Runtime / Interaction<br/>turn admission、task scope、路由、表达与完成协调"]
     PROMPT["Prompt<br/>collect → ContextPack → project → render"]
-    EXEC["Execution Contracts<br/>CoreExecutionSpec / CapabilitySnapshot / Ledger"]
-    AGENT["Native / Third-party Agent<br/>模型与工具执行"]
+    EXEC["Execution Contracts<br/>CoreExecutionSpec / CoreExecutionHead / Session / Lifecycle / Ledger"]
+    AGENT["Native / Third-party Agent<br/>模型与工具执行（Executor Body）"]
     OUTPUT["Output Controller / RespondStage<br/>可见输出、物理投递与完成"]
     HISTORY["Conversation / Postprocess / Memory<br/>可见历史、后台消费与长期状态"]
     PLUGIN["Plugin Context / Hooks<br/>官方扩展与兼容接口"]
@@ -40,6 +40,7 @@ flowchart LR
 
     EXEC --> PROMPT
     EXEC --> PROVIDER
+    EXEC --> AGENT
     OUTPUT --> PLATFORM
     OUTPUT --> HISTORY
     HISTORY --> PROVIDER
