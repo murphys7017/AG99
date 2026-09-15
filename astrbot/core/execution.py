@@ -173,6 +173,33 @@ class CoreExecutionOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class CoreExecutionDeadlineView:
+    """Read-only view of the Personal-owned turn deadline."""
+
+    deadline_at: float
+    _remaining_seconds_reader: Callable[[], float] = field(
+        repr=False,
+        compare=False,
+    )
+
+    @classmethod
+    def from_budget(cls, budget: Any) -> CoreExecutionDeadlineView:
+        """Bind a view without transferring ownership of the mutable budget."""
+
+        reader = getattr(budget, "remaining", None)
+        deadline_at = getattr(budget, "deadline_at", None)
+        if not callable(reader) or deadline_at is None:
+            raise TypeError("CoreExecutionDeadlineView requires a deadline budget")
+        return cls(deadline_at=float(deadline_at), _remaining_seconds_reader=reader)
+
+    def remaining_seconds(self) -> float:
+        return max(0.0, float(self._remaining_seconds_reader()))
+
+    def expired(self) -> bool:
+        return self.remaining_seconds() <= 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class CoreExecutionLedgerPreparation:
     """Terminal material prepared for the existing Ledger boundary.
 
@@ -436,6 +463,11 @@ class CoreExecutionLifecycle:
         repr=False,
     )
     _executor_stop_error: str | None = field(default=None, init=False, repr=False)
+    _deadline_view: CoreExecutionDeadlineView | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _event_publisher: Callable[[CoreEvent], None] | None = field(
         default=None,
         init=False,
@@ -495,6 +527,21 @@ class CoreExecutionLifecycle:
             raise ValueError("CoreExecutionLifecycle already has an executor callback")
         self._executor_stop_callback = callback
 
+    @property
+    def deadline_view(self) -> CoreExecutionDeadlineView | None:
+        """Return the Personal-owned deadline as a read-only Core view."""
+
+        return self._deadline_view
+
+    def bind_deadline_view(self, view: CoreExecutionDeadlineView) -> None:
+        """Bind the one Personal turn deadline view for this execution."""
+
+        if self._deadline_view is not None:
+            if self._deadline_view is view:
+                return
+            raise ValueError("CoreExecutionLifecycle already has a deadline view")
+        self._deadline_view = view
+
     def cancel(
         self,
         *,
@@ -529,6 +576,20 @@ class CoreExecutionLifecycle:
         )
         self._request_executor_stop()
         return cancelled
+
+    def cancel_for_deadline(
+        self,
+        *,
+        executor_id: str,
+        stage: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreEvent:
+        """Route an upstream deadline expiry through the Core cancellation owner."""
+
+        details = dict(metadata or {})
+        details.setdefault("reason", "deadline_exceeded")
+        details.setdefault("stage", str(stage or "turn"))
+        return self.cancel(executor_id=executor_id, metadata=details)
 
     @property
     def executor_stop_error(self) -> str | None:
@@ -683,6 +744,15 @@ class CoreExecutionHead:
 
         self.lifecycle.bind_executor_stop_callback(callback)
 
+    @property
+    def deadline_view(self) -> CoreExecutionDeadlineView | None:
+        return self.lifecycle.deadline_view
+
+    def bind_deadline_view(self, view: CoreExecutionDeadlineView) -> None:
+        """Bind Personal's read-only deadline view to the Core Head."""
+
+        self.lifecycle.bind_deadline_view(view)
+
     def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
         """Record and publish one sequenced execution fact."""
 
@@ -697,6 +767,21 @@ class CoreExecutionHead:
         """Accept cancellation and publish the resulting terminal event once."""
 
         return self.lifecycle.cancel(executor_id=executor_id, metadata=metadata)
+
+    def cancel_for_deadline(
+        self,
+        *,
+        executor_id: str,
+        stage: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreEvent:
+        """Cancel the Core execution after Personal reports deadline expiry."""
+
+        return self.lifecycle.cancel_for_deadline(
+            executor_id=executor_id,
+            stage=stage,
+            metadata=metadata,
+        )
 
     def subscribe(self, callback: Callable[[CoreEvent], None]) -> None:
         """Register a local observer for newly published Core events."""
@@ -1148,6 +1233,7 @@ __all__ = [
     "CoreEvent",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
+    "CoreExecutionDeadlineView",
     "CoreExecutionHead",
     "CoreExecutionLedgerPreparation",
     "CoreExecutionLifecycle",

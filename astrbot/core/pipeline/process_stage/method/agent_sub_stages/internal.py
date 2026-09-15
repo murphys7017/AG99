@@ -27,6 +27,7 @@ from astrbot.core.astr_main_agent import (
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
+    CoreExecutionDeadlineView,
     CoreExecutionEventKind,
     CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
@@ -500,6 +501,10 @@ class InternalAgentSubStage(Stage):
                         event,
                         effective_execution_spec,
                     )
+                    if deadline := get_interaction_turn_deadline(event):
+                        execution_head.bind_deadline_view(
+                            CoreExecutionDeadlineView.from_budget(deadline)
+                        )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
                     execution_head.bind_executor_stop_callback(agent_runner.request_stop)
                     record_interaction_turn_core_execution_event(

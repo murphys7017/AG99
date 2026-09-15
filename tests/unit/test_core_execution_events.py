@@ -6,6 +6,7 @@ from astrbot.core.execution import (
     CoreCommand,
     CoreCommandKind,
     CoreEvent,
+    CoreExecutionDeadlineView,
     CoreExecutionEvent,
     CoreExecutionEventKind,
     CoreExecutionHead,
@@ -538,6 +539,44 @@ def test_core_execution_head_prepares_ledger_material_from_terminal_outcome():
     assert preparation.result is None
     assert preparation.error == "provider unavailable"
     assert preparation.outcome is not None
+
+
+def test_core_execution_head_binds_read_only_deadline_view_and_routes_expiry():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    remaining = [3.0]
+    view = CoreExecutionDeadlineView(
+        deadline_at=10.0,
+        _remaining_seconds_reader=lambda: remaining[0],
+    )
+    head = CoreExecutionHead(
+        lifecycle=CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    )
+    stopped = []
+    head.bind_deadline_view(view)
+    head.bind_executor_stop_callback(lambda: stopped.append(True))
+    head.start()
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+
+    assert head.deadline_view is view
+    remaining[0] = 0.0
+    assert head.deadline_view.expired() is True
+    cancelled = head.cancel_for_deadline(executor_id="native", stage="turn_execution")
+
+    assert cancelled.kind is CoreExecutionEventKind.CANCELLED
+    assert cancelled.execution.metadata == {
+        "reason": "deadline_exceeded",
+        "stage": "turn_execution",
+    }
+    assert stopped == [True]
 
 
 def test_core_execution_lifecycle_prepares_fallback_ledger_material_without_terminal_event():

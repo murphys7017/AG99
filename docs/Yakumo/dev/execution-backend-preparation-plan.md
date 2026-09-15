@@ -721,25 +721,35 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - Personal 的总 turn deadline 仍是唯一总预算。Core 只消费由上游 timeout/cancellation 形成的
   终态事实；本切片没有把 deadline 移入 Core，也没有创建独立 timeout 或队列。
 
+### 2026-09-15 Phase 9 第十二个实现切片
+
+- `CoreExecutionDeadlineView` 将 Personal 持有的 `TurnDeadlineBudget` 暴露为只读剩余时间视图；
+  Core 不复制计时器、不延长总预算，也不取得 deadline 的可变 owner。
+- Native Head 启动后绑定该视图。ProcessStage 在 Personal 报告 turn deadline 到期时，通过
+  `CoreExecutionHead.cancel_for_deadline()` 统一写入 `cancelled` 终态并请求当前 Executor stop；
+  Core 只负责执行终态收敛，Personal 仍负责用户可见的超时处理。
+- 本切片不引入 Core 自主 watchdog、第二个 timeout、队列、持久化迁移或新的输出路径。
+
 ### Phase 9 当前复核结论
 
-截至本次复核，Phase 9 已完成十一个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
+截至本次复核，Phase 9 已完成十二个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
 协调、Ledger 材料归属、取消命令、Executor stop callback、deadline/异常/取消终态与证据收口、
 显式 `CoreExecutionHead` 同步入口、Interaction journal/trace 的本地事件消费，以及无持久化依赖的
-Ledger 结果材料准备。它已经提供了 Core Head 后续扩展可使用的进程内事实边界，但当前仍由
+Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入口。它已经提供了 Core Head 后续
+扩展可使用的进程内事实边界，但当前仍由
 `InternalAgentSubStage` 创建和运行 Native Runner。
 
 因此当前状态应表述为：
 
 - **已具备**：统一的执行身份、事件序号、命令幂等、终态保护、取消入口、受限终止证据与
-  生命周期拥有的 Outcome 与 LedgerPreparation 汇总；
+  生命周期拥有的 Outcome 与 LedgerPreparation 汇总，以及 Personal deadline 的只读协作入口；
 - **尚未具备**：Core Head 的完整生命周期 owner、命令/事件队列、Executor Adapter、统一 Artifact
   回流、第三方 Runner 迁移和可替换 Executor Body；
 - **明确不做**：Personal/Core 远程化、分布式消息系统、第二套对外输出路径。
 
-下一步只处理 Core 执行期的 deadline 协作：Personal 仍持有整个 turn 的唯一总预算，Core Head
-不得复制或延长它；但 Head 需要获得只读的剩余预算视图，并成为 deadline 到期时执行取消与终态
-清理的唯一 Core-side 入口。该边界经过真实 Interaction 验证后，才建立 Native Executor Adapter。
+下一步验证 deadline 到期、外层 task cancellation、重复取消和旧任务迟到结果的真实 Interaction
+时序；确认 Head 的终态、stop callback 和 LedgerPreparation 只收敛一次。该边界经过真实验证后，
+才建立 Native Executor Adapter。
 不得把现有 Lifecycle 直接更名为 `ExecutionBackend`，也不得先接入第二个执行器来反向逼迫接口设计。
 
 ## 非目标

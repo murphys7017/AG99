@@ -4,6 +4,7 @@ from contextlib import AsyncExitStack, aclosing
 
 from astrbot import logger
 from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
+from astrbot.core.execution import get_core_execution_head
 from astrbot.core.interaction.config import load_interaction_agent_config
 from astrbot.core.interaction.delayed_plugin_delivery import (
     DelayedPluginDeliveryContext,
@@ -699,6 +700,19 @@ class ProcessStage(Stage):
                 else "fallback_error_reply"
             ),
         )
+        execution_head = get_core_execution_head(event)
+        if execution_head is not None and execution_head.terminal_event is None:
+            try:
+                execution_head.cancel_for_deadline(
+                    executor_id="native",
+                    stage=stage,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to route Interaction deadline to Core Head: turn_id=%s",
+                    event.get_extra("_turn_id"),
+                    exc_info=True,
+                )
         if already_completed:
             event.stop_event()
             logger.warning(
