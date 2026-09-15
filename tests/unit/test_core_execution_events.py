@@ -579,6 +579,50 @@ def test_core_execution_head_binds_read_only_deadline_view_and_routes_expiry():
     assert stopped == [True]
 
 
+def test_core_execution_journal_ignores_late_terminal_after_deadline_cancel():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    stop_calls = []
+    head.bind_executor_stop_callback(lambda: stop_calls.append(True))
+
+    submitted = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    cancelled = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.CANCELLED,
+        executor_id="native",
+        metadata={"reason": "deadline_exceeded", "stage": "turn_execution"},
+    )
+    late_completed = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.COMPLETED,
+        executor_id="native",
+    )
+    late_failed = record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.FAILED,
+        executor_id="native",
+        metadata={"error": "late runner failure"},
+    )
+
+    assert submitted is not None
+    assert cancelled is not None
+    assert late_completed is None
+    assert late_failed is None
+    assert stop_calls == [True]
+    assert [item.kind for item in head.events] == [
+        CoreExecutionEventKind.SUBMITTED,
+        CoreExecutionEventKind.CANCELLED,
+    ]
+    outcome = head.outcome()
+    assert outcome is not None
+    assert outcome.status == "cancelled"
+
+
 def test_core_execution_lifecycle_prepares_fallback_ledger_material_without_terminal_event():
     spec = CoreExecutionSpec.from_context_pack(
         context_pack=ContextPack(),

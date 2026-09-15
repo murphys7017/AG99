@@ -730,9 +730,16 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   Core 只负责执行终态收敛，Personal 仍负责用户可见的超时处理。
 - 本切片不引入 Core 自主 watchdog、第二个 timeout、队列、持久化迁移或新的输出路径。
 
+### 2026-09-15 Phase 9 第十三个验证切片
+
+- 通过现有 Interaction journal bridge 验证 deadline 取消后的重复取消与迟到终态保护：同一执行
+  只保留一次 `cancelled`，迟到的 `completed/failed` 不会重新打开 Session、重复触发 stop
+  callback 或污染 Outcome。
+- 本验证没有增加事件类型、队列或 Executor 适配层。
+
 ### Phase 9 当前复核结论
 
-截至本次复核，Phase 9 已完成十二个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
+截至本次复核，Phase 9 已完成十二个连续的 Native 基础切片，并完成一个 deadline 时序验证切片：执行会话与事件类型、Lifecycle
 协调、Ledger 材料归属、取消命令、Executor stop callback、deadline/异常/取消终态与证据收口、
 显式 `CoreExecutionHead` 同步入口、Interaction journal/trace 的本地事件消费，以及无持久化依赖的
 Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入口。它已经提供了 Core Head 后续
