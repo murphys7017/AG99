@@ -710,26 +710,37 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   owner 或数据库依赖迁移。
 - timeout owner、取消 cleanup、持久化端口、队列和 Executor Adapter 都没有随本切片提前引入。
 
+### 2026-09-15 Phase 9 第十一个实现切片
+
+- `CoreExecutionLedgerPreparation` 成为 Lifecycle/Head 面向现有 Ledger 边界的非持久化结果材料：
+  它使用已确认终态统一确定 status、error 与 result 保留规则，并保留 Outcome 供后续 Adapter 使用；
+  它不引用 SQLite、conversation、平台 Event 或可见输出。
+- Native Stage 继续提取 Runner 消息、token usage 与 conversation ID，并调用现有 Ledger；但不再
+  自行组合成功、失败、取消或中止的 result/error 规则。只有旧 Native 路径无法形成终态事件时，
+  才向 Core 提供受限 fallback 事实。
+- Personal 的总 turn deadline 仍是唯一总预算。Core 只消费由上游 timeout/cancellation 形成的
+  终态事实；本切片没有把 deadline 移入 Core，也没有创建独立 timeout 或队列。
+
 ### Phase 9 当前复核结论
 
-截至本次复核，Phase 9 已完成十个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
+截至本次复核，Phase 9 已完成十一个连续的 Native 基础切片：执行会话与事件类型、Lifecycle
 协调、Ledger 材料归属、取消命令、Executor stop callback、deadline/异常/取消终态与证据收口、
-显式 `CoreExecutionHead` 同步入口，以及 Interaction journal/trace 的本地事件消费。它已经提供了
-Core Head 后续扩展可使用的进程内事实边界，但当前仍由 `InternalAgentSubStage` 创建和运行 Native Runner。
+显式 `CoreExecutionHead` 同步入口、Interaction journal/trace 的本地事件消费，以及无持久化依赖的
+Ledger 结果材料准备。它已经提供了 Core Head 后续扩展可使用的进程内事实边界，但当前仍由
+`InternalAgentSubStage` 创建和运行 Native Runner。
 
 因此当前状态应表述为：
 
 - **已具备**：统一的执行身份、事件序号、命令幂等、终态保护、取消入口、受限终止证据与
-  生命周期拥有的 Outcome 汇总；
+  生命周期拥有的 Outcome 与 LedgerPreparation 汇总；
 - **尚未具备**：Core Head 的完整生命周期 owner、命令/事件队列、Executor Adapter、统一 Artifact
   回流、第三方 Runner 迁移和可替换 Executor Body；
 - **明确不做**：Personal/Core 远程化、分布式消息系统、第二套对外输出路径。
 
-下一步先明确 Core 执行期 timeout 的归属，并把最终 Ledger 的调用准备收口为 Core Head 内部
-owner；Personal 仍持有整个 turn 的 deadline，Core 不得复制或延长该总预算。现有 Outcome 已承担
-artifact 汇总，后续只应消除 Stage 对终态和 Ledger 状态的二次推断。只有这些边界稳定后，才建立
-Native Executor Adapter。不得把现有 Lifecycle 直接更名为 `ExecutionBackend`，也不得先接入
-第二个执行器来反向逼迫接口设计。
+下一步只处理 Core 执行期的 deadline 协作：Personal 仍持有整个 turn 的唯一总预算，Core Head
+不得复制或延长它；但 Head 需要获得只读的剩余预算视图，并成为 deadline 到期时执行取消与终态
+清理的唯一 Core-side 入口。该边界经过真实 Interaction 验证后，才建立 Native Executor Adapter。
+不得把现有 Lifecycle 直接更名为 `ExecutionBackend`，也不得先接入第二个执行器来反向逼迫接口设计。
 
 ## 非目标
 

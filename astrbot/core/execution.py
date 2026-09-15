@@ -173,6 +173,50 @@ class CoreExecutionOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class CoreExecutionLedgerPreparation:
+    """Terminal material prepared for the existing Ledger boundary.
+
+    This is intentionally not a persistence record. The Core lifecycle owns
+    the execution-derived status, result policy, and terminal error; the
+    Native Stage still supplies runner evidence and invokes the current
+    SQLite-backed Ledger.
+    """
+
+    execution_spec: CoreExecutionSpec
+    status: str
+    result: str | None
+    error: str | None
+    outcome: CoreExecutionOutcome | None
+
+    @classmethod
+    def from_fallback(
+        cls,
+        *,
+        execution_spec: CoreExecutionSpec,
+        completion_text: str | None,
+        user_aborted: bool = False,
+        fallback_status: str | None = None,
+        fallback_error: str | None = None,
+    ) -> CoreExecutionLedgerPreparation:
+        """Preserve the legacy pre-terminal fallback without a lifecycle fact."""
+
+        status = fallback_status or ("aborted" if user_aborted else "completed")
+        text = str(completion_text or "")
+        error = None
+        if status == "failed":
+            error = fallback_error or text
+        elif status in {"cancelled", "aborted"}:
+            error = fallback_error
+        return cls(
+            execution_spec=execution_spec,
+            status=status,
+            result=text if status != "failed" else None,
+            error=error,
+            outcome=None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CoreCommand:
     """A directed command sent to one Core execution session."""
 
@@ -526,6 +570,47 @@ class CoreExecutionLifecycle:
             ),
         )
 
+    def prepare_ledger_preparation(
+        self,
+        *,
+        completion_text: str | None,
+        user_aborted: bool = False,
+        fallback_status: str | None = None,
+        fallback_error: str | None = None,
+    ) -> CoreExecutionLedgerPreparation:
+        """Prepare terminal facts without coupling the lifecycle to persistence.
+
+        A structured terminal event wins whenever it exists. The fallback is
+        retained solely for failures that happen before a terminal event can be
+        recorded by the legacy Native Stage.
+        """
+
+        outcome = self.outcome(user_aborted=user_aborted)
+        if outcome is None:
+            return CoreExecutionLedgerPreparation.from_fallback(
+                execution_spec=self.spec,
+                completion_text=completion_text,
+                user_aborted=user_aborted,
+                fallback_status=fallback_status,
+                fallback_error=fallback_error,
+            )
+
+        status = outcome.status
+        text = str(completion_text or "")
+        terminal_error = outcome.terminal_error or fallback_error
+        error = None
+        if status == "failed":
+            error = terminal_error or text
+        elif status in {"cancelled", "aborted"}:
+            error = terminal_error
+        return CoreExecutionLedgerPreparation(
+            execution_spec=self.spec,
+            status=status,
+            result=text if status != "failed" else None,
+            error=error,
+            outcome=outcome,
+        )
+
     def _request_executor_stop(self) -> None:
         if self._executor_stop_callback is None:
             return
@@ -656,6 +741,23 @@ class CoreExecutionHead:
         """Return the lifecycle-owned terminal summary for this execution."""
 
         return self.lifecycle.outcome(user_aborted=user_aborted)
+
+    def prepare_ledger_preparation(
+        self,
+        *,
+        completion_text: str | None,
+        user_aborted: bool = False,
+        fallback_status: str | None = None,
+        fallback_error: str | None = None,
+    ) -> CoreExecutionLedgerPreparation:
+        """Return the Core-owned material for the existing Ledger boundary."""
+
+        return self.lifecycle.prepare_ledger_preparation(
+            completion_text=completion_text,
+            user_aborted=user_aborted,
+            fallback_status=fallback_status,
+            fallback_error=fallback_error,
+        )
 
     def ledger_status(self, *, user_aborted: bool = False) -> str | None:
         return self.lifecycle.ledger_status(user_aborted=user_aborted)
@@ -1047,6 +1149,7 @@ __all__ = [
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
     "CoreExecutionHead",
+    "CoreExecutionLedgerPreparation",
     "CoreExecutionLifecycle",
     "CoreExecutionOutcome",
     "CoreExecutionSession",

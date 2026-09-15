@@ -28,6 +28,7 @@ from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreExecutionEventKind,
+    CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
     bind_effective_core_request,
     get_core_execution_head,
@@ -941,42 +942,46 @@ class InternalAgentSubStage(Stage):
         ledger = self.ctx.plugin_manager.context.core_execution_ledger
         if ledger is None:
             return
+        completion_text = str(
+            llm_response.completion_text if llm_response is not None else ""
+        )
         execution_head = get_core_execution_head(event)
         lifecycle = (
             execution_head.lifecycle
             if execution_head is not None
             else get_core_execution_lifecycle(event)
         )
-        outcome = (
-            execution_head.outcome(user_aborted=user_aborted)
+        preparation = (
+            execution_head.prepare_ledger_preparation(
+                completion_text=completion_text,
+                user_aborted=user_aborted,
+                fallback_status=status_override,
+                fallback_error=terminal_error,
+            )
             if execution_head is not None
-            else lifecycle.outcome(user_aborted=user_aborted)
+            else lifecycle.prepare_ledger_preparation(
+                completion_text=completion_text,
+                user_aborted=user_aborted,
+                fallback_status=status_override,
+                fallback_error=terminal_error,
+            )
             if lifecycle is not None
-            else None
+            else CoreExecutionLedgerPreparation.from_fallback(
+                execution_spec=execution_spec,
+                completion_text=completion_text,
+                user_aborted=user_aborted,
+                fallback_status=status_override,
+                fallback_error=terminal_error,
+            )
         )
-        # Once the Core session has a terminal fact, it is the authoritative
-        # persistence outcome. Overrides only cover failures before binding.
-        status = outcome.status if outcome is not None else status_override
-        status = status or ("aborted" if user_aborted else "completed")
-        completion_text = str(
-            llm_response.completion_text if llm_response is not None else ""
-        )
-        terminal_error = (
-            outcome.terminal_error if outcome is not None else terminal_error
-        ) or terminal_error
-        error = None
-        if status == "failed":
-            error = terminal_error or completion_text
-        elif status in {"cancelled", "aborted"}:
-            error = terminal_error
         await ledger.append_execution(
-            execution_spec=execution_spec,
+            execution_spec=preparation.execution_spec,
             conversation_id=req.conversation.cid,
             executor_id="native",
-            status=status,
+            status=preparation.status,
             messages=messages,
-            result=completion_text if status != "failed" else None,
-            error=error,
+            result=preparation.result,
+            error=preparation.error,
             token_usage=(
                 runner_stats.token_usage.__dict__ if runner_stats is not None else None
             ),

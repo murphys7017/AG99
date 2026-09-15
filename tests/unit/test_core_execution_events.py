@@ -502,6 +502,63 @@ def test_core_execution_outcome_aggregates_terminal_and_artifact_facts():
     assert [item.metadata["artifact_id"] for item in outcome.artifacts] == ["summary"]
 
 
+def test_core_execution_head_prepares_ledger_material_from_terminal_outcome():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    head = CoreExecutionHead(
+        lifecycle=CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+    )
+    head.start()
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.FAILED,
+            executor_id="native",
+            metadata={"error": "provider unavailable"},
+        )
+    )
+
+    preparation = head.prepare_ledger_preparation(
+        completion_text="raw provider response",
+        fallback_status="completed",
+        fallback_error="legacy fallback",
+    )
+
+    assert preparation.execution_spec is spec
+    assert preparation.status == "failed"
+    assert preparation.result is None
+    assert preparation.error == "provider unavailable"
+    assert preparation.outcome is not None
+
+
+def test_core_execution_lifecycle_prepares_fallback_ledger_material_without_terminal_event():
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-1",
+    )
+    lifecycle = CoreExecutionLifecycle(session=CoreExecutionSession(spec=spec))
+
+    preparation = lifecycle.prepare_ledger_preparation(
+        completion_text="raw provider response",
+        fallback_status="failed",
+        fallback_error="build failed",
+    )
+
+    assert preparation.status == "failed"
+    assert preparation.result is None
+    assert preparation.error == "build failed"
+    assert preparation.outcome is None
+
+
 def test_core_execution_lifecycle_bounds_terminal_failure_evidence():
     spec = CoreExecutionSpec.from_context_pack(
         context_pack=ContextPack(),
