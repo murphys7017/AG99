@@ -1,29 +1,34 @@
-# Upstream Merge Ledger
+# Upstream Reference Intake Ledger
 
-This document records upstream changes that were reviewed but not merged into this fork.
-Keep appending to it when reviewing future upstream updates, so old merge decisions remain easy to revisit.
+This document records AstrBot upstream changes that were studied as reference material for
+AG99. It is an intake and decision record, not a merge plan and not a measure of how closely
+this repository follows upstream history. Keep appending to it when reviewing future upstream
+updates, so old decisions remain easy to revisit without treating them as missing work.
 
-## Dynamic Sync Board
+## Reference Intake Board
 
-Last updated: 2026-08-02
+Last updated: 2026-09-15
 
 Last recorded comparison baseline:
 
 - Local side: the active Yakumo working branch at review time; local `master` is also a fork branch and is not treated as the official baseline.
 - Upstream remote: `upstream` (`https://github.com/AstrBotDevs/AstrBot`)
-- Last local upstream snapshot checked: `upstream/master` at `9bb294d8c` (`v4.27.0`).
-- Remote refresh status: HTTPS `git fetch upstream --prune` succeeded on 2026-08-02; `upstream/master` and tag `v4.27.0` both point to `9bb294d8c`.
-- Git-only divergence at this snapshot before the local rewrite: local-only/upstream-only counts are no longer tracked as a decision signal for this fork; topic review remains the source of truth.
-- The refreshed range contains 133 upstream commits after the previous `25cbd41e0` review baseline. Only the topics recorded below have been reviewed in this pass; the remaining commits still require topic review.
+- Last local upstream snapshot checked: `upstream/master` at `a4121464` (`v4.28.0`).
+- Reference snapshot status: the local `upstream/master` ref was checked for this review and remains pinned to the recorded SHA. This confirms the reference snapshot only; it does not create an integration or merge obligation.
+- Git-only divergence is not tracked as a decision signal for this fork; topic and behavioral
+  review remain the source of truth.
+- The refreshed range contains 270 upstream commits after the previous `25cbd41e0` review baseline. Only the topics recorded below have been studied in this pass; unrecorded commits are reference material to inspect only when they relate to an AG99 need, not a backlog that must be cleared.
 
 Important interpretation:
 
 - This fork often rewrites upstream changes instead of cherry-picking them.
 - A commit still shown as upstream-only may already be functionally absorbed if the local patch differs.
-- Before merging anything, compare by topic and behavior, not only by commit hash.
+- Before adopting anything, compare by topic and behavior, not only by commit hash. A local
+  rewrite may be preferable to copying the upstream implementation when AG99 has a different
+  owner boundary.
 - Historical entries preserve the Prompt terminology used at review time. References to `ContentPack`, Prompt Selector, shadow mode, or three targets are not current architecture; the current protected chain is `ContextPack -> target projection -> Render Profile -> Layout/PromptTree -> Provider Renderer -> Apply` for Router, Core Planner, Persona, and Core.
 
-Current local upstream-sync commits:
+Current local reference-intake commits:
 
 - `e302356b` Add NVIDIA and Ollama embedding providers
 - `29e1e1f8` Improve provider response compatibility
@@ -914,9 +919,9 @@ Recently absorbed by rewrite:
   - `c58916b8` plugin WebUI sidebar entries were rewritten locally: plugin metadata supports `icon`, plugin APIs expose it, the sidebar adds a localized plugin-pages group before More, and plugin icons are limited to local `mdi-*` names instead of remote SVG injection.
   - Validation: targeted pytest for dashboard/plugin/thread/provider-stats/SQLite/document-storage paths passed, focused ruff passed, dashboard `vue-tsc --noEmit` passed, changed i18n JSON parsed after BOM stripping, and `git diff --check` reported only Windows CRLF warnings.
 
-### Topic Merge Plan
+### Topic Reference Intake Plan
 
-Use this table as the live working plan. Update `Status`, `Local action`, and `Next check` whenever upstream sync work is done.
+Use this table as the live working plan. Update `Status`, `Local action`, and `Next check` whenever an upstream topic is studied. It tracks reference intake decisions, not pending history synchronization.
 
 | Topic | Status | Upstream examples | Local action | Next check |
 | --- | --- | --- | --- | --- |

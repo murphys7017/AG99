@@ -142,7 +142,7 @@ context:
     - Protocol commands and live audio continue to bypass conversational Router and Core Planner.
     - Planner failures never grant Core execution; an already emitted Persona reply may finalize the turn with the Planner failure retained, while turns without visible Persona output remain fail-fast.
     - The retired decision_provider_id, decision_temperature, and decision_timeout compatibility fields are removed rather than repurposed for Planner.
-    - Upstream sync should continue by topic rewrite, not broad merge.
+    - AstrBot upstream is a reference intake source: adopt only topic-scoped behavior that remains relevant to AG99, usually by local rewrite; do not treat history alignment or broad merge as a project goal.
     - Prompt, memory, postprocess, and interaction architecture remain local source of truth.
     - Simple upstream items can be marked absorbed when local behavior is functionally equivalent even if git cherry still shows them as upstream-only.
     - "Bundled WebUI should take precedence over `data/dist` only when the user dist version is older than the current core version and the bundled dist exists."

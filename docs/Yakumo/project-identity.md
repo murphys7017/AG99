@@ -15,7 +15,8 @@ Yakumo 是作者名，完整名称为 YakumoAki。`docs/Yakumo` 路径和相关�
 - Python 包和导入路径仍使用 `astrbot`。
 - CLI 入口仍是 `astrbot`，插件前缀仍是 `astrbot_plugin_`。
 - 平台 Adapter、Provider、Pipeline、插件 API、Dashboard 和配置体系继续复用 AstrBot 基础设施。
-- 与上游同步的兼容修复仍会记录在 [上游合并记录](./upstream-merge-ledger.md) 中。
+- 从 AstrBot 上游学习并选择性吸收的修复仍会记录在
+  [上游参考吸收记录](./upstream-merge-ledger.md) 中；该记录不表示本仓库以合并上游历史为目标。
 
 但 AG99 已经不是只改变默认配置的 AstrBot 分支。当前仓库新增并持续维护自己的运行时边界：
 

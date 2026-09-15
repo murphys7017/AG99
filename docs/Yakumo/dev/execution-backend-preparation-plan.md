@@ -1,6 +1,6 @@
 # Personal Runtime 前置主链清理计划
 
-当前复核基线：2026-09-13。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
+当前复核基线：2026-09-15。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
 Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完整 Core Head、统一队列或
 可替换 Executor Body。本文的“已完成”只表示源码中已经存在的边界，不表示后续目标已经实现。
 
@@ -11,6 +11,17 @@ Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完�
 
 本文是目标和实施顺序，不代表所述能力已经完成。当前运行事实以
 `execution-backend-flow.mmd` 和源码为准。
+
+## 上游参考边界
+
+AG99 使用 AstrBot 的基础设施与公开兼容面，但当前运行时架构已经与上游主线明显分化。
+因此上游是按需学习和选择性吸收修复、Provider/平台兼容与通用能力的参考来源，不是需要
+追平或合并的开发主线。Git 历史分叉数量不构成待办；每项参考输入都必须先判断 AG99 是否
+仍有相同问题、是否符合本项目 owner 边界，以及是否应以本地小改动实现。
+
+Prompt、Memory、Interaction、Personal 输出链与 Core Head 的设计以本仓库文档和源码为准。
+上游参考结论记录在 `docs/Yakumo/upstream-merge-ledger.md`，用于避免重复研究，而不是建立
+历史对齐或大范围合并计划。
 
 ## 优先级调整
 
@@ -714,9 +725,11 @@ Core Head 后续扩展可使用的进程内事实边界，但当前仍由 `Inter
   回流、第三方 Runner 迁移和可替换 Executor Body；
 - **明确不做**：Personal/Core 远程化、分布式消息系统、第二套对外输出路径。
 
-下一步先把 `CoreExecutionLifecycle` 收口为 Core Head 内部 owner，再迁移超时、Artifact 汇总和
-最终 Ledger 调用；只有这一步稳定后，才建立 Native Executor Adapter。不得把现有 Lifecycle
-直接更名为 `ExecutionBackend`，也不得先接入第二个执行器来反向逼迫接口设计。
+下一步先明确 Core 执行期 timeout 的归属，并把最终 Ledger 的调用准备收口为 Core Head 内部
+owner；Personal 仍持有整个 turn 的 deadline，Core 不得复制或延长该总预算。现有 Outcome 已承担
+artifact 汇总，后续只应消除 Stage 对终态和 Ledger 状态的二次推断。只有这些边界稳定后，才建立
+Native Executor Adapter。不得把现有 Lifecycle 直接更名为 `ExecutionBackend`，也不得先接入
+第二个执行器来反向逼迫接口设计。
 
 ## 非目标
 
