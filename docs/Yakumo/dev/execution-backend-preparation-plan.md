@@ -737,7 +737,7 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
   callback 或污染 Outcome。
 - 本验证没有增加事件类型、队列或 Executor 适配层。
 
-### 2026-09-15 Phase 9 第十四个真实 trace 审计切片
+### 2026-09-16 Phase 9 第十四个真实 trace 审计切片
 
 - 对当前可读取的 `astrbot.trace.log` 中 `core_execution_event` 记录按
   `execution_id` 重组后，发现两条完整执行链：一条以 `failed/max_steps_exhausted` 终止，

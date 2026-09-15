@@ -28,6 +28,7 @@ from astrbot.core.interaction.turn_state import (
     bind_interaction_turn_core_execution_journal,
     get_interaction_turn_core_execution_events,
     record_interaction_turn_core_execution_event,
+    record_interaction_turn_core_execution_stop_callback_failure,
 )
 from astrbot.core.prompt.context_types import ContextPack
 
@@ -264,6 +265,33 @@ def test_head_direct_event_projects_to_bound_interaction_journal():
         CoreExecutionEventKind.SUBMITTED
     ]
     assert event.trace.records[-1][1]["sequence"] == 1
+
+
+def test_head_journal_replays_events_emitted_before_binding():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.WORKING,
+            executor_id="native",
+        )
+    )
+
+    assert bind_interaction_turn_core_execution_journal(event, head) is True
+    assert [item.kind for item in get_interaction_turn_core_execution_events(event)] == [
+        CoreExecutionEventKind.SUBMITTED,
+        CoreExecutionEventKind.WORKING,
+    ]
+    assert [metadata["sequence"] for _, metadata in event.trace.records] == [1, 2]
 
 
 def test_head_journal_keeps_terminal_event_when_artifacts_fill_its_bound():
@@ -779,6 +807,33 @@ def test_core_execution_journal_records_executor_stop_callback_failure():
         "core_execution_event",
         "core_execution_stop_callback_failed",
     ]
+
+
+def test_head_deadline_cancellation_records_stop_callback_failure_at_interaction_boundary():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    assert bind_interaction_turn_core_execution_journal(event, head) is True
+
+    def fail_stop() -> None:
+        raise RuntimeError("executor unavailable")
+
+    head.bind_executor_stop_callback(fail_stop)
+    cancelled = head.cancel_for_deadline(
+        executor_id="native",
+        stage="turn_execution",
+    )
+    record_interaction_turn_core_execution_stop_callback_failure(
+        event,
+        cancelled.execution,
+        error=head.executor_stop_error,
+    )
+
+    assert [name for name, _ in event.trace.records] == [
+        "core_execution_event",
+        "core_execution_stop_callback_failed",
+    ]
+    assert event.trace.records[-1][1]["error"] == "RuntimeError: executor unavailable"
 
 
 def test_core_execution_session_orders_events_and_accepts_commands_once():

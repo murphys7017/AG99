@@ -937,7 +937,7 @@ Use this table as the live working plan. Update `Status`, `Local action`, and `N
 
 ### Review Rules for Future Upstream Sync
 
-- Always update this `Dynamic Sync Board` before and after a sync batch.
+- Always update this `Reference Intake Board` before and after a sync batch.
 - Record the exact upstream ref used. If fetch fails, record that and use the latest local snapshot explicitly.
 - Prefer small topic batches over broad merges.
 - Mark each upstream topic as `Absorbed`, `Deferred`, `Skipped`, or `Needs review`.

@@ -33,6 +33,7 @@ from astrbot.core.interaction.turn_state import (
     has_interaction_turn_final_output_claimed,
     is_interaction_turn_completed,
     mark_interaction_turn_failed,
+    record_interaction_turn_core_execution_stop_callback_failure,
     record_interaction_turn_failure,
 )
 from astrbot.core.persona_error_reply import (
@@ -703,9 +704,14 @@ class ProcessStage(Stage):
         execution_head = get_core_execution_head(event)
         if execution_head is not None and execution_head.terminal_event is None:
             try:
-                execution_head.cancel_for_deadline(
+                cancelled = execution_head.cancel_for_deadline(
                     executor_id="native",
                     stage=stage,
+                )
+                record_interaction_turn_core_execution_stop_callback_failure(
+                    event,
+                    cancelled.execution,
+                    error=execution_head.executor_stop_error,
                 )
             except Exception:  # noqa: BLE001
                 logger.warning(

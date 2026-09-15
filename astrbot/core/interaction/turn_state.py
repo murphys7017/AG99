@@ -1086,7 +1086,7 @@ def _make_interaction_turn_core_execution_journal_room(
     return False
 
 
-def _record_interaction_turn_core_execution_stop_callback_failure(
+def record_interaction_turn_core_execution_stop_callback_failure(
     event,
     execution_event: CoreExecutionEvent,
     *,
@@ -1136,9 +1136,12 @@ def bind_interaction_turn_core_execution_journal(
     if bound_head is not None:
         raise ValueError("Interaction Core execution journal is already bound to another Head")
 
-    execution_head.subscribe(
-        lambda envelope: _project_core_execution_event_to_interaction_turn(event, envelope)
-    )
+    def project_event(envelope: CoreEvent) -> CoreExecutionEvent | None:
+        return _project_core_execution_event_to_interaction_turn(event, envelope)
+
+    execution_head.subscribe(project_event)
+    for envelope in execution_head.events:
+        project_event(envelope)
     event.set_extra(INTERACTION_CORE_EXECUTION_JOURNAL_HEAD_EXTRA_KEY, execution_head)
     return True
 
@@ -1189,7 +1192,7 @@ def record_interaction_turn_core_execution_event(
                 executor_id=executor_id,
                 metadata=metadata,
             )
-            _record_interaction_turn_core_execution_stop_callback_failure(
+            record_interaction_turn_core_execution_stop_callback_failure(
                 event,
                 envelope.execution,
                 error=execution_head.executor_stop_error,
@@ -1238,7 +1241,7 @@ def _project_interaction_turn_core_execution_event_from_legacy_bridge(
         return None
     projected = _project_core_execution_event_to_interaction_turn(event, envelope)
     if kind is CoreExecutionEventKind.CANCELLED and lifecycle is not None:
-        _record_interaction_turn_core_execution_stop_callback_failure(
+        record_interaction_turn_core_execution_stop_callback_failure(
             event,
             envelope.execution,
             error=lifecycle.executor_stop_error,
