@@ -703,16 +703,6 @@ const transportMode = ref<TransportMode>(
     : "sse",
 );
 
-const pointerMediaQuery = window.matchMedia('(pointer: coarse)');
-const isTouchDevice = ref<boolean>(pointerMediaQuery.matches);
-const handlePointerChange = (e: MediaQueryListEvent) => {
-  isTouchDevice.value = e.matches;
-};
-pointerMediaQuery.addEventListener('change', handlePointerChange);
-onBeforeUnmount(() => {
-  pointerMediaQuery.removeEventListener('change', handlePointerChange);
-});
-
 const transportOptions: Array<{ value: TransportMode; labelKey: string }> = [
   { value: "sse", labelKey: "transport.sse" },
   { value: "websocket", labelKey: "transport.websocket" },
