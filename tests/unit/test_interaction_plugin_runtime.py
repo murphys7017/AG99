@@ -40,6 +40,7 @@ from astrbot.core.interaction.turn_state import (
     is_interaction_turn_pipeline_output_suppressed,
     is_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_pipeline_route_handled,
+    reserve_interaction_turn_final_output,
     set_interaction_turn_config,
     set_interaction_turn_emitting_immediate_reply,
     set_interaction_turn_immediate_reply,
@@ -103,6 +104,85 @@ def test_tool_stage_observer_classifies_research_tools_without_user_arguments():
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_stage_observer_coalesces_same_stage_within_one_turn():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def get_platform_id(self):
+            return "test"
+
+        def is_stopped(self):
+            return False
+
+    event = Event()
+    turn_state = ensure_interaction_turn_state(event)
+    controller = InteractionOutputController()
+    controller._observe_tool_stage = AsyncMock(return_value=True)
+    first_tool = FunctionTool(
+        name="web_search",
+        description="Search current web sources.",
+        parameters={"type": "object", "properties": {}},
+    )
+    second_tool = FunctionTool(
+        name="web_search",
+        description="Search current web sources.",
+        parameters={"type": "object", "properties": {}},
+    )
+
+    try:
+        await controller.observe_core_tool_start(event, first_tool, {"query": "one"})
+        await controller.observe_core_tool_start(event, second_tool, {"query": "two"})
+        await controller.observe_core_tool_end(event, first_tool, {"query": "one"})
+        controller._observe_tool_stage.assert_not_awaited()
+
+        await controller.observe_core_tool_end(event, second_tool, {"query": "two"})
+        controller._observe_tool_stage.assert_awaited_once_with(
+            event,
+            descriptor="资料检索",
+            phase="completed",
+        )
+    finally:
+        await turn_state.execution_scope.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_stage_observer_skips_when_final_output_is_reserved():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        def is_stopped(self):
+            return False
+
+    event = Event()
+    ensure_interaction_turn_state(event)
+    assert await reserve_interaction_turn_final_output(event) is True
+    controller = InteractionOutputController(
+        visible_reply_renderer=AsyncMock(),
+    )
+
+    assert await controller._observe_tool_stage(
+        event,
+        descriptor="资料检索",
+        phase="completed",
+    ) is False
+    controller.visible_reply_renderer.assert_not_awaited()
 
 
 @pytest.mark.asyncio

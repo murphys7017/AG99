@@ -15,6 +15,7 @@ from astrbot.core.execution import (
     CoreExecutionEvent,
     CoreExecutionEventKind,
     CoreExecutionHead,
+    CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
     get_core_execution_head,
     get_core_execution_lifecycle,
@@ -1108,6 +1109,88 @@ def record_interaction_turn_core_execution_stop_callback_failure(
             executor_id=execution_event.executor_id,
             error=error,
         )
+    except Exception:
+        pass
+
+
+def record_interaction_turn_core_execution_ledger_settlement(
+    event,
+    preparation: CoreExecutionLedgerPreparation,
+    *,
+    executor_id: str,
+    inserted: bool,
+) -> None:
+    """Record one inserted or deduplicated Ledger append without execution material."""
+
+    if not event.get_extra("_interaction_enabled", False):
+        return
+    state = get_interaction_turn_state(event)
+    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    prepared_spec = preparation.execution_spec
+    if (
+        state is None
+        or not isinstance(execution_spec, CoreExecutionSpec)
+        or execution_spec.execution_id != prepared_spec.execution_id
+        or execution_spec.turn_id != state.turn_id
+        or prepared_spec.turn_id != state.turn_id
+    ):
+        return
+    trace = getattr(event, "trace", None)
+    record = getattr(trace, "record", None)
+    if not callable(record):
+        return
+    outcome = preparation.outcome
+    try:
+        record(
+            "core_execution_ledger_settled",
+            execution_id=prepared_spec.execution_id,
+            core_task_id=prepared_spec.core_task_id,
+            turn_id=prepared_spec.turn_id,
+            executor_id=executor_id,
+            status=preparation.status,
+            inserted=bool(inserted),
+            deduplicated=not bool(inserted),
+            terminal_kind=(
+                outcome.terminal_event.kind.value if outcome is not None else None
+            ),
+            used_fallback=outcome is None,
+        )
+    except Exception:
+        pass
+
+
+def record_interaction_turn_core_execution_ledger_persist_failure(
+    event,
+    *,
+    executor_id: str,
+    error: Exception,
+) -> None:
+    """Record an execution-scoped Ledger persistence failure."""
+
+    error_text = str(error)[:2000]
+    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    state = get_interaction_turn_state(event)
+    if (
+        not event.get_extra("_interaction_enabled", False)
+        or state is None
+        or not isinstance(execution_spec, CoreExecutionSpec)
+        or execution_spec.turn_id != state.turn_id
+    ):
+        return
+    trace = getattr(event, "trace", None)
+    record = getattr(trace, "record", None)
+    if not callable(record):
+        return
+    fields = {
+        "executor_id": executor_id,
+        "error_type": type(error).__name__,
+        "error": error_text,
+        "execution_id": execution_spec.execution_id,
+        "core_task_id": execution_spec.core_task_id,
+        "turn_id": execution_spec.turn_id,
+    }
+    try:
+        record("core_execution_ledger_persist_failed", **fields)
     except Exception:
         pass
 

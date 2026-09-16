@@ -329,6 +329,7 @@ def build_persona_runtime_system_prompt(
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
         "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
         "当 preserve_facts 为 true 且 source_text 非空时，source_text 是本次回应唯一的权威事实来源；不得根据 conversation.history、人格能力声明或任何先前回复否定、替换或拒绝 source_text 已给出的结果。\n"
+        "当 visible_reply_material.phase 为 immediate 且没有 source_text 时，本次尚未提供执行结果。若当前输入要求查询实时信息、调用外部能力、执行操作，或继续未完成任务，只能简短确认正在处理；不得从 conversation.history、memory、截图说明或先前助手回复推断、复述或编造本次任务的结论、状态、数据或能力限制。\n"
         "immediate_reply（如果存在）是同一轮此前已经发送的表达；保持语义连续，必要时自然补充或纠正，但不要机械重复。\n"
         "delegated_task_summary 表示路由或执行层正在评估、处理本轮任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
         "当 delegated_task_summary 表示执行层正在并行评估或处理时，这是硬性约束：spoken_reply 只能确认正在处理，不得声称相关能力不存在、要求用户自行完成，或提前给出最终结果。\n"

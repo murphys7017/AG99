@@ -10,6 +10,7 @@ from astrbot.core.execution import (
     CoreExecutionEvent,
     CoreExecutionEventKind,
     CoreExecutionHead,
+    CoreExecutionLedgerPreparation,
     CoreExecutionLifecycle,
     CoreExecutionSession,
     CoreExecutionSessionStatus,
@@ -28,6 +29,8 @@ from astrbot.core.interaction.turn_state import (
     bind_interaction_turn_core_execution_journal,
     get_interaction_turn_core_execution_events,
     record_interaction_turn_core_execution_event,
+    record_interaction_turn_core_execution_ledger_persist_failure,
+    record_interaction_turn_core_execution_ledger_settlement,
     record_interaction_turn_core_execution_stop_callback_failure,
 )
 from astrbot.core.prompt.context_types import ContextPack
@@ -834,6 +837,93 @@ def test_head_deadline_cancellation_records_stop_callback_failure_at_interaction
         "core_execution_stop_callback_failed",
     ]
     assert event.trace.records[-1][1]["error"] == "RuntimeError: executor unavailable"
+
+
+def test_core_execution_ledger_settlement_trace_keeps_terminal_identity():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        )
+    )
+    head.record_event(
+        CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.COMPLETED,
+            executor_id="native",
+        )
+    )
+    preparation = head.prepare_ledger_preparation(completion_text="done")
+
+    record_interaction_turn_core_execution_ledger_settlement(
+        event,
+        preparation,
+        executor_id="native",
+        inserted=True,
+    )
+
+    name, fields = event.trace.records[-1]
+    assert name == "core_execution_ledger_settled"
+    assert fields == {
+        "execution_id": spec.execution_id,
+        "core_task_id": spec.core_task_id,
+        "turn_id": spec.turn_id,
+        "executor_id": "native",
+        "status": "completed",
+        "inserted": True,
+        "deduplicated": False,
+        "terminal_kind": "completed",
+        "used_fallback": False,
+    }
+
+
+def test_core_execution_ledger_failure_trace_keeps_execution_identity():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+
+    record_interaction_turn_core_execution_ledger_persist_failure(
+        event,
+        executor_id="native",
+        error=RuntimeError("database unavailable"),
+    )
+
+    name, fields = event.trace.records[-1]
+    assert name == "core_execution_ledger_persist_failed"
+    assert fields == {
+        "executor_id": "native",
+        "error_type": "RuntimeError",
+        "error": "database unavailable",
+        "execution_id": spec.execution_id,
+        "core_task_id": spec.core_task_id,
+        "turn_id": spec.turn_id,
+    }
+
+
+def test_core_execution_ledger_settlement_trace_marks_deduplicated_fallback():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    preparation = CoreExecutionLedgerPreparation.from_fallback(
+        execution_spec=spec,
+        completion_text="done",
+    )
+
+    record_interaction_turn_core_execution_ledger_settlement(
+        event,
+        preparation,
+        executor_id="native",
+        inserted=False,
+    )
+
+    name, fields = event.trace.records[-1]
+    assert name == "core_execution_ledger_settled"
+    assert fields["inserted"] is False
+    assert fields["deduplicated"] is True
+    assert fields["terminal_kind"] is None
+    assert fields["used_fallback"] is True
 
 
 def test_core_execution_session_orders_events_and_accepts_commands_once():

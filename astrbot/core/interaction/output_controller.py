@@ -118,6 +118,7 @@ PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY = (
     "_interaction_plugin_output_transaction_assistant_artifacts"
 )
 TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY = "_interaction_tool_stage_observation_tasks"
+TOOL_STAGE_OBSERVATION_STATE_EXTRA_KEY = "_interaction_tool_stage_observation_state"
 CORE_REPLY_FALLBACK_TEXT = "模型服务暂时不可用，请稍后再试。"
 
 
@@ -1072,6 +1073,12 @@ class InteractionOutputController:
                 observation_state["lock"] = lock
         async with lock:
             if (
+                event.is_stopped()
+                or is_interaction_turn_completed(event)
+                or has_interaction_turn_final_output_claimed(event)
+            ):
+                return
+            if (
                 get_interaction_turn_stream_interjections_emitted(event)
                 >= self._get_interaction_config(event).stream_interjection_max_per_turn
             ):
@@ -1133,6 +1140,11 @@ class InteractionOutputController:
         turn_state = get_interaction_turn_state(event)
         if turn_state is None:
             return
+        stage_state = self._get_tool_stage_observation_state(event, descriptor)
+        if stage_state["running_attempt_started"] or stage_state[
+            "completed_attempt_started"
+        ]:
+            return
         record: dict[str, Any] = {
             "tool": tool,
             "descriptor": descriptor,
@@ -1150,6 +1162,12 @@ class InteractionOutputController:
             )
             if event.is_stopped() or is_interaction_turn_completed(event):
                 return
+            stage_state = self._get_tool_stage_observation_state(event, descriptor)
+            if stage_state["running_attempt_started"] or stage_state[
+                "completed_attempt_started"
+            ]:
+                return
+            stage_state["running_attempt_started"] = True
             record["stage_attempt_started"] = True
             emitted = await self._observe_tool_stage(
                 event,
@@ -1157,6 +1175,7 @@ class InteractionOutputController:
                 phase="running",
             )
             record["emitted"] = emitted
+            stage_state["running_emitted"] = emitted
 
         record["task"] = turn_state.execution_scope.create_task(
             emit_delayed_stage(),
@@ -1194,11 +1213,45 @@ class InteractionOutputController:
             or not self._tool_stage_observation_allowed(event)
         ):
             return
+        if any(
+            item.get("descriptor") == record.get("descriptor") for item in records
+        ):
+            return
+        stage_state = self._get_tool_stage_observation_state(
+            event,
+            str(record["descriptor"]),
+        )
+        if stage_state["running_attempt_started"] or stage_state[
+            "completed_attempt_started"
+        ]:
+            return
+        stage_state["completed_attempt_started"] = True
         await self._observe_tool_stage(
             event,
             descriptor=str(record["descriptor"]),
             phase="completed",
         )
+        stage_state["completed_emitted"] = True
+
+    @staticmethod
+    def _get_tool_stage_observation_state(
+        event: AstrMessageEvent,
+        descriptor: str,
+    ) -> dict[str, bool]:
+        states = event.get_extra(TOOL_STAGE_OBSERVATION_STATE_EXTRA_KEY, {})
+        if not isinstance(states, dict):
+            states = {}
+        state = states.get(descriptor)
+        if not isinstance(state, dict):
+            state = {
+                "running_attempt_started": False,
+                "running_emitted": False,
+                "completed_attempt_started": False,
+                "completed_emitted": False,
+            }
+            states[descriptor] = state
+            event.set_extra(TOOL_STAGE_OBSERVATION_STATE_EXTRA_KEY, states)
+        return state
 
     def _tool_stage_observation_allowed(self, event: AstrMessageEvent) -> bool:
         config = self._get_interaction_config(event)
@@ -1208,6 +1261,7 @@ class InteractionOutputController:
             and config.stream_interjection_max_per_turn > 0
             and not event.is_stopped()
             and not is_interaction_turn_completed(event)
+            and not has_interaction_turn_final_output_claimed(event)
         )
 
     @staticmethod
@@ -1280,6 +1334,12 @@ class InteractionOutputController:
         if not isinstance(lock, asyncio.Lock):
             return False
         async with lock:
+            if (
+                event.is_stopped()
+                or is_interaction_turn_completed(event)
+                or has_interaction_turn_final_output_claimed(event)
+            ):
+                return False
             if (
                 get_interaction_turn_stream_interjections_emitted(event)
                 >= self._get_interaction_config(event).stream_interjection_max_per_turn
@@ -1354,6 +1414,12 @@ class InteractionOutputController:
         reason: str = "persona_runtime",
         observation_kind: str = "stream_text",
     ) -> StreamObservationDecision:
+        if (
+            event.is_stopped()
+            or is_interaction_turn_completed(event)
+            or has_interaction_turn_final_output_claimed(event)
+        ):
+            return StreamObservationDecision(reason="turn_output_closed")
         try:
             result = await self._render_visible_reply(
                 event,
@@ -1393,6 +1459,12 @@ class InteractionOutputController:
             )
             return StreamObservationDecision(reason="persona_render_failed")
 
+        if (
+            event.is_stopped()
+            or is_interaction_turn_completed(event)
+            or has_interaction_turn_final_output_claimed(event)
+        ):
+            return StreamObservationDecision(reason="turn_output_closed")
         reply = result.spoken_reply.strip()
         return StreamObservationDecision(
             should_interject=bool(reply),
@@ -1536,7 +1608,12 @@ class InteractionOutputController:
         reason: str,
     ) -> None:
         text = reply.strip()
-        if not text:
+        if (
+            not text
+            or event.is_stopped()
+            or is_interaction_turn_completed(event)
+            or has_interaction_turn_final_output_claimed(event)
+        ):
             return
         message = MessageChain([Plain(text)])
         message.type = "interaction_stream_reply"
@@ -1785,7 +1862,13 @@ class InteractionOutputController:
 
     @staticmethod
     def _extract_observable_stream_text(chain: MessageChain) -> str:
-        if chain.type == "break":
+        if chain.type in {
+            "break",
+            "tool_call",
+            "tool_call_result",
+            "tool_direct_result",
+            "agent_stats",
+        }:
             return ""
         if chain.type == "audio_chunk":
             for component in chain.chain:

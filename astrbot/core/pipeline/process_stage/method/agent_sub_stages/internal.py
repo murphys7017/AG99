@@ -44,6 +44,8 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_runtime_config,
     is_interaction_turn_core_delegated,
     record_interaction_turn_core_execution_event,
+    record_interaction_turn_core_execution_ledger_persist_failure,
+    record_interaction_turn_core_execution_ledger_settlement,
 )
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
@@ -979,7 +981,7 @@ class InternalAgentSubStage(Stage):
                 fallback_error=terminal_error,
             )
         )
-        await ledger.append_execution(
+        inserted = await ledger.append_execution(
             execution_spec=preparation.execution_spec,
             conversation_id=req.conversation.cid,
             executor_id="native",
@@ -990,6 +992,12 @@ class InternalAgentSubStage(Stage):
             token_usage=(
                 runner_stats.token_usage.__dict__ if runner_stats is not None else None
             ),
+        )
+        record_interaction_turn_core_execution_ledger_settlement(
+            event,
+            preparation,
+            executor_id="native",
+            inserted=inserted,
         )
         event.set_extra(
             "_core_execution_ledger_recorded_id",
@@ -1006,17 +1014,11 @@ class InternalAgentSubStage(Stage):
         error_text = str(error)[:2000]
         event.set_extra("_core_execution_ledger_failed", True)
         event.set_extra("_core_execution_ledger_failure_reason", error_text)
-        trace = getattr(event, "trace", None)
-        record = getattr(trace, "record", None)
-        if callable(record):
-            try:
-                record(
-                    "core_execution_ledger_persist_failed",
-                    error_type=type(error).__name__,
-                    error=error_text,
-                )
-            except Exception:  # noqa: BLE001
-                pass
+        record_interaction_turn_core_execution_ledger_persist_failure(
+            event,
+            executor_id="native",
+            error=error,
+        )
 
     async def _save_cancelled_interaction_core_state(
         self,

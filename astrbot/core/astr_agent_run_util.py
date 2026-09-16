@@ -18,6 +18,7 @@ from astrbot.core.interaction.output_modes import (
 )
 from astrbot.core.interaction.turn_state import (
     get_interaction_turn_deadline,
+    is_interaction_turn_core_delegated,
     record_interaction_turn_core_execution_event,
 )
 from astrbot.core.message.components import BaseMessageComponent, Json, Plain
@@ -52,6 +53,24 @@ async def _send_core_event_message(
     *,
     delivery: CoreOutputDelivery,
 ) -> None:
+    if (
+        delivery is CoreOutputDelivery.PROGRESS
+        and is_interaction_turn_core_delegated(astr_event)
+    ):
+        # Personal owns the user-visible Interaction surface. Keep tool status as
+        # execution evidence, rather than emitting a second raw Core utterance.
+        record_interaction_turn_core_execution_event(
+            astr_event,
+            kind=CoreExecutionEventKind.PROGRESS,
+            executor_id="native",
+            metadata={
+                "source": "suppressed_visible_core_progress",
+                "message_type": str(message.type or ""),
+                "component_count": len(message.chain),
+            },
+        )
+        return
+
     with temporary_output_origin(astr_event, OutputOrigin.CORE.value):
         with temporary_core_output_delivery(astr_event, delivery.value):
             await astr_event.send(message)

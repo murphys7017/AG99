@@ -555,10 +555,19 @@ async def test_core_visible_reply_material_preserves_immediate_reply_context():
         phase="final",
     )
     assert slots[0].value == {
+        "phase": "final",
+        "source": "core_result",
         "source_text": "核心天气结果",
         "immediate_reply": "我没有联网能力",
         "preserve_facts": True,
     }
+
+
+def test_persona_runtime_prompt_constrains_result_free_immediate_requests():
+    prompt = build_persona_runtime_system_prompt()
+
+    assert "visible_reply_material.phase 为 immediate" in prompt
+    assert "不得从 conversation.history、memory、截图说明或先前助手回复推断" in prompt
 
 
 def test_visible_reply_material_profile_hides_redundant_media_slots():

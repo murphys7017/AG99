@@ -29,7 +29,10 @@ class PersonaVisibleReplyCollector(ContextCollectorInterface):
     ) -> list[ContextSlot]:
         del event, plugin_context, config, provider_request
         request = self.request
+        intent = getattr(request, "intent", None)
         payload = {
+            "phase": str(getattr(intent, "phase", "standalone") or "standalone"),
+            "source": str(getattr(intent, "source", "direct") or "direct"),
             "source_text": str(getattr(request, "source_text", "") or "").strip(),
             "immediate_reply": str(
                 getattr(request, "immediate_reply", "") or ""
