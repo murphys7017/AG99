@@ -33,6 +33,7 @@ from astrbot.core.interaction.turn_coordinator import (
     PluginJobLaunch,
 )
 from astrbot.core.interaction.turn_state import (
+    ensure_interaction_turn_state,
     record_interaction_turn_visible_message_fingerprint,
 )
 from astrbot.core.interaction.types import InteractionRouteMode
@@ -186,16 +187,14 @@ async def test_turn_coordinator_skips_draining_plugin_without_failing_turn():
     runtime = PluginExecutionRuntime()
     coordinator = InteractionTurnCoordinator(runtime)
     event = _CoordinatorEvent()
-    route = SimpleNamespace(route_mode=InteractionRouteMode.PERSONA)
     plugin_called = False
 
     await runtime.begin_module_draining("data.plugins.demo.main")
 
     async def run_personal():
+        state = ensure_interaction_turn_state(event)
+        state.route_decision = SimpleNamespace(route_mode=InteractionRouteMode.PERSONA)
         return "personal reply"
-
-    async def run_router():
-        return route
 
     async def run_plugin(_publish_gate, _submit_provider_request):
         nonlocal plugin_called
@@ -204,7 +203,6 @@ async def test_turn_coordinator_skips_draining_plugin_without_failing_turn():
     turn = await coordinator.start(
         event,
         personal_factory=run_personal,
-        router_factory=run_router,
         plugin_window_seconds=1.0,
         plugin_launch=PluginJobLaunch(
             branch_event=event,
@@ -216,7 +214,8 @@ async def test_turn_coordinator_skips_draining_plugin_without_failing_turn():
     control = await coordinator.resolve_control(turn)
 
     assert control.plugin_gate is PluginGateResolution.PASSED
-    assert control.route is route
+    assert control.route is not None
+    assert control.route.route_mode is InteractionRouteMode.PERSONA
     assert turn.plugin_job is None
     assert not plugin_called
     assert event.get_extra("_interaction_plugin_launch_skipped_reason") == (
@@ -369,21 +368,16 @@ async def test_stopped_gate_keeps_later_same_handler_output_deliverable():
 
 
 @pytest.mark.asyncio
-async def test_turn_coordinator_starts_three_lines_and_bridges_provider_request():
+async def test_turn_coordinator_starts_personal_and_plugin_and_bridges_provider_request():
     runtime = PluginExecutionRuntime()
     coordinator = InteractionTurnCoordinator(runtime)
     event = _CoordinatorEvent()
     personal_started = asyncio.Event()
-    router_started = asyncio.Event()
     release_turn_tasks = asyncio.Event()
     plugin_result = PluginBranchResult()
 
     async def run_personal():
         personal_started.set()
-        await release_turn_tasks.wait()
-
-    async def run_router():
-        router_started.set()
         await release_turn_tasks.wait()
 
     async def run_plugin(publish_gate, submit_provider_request):
@@ -394,7 +388,6 @@ async def test_turn_coordinator_starts_three_lines_and_bridges_provider_request(
     turn = await coordinator.start(
         event,
         personal_factory=run_personal,
-        router_factory=run_router,
         plugin_window_seconds=1.0,
         plugin_launch=PluginJobLaunch(
             branch_event=event,
@@ -403,7 +396,7 @@ async def test_turn_coordinator_starts_three_lines_and_bridges_provider_request(
         ),
     )
 
-    await asyncio.gather(personal_started.wait(), router_started.wait())
+    await personal_started.wait()
     control = await coordinator.resolve_control(turn)
     assert control.plugin_gate is PluginGateResolution.DELEGATED
     assert control.route is None
@@ -419,32 +412,22 @@ async def test_turn_coordinator_starts_three_lines_and_bridges_provider_request(
     release_turn_tasks.set()
     await asyncio.gather(
         turn.personal_task,
-        turn.router_task,
         return_exceptions=True,
     )
-    assert turn.router_task.cancelled()
     await runtime.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_plugin_runtime_failure_keeps_personal_and_router_running():
+async def test_plugin_runtime_failure_keeps_personal_running():
     runtime = PluginExecutionRuntime()
     coordinator = InteractionTurnCoordinator(runtime)
     event = _CoordinatorEvent()
     personal_started = asyncio.Event()
-    router_started = asyncio.Event()
     release_personal = asyncio.Event()
-    release_router = asyncio.Event()
-    route = SimpleNamespace(route_mode=InteractionRouteMode.PERSONA)
 
     async def run_personal():
         personal_started.set()
         await release_personal.wait()
-
-    async def run_router():
-        router_started.set()
-        await release_router.wait()
-        return route
 
     async def run_plugin(_publish_gate, _submit_provider_request):
         raise RuntimeError("plugin runtime failed")
@@ -452,7 +435,6 @@ async def test_plugin_runtime_failure_keeps_personal_and_router_running():
     turn = await coordinator.start(
         event,
         personal_factory=run_personal,
-        router_factory=run_router,
         plugin_window_seconds=1.0,
         plugin_launch=PluginJobLaunch(
             branch_event=event,
@@ -461,7 +443,7 @@ async def test_plugin_runtime_failure_keeps_personal_and_router_running():
         ),
     )
 
-    await asyncio.gather(personal_started.wait(), router_started.wait())
+    await personal_started.wait()
     assert turn.plugin_job is not None
     await turn.plugin_job.wait_completed()
     control_task = asyncio.create_task(coordinator.resolve_control(turn))
@@ -470,14 +452,14 @@ async def test_plugin_runtime_failure_keeps_personal_and_router_running():
     assert not control_task.done()
     assert not turn.personal_task.done()
 
-    release_router.set()
+    state = ensure_interaction_turn_state(event)
+    state.route_decision = SimpleNamespace(route_mode=InteractionRouteMode.PERSONA)
+    release_personal.set()
     control = await control_task
 
     assert control.plugin_gate is PluginGateResolution.FAILED
-    assert control.route is route
+    assert control.route is state.route_decision
     assert not turn.personal_task.cancelled()
-
-    release_personal.set()
     await turn.personal_task
     await runtime.shutdown()
 

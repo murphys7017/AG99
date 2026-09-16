@@ -416,8 +416,8 @@ General settings for group chat context awareness providers.
 Whether to enable group chat context awareness. Default is `false`. When enabled, the bot records group chat conversations to better understand context.
 
 Capture happens only after the official whitelist and session-status checks. The
-messages are supplied as structured, untrusted group context to Router, Persona,
-and Core; group messages are never treated as system instructions.
+messages are supplied as structured, untrusted group context to Persona, Core
+Planner, and Core; group messages are never treated as system instructions.
 
 #### `provider_ltm_settings.group_message_max_cnt`
 
@@ -454,7 +454,9 @@ Number of caption cache entries. Default is `256`; cache keys include the image 
 - `possibility_reply`: Candidate sampling probability. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
 - `whitelist`: Candidate ID whitelist. Only listed IDs can form candidates. Empty means no whitelist filter. You can use `/sid` to get a platform session ID.
 
-Candidates never call an LLM directly. They first pass through the Router with `silent` available. Unaddressed group messages default to silence and continue only when the Bot has a clear reason to join.
+Candidates never call an LLM directly. They enter the Personal Response Plan with
+`silent` available. Unaddressed group messages default to silence and continue only
+when the Bot has a clear reason to join.
 
 ### `interaction_middleware`
 
@@ -471,11 +473,11 @@ and plugin tools while still allowing compatible module-path keys to be entered 
 
 - `enabled`: Enable Interaction Middleware. Omit it to use the default; set it to
   `false` to retain Core-only behavior.
-- `expression_provider_id`, `router_provider_id`, and `planner_provider_id`:
+- `expression_provider_id` and `planner_provider_id`:
   Optional per-stage model overrides. Leave a field empty to reuse the current
   session's configured chat provider; an explicit ID takes precedence.
-- `parallel_plugin_runtime_enabled`: Enable the three-lane Personal, Router, and
-  Official Plugin Job path. It defaults to `false` and applies to the complete
+- `parallel_plugin_runtime_enabled`: Enable the concurrent Personal and Official
+  Plugin Job path. It defaults to `false` and applies to the complete
   plugin path, not individual plugins. Disabled keeps the Handler-first
   compatibility path; review `DIAG interaction.parallel_turn` diagnostics before
   enabling it.
@@ -483,10 +485,11 @@ and plugin tools while still allowing compatible module-path keys to be entered 
   defaulting to `3` seconds. Expiry releases the turn from waiting for that decision;
   it does not cancel a still-running plugin job, whose late artifacts follow the
   plugin output contract.
-- `persona_history_window_size`: Number of recent Conversation turns used by
-  Persona Expression, defaulting to `50`. Raising it increases request context; it
-  neither replaces semantic Memory retrieval nor changes the independent Router or
-  Core Planner history budgets.
+- `persona_history_window_size`: Candidate-pool limit for Persona Conversation
+  history, defaulting to `300`. Persona keeps a contiguous recent dialogue run,
+  adds a few older anchors relevant to the current input and Memory, then trims to
+  its token budget. It neither replaces semantic Memory retrieval nor changes the
+  Core Planner or Core history budgets.
 - `plugin_runtime_targets`: Plugin LLM lifecycle-target map. Use the plugin directory
   name as the key when possible, with a value of `core` or `personal_expression`.
   This configuration overrides a plugin class's optional
@@ -530,15 +533,15 @@ and plugin tools while still allowing compatible module-path keys to be entered 
 - `personal_conversation_activity_enabled`: Allow non-addressed messages from
   configured observed groups to become restricted `conversation_activity` facts.
   They still pass the whitelist and session-status checks, and do not enter the
-  normal plugin, Router, or Core path.
+  normal plugin, Personal, or Core path.
 - `personal_runtime_direct_continuation_seconds`: After a successful visible
   reply, only the same user who explicitly triggered the Bot may continue
-  without addressing it again. Router may still choose `persona` or `hybrid`,
-  but not `silent`. The default is `10` seconds and is capped by the total
+  without addressing it again. Personal may choose `reply` or `delegate`, but not
+  `silent`. The default is `10` seconds and is capped by the total
   continuation window.
 - `personal_runtime_conversation_continuation_seconds`: After the direct window,
-  only that same trigger user remains eligible and Router may choose `persona`,
-  `hybrid`, or `silent`. The default is `120` seconds; set it to `0` to disable.
+  only that same trigger user remains eligible and Personal may choose `reply`,
+  `delegate`, or `silent`. The default is `120` seconds; set it to `0` to disable.
 - `personal_runtime_muted`, `personal_runtime_quiet_hours_*`,
   `personal_runtime_reply_cooldown_seconds`,
   `personal_runtime_no_action_cooldown_seconds`, and
@@ -555,7 +558,7 @@ and plugin tools while still allowing compatible module-path keys to be entered 
 
 `provider_ltm_settings.active_reply` only controls group-candidate sampling. It remains
 separate from Personal Runtime Policy, while candidates and continuation use the same
-Router silence gate.
+Personal `silent` eligibility gate.
 
 ### `content_safety`
 

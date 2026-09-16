@@ -57,7 +57,6 @@ const CONFIG_SECTION_REGISTRY: Record<string, ConfigSectionRegistryEntry> = {
   'ext_group.ltm': { group: 'ext_group', section: 'ltm', workspace: 'knowledge', scope: 'profile', order: 30 },
   'interaction_middleware_group.general': { group: 'interaction_middleware_group', section: 'general', workspace: 'operations', scope: 'system', order: 10 },
   'interaction_middleware_group.expression': { group: 'interaction_middleware_group', section: 'expression', workspace: 'persona', scope: 'persona', order: 20 },
-  'interaction_middleware_group.router': { group: 'interaction_middleware_group', section: 'router', workspace: 'intelligence', scope: 'profile', order: 40 },
   'interaction_middleware_group.planner': { group: 'interaction_middleware_group', section: 'planner', workspace: 'intelligence', scope: 'profile', order: 50 },
   'interaction_middleware_group.personal_policy': { group: 'interaction_middleware_group', section: 'personal_policy', workspace: 'persona', scope: 'persona', order: 30 },
   'interaction_middleware_group.personal_runtime_policy': { group: 'interaction_middleware_group', section: 'personal_runtime_policy', workspace: 'automation', scope: 'persona', order: 20 },

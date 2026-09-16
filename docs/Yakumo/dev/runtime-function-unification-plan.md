@@ -2,9 +2,9 @@
 
 ## 文档状态
 
-- 状态：Phase 1 至 Phase 5 底层 owner 迁移及 Phase 5A 普通回复并发热路径已完成；真实
-  Provider 日志 smoke、首回复延迟、长请求 deadline 与后续消息队头延迟仍待运行确认。
-- 更新日期：2026-08-04。
+- 状态：Phase 1 至 Phase 5 的底层 owner 迁移已完成。普通对话已收敛为一次 Personal Response
+  Plan；真实 Provider 日志 smoke、首回复延迟、长请求 deadline 与后续消息队头延迟仍待运行确认。
+- 更新日期：2026-09。
 - 实施基线：`ef389bce0`（`docs: plan runtime function unification`）。
 - 日志基线：`data/logs/astrbot.log` 与 `data/logs/astrbot.trace.log` 的 2026-08-03 样本。
 - 任务类型：架构重构与性能修复。
@@ -17,16 +17,38 @@
 状态、验收结果和剩余风险；已经稳定的事实再同步到
 [当前状态](../current-state.md) 与对应模块文档。
 
+## 2026-09 架构修订：统一 Personal 回复计划
+
+此前 Phase 5A/5B 中“Personal 与 Router 并行”的叙述是历史实施记录，不再是当前主链。普通
+消息和合格群聊候选现在只调用一次即时 Persona Expression；该严格 `persona_expression` 输出在
+保留 `spoken_reply`、`speech_cues` 与 `effect_calls` 契约的同时，额外返回必填 `turn_action`：
+
+```text
+Personal Response Plan
+  -> reply:    直接完成本轮
+  -> delegate: 先发简短确认 -> Core Planner -> Core -> Persona final
+  -> silent:   仅允许静默的群聊候选，不发消息
+```
+
+- 私聊及直接续接窗口不允许 `silent`。
+- `delegate` 是 Personal 对 Core 的明确工作委派；Planner 只生成必须为 `execute` 的
+  `CoreTaskSpec`，不再进行第二次路由或 `not_required` 决策。
+- Plugin Job 仍可在启用并行运行时与 Personal 同一 `t0` 启动；它的接管和延迟投递边界保持不变，
+  但不再等待或取消独立 Router task。
+- Persona 历史候选池默认扩至 300 回合。渲染时先保留最近连续片段，再按当前输入、引用文本、
+  topic state 与 short-term memory 选择旧锚点，并受 token 预算约束；Core 和 Planner 保持独立预算。
+
+后续实现和验收以本节为准；文中未更新的 Router 语句仅用于说明当时的问题、迁移原因或旧日志。
+
 ## 一、结论先行
 
 最初最优先的问题不是“17 个插件逐个判断”，而是 Persona 在存在可用工具时，先额外执行
 一次独立的工具预判模型调用，再执行一次最终人格表达模型调用。Phase 1 已删除该预判。
 
 Phase 1 至 Phase 5 复核时又确认了第二个关键路径回归：普通显式消息曾从“Personal 主回复与
-Router 并行控制”漂移为“等待 Router/Planner 后再启动 Persona”，使首回复重新承担两个串行
-模型等待。Phase 5A 恢复并发后仍残留过一项 Planner 媒体压制策略；当前边界进一步收紧为：
-Personal 结果一旦形成就直接进入 Output，只有群聊 Router 的 `silent` 可以尝试取消尚未取得
-发送权的 Personal，Planner 只能决定 Core，不能决定 Personal 是否回复。
+独立控制模型并行”漂移为“等待控制模型/Planner 后再启动 Persona”，使首回复重新承担两个串行
+模型等待。当前边界进一步收紧为：同一次 Personal Response Plan 既形成即时表达又决定是否委派；
+Planner 只能整理已委派任务，不能决定 Personal 是否回复。
 
 插件兼容仍需保留，但插件扩展完整度不是当前性能工作的第一优先级。首要指标是普通消息尽快
 得到 Persona 即时表达；插件生命周期不得增加独立模型判断，插件工具继续默认属于 Core，只有

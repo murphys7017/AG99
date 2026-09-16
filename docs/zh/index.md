@@ -22,7 +22,7 @@ features:
     details: 跨 turn 复用有界状态，统一管理会话租约、连续对话、冷却、预算和主动观察。
   - icon: ⚡
     title: 即时表达与 Core 分离
-    details: Router 只判断 persona、hybrid、silent；Core Planner 独立决定是否进入执行层，Core 结果仍回到 Persona Expression。
+    details: Personal 的一次结构化回复决定 reply、delegate 或群聊 silent；Core Planner 只整理已委派任务，Core 结果仍回到 Persona Expression。
   - icon: 🧩
     title: 结构化 Prompt
     details: 通过 collect、build、project、render、apply 形成目标明确的模型上下文，不把路由和工具执行混进 Prompt 层。

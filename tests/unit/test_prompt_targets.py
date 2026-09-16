@@ -70,11 +70,6 @@ def _canonical_pack() -> ContextPack:
                 {
                     "plugins": [
                         {
-                            "name": "Router Plugin",
-                            "description": "Router-visible capability",
-                            "targets": ["router"],
-                        },
-                        {
                             "name": "Planner Plugin",
                             "description": "Planner-visible capability",
                             "targets": ["core_planner"],
@@ -88,33 +83,6 @@ def _canonical_pack() -> ContextPack:
             ),
         }
     )
-
-
-def test_router_projection_uses_summary_and_recent_context_only():
-    source = _canonical_pack()
-
-    projected = project_context_pack(source, PromptTarget.ROUTER)
-
-    assert set(projected.slots) == {
-        "system.base",
-        "persona.summary",
-        "input.text",
-        "conversation.history",
-        "conversation.group_recent",
-        "memory.topic_state",
-        "memory.short_term",
-    }
-    assert projected.get_slot("conversation.history").value["turns"] == [
-        {"id": 1},
-        {"id": 2},
-        {"id": 3},
-        {"id": 4},
-    ]
-    assert projected.get_slot("capability.plugin_directory") is None
-    assert source.get_slot("conversation.history").value["turn_count"] == 5
-    assert source.get_slot("capability.plugin_directory").value["plugins"][0][
-        "targets"
-    ] == ["router"]
 
 
 def test_persona_projection_keeps_history_and_hides_core_capabilities():
@@ -182,7 +150,7 @@ def test_core_planner_projection_uses_facts_without_router_or_persona_decisions(
     assert projected.get_slot("system.core_execution_context") is None
 
 
-def test_plugin_directory_entries_inherit_slot_targets():
+def test_plugin_directory_entries_remain_hidden_from_core_planner():
     pack = ContextPack(
         slots={
             "capability.plugin_directory": ContextSlot(
@@ -197,15 +165,13 @@ def test_plugin_directory_entries_inherit_slot_targets():
                 },
                 category="capability",
                 source="plugin",
-                meta={"targets": ["router"]},
+                meta={"targets": ["core_planner"]},
             )
         }
     )
 
-    router = project_context_pack(pack, PromptTarget.ROUTER)
     planner = project_context_pack(pack, PromptTarget.CORE_PLANNER)
 
-    assert router.get_slot("capability.plugin_directory") is None
     assert planner.get_slot("capability.plugin_directory") is None
 
 
@@ -236,7 +202,7 @@ def test_direct_slot_targets_are_enforced_before_target_rules():
     )
 
 
-def test_plugin_prompt_extensions_do_not_reach_router_or_planner():
+def test_plugin_prompt_extensions_do_not_reach_core_planner():
     pack = ContextPack(
         slots={
             "extension.system": ContextSlot(
@@ -247,7 +213,6 @@ def test_plugin_prompt_extensions_do_not_reach_router_or_planner():
                             "value": "route rule",
                             "meta": {
                                 "targets": [
-                                    "router",
                                     "core_planner",
                                     "persona",
                                     "core",
@@ -260,7 +225,6 @@ def test_plugin_prompt_extensions_do_not_reach_router_or_planner():
                 source="plugin",
                 meta={
                     "targets": [
-                        "router",
                         "core_planner",
                         "persona",
                         "core",
@@ -270,7 +234,6 @@ def test_plugin_prompt_extensions_do_not_reach_router_or_planner():
         }
     )
 
-    assert project_context_pack(pack, PromptTarget.ROUTER).get_slot("extension.system") is None
     assert project_context_pack(pack, PromptTarget.CORE_PLANNER).get_slot("extension.system") is None
     assert project_context_pack(pack, PromptTarget.PERSONA).get_slot("extension.system") is not None
     assert project_context_pack(pack, PromptTarget.CORE).get_slot("extension.system") is not None
@@ -289,14 +252,14 @@ def test_control_plane_profile_does_not_merge_legacy_plugin_system_prompt():
 
     result = PromptRenderEngine().render(
         pack,
-        target=PromptTarget.ROUTER,
+        target=PromptTarget.CORE_PLANNER,
         profile=PromptRenderProfile(
-            name="router_boundary",
-            system_prompt="Router instruction.",
+            name="planner_boundary",
+            system_prompt="Planner instruction.",
         ),
     )
 
-    assert "Router instruction." in result.system_prompt
+    assert "Planner instruction." in result.system_prompt
     assert "Legacy plugin system prompt." not in result.system_prompt
 
     persona_result = PromptRenderEngine().render(
@@ -329,7 +292,7 @@ def test_direct_slot_with_malformed_targets_is_hidden():
         assert project_context_pack(pack, target).get_slot("input.text") is None
 
 
-def test_router_and_planner_views_remove_runtime_diagnostics_without_mutating_source():
+def test_planner_view_removes_runtime_diagnostics_without_mutating_source():
     source = _canonical_pack()
     history = source.get_slot("conversation.history")
     history.value["turns"][-1] = {
@@ -350,19 +313,17 @@ def test_router_and_planner_views_remove_runtime_diagnostics_without_mutating_so
         "text": "raw diagnostics",
     }
 
-    router = project_context_pack(source, PromptTarget.ROUTER)
     planner = project_context_pack(source, PromptTarget.CORE_PLANNER)
 
-    for projected in (router, planner):
-        assistant = projected.get_slot("conversation.history").value["turns"][-1][
-            "assistant_message"
-        ]
-        assert assistant["content"] == "[runtime diagnostic omitted]"
-        assert "reasoning_content" not in assistant
-        assert "tool_calls" not in assistant
-        assert projected.get_slot("conversation.group_recent").value["records"][-1] == {
-            "content": "[runtime diagnostic omitted]"
-        }
+    assistant = planner.get_slot("conversation.history").value["turns"][-1][
+        "assistant_message"
+    ]
+    assert assistant["content"] == "[runtime diagnostic omitted]"
+    assert "reasoning_content" not in assistant
+    assert "tool_calls" not in assistant
+    assert planner.get_slot("conversation.group_recent").value["records"][-1] == {
+        "content": "[runtime diagnostic omitted]"
+    }
     assert "Traceback" in history.value["turns"][-1]["assistant_message"]["content"]
 
 
@@ -416,7 +377,6 @@ def test_target_budgets_bound_history_and_execution_without_mutating_facts():
         }
     )
 
-    router = project_context_pack(pack, PromptTarget.ROUTER)
     planner = project_context_pack(pack, PromptTarget.CORE_PLANNER)
     persona = project_context_pack(pack, PromptTarget.PERSONA)
     core = project_context_pack(
@@ -434,9 +394,8 @@ def test_target_budgets_bound_history_and_execution_without_mutating_facts():
         config=SimpleNamespace(max_context_length=-1),
     )
 
-    assert len(router.get_slot("conversation.history").value["turns"]) == 4
     assert len(planner.get_slot("conversation.history").value["turns"]) == 8
-    assert len(persona.get_slot("conversation.history").value["turns"]) == 50
+    assert len(persona.get_slot("conversation.history").value["turns"]) == 28
     assert len(core.get_slot("conversation.history").value["turns"]) == 64
     assert len(
         configured_core.get_slot("conversation.history").value["turns"]
@@ -464,10 +423,57 @@ def test_target_budgets_bound_history_and_execution_without_mutating_facts():
     ]["retained_amount"] == 64
 
 
+def test_persona_history_keeps_relevant_old_anchor_after_recent_compaction():
+    turns = []
+    for index in range(60):
+        topic = "星图计划" if index == 4 else "日常闲聊"
+        turns.append(
+            {
+                "user_message": {
+                    "role": "user",
+                    "content": topic + "甲" * 900,
+                },
+                "assistant_message": {
+                    "role": "assistant",
+                    "content": topic + "乙" * 900,
+                },
+            }
+        )
+    pack = ContextPack(
+        slots={
+            "input.text": _slot("input.text", "请继续星图计划", "input"),
+            "conversation.history": _slot(
+                "conversation.history",
+                {"turn_count": len(turns), "turns": turns},
+                "memory",
+            ),
+        }
+    )
+
+    persona = project_context_pack(
+        pack,
+        PromptTarget.PERSONA,
+        history_turns=300,
+    )
+
+    history = persona.get_slot("conversation.history")
+    retained_turns = history.value["turns"]
+    projection = history.meta["persona_history_projection"]
+
+    assert projection["candidate_turn_count"] == 60
+    assert projection["recent_turn_count"] < 28
+    assert projection["anchor_turn_count"] >= 1
+    assert any(
+        turn["user_message"]["content"].startswith("星图计划")
+        for turn in retained_turns
+    )
+    assert len(pack.get_slot("conversation.history").value["turns"]) == 60
+
+
 def test_group_context_records_remain_structured_in_all_rendered_targets():
     pack = _canonical_pack()
 
-    for target in (PromptTarget.ROUTER, PromptTarget.PERSONA, PromptTarget.CORE):
+    for target in (PromptTarget.PERSONA, PromptTarget.CORE):
         result = PromptRenderEngine().render(pack, target=target)
 
         rendered = "\n".join(
@@ -484,7 +490,6 @@ def test_extension_targets_are_filtered_for_extension_enabled_prompt_targets():
                 "extension.context",
                 {
                     "items": [
-                        {"plugin_id": "router", "meta": {"targets": ["router"]}},
                         {
                             "plugin_id": "core_planner",
                             "meta": {"targets": ["core_planner"]},
@@ -498,9 +503,9 @@ def test_extension_targets_are_filtered_for_extension_enabled_prompt_targets():
         }
     )
 
-    for target in (PromptTarget.ROUTER, PromptTarget.CORE_PLANNER):
-        projected = project_context_pack(pack, target)
-        assert projected.get_slot("extension.context") is None
+    assert project_context_pack(pack, PromptTarget.CORE_PLANNER).get_slot(
+        "extension.context"
+    ) is None
 
     for target in (PromptTarget.PERSONA, PromptTarget.CORE):
         projected = project_context_pack(pack, target)

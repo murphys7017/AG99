@@ -18,8 +18,8 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 AG99 does not automatically put every plugin into Persona. Choose the entry point
 that matches the plugin's behavior:
 
-- **Commands, keywords, protocols, or an independent business system that must take over a message:** use an official Pipeline Handler. A Handler may return/send a result or `yield ProviderRequest` to Core; it is not routed again by Router/Planner.
-- **Current state or input material that Persona/Core should see:** use a [Prompt Extension](./guides/prompt-extensions). Select `persona` or `core` with `meta.targets`; Router and Core Planner do not receive plugin extensions.
+- **Commands, keywords, protocols, or an independent business system that must take over a message:** use an official Pipeline Handler. A Handler may return/send a result or `yield ProviderRequest` to Core; it is not re-evaluated by the Personal Response Plan or Core Planner.
+- **Current state or input material that Persona/Core should see:** use a [Prompt Extension](./guides/prompt-extensions). Select `persona` or `core` with `meta.targets`; Core Planner does not receive plugin extensions.
 - **A capability the model should execute:** register an LLM Tool. Tools default to Core and enter Persona only through an explicit tool declaration or `plugin_tool_targets` configuration.
 - **Background device, calendar, or world-state facts:** use a Runtime Sensor. Sensors submit structured Observations; Personal Runtime's Gate/Policy decides whether to express them.
 - **Content the plugin has already decided to deliver exactly:** use `Context.send_message()` or an explicit output API. It preserves its target and content and does not invoke another “should the bot reply?” model decision.

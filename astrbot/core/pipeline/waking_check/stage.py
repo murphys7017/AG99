@@ -381,7 +381,7 @@ class WakingCheckStage(Stage):
                 if capture_group_context:
                     event.set_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, True)
                 logger.info(
-                    "Legacy group active-reply setting selected Router candidate: "
+                    "Legacy group active-reply setting selected Personal candidate: "
                     "session_id=%s sender_id=%s",
                     event.unified_msg_origin,
                     event.get_sender_id(),

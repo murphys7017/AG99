@@ -50,6 +50,7 @@ from astrbot.core.interaction.turn_state import (
 from astrbot.core.interaction.types import (
     InteractionRouteDecision,
     InteractionRouteMode,
+    PersonalResponseAction,
 )
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
@@ -68,7 +69,7 @@ def test_personal_runtime_is_enabled_by_default_but_respects_explicit_disable():
     assert is_middleware_enabled({}) is True
     default_config = load_interaction_agent_config({})
     assert default_config.enabled is True
-    assert default_config.persona_history_window_size == 50
+    assert default_config.persona_history_window_size == 300
     assert default_config.parallel_plugin_runtime_enabled is False
     assert default_config.plugin_parallel_window_seconds == 3.0
     assert default_config.persona_plugin_context_mode == "wait_complete"
@@ -938,7 +939,10 @@ async def test_persona_route_allows_explicitly_targeted_function_tools():
 
     async def generate_expression(_event, _config, *, request):
         requests.append(request)
-        return PersonaExpressionResult()
+        return PersonaExpressionResult(
+            spoken_reply="ok",
+            turn_action=PersonalResponseAction.REPLY,
+        )
 
     middleware._generate_expression = generate_expression
     event = Event()

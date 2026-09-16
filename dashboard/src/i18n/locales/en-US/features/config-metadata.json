@@ -1057,22 +1057,22 @@
     "name": "Interaction Middleware",
     "general": {
       "description": "General",
-      "hint": "Controls the interaction middleware path. Prompt collection builds one fact pack, then Router, Core Planner, Persona, and Core render independent target views.",
+      "hint": "Controls the interaction middleware path. Personal uses one structured response plan to choose a direct reply, Core delegation, or allowed group silence; Core Planner and Core handle delegated work only.",
       "interaction_middleware": {
         "enabled": {
           "description": "Enable Interaction Middleware"
         },
         "turn_timeout": {
           "description": "Total Turn Timeout Seconds",
-          "hint": "Timing starts when the turn enters the Personal Runtime queue. Router, Planner, Persona, Core, plugin tools, retries, and fallback share this total budget. The default is 120 seconds and sub-stages do not reset it."
+          "hint": "Timing starts when the turn enters the Personal Runtime queue. Personal, Planner, Core, plugin tools, retries, and fallback share this total budget. The default is 120 seconds and sub-stages do not reset it."
         },
         "parallel_plugin_runtime_enabled": {
           "description": "Enable Parallel Plugin Runtime",
-          "hint": "When disabled, official message handlers run on the legacy serial path before Personal and Router. When enabled, every eligible ordinary turn uses one Coordinator for Personal and Router; activated handlers, when present, enter one Plugin Job started at the same t0. This is a whole-path switch, not a per-plugin setting. Keep it disabled until runtime validation is complete."
+          "hint": "When disabled, official message handlers run on the legacy serial path before Personal. When enabled, every eligible ordinary turn uses one Coordinator for Personal and a Plugin Job; activated handlers, when present, enter that Plugin Job at the same t0. This is a whole-path switch, not a per-plugin setting. Keep it disabled until runtime validation is complete."
         },
         "plugin_parallel_window_seconds": {
           "description": "Plugin Turn Arbitration Window Seconds",
-          "hint": "Measured from the shared t0 of Personal, Router, and the Plugin Job. Expiry only stops the current turn from waiting; it does not cancel the background plugin. Core waits for the plugin decision, not full plugin completion."
+          "hint": "Measured from the shared t0 of Personal and the Plugin Job. Expiry only stops the current turn from waiting; it does not cancel the background plugin. Core waits for the plugin decision, not full plugin completion."
         },
         "persona_plugin_context_mode": {
           "description": "Persona First-Reply Plugin Context Strategy",
@@ -1093,13 +1093,13 @@
         },
         "persona_history_window_size": {
           "description": "Persona History Window Size",
-          "hint": "Recent turns retained for Persona expression. Router, Memory, and Core windows are unaffected."
+          "hint": "Candidate-pool limit for Persona history. The system keeps a contiguous recent dialogue run, adds a few older anchors relevant to the current input and Memory, then trims to the token budget. Memory and Core are unaffected."
         }
       }
     },
     "expression": {
-      "description": "Fast Expression",
-      "hint": "Generates the first_response that is sent every turn. It only handles persona expression and does not decide whether to enter core.",
+      "description": "Personal Response Plan",
+      "hint": "Generates the unified human-like response plan: direct reply, Core delegation, or allowed group silence. All user-visible Persona expression uses this path.",
       "interaction_middleware": {
         "expression_provider_id": {
           "description": "Expression Model Provider",
@@ -1113,25 +1113,9 @@
         }
       }
     },
-    "router": {
-      "description": "Router",
-      "hint": "Only decides persona / hybrid. Router does not generate replies, decompose tasks, or output reasons or confidence.",
-      "interaction_middleware": {
-        "router_provider_id": {
-          "description": "Router Model Provider",
-          "hint": "A fast model with stable classification is recommended."
-        },
-        "router_temperature": {
-          "description": "Router Temperature"
-        },
-        "router_timeout": {
-          "description": "Router Timeout Seconds"
-        }
-      }
-    },
     "planner": {
       "description": "Core Planner",
-      "hint": "Independently validates whether execution is needed and builds CoreTaskSpec without reading Router decisions.",
+      "hint": "Only after Personal delegates to Core, builds CoreTaskSpec for the current task; it no longer re-decides whether execution is needed.",
       "interaction_middleware": {
         "planner_provider_id": {
           "description": "Planner Model Provider",
@@ -1190,15 +1174,15 @@
         },
         "personal_conversation_activity_enabled": {
           "description": "Enable Ambient Group Activity",
-          "hint": "Observes only unaddressed group text in the default proactive message target. After whitelist and session checks, it submits a Runtime Observation without invoking the normal Router, plugins, or Core."
+          "hint": "Observes only unaddressed group text in the default proactive message target. After whitelist and session checks, it submits a Runtime Observation without invoking the normal Personal response plan, plugins, or Core."
         },
         "personal_runtime_conversation_continuation_seconds": {
           "description": "Group Conversation Continuation Seconds",
-          "hint": "After a delivered reply to the user who explicitly triggered the bot, only that user may continue within this window. After the direct window, Router chooses persona, hybrid, or silent. Set to 0 to disable."
+          "hint": "After a delivered reply to the user who explicitly triggered the bot, only that user may continue within this window. After the direct window, Personal chooses reply, delegate, or silent. Set to 0 to disable."
         },
         "personal_runtime_direct_continuation_seconds": {
           "description": "Direct Group Continuation Seconds",
-          "hint": "Starts when the bot visibly replies. Only the same explicit trigger user may continue without addressing the bot again. Router still chooses persona or hybrid, but silent is disabled. This value is capped by the total continuation window."
+          "hint": "Starts when the bot visibly replies. Only the same explicit trigger user may continue without addressing the bot again. Personal still chooses reply or delegate, but silent is disabled. This value is capped by the total continuation window."
         },
         "personal_runtime_muted": {
           "description": "Mute Proactive Persona",

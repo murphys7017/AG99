@@ -18,7 +18,7 @@ class GroupContextCaptureCollector(Protocol):
         self,
         event: Any,
         *,
-        allow_router_candidate: bool = False,
+        allow_personal_candidate: bool = False,
     ) -> None: ...
 
 

@@ -1,4 +1,4 @@
-"""Low-level event contract for Router-arbitrated group reply candidates."""
+"""Low-level event contract for Personal Response Plan group reply candidates."""
 
 from __future__ import annotations
 

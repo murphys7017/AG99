@@ -32,7 +32,7 @@ Fact Sources
 |---|---|---|
 | Collector | 从官方运行时、Interaction 和插件读取事实，输出命名明确的 `ContextSlot` | 拼最终 Prompt、做路由决策、写 memory、调用模型 |
 | `PromptContextBuilder` | 合并事实、检测冲突、生成带版本的新 `ContextPack` 快照 | 按目标裁剪、决定物理消息布局 |
-| Target Projection | 按 Router、Core Planner、Persona、Core 做白名单、裁剪和诊断清理 | 生成指令、调用模型、修改规范 Pack |
+| Target Projection | 按 Core Planner、Persona、Core 做白名单、裁剪和诊断清理 | 生成指令、调用模型、修改规范 Pack |
 | `PromptRenderProfile` | 提供目标局部的 system/request prompt、输出契约、输入后缀和精确隐藏项 | 声明共享事实、判断 Provider 能力、修改原始 Pack |
 | Layout / Tree | 把逻辑 slot 放入 provider-neutral 语义树 | 选择业务事实、生成 Provider 私有 payload |
 | Provider Renderer | 编译 system/messages/media/tool schema/output contract | 选择目标上下文、执行工具、决定业务路由 |
@@ -65,9 +65,9 @@ Collector 只返回事实：
 
 跨阶段新增或替换事实必须经过 Builder。`ContextPack` 数据类型本身仍然可变，供收集和渲染内部使用；业务模块不得把直接 `add_slot()`、`slots.pop()` 或原地改值当作跨阶段 API。进入 `CoreExecutionSpec` 时，slots、meta、TaskSpec、执行历史和可序列化 capability 描述会被深拷贝，避免后续构建侧变更影响已经准备的执行事实；Native `ToolSet` 是唯一明确保留的实时执行句柄。
 
-Interaction 当前使用两层 single-flight。`interaction_base` 收集 system、persona、input、session、memory、history、附件摘要和官方群聊上下文等可信控制面事实；Router、Core Planner 与 Persona 的首个请求在这一层完成后即可渲染。`interaction_plugin_context` 随即在后台收集普通 Prompt Extension 与 Interaction Prompt Contributor，每轮只执行一次并按 `meta.targets` 投影。Persona 只在该 Pack 已就绪时尽力使用，否则立即回退 base；Core 等待并复用同一个 task。两层都来自同一基础事实源，业务模块不得重新查询历史、memory、输入或 session，也不得把插件扩展重新塞回 Router / Planner。
+Interaction 当前使用两层 single-flight。`interaction_base` 收集 system、persona、input、session、memory、history、附件摘要和官方群聊上下文等可信控制面事实；Personal 与 Core Planner 的首个请求在这一层完成后即可渲染。`interaction_plugin_context` 随即在后台收集普通 Prompt Extension 与 Interaction Prompt Contributor，每轮只执行一次并按 `meta.targets` 投影。Personal 只在该 Pack 已就绪时尽力使用，否则立即回退 base；Core 等待并复用同一个 task。两层都来自同一基础事实源，业务模块不得重新查询历史、memory、输入或 session，也不得把插件扩展重新塞回 Planner。
 
-媒体事实遵循同一边界：基础 `InputCollector` 只记录原始图片、引用图片、媒体内容块和文件记录，不调用图片转述或文件提取服务。非视觉 Persona、Planner 或 Core 在绑定实际 Provider 后，才通过 `PromptContextBuilder(base=...)` 派生本地媒体事实；视觉 Provider 直接消费原始图片。Router 永远不接收图片、音频或转述结果，也不等待媒体 enrichment。Provider 调用前的模态门同时检查上下文消息和额外内容块，避免只清理 `image_urls` 造成绕过。
+媒体事实遵循同一边界：基础 `InputCollector` 只记录原始图片、引用图片、媒体内容块和文件记录，不调用图片转述或文件提取服务。非视觉 Personal、Planner 或 Core 在绑定实际 Provider 后，才通过 `PromptContextBuilder(base=...)` 派生本地媒体事实；视觉 Provider 直接消费原始图片。Provider 调用前的模态门同时检查上下文消息和额外内容块，避免只清理 `image_urls` 造成绕过。
 
 ## 目标投影
 
@@ -75,26 +75,25 @@ Interaction 当前使用两层 single-flight。`interaction_base` 收集 system�
 
 | 目标 | 当前可见范围 | 明确排除 |
 |---|---|---|
-| Router | 当前输入、附件计数、时间、说话者、近期历史、群聊近期上下文、人格摘要、topic/short-term memory | 完整人格、插件扩展、插件目录、媒体正文、工具 schema、effect、Core/Planner 决策 |
-| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、topic/short-term memory | 完整人格、插件扩展、插件目录、Router 决策、effect、实际工具 schema |
-| Persona | 完整人格、官方历史、群聊上下文、memory/persona state、当前输入、待表达材料和 Core 结果 | policy、knowledge、执行能力、Core 私有执行上下文 |
+| Core Planner | 当前输入、附件计数、时间、说话者、清理后的近期历史、topic/short-term memory | 完整人格、插件扩展、插件目录、Personal 计划、effect、实际工具 schema |
+| Persona | 完整人格、官方历史、群聊上下文、memory/persona state、当前输入、待表达材料和 Core 结果；普通即时轮额外输出 `turn_action` | policy、knowledge、执行能力、Core 私有执行上下文 |
 | Core | 官方历史、群聊上下文、当前输入和附件、system/policy、tools、skills、knowledge、subagent、插件执行上下文、`CoreTaskSpec`、有限 Core Execution History | 完整人格、persona state、待表达材料、effect 语义 |
 
-Router 和 Core Planner 只共享事实来源，不共享模型 Prompt、决策或输出。投影中的历史长度、字段清理和诊断移除属于确定性安全边界，不是“让模型自己忽略”。
+Persona 的普通即时计划与 Core Planner 只共享事实来源，不共享模型 Prompt、决策或输出。投影中的历史长度、字段清理和诊断移除属于确定性安全边界，不是“让模型自己忽略”。Persona 的历史先保留最近连续片段，再从最多 300 个候选回合中选取与当前输入、引用文本、topic state 或 short-term memory 相关的较早锚点，并受 token 预算约束。
 
-插件 Prompt Extension 的 `meta.targets` 只允许 `persona`、`core`。普通 extension 未声明目标时只属于 Core。Router/Planner 不挂载插件扩展或插件目录；群聊近期上下文等官方事实若需进入控制面，必须由 AstrBot 内部明确标记的核心 Collector 以结构化上下文槽提供。插件自行设置 `official_context` 不会获得控制面权限。
+插件 Prompt Extension 的 `meta.targets` 只允许 `persona`、`core`。普通 extension 未声明目标时只属于 Core。Planner 不挂载插件扩展或插件目录；群聊近期上下文等官方事实若需进入控制面，必须由 AstrBot 内部明确标记的核心 Collector 以结构化上下文槽提供。插件自行设置 `official_context` 不会获得控制面权限。
 
 ## Render Profile
 
 `PromptRenderProfile` 在目标投影后应用到一个新的目标视图，当前支持：
 
-- `system_prompt`：提供目标自己的系统指令。Persona、Core 及无显式 target 的 legacy Core 会在其后保留旧 `ProviderRequest.system_prompt` 以兼容既有插件；Router、Core Planner 与 Personal Policy 始终替换旧值，避免插件提示进入控制面。
+- `system_prompt`：提供目标自己的系统指令。Persona、Core 及无显式 target 的 legacy Core 会在其后保留旧 `ProviderRequest.system_prompt` 以兼容既有插件；Core Planner 与 Personal Policy 始终替换旧值，避免插件提示进入控制面。
 - `request_prompt`：成为最终模型请求命令，不写入共享事实。
 - `output_contract`：写入目标树的输出契约元数据。
 - `input_text_suffix`：只追加到字符串类型的 `input.text`。
 - `hidden_slot_names`：按完整 slot 名精确隐藏，不支持通配符，也不能替代目标投影的安全规则。
 
-Profile 是“如何使用事实”的局部策略，不是 Collector。Router、Core Planner 和 Persona 的指令与输出协议属于 Profile；当前消息、历史、待表达材料和插件信息仍必须由 Collector 提供。
+Profile 是“如何使用事实”的局部策略，不是 Collector。Core Planner 和 Persona 的指令与输出协议属于 Profile；当前消息、历史、待表达材料和插件信息仍必须由 Collector 提供。
 
 ## Layout、Tree 与 Renderer
 
@@ -130,15 +129,15 @@ Provider Renderer 只编译已经形成的树：
 
 ### Interaction
 
-Interaction 每轮先建立基础 Pack，并立即后台预取唯一的插件扩展 Pack；Router 和 Core Planner 直接从基础 Pack 的独立投影渲染。Persona 不等待插件扩展，已就绪时消费该 Pack，否则从基础 Pack 派生待表达材料。Planner 选择执行后，Main Agent 等待同一插件扩展 task，再加入阶段性的 `CoreTaskSpec`、工具、知识和执行历史并渲染 Core 目标。
+Interaction 每轮先建立基础 Pack，并立即后台预取唯一的插件扩展 Pack；Personal 直接从 Persona 投影渲染一次回复计划。Persona 不等待插件扩展，已就绪时消费该 Pack，否则从基础 Pack 派生待表达材料。仅在它选择 `delegate` 后，Planner 才从基础 Pack 整理 `CoreTaskSpec`；随后 Main Agent 等待同一插件扩展 task，再加入阶段性的任务规格、工具、知识和执行历史并渲染 Core 目标。
 
 ### 非 Interaction Core
 
-普通 Main Agent 直接运行默认 Collector，不使用 Router/Planner/Persona Profile。`astr_main_agent` 装配运行时工具和 Runner，从完整 Pack 形成 `CoreExecutionSpec`，随后按 Native 目标渲染并由 Native Adapter 转为官方请求，不再手写另一套模型可见 Prompt。SubAgent Collector 仍属于这一 Native 收集路径；通用 Snapshot 不再设置独立 SubAgent 字段，但 Native Pack/ToolSet 暂时保留兼容信息。
+普通 Main Agent 直接运行默认 Collector，不使用 Interaction 的 Planner/Persona Profile。`astr_main_agent` 装配运行时工具和 Runner，从完整 Pack 形成 `CoreExecutionSpec`，随后按 Native 目标渲染并由 Native Adapter 转为官方请求，不再手写另一套模型可见 Prompt。SubAgent Collector 仍属于这一 Native 收集路径；通用 Snapshot 不再设置独立 SubAgent 字段，但 Native Pack/ToolSet 暂时保留兼容信息。
 
 ### 官方钩子
 
-官方 `on_llm_request` 是最终路由分支的低层请求钩子，执行顺序在该分支的统一 Prompt Apply 之后。非 Interaction 流程保持 Core 行为；Interaction turn 中，LLM 生命周期目标按配置、插件类 `interaction_runtime_target` 声明、Persona 默认值依次解析，只有最终为 `core` 的插件才进入 Core。插件拥有的 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析。该钩子适合修改最终请求参数或兼容旧插件，不是给 Router、Planner 或 Persona 内部工具调用贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
+官方 `on_llm_request` 是最终路由分支的低层请求钩子，执行顺序在该分支的统一 Prompt Apply 之后。非 Interaction 流程保持 Core 行为；Interaction turn 中，LLM 生命周期目标按配置、插件类 `interaction_runtime_target` 声明、Persona 默认值依次解析，只有最终为 `core` 的插件才进入 Core。插件拥有的 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析。该钩子适合修改最终请求参数或兼容旧插件，不是给 Planner 或 Persona 内部工具调用贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
 
 需要贡献模型可见事实的插件应使用 `PromptExtensionCollectorInterface`。插件开发接口见中英文 Prompt Extension 指南。
 
@@ -152,7 +151,7 @@ OutputContract
   -> response parser
 ```
 
-Router 只返回固定分类词，不使用工具或 JSON。Core Planner 使用独立的 `core_execution_plan` 契约。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
+Core Planner 使用独立的 `core_execution_plan` 契约，且对已委派任务必须返回 `execute`。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；普通即时轮还必须返回 `turn_action=reply|delegate`，允许静默的群聊候选才可返回 `silent`。具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
 
 ## 当前限制
 

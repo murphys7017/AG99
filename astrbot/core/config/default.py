@@ -227,13 +227,10 @@ DEFAULT_CONFIG = {
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
-        "persona_history_window_size": 50,
+        "persona_history_window_size": 300,
         "expression_provider_id": "",
         "expression_temperature": 0.6,
         "expression_timeout": 8.0,
-        "router_provider_id": "",
-        "router_temperature": 0.0,
-        "router_timeout": 3.0,
         "planner_provider_id": "",
         "planner_temperature": 0.1,
         "planner_timeout": 8.0,
@@ -4389,7 +4386,7 @@ CONFIG_METADATA_3 = {
                     "provider_ltm_settings.active_reply.enable": {
                         "description": "群聊主动回复候选",
                         "type": "bool",
-                        "hint": "仅抽样形成 Router 候选。Router 默认静默，必须启用交互中间件；该设置不再直接调用模型。",
+                        "hint": "仅抽样形成 Personal 候选。是否回复、委派或静默由同一次 Personal 结构化表达决定；该设置不直接调用模型。",
                     },
                     "provider_ltm_settings.active_reply.method": {
                         "description": "主动回复方法",
@@ -4427,7 +4424,7 @@ CONFIG_METADATA_3 = {
             "general": {
                 "description": "基础开关",
                 "type": "object",
-                "hint": "控制新的交互中间件主链路。Fast Expression 失败会使用本地 first_response，Router 失败会保守进入 hybrid。",
+                "hint": "控制交互中间件主链路。普通对话由 Personal 的统一结构化表达决定直接回复、委派 Core 或群聊静默；表达失败会使用本地 first_response。",
                 "items": {
                     "interaction_middleware.enabled": {
                         "description": "启用交互中间件",
@@ -4436,17 +4433,17 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.turn_timeout": {
                         "description": "单轮总超时秒数",
                         "type": "float",
-                        "hint": "从进入 Personal Runtime 排队开始计时，Router、Planner、Persona、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
+                        "hint": "从进入 Personal Runtime 排队开始计时，Personal、Planner、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
                     },
                     "interaction_middleware.parallel_plugin_runtime_enabled": {
                         "description": "启用插件三线并行运行时",
                         "type": "bool",
-                        "hint": "关闭时，官方消息 Handler 在 Personal/Router 之前按旧串行路径执行。开启后，合格的普通对话统一由 Coordinator 同时启动 Personal/Router；若存在 activated Handlers，它们整体进入同一 Plugin Job。这不是按插件开关，真实日志验收完成前保持关闭。",
+                        "hint": "关闭时，官方消息 Handler 在 Personal 之前按旧串行路径执行。开启后，合格的普通对话由 Coordinator 同时启动 Personal 与 Plugin Job；若存在 activated Handlers，它们整体进入同一 Plugin Job。这不是按插件开关，真实日志验收完成前保持关闭。",
                     },
                     "interaction_middleware.plugin_parallel_window_seconds": {
                         "description": "插件当前轮仲裁窗口秒数",
                         "type": "float",
-                        "hint": "从 Personal、Router、Plugin Job 的共同 t0 开始计时。窗口到期只让当前轮停止等待插件，不取消后台插件；Core 等待插件作出决定，不等待插件完整执行。",
+                        "hint": "从 Personal 与 Plugin Job 的共同 t0 开始计时。窗口到期只让当前轮停止等待插件，不取消后台插件；Core 等待插件作出决定，不等待插件完整执行。",
                     },
                     "interaction_middleware.persona_plugin_context_mode": {
                         "description": "Persona 首回复的插件上下文策略",
@@ -4477,14 +4474,14 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.persona_history_window_size": {
                         "description": "Persona 历史窗口轮数",
                         "type": "int",
-                        "hint": "Persona 表达时保留的近期对话回合数；不影响 Router、Memory 或 Core。",
+                        "hint": "Persona 历史候选池上限。系统优先保留近期连续上下文，再从较早记录中选择少量与当前输入和 Memory 相关的锚点，并按 token 预算动态裁剪；不影响 Memory 或 Core。",
                     },
                 },
             },
             "expression": {
                 "description": "Fast Expression",
                 "type": "object",
-                "hint": "生成每轮必发的 first_response，只负责人格化即时表达，不判断是否进入核心。",
+                "hint": "生成统一的拟人回复计划：直接回复、委派 Core 或允许的群聊静默；所有用户可见 Persona 表达都使用这一链路。",
                 "items": {
                     "interaction_middleware.expression_provider_id": {
                         "description": "表达模型提供商",
@@ -4503,32 +4500,10 @@ CONFIG_METADATA_3 = {
                     },
                 },
             },
-            "router": {
-                "description": "Router",
-                "type": "object",
-                "hint": "当前只判断 persona / hybrid。Router 不生成回复、不拆解任务、不输出原因或置信度。",
-                "items": {
-                    "interaction_middleware.router_provider_id": {
-                        "description": "路由模型提供商",
-                        "type": "string",
-                        "_special": "select_provider",
-                        "hint": "建议使用响应快、分类稳定的模型。",
-                    },
-                    "interaction_middleware.router_temperature": {
-                        "description": "路由温度",
-                        "type": "float",
-                        "slider": {"min": 0, "max": 2, "step": 0.05},
-                    },
-                    "interaction_middleware.router_timeout": {
-                        "description": "路由超时秒数",
-                        "type": "float",
-                    },
-                },
-            },
             "planner": {
                 "description": "Core Planner",
                 "type": "object",
-                "hint": "仅在 Router 选择 hybrid 后判断是否真的需要执行层，并整理 CoreTaskSpec。",
+                "hint": "仅在 Personal 委派 Core 后，把当前任务整理为 CoreTaskSpec；不再重新判断是否进入执行层。",
                 "items": {
                     "interaction_middleware.planner_provider_id": {
                         "description": "规划模型提供商",
@@ -4627,17 +4602,17 @@ CONFIG_METADATA_3 = {
                     "interaction_middleware.personal_conversation_activity_enabled": {
                         "description": "启用群聊环境观察",
                         "type": "bool",
-                        "hint": "仅观察默认主动消息目标中的未唤醒群聊文本。通过白名单和会话状态检查后只提交 Runtime Observation，不触发普通 Router、插件或 Core。",
+                        "hint": "仅观察默认主动消息目标中的未唤醒群聊文本。通过白名单和会话状态检查后只提交 Runtime Observation，不触发普通 Personal、插件或 Core。",
                     },
                     "interaction_middleware.personal_runtime_conversation_continuation_seconds": {
                         "description": "群聊连续对话窗口秒数",
                         "type": "float",
-                        "hint": "机器人成功回复明确触发它的用户后，仅该用户在窗口内的未唤醒消息可继续进入对话；直接续接窗口结束后由 Router 判断 persona、hybrid 或 silent。设为 0 可关闭。",
+                        "hint": "机器人成功回复明确触发它的用户后，仅该用户在窗口内的未唤醒消息可继续进入对话；直接续接窗口结束后由 Personal 判断直接回复、委派或静默。设为 0 可关闭。",
                     },
                     "interaction_middleware.personal_runtime_direct_continuation_seconds": {
                         "description": "群聊直接续接窗口秒数",
                         "type": "float",
-                        "hint": "从机器人成功发送可见回复开始计时，仅明确触发机器人的同一用户可在该窗口内无需再次 @；Personal、Router 与插件仍按正常链路运行，但 Router 不允许 silent。该值不会超过群聊连续对话总窗口。",
+                        "hint": "从机器人成功发送可见回复开始计时，仅明确触发机器人的同一用户可在该窗口内无需再次 @；Personal 与插件仍按正常链路运行，但 Personal 不允许 silent。该值不会超过群聊连续对话总窗口。",
                     },
                     "interaction_middleware.personal_runtime_muted": {
                         "description": "静音主动人格",

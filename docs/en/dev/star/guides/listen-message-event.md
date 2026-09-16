@@ -343,7 +343,7 @@ pass Persona target authorization. Lifecycle resolution order is
 `interaction_runtime_target` declaration, then the Persona default. Only a plugin
 resolved as `core` receives it on a Core request. Plugin-owned LLM Tools resolve
 independently through the user `plugin_tool_targets` override, their `tool_targets`
-declaration, then the Core default. Router and Core Planner do not emit request or
+declaration, then the Core default. Core Planner does not emit request or
 Agent lifecycle hooks. `on_using_llm_tool` and `on_llm_tool_respond` retain their
 official global observer semantics and run when a tool actually executes in Core or
 Persona. The Persona request is branch-local,
@@ -656,4 +656,8 @@ async def consider_group_message(self, event: AstrMessageEvent):
         request_group_reply_candidate(event)
 ```
 
-The function returns `True` only for group messages. After plugin Handlers finish, Router makes the final choice among `silent`, `persona`, and `hybrid`. Candidate status grants no reply ownership and does not call an LLM directly. Existing plugins that do not use this API retain their previous wake behavior.
+The function returns `True` only for group messages. After plugin Handlers finish,
+the Personal Response Plan makes the final choice among `reply`, `delegate`, and
+eligible-group `silent`. Candidate status grants no reply ownership and does not
+call an LLM directly. Existing plugins that do not use this API retain their
+previous wake behavior.

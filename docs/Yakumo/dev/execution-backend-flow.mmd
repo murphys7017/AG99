@@ -78,7 +78,7 @@ flowchart LR
         PLUGIN_TX["插件输出事务<br/>此前可见输出改记为 progress"]
         DEFAULT_GATE{"未发送消息 + 已唤醒 + 未 call_llm?"}
         NO_CORE["ProcessStage 结束<br/>没有自动 Core 请求<br/>submission context 自动 settle"]
-        FOLLOW_DONE["不启动 Router / Persona / Core<br/>submission context 自动 settle"]
+        FOLLOW_DONE["不启动普通 Personal / Core<br/>submission context 自动 settle"]
         BEFORE_CORE["InteractionMiddleware.handle_pipeline_event<br/>仅在即将调用 Core 前执行"]
         POST_YIELD_RESUME["Core 返回后恢复插件生成器<br/>继续 post-yield 与剩余 Handler<br/>delegated turn 不重复启动默认 Core"]
 
@@ -101,19 +101,18 @@ flowchart LR
         ROUTEABLE{"存在文本、附件或 ProviderRequest?"}
         IMAT["Interaction 入站物化<br/>媒体路径 / Record / STT / 生命周期 received"]
         BYPASS{"Live Mode 或已注册协议命令?"}
-        PROTOCOL["Protocol Core Bypass<br/>标记 delegate_to_core，不创建 Router 决策"]
+        PROTOCOL["Protocol Core Bypass<br/>标记 delegate_to_core，不创建普通对话计划"]
         CTX["Turn-local Context Material single-flight<br/>PromptContextBuilder 构建规范 ContextPack"]
-        ROUTER["Router Task<br/>Router Projection → 当前只输出 persona / hybrid"]
-        PERSONA["Persona Task<br/>Persona Projection → 结构化 persona_expression<br/>tool call 优先，能力不支持时受控 prompt-only 降级"]
-        ROUTE{"Router 结果<br/>私聊失败→persona；群聊候选失败→silent"}
+        PERSONAL["Personal Response Plan<br/>Persona Projection → 结构化 persona_expression<br/>普通轮必须输出 reply / delegate；允许静默的群聊候选可输出 silent"]
+        ROUTE{"Personal turn_action<br/>reply / delegate / silent"}
         PERSONA_ONLY["等待 Persona<br/>完成 visible turn + Finalized Material<br/>停止事件"]
-        PLANNER["Core Planner<br/>Core Planner Projection + 结构化输出"]
-        PLAN{"execute / not_required"}
+        PLANNER["Core Planner<br/>仅整理已委派任务的 CoreTaskSpec"]
+        PLAN{"execute（已委派任务必须可执行）"}
         TASK["保存 CoreTaskSpec<br/>生命周期 delegated"]
         PSTATE{"Turn lock 原子预留输出槽<br/>immediate / final 谁先取得所有权?"}
         PSUP["抑制 Persona"]
         PIMM["OutputController 发送 immediate_reply<br/>Hybrid execute 时不完成 Turn"]
-        TURN_SCOPE["TurnExecutionScope<br/>持有 Router / Persona / Context Material / Stream Observation<br/>lease 释放前统一完成或取消"]
+        TURN_SCOPE["TurnExecutionScope<br/>持有 Personal / Context Material / Stream Observation<br/>lease 释放前统一完成或取消"]
         IFAIL["标记 failed / cancelled<br/>按异常语义终止"]
 
         BEFORE_CORE --> I_ENABLED
@@ -123,21 +122,20 @@ flowchart LR
         ROUTEABLE -->|"是"| IMAT --> BYPASS
         BYPASS -->|"是"| PROTOCOL --> AGENT_ENTRY
         BYPASS -->|"否"| CTX
-        CTX --> ROUTER
-        CTX --> PERSONA
-        ROUTER --> ROUTE
-        PERSONA --> PSTATE
+        CTX --> PERSONAL --> ROUTE
+        ROUTE -->|"reply"| PSTATE
+        ROUTE -->|"delegate"| PSTATE
+        ROUTE -->|"delegate"| PLANNER
+        ROUTE -->|"silent（仅允许的群聊候选）"| PSUP --> PERSONA_ONLY
         PSTATE -->|"允许提交"| PIMM
         PSTATE -->|"被 Core-final 抢先"| PSUP
 
-        ROUTE -->|"persona"| PERSONA_ONLY
-        ROUTE -->|"hybrid"| PLANNER --> PLAN
-        PLAN -->|"not_required"| PERSONA_ONLY
-        PLAN -->|"execute"| TASK --> AGENT_ENTRY
-        TASK -. "speculative task 继续由 turn 持有" .-> TURN_SCOPE
-        PLANNER -->|"失败且 Persona 未成功发出"| IFAIL
-        PLANNER -->|"失败但 Persona 已发出"| PERSONA_ONLY
-        PIMM -. "persona / not_required 分支" .-> PERSONA_ONLY
+        PLANNER --> PLAN --> TASK --> AGENT_ENTRY
+        TASK -. "已委派 turn 继续由 scope 持有" .-> TURN_SCOPE
+        PLANNER -->|"失败且即时确认未成功发出"| IFAIL
+        PLANNER -->|"失败但即时确认已发出"| PERSONA_ONLY
+        PIMM -. "reply" .-> PERSONA_ONLY
+        PIMM -. "delegate" .-> TURN_SCOPE
     end
 
     subgraph AGENT["五、Core Agent 执行"]
@@ -317,7 +315,7 @@ flowchart LR
         OBS_HOLD["restore batch to Inbox<br/>busy turn settle 后重评"]
         OBS_EVENT["RuntimeObservationEvent<br/>仅适配已经决定发送的输出"]
         OBS_SUBMIT["submit_runtime_observation_event<br/>校验主动消息能力<br/>绑定同一 PersonalRuntimeKey / session lock"]
-        OBS_HANDLER["InteractionMiddleware.handle_runtime_observation<br/>显式接收 event + PersonalTurnContext<br/>绕过 Router / Planner / Core"]
+        OBS_HANDLER["InteractionMiddleware.handle_runtime_observation<br/>显式接收 event + PersonalTurnContext<br/>绕过普通 Personal 计划 / Planner / Core"]
         OBS_PERSONA["唯一 Persona Expression<br/>不默认开放有副作用工具"]
         OBS_OUTPUT["InteractionOutputController<br/>统一 materialize / platform send / visible completion"]
         OBS_HISTORY["assistant-only Conversation commit<br/>Prompt / Memory history projection<br/>completed / failed / cancelled lifecycle"]

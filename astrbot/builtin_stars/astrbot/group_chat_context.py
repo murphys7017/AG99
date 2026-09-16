@@ -1,7 +1,7 @@
 import asyncio
 import datetime
-import json
 import hashlib
+import json
 import uuid
 from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass, replace
@@ -200,7 +200,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
                         len(_format_group_record(record)) for record in records
                     ),
                     "official_context": True,
-                    "targets": ["router", "core_planner", "persona", "core"],
+                    "targets": ["core_planner", "persona", "core"],
                     "context_slot": "conversation.group_recent",
                     "context_category": "conversation",
                 },
@@ -339,12 +339,12 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         self,
         event: AstrMessageEvent,
         *,
-        allow_router_candidate: bool = False,
+        allow_personal_candidate: bool = False,
     ) -> None:
         """Record one eligible group message without changing its routing state."""
         if (
             event.get_message_type() != MessageType.GROUP_MESSAGE
-            or (event.is_at_or_wake_command and not allow_router_candidate)
+            or (event.is_at_or_wake_command and not allow_personal_candidate)
             or not self.group_context_enabled(event)
         ):
             return

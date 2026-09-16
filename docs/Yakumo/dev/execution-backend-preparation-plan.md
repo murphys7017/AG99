@@ -12,6 +12,10 @@ Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完�
 本文是目标和实施顺序，不代表所述能力已经完成。当前运行事实以
 `execution-backend-flow.mmd` 和源码为准。
 
+## 2026-09 Interaction 主链修订
+
+本计划早期章节中的 Router 描述是已完成的迁移历史，不是当前实现或后续任务。普通对话现在由一次 Personal Response Plan 生成 `reply / delegate / silent`；`delegate` 后 Planner 只生成 `execute + CoreTaskSpec`。后续 Core Head、Session Runtime 和 Executor Body 的设计应保留这一单一控制入口，不得重新将 Router 作为独立普通消息 Agent 接入。
+
 ## 上游参考边界
 
 AG99 使用 AstrBot 的基础设施与公开兼容面，但当前运行时架构已经与上游主线明显分化。

@@ -16,6 +16,10 @@ Phase 5B-4 至 5B-7 已把同一 t0 三线启动、Core Gate、窗口到期脱�
 T2、父对话绑定和 direct/media assistant-only 历史接入生产 ProcessStage。全局开关仍保持 false；
 真实私聊/群聊时间线完成前不得默认启用。
 
+## 2026-09 当前主链修订
+
+本文记录了当时的三线设计和验收历史。当前协调路径只从同一 `t0` 启动 Personal 与 Official Plugin Job；不存在独立 Interaction Router task。Personal 的同一次结构化 `persona_expression` 输出 `reply / delegate / silent`，`delegate` 后才进入 Planner 和 Core。下文关于 Router 的并发、Gate 和验收描述均是历史阶段记录，不得据此重新引入第二次普通消息路由调用。
+
 Prompt Context 已同步拆成两层 single-flight：基础事实层只收集官方可信控制面扩展，Router 和 Core
 Planner 的首个请求只等待这一层；普通 Prompt Extension 与 Interaction Prompt Contributor 在基础事实
 完成后立即后台预取，每轮只收集一次。`persona_plugin_context_mode` 由用户选择 Persona 是否等待

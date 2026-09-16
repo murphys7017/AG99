@@ -967,7 +967,6 @@ class TestConfigMetadataI18n:
             "personal_policy",
             "personal_runtime_policy",
             "planner",
-            "router",
             "stream",
         ]
         assert (
@@ -982,19 +981,12 @@ class TestConfigMetadataI18n:
             ]["_special"]
             == "select_provider"
         )
-        assert (
-            group["metadata"]["router"]["items"][
-                "interaction_middleware.router_provider_id"
-            ]["_special"]
-            == "select_provider"
-        )
         exposed_keys = {
             item_key
             for section in group["metadata"].values()
             for item_key in section["items"]
         }
         assert "interaction_middleware.expression_model" not in exposed_keys
-        assert "interaction_middleware.router_model" not in exposed_keys
         assert "interaction_middleware.finalizer_model" not in exposed_keys
 
     def test_interaction_middleware_metadata_i18n_keys_have_locale_entries(self):

@@ -21,7 +21,10 @@ from astrbot.core.interaction.expression_agent import (
     resolve_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
 )
-from astrbot.core.interaction.types import InteractionAgentConfig
+from astrbot.core.interaction.types import (
+    InteractionAgentConfig,
+    PersonalResponseAction,
+)
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.output_contract import CompiledOutputContract
@@ -56,6 +59,65 @@ def test_persona_expression_empty_result_without_effects_is_rejected():
         )
 
     assert exc_info.value.reason == "empty_output"
+
+
+def test_personal_response_plan_requires_an_allowed_action_and_reply():
+    request = PersonaExpressionRequest(require_turn_action=True)
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            request,
+            PersonaExpressionResult(spoken_reply="我来处理。"),
+        )
+
+    assert exc_info.value.reason == "missing_personal_response_action"
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            request,
+            PersonaExpressionResult(
+                turn_action=PersonalResponseAction.DELEGATE,
+            ),
+        )
+
+    assert exc_info.value.reason == "empty_output"
+
+
+def test_personal_response_plan_allows_empty_silent_only_for_group_candidate():
+    silent = PersonaExpressionResult(turn_action=PersonalResponseAction.SILENT)
+
+    with pytest.raises(InteractionExpressionError) as exc_info:
+        validate_persona_expression_result(
+            PersonaExpressionRequest(require_turn_action=True),
+            silent,
+        )
+
+    assert exc_info.value.reason == "disallowed_personal_response_action"
+
+    validate_persona_expression_result(
+        PersonaExpressionRequest(require_turn_action=True, allow_silent=True),
+        silent,
+    )
+
+
+def test_personal_response_plan_schema_requires_turn_action():
+    schema = build_persona_expression_tool_parameters(
+        allowed_turn_actions=(
+            PersonalResponseAction.REPLY,
+            PersonalResponseAction.DELEGATE,
+        ),
+    )
+
+    assert schema["required"] == [
+        "turn_action",
+        "spoken_reply",
+        "speech_cues",
+        "effect_calls",
+    ]
+    assert schema["properties"]["turn_action"]["enum"] == [
+        "reply",
+        "delegate",
+    ]
 
 
 def test_persona_expression_allows_effect_only_reply_when_request_explicitly_allows_empty():

@@ -12,8 +12,8 @@ AG99 的目标不是把每条消息简单地交给一个 Agent，而是让一个
 平台适配器
   -> EventBus / Pipeline / Handler
   -> Interaction Middleware
-  -> Personal Runtime + Router
-  -> Core Planner
+  -> Personal Runtime + Personal Response Plan
+  -> Core Planner (delegated turns only)
   -> Core Head / Core 执行层
   -> Persona Expression
   -> Output Runtime
@@ -21,8 +21,8 @@ AG99 的目标不是把每条消息简单地交给一个 Agent，而是让一个
 ```
 
 - **Personal Runtime**：跨 turn 管理人格状态、会话租约、连续对话、冷却、预算和主动观察。
-- **Router**：只判断 `persona / hybrid / silent`；`silent` 仅对有界群聊候选开放，并且只取消尚未发送的表达。
-- **Core Planner**：独立判断是否需要进入 Core，不复用 Router 的模型决策或 Prompt。
+- **Personal Response Plan**：普通对话由一次 Persona 的结构化结果决定 `reply / delegate / silent`；`silent` 仅对允许的群聊候选开放，`delegate` 会先发送简短确认再进入 Core。
+- **Core Planner**：只把已委派的任务整理为可执行 `CoreTaskSpec`，不重新判断是否进入 Core，也不生成用户台词。
 - **Persona Expression**：所有用户可见自然语言统一经过同一个表达入口，即时回复和 Core 结果不会各走一套文案生成器。
 - **Structured Prompt**：通过 `collect -> build -> project -> render -> apply` 形成目标明确的模型上下文。
 - **主动观察**：遵循 `Observation -> Gate -> Policy -> ActionIntent -> Persona -> Output`，不会直接调用 Core、工具或发送消息。
@@ -46,7 +46,7 @@ AG99 仍处于持续开发和真实链路验证阶段：
 | --- | --- |
 | Interaction Middleware | 主链路已实现，边界场景持续验证 |
 | Personal Runtime | 跨 turn 状态、Observation Intake、Gate、Policy 边界和投递反馈已接入 |
-| Router / Core Planner | 职责分离和 fail-closed 边界已接入 |
+| Personal Response Plan / Core Planner | 单次决策和已委派任务规格边界已接入 |
 | Core Head / Executor Body | 已建立进程内同步 Head、事件排序和取消边界；队列与可替换执行器仍在推进 |
 | Persona Expression | 统一可见回复链路已接入，Provider 差异仍在收口 |
 | Structured Prompt | 主链路已实现，模块仍在拆分稳定化 |

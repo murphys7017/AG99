@@ -16,12 +16,11 @@ Platform Adapter
   -> official EventBus / Pipeline / Plugin Handler
   -> Personal Runtime
        -> ordinary addressed turn
-           -> Router ------------------------------+
-           -> Persona Expression -> immediate output
-                Router persona --------------------+-> complete
-                Router hybrid -> Core Planner
+           -> Personal Response Plan -> immediate output
+                -> reply --------------------------+-> complete
+                -> delegate -> Core Planner
                     -> execute -> Execution Backend -> Persona Expression
-                    -> not_required ----------------+-> complete
+                -> silent (eligible group only) ---+-> complete
   -> Output Runtime
   -> Finalized Turn Material
   -> Postprocess / Conversation / Memory
@@ -35,8 +34,8 @@ Personal Runtime 是控制层，负责：
 
 - 以有效 persona、audience 和 privacy scope 识别持续运行实例。
 - 管理 turn、mailbox、并发、follow-up、取消和完成权。
-- 对普通显式消息和未被 Handler 接管的群聊候选并发启动 Router 与 Persona；在 `hybrid` 路径继续 Core Planner 与执行层。
-- 群聊 Router 返回 `silent` 时取消仍处于 pending 的 Persona；已经提交或送达的表达不撤回。
+- 对普通显式消息和未被 Handler 接管的群聊候选启动一次 Personal Response Plan；它与即时 Persona 输出是同一结构化调用，在同一结果中决定 `reply`、`delegate` 或群聊 `silent`。
+- `delegate` 先交付简短处理中确认，再进入 Core Planner 与执行层；`silent` 只对允许静默的群聊候选有效，且不生成可见输出。
 - 将 Core 结果重新交给 Persona Expression 形成用户可见表达。
 - 仲裁 Persona、执行结果和插件输出，避免重复完成同一 turn。
 
@@ -71,14 +70,15 @@ Persona Expression 负责“怎么以这个人格表达”，不负责通用任�
 但所有结果仍必须由 terminal `persona_expression` 协议收口为唯一用户可见表达。静态 Persona、
 动态人格状态、对话历史和 Memory 由 Prompt 系统收集后，按 Persona target 渲染。
 
-### Router 与 Core Planner
+### Personal Response Plan 与 Core Planner
 
-Router 是极简分类器，只判断当前输入可由 Persona 直接回应，还是需要进入 Core 候选路径。
-它不生成回复、不规划任务、不接收工具 schema。
+普通对话不再经过独立 Router。Persona Expression 的即时结构化结果同时承担自然表达与本轮动作选择：
+`reply` 直接完成、`delegate` 继续 Core、`silent` 仅在允许的群聊候选中不参与。它不生成
+`CoreTaskSpec`、不执行 Core 工具，也不输出内部决策理由。
 
-Core Planner 与 Router 独立。它在 `hybrid` 路径上根据同一规范事实包的 Planner 投影判断
-`execute` 或 `not_required`；只有 `execute` 才生成 `CoreTaskSpec`。两者不共享模型决策、
-Prompt 或临时状态。
+Core Planner 只在 `delegate` 路径上运行。它根据同一规范事实包的 Planner 投影整理必须为
+`execute` 的 `CoreTaskSpec`；不重新判断是否进入 Core，不生成用户台词，也不覆盖已经发出的
+Personal 确认。
 
 ### Execution Backend
 
@@ -121,7 +121,7 @@ Collectors
   -> ProviderRequest
 ```
 
-Collector 负责事实，Projection 决定 Router、Planner、Persona 和 Execution 各自可见内容，
+Collector 负责事实，Projection 决定 Planner、Persona 和 Execution 各自可见内容，
 Renderer 只负责编译 Provider 输入。业务模块不得重新查询或拼装同一类事实。
 
 ## 插件边界

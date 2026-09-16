@@ -62,8 +62,8 @@ const metadata = {
         type: 'object',
         items: {},
       },
-      router: {
-        description: 'interaction_middleware_group.router.description',
+      planner: {
+        description: 'interaction_middleware_group.planner.description',
         type: 'object',
         items: {},
       },
@@ -102,7 +102,7 @@ test('normalizeConfigMetadata keeps only extension groups for extension configur
 
   assert.deepEqual(Object.keys(normalized), [
     'interaction_middleware_group__expression',
-    'interaction_middleware_group__router',
+    'interaction_middleware_group__planner',
     'ext_group__segmented_reply',
     'ext_group__ltm',
   ]);
@@ -122,6 +122,6 @@ test('normalizeConfigMetadata keeps all extension sections in the system workspa
   }, 'extension');
 
   assert.equal(normalized.interaction_middleware_group__expression.workspace, 'operations');
-  assert.equal(normalized.interaction_middleware_group__router.workspace, 'operations');
+  assert.equal(normalized.interaction_middleware_group__planner.workspace, 'operations');
   assert.equal(normalized.memory_group.workspace, 'operations');
 });

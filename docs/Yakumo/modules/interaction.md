@@ -7,19 +7,18 @@
 它不是某个前端或 Live2D 场景的专用逻辑，而是通用平台交互中间件：
 
 - 对启用平台，输入先经过官方 EventBus、Pipeline、权限和插件处理，再在核心 Agent 开始前进入 middleware。
-- Prompt 层先收集一份规范 `ContextPack`；普通显式消息和未被 Handler 接管的群聊候选都由 middleware 并发启动 Personal 与轻量 Router。Personal 结果一旦形成就直接进入 Output，不等待 Router 或 Planner；Router 只在 `silent` 时尝试取消尚未取得发送权的 Personal，并仅在 `hybrid` 路径调用独立 Core Planner。Router、Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
+- Prompt 层先收集一份规范 `ContextPack`；普通显式消息和未被 Handler 接管的群聊候选由一次 Personal Response Plan 生成自然表达及 `reply / delegate / silent` 动作。`reply` 直接完成，`delegate` 才调用 Core Planner，`silent` 只对允许的群聊候选开放。Planner、Persona 和 Core 只读取各自投影；直播音频和协议命令使用独立 Core bypass。
 - 对 interaction turn，用户可见输出由 `InteractionOutputController` 统一 materialize、发送、记录。
 - core 仍负责工具、知识库、subagent、搜索、任务执行等能力。
 - middleware 负责 turn owner 语义、人格化表达、stream observation、finalized material 和 completion handoff。
 
-这里必须区分三个互不替代的事实：`route_mode` 表示 Router 的控制判断，
+这里必须区分三个互不替代的事实：`route_mode` 表示 Personal Response Plan 的控制结果，
 `personal_status` 表示 Personal 回复是否尚未开始、生成中、已提交、已送达或被压制，
-`turn_outcome` 表示本轮最终是否已经产生用户可见回复。因此 Router 较晚返回 `silent` 时，
-若 Personal 已经提交或送达，合法终态是 `silent / emitted / replied`，不能倒推为静默。
+`turn_outcome` 表示本轮最终是否已经产生用户可见回复。`silent` 只能在群聊候选且表达尚未取得发送权时形成零输出，不能撤回已提交或已送达的表达。
 
 在 Yakumo 的目标态里，interaction middleware 应进一步收口为
-`Persona Runtime Shell`。它是人格层的一轮运行外壳，负责把输入 observation、route/reflex
-判断、core delegation、输出 materialization 和 finalized material 串起来。
+`Persona Runtime Shell`。它是人格层的一轮运行外壳，负责把输入 observation、Personal
+Response Plan、Core delegation、输出 materialization 和 finalized material 串起来。
 
 它不应拥有整个人格层的数据本体：
 
@@ -34,11 +33,11 @@ middleware 的职责是组合这些服务，并在一个 interaction turn 内形
 
 Interaction 不把所有插件都当作 Persona 输入。插件首先按行为类型分流：
 
-| 类型 | 处理方式 | 是否进入 Router/Planner |
+| 类型 | 处理方式 | 是否进入 Personal/Planner |
 |---|---|---|
 | 官方 Pipeline Handler | 由官方 Handler discovery 找到并执行；可以返回最终结果、停止事件，或 `yield ProviderRequest` 委托 Core。Handler 生成器在 Core 完成后还会继续执行 post-yield 逻辑和剩余 Handler | 否 |
 | Prompt Extension / Contributor | 在基础 ContextPack 之后后台收集，按 `meta.targets` 投影到 Persona 或 Core；异常只记录并跳过 | 否 |
-| 插件 LLM 生命周期 | 按 `plugin_runtime_targets` 选择 Persona 或 Core 的请求生命周期；不为 Router/Planner 执行 | 否 |
+| 插件 LLM 生命周期 | 按 `plugin_runtime_targets` 选择 Persona 或 Core 的请求生命周期；不为 Personal Plan/Planner 执行 | 否 |
 | 插件 LLM Tool | 按 `plugin_tool_targets` 和工具自身声明独立授权；默认 Core，显式允许时进入 Persona | 否，工具只在实际执行目标中可见 |
 | 显式输出 | `event.send()`、`emit_output()`、`Context.send_message()` 等按 direct/persona 语义进入输出控制；显式目标不再经过“是否应该回复”的路由判断 | 否 |
 | Runtime Sensor | 只提交受限结构化 Observation，进入 Personal Runtime 的 Inbox/Gate/Policy；不能提交用户文本、工具调用或最终文案 | 否 |
@@ -48,21 +47,20 @@ Interaction 不把所有插件都当作 Persona 输入。插件首先按行为�
 官方 Handler 仍然是插件接管消息的第一边界。Handler 如果产生终止结果或停止事件，可以阻止
 后续 Personal 与 Core；如果 `yield ProviderRequest`，则进入同一个 Core 执行边界，Core 完成后
 恢复 Handler 生成器，不会再次进入默认 Core。Handler 的输出所有权取决于输出模式：`direct`
-保留插件结果，`persona` 把语义材料交给 Persona 改写；两者都不会让 Router 或 Planner 重新
+保留插件结果，`persona` 把语义材料交给 Persona 改写；两者都不会让 Personal Plan 或 Planner 重新
 决定一次。
 
 默认关闭 `parallel_plugin_runtime_enabled` 时，保持 Handler-first 兼容路径。开启后，完成
-Handler discovery 且存在激活 Handler 的 turn，会同时启动 Personal、Router 和一个
-Runtime-owned Official Plugin Job：
+Handler discovery 且存在激活 Handler 的 turn，会同时启动 Personal 和一个 Runtime-owned
+Official Plugin Job：
 
 ```text
 t0
   ├─ Personal Expression
-  ├─ Router
   └─ Official Plugin Job
        ├─ HANDLED / STOPPED  -> 终止或压制 pending Personal
        ├─ DELEGATED          -> ProviderRequest 进入 Core
-       ├─ PASSED             -> Personal / Router 继续
+       ├─ PASSED             -> Personal 继续
        └─ EXPIRED            -> Core 不再等待插件决定，Job 可在后台完成
 ```
 
@@ -82,7 +80,7 @@ Extension 或 Interaction Prompt Contributor，而不是直接发送消息。它
   -> Persona Expression 生成唯一用户可见回复
 ```
 
-这类插件不会参与 Router 的 `persona / hybrid / silent` 判断，也不能用注入事实强行让 Router
+这类插件不会参与 Personal 的 `reply / delegate / silent` 判断，也不能用注入事实强行让 Personal
 回复。需要改变消息是否被接管时，应使用官方 Handler；需要执行动作时，应注册 LLM Tool 或使用
 插件自己的显式业务系统。
 
@@ -100,9 +98,9 @@ Extension 或 Interaction Prompt Contributor，而不是直接发送消息。它
 }
 ```
 
-Runtime binding、follow-up 判定、session queue、Router、Planner、Persona、Core、Provider
+Runtime binding、follow-up 判定、session queue、Personal、Planner、Core、Provider
 请求和 fallback、工具循环、Runtime Observation 与 completion feedback 都消费这一个剩余
-预算。Router、Planner、Persona 的原有阶段超时仍保留，但只会取“阶段上限”和“turn 剩余时间”
+预算。Personal、Planner 的阶段超时仍保留，但只会取“阶段上限”和“turn 剩余时间”
 中的较小值。总时限耗尽记录 `turn_deadline_exhausted`，取消并等待 turn-owned 子任务，
 然后通过 Output Controller 交付 Persona 自定义错误文案或统一降级文案。每轮结束的
 `DIAG interaction.deadline` 会列出 stage 分配、耗时、状态和 `turn_limited`。
@@ -110,9 +108,9 @@ Runtime binding、follow-up 判定、session queue、Router、Planner、Persona�
 `parallel_plugin_runtime_enabled` 是整条 Official Plugin Job 新路径的全局开关，不是 per-plugin
 开关。统一 Handler 执行器、branch event、PluginExecutionRuntime、InteractionTurnCoordinator、
 Core Gate、EXPIRED 脱离和低优先级 T2 已接入生产 ProcessStage，但仍保持 `false` 等待真实日志与
-启用前停止线验收；开启后，`plugin_parallel_window_seconds` 从 Personal、Router、Plugin Job 的
+启用前停止线验收；开启后，`plugin_parallel_window_seconds` 从 Personal、Plugin Job 的
 共同 `t0` 计算，只结束 T1 对插件决定的等待，不取消 Runtime-owned Job。
-裸 `FAILED` 只表示 Plugin Job 在取得处理权前的运行时故障，按 fail-open 继续 Router/Personal；
+裸 `FAILED` 只表示 Plugin Job 在取得处理权前的运行时故障，按 fail-open 继续 Personal；
 官方 Handler 自身异常仍沿用错误产物与 stop 语义。direct/media T1 和 T2 共用 assistant artifact
 历史序列化，T2 没有可固定父 conversation 时不会新建历史会话。
 
@@ -123,15 +121,15 @@ Core Gate、EXPIRED 脱离和低优先级 T2 已接入生产 ProcessStage，但�
 
 ## 首回复与插件富化
 
-Interaction Prompt 构建分为两层：先形成 Router、Planner、Persona 和 Core 共享的 base facts，
-随后并行预取只面向 Persona/Core 的 plugin enrichment。Router 与 Planner 永远不读取普通插件
-Prompt Extension；Persona 在 enrichment 已就绪时才把它合并进当前表达，未就绪时直接基于 base
-facts 生成首回复；Core 在获准执行后等待并复用同一个 enrichment task。
+Interaction Prompt 构建分为两层：先形成 Personal、Planner、Persona 和 Core 共享的 base facts，
+随后并行预取只面向 Persona/Core 的 plugin enrichment。Planner 永远不读取普通插件 Prompt
+Extension；Personal 在 enrichment 已就绪时才把它合并进当前表达，未就绪时直接基于 base facts
+生成首回复；Core 在获准执行后等待并复用同一个 enrichment task。
 
 这条规则只影响普通的 Prompt Extension 与 Interaction Prompt Contributor，不改变官方 Pipeline
 Handler 的接管、命令或关键词语义。插件若必须在当前轮阻止、接管或改变消息处理，应使用官方
 Handler 契约，而不是把控制逻辑放进 Prompt Extension。Collector 必须保持无副作用，并尽量快速；
-慢贡献最多错过当前首回复，不能阻塞 Personal 或 Router。
+慢贡献最多错过当前首回复，不能阻塞 Personal。
 
 ## 插件运行目标
 
@@ -205,11 +203,11 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
   `MessageEventResult.set_async_stream(...)` 明确不支持并会给工具循环返回提示。最终 Persona
   Expression 是唯一可见回复的 owner；工具另开后台 task 后的输出不属于该次工具调用，仍按普通
   发送路径处理。
-- `hybrid` 路径中，Planner 与已经启动的 Personal 并行推进；Planner 只能决定是否放行 Core，
-  不能因为任务类型、媒体输入或 Core 决策压制 Personal。群聊候选的 Router `silent` 与 Personal
-  通过 turn lock 和输出 reservation 仲裁：pending Personal 被取消，committed / emitted Personal
-  保留。Core 更早取得最终输出 reservation 时，仍可按统一输出事务阻止迟到的 pending Personal，
-  但这是输出先后仲裁，不是 Router 或 Planner 的回复门禁。
+- `delegate` 路径中，Personal 先发送简短处理中确认，Planner 再为该已委派任务生成
+  `execute + CoreTaskSpec`；Planner 不重新决定是否进入 Core，也不能因为任务类型、媒体输入或
+  Core 决策压制 Personal。群聊候选的 `silent` 只能在 Personal 尚未取得发送权时形成零输出。
+  Core 更早取得最终输出 reservation 时，仍可按统一输出事务阻止迟到的 pending Personal，
+  但这是输出先后仲裁，不是 Personal 或 Planner 的回复门禁。
 - 人格 Provider 回退时保留 Hook 后冻结的同一 `ProviderRequest`、结构化输出契约和公开
   Agent context，只替换 Provider binding；不会重新渲染请求，也不会重复调用
   `OnWaitingLLMRequest`、`OnLLMRequest` 或 `OnAgentBegin`。备用 Provider 无法满足严格 terminal
@@ -225,7 +223,7 @@ WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这�
 
 1. 重启 AstrBot，使 `interaction_middleware` 新配置生效。
 2. 对未配置目标的已有插件发送普通对话，确认其 LLM 钩子只出现在 Persona Expression 日志中。
-3. 将一个工作型插件的目录名配置为 `core`，发送会被 Router/Planner 委托的工作请求，确认它只在
+3. 将一个工作型插件的目录名配置为 `core`，发送会被 Personal/Planner 委托的工作请求，确认它只在
    Core 请求、Agent 和工具阶段出现。
 4. 发送该插件的关键词或命令，确认其 Pipeline Handler 仍可直接终止事件，不会先进入 Persona。
 5. 可运行下列聚焦回归测试；其中涵盖默认启用、默认 Persona / 显式 Core 隔离、钩子顺序、工具阶段与
@@ -269,7 +267,7 @@ RuntimeObservation
 可以进入显式启用的 Personal Policy。Policy 通过统一 Prompt 管线读取受限事实，以严格
 tool-call 契约返回 `ignore / observe / express / defer`。`express` 被转换为内部
 `ActionIntent` 后才进入已经决定发送的输出适配链；`defer` 保留 batch 并写入无动作截止时间，
-由 Wake Scheduler 到期后重新评估。通用 Intake 本身不经过 EventBus、Pipeline、Router、Planner、
+由 Wake Scheduler 到期后重新评估。通用 Intake 本身不经过 EventBus、Pipeline、Personal、Planner、
 Core、Persona 或 Output；
 不支持主动消息的目标可以进入 Intake，但会在 target capability Gate 被拒绝。
 
@@ -281,7 +279,7 @@ session lock，目标必须明确支持主动消息；没有 `visible_reply_mate
 留空时兼容默认主动目标，它会为每个已配置且仍支持主动消息的目标独立检查 retained batch，不构造
 消息、不创建新材料或直接发送。空 Inbox 的 Heartbeat 被忽略。群聊环境观察默认关闭；启用后，官方 Waking 阶段只让
 配置群聊目标中的非唤醒文本继续通过白名单和会话状态检查，
-再转换为不含原文的 `conversation_activity` Observation，并在普通限流、插件、Router 和 Core 前
+再转换为不含原文的 `conversation_activity` Observation，并在普通限流、插件、Personal 和 Core 前
 终止该平台事件。Action Coordinator 已实现 `express / defer`。插件可以注册受限 Runtime Sensor，
 通过 handle 提交可过期的结构化事实。Policy 每日调用上限会在 Provider 请求前写入独立
 Personal State Repository。
@@ -330,7 +328,7 @@ class Main(star.Star):
 `session=None` 使用配置的默认主动目标；显式 session 是完整 UMO。注册来源的 `plugin_id` 和
 `source_id` 必须稳定且仅含字母、数字、`.`, `_`, `-`。payload 只能含不可变标量和嵌套容器；
 `text`、`message`、`prompt`、`visible_reply_material` 等消息或回复材料会被拒绝。Sensor 不会
-创建 `AstrMessageEvent`、拿到 Provider/ToolSet、执行 Router/Core 或直接发送；最终是否行动仍由
+创建 `AstrMessageEvent`、拿到 Provider/ToolSet、执行 Personal/Core 或直接发送；最终是否行动仍由
 Inbox、Gate、Policy、Persona 和 Output 决定。插件 reload/unload 会清理其注册，之后的 handle
 提交会失败。
 
@@ -345,8 +343,8 @@ TopicState、ShortTermMemory、PersonaState 或启动 consolidation / promotion�
 Input Runtime / Observation
   -> Interaction Middleware / Persona Runtime Shell
       -> Effective Persona Resolver
-      -> Fast Route Classifier
-      -> Core Planner for hybrid routes
+      -> Personal Response Plan (`reply` / `delegate` / `silent`)
+      -> Core Planner for delegated tasks
       -> Core Agent / Tools / Capabilities, or Persona Expression
       -> Output Gateway
           -> Text / Streaming
@@ -367,18 +365,18 @@ Input Runtime / Observation
 - interaction STT
 - observation / reflex 前置判断
 - Prompt Collectors：一次收集本轮输入、人格、session、官方对话历史、统一 Memory、执行能力和插件贡献，生成规范 `ContextPack`
-- Router：普通显式唤醒只输出 `persona` / `hybrid`；仅 Personal Runtime 标记的有界群聊模型续接候选开放 `silent`。它不承担用户可见回复、task planning 或 effect 输出，读取极简事实投影，不为单个插件打补丁，也不枚举或限制核心 Agent 的能力范围
-- Core Planner：只在 `hybrid` 后独立判断 `execute` / `not_required`，并仅在 `execute` 时生成 `CoreTaskSpec`；它不读取 Router 的模型决策、Prompt 或输出
-- Router/Persona 协同：普通显式消息和未被 Handler 接管的有界群聊候选同时启动 Router 与 Persona；Router 决定 `persona` / `hybrid`，并只对群聊候选开放 `silent`。群聊候选 Router 失败回退为 `silent`，私聊 Router 失败回退为 `persona`；只有 `silent` 会取消 pending Persona，已经提交或送达的表达继续完成，不做撤回。
+- Personal Response Plan：普通显式唤醒和合格群聊候选通过同一次结构化 Persona Expression 输出 `reply`、`delegate` 或 `silent`，同时生成自然语言和 effect。它不拆解任务、不执行 Core 工具；`silent` 仅对允许的群聊候选开放。
+- Core Planner：只在 `delegate` 后生成固定的 `execute + CoreTaskSpec`，不重新判断任务是否应进入 Core，也不拥有用户可见表达权限。
+- Personal/Core 协同：`delegate` 的简短确认由 Personal 先交付；之后 Planner 与 Core 执行，不会压制已提交的表达。`silent` 只能在未提交时形成零输出，不能撤回已经提交或送达的表达。
 - Runtime 所有权：ProcessStage 在插件 Handler 前完成 admission 并取得 session lease；
-  `TurnExecutionScope` 持有 Router、Persona、Context Material 和 Stream Observation task，
+  `TurnExecutionScope` 持有 Personal、Context Material 和 Stream Observation task，
   lease 释放前统一完成或取消；`TurnDeadlineBudget.enforce()` 统一约束 binding、queue、
-  Router、Planner、Persona、Core、Provider 和工具执行，超时取消会等待工具结果 task 清理，
+  Personal、Planner、Core、Provider 和工具执行，超时取消会等待工具结果 task 清理，
   不允许后台继续写状态
-- Hybrid 协同：Planner 返回 `execute` 后立即放行 Core，已经启动的 Persona 可先交付即时表达；Planner 只生成 CoreTaskSpec，Core 最终结果仍由统一 Persona 输出层表达。
+- 委派协同：Personal 选择 `delegate` 后先交付即时确认；Planner 只生成 CoreTaskSpec，Core 最终结果仍由统一 Persona 输出层表达。
 - Core 协同提示：Core 只接收执行任务与能力事实，并直接执行、返回实质结果材料；即时 Persona 的内部状态和预发送文本不注入 Core Prompt。
-- Context/失败协同：Router、Planner 和 Persona 通过 turn-local single-flight 共享一次 Context Material 构建。Planner 失败禁止 Core，并以已经送达或仍可完成的 Persona 走 persona-only 恢复路径。
-- PERSONA / HYBRID 编排；`silent` 只用于有界群聊模型续接候选
+- Context/失败协同：Personal、Planner 和 Persona 通过 turn-local single-flight 共享一次 Context Material 构建。Planner 失败禁止 Core，并以已经送达或仍可完成的 Persona 走 persona-only 恢复路径。
+- REPLY / DELEGATE / SILENT 编排；`silent` 只用于有界群聊模型续接候选
 - live audio 与协议命令 Core bypass
 - 通用 effect call 的输出与插件消费边界；middleware 不理解 Motion 或 Live2D 语义
 - finalized material 校验
@@ -390,7 +388,7 @@ Input Runtime / Observation
 - middleware 是 turn material producer
 - postprocess 是 completion consumer boundary
 - 官方 Conversation 是可见 Dialogue History owner；它在 turn completion 前提交，不由 postprocess 反推或补写
-- Core Execution Ledger 是执行连续性 owner，不保存为用户可见对话，也不投影给 Router 或 Persona
+- Core Execution Ledger 是执行连续性 owner，不保存为用户可见对话，也不投影给 Personal 或 Persona
 - memory service 是 interaction turn 的主记忆写入 owner
 - `completed=True` 表示 middleware lifecycle handoff completed，不表示 memory 一定已经写入
 - `completion_state.status` 明确区分 `active` / `completed` / `failed` / `cancelled`
@@ -461,7 +459,7 @@ runtime config、ProviderRequest 和官方 event 引用。普通平台事件与�
 `RuntimeObservationEvent` 会建立该类型；通用 `submit_observation()` 不创建 event 或 turn
 context，只将事实写入对应 Runtime Inbox。
 
-它尚未成为整个 Interaction 的唯一调用参数。Router、Persona、Planner、Output 和
+它尚未成为整个 Interaction 的唯一调用参数。Personal、Planner、Output 和
 RespondStage 仍以 `AstrMessageEvent` 为兼容载体。第一阶段已将 route、output deferral、
 completion、输入/STT、规划/表达诊断、Conversation 提交和 delivery metadata 的主事实
 收敛到 `InteractionTurnState`；对应 extra 保留兼容投影和无 typed state 时的回退。
@@ -510,7 +508,7 @@ output intent、诊断和兼容投影；不能为减少 extra 数量而同时维
 - `render_plugin_output(...)` / `render_core_reply(...)` / `render_stream_interjection(...)` 只是同一入口的薄包装
 - 本身不做 LLM 调用，只做编排
 - 当前默认输出契约是严格 `tool_call`：注册虚拟工具 `persona_expression`，返回 `spoken_reply` 与 `effect_calls`，且 `allow_text_fallback=False`
-- 当 renderer/provider 明确不支持协议级 tool-call 时，才受控降级为 prompt-only JSON；这不是 router/decision 的职责
+- 当 renderer/provider 明确不支持协议级 tool-call 时，才受控降级为 prompt-only JSON；这不是本轮动作选择的职责
 - Persona Runtime 的表达规则、最终 request prompt 和输出契约由目标 `PromptRenderProfile` 提供；本轮待表达语义、核心流式 `observed_text / total_text / pending_text` 等事实由 Collector 写入原生 `input.visible_reply_material`
 - 对 DeepSeek-V4 / `deepseek-reasoner` 这类 reasoning 模型，首轮 persona user input 会额外注入一次“角色沉浸模式” marker，
   用于约束 `<think>` 里的思维风格；稳定人格设定仍留在 `system`，marker 不作为长期人格本体
@@ -553,7 +551,7 @@ output intent、诊断和兼容投影；不能为减少 extra 数量而同时维
 - effect 的 `arguments` 由注册的 `PersonaEffectSpec.parameters` 决定。
 - motion 类 effect 如果包含 `axes`，运行时会把 `axes.*` 统一视为 `number` schema。
 - `intent_tags` 是否必填不由 persona 顶层决定，而由具体 effect schema 决定；例如 motion effect 可在 `arguments` 内要求它。
-- Router 不输出这个结构；它当前只返回 `persona` 或 `hybrid`。
+- Personal Response Plan 通过同一结构化 Persona 输出返回 `turn_action`；它不另设独立路由协议。
 
 ## Postprocess / Memory 边界
 
@@ -587,7 +585,7 @@ Persona Runtime 可以随 `spoken_reply` 生成通用 `effect_calls`。Core 只�
 - 将参数解释为插件私有行为，并通过 `platform_extras`、`client_objects` 或插件自己的传输链路交付。
 - 自行处理设备能力、资源映射、动作约束和降级策略。
 
-插件不得假设其他插件认识自己的 effect，也不应要求 Router 或 Core Agent 理解具体动作语义。
+插件不得假设其他插件认识自己的 effect，也不应要求 Personal 或 Core Agent 理解具体动作语义。
 AG99live、Live2D 或桌面身体表现只是这一通用扩展机制的消费者，不是 Interaction 主流程节点。
 `list_persona_effects(event=event)` 用于构建当前 Persona 契约；不传 `event` 的调用只用于注册表管理和诊断，仍会列出所有已启用注册项。
 `event_filter` 必须是同步、无副作用的判断函数；判断抛出异常时 Core 会关闭当前事件上的该 effect，避免把不适用的 schema 暴露给模型。
@@ -600,7 +598,7 @@ interaction middleware 对插件主要暴露两个阶段接口：
    - 在本轮规范 `ContextPack` 构建阶段运行一次。
    - 用于向统一 Prompt 事实包注入结构化信息。
    - 返回 `PromptExtension` 或 `list[PromptExtension]`。
-   - 通过 `meta.targets` 声明 Persona 或 Core 是否可见；不接收任何模型决策，也不能挂载到 Router/Core Planner。
+   - 通过 `meta.targets` 声明 Persona 或 Core 是否可见；不接收任何模型决策，也不能挂载到 Core Planner。
 
 2. `register_interaction_result_contributor(...)`
    - 在 interaction 输出阶段运行。
@@ -608,9 +606,9 @@ interaction middleware 对插件主要暴露两个阶段接口：
    - 返回 `InteractionResultContribution`。
    - 可以补充平台侧 extras、client objects，或覆盖最终文本。
 
-这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Router 或 Planner 的模型决策重新注入 Prompt。
+这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Personal 或 Planner 的模型决策重新注入 Prompt。
 
-跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在路由后的最终请求上触发：默认或最终解析为 `personal_expression` 的插件在 Persona Expression 请求上触发，最终解析为 `core` 的插件在 Core 请求上触发；运行目标优先级为配置覆盖、类或旧装饰器声明、Persona 默认值。它不参与 Router、Planner 或 Persona 内部工具阶段的模型调用。相同生命周期目标控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response` 与 `on_agent_done`；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发，不受请求生命周期目标过滤。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
+跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在最终请求上触发：默认或最终解析为 `personal_expression` 的插件在 Persona Expression 请求上触发，最终解析为 `core` 的插件在 Core 请求上触发；运行目标优先级为配置覆盖、类或旧装饰器声明、Persona 默认值。它不参与 Planner 或 Persona 内部工具阶段的模型调用。相同生命周期目标控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response` 与 `on_agent_done`；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发，不受请求生命周期目标过滤。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
 
 ### Prompt Contributor
 
@@ -649,8 +647,8 @@ class Main(star.Star):
         )
 ```
 
-`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionPromptView`，其 `purpose` 为 `context_collection`。它提供规范事实快照，而不是 Router、Planner 或 Persona 的局部视图；插件必须在返回的 `PromptExtension.meta.targets` 中声明目标。
-插件不能通过 Prompt Extension 向 Router 或 Core Planner 暴露能力目录或业务事实。需要进入控制面的路由/规划事实必须由核心 Collector 提供；插件本身只挂载到 Persona 或 Core。Router 不理解插件私有协议、动作参数或输出 schema；Core Planner 也不接收 Router 的决策。
+`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionPromptView`，其 `purpose` 为 `context_collection`。它提供规范事实快照，而不是 Planner 或 Persona 的局部视图；插件必须在返回的 `PromptExtension.meta.targets` 中声明目标。
+插件不能通过 Prompt Extension 向 Core Planner 暴露能力目录或业务事实。需要进入控制面或规划面的事实必须由核心 Collector 提供；插件本身只挂载到 Persona 或 Core。Personal 不理解插件私有协议、动作参数或输出 schema；Core Planner 也不接收 Personal 的决策。
 如果插件希望影响 Persona visible reply，应返回目标为 `persona` 的 `PromptExtension`。中间件自己的 persona runtime 指令和 visible reply material 不走 extension。
 常用字段：
 
@@ -666,7 +664,7 @@ class Main(star.Star):
 
 推荐 mount 选择：
 
-- `capability`: 插件能力目录不进入 Router / Core Planner；插件的稳定事实应使用 `context` 或其他明确目标为 Persona/Core 的 extension，执行能力契约仍通过 Tool API 注册。
+- `capability`: 插件能力目录不进入 Core Planner；插件的稳定事实应使用 `context` 或其他明确目标为 Persona/Core 的 extension，执行能力契约仍通过 Tool API 注册。
 - `context`: 当前请求动态事实，例如设备状态、运行时状态、临时 session facts。
 - `system`: 仅用于稳定决策规则；不要放动态事实。
 - `input`: 仅用于确实需要贴近当前用户输入的补充材料。

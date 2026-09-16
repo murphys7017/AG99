@@ -16,28 +16,11 @@ from .target_budget import (
 class PromptTarget(str, Enum):
     """A model-facing role that consumes prompt context."""
 
-    ROUTER = "router"
     CORE_PLANNER = "core_planner"
     PERSONAL_POLICY = "personal_policy"
     PERSONA = "persona"
     CORE = "core"
 
-
-_ROUTER_SLOT_NAMES = frozenset(
-    {
-        "system.base",
-        "persona.summary",
-        "input.text",
-        "input.quoted_text",
-        "input.attachment_summary",
-        "session.datetime",
-        "session.user_info",
-        "conversation.history",
-        "conversation.group_recent",
-        "memory.topic_state",
-        "memory.short_term",
-    }
-)
 
 _CORE_BLOCKED_SLOT_NAMES = frozenset(
     {
@@ -98,7 +81,6 @@ def project_context_pack(
     pack: ContextPack,
     target: PromptTarget | str,
     *,
-    router_history_turns: int = 4,
     history_turns: int | None = None,
     config: object | None = None,
 ) -> ContextPack:
@@ -107,7 +89,6 @@ def project_context_pack(
     resolved_target = PromptTarget(target)
     budget = resolve_target_budget(
         resolved_target.value,
-        router_history_turns=router_history_turns,
         history_turns=history_turns,
         config=config,
     )
@@ -181,9 +162,6 @@ def _slot_is_visible(slot: ContextSlot, target: PromptTarget) -> bool:
         targets = {str(value) for value in raw_targets}
         if target.value not in targets:
             return False
-
-    if target is PromptTarget.ROUTER:
-        return slot.name in _ROUTER_SLOT_NAMES
 
     if target is PromptTarget.CORE_PLANNER:
         return slot.name in _CORE_PLANNER_SLOT_NAMES

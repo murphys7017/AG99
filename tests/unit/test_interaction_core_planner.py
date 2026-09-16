@@ -38,7 +38,7 @@ def _execute_payload() -> dict:
     }
 
 
-def test_core_planner_prompt_is_independent_from_router_decision():
+def test_core_planner_prompt_has_no_prior_decision_surface():
     prompt = build_core_planner_system_prompt()
 
     assert "hybrid" not in prompt
@@ -95,19 +95,17 @@ def test_core_planner_prefers_protocol_tool_call():
     assert decision.task_spec.execution_prompt.startswith("查询当前时间")
 
 
-def test_core_planner_accepts_prompt_only_structured_text():
+def test_core_planner_rejects_not_required_for_delegated_task():
     contract, compiled = _compiled("prompt_only")
     response = SimpleNamespace(tools_call_name=[], tools_call_args=[])
 
-    decision = extract_core_planning_decision(
-        '{"decision":"not_required","core_task_spec":null}',
-        llm_response=response,
-        output_contract=contract,
-        compiled_output_contract=compiled,
-    )
-
-    assert decision.action is CorePlanningAction.NOT_REQUIRED
-    assert decision.task_spec is None
+    with pytest.raises(CorePlannerError, match="invalid structured result"):
+        extract_core_planning_decision(
+            '{"decision":"not_required","core_task_spec":null}',
+            llm_response=response,
+            output_contract=contract,
+            compiled_output_contract=compiled,
+        )
 
 
 def test_core_planner_rejects_missing_protocol_tool_call():
@@ -201,7 +199,7 @@ def test_core_planner_rejects_execute_with_empty_required_task_field(empty_field
 def test_core_planner_contract_requires_nonempty_task_fields():
     task_schema = build_core_planner_output_contract().schema["properties"][
         "core_task_spec"
-    ]["anyOf"][0]
+    ]
 
     assert task_schema["properties"]["task_intent"]["minLength"] == 1
     assert task_schema["properties"]["task_summary"]["minLength"] == 1

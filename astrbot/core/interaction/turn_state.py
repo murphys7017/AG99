@@ -275,10 +275,6 @@ class InteractionTurnState:
     stt_transcribed: bool = False
     stt_failed: bool = False
     stt_failure_reason: str | None = None
-    router_failed: bool = False
-    router_failure_reason: str | None = None
-    router_result_source: str = ""
-    router_context_nodes: list[str] = field(default_factory=list)
     core_planner_failed: bool = False
     core_planner_failure_reason: str | None = None
     core_planner_recovered_via_persona: bool = False
@@ -688,64 +684,6 @@ def get_interaction_turn_stt_failure_reason(event) -> str | None:
     return str(reason).strip() if reason else None
 
 
-def record_interaction_turn_router_failure(
-    event,
-    reason: str | None = None,
-) -> None:
-    state = ensure_interaction_turn_state(event)
-    state.router_failed = True
-    state.router_failure_reason = str(reason or "").strip() or None
-    event.set_extra("_interaction_router_failed", True)
-    if state.router_failure_reason is not None:
-        event.set_extra(
-            "_interaction_router_failure_reason",
-            state.router_failure_reason,
-        )
-
-
-def set_interaction_turn_router_result_source(event, source: str) -> None:
-    state = ensure_interaction_turn_state(event)
-    state.router_result_source = str(source or "").strip()
-    event.set_extra("_interaction_router_result_source", state.router_result_source)
-
-
-def get_interaction_turn_router_result_source(event) -> str:
-    state = get_interaction_turn_state(event)
-    if state is not None:
-        return state.router_result_source
-    return str(event.get_extra("_interaction_router_result_source", "") or "")
-
-
-def set_interaction_turn_router_context_nodes(
-    event,
-    nodes: list[str] | None,
-) -> None:
-    state = ensure_interaction_turn_state(event)
-    state.router_context_nodes = [
-        str(node) for node in (nodes or []) if str(node).strip()
-    ]
-    event.set_extra(
-        "_interaction_router_context_nodes",
-        list(state.router_context_nodes),
-    )
-
-
-def get_interaction_turn_router_failure_reason(event) -> str | None:
-    state = get_interaction_turn_state(event)
-    if state is not None:
-        return state.router_failure_reason
-    reason = event.get_extra("_interaction_router_failure_reason")
-    return str(reason).strip() if reason else None
-
-
-def get_interaction_turn_router_context_nodes(event) -> list[str]:
-    state = get_interaction_turn_state(event)
-    if state is not None:
-        return list(state.router_context_nodes)
-    nodes = event.get_extra("_interaction_router_context_nodes", [])
-    return [str(node) for node in nodes] if isinstance(nodes, list) else []
-
-
 def record_interaction_turn_core_planner_failure(
     event,
     reason: str | None = None,
@@ -819,31 +757,6 @@ def set_interaction_turn_route_decision(
 ) -> None:
     state = ensure_interaction_turn_state(event)
     state.route_decision = decision
-
-
-async def publish_interaction_turn_route_decision(
-    event,
-    decision: InteractionRouteDecision,
-    persona_task: asyncio.Task[Any] | None = None,
-) -> bool:
-    """Publish Router output and atomically suppress a still-pending Persona."""
-    state = ensure_interaction_turn_state(event)
-    async with state.lock:
-        state.route_decision = decision
-        if (
-            decision.route_mode is not InteractionRouteMode.SILENT
-            or state.speculative_persona_status
-            is not InteractionSpeculativePersonaStatus.PENDING
-        ):
-            return False
-        state.speculative_persona_status = (
-            InteractionSpeculativePersonaStatus.SUPPRESSED
-        )
-        state.execution_scope.cancel_and_detach(
-            "speculative_persona",
-            persona_task,
-        )
-        return True
 
 
 def set_interaction_turn_core_planning_decision(

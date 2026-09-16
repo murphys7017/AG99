@@ -94,15 +94,13 @@
 5. `PipelineScheduler.execute()`
 6. 官方前置 stage 执行：唤醒、白名单、会话状态、限流、内容安全、预处理
 7. 进入 `ProcessStage`
-8. interaction middleware 创建 turn state；协议任务走独立 Core bypass，普通显式对话并发启动 Router 与 Persona Expression
-9. Router 选择 `persona` 时以即时 Persona 完成；选择 `hybrid` 时调用 Planner，Planner 返回 `execute` 后继续调用 Core，Core 结果再次进入统一 Persona Expression；未被 Handler 接管的群聊候选也并发启动 Router 与 Persona，并可选择 `silent`
+8. interaction middleware 创建 turn state；协议任务走独立 Core bypass，普通显式对话由 Personal 生成一次结构化回复计划
+9. Personal 选择 `reply` 时以即时 Persona 完成；选择 `delegate` 时先发送简短确认，再调用 Planner 整理已委派任务并继续调用 Core；允许静默的群聊候选可选择 `silent`，Core 结果再次进入统一 Persona Expression
 10. 路由后的最终 Persona 或 Core 分支调用相应插件生命周期与工具；关键词、命令等 Pipeline Handler 仍在官方 pipeline 中运行
 
 群聊的 Conversation 历史只为语义判断提供上下文，不自行扩大 Waking 边界。当前 active turn 的同一
 发送者可立即 follow-up；Bot 成功回复后的前 10 秒可直接续接，此后到配置窗口截止进入候选路径。
-候选保留 Handler 接管语义；未被接管时 Router 与 Persona 同时启动，由 Router 判断
-`silent / persona / hybrid`。群聊候选 Router 失败回退为 `silent`，私聊 Router 失败回退为
-`persona`；只有 `silent` 会取消 pending Persona。窗口外和其他发送者仍需唤醒词、@ 或引用 Bot。
+候选保留 Handler 接管语义；未被接管时 Personal 生成一次包含 `reply / delegate / silent` 的结构化计划。私聊不允许 `silent`；群聊候选的 `silent` 不发送可见输出。无效或失败的 Personal 计划使用本地 `reply` fallback，窗口外和其他发送者仍需唤醒词、@ 或引用 Bot。
 
 interaction turn 的输出路径与普通事件不同：
 
@@ -145,7 +143,7 @@ Persona Expression 生成。`defer` 写入无动作截止时间并保留 batch�
 重新评估。多目标 Heartbeat Source 已由现有 Core
 Lifecycle 托管：`platform_settings.personal_runtime_observation_targets` 留空时回退到默认主动目标；全局 Source 汇总所有已加载配置文件中声明、且 UMO 实际路由回该配置的目标。每个目标的开关和间隔读取其实际命中的 Runtime 配置，并维护独立 due time。配置关闭时不提交事实，启用后每个到期 target 只检查既有 retained batch；空 Inbox 不创建 Observation 材料、批次或唤醒任务。它不构造 event/message，也不调用 Persona、Core 或 Output。默认关闭的群聊
 环境 Source 复用这份目标范围：配置目标中的非唤醒群聊文本通过官方白名单和会话状态检查后，
-仅提交不含原文的 `conversation_activity` fact，并在普通限流、插件、Router 和 Core 前结束原事件。
+仅提交不含原文的 `conversation_activity` fact，并在普通限流、插件、Personal 计划和 Core 前结束原事件。
 插件可通过 `Context.register_runtime_observation_sensor(sensor)` 注册受限的事实 Source；返回的
 handle 只能向同一通用 Intake 提交带目标会话、类别、过期时间和结构化 payload 的 Observation。
 生命周期装配器负责把它交给既有 `PersonalRuntimeManager`，因此插件不会拿到 Runtime、EventBus、

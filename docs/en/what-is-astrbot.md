@@ -14,21 +14,21 @@ This page keeps the `what-is-astrbot` path for existing bookmarks and inherited 
 Platform Adapter
   -> EventBus / Pipeline / Handler
   -> Interaction Middleware
-  -> Personal Runtime + Router
-  -> Core Planner
+  -> Personal Runtime + Personal Response Plan
+  -> Core Planner (delegated turns only)
   -> Core Head / Core Execution
   -> Persona Expression
   -> Output Runtime
   -> Conversation / Memory
 ```
 
-Normal messages and bounded unaddressed group candidates enter Interaction Middleware. Personal Runtime owns turn admission and session state. The Router returns `persona`, `hybrid`, or (for group candidates only) `silent`:
+Normal messages and bounded unaddressed group candidates enter Interaction Middleware. Personal Runtime owns turn admission and session state. One structured Persona response plan returns `reply`, `delegate`, or (only for an eligible group candidate) `silent`:
 
-- `persona`: do not start Core; generate visible language through Persona Expression.
-- `hybrid`: let Core Planner independently decide whether execution is necessary; Core handles tools, knowledge, Skills, and other substantial work.
-- `silent`: cancel Persona output that is still pending, without retracting an expression that was already committed or delivered.
+- `reply`: complete the visible response in Personal without starting Core.
+- `delegate`: send one natural, brief acknowledgement, then let Core Planner prepare the delegated work for Core tools, knowledge, Skills, and other substantial work.
+- `silent`: emit no visible output; it is available only to eligible group candidates.
 
-The Core Head coordinates task, event, cancellation, and execution lifecycle in-process. It is currently a synchronous entry point: it does not create a separate queue or send platform messages directly. Core results never bypass Persona Expression. Immediate replies, plugin persona output, and Core-final results share one visible-language and output boundary.
+Core Planner does not make a second admission decision: it only prepares an executable `CoreTaskSpec` for a delegated turn. The Core Head coordinates task, event, cancellation, and execution lifecycle in-process. It is currently a synchronous entry point: it does not create a separate queue or send platform messages directly. Core results never bypass Persona Expression. Immediate replies, plugin persona output, and Core-final results share one visible-language and output boundary.
 
 ## Plugin Participation
 

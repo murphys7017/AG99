@@ -10,8 +10,8 @@
 
 当前第一目标是让高约束场景脱离“手写自由文本 JSON prompt”。其中：
 
-- interaction fast router 不使用结构化输出契约，只返回固定路由词
-- persona visible-reply 以协议级虚拟 `persona_expression` tool-call 为主成功路径
+- 普通 Interaction 的 Personal Response Plan 使用严格的 `persona_expression` 协议级虚拟 tool-call，并要求 `turn_action`
+- persona visible-reply 以同一 `persona_expression` tool-call 为主成功路径
 
 ## 核心类型
 
@@ -125,19 +125,17 @@ provider 负责把 compiled binding 落到自身协议：
 
 Gemini、VolcEngine Ark 等 provider 当前没有 provider-specific renderer。strict contract 到达这些 provider 时，应按场景策略显式失败或受控降级。
 
-## Interaction Fast Router
+## Interaction Personal Response Plan
 
-interaction fast router 是一个轻量分类器，不属于 OutputContract 高约束消费者。
+普通 Interaction 不再有独立 Fast Router。它使用同一个严格 `persona_expression` 输出契约，同时承载自然表达、effect 和本轮动作选择。
 
 运行规则：
 
-- 普通显式唤醒只判断 `persona` / `hybrid`；仅有界群聊模型续接候选增加 `silent`。
-- 不生成用户可见回复。
-- 不输出 `effect_calls`。
-- 不注册 tool-call，不要求 JSON。
-- 解析器可容忍旧 JSON 形态，但 prompt 目标是固定词文本。
-
-旧的 heavy decision agent 仍可作为历史/辅助实现存在，但当前 fast path 的 router 不应承担 structured output、core task spec 或 persona effect 生成职责。
+- `turn_action=reply`：Personal 直接完成本轮可见回复。
+- `turn_action=delegate`：`spoken_reply` 只能是简短处理中确认，随后由 Core Planner 为已委派任务生成 `execute + CoreTaskSpec`。
+- `turn_action=silent`：仅允许合格的群聊候选，且 `spoken_reply`、`speech_cues` 和 `effect_calls` 都必须为空。
+- 无论动作为何，`effect_calls` 都遵守当前事件过滤后的 effect schema 与必发约束；允许的 `silent` 必须为空。
+- 结构化输出不携带 Planner 推理、Core task spec 或用户不可见的控制理由。
 
 ## Persona Visible Reply
 

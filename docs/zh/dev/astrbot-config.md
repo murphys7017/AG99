@@ -416,7 +416,7 @@ Added in `v4.3.5`
 是否启用群聊上下文感知。默认为 `false`。启用后，机器人会记录群聊中的对话内容，以便更好地理解群聊的上下文。
 
 记录会在官方白名单和会话状态检查通过后进行。上下文作为结构化的非可信群聊消息提供给
-Router、人格层和 Core，不会把群成员消息当作系统指令。
+Personal、人格层和 Core，不会把群成员消息当作系统指令。
 
 #### `provider_ltm_settings.group_message_max_cnt`
 
@@ -453,7 +453,7 @@ Router、人格层和 Core，不会把群成员消息当作系统指令。
 - `possibility_reply`: 候选抽样概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
 - `whitelist`: 候选白名单。仅在此列表中的 ID 才会形成候选。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
 
-候选不会直接调用 LLM。它们会先经过支持 `silent` 的 Router；Router 对未唤醒群聊默认静默，只有明确需要机器人加入时才会继续人格或 Core 流程。
+候选不会直接调用独立分类模型。它们会由一次 Personal 结构化回复计划判断 `reply`、`delegate` 或 `silent`；允许静默的群聊候选只有在确实无需参与时才返回 `silent`。
 
 ### `interaction_middleware`
 
@@ -466,16 +466,16 @@ Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑
 编辑器会提供已安装插件和插件工具建议，同时保留手工输入兼容模块路径的能力。
 
 - `enabled`：是否启用 Interaction Middleware。省略时启用；设为 `false` 可保留原有 Core-only 行为。
-- `expression_provider_id`、`router_provider_id` 与 `planner_provider_id`：可选的分阶段模型覆盖。
+- `expression_provider_id` 与 `planner_provider_id`：可选的分阶段模型覆盖。
   留空时复用当前会话已配置的聊天模型；显式填写 ID 时优先使用该模型。
-- `parallel_plugin_runtime_enabled`：是否启用 Personal、Router 与 Official Plugin Job 的三线并行路径。
+- `parallel_plugin_runtime_enabled`：是否启用 Personal 与 Official Plugin Job 的并行路径。
   默认 `false`，且是整条插件路径的全局开关，不支持按单个插件半启用。关闭时保留 Handler 先接管的
   兼容路径；开启前应先检查 `DIAG interaction.parallel_turn` 等运行日志。
-- `plugin_parallel_window_seconds`：三线并行时 T1 等待插件处理决定的窗口，默认 `3` 秒。窗口结束只
+- `plugin_parallel_window_seconds`：并行时 T1 等待插件处理决定的窗口，默认 `3` 秒。窗口结束只
   解除本轮对插件决定的等待，不会取消仍在运行的插件 Job；迟到产物按插件输出协议处理。
-- `persona_history_window_size`：Persona Expression 使用的最近 Conversation 历史轮数，默认 `50`。
-  增大它会提高当前请求的上下文长度；它不替代 Memory 的语义检索，也不改变 Router 或 Core Planner
-  的独立历史预算。
+- `persona_history_window_size`：Persona Expression 的历史候选池上限，默认 `300`。系统优先保留
+  最近连续上下文，再从较早记录中选择少量与当前输入和 Memory 相关的锚点，并按 token 预算动态裁剪；
+  它不替代 Memory 的语义检索，也不改变 Core Planner 或 Core 的独立历史预算。
 - `plugin_runtime_targets`：插件 LLM 生命周期目标映射。键推荐使用插件目录名，值为 `core` 或
   `personal_expression`。该配置会覆盖插件类可选的 `interaction_runtime_target` 声明；既未配置
   也未声明的插件默认在 Persona Expression 运行。普通关键词、命令和 `AdapterMessageEvent`
@@ -510,12 +510,12 @@ Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑
   与原因码，例如 `heartbeat_without_material`、`idle_initiation_not_due`。
 - `personal_conversation_activity_enabled`：允许已配置观察范围内的非唤醒群聊消息形成受限的
   `conversation_activity` 事实；它仍会先经过白名单和会话状态检查，不会作为普通消息进入插件、
-  Router 或 Core。
+  Personal 计划或 Core。
 - `personal_runtime_direct_continuation_seconds`：Bot 成功回复明确触发它的用户后，仅该用户可在这段
-  窗口内无需再次 `@`；Router 仍判断 `persona` 或 `hybrid`，但不能选择 `silent`。默认 `10` 秒，
+  窗口内无需再次 `@`；Personal 仍判断 `reply` 或 `delegate`，但不能选择 `silent`。默认 `10` 秒，
   且不会超过连续对话总窗口。
 - `personal_runtime_conversation_continuation_seconds`：直接续接窗口结束后，仍只允许上述同一用户的
-  未唤醒消息进入 Router，由其判断 `persona`、`hybrid` 或 `silent`。默认 `120` 秒，设为 `0` 可关闭。
+  未唤醒消息进入 Personal，由其判断 `reply`、`delegate` 或 `silent`。默认 `120` 秒，设为 `0` 可关闭。
 - `personal_runtime_muted`、`personal_runtime_quiet_hours_*`、
   `personal_runtime_reply_cooldown_seconds`、`personal_runtime_no_action_cooldown_seconds` 与
   `personal_runtime_daily_proactive_output_limit`：控制静音、安静时段、重试节流和每日主动表达上限。
@@ -526,7 +526,7 @@ Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑
   命中的配置决定。它只限定可观察的会话，不决定何时发送消息。
 
 `provider_ltm_settings.active_reply` 仅控制群聊候选抽样；它与 Personal Runtime Policy 仍是独立
-功能，但候选回复与连续对话共用 Router 的静默门控。
+功能，但候选回复与连续对话共用 Personal 的静默门控。
 
 ### `content_safety`
 

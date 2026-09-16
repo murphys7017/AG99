@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- **状态**：方案评审修订稿（2026-08-28）
+- **状态**：方案评审修订稿，已按 2026-09 统一 Personal 回复计划修订
 - **适用项目**：AG99（基于 AstrBot 的持续演进版本）
 - **当前阶段**：已纳入当前代码基线；本文档只列出尚未完成的边界收口，不把已完成工作重复列为重构任务
 - **风险等级**：高。该方案会影响 Interaction、Prompt、Memory、Personal Runtime 和日志协议，但第一阶段只允许做文档与观测准备
@@ -10,13 +10,18 @@
 
 这份文档解决的不是“再写一版人格提示词”，而是收口人格相关职责。当前人格能力已经具备较完整的运行链路，但静态人格、关系状态、运行控制、模型决策和最终表达仍分散在多个模块中，导致命名重叠、调用链难以解释、日志难以归因，也使性能优化容易变成局部打补丁。
 
+> **当前主链修订。** 普通对话不再有独立 Router。Personal 的即时 `persona_expression` 是同一个
+> 结构化回复计划：`reply` 直接完成，`delegate` 先发送简短确认后委派 Core，`silent` 只对允许的
+> 群聊候选生效。Planner 只整理 `delegate` 任务的可执行规格。下文关于 Router 的已完成阶段、
+> 旧日志和迁移理由保留为历史记录；与本框冲突时以本框、源码和 `current-state.md` 为准。
+
 ## 当前基线状态
 
 本计划必须建立在当前实现之上，而不是假设所有边界都尚未存在：
 
 | 状态 | 当前结论 |
 | --- | --- |
-| 已完成 | Persona Expression 已是 visible-reply 的统一入口；Router、Core Planner、Personal Policy 已使用结构化决策并禁止生成用户台词；普通消息中的 Personal/Router 并行、Core-final 回到 Persona、Delivery Receipt 驱动冷却和额度等主语义已经存在 |
+| 已完成 | Persona Expression 已是 visible-reply 的统一入口；普通消息由一次 Personal 结构化计划决定 `reply/delegate/silent`，Core-final 回到 Persona，Delivery Receipt 驱动冷却和额度等主语义已经存在 |
 | 已完成 | PersonalState 已区分进程态快照与 `PersonalPersistentState`，并由 `PersonalStateRepository` 持久化最小控制字段；Heartbeat/idle initiation 的安静结果已经不再逐次以 INFO 输出 |
 | 部分完成 | 静态 Persona、Memory PersonaState、Personal Runtime 控制状态已经有独立代码位置，但领域命名、作用域和 Prompt 槽位仍未完全统一 |
 | 部分完成 | Prompt target、ContextPack single-flight、插件 enrichment、主动 Observation Inbox 和 Wake Scheduler 已存在，但仍需要把数据所有权和失败语义写成稳定契约 |
@@ -32,7 +37,7 @@
 
 1. 明确“人格是什么”和“本轮是否表达”是两个不同问题。
 2. 将稳定人格、关系状态、运行控制、决策和可见表达拆成稳定边界。
-3. 让 Router、Core Planner、Personal Policy 只做决策，不生成用户可见台词。
+3. 让 Personal Response Plan、Core Planner、Personal Policy 各自只承担明确决策，不生成第二套用户可见台词。
 4. 让所有需要人格改写的语义文本继续经过唯一的 Persona Expression 入口；direct/media 等兼容输出保持明确的旁路语义。
 5. 让普通对话、群聊候选、主动观察、插件/Core 委派都复用同一套人格表达协议。
 6. 让 Prompt target 只决定“某个目标可以看到哪些事实以及要遵守什么输出约束”，不在不同 Agent 内部重复拼接人格。
@@ -48,7 +53,7 @@
 - 立即把 AG99 拆成多进程或分布式服务。
 - 重新引入 LLM Selector 来决定 Prompt target。
 - 让 Memory 在 Prompt collect 阶段写入状态。
-- 让 Router、Planner 或 Policy 直接发送消息、执行工具或生成用户台词。
+- 让 Core Planner 或 Policy 直接发送消息、执行工具或生成用户台词。
 - 一次性删除所有旧字段和旧入口。
 - 为某个单独插件、某个平台或某个 Provider 添加专用分支。
 
@@ -63,7 +68,7 @@
 | 静态人格 | `astrbot/core/prompt/collectors/persona_collector.py`、`persona_segments.py` | 负责内容收集，但容易被误认为拥有全部人格状态 |
 | 关系与长期状态 | `astrbot/core/memory/persona_state_service.py`、`memory.persona_state` | 与静态 Persona、Conversation、PersonalState 的命名边界不够清楚 |
 | 本轮运行状态 | `astrbot/core/interaction/personal_state.py`、`personal_runtime.py` | 同时承载忙闲、冷却、观察、表达和诊断字段，容易形成大状态对象 |
-| 参与/路由决策 | `router_agent.py` | 负责是否参与，但历史上容易与“人格表达”概念混淆 |
+| 普通回复计划 | `expression_agent.py`、`persona_runtime.py` | 同一次结构化 Persona 输出决定可见表达与 `reply/delegate/silent`，不得扩展为任务规划或 Core 工具执行 |
 | Core 是否执行 | `core_planner.py` | 负责执行计划，不应拥有可见表达权限 |
 | 主动观察决策 | `personal_policy.py`、`personal_gate.py` | 负责是否形成行动意图，但必须与普通回复人格表达隔离 |
 | 用户可见表达 | `expression_agent.py`、`persona_runtime.py` | 已经接近统一入口，但请求字段和调用来源仍较平铺 |
@@ -82,14 +87,14 @@
 如果这些信息继续放在同一对象或同一 Prompt 片段中，后续会出现三类风险：
 
 1. 一次短期冷却变化被误认为人格变化。
-2. Router/Policy 的无动作结果被误认为 Persona 没有回复能力。
+2. Personal Policy 的无动作结果被误认为 Persona 没有回复能力。
 3. 已生成但未送达的文本被当成“最近表达”，造成错误去重和冷却。
 
 ### 2.3 无动作回复与慢响应的共同根因
 
 “无动作回复”和“响应慢”并不一定是同一个 bug，但都容易由边界不清放大：
 
-- Personal 与 Router/Planner 的启动时机不透明，无法判断是在并行等待还是串行等待。
+- Personal 与 Planner 的启动时机不透明，容易重新引入不必要的串行等待。
 - Persona 请求可能携带过多决策字段，导致表达模型重复承担路由工作。
 - 插件 enrichment、Core 材料和表达材料没有明确的 best-effort / wait-complete 策略时，Persona 可能被不必要地阻塞。
 - idle initiation 的调度检查、排队、合并、唤醒和无新事实如果没有统一关联，会让日志看起来像频繁推送，掩盖真正的发送次数；当前日志级别已完成初步降噪，剩余问题是关联和聚合。
@@ -120,10 +125,10 @@ PersonaDefinition
     + RuntimeControlSnapshot
     + CurrentInteractionMaterial
     -> EffectivePersonaContext
-         ├─ Ordinary turn: Personal Expression branch
-         │       └─ PersonaExpression -> Output Controller -> Delivery Receipt
-         └─ Control branch: Router -> Core Planner -> Core (仅 hybrid/execute)
-                                └─ Core material -> PersonaExpression -> Delivery Receipt
+         ├─ Ordinary turn: Personal Response Plan
+         │       ├─ reply -> Output Controller -> Delivery Receipt
+         │       ├─ delegate -> Core Planner -> Core -> PersonaExpression -> Delivery Receipt
+         │       └─ silent (eligible group only) -> complete without visible output
 
 Observation branch:
 ObservationBatch -> Gate -> Personal Policy -> PersonalActionIntent
@@ -135,7 +140,7 @@ ObservationBatch -> Gate -> Personal Policy -> PersonalActionIntent
 1. **PersonaDefinition**：稳定的人格定义，回答“我是谁、我应该遵守什么稳定表达规则”。
 2. **PersonaRelationshipState**：按用户、群体或隐私作用域隔离的关系状态，回答“我和当前对象处于什么关系状态”。
 3. **RuntimeControlState**：进程运行和主动表达控制，回答“现在是否允许继续做某件事”。
-4. **Decision Plane**：Router、Core Planner、Personal Policy 等决策组件，回答“这一轮是否参与、是否执行、是否形成行动意图”。
+4. **Decision Plane**：Personal Response Plan、Core Planner、Personal Policy 等决策组件，回答“这一轮是否参与、是否执行、是否形成行动意图”。
 5. **PersonaExpression**：唯一的可见自然语言表达组件，回答“在已获准表达的前提下，应该如何说”。
 
 这五层不是五个必须立即新增的类，而是必须先固定的所有权边界。迁移初期可以由现有类提供适配，但禁止继续扩大旧类的职责。
@@ -169,9 +174,9 @@ EffectivePersonaContext(
 决策平面只输出结构化结果：
 
 ```text
-Router       -> RouteDecision
-Core Planner -> CoreExecutionDecision
-Policy       -> PersonalActionIntent
+Personal Plan -> reply / delegate / silent
+Core Planner  -> executable CoreTaskSpec
+Policy        -> PersonalActionIntent
 ```
 
 表达平面只接收材料和约束：
@@ -180,9 +185,9 @@ Policy       -> PersonalActionIntent
 PersonaExpressionRequest -> PersonaExpressionResult
 ```
 
-表达平面不得再次判断是否应该参与、是否应该静默，也不得由不同调用方通过私有布尔值临时
-改变同一 `personal_expression` 的插件 FunctionTool 授权。普通 turn 中 Personal Expression
-与 Router 可以并行启动；只有 Core-final 和主动 Observation 按各自上游结果进入表达平面。
+表达平面不得再次规划 Core 工作，也不得由不同调用方通过私有布尔值临时改变同一
+`personal_expression` 的插件 FunctionTool 授权。普通 turn 中 Personal Expression 的一次
+结构化结果同时完成表达和参与决策；只有 Core-final 和主动 Observation 按各自上游结果进入表达平面。
 即时表达与 Core-final 是同一表达面在不同材料和发送时机下的调用，不建立 `fast_persona`
 或其他第二执行面。若上游没有表达许可，表达组件不应被调用；若上游已经获得表达许可但材料
 为空，应返回明确的结构化空结果，而不是生成“无动作回复”。
@@ -345,9 +350,8 @@ Collectors -> ContextPack -> target projection -> Render Profile -> Layout -> Pr
 
 | Target | 可以看到 | 不可以看到/执行 |
 | --- | --- | --- |
-| `persona_expression` | PersonaDefinition、关系摘要、必要 MemorySnapshot、当前表达材料、表达约束、已授权 effect schema | Core capability、工具执行细节、Router/Planner/Policy 的内部推理、原始诊断 provenance |
-| `router` | 当前输入、最小会话事实、唤醒/续接资格、必要历史摘要 | Persona Expression prompt、插件扩展、工具、effect、Core 执行能力 |
-| `core_planner` | 当前输入、任务说明、执行历史摘要、能力可用性、路由结果 | 用户可见台词、Persona Expression 私有规则、Policy 内部状态 |
+| `persona_expression` | PersonaDefinition、关系摘要、必要 MemorySnapshot、当前表达材料、表达约束、已授权 effect schema | Core capability、工具执行细节、Planner/Policy 的内部推理、原始诊断 provenance |
+| `core_planner` | 当前输入、已委派任务、执行历史摘要和必要执行事实 | 用户可见台词、Persona Expression 私有规则、Policy 内部状态 |
 | `personal_policy` | 结构化 ObservationBatch、控制快照、最近表达时间/是否存在的摘要、时间/预算条件 | 原始表达指纹、工具、Skills、知识库、effect 执行、原始平台事件、可见回复文本生成 |
 | `native_core` | 完整 CoreExecutionSpec 和已装配 ToolSet | 其他 target 的隐藏材料和未授权插件扩展 |
 
@@ -362,10 +366,10 @@ Collectors -> ContextPack -> target projection -> Render Profile -> Layout -> Pr
   -> InteractionTurnState
   -> 基础 ContextPack
   -> Personal Runtime lease
-  -> Personal Expression 与 Router 并行
-  -> Personal 获得输出 reservation 后直接表达
-  -> Router 决定 persona / hybrid / silent
-  -> hybrid 时 Core Planner / Core 执行
+  -> Personal Response Plan（结构化 Persona Expression）
+  -> reply：Personal 获得输出 reservation 后直接表达
+  -> delegate：Personal 先给出简短确认，再进入 Core Planner / Core 执行
+  -> silent：仅允许的群聊候选零输出完成
   -> Core 结果回到 Persona Expression
   -> Output Controller
   -> Delivery Receipt
@@ -374,9 +378,9 @@ Collectors -> ContextPack -> target projection -> Render Profile -> Layout -> Pr
 
 规则：
 
-- Personal 负责即时可见回复，不等待 Router 或 Planner 完成。
-- Router 的 `silent` 只能取消仍处于 pending 的 Personal，不得撤回已提交或已送达表达。
-- Core Planner 不能压制已经获得发送权的 Persona 回复。
+- Personal 负责即时可见回复与本轮动作选择；`reply` 不进入 Core，`delegate` 才启动 Planner。
+- `silent` 只能在允许的群聊候选且 Personal 尚未提交表达时形成零输出，不得撤回已提交或已送达表达。
+- Core Planner 不能压制已经获得发送权的 Persona 回复，也不重新判断是否需要 Core。
 - Core 成功、失败、工具错误都作为表达材料交给 Persona，不由 Core 自行拼最终台词。
 
 ### 6.2 群聊候选消息
@@ -386,8 +390,8 @@ Collectors -> ContextPack -> target projection -> Render Profile -> Layout -> Pr
   -> WakingCheckStage
   -> WhitelistCheckStage / SessionStatusCheckStage
   -> ConversationActivity / continuation eligibility
-  -> Router + Personal（仅合格候选）
-  -> silent / persona / hybrid
+  -> Personal Response Plan（仅合格候选）
+  -> silent / reply / delegate
 ```
 
 规则：
@@ -395,7 +399,7 @@ Collectors -> ContextPack -> target projection -> Render Profile -> Layout -> Pr
 - 未明确唤醒时，必须先经过官方唤醒、白名单和会话状态检查。
 - 同一发送者的续接资格由拥有者和窗口决定，Conversation 历史本身不授予唤醒权。
 - 群聊环境观察只产生结构化 Observation，不把原文伪装成用户消息。
-- `silent` 是 Router 的群聊参与决策，不是 Persona Expression 的输出模式。
+- `silent` 是 Personal Response Plan 的群聊参与结果，属于 Persona Expression 的结构化输出模式。
 
 ### 6.3 主动观察与 idle initiation
 
@@ -453,7 +457,7 @@ Plugin Handler
 规则：
 
 - 插件可提供材料、ProviderRequest 或直接输出，但显式 `persona` 输出最终仍经统一 Persona Expression。
-- Router、Planner、Policy 不直接接收插件工具或插件内部扩展，除非通过已声明的 target projection。
+- Planner、Policy 不直接接收插件工具或插件内部扩展，除非通过已声明的 target projection。
 - `DELEGATED` 失败不得重放 ProviderRequest；已完成但尚未送达的产物走既有 T2 ledger 路径。
 - direct/media 兼容路径保持原语义，但不得反向污染 Persona 状态。
 
@@ -524,7 +528,7 @@ Plugin Handler
 退出条件：
 
 - `persona_expression` target 的人格材料来源可枚举。
-- Router、Planner、Policy 不再通过通用 Persona collector 获得超出其白名单的内容。
+- Planner、Policy 不再通过通用 Persona collector 获得超出其白名单的内容。
 - 同一轮多次表达复用同一份基础快照，不重复执行昂贵收集。
 
 ### Phase 3：迁移 Persona Expression
@@ -548,14 +552,14 @@ Plugin Handler
 - 生成成功但送达失败不会更新冷却、最近表达和主动额度。
 - “无动作”可区分为 `not_admitted`、`no_material`、`intentional_empty`、`suppressed_duplicate`、`policy_ignore`、`expression_failed`、`delivery_failed`。
 
-### Phase 4：隔离 Router、Core Planner、Personal Policy
+### Phase 4：固化 Personal Response Plan、Core Planner、Personal Policy 边界
 
 **目标**：审计并固化现有决策边界，不重复实现已经存在的结构化结果。
 
 工作项：
 
-- 核对 Router、Core Planner、Personal Policy 的现有返回契约和发送权限，补齐遗漏调用方。
-- 保留 Router 的 `silent/persona/hybrid`、Planner 的 `execute/not_required`、Policy 的 `ignore/observe/express/defer` 语义。
+- 核对 Personal Response Plan、Core Planner、Personal Policy 的现有返回契约和发送权限，补齐遗漏调用方。
+- 保留 Personal 的 `reply/delegate/silent`、Planner 的固定 `execute + CoreTaskSpec`、Policy 的 `ignore/observe/express/defer` 语义。
 - 清理仍存在的三类组件对 `event.send()`、Output Controller、Conversation 的直接依赖；已经符合边界的代码不再迁移。
 - 为每种决策增加 reason code 和耗时字段。
 
@@ -593,7 +597,7 @@ Plugin Handler
 - 为每个阶段记录 `started_at`、`completed_at`、`wait_reason`、`budget_remaining`。
 - 只并发无副作用且有明确 single-flight 约束的 Collector。
 - Persona 使用基础 ContextPack 时采用 best-effort；Core 需要完整插件 enrichment 时复用同一 task，不重复收集。
-- 将 Router、Persona、插件 Runtime 的同一 `t0` 并行关系写入 trace，而非依赖人工猜测时间。
+- 将 Personal、插件 Runtime 的同一 `t0` 并行关系写入 trace，而非依赖人工猜测时间。
 - 对 Provider 调用增加按 target、intent、cache 命中情况的统计。
 
 退出条件：
@@ -612,7 +616,6 @@ Plugin Handler
 - `astrbot/core/interaction/expression_agent.py`
 - `astrbot/core/interaction/personal_policy.py`
 - `astrbot/core/interaction/personal_gate.py`
-- `astrbot/core/interaction/router_agent.py`
 - `astrbot/core/interaction/core_planner.py`
 - `astrbot/core/interaction/output_controller.py`
 - `astrbot/core/prompt/collectors/persona_collector.py`
@@ -740,7 +743,7 @@ personal_wake_skipped
 
 至少验证四条真实路径：
 
-1. 私聊明确消息：Personal 与 Router 同一 `t0` 启动，Personal 可以先于 Planner 表达。
+1. 私聊明确消息：Personal 在一次结构化输出中选择 `reply` 或 `delegate`；`delegate` 的确认可以先于 Planner 和 Core 表达。
 2. 群聊未唤醒消息：不满足资格时不调用 Persona、不调用 Core、不产生平台输出。
 3. 主动观察：空 Inbox 不调用 Provider；Policy express 只在送达成功后更新控制状态。
 4. 插件委派：ProviderRequest 只执行一次，Core 结果只经过一次 Persona Expression。
@@ -758,16 +761,16 @@ personal_wake_skipped
 性能优化必须建立在边界稳定之后，优先级如下：
 
 1. **去掉重复工作**：同一 turn 复用 ContextPack、enrichment task 和已构造的表达材料。
-2. **提前开始无副作用工作**：Personal、Router、可安全并行的插件 Runtime 从同一 `t0` 启动。
+2. **提前开始无副作用工作**：Personal 与可安全并行的插件 Runtime 从同一 `t0` 启动。
 3. **缩短等待而不是降低质量**：Persona 首次表达使用基础上下文，Core 再等待完整执行材料。
 4. **减少空转唤醒**：Heartbeat 不为无新事实或已有更早 deadline 的 Runtime 创建重复 initiation。
-5. **控制模型调用数**：Router/Planner/Policy 各自只在有明确职责时调用；表达模型不承担路由判断。
+5. **控制模型调用数**：Planner/Policy 各自只在有明确职责时调用；Personal 的同一次结构化表达承担本轮动作选择，不再有独立路由调用。
 6. **按阶段消耗统一预算**：所有阶段共享同一个 turn deadline，不允许某个内部重试悄悄延长整轮响应。
 
 不得通过以下方式“优化”：
 
 - 直接删除 Persona Expression 以换取速度。
-- 让 Router 或 Core 自己生成可见台词。
+- 让 Core 自己生成可见台词，或重新引入与 Personal 重叠的独立路由表达。
 - 让 idle scheduler 以更高频率轮询来弥补状态不清。
 - 用静默 fallback 掩盖 Provider、插件或平台送达失败。
 
@@ -779,7 +782,7 @@ personal_wake_skipped
 - Persona 与 Memory 的作用域迁移可能造成历史状态无法直接匹配。
 - 统一表达入口会暴露现有 direct/media 兼容路径的隐含差异。
 - Provider 对严格 Persona 输出契约的支持能力不一致。
-- 并行启动 Personal、Router、插件 Runtime 会产生不可见的 speculative cost，需要通过 trace 证明收益。
+- 并行启动 Personal 与插件 Runtime 会产生不可见的 speculative cost，需要通过 trace 证明收益。
 - 日志聚合过度可能降低故障定位能力，必须保留首尾异常和稳定关联 ID。
 
 ### 需要在 Phase 0/1 评审时确认
@@ -797,7 +800,7 @@ personal_wake_skipped
 
 - 稳定人格、关系状态、运行控制、决策和表达拥有清晰且可追踪的所有权。
 - 所有用户可见自然语言都能定位到唯一 Persona Expression 或明确兼容出口。
-- Router、Planner、Policy 不拥有发送权限，也不生成用户台词。
+- Planner、Policy 不拥有发送权限，也不生成用户台词；Personal 是普通轮次唯一的统一表达与动作选择入口。
 - 普通回复、群聊候选、主动观察和插件委派共享统一的表达/送达协议。
 - 无动作结果可解释、可测试，且不会产生空占位回复。
 - idle initiation 日志能够区分内部调度与真实推送，重复检查不会制造 INFO 噪声。

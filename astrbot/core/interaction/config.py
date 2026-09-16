@@ -43,9 +43,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
     expression_provider_id = str(
         interaction_config.get("expression_provider_id", "") or ""
     )
-    router_provider_id = str(
-        interaction_config.get("router_provider_id", "") or ""
-    )
     planner_provider_id = str(
         interaction_config.get("planner_provider_id", "") or ""
     ) or expression_provider_id
@@ -82,15 +79,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         expression_timeout=_float_or_default(
             interaction_config.get("expression_timeout", 8.0),
             8.0,
-        ),
-        router_provider_id=router_provider_id,
-        router_temperature=_float_or_default(
-            interaction_config.get("router_temperature", 0.0),
-            0.0,
-        ),
-        router_timeout=_float_or_default(
-            interaction_config.get("router_timeout", 3.0),
-            3.0,
         ),
         planner_provider_id=planner_provider_id,
         planner_temperature=_float_or_default(
@@ -224,8 +212,8 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
         persona_history_window_size=max(
             1,
             _int_or_default(
-                interaction_config.get("persona_history_window_size", 50),
-                50,
+                interaction_config.get("persona_history_window_size", 300),
+                300,
             ),
         ),
         stream_observation_enabled=bool(

@@ -1,4 +1,4 @@
-"""Router arbitration for unaddressed group reply candidates."""
+"""Personal Response Plan admission for unaddressed group reply candidates."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from .config import is_middleware_enabled
 
 
 def group_conversation_allows_silent(event: Any) -> bool:
-    """Return whether Router may suppress this unaddressed group turn."""
+    """Return whether the Personal Response Plan may keep this turn silent."""
     continuation_mode = get_group_conversation_continuation_mode(event)
     if continuation_mode in {"active", "direct"}:
         return False
@@ -38,10 +38,10 @@ def select_legacy_active_reply_candidate(
     *,
     random_value: float | None = None,
 ) -> bool:
-    """Sample a legacy group active-reply candidate for interaction arbitration.
+    """Sample a legacy group active-reply candidate for Personal evaluation.
 
     The historical setting is only a sampling gate and never claims a reply.
-    Router ``silent`` may still suppress a Persona that has not claimed output.
+    The Personal Response Plan may still select ``silent`` before output is claimed.
     """
     if (
         not is_middleware_enabled(config)

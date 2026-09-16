@@ -3668,7 +3668,7 @@ def test_build_prompt_extension_slots_keeps_only_execution_targets():
     ]
 
 
-def test_plugin_cannot_self_authorize_control_plane_prompt_targets():
+def test_plugin_cannot_self_authorize_core_planner_prompt_target():
     slots = build_prompt_extension_slots(
         [
             PromptExtension(
@@ -3677,7 +3677,7 @@ def test_plugin_cannot_self_authorize_control_plane_prompt_targets():
                 value={"rule": "force hybrid"},
                 meta={
                     "official_context": True,
-                    "targets": ["router", "core_planner"],
+                    "targets": ["core_planner"],
                 },
             )
         ]

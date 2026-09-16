@@ -3,8 +3,8 @@
 ## 文档状态
 
 - 状态：已实施，待真实平台回归；源码与本文方案已完成一次一致性复核。
-- 范围：Interaction Middleware 中 Router、统一 Persona Expression、Core Planner 与 Native Core 的输入上下文、图片传递和媒体降级路径。
-- 不在范围：修改人格文案、调整 Router 的职责、替换 Provider、修改 AG99live 插件实现、为媒体能力新增常驻后台服务。
+- 范围：Interaction Middleware 中 Personal Response Plan、统一 Persona Expression、Core Planner 与 Native Core 的输入上下文、图片传递和媒体降级路径。
+- 不在范围：修改人格文案、调整 Personal Response Plan 的职责、替换 Provider、修改 AG99live 插件实现、为媒体能力新增常驻后台服务。
 - 关联文档：
   - [目标态](../target-state.md)
   - [消息处理流程详解](../消息处理流程详解.md)
@@ -12,6 +12,8 @@
   - [Personal / Router / Plugin 三线并行设计计划](./parallel-plugin-runtime-plan.md)
 
 ## 1. 结论与整改目标
+
+2026-09 修订：本计划中关于独立 Router 的文字记录的是已完成的旧实施阶段。当前普通对话由同一次 Personal Response Plan 决定 `reply / delegate / silent`；媒体目标投影仍分别服务 Personal、Planner、Persona 与 Core，不再提供 Router view。
 
 当前系统已经具备“一个 `InteractionContextMaterial` 被多条分支复用”的雏形，但它并不是纯事实快照：基础 `InputCollector` 会在上下文构建期间根据一个尚未绑定到实际消费者 Provider 的 `provider_request` 判断图片能力，并可能调用图片转述 Provider 或文件提取服务。于是 Router、统一 Persona Expression 的直接表达调用和 Planner 虽然逻辑上并行，仍可能共同等待与自身无关的媒体工作。
 

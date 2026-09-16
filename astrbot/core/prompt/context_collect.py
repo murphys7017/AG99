@@ -50,7 +50,7 @@ PROMPT_EXTENSION_SLOT_NAMES: dict[str, str] = {
     mount: f"extension.{mount}" for mount in PROMPT_EXTENSION_MOUNTS
 }
 PLUGIN_PROMPT_TARGETS = frozenset({"persona", "core"})
-CONTROL_PLANE_PROMPT_TARGETS = frozenset({"router", "core_planner"})
+CONTROL_PLANE_PROMPT_TARGETS = frozenset({"core_planner"})
 PromptExtensionCollectorScope = Literal["all", "control_plane", "plugin"]
 _CONTROL_PLANE_COLLECTOR_MODULE_PREFIXES = (
     "astrbot.core.",
@@ -104,10 +104,10 @@ def _default_collectors(
 
 
 def interaction_base_collectors() -> list[ContextCollectorInterface]:
-    """Return facts needed before an Interaction route is known.
+    """Return facts needed before Personal resolves the response plan.
 
-    Core execution resources are collected later, after routing.  This keeps
-    speculative Router and Persona branches independent from Core-only state.
+    Core execution resources are collected later, after delegation. This keeps
+    Personal expression independent from Core-only state.
     """
     return [
         SystemCollector(base_only=True),
@@ -390,7 +390,7 @@ def _normalize_plugin_prompt_extension(
     *,
     allow_control_plane_targets: bool = False,
 ) -> PromptExtension | None:
-    """Keep third-party prompt contributions off Router and Core Planner."""
+    """Keep third-party prompt contributions off Core Planner."""
     normalized = deepcopy(extension)
     meta = dict(normalized.meta)
     raw_targets = meta.get("targets")

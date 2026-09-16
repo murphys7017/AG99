@@ -11,6 +11,14 @@ class InteractionRouteMode(str, Enum):
     HYBRID = "hybrid"
 
 
+class PersonalResponseAction(str, Enum):
+    """Control decision emitted by the ordinary Personal response plan."""
+
+    REPLY = "reply"
+    DELEGATE = "delegate"
+    SILENT = "silent"
+
+
 @dataclass(slots=True)
 class CoreTaskSpec:
     task_intent: str = "general"
@@ -138,7 +146,6 @@ class CoreTaskSpec:
 
 class CorePlanningAction(str, Enum):
     EXECUTE = "execute"
-    NOT_REQUIRED = "not_required"
 
 
 @dataclass(slots=True)
@@ -159,15 +166,11 @@ class CorePlanningDecision:
             action = CorePlanningAction(raw_action.strip().lower())
         except ValueError:
             return None
-        raw_task_spec = payload["core_task_spec"]
-        if action is CorePlanningAction.EXECUTE:
-            task_spec = CoreTaskSpec.from_mapping(raw_task_spec)
-            if task_spec is None:
-                return None
-        else:
-            if raw_task_spec is not None:
-                return None
-            task_spec = None
+        if action is not CorePlanningAction.EXECUTE:
+            return None
+        task_spec = CoreTaskSpec.from_mapping(payload["core_task_spec"])
+        if task_spec is None:
+            return None
         return cls(action=action, task_spec=task_spec)
 
     def to_dict(self) -> dict[str, Any]:
@@ -181,6 +184,18 @@ class CorePlanningDecision:
 class InteractionRouteDecision:
     route_mode: InteractionRouteMode = InteractionRouteMode.HYBRID
     reason: str = "fast_route"
+
+    @classmethod
+    def from_personal_action(
+        cls,
+        action: PersonalResponseAction,
+    ) -> InteractionRouteDecision:
+        route_mode = {
+            PersonalResponseAction.REPLY: InteractionRouteMode.PERSONA,
+            PersonalResponseAction.DELEGATE: InteractionRouteMode.HYBRID,
+            PersonalResponseAction.SILENT: InteractionRouteMode.SILENT,
+        }[action]
+        return cls(route_mode=route_mode, reason="personal_response_plan")
 
     @classmethod
     def from_mapping(cls, payload: object) -> InteractionRouteDecision | None:
@@ -216,9 +231,6 @@ class InteractionAgentConfig:
     expression_provider_id: str = ""
     expression_temperature: float = 0.6
     expression_timeout: float = 8.0
-    router_provider_id: str = ""
-    router_temperature: float = 0.0
-    router_timeout: float = 3.0
     planner_provider_id: str = ""
     planner_temperature: float = 0.1
     planner_timeout: float = 8.0
@@ -243,7 +255,7 @@ class InteractionAgentConfig:
     personal_idle_initiation_enabled: bool = False
     personal_idle_initiation_after_seconds: float = 1800.0
     memory_window_size: int = 8
-    persona_history_window_size: int = 50
+    persona_history_window_size: int = 300
     stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200
     stream_interjection_enabled: bool = True

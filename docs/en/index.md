@@ -22,7 +22,7 @@ features:
     details: Reuses bounded state across turns and owns session leases, continuation windows, cooldowns, budgets, and observations.
   - icon: ⚡
     title: Fast Expression, Separate Core
-    details: The Router selects persona, hybrid, or silent; Core Planner independently decides whether execution is needed, and Core results return through Persona Expression.
+    details: One Personal Response Plan selects reply, delegate, or eligible-group silent; delegated work is refined by Core Planner, and Core results return through Persona Expression.
   - icon: 🧩
     title: Structured Prompt
     details: Canonical facts flow through collect, build, project, render, and apply without putting routing or tool execution inside the Prompt layer.

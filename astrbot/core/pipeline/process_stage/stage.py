@@ -382,10 +382,6 @@ class ProcessStage(Stage):
                     event,
                     interaction_config,
                 ),
-                router_factory=lambda: middleware.run_router_task(
-                    event,
-                    interaction_config,
-                ),
                 plugin_window_seconds=(
                     interaction_config.plugin_parallel_window_seconds
                 ),
@@ -604,7 +600,7 @@ class ProcessStage(Stage):
 
         # A Handler may decide asynchronously that an otherwise passive
         # group message is worth evaluating. It joins the same interaction
-        # path as every other candidate; Router and Persona start there once.
+        # path as every other candidate; the Personal response plan starts there once.
         if (
             not is_group_candidate
             and not event.is_stopped()

@@ -517,7 +517,7 @@ async def on_astrbot_loaded(self):
 
 ProviderRequest 对象包含了 LLM 请求的所有信息，包括请求的文本、系统提示等。
 
-启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的非工具修改会保留到最终用户可见表达。生命周期目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。插件 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析；请求钩子可以移除工具，但新增工具仍必须通过 Persona 目标授权过滤。Router 和 Core Planner 不会触发请求或 Agent 生命周期钩子；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
+启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的非工具修改会保留到最终用户可见表达。生命周期目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。插件 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析；请求钩子可以移除工具，但新增工具仍必须通过 Persona 目标授权过滤。Core Planner 不会触发请求或 Agent 生命周期钩子；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent
@@ -918,7 +918,7 @@ async def consider_group_message(self, event: AstrMessageEvent):
         request_group_reply_candidate(event)
 ```
 
-该接口仅对群消息返回 `True`。插件 Handler 完成后，Router 会在 `silent`、`persona` 和 `hybrid` 中做最终选择；候选资格不授予插件回复所有权，也不会直接调用 LLM。未调用此接口的旧插件保持原有唤醒行为。
+该接口仅对群消息返回 `True`。插件 Handler 完成后，Personal Response Plan 会在 `reply`、`delegate` 和合格群聊候选的 `silent` 中做最终选择；候选资格不授予插件回复所有权，也不会直接调用 LLM。未调用此接口的旧插件保持原有唤醒行为。
 
 ### 插件配置
 

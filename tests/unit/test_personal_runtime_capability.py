@@ -83,8 +83,8 @@ from astrbot.core.interaction.types import (
     CorePlanningAction,
     CorePlanningDecision,
     CoreTaskSpec,
-    InteractionRouteDecision,
     InteractionRouteMode,
+    PersonalResponseAction,
 )
 from astrbot.core.message.components import Image, Plain, Record
 from astrbot.core.message.message_event_result import MessageChain
@@ -1049,7 +1049,7 @@ def test_group_continuation_guards_return_none():
 
 
 @pytest.mark.asyncio
-async def test_personal_reply_sends_before_slow_silent_router(monkeypatch):
+async def test_personal_reply_completes_with_one_reply_plan(monkeypatch):
     metadata = _metadata(support_personal_runtime=True)
     event = _DirectEvent(
         metadata,
@@ -1064,17 +1064,13 @@ async def test_personal_reply_sends_before_slow_silent_router(monkeypatch):
         SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
     )
     persona_started = asyncio.Event()
-    release_router = asyncio.Event()
-
-    async def route_after_persona(*_args, **_kwargs):
-        await release_router.wait()
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
-
     async def start_persona(*_args, **_kwargs):
         persona_started.set()
-        return PersonaExpressionResult(spoken_reply="hello")
+        return PersonaExpressionResult(
+            spoken_reply="hello",
+            turn_action=PersonalResponseAction.REPLY,
+        )
 
-    middleware.router_agent.route = AsyncMock(side_effect=route_after_persona)
     middleware.persona_runtime.express_visible_reply = AsyncMock(
         side_effect=start_persona
     )
@@ -1084,20 +1080,14 @@ async def test_personal_reply_sends_before_slow_silent_router(monkeypatch):
         AsyncMock(),
     )
 
-    task = asyncio.create_task(middleware.handle_pipeline_event(event))
-    try:
-        await asyncio.wait_for(persona_started.wait(), timeout=1.0)
-        await asyncio.wait_for(event.send_completed.wait(), timeout=1.0)
-        assert [message.get_plain_text() for message in event.sent] == ["hello"]
-        assert task.done() is False
-    finally:
-        release_router.set()
-        await task
+    await middleware.handle_pipeline_event(event)
+    await asyncio.wait_for(persona_started.wait(), timeout=1.0)
+    await asyncio.wait_for(event.send_completed.wait(), timeout=1.0)
 
     turn_state = get_interaction_turn_state(event)
     assert turn_state is not None
     assert turn_state.route_decision is not None
-    assert turn_state.route_decision.route_mode is InteractionRouteMode.SILENT
+    assert turn_state.route_decision.route_mode is InteractionRouteMode.PERSONA
     assert turn_state.speculative_persona_status.value == "emitted"
     assert turn_state.completion_state.outcome is not None
     assert turn_state.completion_state.outcome.value == "replied"
@@ -1128,7 +1118,7 @@ async def test_core_progress_output_does_not_finalize_visible_turn():
 
 
 @pytest.mark.asyncio
-async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
+async def test_plugin_gate_can_suppress_pending_personal_before_completion():
     event = _DirectEvent(_metadata())
     plugin_runtime = PluginExecutionRuntime()
     coordinator = InteractionTurnCoordinator(plugin_runtime)
@@ -1139,17 +1129,12 @@ async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
         persona_started.set()
         await asyncio.Future()
 
-    async def resolve_silent_route():
-        await persona_started.wait()
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
-
     async def hold_plugin(_publish_gate, _submit_provider_request):
         await release_plugin.wait()
 
     turn = await coordinator.start(
         event,
         personal_factory=hold_persona,
-        router_factory=resolve_silent_route,
         plugin_window_seconds=5.0,
         plugin_launch=PluginJobLaunch(
             branch_event=event,
@@ -1159,7 +1144,6 @@ async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
     )
     control_task = asyncio.create_task(coordinator.resolve_control(turn))
     try:
-        await asyncio.wait_for(turn.router_task, timeout=1.0)
         for _ in range(10):
             state = get_interaction_turn_state(event)
             if state is not None and state.speculative_persona_status.value == "suppressed":
@@ -1168,17 +1152,16 @@ async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
 
         state = get_interaction_turn_state(event)
         assert state is not None
-        assert state.route_decision is not None
-        assert state.route_decision.route_mode is InteractionRouteMode.SILENT
-        assert state.speculative_persona_status.value == "suppressed"
+        assert state.speculative_persona_status.value == "pending"
         assert control_task.done() is False
         assert turn.plugin_watcher_task is not None
         assert turn.plugin_watcher_task.done() is False
 
         assert turn.plugin_job is not None
-        turn.plugin_job.publish_gate(PluginGateResolution.PASSED)
+        turn.plugin_job.publish_gate(PluginGateResolution.HANDLED)
         control = await asyncio.wait_for(control_task, timeout=1.0)
-        assert control.route is state.route_decision
+        assert control.route is None
+        assert state.speculative_persona_status.value == "suppressed"
     finally:
         release_plugin.set()
         state = get_interaction_turn_state(turn.event)
@@ -1188,9 +1171,10 @@ async def test_silent_router_suppresses_pending_persona_before_plugin_gate():
 
 
 @pytest.mark.asyncio
-async def test_core_planner_cannot_suppress_ready_personal_reply(monkeypatch):
+async def test_delegated_personal_reply_reaches_core_after_planner(monkeypatch):
     metadata = _metadata(support_personal_runtime=True)
     event = _DirectEvent(metadata)
+    event.set_extra("selected_provider", "test-provider")
     event.message_obj.message.append(Image(file="input.png"))
     runtime_config = {"interaction_middleware": {"enabled": True}}
     middleware = InteractionMiddleware(
@@ -1198,27 +1182,21 @@ async def test_core_planner_cannot_suppress_ready_personal_reply(monkeypatch):
         InteractionOutputController(),
         SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
     )
-    planner_finished = asyncio.Event()
-
-    async def generate_after_planner(*_args, **_kwargs):
-        await planner_finished.wait()
-        return PersonaExpressionResult(spoken_reply="hello")
+    async def generate_delegated(*_args, **_kwargs):
+        return PersonaExpressionResult(
+            spoken_reply="我来查一下。",
+            turn_action=PersonalResponseAction.DELEGATE,
+        )
 
     async def execute_core(*_args, **_kwargs):
-        planner_finished.set()
         return CorePlanningDecision(
             action=CorePlanningAction.EXECUTE,
             task_spec=CoreTaskSpec(task_summary="inspect image"),
         )
 
-    middleware.router_agent.route = AsyncMock(
-        return_value=InteractionRouteDecision(
-            route_mode=InteractionRouteMode.HYBRID,
-        )
-    )
     middleware.core_planner.plan = AsyncMock(side_effect=execute_core)
     middleware.persona_runtime.express_visible_reply = AsyncMock(
-        side_effect=generate_after_planner
+        side_effect=generate_delegated
     )
     middleware._materialize_inbound_media = AsyncMock()
     monkeypatch.setattr(
@@ -1231,18 +1209,14 @@ async def test_core_planner_cannot_suppress_ready_personal_reply(monkeypatch):
 
     turn_state = get_interaction_turn_state(event)
     assert turn_state is not None
-    assert [message.get_plain_text() for message in event.sent] == ["hello"]
+    assert [message.get_plain_text() for message in event.sent] == ["我来查一下。"]
     assert turn_state.core_delegated is True
     assert turn_state.speculative_persona_status.value == "emitted"
     await turn_state.execution_scope.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("router_fails", [False, True])
-async def test_model_continuation_silent_route_suppresses_pending_persona(
-    monkeypatch,
-    router_fails,
-):
+async def test_group_personal_silent_plan_suppresses_visible_output(monkeypatch):
     metadata = _metadata(support_personal_runtime=True)
     event = _DirectEvent(
         metadata,
@@ -1256,23 +1230,11 @@ async def test_model_continuation_silent_route_suppresses_pending_persona(
         InteractionOutputController(),
         SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
     )
-    persona_started = asyncio.Event()
-
-    async def hold_persona(*_args, **_kwargs):
-        persona_started.set()
-        await asyncio.Future()
-
-    async def route_after_persona(*_args, **_kwargs):
-        await persona_started.wait()
-        if router_fails:
-            raise RuntimeError("router failed")
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
-
-    route = AsyncMock(side_effect=route_after_persona)
-    middleware.router_agent.route = route
     middleware._materialize_inbound_media = AsyncMock()
     middleware.persona_runtime.express_visible_reply = AsyncMock(
-        side_effect=hold_persona
+        return_value=PersonaExpressionResult(
+            turn_action=PersonalResponseAction.SILENT,
+        )
     )
     monkeypatch.setattr(
         "astrbot.core.interaction.middleware.dispatch_interaction_lifecycle",
@@ -1281,37 +1243,12 @@ async def test_model_continuation_silent_route_suppresses_pending_persona(
 
     await middleware.handle_pipeline_event(event)
 
-    route.assert_awaited_once()
     middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert event.sent == []
     assert get_interaction_turn_state(event).speculative_persona_status.value == (
         "suppressed"
     )
     assert event.is_stopped()
-    assert bool(event.get_extra("_interaction_router_failed", False)) is router_fails
-
-
-@pytest.mark.asyncio
-async def test_private_router_failure_falls_back_to_persona():
-    metadata = _metadata(support_personal_runtime=True)
-    event = _DirectEvent(metadata, message_type=MessageType.FRIEND_MESSAGE)
-    runtime_config = {"interaction_middleware": {"enabled": True}}
-    middleware = InteractionMiddleware(
-        runtime_config,
-        InteractionOutputController(),
-        SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
-    )
-    middleware.router_agent.route = AsyncMock(
-        side_effect=RuntimeError("router failed")
-    )
-
-    decision = await middleware._route_interaction(
-        event,
-        middleware.interaction_config,
-    )
-
-    assert decision.route_mode is InteractionRouteMode.PERSONA
-    assert event.get_extra("_interaction_router_failure_reason") == "router failed"
 
 
 @pytest.mark.asyncio
@@ -1912,19 +1849,10 @@ async def test_model_continuation_preserves_handler_takeover_before_route(
         InteractionOutputController(),
         plugin_context,
     )
-    persona_started = asyncio.Event()
-
-    async def hold_persona(*_args, **_kwargs):
-        persona_started.set()
-        await asyncio.Future()
-
-    async def route_after_persona(*_args, **_kwargs):
-        await persona_started.wait()
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
-
-    middleware.router_agent.route = AsyncMock(side_effect=route_after_persona)
     middleware.persona_runtime.express_visible_reply = AsyncMock(
-        side_effect=hold_persona
+        return_value=PersonaExpressionResult(
+            turn_action=PersonalResponseAction.SILENT,
+        )
     )
     middleware._materialize_inbound_media = AsyncMock()
     monkeypatch.setattr(
@@ -1961,7 +1889,6 @@ async def test_model_continuation_preserves_handler_takeover_before_route(
     async for _ in process.process(event):
         pass
 
-    middleware.router_agent.route.assert_awaited_once()
     middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert process.agent_sub_stage.called is False
     assert event.sent == []
@@ -2032,7 +1959,7 @@ async def test_waking_marks_explicit_owner_and_preserves_active_handler_takeover
     assert active_event.is_at_or_wake_command
 
 @pytest.mark.asyncio
-async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypatch):
+async def test_handler_group_reply_candidate_reaches_silent_personal_plan(monkeypatch):
     metadata = _metadata(support_personal_runtime=True)
     event = _DirectEvent(
         metadata,
@@ -2051,19 +1978,10 @@ async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypa
         InteractionOutputController(),
         plugin_context,
     )
-    persona_started = asyncio.Event()
-
-    async def hold_persona(*_args, **_kwargs):
-        persona_started.set()
-        await asyncio.Future()
-
-    async def route_after_persona(*_args, **_kwargs):
-        await persona_started.wait()
-        return InteractionRouteDecision(route_mode=InteractionRouteMode.SILENT)
-
-    middleware.router_agent.route = AsyncMock(side_effect=route_after_persona)
     middleware.persona_runtime.express_visible_reply = AsyncMock(
-        side_effect=hold_persona
+        return_value=PersonaExpressionResult(
+            turn_action=PersonalResponseAction.SILENT,
+        )
     )
     middleware._materialize_inbound_media = AsyncMock()
     monkeypatch.setattr(
@@ -2102,7 +2020,6 @@ async def test_handler_group_reply_candidate_reaches_silent_router_once(monkeypa
     async for _ in process.process(event):
         pass
 
-    middleware.router_agent.route.assert_awaited_once()
     middleware.persona_runtime.express_visible_reply.assert_awaited_once()
     assert process.agent_sub_stage.called is False
     assert event.sent == []

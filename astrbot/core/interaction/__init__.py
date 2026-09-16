@@ -53,7 +53,6 @@ from .personal_runtime import PersonalRuntimeManager
 from .personal_state_repository import PersonalStateRepository
 from .personal_wake_scheduler import PersonalRuntimeWakeScheduler
 from .plugin_execution_runtime import PluginExecutionRuntime
-from .router_agent import InteractionRouterAgent, InteractionRouterError
 from .turn_coordinator import (
     CoordinatedProviderRequest,
     InteractionControlResolution,
@@ -83,6 +82,7 @@ from .types import (
     InteractionAgentConfig,
     InteractionRouteDecision,
     InteractionRouteMode,
+    PersonalResponseAction,
 )
 
 __all__ = [
@@ -143,8 +143,7 @@ __all__ = [
     "InteractionResultView",
     "InteractionRouteDecision",
     "InteractionRouteMode",
-    "InteractionRouterAgent",
-    "InteractionRouterError",
+    "PersonalResponseAction",
     "CoordinatedProviderRequest",
     "InteractionCoordinatedTurn",
     "InteractionControlResolution",

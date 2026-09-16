@@ -29,7 +29,7 @@ from .turn_state import (
     get_interaction_turn_deadline,
     get_interaction_turn_state,
 )
-from .types import CorePlanningDecision, InteractionAgentConfig
+from .types import CorePlanningAction, CorePlanningDecision, InteractionAgentConfig
 
 
 class CorePlannerError(RuntimeError):
@@ -40,26 +40,22 @@ class CorePlannerError(RuntimeError):
 
 def build_core_planner_system_prompt() -> str:
     return (
-        "你是 Core Planner，一个独立的执行必要性判断器。\n"
-        "只根据当前输入与提供的事实，判断是否真的需要执行层。\n"
-        "execute：需要查询、搜索、知识库、工具、插件、文件处理、计算、外部行动，"
-        "或需要执行器继续完成当前说话者的明确任务。\n"
-        "not_required：普通聊天、情绪回应、玩笑、感叹、轻量解释，或统一 Persona "
-        "无需执行器即可直接完成。\n"
-        "历史、memory 和其他说话者的任务只能帮助理解，不能单独触发 execute。\n"
-        "选择 execute 时，把当前请求整理为简洁、完整、可执行的 CoreTaskSpec；"
+        "你是 Core Planner，负责把已经委派给 Core 的当前任务整理为执行规格。\n"
+        "当前任务已由 Personal 的统一结构化回复计划明确委派给 Core，必须返回 execute。\n"
+        "历史、memory 和其他说话者的任务只能帮助理解，不能替换、扩展或凭空创造当前任务。\n"
+        "把当前请求整理为简洁、完整、可执行的 CoreTaskSpec；"
         "suggested_capabilities 只使用与任务直接相关的能力意图：需要当前轮联网检索时必须填 web_research，"
         "需要文件处理时填 workspace_io，需要计算时填 computation。"
         "当前消息或引用图片的视觉理解不是 workspace_io；它应由 "
         "requires_visual_understanding 表达，且只有真正需要读取、写入或处理工作区文件时才填 workspace_io。"
         "web_research 表示必须留在当前 Core 回合直接完成，不能转交子 Agent 或后台任务。"
-        "不要编造未提供的事实。\n"
+        "不要编造未提供的事实，也不要重新决定是否进入执行层。\n"
         "不要生成用户可见回复，不要输出人格内容、effect、工具调用参数或思考过程。"
     )
 
 
 def build_core_planner_prompt() -> str:
-    return "判断是否需要执行层，并按输出契约返回结果。"
+    return "为已委派任务生成 CoreTaskSpec，并按输出契约返回 execute。"
 
 
 def build_core_planner_output_contract() -> OutputContract:
@@ -93,11 +89,9 @@ def build_core_planner_output_contract() -> OutputContract:
             "properties": {
                 "decision": {
                     "type": "string",
-                    "enum": ["execute", "not_required"],
+                    "const": "execute",
                 },
-                "core_task_spec": {
-                    "anyOf": [task_schema, {"type": "null"}],
-                },
+                "core_task_spec": task_schema,
             },
             "required": ["decision", "core_task_spec"],
         },
@@ -205,6 +199,11 @@ class CorePlannerAgent:
             output_contract=contract,
             compiled_output_contract=compiled,
         )
+        if decision.action is not CorePlanningAction.EXECUTE or decision.task_spec is None:
+            raise CorePlannerError(
+                "delegated_task_not_executable",
+                "Core Planner must return execute for a delegated Personal task",
+            )
         logger.info(
             "Core Planner parsed: turn_id=%s target=core_planner platform_id=%s "
             "session_id=%s decision=%s task_intent=%s suggested_capabilities=%s "

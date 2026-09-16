@@ -49,7 +49,7 @@ def active_reply_config():
     }
 
 
-def test_legacy_active_reply_only_selects_a_router_candidate():
+def test_legacy_active_reply_only_selects_a_personal_candidate():
     event = make_event()
 
     assert select_legacy_active_reply_candidate(
@@ -73,7 +73,7 @@ def test_legacy_active_reply_requires_interaction_middleware():
     assert not select_legacy_active_reply_candidate(event, config, random_value=0.0)
 
 
-def test_plugin_can_request_router_admission_without_direct_reply_ownership():
+def test_plugin_can_request_personal_admission_without_direct_reply_ownership():
     event = make_event()
 
     assert request_group_reply_candidate(event)
@@ -113,6 +113,6 @@ async def test_group_context_stage_records_after_admission_and_stops_passive_eve
 
     collector.capture_ambient_message.assert_awaited_once_with(
         event,
-        allow_router_candidate=False,
+        allow_personal_candidate=False,
     )
     event.stop_event.assert_called_once()

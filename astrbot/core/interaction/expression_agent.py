@@ -99,7 +99,7 @@ from .turn_state import (
     record_interaction_turn_expression_fallback,
     set_interaction_turn_persona_id,
 )
-from .types import InteractionAgentConfig
+from .types import InteractionAgentConfig, PersonalResponseAction
 
 PersonaExpressionKind = Literal["reply", "proactive", "interjection"]
 PersonaExpressionSource = Literal[
@@ -151,6 +151,10 @@ class PersonaExpressionRequest:
     intent: PersonaExpressionIntent = field(default_factory=PersonaExpressionIntent)
     avoid_previous_reply: bool = False
     compact_context: bool = False
+    # Ordinary user turns use this one response plan for both visible wording
+    # and the decision to keep the work in Personal or hand it to Core.
+    require_turn_action: bool = False
+    allow_silent: bool = False
 
     @classmethod
     def core_final(
@@ -182,6 +186,7 @@ class PersonaExpressionResult:
     effect_calls: list[PersonaEffectCall] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     speech_cues: list[SpeechCue] = field(default_factory=list)
+    turn_action: PersonalResponseAction | None = None
 
 
 class InteractionExpressionError(RuntimeError):
@@ -250,7 +255,23 @@ def validate_persona_expression_result(
     *,
     effects: Sequence[PersonaEffectSpec] = (),
 ) -> None:
-    if not result.spoken_reply and not req.allow_empty:
+    action = result.turn_action
+    if req.require_turn_action:
+        if not isinstance(action, PersonalResponseAction):
+            raise InteractionExpressionError("missing_personal_response_action")
+        if action is PersonalResponseAction.SILENT:
+            if not req.allow_silent:
+                raise InteractionExpressionError("disallowed_personal_response_action")
+            if (
+                result.spoken_reply.strip()
+                or result.speech_cues
+                or result.effect_calls
+            ):
+                raise InteractionExpressionError("invalid_silent_personal_response")
+            return
+        if not result.spoken_reply.strip():
+            raise InteractionExpressionError("empty_output")
+    elif not result.spoken_reply and not req.allow_empty:
         raise InteractionExpressionError("empty_output")
     required_effects = [
         effect
@@ -292,6 +313,9 @@ def validate_persona_expression_result(
 
 def build_persona_runtime_system_prompt(
     effects: Sequence[PersonaEffectSpec] = (),
+    *,
+    require_turn_action: bool = False,
+    allow_silent: bool = False,
 ) -> str:
     required_effects = [
         effect
@@ -318,12 +342,33 @@ def build_persona_runtime_system_prompt(
             "请始终按对应 schema 提供合法、完整的 arguments；语义标签或注释字段不能代替 "
             "schema 要求的执行形态或其他必填字段，也不要自行编造默认值。\n"
         )
+        if allow_silent:
+            required_effect_guidance += (
+                "唯一例外是允许静默的群聊候选选择 silent：此时 spoken_reply、"
+                "speech_cues 和 effect_calls 都必须为空。\n"
+            )
+    turn_action_guidance = ""
+    output_fields = "spoken_reply、speech_cues 与 effect_calls"
+    if require_turn_action:
+        output_fields = "turn_action、spoken_reply、speech_cues 与 effect_calls"
+        silent_rule = (
+            "仅在当前是允许静默的群聊候选时可以使用 silent；silent 时三个输出字段都必须为空。"
+            if allow_silent
+            else "当前不允许使用 silent。"
+        )
+        turn_action_guidance = (
+            "本次必须同时给出 turn_action：reply、delegate 或 silent。"
+            "reply 表示由 Personal 直接完成本轮可见回答；delegate 表示本轮需要 Core 继续工作，"
+            "spoken_reply 只能是一句自然、简短的处理中确认，不能伪装成最终事实答案；"
+            f"{silent_rule} 不要输出决策理由、置信度或任务规格。\n"
+        )
     return (
         "你负责以当前人格对用户表达。\n"
         "根据本次调用提供的 visible_reply_material，生成自然语言表达以及必要的人格 effect 调用。\n"
-        "必须按本次输出契约返回只包含 spoken_reply、speech_cues 与 effect_calls 的结构化结果。\n"
+        f"必须按本次输出契约返回只包含 {output_fields} 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
         f"{required_effect_guidance}"
+        f"{turn_action_guidance}"
         f"{build_speech_cue_guidance()}\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
@@ -339,7 +384,7 @@ def build_persona_runtime_system_prompt(
         "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
         "short_reply 为 true 时只说一句简短口语短句，尽量控制在 20 字以内。\n"
         "allow_empty 为 true 且当前没有必要说话时，可以让 spoken_reply 为空字符串。\n"
-        "不要决定是否进入执行层，不要假装已完成尚未完成的任务。\n"
+        "除本次明确要求的 turn_action 外，不要输出额外的执行层决策信息，也不要假装已完成尚未完成的任务。\n"
         "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
 
@@ -397,6 +442,8 @@ def resolve_deepseek_first_turn_reasoning_marker(
 
 def build_persona_expression_tool_parameters(
     effects: Sequence[PersonaEffectSpec] = (),
+    *,
+    allowed_turn_actions: Sequence[PersonalResponseAction] | None = None,
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "spoken_reply": {"type": "string"},
@@ -433,13 +480,17 @@ def build_persona_expression_tool_parameters(
             "type": "array",
             "items": {"oneOf": copy.deepcopy(effect_schemas)},
         }
+        allows_silent = (
+            allowed_turn_actions is not None
+            and PersonalResponseAction.SILENT in allowed_turn_actions
+        )
         required_per_segment = sum(
             1
             for effect in enabled_effects
             if isinstance(effect.metadata, dict)
             and effect.metadata.get("required_per_segment") is True
         )
-        if required_per_segment:
+        if required_per_segment and not allows_silent:
             properties["effect_calls"]["minItems"] = required_per_segment
             if (
                 required_per_segment == 1
@@ -466,22 +517,45 @@ def build_persona_expression_tool_parameters(
                     "replace an execution shape or other required fields defined by "
                     "the effect schema; do not invent default values."
                 )
+        elif required_per_segment:
+            properties["effect_calls"]["description"] = (
+                "Required Persona Effects apply to reply and delegate. A silent "
+                "group-candidate response must keep effect_calls empty."
+            )
+
+    required = ["spoken_reply", "speech_cues", "effect_calls"]
+    if allowed_turn_actions is not None:
+        actions = [action.value for action in allowed_turn_actions]
+        properties["turn_action"] = {
+            "type": "string",
+            "enum": actions,
+            "description": (
+                "Personal response plan for this ordinary turn. reply completes it in "
+                "Personal; delegate continues in Core; silent emits nothing."
+            ),
+        }
+        required.insert(0, "turn_action")
 
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": copy.deepcopy(properties),
-        "required": ["spoken_reply", "speech_cues", "effect_calls"],
+        "required": required,
     }
 
 
 def build_persona_expression_output_contract_for_effects(
     effects: Sequence[PersonaEffectSpec] = (),
+    *,
+    allowed_turn_actions: Sequence[PersonalResponseAction] | None = None,
 ) -> OutputContract:
     return OutputContract(
         mode="tool_call",
         strict=True,
-        schema=build_persona_expression_tool_parameters(effects),
+        schema=build_persona_expression_tool_parameters(
+            effects,
+            allowed_turn_actions=allowed_turn_actions,
+        ),
         preferred_tool_name="persona_expression",
         allow_text_fallback=False,
     )
@@ -562,11 +636,22 @@ def _build_persona_expression_result_from_payload(
         metadata["effect_parse_issues"] = [issue.to_dict() for issue in effect_issues]
     if speech_cue_issues:
         metadata["speech_cue_parse_issues"] = speech_cue_issues
+    raw_action = payload.get("turn_action")
+    try:
+        turn_action = (
+            PersonalResponseAction(str(raw_action))
+            if raw_action is not None
+            else None
+        )
+    except ValueError:
+        turn_action = None
+        metadata["personal_response_action_parse_issue"] = str(raw_action)
     return PersonaExpressionResult(
         spoken_reply=str(payload.get("spoken_reply", "") or ""),
         speech_cues=speech_cues,
         effect_calls=effect_calls,
         metadata=metadata,
+        turn_action=turn_action,
     )
 
 
@@ -664,6 +749,12 @@ def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
         prompt += (
             "\n这是自主表达。spoken_reply 不得重复 conversation history 中最近一条 "
             "assistant 回复；即使表达意图相近，也必须换用有实质差异的措辞和角度。"
+        )
+    if req.require_turn_action:
+        prompt += (
+            "\n【本轮统一回复计划】必须使用 turn_action 决定本轮：普通可直接回应选 reply；"
+            "需要查询、外部能力、执行操作或继续未完成工作选 delegate；"
+            "只有允许静默的群聊候选且确实无需参与时选 silent。"
         )
     return prompt
 
@@ -1232,13 +1323,14 @@ class InteractionExpressionAgent:
         logger.info(
             "Persona expression generated: turn_id=%s target=persona_expression "
             "platform_id=%s session_id=%s phase=%s lifecycle_id=%s length=%s "
-            "speech_cues=%s effect_calls=%s",
+            "turn_action=%s speech_cues=%s effect_calls=%s",
             str(event.get_extra("_turn_id", "") or ""),
             event.get_platform_id(),
             event.session_id,
             _describe_expression_request(req),
             prepared.lifecycle.lifecycle_id,
             len(result.spoken_reply),
+            result.turn_action.value if result.turn_action is not None else "none",
             [cue.kind for cue in result.speech_cues],
             [call.name for call in result.effect_calls],
         )
@@ -1327,10 +1419,16 @@ class InteractionExpressionAgent:
         corrected.effect_calls = [
             call for call in original.effect_calls if call.name not in repair_names
         ] + [call for call in corrected.effect_calls if call.name in repair_names]
+        corrected.turn_action = original.turn_action
         validate_persona_expression_result(prepared.req, corrected, effects=effects)
         corrected.metadata["effect_correction_used"] = True
         response.tools_call_args = [
             {
+                **(
+                    {"turn_action": corrected.turn_action.value}
+                    if corrected.turn_action is not None
+                    else {}
+                ),
                 "spoken_reply": corrected.spoken_reply,
                 "speech_cues": [cue.to_dict() for cue in corrected.speech_cues],
                 "effect_calls": [
@@ -1553,12 +1651,27 @@ class InteractionExpressionAgent:
                 }
             )
         history_turns = max(0, interaction_config.persona_history_window_size)
+        allowed_turn_actions: tuple[PersonalResponseAction, ...] | None = None
+        if req.require_turn_action:
+            allowed_turn_actions = (
+                PersonalResponseAction.REPLY,
+                PersonalResponseAction.DELEGATE,
+                PersonalResponseAction.SILENT,
+            ) if req.allow_silent else (
+                PersonalResponseAction.REPLY,
+                PersonalResponseAction.DELEGATE,
+            )
         profile = PromptRenderProfile(
             name="interaction_persona_runtime",
-            system_prompt=build_persona_runtime_system_prompt(persona_effect_specs),
+            system_prompt=build_persona_runtime_system_prompt(
+                persona_effect_specs,
+                require_turn_action=req.require_turn_action,
+                allow_silent=req.allow_silent,
+            ),
             request_prompt=_build_expression_prompt(req),
             output_contract=build_persona_expression_output_contract_for_effects(
-                persona_effect_specs
+                persona_effect_specs,
+                allowed_turn_actions=allowed_turn_actions,
             ),
             input_text_suffix=reasoning_marker,
             hidden_slot_names=frozenset(hidden_slot_names),
@@ -1868,14 +1981,28 @@ def _log_persona_prompt_size_diagnostics(
             "enforced": False,
         }
     logger.debug(
-        "DIAG expression.prompt_size: platform_id=%s session_id=%s phase=%s lifecycle_id=%s total_chars=%s estimated_tokens=%s sections=%s tool_count=%s tool_names=%s slots=%s",
+        "DIAG expression.prompt_size: platform_id=%s session_id=%s phase=%s lifecycle_id=%s total_chars=%s estimated_tokens=%s sections=%s history_projection=%s tool_count=%s tool_names=%s slots=%s",
         event.get_platform_id(),
         event.session_id,
         _describe_expression_request(req),
         lifecycle_id,
         total_chars,
-        math.ceil(total_chars / 4),
+        _estimate_text_tokens(
+            "".join(
+                (
+                    provider_request.system_prompt or "",
+                    json.dumps(provider_request.contexts or [], ensure_ascii=False),
+                    provider_request.prompt or "",
+                    json.dumps(effective_tool_schema, ensure_ascii=False),
+                )
+            )
+        ),
         section_sizes,
+        (
+            context_budgets.get("conversation_history", {}).get("extra", {})
+            if isinstance(context_budgets, dict)
+            else {}
+        ),
         len(effective_tool_schema),
         [
             *toolset.names(),
@@ -1890,6 +2017,12 @@ def _serialized_size(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False, default=str))
     except (TypeError, ValueError):
         return len(str(value or ""))
+
+
+def _estimate_text_tokens(value: str) -> int:
+    chinese_count = sum("\u4e00" <= char <= "\u9fff" for char in value)
+    other_count = len(value) - chinese_count
+    return math.ceil(chinese_count * 0.6 + other_count * 0.3)
 
 
 def _latest_assistant_expression_fingerprint(pack) -> str | None:

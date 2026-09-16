@@ -17,7 +17,7 @@ Plugin Collector
   -> ProviderRequest
 ```
 
-Collector 在目标投影前运行，因此同一份插件事实可以通过 `meta.targets` 授权给 Persona 或 Core。Router 和 Core Planner 不挂载插件扩展，也不读取插件能力目录；它们只消费核心维护的路由事实。Collector 不会拿到这些模型的决策，也不能修改规范 Pack。
+Collector 在目标投影前运行，因此同一份插件事实可以通过 `meta.targets` 授权给 Persona 或 Core。Core Planner 不挂载插件扩展，也不读取插件能力目录；它只消费核心维护的任务事实。Collector 不会拿到控制决策，也不能修改规范 Pack。
 
 ## 注册 Collector
 
@@ -84,7 +84,7 @@ class Main(Star):
 
 普通 extension 没有声明 `targets` 时默认只提供给 Core。不要依赖“所有目标默认可见”。
 
-Router 和 Core Planner 不接受插件能力目录。需要让它们参与路由或执行判断的事实，必须由 AstrBot 内部明确标记的核心 Collector 以非插件的结构化上下文提供；插件不能通过 Prompt Extension 改变 Router/Planner 的准入或规划，自行设置 `official_context` 也不会获得该权限。
+Core Planner 不接受插件能力目录。需要让它参与任务整理的事实，必须由 AstrBot 内部明确标记的核心 Collector 以非插件的结构化上下文提供；插件不能通过 Prompt Extension 改变 Personal 的准入或 Planner 的任务规格，自行设置 `official_context` 也不会获得该权限。
 
 ## 生命周期与失败
 
@@ -97,11 +97,11 @@ Router 和 Core Planner 不接受插件能力目录。需要让它们参与路�
 
 ## Interaction 时延边界
 
-Interaction turn 会先构建 Router、Planner、Persona 和 Core 共享的基础事实，再在后台构建只面向
-Persona/Core 的插件富化包。Router 和 Planner 从不读取普通插件 Extension；Persona 仅在富化包
+Interaction turn 会先构建 Personal、Planner、Persona 和 Core 共享的基础事实，再在后台构建只面向
+Persona/Core 的插件富化包。Core Planner 从不读取普通插件 Extension；Persona 仅在富化包
 已经就绪时把它合并进当前表达，未就绪时会直接生成首回复；Core 在需要执行时才等待并复用同一结果。
 
-因此 Prompt Extension 是“尽力增强”，不能作为当前首回复、Router 判断或消息接管的硬依赖。若插件
+因此 Prompt Extension 是“尽力增强”，不能作为当前首回复、Personal 判断或消息接管的硬依赖。若插件
 必须终止、接管或改变当前消息的处理，应使用官方 Pipeline Handler；不要在 Collector 中发送消息、
 执行工具或以等待慢外部请求的方式实现控制逻辑。
 
@@ -114,14 +114,14 @@ Persona/Core 的插件富化包。Router 和 Planner 从不读取普通插件 Ex
 | LLM Tool | 注册可执行能力；插件工具默认进入 Core，只有工具声明或用户配置明确允许时进入 Persona |
 | `on_llm_request` | 修改路由后的最终 Persona 或 Core 低层请求，取决于插件运行目标 |
 
-插件 LLM 生命周期与 LLM Tool 独立解析：生命周期按“`plugin_runtime_targets` 配置覆盖 > 类或旧装饰器声明 > Persona 默认值”，工具按“`plugin_tool_targets` 用户覆盖 > 工具 `tool_targets` 声明 > Core 默认值”。非 Interaction 流程保持官方 Core 行为。`on_llm_request` 不覆盖 Router、Core Planner 或 Persona 内部工具回路；实际执行 Persona 插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。需要 Persona/Core 读取的插件事实必须进入 Prompt Extension，并声明 `persona` 或 `core`；不要把每轮动态事实依赖在低层请求钩子上。
+插件 LLM 生命周期与 LLM Tool 独立解析：生命周期按“`plugin_runtime_targets` 配置覆盖 > 类或旧装饰器声明 > Persona 默认值”，工具按“`plugin_tool_targets` 用户覆盖 > 工具 `tool_targets` 声明 > Core 默认值”。非 Interaction 流程保持官方 Core 行为。`on_llm_request` 不覆盖 Core Planner 或 Persona 内部工具回路；实际执行 Persona 插件工具时仍会触发 `on_using_llm_tool` 和 `on_llm_tool_respond`。需要 Persona/Core 读取的插件事实必须进入 Prompt Extension，并声明 `persona` 或 `core`；不要把每轮动态事实依赖在低层请求钩子上。
 
 ## 安全约束
 
 - 不返回 token、密码、内部路径或无必要的用户标识。
-- 不把模型输出、Router/Planner 决策重新注入同一轮事实包。
+- 不把模型输出、Personal/Planner 决策重新注入同一轮事实包。
 - 不在 Collector 中发送消息、写 memory 或执行有副作用工具。
 - 不用 Prompt Extension 伪装可执行工具；实际工具必须通过 Tool API 注册。
-- 不为某个插件要求修改通用 Router Prompt；插件只描述自己的名称和能力。
+- 不为某个插件要求修改通用 Personal Prompt；插件只描述自己的名称和能力。
 
 Prompt 系统当前不会自动执行所有 Catalog redaction 声明。插件必须在返回 `value` 前完成自己的最小化和脱敏。

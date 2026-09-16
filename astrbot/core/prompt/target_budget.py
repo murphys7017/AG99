@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -27,8 +28,9 @@ class PromptTargetBudget:
 
 
 CORE_HISTORY_HARD_TURN_LIMIT = 64
+PERSONA_RECENT_HISTORY_TURNS = 28
+PERSONA_RECENT_TOKEN_SHARE = 0.75
 _TARGET_MEMORY_TOKEN_LIMITS = {
-    "router": 3000,
     "core_planner": 4000,
     "personal_policy": 4000,
     "persona": 10000,
@@ -39,7 +41,6 @@ _TARGET_MEMORY_TOKEN_LIMITS = {
 def resolve_target_budget(
     target: str,
     *,
-    router_history_turns: int = 4,
     history_turns: int | None = None,
     config: object | None = None,
 ) -> PromptTargetBudget:
@@ -50,18 +51,15 @@ def resolve_target_budget(
     if history_turns is not None:
         selected_history_turns = max(0, int(history_turns))
         history_limit_reason = "render_profile_history_limit"
-    elif target == "router":
-        selected_history_turns = max(0, int(router_history_turns))
-        history_limit_reason = "router_history_limit"
     elif target == "personal_policy":
-        selected_history_turns = max(int(router_history_turns), 6)
+        selected_history_turns = 6
         history_limit_reason = "personal_policy_history_limit"
     elif target == "core_planner":
-        selected_history_turns = max(int(router_history_turns), 8)
+        selected_history_turns = 8
         history_limit_reason = "core_planner_history_limit"
     elif target == "persona":
-        selected_history_turns = 50
-        history_limit_reason = "persona_history_limit"
+        selected_history_turns = 300
+        history_limit_reason = "persona_history_candidate_limit"
     else:
         configured_limit = getattr(config, "max_context_length", -1)
         if isinstance(configured_limit, int) and configured_limit >= 0:
@@ -71,18 +69,15 @@ def resolve_target_budget(
             selected_history_turns = CORE_HISTORY_HARD_TURN_LIMIT
             history_limit_reason = "core_history_hard_fallback"
 
-    compact_target = target in {"router", "personal_policy"}
+    compact_target = target == "personal_policy"
     history_token_limit = {
-        "router": 2000,
         "personal_policy": 3000,
         "core_planner": 4000,
         "persona": 16000,
         "core": 16000,
     }[target]
     history_max_message_chars = 1800
-    if target == "router":
-        history_max_message_chars = 1000
-    elif compact_target:
+    if compact_target:
         history_max_message_chars = 1200
 
     return PromptTargetBudget(
@@ -106,7 +101,12 @@ def apply_target_budget(
     """Apply one budget and attach diagnostics to the isolated projection."""
     history = projected.get_slot("conversation.history")
     if history is not None:
-        _project_history(history, budget)
+        _project_history(
+            history,
+            budget,
+            target=target,
+            relevance_terms=_extract_persona_relevance_terms(source_slots),
+        )
 
     group_recent = projected.get_slot("conversation.group_recent")
     if group_recent is not None:
@@ -117,7 +117,13 @@ def apply_target_budget(
     _attach_budget_diagnostics(source_slots, projected, target, budget)
 
 
-def _project_history(slot: ContextSlot, budget: PromptTargetBudget) -> None:
+def _project_history(
+    slot: ContextSlot,
+    budget: PromptTargetBudget,
+    *,
+    target: str,
+    relevance_terms: set[str],
+) -> None:
     if not isinstance(slot.value, dict):
         return
     turns = slot.value.get("turns")
@@ -125,12 +131,12 @@ def _project_history(slot: ContextSlot, budget: PromptTargetBudget) -> None:
         return
 
     safe_limit = max(0, budget.history_turns)
-    selected_turns = deepcopy(turns[-safe_limit:] if safe_limit else [])
+    candidate_turns = deepcopy(turns[-safe_limit:] if safe_limit else [])
     reasons: list[str] = []
-    if len(selected_turns) != len(turns):
+    if len(candidate_turns) != len(turns):
         reasons.append(budget.history_limit_reason)
 
-    for turn in selected_turns:
+    for turn in candidate_turns:
         if not isinstance(turn, dict):
             continue
         for key in ("user_message", "assistant_message"):
@@ -154,6 +160,23 @@ def _project_history(slot: ContextSlot, budget: PromptTargetBudget) -> None:
             message.pop("reasoning_content", None)
             message.pop("thinking", None)
 
+    if target == "persona":
+        selected_turns, projection_meta = _select_persona_history_turns(
+            candidate_turns,
+            budget=budget,
+            relevance_terms=relevance_terms,
+        )
+        slot.meta["persona_history_projection"] = projection_meta
+        if projection_meta["anchor_turn_count"]:
+            reasons.append("persona_relevance_anchors")
+        if projection_meta["recent_turn_count"] < min(
+            PERSONA_RECENT_HISTORY_TURNS,
+            len(candidate_turns),
+        ):
+            reasons.append("persona_recent_token_budget")
+    else:
+        selected_turns = candidate_turns
+
     while (
         len(selected_turns) > 1
         and _estimate_value_tokens(selected_turns)
@@ -169,6 +192,136 @@ def _project_history(slot: ContextSlot, budget: PromptTargetBudget) -> None:
     slot.meta["target_truncated"] = bool(reasons)
     slot.meta["turn_count"] = len(selected_turns)
     slot.meta["budget_truncation_reasons"] = list(dict.fromkeys(reasons))
+
+
+def _select_persona_history_turns(
+    turns: list[object],
+    *,
+    budget: PromptTargetBudget,
+    relevance_terms: set[str],
+) -> tuple[list[object], dict[str, int]]:
+    """Keep a recent dialogue run, then add a few relevant older anchors."""
+
+    normalized_turns = [turn for turn in turns if isinstance(turn, dict)]
+    if not normalized_turns:
+        return [], {
+            "candidate_turn_count": len(turns),
+            "recent_turn_count": 0,
+            "anchor_turn_count": 0,
+            "retained_turn_count": 0,
+            "estimated_tokens": 0,
+        }
+
+    recent_start = max(0, len(normalized_turns) - PERSONA_RECENT_HISTORY_TURNS)
+    recent_budget = max(
+        1,
+        math.floor(budget.history_max_estimated_tokens * PERSONA_RECENT_TOKEN_SHARE),
+    )
+    selected_indexes: set[int] = set(range(recent_start, len(normalized_turns)))
+    used_tokens = _estimate_value_tokens(
+        [normalized_turns[index] for index in sorted(selected_indexes)]
+    )
+    # Preserve a contiguous suffix. If its oldest turns overflow the quick-path
+    # share, drop them in chronological order rather than leaving dialogue gaps.
+    while (
+        len(selected_indexes) > 1
+        and used_tokens > recent_budget
+    ):
+        oldest_index = min(selected_indexes)
+        selected_indexes.remove(oldest_index)
+        used_tokens -= _estimate_value_tokens(normalized_turns[oldest_index])
+
+    # A direct current reply without any recent dialogue still benefits from
+    # relevant old anchors. Ties prefer newer evidence but output order stays
+    # chronological below.
+    # The recent suffix may have been shortened above to honor its own budget.
+    # Its discarded prefix becomes eligible as an older relevance anchor; using
+    # the original recent_start here would leave a silent history gap.
+    retained_recent_start = min(selected_indexes)
+    anchor_candidates: list[tuple[int, int, int]] = []
+    for index, turn in enumerate(normalized_turns[:retained_recent_start]):
+        score = _score_history_turn_relevance(turn, relevance_terms)
+        if score:
+            anchor_candidates.append((score, index, _estimate_value_tokens(turn)))
+    anchor_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    anchor_count = 0
+    for _, index, turn_tokens in anchor_candidates:
+        if used_tokens + turn_tokens > budget.history_max_estimated_tokens:
+            continue
+        selected_indexes.add(index)
+        used_tokens += turn_tokens
+        anchor_count += 1
+
+    selected = [
+        normalized_turns[index]
+        for index in sorted(selected_indexes)
+    ]
+    recent_count = sum(
+        index >= retained_recent_start for index in selected_indexes
+    )
+    return selected, {
+        "candidate_turn_count": len(normalized_turns),
+        "recent_turn_count": recent_count,
+        "anchor_turn_count": anchor_count,
+        "retained_turn_count": len(selected),
+        "estimated_tokens": _estimate_value_tokens(selected),
+    }
+
+
+def _extract_persona_relevance_terms(
+    source_slots: dict[str, ContextSlot],
+) -> set[str]:
+    chunks: list[str] = []
+    for slot_name in (
+        "input.text",
+        "input.quoted_text",
+        "memory.topic_state",
+        "memory.short_term",
+    ):
+        slot = source_slots.get(slot_name)
+        if slot is None:
+            continue
+        chunks.append(_serialize_for_relevance(slot.value))
+    return _extract_relevance_terms("\n".join(chunks))
+
+
+def _score_history_turn_relevance(turn: object, terms: set[str]) -> int:
+    if not terms or not isinstance(turn, dict):
+        return 0
+    message_text = "\n".join(
+        _serialize_for_relevance(turn.get(key))
+        for key in ("user_message", "assistant_message")
+    )
+    return len(terms & _extract_relevance_terms(message_text))
+
+
+def _serialize_for_relevance(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _extract_relevance_terms(value: str) -> set[str]:
+    if not isinstance(value, str) or not value.strip():
+        return set()
+    terms: set[str] = set()
+    ignored_terms = {
+        "什么", "这个", "那个", "可以", "我们", "你们", "然后", "还是",
+        "一下", "现在", "就是", "一个", "没有", "需要", "进行", "用户",
+        "助手", "回答", "回复", "问题", "内容", "消息", "本次", "当前",
+        "已经",
+    }
+    for token in re.findall(r"[a-zA-Z0-9_]{2,}|[\u4e00-\u9fff]{2,}", value.lower()):
+        if token in ignored_terms:
+            continue
+        if len(token) <= 12:
+            terms.add(token)
+        if all("\u4e00" <= char <= "\u9fff" for char in token):
+            terms.update(token[index : index + 2] for index in range(len(token) - 1))
+    return terms
 
 
 def _project_group_recent(
@@ -305,6 +458,7 @@ def _attach_budget_diagnostics(
             extra={
                 "original_message_count": _history_message_count(source_history),
                 "retained_message_count": _history_message_count(projected_history),
+                **_persona_history_projection_diagnostics(projected_history),
             },
         ),
         "execution_ledger": _budget_report(
@@ -386,6 +540,21 @@ def _history_turn_count(slot: ContextSlot | None) -> int:
     return len(turns) if isinstance(turns, list) else 0
 
 
+def _persona_history_projection_diagnostics(
+    slot: ContextSlot | None,
+) -> dict[str, int]:
+    if slot is None or not isinstance(slot.meta, dict):
+        return {}
+    projection = slot.meta.get("persona_history_projection")
+    if not isinstance(projection, dict):
+        return {}
+    return {
+        f"persona_{key}": value
+        for key, value in projection.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+
+
 def _history_message_count(slot: ContextSlot | None) -> int:
     value = _slot_value(slot)
     turns = value.get("turns") if isinstance(value, dict) else None
@@ -454,7 +623,9 @@ def _estimate_value_tokens(value: object) -> int:
         serialized = json.dumps(value, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
         serialized = str(value or "")
-    return math.ceil(len(serialized) / 4)
+    chinese_count = sum("\u4e00" <= char <= "\u9fff" for char in serialized)
+    other_count = len(serialized) - chinese_count
+    return math.ceil(chinese_count * 0.6 + other_count * 0.3)
 
 
 def _sanitize_group_record(

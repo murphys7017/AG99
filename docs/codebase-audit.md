@@ -12,7 +12,7 @@
 `docs/Yakumo/dev/execution-backend-preparation-plan.md` 的 Phase 9 推进。
 
 系统主意图是连贯的：Persona Agent 负责快速初期响应和最终拟人化表达，Core Agent 负责工作与
-工具执行，Router/Planner 只负责控制决策。主要腐化发生在这个模型与 AstrBot 旧 Event、Handler、
+工具执行，Personal Response Plan/Planner 只负责控制决策。主要腐化发生在这个模型与 AstrBot 旧 Event、Handler、
 ProviderRequest 和主动消息契约的交界处。新旧路径都能工作，但仍通过 raw event extra、方法拦截、
 callback 和多个 fallback 维持兼容，导致同一输出或状态规则需要在多处理解和修改。
 
@@ -44,10 +44,10 @@ preprocess -> ProcessStage。ProcessStage 先调用 PersonalRuntimeManager.submi
 1. 默认 default_handler：PluginHandlerExecutor.process() 运行官方 Handler，必要时进入
    InternalAgentSubStage。
 2. 开启 parallel_plugin_runtime_enabled 且事件合格时：建立 PluginBranchResult 和官方 Plugin Job，
-   由 InteractionTurnCoordinator 与 Persona、Router 并行控制，Core 仅在 route/gate 允许后启动。
+   由 InteractionTurnCoordinator 与 Personal 并行控制；Personal 的结构化计划选择 `delegate` 后，Core 才在 Plugin Gate 允许时启动。
 
-InteractionMiddleware 启动 Persona 与 Router。Router 返回 persona、hybrid 或群聊候选可用的 silent；
-Core Planner 仅在 hybrid 时决定工作。Persona 负责即时表达，Core 结果再经 Persona 生成最终表达。
+InteractionMiddleware 启动 Personal Response Plan。一次结构化 Persona Expression 同时返回自然表达和
+`reply / delegate / silent`；Planner 仅在 `delegate` 后生成 `execute + CoreTaskSpec`，不重新决定是否进入 Core。Persona 负责即时表达，Core 结果再经 Persona 生成最终表达。
 
 Core 链为 InternalAgentSubStage -> build_main_agent()。后者负责 Provider、能力解析、PromptContext、
 CoreExecutionSpec、渲染适配和 AgentRunner；最终请求绑定过渡性的 CoreExecutionHead，由 Head
@@ -60,7 +60,7 @@ Interaction 可见输出主要由 InteractionOutputController 物化、仲裁、
 CronMessageEvent -> build_main_agent() -> send_message_to_user。Personal Runtime 的观察和 idle
 initiation 不创建平台 Event，而是进入 RuntimeObservationEvent 和 Personal session runtime。
 
-关键 owner：路由由 Router/Planner 决定；表达由 InteractionPersonaRuntime/
+关键 owner：普通轮次的控制由 Personal Response Plan/Planner 决定；表达由 InteractionPersonaRuntime/
 InteractionExpressionAgent 负责；工作由 Core Agent/AgentRunner 负责；内部 turn 状态由
 InteractionTurnState 负责；可见输出事务由 InteractionOutputController 负责；连续对话、观察、idle
 和主动人格状态由 PersonalRuntimeManager 负责。
@@ -459,7 +459,7 @@ Change risk：Low-Medium。Confidence：Confirmed alias；删除 Needs confirmat
 
 # Reverse Check
 
-- 审计按入口、控制面、执行面、输出、状态、配置和副作用建立了系统模型，没有把 Router/Planner 当作第三个
+- 审计按入口、控制面、执行面、输出、状态、配置和副作用建立了系统模型，没有把 Personal Response Plan/Planner 当作第三个
   对话 Agent。
 - 没有因为类名看起来专业就赋予其价值；callback、DTO、alias 和 wrapper 均追踪了 caller 与边界作用。
 - 没有把仍有 caller 的兼容代码直接判为死代码，也没有把日志中的测试条目当生产证据。

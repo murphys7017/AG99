@@ -14,21 +14,21 @@ AG99 是这个仓库当前对外使用的项目名称，由 YakumoAki 创建并�
 平台适配器
   -> EventBus / Pipeline / Handler
   -> Interaction Middleware
-  -> Personal Runtime + Router
-  -> Core Planner
+  -> Personal Runtime + Personal Response Plan
+  -> Core Planner（仅已委派任务）
   -> Core Head / Core 执行层
   -> Persona Expression
   -> Output Runtime
   -> Conversation / Memory
 ```
 
-普通消息和未被 Handler 接管的有界群聊候选会进入 Interaction Middleware。Personal Runtime 负责本轮准入与会话状态，Router 只返回 `persona`、`hybrid` 或（仅群聊候选）`silent`：
+普通消息和未被 Handler 接管的有界群聊候选会进入 Interaction Middleware。Personal Runtime 负责本轮准入与会话状态；同一次 Persona 的结构化回复计划返回 `reply`、`delegate` 或（仅允许静默的群聊候选）`silent`：
 
-- `persona`：不启动 Core，直接由 Persona Expression 生成可见表达。
-- `hybrid`：由 Core Planner 独立判断是否需要执行；需要时 Core 负责工具、知识库、Skills 等实质工作。
-- `silent`：取消仍处于 pending 的 Persona 输出，不撤回已经提交或送达的表达。
+- `reply`：由 Personal 直接完成本轮可见表达，不启动 Core。
+- `delegate`：先发送一句自然、简短的处理中确认，再由 Core Planner 整理已委派任务，Core 负责工具、知识库、Skills 等实质工作。
+- `silent`：不生成可见输出；它只对允许静默的群聊候选有效。
 
-Core Head 负责在进程内协调任务、事件、取消和执行生命周期；当前仍是同步入口，不创建独立队列，也不直接发送平台消息。Core 的结果不会绕过 Persona 直接发送，而是回到同一个 Persona Expression。这样即时回复、插件人格输出和 Core 最终结果共享一致的表达与输出边界。
+Core Planner 不重新判定是否进入执行层，只为 `delegate` 生成可执行 `CoreTaskSpec`。Core Head 负责在进程内协调任务、事件、取消和执行生命周期；当前仍是同步入口，不创建独立队列，也不直接发送平台消息。Core 的结果不会绕过 Persona 直接发送，而是回到同一个 Persona Expression。这样即时回复、插件人格输出和 Core 最终结果共享一致的表达与输出边界。
 
 ## 插件如何参与
 

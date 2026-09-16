@@ -35,7 +35,7 @@ class GroupContextStage(Stage):
             if collector is not None:
                 await collector.capture_ambient_message(
                     event,
-                    allow_router_candidate=is_group_reply_candidate(event),
+                    allow_personal_candidate=is_group_reply_candidate(event),
                 )
         except Exception:
             logger.exception(
