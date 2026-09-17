@@ -17,6 +17,7 @@ from astrbot.core.interaction.expression_agent import (
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     build_persona_runtime_system_prompt,
+    _build_expression_prompt,
     extract_persona_expression_result,
     resolve_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
@@ -626,10 +627,24 @@ async def test_core_visible_reply_material_preserves_immediate_reply_context():
 
 
 def test_persona_runtime_prompt_constrains_result_free_immediate_requests():
-    prompt = build_persona_runtime_system_prompt()
+    prompt = _build_expression_prompt(
+        PersonaExpressionRequest(require_turn_action=True)
+    )
 
-    assert "visible_reply_material.phase 为 immediate" in prompt
-    assert "不得从 conversation.history、memory、截图说明或先前助手回复推断" in prompt
+    assert "需要查询实时信息、外部能力、执行操作或继续未完成工作时选 delegate" in prompt
+    assert "不能伪装成最终事实答案" in prompt
+
+
+def test_persona_progress_prompt_keeps_single_tool_completion_local():
+    prompt = _build_expression_prompt(
+        PersonaExpressionRequest(
+            progress_stage="tool_completed",
+            intent=PersonaExpressionIntent(kind="interjection"),
+        )
+    )
+
+    assert "单个步骤已结束" in prompt
+    assert "所有来源、所有检索或整个任务已经完成" in prompt
 
 
 def test_visible_reply_material_profile_hides_redundant_media_slots():

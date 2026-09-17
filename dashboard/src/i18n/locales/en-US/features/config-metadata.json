@@ -1097,6 +1097,51 @@
         }
       }
     },
+    "plugin": {
+      "description": "Plugin Enrichment and Capability Targets",
+      "hint": "Controls parallel execution for ordinary-turn plugins, Prompt/Result Contributor timeouts, and whether plugin hooks or FunctionTools target Personal or Core. Commands, message handlers, and event listeners are unaffected.",
+      "interaction_middleware": {
+        "parallel_plugin_runtime_enabled": {
+          "description": "Enable Parallel Plugin Runtime",
+          "hint": "When disabled, official message handlers run on the legacy serial path before Personal. When enabled, every eligible ordinary turn uses one Coordinator for Personal and a Plugin Job; activated handlers, when present, enter that Plugin Job at the same t0."
+        },
+        "plugin_parallel_window_seconds": {
+          "description": "Plugin Turn Arbitration Window Seconds",
+          "hint": "Measured from the shared t0 of Personal and the Plugin Job. Expiry only stops the current turn from waiting; it does not cancel the background plugin. Core waits for the plugin decision, not full plugin completion."
+        },
+        "persona_plugin_context_mode": {
+          "description": "Persona First-Reply Plugin Context Strategy",
+          "labels": ["Wait for Plugin Context", "Use Base Context Immediately"],
+          "hint": "Controls whether ordinary prompt extensions and contributors block Persona's first request."
+        },
+        "contributor_timeout": {
+          "description": "Per-Contributor Timeout Seconds",
+          "hint": "Time limit for one ordinary Prompt Contributor or Result Contributor. A timeout drops only that contribution and records diagnostics; it does not cancel the Plugin Job or the turn."
+        },
+        "plugin_runtime_targets": {
+          "description": "Plugin LLM Hook Execution Path",
+          "hint": "Controls only LLM lifecycle hooks, not commands, message handlers, event listeners, or FunctionTools. User configuration overrides the plugin declaration; undeclared plugins default to Persona Expression."
+        },
+        "plugin_tool_targets": {
+          "description": "Plugin FunctionTool Execution Path",
+          "hint": "Controls only where plugin FunctionTools are exposed. User configuration overrides tool declarations; undeclared tools default to Core only, and an exact plugin.tool entry takes precedence."
+        }
+      }
+    },
+    "context": {
+      "description": "Persona Context",
+      "hint": "Controls the recent memory and Persona-history candidate pool retained in Interaction's read-only context. Target token budgets still apply final trimming.",
+      "interaction_middleware": {
+        "memory_window_size": {
+          "description": "Memory Window Size",
+          "hint": "Number of interaction memory turns read when building middleware context."
+        },
+        "persona_history_window_size": {
+          "description": "Persona History Window Size",
+          "hint": "Candidate-pool limit for Persona history. The system keeps a contiguous recent dialogue run, adds a few older anchors relevant to the current input and Memory, then trims to the token budget. Memory and Core are unaffected."
+        }
+      }
+    },
     "expression": {
       "description": "Personal Response Plan",
       "hint": "Generates the unified human-like response plan: direct reply, Core delegation, or allowed group silence. All user-visible Persona expression uses this path.",
@@ -1212,30 +1257,23 @@
         }
       }
     },
-    "stream": {
-      "description": "In-Progress Prompts",
-      "hint": "Observes core streaming output windows and lets the middleware insert short in-progress prompts while core is still working.",
+    "progress": {
+      "description": "Execution Progress Prompts",
+      "hint": "One switch controls both streamed-text observation and tool-stage prompts. Prompts describe confirmed local progress and never treat one step as full-task completion.",
       "interaction_middleware": {
-        "stream_observation_enabled": {
-          "description": "Enable In-Progress Observation"
-        },
         "stream_observation_min_chars": {
-          "description": "Minimum Accumulated Characters",
-          "hint": "The middleware only decides whether to insert an in-progress prompt after core streaming output reaches this character count."
+          "description": "Minimum Streamed Characters",
+          "hint": "Applies only to Core streamed text. Progress is considered after this many accumulated characters; tool results never trigger by body length."
         },
         "stream_interjection_enabled": {
-          "description": "Allow In-Progress Prompts"
+          "description": "Enable Execution Progress Prompts"
         },
         "stream_interjection_max_per_turn": {
-          "description": "Max Prompts Per Turn"
+          "description": "Max Progress Prompts Per Turn"
         },
         "tool_stage_observation_delay_seconds": {
-          "description": "Tool Processing Prompt Delay (Seconds)",
-          "hint": "A research-oriented tool that exceeds this duration may show one in-progress prompt."
-        },
-        "tool_stage_observation_enabled": {
-          "description": "Enable Tool-Stage Prompts",
-          "hint": "Research-oriented tools such as search, query, and read only prompt at completion or timeout."
+          "description": "Tool Running Prompt Delay (Seconds)",
+          "hint": "A research-oriented tool may show one still-running prompt after this delay. Completion of one tool step is never phrased as completion of the full task."
         }
       }
     }

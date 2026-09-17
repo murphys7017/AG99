@@ -262,10 +262,10 @@ PersonaExpressionRequest(
     material=ExpressionMaterial(
         source_text=None,
         immediate_reply=None,
-        delegated_task_summary=None,
         observed_text=None,
         total_text=None,
         pending_text=None,
+        progress_stage=None,
     ),
     intent=ExpressionIntent(
         kind="reply|follow_up|proactive|interjection|error",

@@ -37,15 +37,15 @@ class PersonaVisibleReplyCollector(ContextCollectorInterface):
             "immediate_reply": str(
                 getattr(request, "immediate_reply", "") or ""
             ).strip(),
-            "delegated_task_summary": str(
-                getattr(request, "delegated_task_summary", "") or ""
-            ).strip(),
             "observed_text": str(
                 getattr(request, "observed_text", "") or ""
             ).strip(),
             "total_text": str(getattr(request, "total_text", "") or "").strip(),
             "pending_text": str(
                 getattr(request, "pending_text", "") or ""
+            ).strip(),
+            "progress_stage": str(
+                getattr(request, "progress_stage", "") or ""
             ).strip(),
             "preserve_facts": bool(getattr(request, "preserve_facts", False)),
             "short_reply": bool(getattr(request, "short_reply", False)),

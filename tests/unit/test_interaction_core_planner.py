@@ -10,6 +10,7 @@ from astrbot.core.interaction.core_planner import (
 )
 from astrbot.core.interaction.types import CorePlanningAction, CoreTaskSpec
 from astrbot.core.output_contract import CompiledOutputContract
+from astrbot.core.tools.web_search_tools import is_web_search_tool_name
 
 
 def _compiled(strategy: str) -> tuple:
@@ -58,6 +59,12 @@ def test_core_task_spec_marks_web_research_as_direct_execution():
         suggested_capabilities=["知识检索"],
     ).requires_direct_web_research()
     assert CoreTaskSpec(suggested_capabilities=["workspace_io"]).requires_direct_web_research() is False
+
+
+def test_web_search_capability_detection_includes_namespaced_tools():
+    assert is_web_search_tool_name("web__search") is True
+    assert is_web_search_tool_name("web__open") is False
+    assert is_web_search_tool_name("weather__lookup") is False
 
 
 def test_core_task_spec_keeps_visual_requirement_out_of_workspace_io():

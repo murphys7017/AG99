@@ -112,7 +112,6 @@ from astrbot.core.tools.knowledge_base_tools import (
 )
 from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.tools.web_search_tools import (
-    WEB_SEARCH_TOOL_NAMES,
     BaiduWebSearchTool,
     BochaWebSearchTool,
     BraveWebSearchTool,
@@ -122,6 +121,7 @@ from astrbot.core.tools.web_search_tools import (
     FirecrawlWebSearchTool,
     TavilyExtractWebPageTool,
     TavilyWebSearchTool,
+    is_web_search_tool_name,
     normalize_legacy_web_search_config,
 )
 from astrbot.core.utils.astrbot_path import (
@@ -1126,7 +1126,7 @@ async def build_main_agent(
     req.func_tool = capabilities.to_toolset()
     if exclude_handoff_tools:
         web_tool_names = sorted(
-            set(capabilities.names()).intersection(WEB_SEARCH_TOOL_NAMES)
+            name for name in capabilities.names() if is_web_search_tool_name(name)
         )
         logger.info(
             "DIAG interaction.direct_web_research_capability: turn_id=%s "

@@ -256,11 +256,9 @@ class InteractionAgentConfig:
     personal_idle_initiation_after_seconds: float = 1800.0
     memory_window_size: int = 8
     persona_history_window_size: int = 300
-    stream_observation_enabled: bool = True
     stream_observation_min_chars: int = 200
     stream_interjection_enabled: bool = True
     stream_interjection_max_per_turn: int = 1
-    tool_stage_observation_enabled: bool = True
     tool_stage_observation_delay_seconds: float = 8.0
     contributor_timeout: float = 1.0
 

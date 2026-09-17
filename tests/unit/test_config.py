@@ -962,12 +962,14 @@ class TestConfigMetadataI18n:
 
         group = result["interaction_middleware_group"]
         assert sorted(group["metadata"]) == [
+            "context",
             "expression",
             "general",
             "personal_policy",
             "personal_runtime_policy",
             "planner",
-            "stream",
+            "plugin",
+            "progress",
         ]
         assert (
             group["metadata"]["general"]["items"]["interaction_middleware.enabled"][
@@ -988,6 +990,8 @@ class TestConfigMetadataI18n:
         }
         assert "interaction_middleware.expression_model" not in exposed_keys
         assert "interaction_middleware.finalizer_model" not in exposed_keys
+        assert "interaction_middleware.stream_observation_enabled" not in exposed_keys
+        assert "interaction_middleware.tool_stage_observation_enabled" not in exposed_keys
 
     def test_interaction_middleware_metadata_i18n_keys_have_locale_entries(self):
         """Interaction middleware metadata should not render raw i18n keys."""

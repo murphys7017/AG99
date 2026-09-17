@@ -14,17 +14,27 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.tools.registry import builtin_tool
 
-WEB_SEARCH_TOOL_NAMES = [
-    "web_search_baidu",
-    "web_search_tavily",
-    "tavily_extract_web_page",
-    "web_search_bocha",
-    "web_search_brave",
-    "web_search_firecrawl",
-    "firecrawl_extract_web_page",
-    "web_search_exa",
-    "exa_get_contents",
-]
+WEB_SEARCH_TOOL_NAMES = frozenset(
+    {
+        "web_search_baidu",
+        "web_search_tavily",
+        "tavily_extract_web_page",
+        "web_search_bocha",
+        "web_search_brave",
+        "web_search_firecrawl",
+        "firecrawl_extract_web_page",
+        "web_search_exa",
+        "exa_get_contents",
+    }
+)
+
+
+def is_web_search_tool_name(name: object) -> bool:
+    """Return whether a tool is authorized to perform direct web research."""
+    normalized = str(name or "").strip().lower()
+    return normalized in WEB_SEARCH_TOOL_NAMES or normalized == "web__search"
+
+
 _TAVILY_WEB_SEARCH_TOOL_CONFIG = {
     "provider_settings.web_search": True,
     "provider_settings.websearch_provider": "tavily",
@@ -1175,5 +1185,6 @@ __all__ = [
     "TavilyExtractWebPageTool",
     "TavilyWebSearchTool",
     "WEB_SEARCH_TOOL_NAMES",
+    "is_web_search_tool_name",
     "normalize_legacy_web_search_config",
 ]

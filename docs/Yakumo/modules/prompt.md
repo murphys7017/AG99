@@ -95,6 +95,15 @@ Persona 的普通即时计划与 Core Planner 只共享事实来源，不共享�
 
 Profile 是“如何使用事实”的局部策略，不是 Collector。Core Planner 和 Persona 的指令与输出协议属于 Profile；当前消息、历史、待表达材料和插件信息仍必须由 Collector 提供。
 
+### Persona 阶段指令
+
+Persona 的 Prompt 分成两层，避免让一次调用同时解释彼此无关的阶段：
+
+- `system_prompt` 只声明稳定职责、`persona_expression` 输出契约、effect schema 和不泄露内部材料的共同边界。
+- `request_prompt` 只声明本次阶段任务：普通即时轮生成 `reply / delegate / silent` 的统一回复计划；结果表达以 `source_text` 为唯一事实来源；进度表达区分流式观察、单个工具运行中和单个工具完成。
+
+流式观察不是工具回执，因此不能宣称工具、来源、结果或整轮任务已完成。单个工具完成也只代表该步骤结束；只有 Core 最终结果才可表达为整轮完成。`input.visible_reply_material.progress_stage` 是这一语义的结构化事实，不能再依靠文案猜测。
+
 ## Layout、Tree 与 Renderer
 
 `PromptTreeBuilder` 只接收目标视图和 `PromptLayoutInterface`。Layout 决定逻辑 group 的启用范围、节点路径和 slot 到树节点的落位；PromptTree 是 provider-neutral 中间表示。
@@ -151,7 +160,7 @@ OutputContract
   -> response parser
 ```
 
-Core Planner 使用独立的 `core_execution_plan` 契约，且对已委派任务必须返回 `execute`。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；普通即时轮还必须返回 `turn_action=reply|delegate`，允许静默的群聊候选才可返回 `silent`。具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
+Core Planner 使用独立的 `core_execution_plan` 契约，且对已委派任务必须返回 `execute`。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；普通即时轮还必须返回 `turn_action=reply|delegate`，允许静默的群聊候选才可返回 `silent`。`persona_expression` 是终端输出契约，不是业务工具；业务 `FunctionTool` 只按 `plugin_tool_targets` 的显式授权进入 Persona 或 Core。具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
 
 ## 当前限制
 

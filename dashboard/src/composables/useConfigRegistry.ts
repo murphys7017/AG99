@@ -56,11 +56,13 @@ const CONFIG_SECTION_REGISTRY: Record<string, ConfigSectionRegistryEntry> = {
   'ext_group.segmented_reply': { group: 'ext_group', section: 'segmented_reply', workspace: 'operations', scope: 'system', order: 15 },
   'ext_group.ltm': { group: 'ext_group', section: 'ltm', workspace: 'knowledge', scope: 'profile', order: 30 },
   'interaction_middleware_group.general': { group: 'interaction_middleware_group', section: 'general', workspace: 'operations', scope: 'system', order: 10 },
+  'interaction_middleware_group.plugin': { group: 'interaction_middleware_group', section: 'plugin', workspace: 'capabilities', scope: 'system', order: 15 },
+  'interaction_middleware_group.context': { group: 'interaction_middleware_group', section: 'context', workspace: 'persona', scope: 'persona', order: 15 },
   'interaction_middleware_group.expression': { group: 'interaction_middleware_group', section: 'expression', workspace: 'persona', scope: 'persona', order: 20 },
   'interaction_middleware_group.planner': { group: 'interaction_middleware_group', section: 'planner', workspace: 'intelligence', scope: 'profile', order: 50 },
   'interaction_middleware_group.personal_policy': { group: 'interaction_middleware_group', section: 'personal_policy', workspace: 'persona', scope: 'persona', order: 30 },
   'interaction_middleware_group.personal_runtime_policy': { group: 'interaction_middleware_group', section: 'personal_runtime_policy', workspace: 'automation', scope: 'persona', order: 20 },
-  'interaction_middleware_group.stream': { group: 'interaction_middleware_group', section: 'stream', workspace: 'operations', scope: 'system', order: 20 },
+  'interaction_middleware_group.progress': { group: 'interaction_middleware_group', section: 'progress', workspace: 'operations', scope: 'system', order: 20 },
 };
 
 function isPlainObject(value: unknown): value is Record<string, any> {

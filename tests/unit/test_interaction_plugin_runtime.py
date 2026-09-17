@@ -957,7 +957,7 @@ async def test_persona_route_allows_explicitly_targeted_function_tools():
     assert requests[0].intent.kind == "reply"
     assert requests[0].intent.source == "user_message"
     assert requests[0].intent.phase == "immediate"
-    assert requests[0].delegated_task_summary == ""
+    assert requests[0].progress_stage is None
 
 
 @pytest.mark.asyncio

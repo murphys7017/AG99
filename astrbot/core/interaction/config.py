@@ -216,9 +216,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 300,
             ),
         ),
-        stream_observation_enabled=bool(
-            interaction_config.get("stream_observation_enabled", True)
-        ),
         stream_observation_min_chars=max(
             1,
             _int_or_default(
@@ -235,9 +232,6 @@ def load_interaction_agent_config(config: Any) -> InteractionAgentConfig:
                 interaction_config.get("stream_interjection_max_per_turn", 1),
                 1,
             ),
-        ),
-        tool_stage_observation_enabled=bool(
-            interaction_config.get("tool_stage_observation_enabled", True)
         ),
         tool_stage_observation_delay_seconds=max(
             0.1,

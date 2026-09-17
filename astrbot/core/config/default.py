@@ -224,6 +224,7 @@ DEFAULT_CONFIG = {
         "parallel_plugin_runtime_enabled": False,
         "plugin_parallel_window_seconds": 3.0,
         "persona_plugin_context_mode": "wait_complete",
+        "contributor_timeout": 1.0,
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
@@ -253,11 +254,9 @@ DEFAULT_CONFIG = {
         "personal_heartbeat_interval_seconds": 300.0,
         "personal_idle_initiation_enabled": False,
         "personal_idle_initiation_after_seconds": 1800.0,
-        "stream_observation_enabled": True,
         "stream_observation_min_chars": 200,
         "stream_interjection_enabled": True,
         "stream_interjection_max_per_turn": 1,
-        "tool_stage_observation_enabled": True,
         "tool_stage_observation_delay_seconds": 8.0,
     },
     "memory": build_default_memory_config_payload(),
@@ -4435,6 +4434,13 @@ CONFIG_METADATA_3 = {
                         "type": "float",
                         "hint": "从进入 Personal Runtime 排队开始计时，Personal、Planner、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
                     },
+                },
+            },
+            "plugin": {
+                "description": "插件富化与能力目标",
+                "type": "object",
+                "hint": "控制普通对话插件的并行执行、Prompt/结果贡献者超时，以及插件钩子和插件 FunctionTool 进入 Personal 或 Core 的目标。命令、消息 Handler 和事件监听器不受这些配置影响。",
+                "items": {
                     "interaction_middleware.parallel_plugin_runtime_enabled": {
                         "description": "启用插件三线并行运行时",
                         "type": "bool",
@@ -4452,6 +4458,11 @@ CONFIG_METADATA_3 = {
                         "labels": ["等待插件上下文完成", "不等待，直接使用基础上下文"],
                         "hint": "控制普通 Prompt Extension 和 Contributor 是否阻塞 Persona 首次请求。等待模式受单轮总超时保护；协议或适配器直接注入的人格输入不受此项影响。",
                     },
+                    "interaction_middleware.contributor_timeout": {
+                        "description": "单个贡献者超时秒数",
+                        "type": "float",
+                        "hint": "普通 Prompt Contributor 与结果 Contributor 的单项时间上限。超时只丢弃该项贡献并记录诊断，不取消当前 Plugin Job 或整轮任务。",
+                    },
                     "interaction_middleware.plugin_runtime_targets": {
                         "description": "插件对话钩子生效链路",
                         "type": "object",
@@ -4466,6 +4477,13 @@ CONFIG_METADATA_3 = {
                         "_special": "plugin_tool_target_map",
                         "hint": "只控制插件提供给模型调用的工具（FunctionTool）出现在核心还是人格表达链路；配置优先于工具声明，未声明时默认只在核心生效，插件.工具 精确项优先。",
                     },
+                },
+            },
+            "context": {
+                "description": "Persona 上下文",
+                "type": "object",
+                "hint": "控制 Interaction 构建只读上下文时保留的近期记忆和 Persona 历史候选池；最终仍按目标 token 预算裁剪。",
+                "items": {
                     "interaction_middleware.memory_window_size": {
                         "description": "记忆窗口轮数",
                         "type": "int",
@@ -4657,37 +4675,28 @@ CONFIG_METADATA_3 = {
                     },
                 },
             },
-            "stream": {
-                "description": "执行过程提示",
+            "progress": {
+                "description": "执行进度提示",
                 "type": "object",
-                "hint": "观察核心流式输出窗口，并允许中间件在核心执行过程中插入简短提示。",
+                "hint": "由同一开关统一控制流式内容观察与工具阶段提示；提示只描述已确认的当前进度，不把单个步骤当作整轮完成。",
                 "items": {
-                    "interaction_middleware.stream_observation_enabled": {
-                        "description": "启用执行过程观察",
-                        "type": "bool",
-                    },
                     "interaction_middleware.stream_observation_min_chars": {
-                        "description": "最少累计字符数",
+                        "description": "流式观察最少累计字符数",
                         "type": "int",
-                        "hint": "核心流式输出累计到这个字符数后，中间件才会判断是否需要插入过程提示。",
+                        "hint": "仅用于核心流式文本；累计到该字符数后才判断是否需要给出进度提示。工具结果不会按正文长度触发。",
                     },
                     "interaction_middleware.stream_interjection_enabled": {
-                        "description": "允许过程提示",
+                        "description": "启用执行进度提示",
                         "type": "bool",
                     },
                     "interaction_middleware.stream_interjection_max_per_turn": {
-                        "description": "每轮最多提示次数",
+                        "description": "每轮最多进度提示次数",
                         "type": "int",
                     },
-                    "interaction_middleware.tool_stage_observation_enabled": {
-                        "description": "启用工具阶段提示",
-                        "type": "bool",
-                        "hint": "检索、查询、读取等资料型 FunctionTool 只在完成或超时阶段提示，不按返回正文长度触发。",
-                    },
                     "interaction_middleware.tool_stage_observation_delay_seconds": {
-                        "description": "工具处理中提示延迟秒数",
+                        "description": "工具运行中提示延迟秒数",
                         "type": "float",
-                        "hint": "超过此时长仍未结束的资料型 FunctionTool 可提示一次仍在处理。",
+                        "hint": "资料型 FunctionTool 超过此时长仍未结束时，可提示一次仍在处理；完成单个工具步骤时不会被表述为整轮完成。",
                     },
                 },
             },

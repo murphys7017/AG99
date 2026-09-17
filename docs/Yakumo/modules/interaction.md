@@ -119,6 +119,18 @@ Core Gate、EXPIRED 脱离和低优先级 T2 已接入生产 ProcessStage，但�
 `DIAG plugin.delayed_delivery` 和 `DIAG plugin.runtime` 分别解释 Handler 产物、T2 投递与后台 Job
 存活状态。Personal 的 `emitted_at` 在平台发送成功后记录，不以模型返回或发送意图代替。
 
+## 配置分组
+
+`interaction_middleware` 的公开配置按实际 owner 分组，而不是按历史模块名堆叠：
+
+- `general`：中间件开关与整轮总超时。
+- `plugin`：并行 Plugin Job、首回复是否等待插件富化、单个 Prompt/Result Contributor 超时，以及插件 Hook / FunctionTool 的目标映射。
+- `context`：近期 interaction memory 与 Persona 历史候选池；这两个是输入候选上限，最终仍服从目标 token 预算。
+- `expression`、`planner`、`personal_policy`、`personal_runtime_policy`：分别属于统一 Persona 表达、已委派任务规划、后台策略和主动人格运行时。
+- `progress`：一个总开关和三个阈值，共同管理流式文本与资料型工具的执行进度提示。
+
+`stream_observation_enabled` 与 `tool_stage_observation_enabled` 已删除。两者过去只是同一进度提示开关的局部重复控制：关闭总开关时不会再创建观察工作；开启时两类观察都按各自阈值提供结构化阶段事实。
+
 ## 首回复与插件富化
 
 Interaction Prompt 构建分为两层：先形成 Personal、Planner、Persona 和 Core 共享的 base facts，
@@ -416,6 +428,10 @@ Input Runtime / Observation
   output_controller 自身不直接调 provider 或独立拼装 persona prompt
 - 即时表达也由同一个 Persona Runtime 生成，并直接把 `PersonaExpressionResult` 交给
   Output Controller；它不是独立于“统一拟人化”的第二条生成链路
+- 过程提示由 `stream_interjection_enabled` 统一启用或关闭：流式文本按
+  `stream_observation_min_chars` 形成观察窗口，资料型工具按
+  `tool_stage_observation_delay_seconds` 提供运行中或单步骤完成事实；两个旧的分项观察开关已删除
+- 单个工具步骤完成只能产生“继续整理”的阶段提示，不能声称所有来源、所有检索或整轮任务完成
 
 输出分类中的新 message kind：
 

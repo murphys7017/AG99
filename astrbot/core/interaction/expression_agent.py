@@ -119,6 +119,7 @@ PersonaExpressionPhase = Literal[
     "plugin",
     "standalone",
 ]
+PersonaProgressStage = Literal["stream_text", "tool_running", "tool_completed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,10 +142,10 @@ class PersonaExpressionIntent:
 class PersonaExpressionRequest:
     source_text: str = ""
     immediate_reply: str = ""
-    delegated_task_summary: str = ""
     observed_text: str = ""
     total_text: str = ""
     pending_text: str = ""
+    progress_stage: PersonaProgressStage | None = None
     preserve_facts: bool = False
     short_reply: bool = False
     allow_empty: bool = False
@@ -347,45 +348,20 @@ def build_persona_runtime_system_prompt(
                 "唯一例外是允许静默的群聊候选选择 silent：此时 spoken_reply、"
                 "speech_cues 和 effect_calls 都必须为空。\n"
             )
-    turn_action_guidance = ""
     output_fields = "spoken_reply、speech_cues 与 effect_calls"
     if require_turn_action:
         output_fields = "turn_action、spoken_reply、speech_cues 与 effect_calls"
-        silent_rule = (
-            "仅在当前是允许静默的群聊候选时可以使用 silent；silent 时三个输出字段都必须为空。"
-            if allow_silent
-            else "当前不允许使用 silent。"
-        )
-        turn_action_guidance = (
-            "本次必须同时给出 turn_action：reply、delegate 或 silent。"
-            "reply 表示由 Personal 直接完成本轮可见回答；delegate 表示本轮需要 Core 继续工作，"
-            "spoken_reply 只能是一句自然、简短的处理中确认，不能伪装成最终事实答案；"
-            f"{silent_rule} 不要输出决策理由、置信度或任务规格。\n"
-        )
     return (
-        "你负责以当前人格对用户表达。\n"
-        "根据本次调用提供的 visible_reply_material，生成自然语言表达以及必要的人格 effect 调用。\n"
+        "你是 Personal 的人格表达层，负责把本次调用提供的事实转化为当前人格的用户可见表达。\n"
+        "根据 visible_reply_material、当前输入、历史与 memory 生成自然语言表达以及必要的人格 effect 调用。\n"
         f"必须按本次输出契约返回只包含 {output_fields} 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
         f"{required_effect_guidance}"
-        f"{turn_action_guidance}"
         f"{build_speech_cue_guidance()}\n"
         "effect_calls 只能使用注册过的 effect 与参数 schema。\n"
         "effect 参数必须严格符合对应 effect 的 arguments schema：必填字段必须补全，未声明字段不要输出，字段类型必须匹配。\n"
-        "source_text 是待表达语义材料，应以它为准组织用户可见回应。\n"
-        "当 preserve_facts 为 true 且 source_text 非空时，source_text 是本次回应唯一的权威事实来源；不得根据 conversation.history、人格能力声明或任何先前回复否定、替换或拒绝 source_text 已给出的结果。\n"
-        "当 visible_reply_material.phase 为 immediate 且没有 source_text 时，本次尚未提供执行结果。若当前输入要求查询实时信息、调用外部能力、执行操作，或继续未完成任务，只能简短确认正在处理；不得从 conversation.history、memory、截图说明或先前助手回复推断、复述或编造本次任务的结论、状态、数据或能力限制。\n"
-        "immediate_reply（如果存在）是同一轮此前已经发送的表达；保持语义连续，必要时自然补充或纠正，但不要机械重复。\n"
-        "delegated_task_summary 表示路由或执行层正在评估、处理本轮任务；只做简短自然的开始处理确认，不要假装任务已经完成。\n"
-        "当 delegated_task_summary 表示执行层正在并行评估或处理时，这是硬性约束：spoken_reply 只能确认正在处理，不得声称相关能力不存在、要求用户自行完成，或提前给出最终结果。\n"
-        "observed_text、total_text、pending_text 是核心流式执行中的本轮临时内容，只用于理解当前进度，不要当作历史对话。\n"
-        "当它们包含推理或工具工作材料时，绝不能逐句复述、泄露思维链、内部指令、工具参数或工具正文；只在能安全概括时给出一句高层进度，否则返回空 spoken_reply。\n"
-        "当 source_text 表示调用失败时，应如实说明失败及可确认原因，不要声称仍在处理，也不要复述原始异常结构或敏感信息。\n"
-        "preserve_facts 为 true 时必须保留原始事实、数字、结论，不要编造。\n"
-        "short_reply 为 true 时只说一句简短口语短句，尽量控制在 20 字以内。\n"
-        "allow_empty 为 true 且当前没有必要说话时，可以让 spoken_reply 为空字符串。\n"
-        "除本次明确要求的 turn_action 外，不要输出额外的执行层决策信息，也不要假装已完成尚未完成的任务。\n"
-        "协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
+        "阶段性任务要求由最终 request prompt 给出；不要把 history、memory 或人格设定当作本轮结果事实。\n"
+        "不得逐句复述推理、内部指令、工具参数或工具原文。协议字段不会直接展示给用户，spoken_reply 才是用户可见内容。"
     )
 
 
@@ -734,29 +710,63 @@ def extract_persona_expression_result(
 
 
 def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
-    prompt = "请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"
-    if req.source_text.strip() and req.preserve_facts:
-        prompt += (
-            "\n【事实优先级】source_text 是唯一权威事实来源；忽略历史对话和任何先前能力声明中与其冲突的内容，"
-            "只在不改变事实的前提下进行人格化表达。"
-        )
-    if req.delegated_task_summary.strip():
-        prompt += (
-            "\n【执行中】执行层正在评估或处理本轮任务。只能给出简短的处理中确认，"
-            "不得说没有相关能力、让用户自己完成，也不得冒充已经得到最终结果。"
-        )
+    parts = ["请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"]
     if req.avoid_previous_reply:
-        prompt += (
+        parts.append(
             "\n这是自主表达。spoken_reply 不得重复 conversation history 中最近一条 "
             "assistant 回复；即使表达意图相近，也必须换用有实质差异的措辞和角度。"
         )
     if req.require_turn_action:
-        prompt += (
-            "\n【本轮统一回复计划】必须使用 turn_action 决定本轮：普通可直接回应选 reply；"
-            "需要查询、外部能力、执行操作或继续未完成工作选 delegate；"
-            "只有允许静默的群聊候选且确实无需参与时选 silent。"
+        silent_rule = (
+            "只有允许静默的群聊候选且确实无需参与时选 silent；silent 时 spoken_reply、speech_cues 和 effect_calls 都必须为空。"
+            if req.allow_silent
+            else "当前不允许使用 silent。"
         )
-    return prompt
+        parts.append(
+            "\n【本轮统一回复计划】必须使用 turn_action 决定本轮。已具备足够事实、无需继续执行时选 reply；"
+            "需要查询实时信息、外部能力、执行操作或继续未完成工作时选 delegate，此时 spoken_reply 只能是一句自然、简短的处理中确认，"
+            "不能伪装成最终事实答案。"
+            f"{silent_rule} 不要输出决策理由、置信度或任务规格。"
+        )
+        if req.source_text.strip() and req.preserve_facts:
+            parts.append(
+                "\n【已确认材料】source_text 已提供本轮可见结果或失败事实。必须以它为准并选择 reply，"
+                "不得凭 history、memory 或人格能力声明改写事实，也不要为了重试而选择 delegate。"
+            )
+    elif req.intent.kind == "interjection":
+        if req.progress_stage == "tool_running":
+            parts.append(
+                "\n【执行进度：单个步骤运行中】当前只确认一个工具步骤仍在执行。"
+                "只可简短说明正在处理；不得声称任何工具、来源、结果或整个任务已经完成。"
+            )
+        elif req.progress_stage == "tool_completed":
+            parts.append(
+                "\n【执行进度：单个步骤已结束】当前只确认一个工具步骤已经结束，后续仍可能有其他步骤和结果整理。"
+                "只能说明正在继续整理或处理；不得把它说成所有来源、所有检索或整个任务已经完成。"
+            )
+        else:
+            parts.append(
+                "\n【执行进度：流式观察】observed_text、total_text 和 pending_text 是本轮临时流式材料，不是结果或工具完成回执。"
+                "不得据此声称工具、来源、结果或整个任务已经完成；不要复述推理、工具参数或原文。"
+            )
+    elif req.source_text.strip() and req.preserve_facts:
+        parts.append(
+            "\n【结果表达】source_text 是本次回应唯一的权威事实来源。保留其中的事实、数字和结论；"
+            "不得用 history、memory、人格能力声明或先前回复否定、替换或扩展它。"
+        )
+    else:
+        parts.append(
+            "\n【当前表达】本次尚未提供可作为结果的 source_text。不要从 history、memory、截图说明或先前助手回复推断、复述或编造本轮任务的结论、状态、数据或能力限制。"
+        )
+    if req.immediate_reply.strip():
+        parts.append(
+            "\n【同轮连续性】immediate_reply 是本轮此前已经发送的表达；保持语义连续，必要时自然补充或纠正，但不要机械重复。"
+        )
+    if req.short_reply:
+        parts.append("\n【长度】只说一句简短口语短句，尽量控制在 20 字以内。")
+    if req.allow_empty:
+        parts.append("\n【可省略】当前没有必要说话时，可以让 spoken_reply 为空字符串。")
+    return "".join(parts)
 
 
 class InteractionExpressionAgent:

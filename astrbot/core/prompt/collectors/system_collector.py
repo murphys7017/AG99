@@ -255,9 +255,9 @@ class SystemCollector(ContextCollectorInterface):
             else:
                 tools = provider_request.func_tool if provider_request is not None else None
                 tool_names = set(tools.names()) if tools is not None else set()
-            from astrbot.core.tools.web_search_tools import WEB_SEARCH_TOOL_NAMES
+            from astrbot.core.tools.web_search_tools import is_web_search_tool_name
 
-            if tool_names.intersection(WEB_SEARCH_TOOL_NAMES):
+            if any(is_web_search_tool_name(name) for name in tool_names):
                 tool_prompt += (
                     " This task requires direct web research in the current Core "
                     "turn. Use an authorized web-search tool; do not hand it off "

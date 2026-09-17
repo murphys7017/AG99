@@ -876,7 +876,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
     ) -> AsyncGenerator[MessageChain, None]:
         interaction_config = self._get_interaction_config(event)
-        if not interaction_config.stream_observation_enabled:
+        if not interaction_config.stream_interjection_enabled:
             async for chain in generator:
                 chunk_text = self._extract_observable_stream_text(chain)
                 if chunk_text:
@@ -1257,7 +1257,6 @@ class InteractionOutputController:
         config = self._get_interaction_config(event)
         return (
             config.stream_interjection_enabled
-            and config.tool_stage_observation_enabled
             and config.stream_interjection_max_per_turn > 0
             and not event.is_stopped()
             and not is_interaction_turn_completed(event)
@@ -1315,9 +1314,15 @@ class InteractionOutputController:
         if not self._tool_stage_observation_allowed(event):
             return False
         if phase == "running":
-            source_text = f"{descriptor}仍在处理中。只简短告知用户仍在处理，不要猜测或转述任何工具结果。"
+            source_text = (
+                f"单个{descriptor}步骤仍在处理中。只简短告知用户仍在处理，"
+                "不要猜测或转述任何工具结果。"
+            )
         else:
-            source_text = f"{descriptor}已经完成。只简短告知用户正在整理结果，不要提前宣称整个任务已经完成，也不要转述工具原始内容。"
+            source_text = (
+                f"单个{descriptor}步骤已经结束；这不代表其他检索、工具步骤或整个任务已经完成。"
+                "只简短告知用户正在继续整理，不要转述工具原始内容。"
+            )
         decision = await self._decide_stream_interjection(
             event,
             observed_text=source_text,
@@ -1325,6 +1330,7 @@ class InteractionOutputController:
             window_index=get_interaction_turn_stream_observation_count(event) + 1,
             source_text=source_text,
             observation_kind="tool_stage",
+            progress_stage=f"tool_{phase}",
             metadata={"tool_stage": descriptor, "tool_phase": phase},
         )
         if not decision.should_interject or not decision.reply:
@@ -1364,6 +1370,7 @@ class InteractionOutputController:
         is_final: bool = False,
         source_text: str = "",
         observation_kind: str = "stream_text",
+        progress_stage: str = "stream_text",
         metadata: Mapping[str, Any] | None = None,
     ) -> StreamObservationDecision:
         interaction_config = self._get_interaction_config(event)
@@ -1391,6 +1398,7 @@ class InteractionOutputController:
                 is_final=is_final,
                 reason=decision.reason or "plugin_decider",
                 observation_kind=observation_kind,
+                progress_stage=progress_stage,
             )
         return await self._render_stream_interjection_via_persona(
             event,
@@ -1400,6 +1408,7 @@ class InteractionOutputController:
             window_index=window_index,
             is_final=is_final,
             observation_kind=observation_kind,
+            progress_stage=progress_stage,
         )
 
     async def _render_stream_interjection_via_persona(
@@ -1413,6 +1422,7 @@ class InteractionOutputController:
         is_final: bool,
         reason: str = "persona_runtime",
         observation_kind: str = "stream_text",
+        progress_stage: str = "stream_text",
     ) -> StreamObservationDecision:
         if (
             event.is_stopped()
@@ -1428,6 +1438,7 @@ class InteractionOutputController:
                     observed_text=observed_text,
                     total_text=total_text,
                     pending_text=get_interaction_turn_stream_pending_text(event),
+                    progress_stage=progress_stage,
                     short_reply=True,
                     allow_empty=True,
                     intent=PersonaExpressionIntent(

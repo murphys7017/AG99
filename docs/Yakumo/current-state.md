@@ -195,7 +195,7 @@ Head 仍是同步入口包装，不包含统一内部队列和可替换 Executor
 - Core Execution Ledger 以 `execution_id` 独立保存 task、attempt、有限工具证据、结果、错误和 token usage，并仅投影给 Core。Native 当前已通过 `CoreExecutionLifecycle` 统一排序执行事件并承载取消/终态事实，但最终 Ledger 调用仍位于 `InternalAgentSubStage`，跨 Native/Third-party 的共同回流契约尚未完成，因此当前尚不具备直接接入可替换 Backend 的条件。
 - Interaction 的普通 Prompt Extension 与 Prompt Contributor 在 base facts 完成后统一后台运行一次，形成 Persona/Core 共用的 plugin enrichment pack；插件贡献项仍只通过 `meta.targets` 进入目标投影。Persona 是否等待 pending enrichment 由 `persona_plugin_context_mode` 决定，Planner 不挂载普通插件扩展或插件目录，只消费可信控制面 Collector 提供的 base facts；Core 等待同一 task 后在 enrichment pack 上加入阶段性的 `CoreTaskSpec` 并投影为 Core 视图。单个 Prompt Contributor 失败只记录并跳过。
 - `expression_agent` 已从 phase 驱动改为“visible reply material”驱动：
-  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；普通即时轮额外要求 `turn_action`。persona runtime 指令与输出契约由 Render Profile 提供，`persona.prompt` 直接渲染为 `<persona>` 文本，当前轮待表达材料由 Collector 进入 `input.visible_reply_material`
+  prompt tree 通过 `astrbot/core/prompt` 组装材料，默认注册严格 `tool_call` 的 `persona_expression`，返回 `spoken_reply` / `effect_calls`；普通即时轮额外要求 `turn_action`。Persona 的稳定职责和输出契约保留在 system prompt，普通计划、结果表达与进度提示分别由 request prompt 声明；当前轮待表达材料由 Collector 进入 `input.visible_reply_material`，其中 `progress_stage` 明确流式观察、单个工具运行中或单个工具完成，防止把局部步骤误说成整轮完成
 - persona visible-reply 当前统一基线是协议级虚拟 tool-call；`prompt_only JSON` 仅作为 renderer/provider 不支持 tool-call 时的受控降级路径，自由文本仍不算成功
 - 旧 `finalizer.py` 已删除；core final reply 不再走独立 finalizer provider
 - stream interjection 不再在 `output_controller` 内独立拼 prompt 调模型生成文案，而是只通过统一 persona visible-reply 入口生成
