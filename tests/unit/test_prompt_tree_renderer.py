@@ -2163,6 +2163,7 @@ def test_render_engine_renders_extension_slots_to_system_and_input_targets():
     assert "<desktop_sidecar>" in result.system_prompt
     assert "<plugin_id>" in result.system_prompt
     assert "desktop.sidecar" in result.system_prompt
+    assert "{&quot;mode&quot;:&quot;assistant&quot;}" in result.system_prompt
     assert "<conversation_extensions>" in result.system_prompt
     assert "desktop help" in result.system_prompt
     assert "Runtime Context" not in result.system_prompt

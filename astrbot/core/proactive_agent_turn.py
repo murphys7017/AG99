@@ -62,20 +62,14 @@ async def run_proactive_agent_turn(
     conversation = await _get_session_conv(event=event, plugin_context=context)
     request.conversation = conversation
     history = json.loads(conversation.history)
-    if history:
+    if history and include_history_fences:
         request.contexts = history
         history_dump = request._print_friendly_context()
         request.contexts = []
-        if include_history_fences:
-            request.system_prompt += (
-                "\n\nBellow is you and user previous conversation history:\n"
-                f"---\n{history_dump}\n---\n"
-            )
-        else:
-            request.system_prompt += (
-                "\n\nBellow is you and user previous conversation history:\n"
-                f"{history_dump}"
-            )
+        request.system_prompt += (
+            "\n\nBellow is you and user previous conversation history:\n"
+            f"---\n{history_dump}\n---\n"
+        )
 
     request.system_prompt += system_prompt
     request.prompt = prompt

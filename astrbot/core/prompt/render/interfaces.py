@@ -2441,7 +2441,16 @@ class BasePromptRenderer:
                 entry_rendered |= self._render_generic_value(
                     entry_ref,
                     "value",
-                    item.get("value"),
+                    (
+                        json.dumps(
+                            item.get("value"),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            default=str,
+                        )
+                        if item.get("value_kind") == "mapping"
+                        else item.get("value")
+                    ),
                 )
                 rendered_plugin |= entry_rendered
             rendered_any |= rendered_plugin

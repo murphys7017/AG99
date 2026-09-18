@@ -625,7 +625,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 "If you need to deliver the result to the user immediately, "
                 "you MUST use `send_message_to_user` tool to send the message directly to the user, "
                 "otherwise the user will not see the result. "
-                "After completing your task, summarize and output your actions and results. "
+                "After the delivery tool succeeds, stop without producing an additional summary. "
             ),
             require_delivery_tool=True,
             include_history_fences=False,

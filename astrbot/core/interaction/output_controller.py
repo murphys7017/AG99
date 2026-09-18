@@ -55,6 +55,7 @@ from .output_modes import (
     PluginOutputMode,
     temporary_output_origin,
 )
+from .personal_expression_guard import fingerprint_personal_expression
 from .turn_state import (
     InteractionFinalOutputStatus,
     add_interaction_turn_stream_observation_task,
@@ -561,7 +562,7 @@ class InteractionOutputController:
             event,
             message,
             message_kind=resolved_kind,
-            result_is_model_result=False,
+            result_is_model_result=resolved_mode is PluginOutputMode.PERSONA,
             message_id=message_id,
         )
         delivered_message_ids = await self._deliver_visible_message(
@@ -1738,6 +1739,26 @@ class InteractionOutputController:
         result: PersonaExpressionResult,
         event: AstrMessageEvent,
     ) -> None:
+        immediate_reply = get_interaction_turn_immediate_reply(event)
+        if (
+            immediate_reply
+            and fingerprint_personal_expression(result.spoken_reply)
+            == fingerprint_personal_expression(immediate_reply)
+            and not result.effect_calls
+            and not result.metadata.get("persona_tool_attachments")
+        ):
+            logger.info(
+                "Suppressing exact duplicate Core-final Persona reply: "
+                "turn_id=%s message=%s",
+                event.get_extra("_turn_id"),
+                immediate_reply,
+            )
+            # The Core-final path normally records and persists the visible
+            # output here. A suppressed duplicate still has to close the
+            # interaction turn without emitting a second platform message.
+            self._materialize_finalized_turn(event)
+            await self._persist_interaction_turn(event)
+            return
         final_message = source_message.derive(
             [
                 Plain(result.spoken_reply),

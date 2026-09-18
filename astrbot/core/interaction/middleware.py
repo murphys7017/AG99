@@ -573,10 +573,17 @@ class InteractionMiddleware:
         if not await reserve_interaction_turn_final_output(event):
             return
         try:
+            # Proactive plain text belongs to the unified Persona output surface.
+            # Keep media-bearing plugin output direct so attachments are not rewritten.
+            has_non_plain = any(
+                not isinstance(component, Plain)
+                for component in (message.chain or [])
+            )
+            output_mode = "direct" if has_non_plain else "persona"
             await self.output_controller.capture_plugin_output(
                 message,
                 event,
-                mode="direct",
+                mode=output_mode,
                 finalize=True,
                 platform_extras=platform_extras,
             )

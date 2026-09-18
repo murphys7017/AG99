@@ -422,10 +422,11 @@ class CronJobManager:
                 "You are now responding to a scheduled task. "
                 "Proceed according to your system instructions. "
                 "Output using same language as previous conversation. "
-                "After completing your task, summarize and output your actions and results."
+                "Use the delivery tool when a user-visible message is required; "
+                "after the tool succeeds, stop without producing an additional summary."
             ),
             require_delivery_tool=bool(delivery_session_str),
-            include_history_fences=True,
+            include_history_fences=False,
         )
         if turn is None:
             logger.error("Failed to build main agent for cron job.")

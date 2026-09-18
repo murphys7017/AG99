@@ -948,6 +948,36 @@ async def test_core_result_returns_through_unified_persona_expression():
 
 
 @pytest.mark.asyncio
+async def test_exact_duplicate_core_final_reply_closes_turn_without_delivery():
+    class Event:
+        def __init__(self):
+            self._extras = {"_turn_id": "turn-duplicate-final"}
+            self.message_str = "提醒我"
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    persisted = AsyncMock()
+    event = Event()
+    ensure_interaction_turn_state(event)
+    set_interaction_turn_immediate_reply(event, "三分钟后提醒你。")
+    controller = InteractionOutputController(persist_callback=persisted)
+    controller._deliver_core_final_message = AsyncMock()
+
+    await controller.deliver_prepared_core_reply(
+        MessageChain([Plain("Core execution completed")]),
+        PersonaExpressionResult(spoken_reply="三分钟后提醒你。"),
+        event,
+    )
+
+    controller._deliver_core_final_message.assert_not_awaited()
+    persisted.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
 async def test_core_persona_failure_falls_back_to_raw_core_output():
     class Event:
         def __init__(self):
