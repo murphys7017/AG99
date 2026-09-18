@@ -262,6 +262,9 @@ class PersonalHeartbeatSource:
             if not (
                 result.status.value == "ignored"
                 and result.reason_codes == ("heartbeat_without_material",)
+            ) and not (
+                result.status.value == "coalesced"
+                and result.reason_codes == ("inbox_coalesced_replaced",)
             ):
                 logger.debug(
                     "Personal Runtime heartbeat submitted: target=%s status=%s "

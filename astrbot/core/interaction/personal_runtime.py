@@ -770,16 +770,20 @@ class PersonalSessionRuntime:
         if not result.admitted:
             return result
 
-        logger.debug(
-            "Personal Runtime observation admitted: runtime_key_hash=%s "
-            "observation_id=%s kind=%s status=%s pending_count=%s reasons=%s",
-            _runtime_key_hash(self.key),
-            result.observation_id,
-            observation.kind,
-            result.status.value,
-            result.pending_count,
-            ",".join(result.reason_codes),
-        )
+        if not (
+            observation.kind == "heartbeat"
+            and result.status is ObservationAdmissionStatus.COALESCED
+        ):
+            logger.debug(
+                "Personal Runtime observation admitted: runtime_key_hash=%s "
+                "observation_id=%s kind=%s status=%s pending_count=%s reasons=%s",
+                _runtime_key_hash(self.key),
+                result.observation_id,
+                observation.kind,
+                result.status.value,
+                result.pending_count,
+                ",".join(result.reason_codes),
+            )
         self._remember_observation_material(observation)
         self.idle_since = None
         self.touch(now=now)
@@ -795,6 +799,11 @@ class PersonalSessionRuntime:
                     or self.next_observation_wake_at <= now
                 )
             ):
+                if (
+                    self.observation_evaluation_task is not None
+                    and not self.observation_evaluation_task.done()
+                ):
+                    return result
                 self._clear_observation_wake()
                 task_created = self._ensure_observation_evaluation_task(
                     observation.observation_id,
