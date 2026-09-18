@@ -16,6 +16,7 @@ from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.plugin_admission import build_plugin_admission_snapshot
 from astrbot.core.plugin_runtime import (
     plugin_supports_runtime_target,
+    tool_plugin_is_selected,
     tool_supports_runtime_target,
     validate_plugin_capability_targets,
 )
@@ -170,6 +171,24 @@ def test_hook_and_tool_targets_are_independent(monkeypatch, tmp_path):
     save_config(event.get_extra("_astrbot_config"), config, is_core=True)
     persisted = json.loads(path.read_text(encoding="utf-8-sig"))
     assert persisted["interaction_middleware"]["plugin_capability_targets"] == binding
+
+
+def test_external_mcp_tool_is_not_rejected_as_unknown_plugin():
+    """Connected MCP tools are process-level Core capabilities."""
+    enabled = Event({"provider_settings": {"web_search": True}})
+    disabled = Event({"provider_settings": {"web_search": False}})
+    for tool_name in ("web_search", "web__search"):
+        external_tool = SimpleNamespace(
+            name=tool_name,
+            mcp_server_name="MiniMax",
+            execution_targets=frozenset({"core"}),
+        )
+        assert tool_plugin_is_selected(enabled, external_tool)
+        assert not tool_plugin_is_selected(disabled, external_tool)
+        assert tool_supports_runtime_target(enabled, external_tool, "core")
+        assert not tool_supports_runtime_target(
+            enabled, external_tool, "personal_expression"
+        )
 
 
 @pytest.mark.asyncio

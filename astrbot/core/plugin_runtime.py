@@ -15,6 +15,7 @@ from astrbot.core.plugin_admission import (
     capability_allowed,
     resolve_owner_metadata,
 )
+from astrbot.core.tools.web_search_tools import is_web_search_tool_name
 
 PluginRuntimeTarget = Literal["core", "personal_expression"]
 PLUGIN_RUNTIME_TARGET_CORE: PluginRuntimeTarget = "core"
@@ -134,6 +135,24 @@ def tool_supports_runtime_target(event, tool: object, target: str) -> bool:
 
 
 def tool_plugin_is_selected(event, tool: object) -> bool:
+    # MCP tools are process-level external capabilities. They do not have an
+    # AstrBot plugin owner, so the per-turn plugin admission policy must not
+    # reject them as unknown-owner tools. Search is still controlled by the
+    # active configuration profile, matching the built-in web-search switch.
+    if getattr(tool, "mcp_server_name", None):
+        tool_name = getattr(tool, "name", None)
+        if tool_name == "web_search" or is_web_search_tool_name(tool_name):
+            config = event.get_extra("_astrbot_config", {}) if event is not None else {}
+            provider_settings = (
+                config.get("provider_settings", {})
+                if isinstance(config, dict)
+                else {}
+            )
+            return (
+                isinstance(provider_settings, dict)
+                and provider_settings.get("web_search", False) is True
+            )
+        return True
     return capability_allowed(
         event,
         kind=CapabilityKind.TOOL,
