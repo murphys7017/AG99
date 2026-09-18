@@ -116,13 +116,13 @@ class MyWorkPlugin(Star):
     pass
 ```
 
-配置文件中的 `interaction_middleware.plugin_runtime_targets` 优先级更高，完整顺序为
+配置文件中的 `interaction_middleware.plugin_capability_targets.<plugin>.llm_hooks` 优先级更高，完整顺序为
 “配置覆盖 > 类或装饰器声明 > Persona Expression 默认值”；关键词、命令等 Pipeline Handler
 不受此设置影响，仍保持原有的终止语义。
 
 插件拥有的 LLM Tool 不跟随这个生命周期目标：工具默认进入 Core，可通过装饰器的
 `tool_targets={"personal_expression"}` 显式声明 Persona；用户还可用
-`interaction_middleware.plugin_tool_targets` 按插件目录名或 `插件目录名.工具名` 覆盖。
+`interaction_middleware.plugin_capability_targets.<plugin>.tools` 中，`<plugin>` 是注册名称，工具名称精确项优先于 `*`。
 
 > [!TIP]
 >
@@ -517,7 +517,7 @@ async def on_astrbot_loaded(self):
 
 ProviderRequest 对象包含了 LLM 请求的所有信息，包括请求的文本、系统提示等。
 
-启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的非工具修改会保留到最终用户可见表达。生命周期目标按 `interaction_middleware.plugin_runtime_targets` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。插件 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析；请求钩子可以移除工具，但新增工具仍必须通过 Persona 目标授权过滤。Core Planner 不会触发请求或 Agent 生命周期钩子；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
+启用 Interaction Middleware 时，插件默认在 Persona Expression 的预工具准备请求上收到此钩子，且每次人格表达只触发一次；对 `ProviderRequest` 的非工具修改会保留到最终用户可见表达。生命周期目标按 `interaction_middleware.plugin_capability_targets.<plugin>.llm_hooks` 配置、插件类或 `register_star(..., interaction_runtime_target=...)` 声明、Persona 默认值依次解析；最终为 `core` 的插件才会在 Core 请求上收到它。插件 LLM Tool 独立按 `plugin_capability_targets.<plugin>.tools` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析；请求钩子可以移除工具，但新增工具仍必须通过 Persona 目标授权过滤。Core Planner 不会触发请求或 Agent 生命周期钩子；`on_using_llm_tool` 和 `on_llm_tool_respond` 在 Core 或 Persona 实际执行工具时触发，并受插件准入和 LLM Hook 目标过滤。Persona 侧收到的是本次表达分支私有的 `ProviderRequest`，修改不会覆盖同一事件的 Core 请求；钩子收到的事件对象仍是原始 `AstrMessageEvent`。关键词、命令等普通 Pipeline Handler 不受此配置影响，仍可直接终止事件。
 
 ```python
 from astrbot.api.event import filter, AstrMessageEvent

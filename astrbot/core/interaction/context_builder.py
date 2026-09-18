@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Iterable
-from copy import copy, deepcopy
+from copy import copy
 from typing import Any
 
 from astrbot import logger
-from astrbot.core.plugin_admission import call_capability_lister
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors.input_collector import (
     InputMediaEnrichmentCollector,
@@ -16,21 +14,13 @@ from astrbot.core.prompt.collectors.memory_collector import (
     get_cached_prompt_memory_snapshot,
 )
 from astrbot.core.prompt.context_collect import (
-    build_prompt_extension_slots,
     interaction_base_collectors,
 )
 from astrbot.core.prompt.context_types import ContextPack, ContextSlot
-from astrbot.core.prompt.extensions import PromptExtension
 from astrbot.core.prompt.interfaces import ContextCollectorInterface
-from astrbot.core.prompt.strict_mode import is_prompt_pipeline_strict
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.star.context import Context
 
-from .contributors import (
-    InteractionPromptPurpose,
-    InteractionPromptView,
-    PromptViewPhase,
-)
 from .persona_domain import (
     adapt_persona_collector_slots,
     build_effective_persona_context,
@@ -41,12 +31,6 @@ from .turn_state import (
     get_interaction_turn_state,
 )
 from .types import InteractionAgentConfig, InteractionPromptBuildConfig
-
-
-class InteractionPromptContributorError(RuntimeError):
-    def __init__(self, reason: str, message: str | None = None) -> None:
-        self.reason = reason
-        super().__init__(message or reason)
 
 
 class AttachmentSummaryCollector(ContextCollectorInterface):
@@ -74,36 +58,6 @@ class AttachmentSummaryCollector(ContextCollectorInterface):
                 meta={"scope": "derived"},
             )
         ]
-
-
-class InteractionPromptContributorCollector(ContextCollectorInterface):
-    def __init__(self, context_snapshot: dict[str, Any]) -> None:
-        self.context_snapshot = context_snapshot
-
-    async def collect(
-        self,
-        event,
-        plugin_context,
-        config,
-        provider_request=None,
-    ) -> list[ContextSlot]:
-        del provider_request
-        extensions = await collect_interaction_prompt_extensions(
-            event,
-            plugin_context,
-            config,
-            self.context_snapshot,
-        )
-        targeted_extensions: list[PromptExtension] = []
-        for extension in extensions:
-            targeted = deepcopy(extension)
-            targeted.meta = dict(targeted.meta)
-            targeted.meta.setdefault("targets", ["persona"])
-            targeted_extensions.append(targeted)
-        return build_prompt_extension_slots(
-            targeted_extensions,
-            source="interaction_prompt_contributors",
-        )
 
 
 async def build_interaction_context_pack(
@@ -506,9 +460,7 @@ async def _build_interaction_plugin_context_pack(
         build_config,
     ).build(
         provider_request=event.get_extra("provider_request"),
-        collectors=[
-            InteractionPromptContributorCollector(material.context_snapshot),
-        ],
+        collectors=[],
         include_prompt_extensions=True,
         prompt_extension_collector_scope="plugin",
         base=material.prompt_context_pack,
@@ -745,162 +697,3 @@ def extract_core_capability_payload(pack: ContextPack) -> dict[str, Any]:
         "subagent_available": pack.get_slot("capability.subagent_handoff_tools")
         is not None,
     }
-
-
-async def collect_interaction_prompt_extensions(
-    event,
-    plugin_context: Context,
-    config,
-    context_snapshot: dict[str, Any],
-) -> list[PromptExtension]:
-    extensions: list[PromptExtension] = []
-    contributor_timeout = max(
-        0.1,
-        float(getattr(config, "contributor_timeout", 1.0) or 1.0),
-    )
-    strict = is_prompt_pipeline_strict(config)
-    view = _build_prompt_view(
-        event=event,
-        config=config,
-        context_snapshot=context_snapshot,
-        purpose="context_collection",
-        phase="collect",
-    ).copy_read_only()
-    contributors = list(
-        call_capability_lister(
-            plugin_context.list_interaction_prompt_contributors,
-            event=event,
-        )
-    )
-
-    async def _collect_one(contributor):
-        plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")
-        try:
-            payload = await asyncio.wait_for(
-                contributor.collect(event, plugin_context, view),
-                timeout=contributor_timeout,
-            )
-        except TimeoutError:
-            error = f"timeout_after_{contributor_timeout:.3f}s"
-            _record_interaction_prompt_contributor_failure(
-                event,
-                plugin_id=plugin_id,
-                error=error,
-            )
-            return InteractionPromptContributorError(
-                "collector_timeout",
-                "Interaction prompt contributor timed out: "
-                f"plugin_id={plugin_id} timeout={contributor_timeout:.3f}s",
-            )
-        except Exception as exc:  # noqa: BLE001
-            _record_interaction_prompt_contributor_failure(
-                event,
-                plugin_id=plugin_id,
-                error=str(exc),
-            )
-            return InteractionPromptContributorError(
-                "collector_failed",
-                f"Interaction prompt contributor failed: plugin_id={plugin_id} error={exc}",
-            )
-
-        try:
-            contributor_extensions = _normalize_interaction_prompt_extensions(payload)
-            build_prompt_extension_slots(
-                contributor_extensions,
-                source="interaction_prompt_contributors",
-            )
-        except (InteractionPromptContributorError, ValueError) as exc:
-            _record_interaction_prompt_contributor_failure(
-                event,
-                plugin_id=plugin_id,
-                error=str(exc),
-            )
-            return InteractionPromptContributorError("invalid_payload", str(exc))
-        return contributor_extensions
-
-    results = await asyncio.gather(
-        *[_collect_one(contributor) for contributor in contributors],
-    )
-    failures = [
-        result
-        for result in results
-        if isinstance(result, InteractionPromptContributorError)
-    ]
-    if strict and failures:
-        raise failures[0]
-    for result in results:
-        if isinstance(result, InteractionPromptContributorError):
-            continue
-        extensions.extend(result)
-
-    extensions.sort(key=lambda item: (item.order, item.plugin_id))
-    return extensions
-
-
-def _normalize_interaction_prompt_extensions(payload: object) -> list[PromptExtension]:
-    if payload is None:
-        return []
-    if isinstance(payload, PromptExtension):
-        return [payload]
-    if isinstance(payload, Iterable) and not isinstance(payload, str | bytes | dict):
-        items = list(payload)
-        if all(isinstance(item, PromptExtension) for item in items):
-            return items
-    raise InteractionPromptContributorError(
-        "invalid_payload",
-        "interaction prompt contributor must return PromptExtension, list[PromptExtension], or None",
-    )
-
-
-def _record_interaction_prompt_contributor_failure(
-    event,
-    *,
-    plugin_id: str,
-    error: str,
-) -> None:
-    failures = event.get_extra("_interaction_prompt_contributor_failures", [])
-    if not isinstance(failures, list):
-        failures = []
-    failures.append({"plugin_id": plugin_id, "error": error})
-    event.set_extra("_interaction_prompt_contributor_failures", failures)
-    logger.error(
-        "Interaction prompt contributor failed: plugin_id=%s error=%s",
-        plugin_id,
-        error,
-    )
-
-
-def _build_prompt_view(
-    *,
-    event,
-    config,
-    context_snapshot: dict[str, Any],
-    purpose: InteractionPromptPurpose,
-    phase: PromptViewPhase,
-) -> InteractionPromptView:
-    platform_id = (
-        event.get_platform_id()
-        if callable(getattr(event, "get_platform_id", None))
-        else ""
-    )
-    session_id = str(
-        getattr(event, "unified_msg_origin", None)
-        or getattr(event, "session_id", "")
-        or ""
-    )
-    context = context_snapshot if isinstance(context_snapshot, dict) else {}
-    return InteractionPromptView(
-        turn_id=str(event.get_extra("_turn_id", "") or ""),
-        platform_id=platform_id,
-        session_id=session_id,
-        purpose=purpose,
-        phase=phase,
-        config=config,
-        context_snapshot=context,
-        persona=dict(context.get("persona", {}) or {}),
-        input=dict(context.get("input", {}) or {}),
-        memory=dict(context.get("memory", {}) or {}),
-        recent_messages=list(context.get("recent_messages", []) or []),
-        capabilities=dict(context.get("core_capabilities", {}) or {}),
-        metadata={"canonical_context": True},
-    )

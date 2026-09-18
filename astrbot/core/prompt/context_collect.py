@@ -10,7 +10,7 @@ import asyncio
 import json
 from collections.abc import Iterable
 from copy import deepcopy
-from typing import Literal
+from typing import Any, Literal
 
 from astrbot.core import logger
 from astrbot.core.capabilities import (
@@ -18,7 +18,7 @@ from astrbot.core.capabilities import (
     CapabilitySnapshot,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.plugin_admission import call_capability_lister
+from astrbot.core.plugin_admission import build_plugin_admission_snapshot
 from astrbot.core.star.context import Context
 
 from .collectors.conversation_history_collector import ConversationHistoryCollector
@@ -474,7 +474,8 @@ async def _collect_prompt_extension_slots(
     if not callable(list_collectors):
         return [], []
 
-    raw_collectors = call_capability_lister(list_collectors, event=event)
+    await build_plugin_admission_snapshot(event=event)
+    raw_collectors = list_collectors(event=event)
     try:
         collectors = list(raw_collectors or [])
     except TypeError:
@@ -747,10 +748,8 @@ async def _await_prompt_extension_collectors(
 
     deadline = get_interaction_turn_deadline(event)
     if deadline is None:
-        # No turn budget: keep the historical unbounded behaviour, but still
-        # clean up if the wait itself is cancelled.
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.wait(tasks, timeout=_plugin_enrichment_limit(config))
         finally:
             await drain()
         return [_safe_task_result(task) for task in tasks]
@@ -799,17 +798,9 @@ async def _await_prompt_extension_collectors(
     return [_safe_task_result(task) for task in tasks]
 
 
-def _plugin_enrichment_limit(config: Any) -> float | None:
+def _plugin_enrichment_limit(config: Any) -> float:
     """Group-level cap for plugin enrichment, if the config carries one."""
-    for attr in ("plugin_enrichment_timeout", "contributor_timeout"):
-        value = getattr(config, attr, None)
-        if value is None:
-            continue
-        try:
-            return max(0.0, float(value))
-        except (TypeError, ValueError):
-            continue
-    return None
+    return max(0.0, float(getattr(config, "plugin_enrichment_timeout", 3.0)))
 
 
 def _prompt_extension_collector_in_scope(

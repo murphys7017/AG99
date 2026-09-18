@@ -11,7 +11,7 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 
 > [!NOTE]
 > AG99, created by YakumoAki, also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
-> In an Interaction turn, normal plugin LLM hooks enhance Persona Expression by default, while executable tools default to Core. Plugins can declare a lifecycle target with `interaction_runtime_target` and a tool target with `tool_targets`; user `plugin_runtime_targets` and `plugin_tool_targets` settings override them independently.
+> In an Interaction turn, normal plugin LLM hooks enhance Persona Expression by default, while executable tools default to Core. Plugins can declare a lifecycle target with `interaction_runtime_target` and a tool target with `tool_targets`; user `plugin_capability_targets.<plugin>.llm_hooks` and `plugin_capability_targets.<plugin>.tools` settings override them independently.
 
 > [!IMPORTANT]
 > **Target and admission are two different things.** The declarations and settings above
@@ -42,7 +42,7 @@ that matches the plugin's behavior:
 
 - **Commands, keywords, protocols, or an independent business system that must take over a message:** use an official Pipeline Handler. A Handler may return/send a result or `yield ProviderRequest` to Core; it is not re-evaluated by the Personal Response Plan or Core Planner.
 - **Current state or input material that Persona/Core should see:** use a [Prompt Extension](./guides/prompt-extensions). Select `persona` or `core` with `meta.targets`; Core Planner does not receive plugin extensions.
-- **A capability the model should execute:** register an LLM Tool. Tools default to Core and enter Persona only through an explicit tool declaration or `plugin_tool_targets` configuration.
+- **A capability the model should execute:** register an LLM Tool. Tools default to Core and enter Persona only through an explicit tool declaration or `plugin_capability_targets.<plugin>.tools` configuration.
 - **Background device, calendar, or world-state facts:** use a Runtime Sensor. Sensors submit structured Observations; Personal Runtime's Gate/Policy decides whether to express them.
 - **Content the plugin has already decided to deliver exactly:** use `Context.send_message()` or an explicit output API. It preserves its target and content and does not invoke another “should the bot reply?” model decision.
 

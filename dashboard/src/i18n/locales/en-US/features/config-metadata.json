@@ -1076,16 +1076,11 @@
         },
         "persona_plugin_context_mode": {
           "description": "Persona First-Reply Plugin Context Strategy",
-          "labels": ["Wait for Plugin Context", "Use Base Context Immediately"],
+          "labels": [
+            "Wait for Plugin Context",
+            "Use Base Context Immediately"
+          ],
           "hint": "Controls whether ordinary prompt extensions and contributors block Persona's first request."
-        },
-        "plugin_runtime_targets": {
-          "description": "Plugin LLM Hook Execution Path",
-          "hint": "Controls only LLM lifecycle hooks, not commands, message handlers, event listeners, or FunctionTools. User configuration overrides the plugin declaration; undeclared plugins default to Persona Expression."
-        },
-        "plugin_tool_targets": {
-          "description": "Plugin FunctionTool Execution Path",
-          "hint": "Controls only where plugin FunctionTools are exposed. User configuration overrides tool declarations; undeclared tools default to Core only, and an exact plugin.tool entry takes precedence."
         },
         "memory_window_size": {
           "description": "Memory Window Size",
@@ -1094,6 +1089,10 @@
         "persona_history_window_size": {
           "description": "Persona History Window Size",
           "hint": "Candidate-pool limit for Persona history. The system keeps a contiguous recent dialogue run, adds a few older anchors relevant to the current input and Memory, then trims to the token budget. Memory and Core are unaffected."
+        },
+        "plugin_capability_targets": {
+          "description": "Plugin capability targets",
+          "hint": "llm_hooks: core | personal_expression; tools: { tool_name | *: core | personal_expression }"
         }
       }
     },
@@ -1111,7 +1110,10 @@
         },
         "persona_plugin_context_mode": {
           "description": "Persona First-Reply Plugin Context Strategy",
-          "labels": ["Wait for Plugin Context", "Use Base Context Immediately"],
+          "labels": [
+            "Wait for Plugin Context",
+            "Use Base Context Immediately"
+          ],
           "hint": "Controls whether ordinary prompt extensions and contributors block Persona's first request."
         },
         "contributor_timeout": {
@@ -1122,13 +1124,9 @@
           "description": "Plugin context total budget (seconds)",
           "hint": "One shared time cap for all ordinary Prompt Extension collectors. On timeout it stops waiting and keeps whatever was already collected. The budget can only shorten the turn deadline; it is not a per-plugin timeout and does not cancel background work."
         },
-        "plugin_runtime_targets": {
-          "description": "Plugin LLM Hook Execution Path",
-          "hint": "Controls only LLM lifecycle hooks, not commands, message handlers, event listeners, or FunctionTools. User configuration overrides the plugin declaration; undeclared plugins default to Persona Expression."
-        },
-        "plugin_tool_targets": {
-          "description": "Plugin FunctionTool Execution Path",
-          "hint": "Controls only where plugin FunctionTools are exposed. User configuration overrides tool declarations; undeclared tools default to Core only, and an exact plugin.tool entry takes precedence."
+        "plugin_capability_targets": {
+          "description": "Plugin capability targets",
+          "hint": "llm_hooks: core | personal_expression; tools: { tool_name | *: core | personal_expression }"
         }
       }
     },
@@ -1882,22 +1880,22 @@
         "hint": "Only effective for qwen3-rerank models. Recommended to write in English."
       },
       "nvidia_rerank_api_base": {
-          "description": "API Base URL"
+        "description": "API Base URL"
       },
       "nvidia_rerank_api_key": {
-          "description": "API Key"
+        "description": "API Key"
       },
       "nvidia_rerank_model": {
-          "description": "Rerank Model Name",
-          "hint": "Please refer to the NVIDIA Docs for the model name."
+        "description": "Rerank Model Name",
+        "hint": "Please refer to the NVIDIA Docs for the model name."
       },
       "nvidia_rerank_model_endpoint": {
-          "description": "Custom Model Endpoint",
-          "hint": "Custom URL suffix endpoint, defaults to /reranking."
+        "description": "Custom Model Endpoint",
+        "hint": "Custom URL suffix endpoint, defaults to /reranking."
       },
       "nvidia_rerank_truncate": {
-          "description": "Text Truncation Strategy",
-          "hint": "Whether to truncate the input to fit the model's maximum context length when the input text is too long."
+        "description": "Text Truncation Strategy",
+        "hint": "Whether to truncate the input to fit the model's maximum context length when the input text is too long."
       },
       "launch_model_if_not_running": {
         "description": "Auto-start model if not running",

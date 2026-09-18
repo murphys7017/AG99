@@ -616,8 +616,8 @@ def register_llm_tool(
 
     ``tool_targets`` 声明工具本身允许的执行面，默认仅 ``("core",)``。
     可选值为 ``"core"`` 和 ``"personal_expression"``。Interaction turn
-    中，用户可通过 ``plugin_tool_targets`` 按插件或具体工具覆盖该声明；
-    ``plugin_runtime_targets`` 只控制插件的 LLM 生命周期钩子，不改变工具归属。
+    中，用户通过 ``plugin_capability_targets[插件名称].tools`` 覆盖工具目标；
+    同一插件条目中的 ``llm_hooks`` 独立控制 LLM 生命周期钩子。
 
     返回值：
         - 返回 str：结果会被加入下一次 LLM 请求的 prompt 中，用于让 LLM 总结工具返回的结果

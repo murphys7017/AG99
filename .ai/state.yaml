@@ -1,3 +1,27 @@
+plugin_capability_cleanup:
+  date: '2026-09-18'
+  class: refactor
+  risk: high
+  status: implemented_pending_live_acceptance
+  authorization: User approved breaking migration; do not retain old plugin configuration.
+  scope: >-
+    Separate admission from target and applicability; consolidate target configuration
+    into plugin_capability_targets keyed by registered plugin name with independent
+    llm_hooks and tools entries. Remove Interaction prompt contributor registry in
+    favor of standard Prompt Extension collectors. Migrate AG99live source/runtime,
+    enforce mandatory effect preparation failures, and remove inert compatibility APIs.
+  non_goals: Process-level task/provider lifecycle redesign, changing persona prompt wording, automatic restart.
+  review: Final scoped review found no new blocking issue; user authorized commits in both repositories.
+  validation: >-
+    Persona wait-policy checks passed (5); focused capability/routing checks passed
+    (6 plus 2 routing checks). Changed Python Ruff and compileall passed. Dashboard
+    typecheck/build passed; desktop/mobile isolated editor interaction verified,
+    not backend end-to-end acceptance. AG99live registration/target smoke checks
+    passed (3); nine changed runtime/documentation files synced and SHA256 verified.
+    Branch extra copying preserves admission snapshot identity. Live OLV acceptance
+    remains pending; AstrBot was not started or restarted. Commit excludes ignored
+    local config and generated browser artifacts.
+  local_config: Old target maps removed from ignored test config; new target overrides reset to empty.
 task:
   class: refactor
   risk: high

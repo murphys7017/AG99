@@ -37,8 +37,8 @@ Interaction 不把所有插件都当作 Persona 输入。插件首先按行为�
 |---|---|---|
 | 官方 Pipeline Handler | 由官方 Handler discovery 找到并执行；可以返回最终结果、停止事件，或 `yield ProviderRequest` 委托 Core。Handler 生成器在 Core 完成后还会继续执行 post-yield 逻辑和剩余 Handler | 否 |
 | Prompt Extension / Contributor | 在基础 ContextPack 之后后台收集，按 `meta.targets` 投影到 Persona 或 Core；异常只记录并跳过 | 否 |
-| 插件 LLM 生命周期 | 按 `plugin_runtime_targets` 选择 Persona 或 Core 的请求生命周期；不为 Personal Plan/Planner 执行 | 否 |
-| 插件 LLM Tool | 按 `plugin_tool_targets` 和工具自身声明独立授权；默认 Core，显式允许时进入 Persona | 否，工具只在实际执行目标中可见 |
+| 插件 LLM 生命周期 | 按 `plugin_capability_targets.<plugin>.llm_hooks` 选择 Persona 或 Core 的请求生命周期；不为 Personal Plan/Planner 执行 | 否 |
+| 插件 LLM Tool | 按 `plugin_capability_targets.<plugin>.tools` 和工具自身声明独立授权；默认 Core，显式允许时进入 Persona | 否，工具只在实际执行目标中可见 |
 | 显式输出 | `event.send()`、`emit_output()`、`Context.send_message()` 等按 direct/persona 语义进入输出控制；显式目标不再经过“是否应该回复”的路由判断 | 否 |
 | Runtime Sensor | 只提交受限结构化 Observation，进入 Personal Runtime 的 Inbox/Gate/Policy；不能提交用户文本、工具调用或最终文案 | 否 |
 
@@ -171,42 +171,40 @@ class MyWorkPlugin(Star):
     interaction_runtime_target = "core"
 ```
 
-也可按插件目录名在配置中覆盖：
+也可按插件注册名称在配置中分别覆盖 Hook 与 FunctionTool：
 
 ```jsonc
 "interaction_middleware": {
   "enabled": true,
   "turn_timeout": 120.0,
-  "plugin_runtime_targets": {
-    "astrbot_plugin_self_code": "core",
-    "astrbot_plugin_persona_game": "personal_expression"
-  },
-  "plugin_tool_targets": {
-    "astrbot_plugin_persona_game": "personal_expression",
-    "astrbot_plugin_memory.read_memory_detail": "personal_expression"
+  "plugin_capability_targets": {
+    "self_code": {"llm_hooks": "core"},
+    "persona_game": {
+      "llm_hooks": "personal_expression",
+      "tools": {"*": "personal_expression"}
+    },
+    "memory": {"tools": {"read_memory_detail": "personal_expression"}}
   }
 }
 ```
 
-运行目标优先级为：`interaction_middleware.plugin_runtime_targets` 配置、插件类或旧
+运行目标优先级为：`plugin_capability_targets[插件名称].llm_hooks` 配置、插件类或
 `register_star(..., interaction_runtime_target=...)` 声明、最后是 `personal_expression` 默认值。
-无效值按默认值处理。推荐使用插件目录名；为兼容已加载插件，运行时也会识别其模块路径和
-元数据名称。该规则只控制 LLM 生命周期钩子，不改变工具归属。
+保存时拒绝无效值。键使用插件注册名称，不读取旧映射或模块路径别名。此规则不改变工具归属。
 
-可执行工具独立遵守：`interaction_middleware.plugin_tool_targets` 用户配置、工具自身
-`tool_targets` 声明、最后是 `core` 默认值。配置键可以使用插件目录名覆盖整个插件，也可以使用
-`插件目录名.工具名` 精确覆盖一个工具；精确项优先。只有明确解析为 `personal_expression` 的工具
+可执行工具独立遵守：`plugin_capability_targets[插件名称].tools` 用户配置、工具自身
+`tool_targets` 声明、最后是 `core` 默认值。工具名称精确项优先于 `*`。只有明确解析为 `personal_expression` 的工具
 才会进入 Persona Agent 循环，普通 Persona 对话不会因为 Core 工具产生额外模型调用。Persona
 即使没有业务工具，也使用同一个 Agent 循环生成 terminal `persona_expression`，不存在单独的
 “是否调用工具”预判请求。
 
-WebUI 可在“配置文件 → 交互中间件 → 基础开关”中编辑这两个目标映射。编辑器会列出已安装插件和
-插件工具，也允许手工输入兼容的插件模块路径；目标值通过固定选项限制为 `core` 或
+WebUI 可在配置文件的“插件富化与能力目标”中统一编辑。编辑器会列出已安装插件和
+插件工具；目标值通过固定选项限制为 `core` 或
 `personal_expression`。
 
 此设置的边界如下：
 
-- `plugin_runtime_targets` 只路由插件拥有的 LLM 生命周期钩子；`plugin_tool_targets` 只覆盖
+- `plugin_capability_targets` 中的 `llm_hooks` 只路由插件 LLM 生命周期钩子；`tools` 只覆盖
   插件工具。内置工具与 MCP 工具继续遵守自身的 `execution_targets`。
 - 普通 Pipeline Handler，包括关键词、命令和 `AdapterMessageEvent`，仍在官方 Pipeline
   中运行。它们可以终止事件，从而阻止后续 Persona 或 Core，但不会被当作 Persona 插件迁移。
@@ -617,13 +615,13 @@ Persona Runtime 可以随 `spoken_reply` 生成通用 `effect_calls`。Core 只�
 插件不得假设其他插件认识自己的 effect，也不应要求 Personal 或 Core Agent 理解具体动作语义。
 AG99live、Live2D 或桌面身体表现只是这一通用扩展机制的消费者，不是 Interaction 主流程节点。
 `list_persona_effects(event=event)` 用于构建当前 Persona 契约；不传 `event` 的调用只用于注册表管理和诊断，仍会列出所有已启用注册项。
-`event_filter` 必须是同步、无副作用的判断函数；判断抛出异常时 Core 会关闭当前事件上的该 effect，避免把不适用的 schema 暴露给模型。
+`event_filter` 必须同步且无副作用。可选 Effect 判断异常时跳过；已准入的必发 Effect 判断或 schema 准备异常时显式失败，不能静默删掉契约。
 
 ## 插件侧两个接口
 
 interaction middleware 对插件主要暴露两个阶段接口：
 
-1. `register_interaction_prompt_contributor(...)`
+1. `register_prompt_extension_collector(...)`
    - 在本轮规范 `ContextPack` 构建阶段运行一次。
    - 用于向统一 Prompt 事实包注入结构化信息。
    - 返回 `PromptExtension` 或 `list[PromptExtension]`。
@@ -635,11 +633,11 @@ interaction middleware 对插件主要暴露两个阶段接口：
    - 返回 `InteractionResultContribution`。
    - 可以补充平台侧 extras、client objects，或覆盖最终文本。
 
-这两个接口不是普通 core prompt extension 的替代品。前者是 interaction turn 的事实采集兼容入口，后者用于 interaction 输出 materialization。两者都不能让插件把 Personal 或 Planner 的模型决策重新注入 Prompt。
+前者是 Core 与 Interaction 共用的唯一 Prompt 事实采集入口；后者用于输出 materialization。旧 Interaction Prompt Contributor API 已删除，不保留独立收集路径。
 
-跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在最终请求上触发：默认或最终解析为 `personal_expression` 的插件在 Persona Expression 请求上触发，最终解析为 `core` 的插件在 Core 请求上触发；运行目标优先级为配置覆盖、类或旧装饰器声明、Persona 默认值。它不参与 Planner 或 Persona 内部工具阶段的模型调用。相同生命周期目标控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response` 与 `on_agent_done`；`on_using_llm_tool` 和 `on_llm_tool_respond` 保持官方全局工具观察语义，在 Core 或 Persona 实际执行工具时触发，不受请求生命周期目标过滤。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
+跨 Core 与 Interaction 都需要的模型事实应优先使用通用 `PromptExtensionCollectorInterface`。`on_llm_request` 在最终请求上触发：默认或最终解析为 `personal_expression` 的插件在 Persona Expression 请求上触发，最终解析为 `core` 的插件在 Core 请求上触发；运行目标优先级为配置覆盖、类或旧装饰器声明、Persona 默认值。它不参与 Planner 或 Persona 内部工具阶段的模型调用。相同生命周期目标控制 `on_waiting_llm_request`、`on_agent_begin`、`on_llm_response` 与 `on_agent_done`；`on_using_llm_tool` 和 `on_llm_tool_respond` 在 Core 或 Persona 实际执行工具时触发，并受插件准入和 LLM Hook 目标过滤。非 Interaction 流程保持官方 Core 生命周期。Prompt 各层完整边界见 `modules/prompt.md`。
 
-### Prompt Contributor
+### Prompt Collector
 
 注册方式：
 
@@ -652,7 +650,7 @@ class LocalPluginDirectoryContributor:
     plugin_id = "example.plugin_catalog"
     priority = 50
 
-    async def collect(self, event, plugin_context, view):
+    async def collect(self, event, plugin_context, config=None, *, provider_request=None):
         return PromptExtension(
             plugin_id=self.plugin_id,
             mount="capability",
@@ -671,25 +669,15 @@ class LocalPluginDirectoryContributor:
 class Main(star.Star):
     def __init__(self, context: star.Context) -> None:
         self.context = context
-        self.context.register_interaction_prompt_contributor(
+        self.context.register_prompt_extension_collector(
             LocalPluginDirectoryContributor()
         )
 ```
 
-`collect(event, plugin_context, view)` 的 `view` 是只读 `InteractionPromptView`，其 `purpose` 为 `context_collection`。它提供规范事实快照，而不是 Planner 或 Persona 的局部视图；插件必须在返回的 `PromptExtension.meta.targets` 中声明目标。
+`collect(event, plugin_context, config, *, provider_request=None)` 使用统一 Collector 协议；插件必须在返回的 `PromptExtension.meta.targets` 中声明目标。
 插件不能通过 Prompt Extension 向 Core Planner 暴露能力目录或业务事实。需要进入控制面或规划面的事实必须由核心 Collector 提供；插件本身只挂载到 Persona 或 Core。Personal 不理解插件私有协议、动作参数或输出 schema；Core Planner 也不接收 Personal 的决策。
 如果插件希望影响 Persona visible reply，应返回目标为 `persona` 的 `PromptExtension`。中间件自己的 persona runtime 指令和 visible reply material 不走 extension。
-常用字段：
-
-- `view.turn_id`
-- `view.platform_id`
-- `view.session_id`
-- `view.persona`
-- `view.input`
-- `view.memory`
-- `view.recent_messages`
-- `view.capabilities`
-- `view.context_snapshot`
+事件、配置和请求用于读取当前输入事实。人格、历史和 Memory 仍由核心事实包负责，不再向插件提供第二套 Prompt View 收集接口。
 
 推荐 mount 选择：
 

@@ -20,6 +20,11 @@ from astrbot.core.pipeline.content_safety_check.strategies.strategy import (
 )
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_admission import (
+    CapabilityKind,
+    build_plugin_admission_snapshot,
+    capability_allowed,
+)
 from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import ProviderRequest
@@ -64,11 +69,20 @@ class PreOutputProcessor:
         *,
         is_stream: bool = False,
     ) -> bool:
+        await build_plugin_admission_snapshot(event=event)
         handlers = star_handlers_registry.get_handlers_by_event_type(
             EventType.OnDecoratingResultEvent,
-            plugins_name=event.plugins_name,
+            only_activated=False,
+            plugins_name=None,
         )
         for handler in handlers:
+            if not capability_allowed(
+                event,
+                kind=CapabilityKind.OUTPUT_HOOK,
+                owner_module_path=handler.handler_module_path,
+                item_name=handler.handler_name,
+            ):
+                continue
             plugin = star_map.get(handler.handler_module_path)
             plugin_name = (
                 plugin.name if plugin is not None else handler.handler_module_path
@@ -91,7 +105,7 @@ class PreOutputProcessor:
                         plugin_name,
                         handler.handler_name,
                     )
-            except BaseException:
+            except Exception:
                 logger.error(traceback.format_exc())
 
             if event.is_stopped():

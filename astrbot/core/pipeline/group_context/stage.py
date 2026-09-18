@@ -10,7 +10,7 @@ from astrbot.core.interaction.group_context_capture import (
 )
 from astrbot.core.interaction.group_reply import is_group_reply_candidate
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.plugin_admission import call_capability_lister
+from astrbot.core.plugin_admission import build_plugin_admission_snapshot
 
 from ..context import PipelineContext
 from ..stage import Stage, register_stage
@@ -30,10 +30,10 @@ class GroupContextStage(Stage):
         if not event.get_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, False):
             return
         try:
+            await build_plugin_admission_snapshot(event=event)
             collector = resolve_group_context_capture_collector(
-                call_capability_lister(
-                    self.ctx.plugin_manager.context.list_prompt_extension_collectors,
-                    event=event,
+                self.ctx.plugin_manager.context.list_prompt_extension_collectors(
+                    event=event
                 )
             )
             if collector is not None:

@@ -25,18 +25,17 @@ from astrbot.core.plugin_admission import (
     CapabilityKind,
     CapabilityRef,
     PluginAdmissionSnapshot,
+    capability_kind_for_event_type,
     get_plugin_admission_snapshot,
     is_hard_contribution,
     resolve_capability_admission,
+    resolve_owner_metadata,
 )
 
 #: Fields the user may change. Deliberately small: the capability *target* is
 #: fixed by contract for most kinds, so exposing it would allow meaningless or
 #: illegal values.
 EDITABLE_FIELDS: tuple[str, ...] = (
-    "permission_override",  # enable/disable this capability
-    "session_allowed",  # whether the current session may use it
-    "direct_output_compatibility",  # legacy direct send stays on compatibility path
     "hook_target",  # LLM hook: core | personal_expression
     "tool_target",  # FunctionTool: core | personal_expression
 )
@@ -59,9 +58,9 @@ READ_ONLY_FIELDS: tuple[str, ...] = (
 _DEFAULT_TARGETS: dict[CapabilityKind, str | None] = {
     CapabilityKind.HANDLER: "pipeline",
     CapabilityKind.LLM_HOOK: "personal_expression",
+    CapabilityKind.OUTPUT_HOOK: "output",
     CapabilityKind.TOOL: "core",
     CapabilityKind.PROMPT_EXTENSION: None,
-    CapabilityKind.INTERACTION_PROMPT: "personal_expression",
     CapabilityKind.INTERACTION_RESULT: "personal_expression",
     CapabilityKind.STREAM_DECIDER: "personal_expression",
     CapabilityKind.LIFECYCLE_OBSERVER: "observe",
@@ -84,6 +83,7 @@ _DEFAULT_TARGETS: dict[CapabilityKind, str | None] = {
 _FIXED_TARGET_KINDS: frozenset[CapabilityKind] = frozenset(
     {
         CapabilityKind.HANDLER,
+        CapabilityKind.OUTPUT_HOOK,
         CapabilityKind.PROMPT_EXTENSION,
         CapabilityKind.PERSONA_EFFECT,
         CapabilityKind.RUNTIME_SENSOR,
@@ -108,9 +108,9 @@ def _capability_target_reason(kind: CapabilityKind) -> str:
     if kind in _FIXED_TARGET_KINDS:
         return "fixed_by_contract"
     if kind is CapabilityKind.LLM_HOOK:
-        return "plugin_runtime_targets"
+        return "configuration"
     if kind in {CapabilityKind.TOOL, CapabilityKind.AGENT_TOOL}:
-        return "plugin_tool_targets"
+        return "configuration"
     if kind in PROCESS_CAPABILITY_KINDS:
         return "process_lifecycle"
     return "default"
@@ -135,7 +135,9 @@ def describe_capability(
         plugin_id=plugin_id,
         item_name=item_name,
     )
-    snapshot = snapshot if snapshot is not None else get_plugin_admission_snapshot(event)
+    snapshot = (
+        snapshot if snapshot is not None else get_plugin_admission_snapshot(event)
+    )
     decision = (
         snapshot.decision_for(ref)
         if snapshot is not None
@@ -151,14 +153,20 @@ def describe_capability(
         "owner_plugin_name": owner_plugin_name,
         "plugin_id": plugin_id,
         "item_name": item_name,
-        "permission_state": "allowed" if decision.allowed else decision.reason,
+        "permission_state": (
+            "not_evaluated"
+            if event is None and snapshot is None and is_interaction
+            else "allowed"
+            if decision.allowed
+            else decision.reason
+        ),
         "permission_reason": decision.reason,
-        "permission_editable": is_interaction,
-        "applicability_state": "event_filter",
+        "permission_editable": False,
+        "applicability_state": "not_evaluated",
         "hard_or_soft": "hard" if hard else "soft",
         "target": _DEFAULT_TARGETS.get(kind),
         "target_reason": _capability_target_reason(kind),
-        "target_editable": kind not in _FIXED_TARGET_KINDS,
+        "target_editable": kind in {CapabilityKind.LLM_HOOK, CapabilityKind.TOOL},
         "migration_state": _MIGRATION_STATES.get(kind, "current"),
         "scope": "interaction" if is_interaction else "process",
         "owner_source": decision is not None and getattr(decision, "reason", "") or "",
@@ -228,7 +236,7 @@ def build_capability_inventory(
         add(key, entry, owner)
 
     return {
-        "editabled_fields": list(EDITABLE_FIELDS),
+        "editable_fields": list(EDITABLE_FIELDS),
         "read_only_fields": list(READ_ONLY_FIELDS),
         "plugins": [
             {
@@ -236,26 +244,16 @@ def build_capability_inventory(
                 "owner_module_path": owners.get(name),
                 "capabilities": sorted(
                     entries,
-                    key=lambda item: (item["scope"], item["kind"], item["item_name"] or ""),
+                    key=lambda item: (
+                        item["scope"],
+                        item["kind"],
+                        item["item_name"] or "",
+                    ),
                 ),
             }
             for name, entries in sorted(by_plugin.items())
         ],
     }
-
-
-#: Event types owned by the official Pipeline rather than a Persona/Core consumer.
-_PIPELINE_EVENT_NAMES = {"AdapterMessageEvent"}
-
-#: Management lifecycle hooks. They are intentionally exempt from session-level
-#: disabling, so they are reported without an editable permission.
-_MANAGEMENT_EVENT_NAMES = {
-    "OnAstrBotLoadedEvent",
-    "OnPlatformLoadedEvent",
-    "OnPluginLoadedEvent",
-    "OnPluginUnloadedEvent",
-    "OnPluginErrorEvent",
-}
 
 
 def _iter_handler_capabilities(event: Any, runtime_config: Any):
@@ -277,25 +275,22 @@ def _iter_handler_capabilities(event: Any, runtime_config: Any):
         owner_name = getattr(metadata, "name", None) or module_path
         owner_module = getattr(metadata, "module_path", None) or module_path
 
-        if event_name in _PIPELINE_EVENT_NAMES:
-            kind = CapabilityKind.HANDLER
+        kind = capability_kind_for_event_type(event_type)
+        if kind is CapabilityKind.HANDLER:
             target, target_reason = "pipeline", "fixed_by_contract"
             editable = False
-        elif event_name in _MANAGEMENT_EVENT_NAMES:
-            kind = CapabilityKind.MANAGEMENT_HOOK
+        elif kind is CapabilityKind.MANAGEMENT_HOOK:
             target, target_reason = "pipeline", "fixed_by_contract"
+            editable = False
+        elif kind is CapabilityKind.OUTPUT_HOOK:
+            target, target_reason = "output", "fixed_by_contract"
             editable = False
         else:
-            kind = CapabilityKind.LLM_HOOK
             resolved, source = resolve_plugin_runtime_target(
                 runtime_config, metadata, module_path
             )
             target = resolved
-            target_reason = (
-                "plugin_runtime_targets"
-                if source == "plugin_runtime_targets"
-                else "default"
-            )
+            target_reason = source
             editable = True
 
         entry = describe_capability(
@@ -304,7 +299,9 @@ def _iter_handler_capabilities(event: Any, runtime_config: Any):
             owner_module_path=owner_module,
             owner_plugin_name=owner_name,
             item_name=getattr(handler, "handler_name", None),
-            snapshot=get_plugin_admission_snapshot(event) if event is not None else None,
+            snapshot=get_plugin_admission_snapshot(event)
+            if event is not None
+            else None,
         )
         entry["target"] = target
         entry["target_reason"] = target_reason
@@ -317,18 +314,17 @@ def _iter_handler_capabilities(event: Any, runtime_config: Any):
 def _iter_tool_capabilities(event: Any, runtime_config: Any):
     """Yield inventory entries for plugin-owned FunctionTools."""
     try:
-        from astrbot.core.plugin_runtime import resolve_tool_runtime_target
+        from astrbot.core.plugin_runtime import (
+            resolve_tool_runtime_target,
+            tool_owner_module,
+        )
         from astrbot.core.provider.register import llm_tools
-        from astrbot.core.star.star import star_map
     except Exception:  # noqa: BLE001
         return
 
     for tool in list(getattr(llm_tools, "func_list", []) or []):
-        module_path = getattr(tool, "handler_module_path", None)
-        handler = getattr(tool, "handler", None)
-        if not module_path and handler is not None:
-            module_path = getattr(handler, "__module__", None)
-        metadata = _metadata_for_module(star_map, module_path)
+        module_path = tool_owner_module(tool)
+        metadata = resolve_owner_metadata(module_path)
         if metadata is None:
             # Built-in / MCP tools are not plugin capabilities for this model;
             # they keep their own execution_targets.
@@ -345,29 +341,15 @@ def _iter_tool_capabilities(event: Any, runtime_config: Any):
             owner_module_path=owner_module,
             owner_plugin_name=owner_name,
             item_name=tool_name,
-            snapshot=get_plugin_admission_snapshot(event) if event is not None else None,
+            snapshot=get_plugin_admission_snapshot(event)
+            if event is not None
+            else None,
         )
         entry["target"] = target
-        entry["target_reason"] = (
-            "plugin_tool_targets" if source == "plugin_tool_targets" else source
-        )
-        entry["target_editable"] = True
+        entry["target_reason"] = source
+        entry["target_editable"] = source != "fixed_by_contract"
         entry["description"] = str(getattr(tool, "description", "") or "")[:200]
         yield entry, owner_name, owner_module
-
-
-def _metadata_for_module(star_map: dict, module_path: str | None):
-    if not isinstance(module_path, str) or not module_path:
-        return None
-    direct = star_map.get(module_path)
-    if direct is not None:
-        return direct
-    for candidate_path, metadata in star_map.items():
-        if module_path == candidate_path or module_path.startswith(
-            f"{candidate_path}."
-        ):
-            return metadata
-    return None
 
 
 __all__ = [

@@ -91,7 +91,6 @@ from .turn_state import (
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
     set_interaction_turn_inbound_media_materialized,
-    set_interaction_turn_plugin_admission,
     set_interaction_turn_route_decision,
     set_interaction_turn_runtime_config,
     suppress_interaction_turn_pending_persona,
@@ -109,6 +108,7 @@ LOCAL_FAST_EXPRESSION_FALLBACK_RESULT = PersonaExpressionResult(
     spoken_reply="模型服务暂时不可用，请稍后再试。",
     turn_action=PersonalResponseAction.REPLY,
 )
+
 
 def _merge_runtime_config(base: Any, override: Any) -> Any:
     if not isinstance(base, Mapping):
@@ -147,6 +147,7 @@ class InteractionMiddleware:
             self._render_visible_reply_via_persona
         )
         self.output_controller.lifecycle_callback = self._emit_lifecycle_from_output
+
     async def _emit_lifecycle_from_output(
         self,
         event: AstrMessageEvent,
@@ -308,25 +309,11 @@ class InteractionMiddleware:
             return
         if get_interaction_turn_plugin_admission(event) is not None:
             return
-        try:
-            turn_state = ensure_interaction_turn_state(event)
-            snapshot = await build_plugin_admission_snapshot(
-                event=event,
-                plugin_context=self.plugin_context,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Admission must never be the reason a turn fails. Consumers fall
-            # back to the live-state resolver, which keeps the historical
-            # permissive result.
-            logger.error(
-                "Failed to freeze plugin admission snapshot: platform_id=%s "
-                "session_id=%s error=%s",
-                event.get_platform_id(),
-                event.session_id,
-                exc,
-                exc_info=True,
-            )
-            return
+        turn_state = ensure_interaction_turn_state(event)
+        snapshot = await build_plugin_admission_snapshot(
+            event=event,
+            plugin_context=self.plugin_context,
+        )
         # TurnState is the single source of truth and the first writer wins, so
         # two concurrent builders cannot leave the turn and the event extra
         # pointing at different snapshots.
@@ -960,9 +947,6 @@ class InteractionMiddleware:
             event,
             interaction_config,
             request=PersonaExpressionRequest(
-                # ``compact_context`` is inert: plugin context wait policy comes
-                # from ``persona_plugin_context_mode`` only, so the ordinary
-                # first reply honours the user's configured choice.
                 require_turn_action=True,
                 allow_silent=group_conversation_allows_silent(event),
                 intent=PersonaExpressionIntent(

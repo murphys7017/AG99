@@ -1,5 +1,7 @@
 # 运行时功能统一实施计划
 
+> 2026-09-18 修订：本文 D-001/D-002 等关于保留两张插件目标映射的限制已被 [插件能力收口契约](./plugin-capability-cleanup.md) 取代。准入与目标仍分离；当前配置为 `plugin_capability_targets`，Prompt 只有标准 Collector 入口。
+
 ## 文档状态
 
 - 状态：Phase 1 至 Phase 5 的底层 owner 迁移已完成。普通对话已收敛为一次 Personal Response

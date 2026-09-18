@@ -1,5 +1,7 @@
 # Personal / Router / Plugin 三线并行设计计划
 
+> 2026-09-18 修订：关于两张插件 target 映射和独立 Prompt Contributor 的历史条款由 [插件能力收口契约](./plugin-capability-cleanup.md) 取代。此变更不把 Handler、Prompt 或 Effect 改造成可路由业务工具。
+
 ## 文档状态
 
 - 状态：最终设计冻结（2026-08-06）；Phase 5B-1 至 5B-8 的生产实现和代码侧诊断已完成，并由默认关闭的全局开关保护；Phase 5B-0 基线与 Phase 5B-8 启用仍等待真实日志验收。

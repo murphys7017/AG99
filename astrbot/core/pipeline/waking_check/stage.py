@@ -23,10 +23,14 @@ from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
-from astrbot.core.plugin_admission import resolve_event_plugins_name
+from astrbot.core.plugin_admission import (
+    CapabilityKind,
+    build_plugin_admission_snapshot,
+    capability_allowed,
+    resolve_event_plugins_name,
+)
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.permission import PermissionTypeFilter
-from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
@@ -106,13 +110,22 @@ async def _discover_activated_handlers(
     # Shared whitelist rule: missing or ["*"] means no restriction, while an
     # explicit list (including []) is used verbatim.
     event.plugins_name = resolve_event_plugins_name(config)
+    await build_plugin_admission_snapshot(event=event)
     logger.debug("enabled_plugins_name: %s", config.get("plugin_set", ["*"]))
 
     handler_woke = False
     for handler in star_handlers_registry.get_handlers_by_event_type(
         EventType.AdapterMessageEvent,
-        plugins_name=event.plugins_name,
+        plugins_name=None,
+        only_activated=False,
     ):
+        if not capability_allowed(
+            event,
+            kind=CapabilityKind.HANDLER,
+            owner_module_path=handler.handler_module_path,
+            item_name=handler.handler_name,
+        ):
+            continue
         if (
             disable_builtin_commands
             and handler.handler_module_path
@@ -176,10 +189,6 @@ async def _discover_activated_handlers(
 
         event._extras.pop("parsed_params", None)
 
-    activated_handlers = await SessionPluginManager.filter_handlers_by_session(
-        event,
-        activated_handlers,
-    )
     event.set_extra("activated_handlers", activated_handlers)
     event.set_extra("handlers_parsed_params", handlers_parsed_params)
     return handler_woke

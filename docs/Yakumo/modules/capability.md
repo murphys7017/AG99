@@ -24,8 +24,8 @@
 
 Interaction turn 中，插件的 LLM 生命周期默认属于 `personal_expression`，适合人格、娱乐和
 关系增强。插件可在 `Star` 类或 `register_star(..., interaction_runtime_target=...)` 中声明
-`core`；会话配置 `interaction_middleware.plugin_runtime_targets` 可覆盖该声明。插件拥有的
-LLM Tool 独立遵守 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值。
+`core`；会话配置 `interaction_middleware.plugin_capability_targets.<plugin>.llm_hooks` 可覆盖该声明。插件拥有的
+LLM Tool 独立遵守 `plugin_capability_targets.<plugin>.tools` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值。
 关键词、命令和其他 `AdapterMessageEvent` Handler 仍由官方 Pipeline 负责。
 
 `Context.tool_loop_agent(..., tool_execution_surface=...)` 把执行面显式传给

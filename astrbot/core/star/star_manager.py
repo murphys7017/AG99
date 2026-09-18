@@ -1896,9 +1896,6 @@ class PluginManager:
                 )
 
         self.context.remove_prompt_extension_collectors_by_module_prefix(module_prefix)
-        self.context.remove_interaction_prompt_contributors_by_module_prefix(
-            module_prefix
-        )
         self.context.remove_interaction_result_contributors_by_module_prefix(
             module_prefix
         )

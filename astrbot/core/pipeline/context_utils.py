@@ -6,7 +6,12 @@ from contextlib import aclosing
 from astrbot import logger
 from astrbot.core.message.message_event_result import CommandResult, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.plugin_admission import get_plugin_admission_snapshot
+from astrbot.core.plugin_admission import (
+    CapabilityKind,
+    build_plugin_admission_snapshot,
+    capability_allowed,
+    capability_kind_for_event_type,
+)
 from astrbot.core.plugin_runtime import plugin_supports_runtime_target
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
@@ -90,21 +95,22 @@ async def call_event_hook(
     #
 
     """
-    snapshot = get_plugin_admission_snapshot(event)
-    if execution_surface is not None and snapshot is not None and snapshot.owner_states:
-        # Admission below owns the frozen plugin policy; registry filtering still
-        # enforces each handler's own enabled flag.
-        handlers = star_handlers_registry.get_handlers_by_event_type(
-            hook_type,
-            only_activated=False,
-            plugins_name=None,
-        )
-    else:
-        handlers = star_handlers_registry.get_handlers_by_event_type(
-            hook_type,
-            plugins_name=event.plugins_name,
-        )
+    kind = capability_kind_for_event_type(hook_type)
+    if kind is not CapabilityKind.MANAGEMENT_HOOK:
+        await build_plugin_admission_snapshot(event=event)
+    handlers = star_handlers_registry.get_handlers_by_event_type(
+        hook_type,
+        only_activated=kind is CapabilityKind.MANAGEMENT_HOOK,
+        plugins_name=None,
+    )
     for handler in handlers:
+        if execution_surface is None and not capability_allowed(
+            event,
+            kind=kind,
+            owner_module_path=handler.handler_module_path,
+            item_name=handler.handler_name,
+        ):
+            continue
         if execution_surface is not None and not plugin_supports_runtime_target(
             event,
             handler.handler_module_path,
@@ -114,17 +120,21 @@ async def call_event_hook(
         try:
             assert inspect.iscoroutinefunction(handler.handler)
             plugin = star_map.get(handler.handler_module_path)
-            plugin_name = plugin.name if plugin is not None else handler.handler_module_path
+            plugin_name = (
+                plugin.name if plugin is not None else handler.handler_module_path
+            )
             logger.debug(
                 f"hook({hook_type.name}) -> {plugin_name} - {handler.handler_name}",
             )
             await handler.handler(event, *args, **kwargs)
-        except BaseException:
+        except Exception:
             logger.error(traceback.format_exc())
 
         if event.is_stopped():
             plugin = star_map.get(handler.handler_module_path)
-            plugin_name = plugin.name if plugin is not None else handler.handler_module_path
+            plugin_name = (
+                plugin.name if plugin is not None else handler.handler_module_path
+            )
             logger.info(
                 f"{plugin_name} - {handler.handler_name} 终止了事件传播。",
             )

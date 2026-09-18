@@ -44,7 +44,6 @@ from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.plugin_admission import (
-    call_capability_lister,
     is_hard_contribution,
 )
 from astrbot.core.plugin_runtime import (
@@ -155,15 +154,6 @@ class PersonaExpressionRequest:
     allow_empty: bool = False
     intent: PersonaExpressionIntent = field(default_factory=PersonaExpressionIntent)
     avoid_previous_reply: bool = False
-    compact_context: bool = False
-    """Deprecated and inert for wait policy.
-
-    This used to make a direct expression skip pending plugin enrichment, which
-    silently overrode ``persona_plugin_context_mode``. Wait policy is now decided
-    only by that configuration, so the flag no longer changes context selection.
-    It is retained so existing callers keep working; do not reintroduce a second
-    wait policy through it.
-    """
     # Ordinary user turns use this one response plan for both visible wording
     # and the decision to keep the work in Personal or hand it to Core.
     require_turn_action: bool = False
@@ -1611,12 +1601,7 @@ class InteractionExpressionAgent:
                 )
             ),
         )
-        # Every Persona expression resolves its plugin context through the same
-        # policy entry point. The wait policy (``wait_complete`` /
-        # ``best_effort``) is the ONLY thing that decides whether pending plugin
-        # enrichment blocks this expression; ``compact_context`` no longer
-        # bypasses it, because that turned a Prompt-budget flag into an implicit
-        # second wait policy.
+        # Immediate and final expression share the same plugin wait policy.
         persona_context_pack = await get_or_build_interaction_persona_context_pack(
             event=event,
             plugin_context=plugin_context,
@@ -1730,7 +1715,7 @@ class InteractionExpressionAgent:
         list_effects = getattr(plugin_context, "list_persona_effects", None)
         if not callable(list_effects):
             return []
-        effects = call_capability_lister(list_effects, event=event)
+        effects = list_effects(event=event)
         return effects if isinstance(effects, list) else []
 
     async def _build_or_reuse_context_material(

@@ -329,6 +329,14 @@ def save_config(
     if errors:
         raise ValueError(f"格式校验未通过: {errors}")
 
+    if is_core:
+        from astrbot.core.plugin_runtime import validate_plugin_capability_targets
+
+        validate_plugin_capability_targets(
+            post_config.get("interaction_middleware", {}).get(
+                "plugin_capability_targets", {}
+            )
+        )
     config.save_config(post_config)
 
 

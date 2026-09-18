@@ -29,6 +29,8 @@ from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 from astrbot.core.plugin_admission import (
     CapabilityKind,
+    CapabilityRef,
+    build_session_plugin_admission_snapshot,
     capability_allowed,
     get_plugin_admission_snapshot,
     resolve_event_plugins_name,
@@ -317,10 +319,6 @@ class Context:
             _PromptExtensionCollectorRegistration
         ] = []
         self._prompt_extension_collector_seq = 0
-        self._interaction_prompt_contributors: list[
-            _InteractionContributorRegistration
-        ] = []
-        self._interaction_prompt_contributor_seq = 0
         self._interaction_result_contributors: list[
             _InteractionContributorRegistration
         ] = []
@@ -1055,77 +1053,21 @@ class Context:
         registration: _RuntimeObservationSensorRegistration,
         target_session: MessageSesion,
     ) -> bool:
-        """Resolve admission for a Runtime Observation sensor without an event.
-
-        Sensors submit outside any Interaction turn, so there is no frozen
-        snapshot to read. The session-level plugin configuration is read
-        directly for the target session instead.
-        """
-        owner_module_path = registration.owner_module_path
-        owner_plugin_name = registration.owner_plugin_name
-        metadata = star_map.get(owner_module_path) if owner_module_path else None
-        if metadata is None:
-            return True
-        if metadata.reserved or not metadata.activated:
-            return bool(metadata.reserved)
-        plugin_name = owner_plugin_name or metadata.name
-        if not plugin_name:
-            return True
-
+        """Resolve the same permission policy against the Sensor's target session."""
         session_id = str(target_session)
-
-        # A sensor has no event, so the target session's own plugin whitelist is
-        # resolved here. Skipping this would let an observation be submitted by a
-        # plugin that ``plugin_set`` excluded.
-        try:
-            runtime_config = self.get_config(umo=session_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to resolve sensor target config: session=%s error=%s",
-                session_id,
-                exc,
-                exc_info=True,
-            )
-            runtime_config = None
+        runtime_config = self.get_config(umo=session_id)
         allowed_plugins = resolve_event_plugins_name(runtime_config)
-        if allowed_plugins is not None and plugin_name not in allowed_plugins:
-            logger.info(
-                "Runtime Observation sensor suppressed: plugin %s is not in "
-                "plugin_set for session %s",
-                plugin_name,
-                session_id,
+        snapshot = await build_session_plugin_admission_snapshot(
+            session_id=session_id,
+            plugin_set=tuple(allowed_plugins) if allowed_plugins is not None else None,
+        )
+        return snapshot.allows(
+            CapabilityRef(
+                kind=CapabilityKind.RUNTIME_SENSOR,
+                owner_module_path=registration.owner_module_path,
+                owner_plugin_name=registration.owner_plugin_name,
             )
-            return False
-
-        try:
-            from astrbot.core import sp
-
-            session_plugin_config = await sp.get_async(
-                scope="umo",
-                scope_id=session_id,
-                key="session_plugin_config",
-                default={},
-            )
-            if isinstance(session_plugin_config, dict):
-                session_config = session_plugin_config.get(session_id, {})
-                if isinstance(session_config, dict):
-                    disabled = session_config.get("disabled_plugins", []) or []
-                    if plugin_name in disabled:
-                        logger.info(
-                            "Runtime Observation sensor suppressed: plugin %s is "
-                            "disabled for session %s",
-                            plugin_name,
-                            session_id,
-                        )
-                        return False
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to resolve sensor session admission: session=%s error=%s",
-                target_session,
-                exc,
-                exc_info=True,
-            )
-        return True
+        )
 
     def _resolve_runtime_observation_session(
         self,
@@ -1288,31 +1230,6 @@ class Context:
             )
         return removed
 
-    def register_interaction_prompt_contributor(self, contributor: Any) -> None:
-        self._register_interaction_contributor(
-            contributor,
-            registry_attr="_interaction_prompt_contributors",
-            seq_attr="_interaction_prompt_contributor_seq",
-            contributor_type="prompt contributor",
-        )
-
-    def list_interaction_prompt_contributors(self, event: Any = None) -> list[Any]:
-        return self._list_interaction_contributors(
-            self._interaction_prompt_contributors,
-            event=event,
-            kind=CapabilityKind.INTERACTION_PROMPT,
-        )
-
-    def remove_interaction_prompt_contributors_by_module_prefix(
-        self,
-        module_prefix: str,
-    ) -> int:
-        return self._remove_interaction_contributors_by_module_prefix(
-            registry_attr="_interaction_prompt_contributors",
-            module_prefix=module_prefix,
-            contributor_type="prompt contributor",
-        )
-
     def register_interaction_result_contributor(self, contributor: Any) -> None:
         self._register_interaction_contributor(
             contributor,
@@ -1439,6 +1356,7 @@ class Context:
         event: AstrMessageEvent | None = None,
     ) -> list[PersonaEffectSpec]:
         from astrbot.core.interaction.effects import (
+            PersonaEffectPreparationError,
             clone_persona_effect_spec,
             validate_persona_effect_spec,
         )
@@ -1446,7 +1364,7 @@ class Context:
         registrations = [
             registration
             for registration in self._persona_effects
-            if self._persona_effect_matches_event(registration, event)
+            if registration.effect.enabled
             and self._capability_visible(
                 event,
                 kind=CapabilityKind.PERSONA_EFFECT,
@@ -1454,6 +1372,7 @@ class Context:
                 live_active=self._is_persona_effect_active(registration),
                 item_name=registration.effect.name,
             )
+            and self._persona_effect_matches_event(registration, event)
         ]
         registrations.sort(
             key=lambda registration: (
@@ -1479,6 +1398,8 @@ class Context:
                         exc,
                         exc_info=True,
                     )
+                    if effect.metadata.get("required_per_segment") is True:
+                        raise PersonaEffectPreparationError(effect, exc) from exc
                     continue
             resolved_effects.append(effect)
         return resolved_effects
@@ -1500,6 +1421,12 @@ class Context:
                 exc,
                 exc_info=True,
             )
+            if registration.effect.metadata.get("required_per_segment") is True:
+                from astrbot.core.interaction.effects import (
+                    PersonaEffectPreparationError,
+                )
+
+                raise PersonaEffectPreparationError(registration.effect, exc) from exc
             return False
 
     def unregister_persona_effects(
@@ -1810,7 +1737,7 @@ class Context:
         if event is None:
             return False
         snapshot = get_plugin_admission_snapshot(event)
-        return snapshot is not None and bool(snapshot.owner_states)
+        return snapshot is not None
 
     def _capability_visible(
         self,
@@ -1960,7 +1887,6 @@ class Context:
                 removed[label] = count
 
         _sweep("_prompt_extension_collectors", "prompt_extension_collectors")
-        _sweep("_interaction_prompt_contributors", "interaction_prompt_contributors")
         _sweep("_interaction_result_contributors", "interaction_result_contributors")
         _sweep("_interaction_stream_deciders", "interaction_stream_deciders")
         _sweep("_interaction_lifecycle_observers", "interaction_lifecycle_observers")
@@ -2044,11 +1970,6 @@ class Context:
         _collect(
             self._prompt_extension_collectors,
             "prompt_extension",
-            lambda r: r.plugin_id,
-        )
-        _collect(
-            self._interaction_prompt_contributors,
-            "interaction_prompt",
             lambda r: r.plugin_id,
         )
         _collect(

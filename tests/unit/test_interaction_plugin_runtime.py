@@ -23,11 +23,6 @@ from astrbot.core.interaction.middleware import InteractionMiddleware
 from astrbot.core.interaction.output_adapter import InteractionEventOutputAdapter
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
-from astrbot.core.interaction.plugin_runtime import (
-    PLUGIN_RUNTIME_TARGET_CORE,
-    PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
-    tool_supports_runtime_target,
-)
 from astrbot.core.interaction.turn_state import (
     append_interaction_turn_assistant_artifacts,
     ensure_interaction_turn_state,
@@ -60,6 +55,11 @@ from astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal import
 )
 from astrbot.core.pipeline.process_stage.stage import ProcessStage
 from astrbot.core.pipeline.respond.stage import RespondStage
+from astrbot.core.plugin_runtime import (
+    PLUGIN_RUNTIME_TARGET_CORE,
+    PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    tool_supports_runtime_target,
+)
 from astrbot.core.star.base import Star
 from astrbot.core.star.star import StarMetadata, star_map, star_registry
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
@@ -616,7 +616,7 @@ async def test_llm_hook_dispatch_uses_configured_plugin_runtime_target(monkeypat
                 "_interaction_enabled": True,
                 "_astrbot_config": {
                     "interaction_middleware": {
-                        "plugin_runtime_targets": {"core_plugin": "core"}
+                        "plugin_capability_targets": {"core": {"llm_hooks": "core"}}
                     }
                 },
             }
@@ -628,6 +628,7 @@ async def test_llm_hook_dispatch_uses_configured_plugin_runtime_target(monkeypat
             return False
 
     event = Event()
+    event.set_extra = lambda key, value: event._extras.__setitem__(key, value)
 
     await call_event_hook(
         event,
@@ -722,7 +723,7 @@ def test_plugin_tool_runtime_target_defaults_to_core_in_interaction_turn(
                 "_interaction_enabled": interaction_enabled,
                 "_astrbot_config": {
                     "interaction_middleware": {
-                        "plugin_tool_targets": tool_targets or {},
+                        "plugin_capability_targets": {"persona tools": {"tools": tool_targets or {}}},
                     }
                 },
             }
@@ -757,8 +758,8 @@ def test_plugin_tool_runtime_target_defaults_to_core_in_interaction_turn(
     persona_event = Event(
         interaction_enabled=True,
         tool_targets={
-            "persona_tools": "core",
-            "persona_tools.persona_tool": "personal_expression",
+            "*": "core",
+            "persona_tool": "personal_expression",
         },
     )
     assert tool_supports_runtime_target(
@@ -837,9 +838,11 @@ async def test_capability_resolver_applies_exact_override_and_rejects_persona_su
                 "_interaction_enabled": True,
                 "_astrbot_config": {
                     "interaction_middleware": {
-                        "plugin_tool_targets": {
-                            "capability_tools": "core",
-                            "capability_tools.persona_lookup": "personal_expression",
+                        "plugin_capability_targets": {
+                            "capability tools": {"tools": {
+                                "*": "core",
+                                "persona_lookup": "personal_expression",
+                            }},
                         }
                     }
                 },
@@ -1324,8 +1327,8 @@ def test_plugin_lifecycle_target_does_not_override_tool_target(monkeypatch):
                 "_interaction_enabled": True,
                 "_astrbot_config": {
                     "interaction_middleware": {
-                        "plugin_runtime_targets": (
-                            {"work_tools": target} if target else {}
+                        "plugin_capability_targets": (
+                            {"work tools": {"llm_hooks": target}} if target else {}
                         )
                     }
                 },

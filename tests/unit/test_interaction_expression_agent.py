@@ -14,10 +14,10 @@ from astrbot.core.interaction.expression_agent import (
     PersonaExpressionIntent,
     PersonaExpressionRequest,
     PersonaExpressionResult,
+    _build_expression_prompt,
     build_persona_expression_output_contract_for_effects,
     build_persona_expression_tool_parameters,
     build_persona_runtime_system_prompt,
-    _build_expression_prompt,
     extract_persona_expression_result,
     resolve_deepseek_first_turn_reasoning_marker,
     validate_persona_expression_result,
@@ -707,6 +707,7 @@ async def test_persona_projection_keeps_identity_history_memory_without_waiting(
     ``persona_plugin_context_mode`` is the only wait policy, so every expression
     routes through ``get_or_build_interaction_persona_context_pack``.
     """
+
     class Event:
         session_id = "fast-persona"
         unified_msg_origin = "webchat:friend:fast-persona"
@@ -832,7 +833,7 @@ async def test_persona_projection_keeps_identity_history_memory_without_waiting(
         PluginContext(),
         InteractionAgentConfig(),
         Provider(),
-        req=PersonaExpressionRequest(compact_context=True),
+        req=PersonaExpressionRequest(),
     )
 
     selected_slots = set(result.metadata["selected_slot_names"])
@@ -856,7 +857,7 @@ async def test_persona_projection_keeps_identity_history_memory_without_waiting(
         PluginContext(),
         InteractionAgentConfig(),
         Provider(),
-        req=PersonaExpressionRequest(compact_context=True),
+        req=PersonaExpressionRequest(),
     )
 
     ready_slots = set(ready_result.metadata["selected_slot_names"])

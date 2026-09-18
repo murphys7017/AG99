@@ -1076,16 +1076,11 @@
         },
         "persona_plugin_context_mode": {
           "description": "Persona 首回复的插件上下文策略",
-          "labels": ["等待插件上下文完成", "不等待，直接使用基础上下文"],
+          "labels": [
+            "等待插件上下文完成",
+            "不等待，直接使用基础上下文"
+          ],
           "hint": "控制普通 Prompt Extension 和 Contributor 是否阻塞 Persona 首次请求。"
-        },
-        "plugin_runtime_targets": {
-          "description": "插件对话钩子生效链路",
-          "hint": "只控制插件对模型请求、响应等环节的增强（LLM 生命周期 Hook），不影响命令、消息 Handler、事件监听器或模型可调用工具；配置优先于插件声明，未声明时默认在人格表达链路生效。"
-        },
-        "plugin_tool_targets": {
-          "description": "插件工具调用生效链路",
-          "hint": "只控制插件提供给模型调用的工具（FunctionTool）出现在核心还是人格表达链路；配置优先于工具声明，未声明时默认只在核心生效，插件.工具 精确项优先。"
         },
         "memory_window_size": {
           "description": "记忆窗口轮数",
@@ -1094,6 +1089,10 @@
         "persona_history_window_size": {
           "description": "Persona 历史窗口轮数",
           "hint": "Persona 历史候选池上限。系统优先保留近期连续上下文，再从较早记录中选择少量与当前输入和 Memory 相关的锚点，并按 token 预算动态裁剪；不影响 Memory 或 Core。"
+        },
+        "plugin_capability_targets": {
+          "description": "插件能力生效位置",
+          "hint": "llm_hooks: core | personal_expression; tools: { tool_name | *: core | personal_expression }"
         }
       }
     },
@@ -1111,7 +1110,10 @@
         },
         "persona_plugin_context_mode": {
           "description": "Persona 首回复的插件上下文策略",
-          "labels": ["等待插件上下文完成", "不等待，直接使用基础上下文"],
+          "labels": [
+            "等待插件上下文完成",
+            "不等待，直接使用基础上下文"
+          ],
           "hint": "控制普通 Prompt Extension 和 Contributor 是否阻塞 Persona 首次请求。"
         },
         "contributor_timeout": {
@@ -1122,13 +1124,9 @@
           "description": "插件上下文总预算秒数",
           "hint": "所有普通 Prompt Extension 收集器共享的一个总时间上限。超时后停止等待并保留已完成的贡献；该预算只会在整轮 deadline 之内缩短等待，不是按插件的超时，也不会取消后台任务。"
         },
-        "plugin_runtime_targets": {
-          "description": "插件对话钩子生效链路",
-          "hint": "只控制插件对模型请求、响应等环节的增强（LLM 生命周期 Hook），不影响命令、消息 Handler、事件监听器或模型可调用工具；配置优先于插件声明，未声明时默认在人格表达链路生效。"
-        },
-        "plugin_tool_targets": {
-          "description": "插件工具调用生效链路",
-          "hint": "只控制插件提供给模型调用的工具（FunctionTool）出现在核心还是人格表达链路；配置优先于工具声明，未声明时默认只在核心生效，插件.工具 精确项优先。"
+        "plugin_capability_targets": {
+          "description": "插件能力生效位置",
+          "hint": "llm_hooks: core | personal_expression; tools: { tool_name | *: core | personal_expression }"
         }
       }
     },

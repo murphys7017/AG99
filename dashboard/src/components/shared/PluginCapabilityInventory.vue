@@ -176,11 +176,8 @@ function targetLabel(cap) {
   if (cap.target_reason === 'fixed_by_contract') {
     return `${cap.target}`
   }
-  if (cap.target_reason === 'plugin_runtime_targets') {
+  if (cap.target_reason === 'configuration') {
     return `${cap.target} · ${tm('runtimeTargetEditor.capabilityInventory.reasonRuntimeTargets')}`
-  }
-  if (cap.target_reason === 'plugin_tool_targets') {
-    return `${cap.target} · ${tm('runtimeTargetEditor.capabilityInventory.reasonToolTargets')}`
   }
   if (cap.target_reason === 'process_lifecycle') {
     return `${cap.target} · ${tm('runtimeTargetEditor.capabilityInventory.reasonProcess')}`

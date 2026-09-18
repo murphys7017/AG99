@@ -490,29 +490,20 @@ and plugin tools while still allowing compatible module-path keys to be entered 
   adds a few older anchors relevant to the current input and Memory, then trims to
   its token budget. It neither replaces semantic Memory retrieval nor changes the
   Core Planner or Core history budgets.
-- `plugin_runtime_targets`: Plugin LLM lifecycle-target map. Use the plugin directory
-  name as the key when possible, with a value of `core` or `personal_expression`.
-  This configuration overrides a plugin class's optional
-  `interaction_runtime_target` declaration; an unconfigured and undeclared
-  plugin defaults to Persona Expression. Keyword, command, and
-  `AdapterMessageEvent` handlers remain in the official Pipeline and are not
-  migrated by this setting. A plugin can declare its default in code with
-  `interaction_runtime_target = "core"`. Example:
-- `plugin_tool_targets`: Plugin tool-target map. Executable tools default to Core
-  and can opt into `personal_expression` with their own `tool_targets` declaration.
-  This user configuration has highest precedence. Use a plugin directory name to
-  override all of its tools, or `plugin_directory.tool_name` for one exact tool;
-  an exact entry wins.
+- `plugin_capability_targets`: Capability targets keyed by the registered plugin
+  name. `llm_hooks` overrides LLM lifecycle targets (declaration, then Personal by
+  default); `tools` independently overrides FunctionTool targets (declaration,
+  then Core by default). Exact tool names override `*`. Saving rejects invalid
+  structures and targets. The former two target maps are no longer read.
+  Handlers, Prompt Extensions, and Persona Effects retain their fixed consumers.
 
   ```jsonc
   "interaction_middleware": {
     "enabled": true,
-    "plugin_runtime_targets": {
-      "astrbot_plugin_self_code": "core"
-    },
-    "plugin_tool_targets": {
-      "astrbot_plugin_game": "personal_expression",
-      "astrbot_plugin_memory.read_memory_detail": "personal_expression"
+    "plugin_capability_targets": {
+      "self_code": {"llm_hooks": "core"},
+      "game": {"tools": {"*": "personal_expression"}},
+      "memory": {"tools": {"read_memory_detail": "personal_expression"}}
     }
   }
   ```

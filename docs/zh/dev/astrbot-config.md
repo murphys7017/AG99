@@ -476,24 +476,18 @@ Dashboard 可在“配置文件 → 交互中间件 → 基础开关”中编辑
 - `persona_history_window_size`：Persona Expression 的历史候选池上限，默认 `300`。系统优先保留
   最近连续上下文，再从较早记录中选择少量与当前输入和 Memory 相关的锚点，并按 token 预算动态裁剪；
   它不替代 Memory 的语义检索，也不改变 Core Planner 或 Core 的独立历史预算。
-- `plugin_runtime_targets`：插件 LLM 生命周期目标映射。键推荐使用插件目录名，值为 `core` 或
-  `personal_expression`。该配置会覆盖插件类可选的 `interaction_runtime_target` 声明；既未配置
-  也未声明的插件默认在 Persona Expression 运行。普通关键词、命令和 `AdapterMessageEvent`
-  Handler 仍在官方 Pipeline 中运行，不受此项迁移。插件可在代码中声明
-  `interaction_runtime_target = "core"`。示例：
-- `plugin_tool_targets`：插件工具目标映射。工具默认进入 Core；工具可通过 `tool_targets` 声明
-  `personal_expression`，用户配置的此映射具有最高优先级。键既可使用插件目录名覆盖整个插件，
-  也可使用 `插件目录名.工具名` 精确覆盖单个工具，精确项优先。
+- `plugin_capability_targets`：按插件注册名称配置能力生效位置。`llm_hooks` 覆盖 LLM Hook 目标，
+  未配置时使用插件声明，再回退到 Personal；`tools` 独立覆盖 FunctionTool 目标，工具名优先于 `*`，
+  未配置时使用工具声明，再回退到 Core。保存拒绝无效结构和值，不再读取旧两张 target 映射。
+  Handler、Prompt Extension、Persona Effect 不通过此表改变消费方。
 
   ```jsonc
   "interaction_middleware": {
     "enabled": true,
-    "plugin_runtime_targets": {
-      "astrbot_plugin_self_code": "core"
-    },
-    "plugin_tool_targets": {
-      "astrbot_plugin_game": "personal_expression",
-      "astrbot_plugin_memory.read_memory_detail": "personal_expression"
+    "plugin_capability_targets": {
+      "self_code": {"llm_hooks": "core"},
+      "game": {"tools": {"*": "personal_expression"}},
+      "memory": {"tools": {"read_memory_detail": "personal_expression"}}
     }
   }
   ```

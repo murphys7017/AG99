@@ -9,6 +9,18 @@ from typing import Any
 _EFFECT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 
 
+class PersonaEffectPreparationError(RuntimeError):
+    """A persona effect could not be prepared for the current turn."""
+
+    def __init__(self, effect: PersonaEffectSpec, cause: BaseException) -> None:
+        self.effect = effect
+        self.cause = cause
+        super().__init__(
+            f"persona effect {effect.name!r} from {effect.plugin_id!r} "
+            f"could not be prepared: {cause}"
+        )
+
+
 @dataclass(slots=True)
 class PersonaEffectSpec:
     plugin_id: str

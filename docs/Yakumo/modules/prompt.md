@@ -146,7 +146,7 @@ Interaction 每轮先建立基础 Pack，并立即后台预取唯一的插件扩
 
 ### 官方钩子
 
-官方 `on_llm_request` 是最终路由分支的低层请求钩子，执行顺序在该分支的统一 Prompt Apply 之后。非 Interaction 流程保持 Core 行为；Interaction turn 中，LLM 生命周期目标按配置、插件类 `interaction_runtime_target` 声明、Persona 默认值依次解析，只有最终为 `core` 的插件才进入 Core。插件拥有的 LLM Tool 独立按 `plugin_tool_targets` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析。该钩子适合修改最终请求参数或兼容旧插件，不是给 Planner 或 Persona 内部工具调用贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
+官方 `on_llm_request` 是最终路由分支的低层请求钩子，执行顺序在该分支的统一 Prompt Apply 之后。非 Interaction 流程保持 Core 行为；Interaction turn 中，LLM 生命周期目标按配置、插件类 `interaction_runtime_target` 声明、Persona 默认值依次解析，只有最终为 `core` 的插件才进入 Core。插件拥有的 LLM Tool 独立按 `plugin_capability_targets.<plugin>.tools` 用户覆盖、工具 `tool_targets` 声明和 Core 默认值解析。该钩子适合修改最终请求参数或兼容旧插件，不是给 Planner 或 Persona 内部工具调用贡献共享事实的入口，也不保证覆盖这些轻量模型调用。
 
 需要贡献模型可见事实的插件应使用 `PromptExtensionCollectorInterface`。插件开发接口见中英文 Prompt Extension 指南。
 
@@ -160,7 +160,7 @@ OutputContract
   -> response parser
 ```
 
-Core Planner 使用独立的 `core_execution_plan` 契约，且对已委派任务必须返回 `execute`。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；普通即时轮还必须返回 `turn_action=reply|delegate`，允许静默的群聊候选才可返回 `silent`。`persona_expression` 是终端输出契约，不是业务工具；业务 `FunctionTool` 只按 `plugin_tool_targets` 的显式授权进入 Persona 或 Core。具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
+Core Planner 使用独立的 `core_execution_plan` 契约，且对已委派任务必须返回 `execute`。Persona 优先通过虚拟 `persona_expression` tool call 返回 `spoken_reply` 和按当前事件过滤后的 `effect_calls`；普通即时轮还必须返回 `turn_action=reply|delegate`，允许静默的群聊候选才可返回 `silent`。`persona_expression` 是终端输出契约，不是业务工具；业务 `FunctionTool` 只按 `plugin_capability_targets.<plugin>.tools` 的显式授权进入 Persona 或 Core。具体 Motion、Live2D 或设备协议属于插件，不属于 Prompt 主流程。
 
 ## 当前限制
 

@@ -2,7 +2,7 @@
 
 This module only decides whether a capability is allowed to take effect. It does
 not execute capabilities and does not decide the Personal/Core target: target
-resolution stays with ``plugin_runtime_targets`` and ``plugin_tool_targets``.
+resolution stays with ``plugin_capability_targets``.
 
 The model has two orthogonal axes (see
 ``docs/Yakumo/dev/plugin-capability-model-plan.md``):
@@ -30,8 +30,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 
-from astrbot.core import logger
-
 PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY = "_plugin_admission_snapshot"
 
 
@@ -40,9 +38,9 @@ class CapabilityKind(str, Enum):
 
     HANDLER = "handler"
     LLM_HOOK = "llm_hook"
+    OUTPUT_HOOK = "output_hook"
     TOOL = "tool"
     PROMPT_EXTENSION = "prompt_extension"
-    INTERACTION_PROMPT = "interaction_prompt"
     INTERACTION_RESULT = "interaction_result"
     STREAM_DECIDER = "stream_decider"
     LIFECYCLE_OBSERVER = "lifecycle_observer"
@@ -68,9 +66,9 @@ INTERACTION_CAPABILITY_KINDS: frozenset[CapabilityKind] = frozenset(
     {
         CapabilityKind.HANDLER,
         CapabilityKind.LLM_HOOK,
+        CapabilityKind.OUTPUT_HOOK,
         CapabilityKind.TOOL,
         CapabilityKind.PROMPT_EXTENSION,
-        CapabilityKind.INTERACTION_PROMPT,
         CapabilityKind.INTERACTION_RESULT,
         CapabilityKind.STREAM_DECIDER,
         CapabilityKind.LIFECYCLE_OBSERVER,
@@ -96,14 +94,30 @@ PROCESS_CAPABILITY_KINDS: frozenset[CapabilityKind] = frozenset(
     }
 )
 
-#: Lifecycle hooks that must not be silenced by per-session plugin disabling.
-#: ``star_handler`` already exempts these from the ``plugin_set`` whitelist.
-SESSION_EXEMPT_KINDS: frozenset[CapabilityKind] = frozenset(
-    {CapabilityKind.MANAGEMENT_HOOK}
-)
-
 #: Persona effect metadata key marking a mandatory-per-segment contribution.
 HARD_EFFECT_METADATA_KEY = "required_per_segment"
+
+
+def capability_kind_for_event_type(event_type: Any) -> CapabilityKind:
+    """Keep routing and the inventory on the same event classification."""
+    name = event_type.name
+    if name in {
+        "OnAstrBotLoadedEvent", "OnPlatformLoadedEvent", "OnPluginLoadedEvent",
+        "OnPluginUnloadedEvent", "OnPluginErrorEvent",
+    }:
+        return CapabilityKind.MANAGEMENT_HOOK
+    if name in {
+        "OnWaitingLLMRequestEvent", "OnLLMRequestEvent", "OnLLMResponseEvent",
+        "OnAgentBeginEvent", "OnAgentDoneEvent", "OnUsingLLMToolEvent",
+        "OnLLMToolRespondEvent",
+    }:
+        return CapabilityKind.LLM_HOOK
+    if name in {
+        "OnDecoratingResultEvent", "OnAfterMessageSentEvent",
+        "OnTTSStateChangedEvent", "OnPersonaExpressionResultEvent",
+    }:
+        return CapabilityKind.OUTPUT_HOOK
+    return CapabilityKind.HANDLER
 
 
 def is_hard_contribution(metadata: Any) -> bool:
@@ -118,6 +132,7 @@ def is_hard_contribution(metadata: Any) -> bool:
     return isinstance(metadata, dict) and (
         metadata.get(HARD_EFFECT_METADATA_KEY) is True
     )
+
 
 AdmissionReason = Literal[
     "enabled",
@@ -167,15 +182,25 @@ class PluginAdmissionSnapshot:
 
     plugin_set: tuple[str, ...] | None = None
     disabled_plugins: frozenset[str] = frozenset()
-    enabled_plugins: frozenset[str] = frozenset()
     session_id: str = ""
     #: Frozen activation state keyed by owner module path, so every capability of
     #: one plugin gets the same answer for the whole turn.
     owner_states: dict[str, _OwnerState] = field(default_factory=dict)
     decisions: dict[str, AdmissionDecision] = field(default_factory=dict)
-    configuration_snapshot: dict[str, Any] = field(default_factory=dict)
 
     def decision_for(self, ref: CapabilityRef) -> AdmissionDecision:
+        # Policy is frozen, but a removed/reloaded implementation must not inherit
+        # authorization from the previous plugin instance.
+        if ref.kind in INTERACTION_CAPABILITY_KINDS and not _owner_is_current(
+            ref.owner_module_path, self
+        ):
+            return AdmissionDecision(
+                allowed=False,
+                reason="owner_missing",
+                kind=ref.kind,
+                owner_module_path=ref.owner_module_path,
+                owner_plugin_name=ref.owner_plugin_name,
+            )
         key = _ref_key(ref)
         cached = self.decisions.get(key)
         if cached is not None:
@@ -199,7 +224,7 @@ def _ref_key(ref: CapabilityRef) -> str:
     )
 
 
-def _owner_metadata(owner_module_path: str | None):
+def resolve_owner_metadata(owner_module_path: str | None):
     if not isinstance(owner_module_path, str) or not owner_module_path:
         return None
     # Imported lazily: ``astrbot.core.star`` pulls in ``star.context``, which
@@ -244,34 +269,35 @@ def resolve_capability_admission(
             **base,
         )
 
+    if snapshot is not None and not _owner_is_current(ref.owner_module_path, snapshot):
+        return AdmissionDecision(allowed=False, reason="owner_missing", **base)
     owner = _resolve_owner_state(ref.owner_module_path, snapshot)
     if owner is None:
-        # No owning plugin metadata: treat as a system capability, matching the
-        # historical behaviour of the registries.
-        return AdmissionDecision(allowed=True, reason="owner_missing", **base)
-
-    if owner.reserved:
-        return AdmissionDecision(allowed=True, reason="reserved", **base)
+        return AdmissionDecision(
+            allowed=_is_system_owner(ref.owner_module_path),
+            reason="owner_missing",
+            **base,
+        )
 
     if not owner.activated:
         return AdmissionDecision(allowed=False, reason="plugin_inactive", **base)
 
+    if owner.reserved:
+        return AdmissionDecision(allowed=True, reason="reserved", **base)
+
     plugin_name = owner.plugin_name
     if not plugin_name:
-        # An unnamed plugin cannot be selected by name anywhere; keep the
-        # historical permissive behaviour rather than silently dropping it.
-        return AdmissionDecision(allowed=True, reason="enabled", **base)
+        return AdmissionDecision(allowed=False, reason="owner_missing", **base)
 
-    plugin_set = snapshot.plugin_set if snapshot is not None else _resolve_plugin_set(event)
+    plugin_set = (
+        snapshot.plugin_set if snapshot is not None else _resolve_plugin_set(event)
+    )
     if plugin_set is not None and plugin_name not in plugin_set:
         return AdmissionDecision(
             allowed=False,
             reason="plugin_not_in_plugin_set",
             **base,
         )
-
-    if kind in SESSION_EXEMPT_KINDS:
-        return AdmissionDecision(allowed=True, reason="enabled", **base)
 
     disabled = (
         snapshot.disabled_plugins
@@ -291,6 +317,25 @@ class _OwnerState:
     plugin_name: str | None
     activated: bool
     reserved: bool
+    instance: Any = field(default=None, compare=False, repr=False)
+    implementation: Any = field(default=None, compare=False, repr=False)
+
+
+def _is_system_owner(module_path: str | None) -> bool:
+    return bool(module_path and module_path.startswith("astrbot.core."))
+
+
+def _owner_is_current(
+    module_path: str | None, snapshot: PluginAdmissionSnapshot
+) -> bool:
+    owner = _frozen_owner_state(snapshot.owner_states, module_path)
+    if owner is None:
+        return _is_system_owner(module_path)
+    current = resolve_owner_metadata(module_path)
+    return (
+        current is owner.instance
+        and getattr(current, "star_cls", None) is owner.implementation
+    )
 
 
 def _resolve_owner_state(
@@ -303,21 +348,20 @@ def _resolve_owner_state(
     reload/disable cannot make two capabilities of the same plugin disagree
     within one turn.
 
-    A snapshot that carries no frozen registry (constructed directly rather than
-    by :func:`build_plugin_admission_snapshot`) falls back to live metadata, so a
-    partial snapshot degrades to the previous behaviour instead of making every
-    owner look missing and admitting everything.
+    An empty snapshot is an empty registry, never an invitation to read live state.
     """
-    if snapshot is not None and snapshot.owner_states:
+    if snapshot is not None:
         return _frozen_owner_state(snapshot.owner_states, owner_module_path)
 
-    metadata = _owner_metadata(owner_module_path)
+    metadata = resolve_owner_metadata(owner_module_path)
     if metadata is None:
         return None
     return _OwnerState(
         plugin_name=getattr(metadata, "name", None),
         activated=bool(getattr(metadata, "activated", True)),
         reserved=bool(getattr(metadata, "reserved", False)),
+        instance=metadata,
+        implementation=getattr(metadata, "star_cls", None),
     )
 
 
@@ -327,7 +371,7 @@ def _frozen_owner_state(
 ) -> _OwnerState | None:
     """Resolve an owner against the frozen registry using the live rule.
 
-    Mirrors :func:`_owner_metadata`, including its module-prefix match. An exact
+    Mirrors :func:`resolve_owner_metadata`, including its module-prefix match. An exact
     dict lookup alone would miss capabilities whose recorded owner is a
     descendant of the registered plugin module, and would then admit them as
     ``owner_missing`` - bypassing ``plugin_set`` and the session disable list.
@@ -358,8 +402,10 @@ def resolve_event_plugins_name(runtime_config: Any) -> list[str] | None:
     getter = getattr(runtime_config, "get", None)
     if callable(getter):
         plugin_set = getter("plugin_set", None)
-    if plugin_set is None or not isinstance(plugin_set, list):
+    if plugin_set is None:
         return None
+    if not isinstance(plugin_set, list):
+        raise ValueError("plugin_set must be a list")
     if plugin_set == ["*"]:
         return None
     return [str(name) for name in plugin_set]
@@ -379,17 +425,16 @@ def _resolve_plugin_set(event: Any) -> tuple[str, ...] | None:
         return None
     plugins_name = getattr(event, "plugins_name", None)
     if plugins_name is None:
-        return None
+        getter = getattr(event, "get_extra", None)
+        config = getter("_astrbot_config", {}) if callable(getter) else {}
+        plugins_name = resolve_event_plugins_name(config)
+        if plugins_name is None:
+            return None
     if isinstance(plugins_name, str):
         # A bare string would otherwise be iterated character by character.
         names = (plugins_name,)
     else:
-        try:
-            names = tuple(str(name) for name in plugins_name)
-        except TypeError:
-            # Not iterable: keep the historical permissive behaviour rather than
-            # silently denying every plugin.
-            return None
+        names = tuple(str(name) for name in plugins_name)
     if names == ("*",):
         return None
     return names
@@ -414,56 +459,44 @@ async def build_plugin_admission_snapshot(
     plugin_context: Any = None,
 ) -> PluginAdmissionSnapshot:
     """Resolve and freeze admission state for the current Interaction turn."""
-    del plugin_context  # reserved for future per-capability declarations
-    plugin_set = _resolve_plugin_set(event)
+    del plugin_context
+    existing = get_plugin_admission_snapshot(event)
+    if existing is not None:
+        return existing
+    snapshot = await build_session_plugin_admission_snapshot(
+        session_id=str(getattr(event, "unified_msg_origin", "") or ""),
+        plugin_set=_resolve_plugin_set(event),
+    )
+    # Another consumer may have frozen this event while session storage awaited.
+    existing = get_plugin_admission_snapshot(event)
+    if existing is not None:
+        return existing
+    event.set_extra(PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY, snapshot)
+    return snapshot
 
-    session_id = ""
+
+async def build_session_plugin_admission_snapshot(
+    *, session_id: str, plugin_set: tuple[str, ...] | None
+) -> PluginAdmissionSnapshot:
+    """Shared permission source for events and event-less Sensor submissions.
+
+    A storage failure propagates; it must not turn disabled plugins back on.
+    """
+    from astrbot.core import sp
+
     disabled: frozenset[str] = frozenset()
-    enabled: frozenset[str] = frozenset()
-    raw_session_id = getattr(event, "unified_msg_origin", None)
-    if isinstance(raw_session_id, str) and raw_session_id:
-        session_id = raw_session_id
-        try:
-            from astrbot.core import sp
-
-            session_plugin_config = await sp.get_async(
-                scope="umo",
-                scope_id=session_id,
-                key="session_plugin_config",
-                default={},
-            )
-            if isinstance(session_plugin_config, dict):
-                session_config = session_plugin_config.get(session_id, {})
-                if isinstance(session_config, dict):
-                    disabled = frozenset(
-                        str(name)
-                        for name in session_config.get("disabled_plugins", []) or []
-                    )
-                    enabled = frozenset(
-                        str(name)
-                        for name in session_config.get("enabled_plugins", []) or []
-                    )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to read session plugin config for admission: session=%s error=%s",
-                session_id,
-                exc,
-                exc_info=True,
-            )
-
-    snapshot = PluginAdmissionSnapshot(
+    if session_id:
+        sessions = await sp.get_async(
+            scope="umo", scope_id=session_id, key="session_plugin_config", default={}
+        )
+        config = sessions.get(session_id, {})
+        disabled = frozenset(config.get("disabled_plugins", []) or [])
+    return PluginAdmissionSnapshot(
         plugin_set=plugin_set,
         disabled_plugins=disabled,
-        enabled_plugins=enabled,
         session_id=session_id,
         owner_states=_freeze_owner_states(),
     )
-    # The turn state is the single source of truth; the event extra is only a
-    # read-through projection kept for consumers that have no turn state.
-    set_extra = getattr(event, "set_extra", None)
-    if callable(set_extra):
-        set_extra(PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY, snapshot)
-    return snapshot
 
 
 def _freeze_owner_states() -> dict[str, _OwnerState]:
@@ -482,6 +515,8 @@ def _freeze_owner_states() -> dict[str, _OwnerState]:
             plugin_name=getattr(metadata, "name", None),
             activated=bool(getattr(metadata, "activated", True)),
             reserved=bool(getattr(metadata, "reserved", False)),
+            instance=metadata,
+            implementation=getattr(metadata, "star_cls", None),
         )
     return frozen
 
@@ -493,20 +528,15 @@ def get_plugin_admission_snapshot(event: Any) -> PluginAdmissionSnapshot | None:
     projection for consumers that run without a turn (and would otherwise
     observe a different snapshot than the turn's own consumers).
     """
-    try:
-        from astrbot.core.interaction.turn_state import (
-            get_interaction_turn_plugin_admission,
-        )
-    except Exception:  # noqa: BLE001 - import cycle safety
-        get_interaction_turn_plugin_admission = None
+    if event is None:
+        return None
+    from astrbot.core.interaction.turn_state import (
+        get_interaction_turn_plugin_admission,
+    )
 
-    if get_interaction_turn_plugin_admission is not None:
-        try:
-            snapshot = get_interaction_turn_plugin_admission(event)
-        except Exception:  # noqa: BLE001
-            snapshot = None
-        if snapshot is not None:
-            return snapshot
+    snapshot = get_interaction_turn_plugin_admission(event)
+    if snapshot is not None:
+        return snapshot
 
     get_extra = getattr(event, "get_extra", None)
     if not callable(get_extra):
@@ -536,27 +566,6 @@ def capability_allowed(
     return resolve_capability_admission(event=event, ref=ref).allowed
 
 
-def call_capability_lister(
-    lister: Any,
-    *,
-    event: Any,
-) -> Any:
-    """Call a ``Context.list_*`` capability accessor with the turn event.
-
-    The admission-aware accessors take an optional ``event`` keyword. Older or
-    third-party ``Context`` implementations - and lightweight test doubles - may
-    not, so retry without the keyword. Only a keyword mismatch is retried: a
-    ``TypeError`` raised inside the accessor itself still propagates.
-    """
-    try:
-        return lister(event=event)
-    except TypeError as exc:
-        message = str(exc)
-        if "event" not in message or "argument" not in message:
-            raise
-        return lister()
-
-
 __all__ = [
     "AdmissionDecision",
     "AdmissionReason",
@@ -566,12 +575,13 @@ __all__ = [
     "PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY",
     "PROCESS_CAPABILITY_KINDS",
     "PluginAdmissionSnapshot",
-    "SESSION_EXEMPT_KINDS",
     "build_plugin_admission_snapshot",
-    "call_capability_lister",
+    "build_session_plugin_admission_snapshot",
     "capability_allowed",
+    "capability_kind_for_event_type",
     "get_plugin_admission_snapshot",
     "is_hard_contribution",
     "resolve_capability_admission",
     "resolve_event_plugins_name",
+    "resolve_owner_metadata",
 ]

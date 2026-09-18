@@ -49,7 +49,7 @@ Core 结果、插件 persona 输出和流式插话都以“待表达材料”调
 
 即时回复和 Core-final 只是同一表达面在不同材料与不同发送时机下的调用：前者可以使用紧凑
 上下文先接住对话，后者携带 Core 结果完成表达；两者不得因为调用入口不同而得到不同的、
-由调用方临时裁剪的插件 FunctionTool 授权结果。`plugin_tool_targets`、FunctionTool 自身
+由调用方临时裁剪的插件 FunctionTool 授权结果。`plugin_capability_targets.<plugin>.tools`、FunctionTool 自身
 `tool_targets` 与 Persona 工具白名单共同决定 `personal_expression` 可见的 FunctionTool；
 它们不派生 `fast_persona` 或其他第二执行面。
 

@@ -10,6 +10,7 @@ Personal and Core consume the same single-flight result.
 import asyncio
 
 import pytest
+
 from astrbot.core.interaction import context_builder as context_builder_module
 from astrbot.core.interaction.context_builder import (
     get_or_build_interaction_core_plugin_context_pack,
@@ -61,9 +62,6 @@ class _PluginContext:
         return {}
 
     def list_prompt_extension_collectors(self, event=None):
-        return []
-
-    def list_interaction_prompt_contributors(self, event=None):
         return []
 
     def list_persona_effects(self, event=None):
@@ -264,7 +262,7 @@ async def test_persona_expression_waits_when_mode_is_wait_complete(monkeypatch):
         _PluginContext(),
         _config("wait_complete"),
         _provider(),
-        req=PersonaExpressionRequest(compact_context=True),
+        req=PersonaExpressionRequest(),
     )
     names = set(result.metadata.get("selected_slot_names", set()))
     assert PLUGIN_SLOT in names, (
@@ -320,7 +318,7 @@ async def test_persona_expression_uses_base_pack_under_best_effort(monkeypatch):
             _PluginContext(),
             _config("best_effort"),
             _provider(),
-            req=PersonaExpressionRequest(compact_context=True),
+            req=PersonaExpressionRequest(),
         )
         names = set(result.metadata.get("selected_slot_names", set()))
         assert BASE_SLOT in names

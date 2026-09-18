@@ -23,15 +23,12 @@
     </v-btn>
   </div>
 
-  <v-dialog v-model="dialog" max-width="820px">
+  <v-dialog v-model="dialog" max-width="1040px" scrollable>
     <v-card>
       <v-card-title class="text-h3 py-4" style="font-weight: normal;">
         {{ dialogTitle }}
       </v-card-title>
       <v-card-text class="pa-4">
-        <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-          {{ helpText }}
-        </v-alert>
         <v-alert v-if="loadFailed" type="warning" variant="tonal" density="compact" class="mb-4">
           {{ tm('runtimeTargetEditor.loadFailed') }}
         </v-alert>
@@ -47,21 +44,41 @@
           align="start"
           class="target-map-row"
         >
-          <v-col cols="12" md="7">
+          <v-col cols="12" md="3">
             <v-combobox
               v-model="entry.scope"
               :items="scopeOptions"
               item-title="title"
               item-value="value"
               :return-object="false"
-              :label="scopeLabel"
+              :label="tm('runtimeTargetEditor.pluginLabel')"
               :error-messages="entryError(index)"
               density="compact"
               variant="outlined"
               clearable
             />
           </v-col>
-          <v-col cols="10" md="4">
+          <v-col cols="12" md="3">
+            <v-select
+              v-model="entry.kind"
+              :items="kindOptions"
+              :label="tm('runtimeTargetEditor.kindLabel')"
+              density="compact"
+              variant="outlined"
+            />
+          </v-col>
+          <v-col cols="12" md="3" :class="{ 'd-none d-md-block': entry.kind !== 'tools' }">
+            <v-combobox
+              v-if="entry.kind === 'tools'"
+              v-model="entry.tool"
+              :items="toolOptions[entry.scope] || ['*']"
+              :label="tm('runtimeTargetEditor.toolLabel')"
+              density="compact"
+              variant="outlined"
+              :return-object="false"
+            />
+          </v-col>
+          <v-col cols="10" md="2">
             <v-select
               v-model="entry.target"
               :items="targetOptions"
@@ -111,10 +128,6 @@ const props = defineProps({
     type: Object,
     default: () => ({})
   },
-  mode: {
-    type: String,
-    default: 'plugin'
-  },
   maxSummaryItems: {
     type: Number,
     default: 3
@@ -128,6 +141,7 @@ const loading = ref(false)
 const loadFailed = ref(false)
 const draftEntries = ref([])
 const scopeOptions = ref([])
+const toolOptions = ref({})
 let nextEntryId = 0
 
 const validTargets = new Set(['core', 'personal_expression'])
@@ -137,60 +151,60 @@ const normalizedModelValue = computed(() => {
   }
   return props.modelValue
 })
-const summaryEntries = computed(() => Object.entries(normalizedModelValue.value))
+function bindingEntries(value) {
+  return Object.entries(value).flatMap(([scope, binding]) => [
+    ...(binding.llm_hooks ? [newEntry(scope, binding.llm_hooks, 'llm_hooks')] : []),
+    ...Object.entries(binding.tools || {}).map(
+      ([tool, target]) => newEntry(scope, target, 'tools', tool)
+    )
+  ])
+}
+const summaryEntries = computed(() => bindingEntries(normalizedModelValue.value).map(
+  entry => [`${entry.scope} / ${entry.kind === 'tools' ? entry.tool : 'LLM Hook'}`, entry.target]
+))
 const targetOptions = computed(() => [
-  { title: tm('runtimeTargetEditor.targetCore'), value: 'core' },
-  { title: tm('runtimeTargetEditor.targetPersona'), value: 'personal_expression' }
+  { title: 'Core', value: 'core' },
+  { title: 'Personal', value: 'personal_expression' }
 ])
-const emptyText = computed(() => tm(
-  props.mode === 'tool'
-    ? 'runtimeTargetEditor.toolEmpty'
-    : 'runtimeTargetEditor.pluginEmpty'
-))
-const dialogTitle = computed(() => tm(
-  props.mode === 'tool'
-    ? 'runtimeTargetEditor.toolDialogTitle'
-    : 'runtimeTargetEditor.pluginDialogTitle'
-))
-const helpText = computed(() => tm(
-  props.mode === 'tool'
-    ? 'runtimeTargetEditor.toolHelp'
-    : 'runtimeTargetEditor.pluginHelp'
-))
-const scopeLabel = computed(() => tm(
-  props.mode === 'tool'
-    ? 'runtimeTargetEditor.toolScopeLabel'
-    : 'runtimeTargetEditor.pluginScopeLabel'
-))
+const emptyText = computed(() => tm('runtimeTargetEditor.capabilityEmpty'))
+const dialogTitle = computed(() => tm('runtimeTargetEditor.capabilityTitle'))
+const kindOptions = computed(() => [
+  { title: 'LLM Hook', value: 'llm_hooks' },
+  { title: 'FunctionTool', value: 'tools' }
+])
 const hasErrors = computed(() => draftEntries.value.some((_, index) => Boolean(entryError(index))))
 
 function targetLabel(target) {
   if (target === 'personal_expression') {
-    return tm('runtimeTargetEditor.targetPersona')
+    return 'Personal'
   }
   if (target === 'core') {
-    return tm('runtimeTargetEditor.targetCore')
+    return 'Core'
   }
   return String(target || '')
 }
 
-function newEntry(scope = '', target = null) {
+function newEntry(scope = '', target = 'core', kind = 'llm_hooks', tool = '*') {
   nextEntryId += 1
   return {
     id: nextEntryId,
     scope,
-    target: target || (props.mode === 'tool' ? 'personal_expression' : 'core')
+    target,
+    kind,
+    tool
   }
 }
 
 function entryError(index) {
   const scope = String(draftEntries.value[index]?.scope || '').trim()
   const target = draftEntries.value[index]?.target
-  if (!scope) {
+  const { kind, tool } = draftEntries.value[index]
+  if (!scope || (kind === 'tools' && !String(tool || '').trim())) {
     return tm('runtimeTargetEditor.scopeRequired')
   }
   const duplicateCount = draftEntries.value.filter(
-    entry => String(entry.scope || '').trim() === scope
+    entry => String(entry.scope || '').trim() === scope && entry.kind === kind &&
+      (kind !== 'tools' || String(entry.tool || '').trim() === String(tool || '').trim())
   ).length
   if (duplicateCount > 1) {
     return tm('runtimeTargetEditor.scopeDuplicate')
@@ -202,9 +216,7 @@ function entryError(index) {
 }
 
 async function openDialog() {
-  draftEntries.value = Object.entries(normalizedModelValue.value).map(
-    ([scope, target]) => newEntry(scope, target)
-  )
+  draftEntries.value = bindingEntries(normalizedModelValue.value)
   dialog.value = true
   await loadScopeOptions()
 }
@@ -212,10 +224,7 @@ async function openDialog() {
 async function loadScopeOptions() {
   loading.value = true
   loadFailed.value = false
-  const requests = [axios.get('/api/plugin/get')]
-  if (props.mode === 'tool') {
-    requests.push(axios.get('/api/tools/list'))
-  }
+  const requests = [axios.get('/api/plugin/get'), axios.get('/api/tools/list')]
 
   const results = await Promise.allSettled(requests)
   const options = new Map()
@@ -234,15 +243,13 @@ async function loadScopeOptions() {
   }
 
   const toolResult = results[1]
-  if (props.mode === 'tool' && toolResult) {
+  toolOptions.value = {}
+  if (toolResult) {
     if (toolResult.status === 'fulfilled' && toolResult.value.data?.status === 'ok') {
       for (const tool of toolResult.value.data.data || []) {
         if (tool?.origin !== 'plugin' || !tool.origin_name || !tool.name) continue
-        const value = `${tool.origin_name}.${tool.name}`
-        options.set(value, {
-          title: `${tool.origin_name} / ${tool.name}`,
-          value
-        })
+        const names = toolOptions.value[tool.origin_name] ||= ['*']
+        names.push(tool.name)
       }
     } else {
       loadFailed.value = true
@@ -265,7 +272,13 @@ function saveEntries() {
   if (hasErrors.value) return
   const value = {}
   for (const entry of draftEntries.value) {
-    value[String(entry.scope).trim()] = entry.target
+    const binding = value[String(entry.scope).trim()] ||= {}
+    if (entry.kind === 'llm_hooks') {
+      binding.llm_hooks = entry.target
+    } else {
+      binding.tools ||= {}
+      binding.tools[String(entry.tool).trim()] = entry.target
+    }
   }
   emit('update:modelValue', value)
   dialog.value = false

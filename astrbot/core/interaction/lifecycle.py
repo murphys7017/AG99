@@ -7,7 +7,6 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.plugin_admission import call_capability_lister
 
 from .contributors import InteractionLifecycleView
 from .turn_state import (
@@ -90,10 +89,7 @@ def _list_lifecycle_observers(
     )
     if not callable(list_observers):
         return []
-    observers = call_capability_lister(
-        list_observers,
-        event=event,
-    )
+    observers = list_observers(event=event)
     if not isinstance(observers, Iterable) or isinstance(observers, str | bytes | dict):
         return []
     return list(observers)
