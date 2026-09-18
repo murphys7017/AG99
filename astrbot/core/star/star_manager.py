@@ -48,7 +48,7 @@ from astrbot.core.utils.requirements_utils import (
 )
 
 from .command_management import sync_command_configs
-from .context import Context
+from .context import Context, plugin_owner_scope
 from .error_messages import format_plugin_error
 from .filter.permission import PermissionType, PermissionTypeFilter
 from .star import StarMetadata, star_map, star_registry
@@ -1120,21 +1120,32 @@ class PluginManager:
                         setattr(metadata.star_cls_type, "plugin_id", plugin_id)
 
                     if path not in inactivated_plugins:
-                        # 只有没有禁用插件时才实例化插件类
-                        if plugin_config and metadata.star_cls_type:
-                            try:
-                                metadata.star_cls = metadata.star_cls_type(
-                                    context=self.context,
-                                    config=plugin_config,
-                                )
-                            except TypeError as _:
-                                metadata.star_cls = metadata.star_cls_type(
-                                    context=self.context,
-                                )
-                        elif metadata.star_cls_type:
-                            metadata.star_cls = metadata.star_cls_type(
-                                context=self.context,
-                            )
+                        # Only instantiate the plugin class when it is enabled.
+                        # The constructor is plugin-authored code and may
+                        # register capabilities (AG99Live does exactly this), so
+                        # it must run inside the owner scope.
+                        try:
+                            with plugin_owner_scope(
+                                path,
+                                plugin_name=metadata.name,
+                                root_dir_name=root_dir_name,
+                            ):
+                                if plugin_config and metadata.star_cls_type:
+                                    try:
+                                        metadata.star_cls = metadata.star_cls_type(
+                                            context=self.context,
+                                            config=plugin_config,
+                                        )
+                                    except TypeError:
+                                        metadata.star_cls = metadata.star_cls_type(
+                                            context=self.context,
+                                        )
+                                elif metadata.star_cls_type:
+                                    metadata.star_cls = metadata.star_cls_type(
+                                        context=self.context,
+                                    )
+                        except Exception:
+                            raise
 
                         if metadata.star_cls:
                             setattr(metadata.star_cls, "name", p_name)
@@ -1232,21 +1243,25 @@ class PluginManager:
                     obj = None
 
                     if path not in inactivated_plugins:
-                        # 只有没有禁用插件时才实例化插件类
-                        if plugin_config:
-                            try:
+                        # Only instantiate the plugin class when it is enabled.
+                        # Legacy plugin classes may also register capabilities
+                        # from their constructor, so the owner scope is required
+                        # here too.
+                        with plugin_owner_scope(path, root_dir_name=root_dir_name):
+                            if plugin_config:
+                                try:
+                                    obj = plugin_cls(
+                                        context=self.context,
+                                        config=plugin_config,
+                                    )  # 实例化插件类
+                                except TypeError:
+                                    obj = plugin_cls(
+                                        context=self.context,
+                                    )  # 实例化插件类
+                            else:
                                 obj = plugin_cls(
                                     context=self.context,
-                                    config=plugin_config,
                                 )  # 实例化插件类
-                            except TypeError as _:
-                                obj = plugin_cls(
-                                    context=self.context,
-                                )  # 实例化插件类
-                        else:
-                            obj = plugin_cls(
-                                context=self.context,
-                            )  # 实例化插件类
 
                     metadata = self._load_plugin_metadata(
                         plugin_path=plugin_dir_path,
@@ -1327,7 +1342,12 @@ class PluginManager:
 
                 # 执行 initialize() 方法
                 if hasattr(metadata.star_cls, "initialize") and metadata.star_cls:
-                    await metadata.star_cls.initialize()
+                    with plugin_owner_scope(
+                        metadata.module_path,
+                        plugin_name=metadata.name,
+                        root_dir_name=metadata.root_dir_name,
+                    ):
+                        await metadata.star_cls.initialize()
 
                 # 触发插件加载事件
                 handlers = star_handlers_registry.get_handlers_by_event_type(
@@ -1781,14 +1801,38 @@ class PluginManager:
         ]:
             del star_handlers_registry.star_handlers_map[k]
 
-        # llm_tools 中移除该插件的工具函数绑定
+        # Derived once, before it is first used: the tool-matching loop below
+        # needs the parent package prefix, and a partial teardown must never
+        # abort midway and leave the plugin half-unbound.
+        module_prefix = ".".join(plugin_module_path.split(".")[:-1])
+
+        # Remove this plugin's tools from the LLM tool manager. Matching covers
+        # the resolved handler module path and the live handler definition, so a
+        # tool whose module path was rewritten by the loader is still removed.
         to_remove = []
         for func_tool in llm_tools.func_list:
             mp = func_tool.handler_module_path
-            if (
-                mp
-                and mp.startswith(plugin_module_path)
-                and not mp.endswith(("astrbot.builtin_stars", "data.plugins"))
+            if mp and mp.endswith(("astrbot.builtin_stars", "data.plugins")):
+                continue
+            handler = getattr(func_tool, "handler", None)
+            handler_module = (
+                getattr(handler, "__module__", None)
+                if handler is not None
+                else None
+            )
+            candidates = [mp, handler_module]
+            if any(
+                isinstance(candidate, str)
+                and candidate
+                and (
+                    candidate == plugin_module_path
+                    or candidate.startswith(f"{plugin_module_path}.")
+                    or (
+                        module_prefix
+                        and candidate.startswith(f"{module_prefix}.")
+                    )
+                )
+                for candidate in candidates
             ):
                 to_remove.append(func_tool)
         for func_tool in to_remove:
@@ -1796,9 +1840,18 @@ class PluginManager:
 
         # Unregister platform adapters registered by this plugin
         # module_path is like "data.plugins.my_plugin.main", extract prefix like "data.plugins.my_plugin"
-        module_prefix = ".".join(plugin_module_path.split(".")[:-1])
         if module_prefix:
-            self._remove_plugin_runtime_extensions(module_prefix)
+            self._remove_plugin_runtime_extensions(
+                module_prefix,
+                plugin_name=plugin_name,
+            )
+            # Owner-based sweep keyed on the full module path as well, so that
+            # capabilities registered with an explicit owner scope are removed
+            # even when the derived prefix does not match their owner.
+            self._remove_plugin_runtime_extensions(
+                plugin_module_path,
+                plugin_name=plugin_name,
+            )
             unregistered_adapters = unregister_platform_adapters_by_module(
                 module_prefix
             )
@@ -1815,7 +1868,33 @@ class PluginManager:
             is_reserved=plugin.reserved,
         )
 
-    def _remove_plugin_runtime_extensions(self, module_prefix: str) -> None:
+    def _remove_plugin_runtime_extensions(
+        self,
+        module_prefix: str,
+        *,
+        plugin_name: str | None = None,
+    ) -> None:
+        """Remove runtime capabilities owned by one plugin.
+
+        Owner-based teardown is authoritative and also covers capabilities the
+        plugin registered with Core-defined classes (for example
+        ``PersonaEffectSpec``), which module-prefix inference could not attribute.
+        The module-prefix sweep is kept as a fallback for registrations created
+        outside an owner scope, such as builtin capabilities.
+        """
+        remove_by_owner = getattr(self.context, "remove_capabilities_by_owner", None)
+        if callable(remove_by_owner):
+            removed = remove_by_owner(
+                module_path=module_prefix,
+                plugin_name=plugin_name,
+            )
+            if removed:
+                logger.debug(
+                    "owner-based capability teardown removed=%s for plugin=%s",
+                    removed,
+                    plugin_name or module_prefix,
+                )
+
         self.context.remove_prompt_extension_collectors_by_module_prefix(module_prefix)
         self.context.remove_interaction_prompt_contributors_by_module_prefix(
             module_prefix
@@ -1928,7 +2007,14 @@ class PluginManager:
                     exc,
                 )
         elif "terminate" in star_metadata.star_cls_type.__dict__:
-            await star_metadata.star_cls.terminate()
+            # Plugin-authored teardown; keep the owner scope so anything it
+            # registers or unregisters is attributed to the right plugin.
+            with plugin_owner_scope(
+                star_metadata.module_path,
+                plugin_name=star_metadata.name,
+                root_dir_name=star_metadata.root_dir_name,
+            ):
+                await star_metadata.star_cls.terminate()
 
         # 触发插件卸载事件
         handlers = star_handlers_registry.get_handlers_by_event_type(

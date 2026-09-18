@@ -6,6 +6,7 @@ from contextlib import aclosing
 from astrbot import logger
 from astrbot.core.message.message_event_result import CommandResult, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_admission import get_plugin_admission_snapshot
 from astrbot.core.plugin_runtime import plugin_supports_runtime_target
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
@@ -89,10 +90,20 @@ async def call_event_hook(
     #
 
     """
-    handlers = star_handlers_registry.get_handlers_by_event_type(
-        hook_type,
-        plugins_name=event.plugins_name,
-    )
+    snapshot = get_plugin_admission_snapshot(event)
+    if execution_surface is not None and snapshot is not None and snapshot.owner_states:
+        # Admission below owns the frozen plugin policy; registry filtering still
+        # enforces each handler's own enabled flag.
+        handlers = star_handlers_registry.get_handlers_by_event_type(
+            hook_type,
+            only_activated=False,
+            plugins_name=None,
+        )
+    else:
+        handlers = star_handlers_registry.get_handlers_by_event_type(
+            hook_type,
+            plugins_name=event.plugins_name,
+        )
     for handler in handlers:
         if execution_surface is not None and not plugin_supports_runtime_target(
             event,

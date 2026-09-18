@@ -6,9 +6,11 @@ from typing import Literal
 
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.tool import (
+    TOOL_TARGET_CORE,
     TOOL_TARGET_PERSONAL_EXPRESSION,
     tool_supports_target,
 )
+from astrbot.core.plugin_admission import CapabilityKind, capability_allowed
 from astrbot.core.star.star import star_map
 
 PluginRuntimeTarget = Literal["core", "personal_expression"]
@@ -26,11 +28,24 @@ def plugin_supports_runtime_target(
 ) -> bool:
     """Return whether a plugin-owned lifecycle handler belongs to ``target``.
 
+    Two independent conditions must hold:
+
+    * **Admission** — the plugin may contribute at all (global activation,
+      ``plugin_set``, per-session disabled list).
+    * **Target** — the handler belongs to this execution surface, resolved by
+      ``plugin_runtime_targets``.
+
     Personal Runtime owns normal interactions. During an interaction turn,
     plugins therefore default to Persona Expression and only an explicit
     configuration entry may place one in Core. Outside an interaction turn we
     retain the legacy Core lifecycle unchanged.
     """
+    if not capability_allowed(
+        event,
+        kind=CapabilityKind.LLM_HOOK,
+        owner_module_path=module_path,
+    ):
+        return False
     if not _is_personal_runtime_turn(event):
         return True
     return _resolve_plugin_target(event, module_path) == target
@@ -65,15 +80,28 @@ def tool_supports_runtime_target(event, tool: object, target: str) -> bool:
 
 
 def tool_plugin_is_selected(event, tool: object) -> bool:
-    """Return whether the tool's owning plugin is enabled for this session."""
-    selected_plugins = getattr(event, "plugins_name", None)
-    if selected_plugins is None:
+    """Return whether the tool's owning plugin may contribute this tool.
+
+    Delegates to the single admission decision point so that global activation,
+    ``plugin_set`` and the per-session disabled list are all applied
+    consistently. ``plugin_tool_targets`` still decides the Personal/Core
+    target; admission is a separate axis and cannot be bypassed by a target.
+    """
+    module_path = _tool_module_path(tool)
+    metadata = _metadata_for_module(module_path)
+    if metadata is None:
+        # No owning plugin metadata: treat as a system tool, matching the
+        # historical behaviour.
         return True
 
-    metadata = _metadata_for_module(_tool_module_path(tool))
-    if metadata is None:
-        return True
-    return bool(metadata.reserved or metadata.name in selected_plugins)
+    tool_name = str(getattr(tool, "name", "") or "").strip() or None
+    return capability_allowed(
+        event,
+        kind=CapabilityKind.TOOL,
+        owner_module_path=module_path,
+        owner_plugin_name=getattr(metadata, "name", None),
+        item_name=tool_name,
+    )
 
 
 def _is_personal_runtime_turn(event) -> bool:
@@ -136,15 +164,84 @@ def _configured_tool_target(
 def _configured_target_map(event, config_key: str) -> dict | None:
     get_extra = getattr(event, "get_extra", None)
     config = get_extra("_astrbot_config", {}) if get_extra else {}
-    if not isinstance(config, dict):
+    return _configured_target_map_from(config, config_key)
+
+
+def _configured_target_map_from(runtime_config: object, config_key: str) -> dict | None:
+    """Read one target map out of a plain AstrBot config mapping.
+
+    Shared by the turn path (which reads the event's frozen config) and the
+    inventory API (which has no event and passes the runtime config directly).
+    """
+    if not isinstance(runtime_config, dict):
         return None
-    interaction_config = config.get("interaction_middleware", {})
+    interaction_config = runtime_config.get("interaction_middleware", {})
     if not isinstance(interaction_config, dict):
         return None
     configured_targets = interaction_config.get(config_key)
     if not isinstance(configured_targets, dict):
         return None
     return configured_targets
+
+
+def resolve_plugin_runtime_target(
+    runtime_config: object,
+    metadata: object,
+    module_path: str | None,
+) -> tuple[PluginRuntimeTarget, str]:
+    """Resolve one plugin's LLM lifecycle target plus where it came from.
+
+    Resolution order is unchanged: user config, then the plugin's
+    ``interaction_runtime_target`` declaration, then the Persona default.
+    """
+    configured = _target_for_keys(
+        _configured_target_map_from(runtime_config, PLUGIN_RUNTIME_TARGETS_CONFIG_KEY)
+        or {},
+        _plugin_config_keys(metadata, module_path),
+    )
+    if configured is not None:
+        return configured, "plugin_runtime_targets"
+    declared = _declared_target(metadata)
+    if declared is not None:
+        return declared, "declaration"
+    return PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION, "default"
+
+
+def resolve_tool_runtime_target(
+    runtime_config: object,
+    metadata: object,
+    module_path: str | None,
+    tool_name: str,
+    tool: object = None,
+) -> tuple[str, str]:
+    """Resolve one FunctionTool's target plus where it came from.
+
+    Resolution order is unchanged: ``plugin_tool_targets`` (exact
+    ``plugin.tool`` before ``plugin``), then the tool's own ``execution_targets``
+    declaration, then the Core default.
+    """
+    configured_targets = (
+        _configured_target_map_from(runtime_config, PLUGIN_TOOL_TARGETS_CONFIG_KEY)
+        or {}
+    )
+    plugin_keys = _plugin_config_keys(metadata, module_path)
+    if tool_name:
+        exact = _target_for_keys(
+            configured_targets,
+            tuple(f"{key}.{tool_name}" for key in plugin_keys),
+        )
+        if exact is not None:
+            return exact, "plugin_tool_targets"
+    configured = _target_for_keys(configured_targets, plugin_keys)
+    if configured is not None:
+        return configured, "plugin_tool_targets"
+    if tool is not None:
+        targets = getattr(tool, "execution_targets", None)
+        if targets:
+            normalized = sorted(str(target) for target in targets)
+            if normalized:
+                return normalized[0], "declaration"
+    return TOOL_TARGET_CORE, "default"
 
 
 def _target_for_keys(

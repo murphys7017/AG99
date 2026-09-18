@@ -6,6 +6,7 @@ This module wires collectors into a single fail-fast collection flow.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterable
 from copy import deepcopy
@@ -17,6 +18,7 @@ from astrbot.core.capabilities import (
     CapabilitySnapshot,
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_admission import call_capability_lister
 from astrbot.core.star.context import Context
 
 from .collectors.conversation_history_collector import ConversationHistoryCollector
@@ -472,7 +474,7 @@ async def _collect_prompt_extension_slots(
     if not callable(list_collectors):
         return [], []
 
-    raw_collectors = list_collectors()
+    raw_collectors = call_capability_lister(list_collectors, event=event)
     try:
         collectors = list(raw_collectors or [])
     except TypeError:
@@ -489,17 +491,93 @@ async def _collect_prompt_extension_slots(
         )
     )
 
-    collected_extensions: list[PromptExtension] = []
-    collector_names: list[str] = []
+    collector_names = [collector.__class__.__name__ for collector in collectors]
     static_cache = _get_event_dict_extra(event, PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY)
 
-    for collector in collectors:
+    # Collectors run concurrently so one slow plugin no longer delays the others.
+    # The whole group shares one stage budget derived from the turn deadline: it
+    # can only shorten the turn, never become a second deadline owner, and never
+    # creates a per-plugin timeout.
+    results = await _run_prompt_extension_collectors(
+        event=event,
+        collectors=collectors,
+        plugin_context=plugin_context,
+        config=config,
+        provider_request=provider_request,
+        static_cache=static_cache,
+    )
+
+    # Reassemble in the original priority order so slot content stays
+    # deterministic regardless of completion order.
+    collected_extensions: list[PromptExtension] = []
+    for outcome in results:
+        collected_extensions.extend(outcome.extensions)
+        if outcome.lifecycle == "static" and outcome.extensions:
+            _store_static_cache_entry(
+                static_cache,
+                outcome.static_cache_key,
+                config=config,
+                provider_request=provider_request,
+                items=outcome.raw_extensions,
+            )
+
+    event.set_extra(PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY, static_cache)
+
+    slots = _build_normalized_prompt_extension_slots(
+        collected_extensions,
+        source="prompt_extension_collectors",
+    )
+    return slots, collector_names
+
+
+class _PromptExtensionCollectionOutcome:
+    """Result of one collector invocation, kept in collection order."""
+
+    __slots__ = ("static_cache_key", "extensions", "raw_extensions", "lifecycle")
+
+    def __init__(
+        self,
+        *,
+        static_cache_key: str,
+        extensions: list[PromptExtension],
+        raw_extensions: list[PromptExtension],
+        lifecycle: str,
+    ) -> None:
+        self.static_cache_key = static_cache_key
+        self.extensions = extensions
+        self.raw_extensions = raw_extensions
+        self.lifecycle = lifecycle
+
+
+async def _run_prompt_extension_collectors(
+    *,
+    event: AstrMessageEvent,
+    collectors: list[Any],
+    plugin_context: Context,
+    config,
+    provider_request,
+    static_cache: dict,
+) -> list[_PromptExtensionCollectionOutcome]:
+    """Run every prompt extension collector concurrently under one stage budget."""
+
+    async def collect_one(collector: Any) -> _PromptExtensionCollectionOutcome:
         collector_name = collector.__class__.__name__
-        collector_names.append(collector_name)
         allow_control_plane_targets = _collector_allows_control_plane_targets(collector)
         lifecycle = _collector_lifecycle(collector)
         plugin_id = str(getattr(collector, "plugin_id", "") or "").strip()
         static_cache_key = _prompt_extension_cache_key(collector, plugin_id)
+
+        def outcome(
+            extensions: list[PromptExtension],
+            raw: list[PromptExtension] | None = None,
+        ) -> _PromptExtensionCollectionOutcome:
+            return _PromptExtensionCollectionOutcome(
+                static_cache_key=static_cache_key,
+                extensions=extensions,
+                raw_extensions=raw if raw is not None else extensions,
+                lifecycle=lifecycle,
+            )
+
         cached_items = _find_static_cache_entry(
             static_cache,
             static_cache_key,
@@ -510,18 +588,20 @@ async def _collect_prompt_extension_slots(
             cached_extensions = _normalize_prompt_extension_items(
                 deepcopy(cached_items)
             )
-            collected_extensions.extend(
-                normalized
-                for extension in cached_extensions
-                if (
-                    normalized := _normalize_plugin_prompt_extension(
-                        extension,
-                        allow_control_plane_targets=allow_control_plane_targets,
+            return outcome(
+                [
+                    normalized
+                    for extension in cached_extensions
+                    if (
+                        normalized := _normalize_plugin_prompt_extension(
+                            extension,
+                            allow_control_plane_targets=allow_control_plane_targets,
+                        )
                     )
-                )
-                is not None
+                    is not None
+                ],
             )
-            continue
+
         try:
             raw_extensions = await collector.collect(
                 event,
@@ -529,6 +609,8 @@ async def _collect_prompt_extension_slots(
                 config,
                 provider_request=provider_request,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Prompt extension collector failed: collector=%s error=%s",
@@ -536,10 +618,11 @@ async def _collect_prompt_extension_slots(
                 exc,
                 exc_info=True,
             )
-            continue
+            return outcome([])
 
         extensions = _normalize_prompt_extension_items(raw_extensions)
         extensions.sort(key=lambda extension: extension.order)
+        accepted: list[PromptExtension] = []
         for extension in extensions:
             if (
                 not isinstance(extension.plugin_id, str)
@@ -572,24 +655,161 @@ async def _collect_prompt_extension_slots(
                 allow_control_plane_targets=allow_control_plane_targets,
             )
             if normalized is not None:
-                collected_extensions.append(normalized)
+                accepted.append(normalized)
 
-        if lifecycle == "static":
-            _store_static_cache_entry(
-                static_cache,
-                static_cache_key,
-                config=config,
-                provider_request=provider_request,
-                items=extensions,
-            )
+        return outcome(accepted, raw=extensions)
 
-    event.set_extra(PROMPT_EXTENSION_STATIC_CACHE_EXTRA_KEY, static_cache)
+    if not collectors:
+        return []
 
-    slots = _build_normalized_prompt_extension_slots(
-        collected_extensions,
-        source="prompt_extension_collectors",
+    tasks = [
+        asyncio.ensure_future(collect_one(collector)) for collector in collectors
+    ]
+    gathered = await _await_prompt_extension_collectors(
+        event=event,
+        config=config,
+        tasks=tasks,
     )
-    return slots, collector_names
+
+    outcomes: list[_PromptExtensionCollectionOutcome] = []
+    for collector, item in zip(collectors, gathered, strict=True):
+        if isinstance(item, _PromptExtensionCollectionOutcome):
+            outcomes.append(item)
+            continue
+        # Timed out, exhausted, or raised: record diagnostics and keep the
+        # contributions already produced by the other collectors.
+        logger.warning(
+            "Prompt extension collector produced no result: collector=%s reason=%s",
+            collector.__class__.__name__,
+            type(item).__name__ if item is not None else "stage_budget_exceeded",
+        )
+        outcomes.append(
+            _PromptExtensionCollectionOutcome(
+                static_cache_key="",
+                extensions=[],
+                raw_extensions=[],
+                lifecycle="dynamic",
+            )
+        )
+    return outcomes
+
+
+def _safe_task_result(task: asyncio.Future) -> Any:
+    """Read a task's outcome without ever raising.
+
+    ``Task.exception()`` raises ``CancelledError`` for a cancelled task, so a
+    cancelled task is reported as ``None`` instead of being queried.
+    """
+    if task.cancelled():
+        return None
+    if not task.done():
+        return None
+    try:
+        return task.result()
+    except asyncio.CancelledError:
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return exc
+
+
+async def _await_prompt_extension_collectors(
+    *,
+    event: AstrMessageEvent,
+    config,
+    tasks: list[asyncio.Future],
+) -> list[Any]:
+    """Await all collector tasks under one shared group budget.
+
+    The budget is a stage of the turn's single ``TurnDeadlineBudget``, so it can
+    only shorten the turn and never becomes a second deadline owner. A single
+    collector's failure or cancellation is isolated: its slot becomes ``None``
+    and the other contributions are preserved.
+    """
+    from astrbot.core.deadline import TurnDeadlineExceeded
+    from astrbot.core.interaction.turn_state import get_interaction_turn_deadline
+
+    def cancel_all() -> None:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+
+    async def drain() -> None:
+        """Cancel and await every unfinished collector task.
+
+        Must run on ALL exit paths, including outer cancellation: otherwise a
+        turn timeout or user cancel leaves collectors running against a finished
+        event.
+        """
+        cancel_all()
+        unfinished = [task for task in tasks if not task.done()]
+        if unfinished:
+            await asyncio.gather(*unfinished, return_exceptions=True)
+
+    deadline = get_interaction_turn_deadline(event)
+    if deadline is None:
+        # No turn budget: keep the historical unbounded behaviour, but still
+        # clean up if the wait itself is cancelled.
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            await drain()
+        return [_safe_task_result(task) for task in tasks]
+
+    limit = _plugin_enrichment_limit(config)
+    try:
+        with deadline.stage("plugin_enrichment", limit) as stage_budget:
+            remaining = stage_budget.remaining()
+            if remaining <= 0:
+                # Budget already exhausted: stop waiting immediately rather than
+                # falling through to an unbounded wait.
+                await drain()
+                logger.warning(
+                    "Prompt extension collection skipped: turn budget exhausted "
+                    "collectors=%d",
+                    len(tasks),
+                )
+                return [None] * len(tasks)
+
+            _done, pending = await asyncio.wait(tasks, timeout=remaining)
+            if pending:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                logger.warning(
+                    "Prompt extension collection hit the group budget: "
+                    "collectors=%d timed_out=%d budget=%.2fs",
+                    len(tasks),
+                    len(pending),
+                    remaining,
+                )
+    except TurnDeadlineExceeded:
+        await drain()
+        logger.warning(
+            "Prompt extension collection skipped: stage budget unavailable "
+            "collectors=%d",
+            len(tasks),
+        )
+        return [None] * len(tasks)
+    except BaseException:
+        # Outer cancellation (turn timeout, shutdown, user cancel) or any other
+        # failure: tear the collectors down before propagating.
+        await drain()
+        raise
+
+    return [_safe_task_result(task) for task in tasks]
+
+
+def _plugin_enrichment_limit(config: Any) -> float | None:
+    """Group-level cap for plugin enrichment, if the config carries one."""
+    for attr in ("plugin_enrichment_timeout", "contributor_timeout"):
+        value = getattr(config, attr, None)
+        if value is None:
+            continue
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _prompt_extension_collector_in_scope(

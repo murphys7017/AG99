@@ -1118,6 +1118,10 @@
           "description": "Per-Contributor Timeout Seconds",
           "hint": "Time limit for one ordinary Prompt Contributor or Result Contributor. A timeout drops only that contribution and records diagnostics; it does not cancel the Plugin Job or the turn."
         },
+        "plugin_enrichment_timeout": {
+          "description": "Plugin context total budget (seconds)",
+          "hint": "One shared time cap for all ordinary Prompt Extension collectors. On timeout it stops waiting and keeps whatever was already collected. The budget can only shorten the turn deadline; it is not a per-plugin timeout and does not cancel background work."
+        },
         "plugin_runtime_targets": {
           "description": "Plugin LLM Hook Execution Path",
           "hint": "Controls only LLM lifecycle hooks, not commands, message handlers, event listeners, or FunctionTools. User configuration overrides the plugin declaration; undeclared plugins default to Persona Expression."

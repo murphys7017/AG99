@@ -1,4 +1,4 @@
-﻿{
+{
   "title": "Custom Rules",
   "subtitle": "Set custom rules for specific sessions, which take priority over global settings",
   "buttons": {
@@ -77,7 +77,7 @@
     "pluginConfig": {
       "title": "Plugin Configuration",
       "disabledPlugins": "Disabled Plugins",
-      "hint": "Select plugins to disable for this session. Unselected plugins will remain enabled."
+      "hint": "Select plugins to disable for this session. A disabled plugin contributes no prompt extensions, lifecycle hooks, tools, contributors, Persona effects or runtime sensors in this session; plugin management and load hooks are unaffected."
     },
     "kbConfig": {
       "title": "Knowledge Base Configuration",

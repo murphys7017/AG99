@@ -11,6 +11,10 @@ from astrbot.core.platform.astr_message_event import (
     INTERACTION_OUTPUT_CONTROLLER_EXTRA_KEY,
     AstrMessageEvent,
 )
+from astrbot.core.plugin_admission import (
+    PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY,
+    build_plugin_admission_snapshot,
+)
 from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import ProviderRequest
@@ -58,6 +62,7 @@ from .turn_state import (
     get_interaction_turn_delivery_metadata,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
+    get_interaction_turn_plugin_admission,
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     get_interaction_turn_visible_outputs,
@@ -86,6 +91,7 @@ from .turn_state import (
     set_interaction_turn_core_task_spec,
     set_interaction_turn_finalized_material,
     set_interaction_turn_inbound_media_materialized,
+    set_interaction_turn_plugin_admission,
     set_interaction_turn_route_decision,
     set_interaction_turn_runtime_config,
     suppress_interaction_turn_pending_persona,
@@ -291,6 +297,46 @@ class InteractionMiddleware:
         self.attach_event_context(event, turn_id=turn_id)
         turn_state.pipeline_event_prepared = True
 
+    async def freeze_plugin_admission(self, event: AstrMessageEvent) -> None:
+        """Resolve plugin capability admission once for this Interaction turn.
+
+        Every capability consumer in the turn must read this snapshot instead of
+        re-deriving admission: it keeps the answer consistent within a turn and
+        immune to a mid-turn plugin reload.
+        """
+        if event.is_stopped():
+            return
+        if get_interaction_turn_plugin_admission(event) is not None:
+            return
+        try:
+            turn_state = ensure_interaction_turn_state(event)
+            snapshot = await build_plugin_admission_snapshot(
+                event=event,
+                plugin_context=self.plugin_context,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Admission must never be the reason a turn fails. Consumers fall
+            # back to the live-state resolver, which keeps the historical
+            # permissive result.
+            logger.error(
+                "Failed to freeze plugin admission snapshot: platform_id=%s "
+                "session_id=%s error=%s",
+                event.get_platform_id(),
+                event.session_id,
+                exc,
+                exc_info=True,
+            )
+            return
+        # TurnState is the single source of truth and the first writer wins, so
+        # two concurrent builders cannot leave the turn and the event extra
+        # pointing at different snapshots.
+        if turn_state.plugin_admission is None:
+            turn_state.plugin_admission = snapshot
+        event.set_extra(
+            PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY,
+            turn_state.plugin_admission,
+        )
+
     def attach_event_context(
         self,
         event: AstrMessageEvent,
@@ -317,6 +363,7 @@ class InteractionMiddleware:
         if not self.is_enabled_for_event(event):
             return
         self.prepare_pipeline_event(event)
+        await self.freeze_plugin_admission(event)
         if not self._has_routeable_user_content(event):
             mark_interaction_turn_pipeline_route_handled(event)
             event.set_extra(
@@ -377,6 +424,7 @@ class InteractionMiddleware:
         )
         interaction_config = set_interaction_turn_config(event, interaction_config)
         event.set_extra("_interaction_runtime_observation_active", True)
+        await self.freeze_plugin_admission(event)
         await dispatch_interaction_lifecycle(
             event,
             self.plugin_context,
@@ -528,6 +576,7 @@ class InteractionMiddleware:
             self._get_runtime_config(event),
         )
         self.prepare_pipeline_event(event)
+        await self.freeze_plugin_admission(event)
         await dispatch_interaction_lifecycle(
             event,
             self.plugin_context,
@@ -911,7 +960,9 @@ class InteractionMiddleware:
             event,
             interaction_config,
             request=PersonaExpressionRequest(
-                compact_context=True,
+                # ``compact_context`` is inert: plugin context wait policy comes
+                # from ``persona_plugin_context_mode`` only, so the ordinary
+                # first reply honours the user's configured choice.
                 require_turn_action=True,
                 allow_silent=group_conversation_allows_silent(event),
                 intent=PersonaExpressionIntent(

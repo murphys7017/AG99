@@ -7,6 +7,7 @@ from copy import copy, deepcopy
 from typing import Any
 
 from astrbot import logger
+from astrbot.core.plugin_admission import call_capability_lister
 from astrbot.core.prompt.builder import PromptContextBuilder
 from astrbot.core.prompt.collectors.input_collector import (
     InputMediaEnrichmentCollector,
@@ -765,7 +766,12 @@ async def collect_interaction_prompt_extensions(
         purpose="context_collection",
         phase="collect",
     ).copy_read_only()
-    contributors = list(plugin_context.list_interaction_prompt_contributors())
+    contributors = list(
+        call_capability_lister(
+            plugin_context.list_interaction_prompt_contributors,
+            event=event,
+        )
+    )
 
     async def _collect_one(contributor):
         plugin_id = str(getattr(contributor, "plugin_id", "<unknown>") or "<unknown>")

@@ -23,6 +23,7 @@ from astrbot.core.platform.astr_message_event import (
 )
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
+from astrbot.core.plugin_admission import resolve_event_plugins_name
 from astrbot.core.provider.entities import ProviderRequest
 
 from .config import load_interaction_agent_config
@@ -1787,6 +1788,11 @@ class PersonalRuntimeManager:
                     "Runtime output"
                 )
         event.set_extra("_astrbot_config_id", config_id)
+        # Internally constructed events (proactive output, observations, personal
+        # actions) do not pass through the waking-check stage, so their plugin
+        # whitelist must be derived here. Without this they would carry
+        # ``plugins_name = None`` and silently ignore ``plugin_set``.
+        event.plugins_name = resolve_event_plugins_name(runtime_config)
         reservation = self._reserve(
             event,
             config_id,

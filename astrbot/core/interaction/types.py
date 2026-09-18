@@ -261,6 +261,10 @@ class InteractionAgentConfig:
     stream_interjection_max_per_turn: int = 1
     tool_stage_observation_delay_seconds: float = 8.0
     contributor_timeout: float = 1.0
+    #: Shared upper bound for the whole plugin enrichment group. One cap for all
+    #: Prompt Extension collectors, not a per-plugin timeout; it can only shorten
+    #: the turn's own deadline budget.
+    plugin_enrichment_timeout: float = 3.0
 
 
 @dataclass(slots=True)
@@ -274,3 +278,4 @@ class InteractionPromptBuildConfig:
     max_quoted_fallback_images: int = 20
     prompt_pipeline_strict_mode: bool = True
     contributor_timeout: float = 1.0
+    plugin_enrichment_timeout: float = 3.0

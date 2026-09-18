@@ -21,6 +21,7 @@ from astrbot.core.message.message_chain_transforms import (
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
 from astrbot.core.output_lifecycle import PreOutputProcessor, TurnDeliveryCoordinator
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_admission import call_capability_lister
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 from astrbot.core.voice import (
@@ -1512,7 +1513,10 @@ class InteractionOutputController:
             observation_kind=observation_kind,
             metadata=metadata,
         ).copy_read_only()
-        for decider in list_deciders():
+        for decider in call_capability_lister(
+            list_deciders,
+            event=event,
+        ):
             try:
                 payload = await decider.decide(
                     event,
@@ -1991,7 +1995,10 @@ class InteractionOutputController:
             },
         )
         contributions: list[InteractionResultContribution] = []
-        contributors = list_contributors()
+        contributors = call_capability_lister(
+            list_contributors,
+            event=event,
+        )
         timeout = self._get_interaction_config(event).contributor_timeout
 
         async def _collect_one(contributor) -> InteractionResultContribution | None:

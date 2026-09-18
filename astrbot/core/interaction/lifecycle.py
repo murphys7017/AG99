@@ -7,6 +7,7 @@ from typing import Any
 
 from astrbot import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.plugin_admission import call_capability_lister
 
 from .contributors import InteractionLifecycleView
 from .turn_state import (
@@ -42,7 +43,7 @@ async def dispatch_interaction_lifecycle(
         metadata=dict(metadata or {}),
     ).copy_read_only()
 
-    observers = _list_lifecycle_observers(plugin_context)
+    observers = _list_lifecycle_observers(plugin_context, event)
     if not observers:
         return
     results = await asyncio.gather(
@@ -76,7 +77,10 @@ async def dispatch_interaction_lifecycle(
         )
 
 
-def _list_lifecycle_observers(plugin_context: Any | None) -> list[Any]:
+def _list_lifecycle_observers(
+    plugin_context: Any | None,
+    event: Any | None = None,
+) -> list[Any]:
     if plugin_context is None:
         return []
     list_observers = getattr(
@@ -86,7 +90,10 @@ def _list_lifecycle_observers(plugin_context: Any | None) -> list[Any]:
     )
     if not callable(list_observers):
         return []
-    observers = list_observers()
+    observers = call_capability_lister(
+        list_observers,
+        event=event,
+    )
     if not isinstance(observers, Iterable) or isinstance(observers, str | bytes | dict):
         return []
     return list(observers)

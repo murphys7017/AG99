@@ -13,6 +13,28 @@ Welcome to the AstrBot Plugin Development Guide! This section will guide you thr
 > AG99, created by YakumoAki, also provides [Persona Effects](./guides/persona-effects) and [Prompt Extensions](./guides/prompt-extensions). Persona Effects extend structured Persona output, while Prompt Extensions contribute model-visible facts through the unified Prompt pipeline. Neither API registers an LLM tool.
 > In an Interaction turn, normal plugin LLM hooks enhance Persona Expression by default, while executable tools default to Core. Plugins can declare a lifecycle target with `interaction_runtime_target` and a tool target with `tool_targets`; user `plugin_runtime_targets` and `plugin_tool_targets` settings override them independently.
 
+> [!IMPORTANT]
+> **Target and admission are two different things.** The declarations and settings above
+> only decide whether Personal or Core consumes a capability. Whether it is allowed to
+> participate at all is decided by one admission point, which you cannot and should not
+> bypass:
+>
+> ```text
+> Permission    = globally enabled AND valid owner AND allowed by plugin_set AND not session-disabled
+> Applicability = platform / device / runtime match (decided by your own event_filter)
+> ```
+>
+> So when a user disables your plugin, or disables it for one session, **all** of your
+> Prompt Extensions, hooks, tools, contributors, effects and sensors stop applying - do not
+> assume an entry point is exempt. Management lifecycle hooks (`on_astrbot_loaded` and
+> friends) are not affected by per-session disabling.
+>
+> If your contribution is a **mandatory** contract (for example an action Effect required on
+> every reply), declare `required_per_segment: True` in the `PersonaEffectSpec` `metadata`.
+> `hard` only guarantees it is not dropped as a soft contribution by a timeout or a
+> `best_effort` skip; it does **not** exempt you from admission. When the plugin is disabled
+> or the session is disabled, the mandatory contract does not apply either.
+
 ## Choose a Plugin Entry Point
 
 AG99 does not automatically put every plugin into Persona. Choose the entry point

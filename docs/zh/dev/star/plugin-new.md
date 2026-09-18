@@ -15,6 +15,23 @@ outline: deep
 > AG99（作者 YakumoAki）额外提供 [Persona Effect](./guides/persona-effects) 和 [Prompt Extension](./guides/prompt-extensions)。前者扩展 Persona 的结构化表现输出，后者向统一 Prompt 管线贡献模型可见事实；两者都不是 LLM Tool。
 > Interaction turn 中，普通插件的 LLM 钩子默认增强 Persona Expression，可执行工具默认进入 Core。插件可用 `interaction_runtime_target` 声明生命周期目标、用工具 `tool_targets` 声明工具目标；用户的 `plugin_runtime_targets` 与 `plugin_tool_targets` 配置分别覆盖它们。
 
+> [!IMPORTANT]
+> **归属（target）与准入（admission）是两件事。** 上面那些声明与配置只决定能力由
+> Personal 还是 Core 消费。是否允许参与由统一准入决定，你无法也不应该绕开：
+>
+> ```text
+> Permission    = 全局启用 ∧ Owner 有效 ∧ plugin_set 允许 ∧ 当前会话未禁用
+> Applicability = 平台 / 设备 / 运行时匹配（由你的 event_filter 决定）
+> ```
+>
+> 因此：用户停用插件或在某个会话禁用插件后，你的 Prompt Extension、Hook、Tool、
+> Contributor、Effect 与 Sensor **全部**都不再生效——不要假设某个入口能幸免。
+> 生命周期 Hook（`on_astrbot_loaded` 等管理钩子）不受会话级禁用影响。
+>
+> 如果你的贡献是**必发**契约（例如每个回复都要求一次动作 Effect），在 `PersonaEffectSpec`
+> 的 `metadata` 里声明 `required_per_segment: True`。`hard` 只保证它不被超时或
+> `best_effort` 软丢弃，**不等于**豁免准入：插件被停用或会话被禁用时，必发契约同样不生效。
+
 ## 先选择插件入口
 
 AG99 不会把所有插件自动塞进 Persona。开发前先按插件行为选择入口：

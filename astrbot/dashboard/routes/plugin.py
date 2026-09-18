@@ -30,6 +30,7 @@ from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.permission import PermissionTypeFilter
 from astrbot.core.star.filter.regex import RegexFilter
+from astrbot.core.plugin_capability_inventory import build_capability_inventory
 from astrbot.core.star.star import StarMetadata
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 from astrbot.core.star.star_manager import (
@@ -114,6 +115,7 @@ class PluginRoute(Route):
         self.routes = {
             "/plugin/get": ("GET", self.get_plugins),
             "/plugin/detail": ("GET", self.get_plugin_detail),
+            "/plugin/capabilities": ("GET", self.get_plugin_capabilities),
             "/plugin/check-compat": ("POST", self.check_plugin_compatibility),
             "/plugin/page/entry": ("GET", self.get_plugin_page_entry_config),
             "/plugin/install": ("POST", self.install_plugin),
@@ -1382,6 +1384,33 @@ class PluginRoute(Route):
             .ok(_plugin_resp, message=self.plugin_manager.failed_plugin_info)
             .__dict__
         )
+
+    async def get_plugin_capabilities(self):
+        """Return the plugin capability inventory.
+
+        Reports every registered plugin capability with its owner, admission
+        state, fixed/configured target, hard/soft contract and migration state.
+        Editable and read-only fields are returned separately so the UI cannot
+        offer a target for a capability whose consumer is fixed by contract.
+        """
+        try:
+            runtime_config = None
+            config_mgr = getattr(self.core_lifecycle, "astrbot_config_mgr", None)
+            if config_mgr is not None:
+                runtime_config = getattr(config_mgr, "default_conf", None)
+            inventory = build_capability_inventory(
+                event=None,
+                context=self.plugin_manager.context,
+                runtime_config=runtime_config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to build plugin capability inventory: %s",
+                exc,
+                exc_info=True,
+            )
+            return Response().error(f"构建插件能力清单失败: {exc}").__dict__
+        return Response().ok(inventory).__dict__
 
     async def get_plugin_detail(self):
         plugin_name = request.args.get("name")

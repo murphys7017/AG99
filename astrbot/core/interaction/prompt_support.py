@@ -45,6 +45,14 @@ def build_interaction_prompt_build_config(
         )
     except (TypeError, ValueError):
         contributor_timeout = 1.0
+    try:
+        plugin_enrichment_timeout = float(
+            interaction_settings.get("plugin_enrichment_timeout", 3.0)
+            if isinstance(interaction_settings, dict)
+            else 3.0
+        )
+    except (TypeError, ValueError):
+        plugin_enrichment_timeout = 3.0
     return InteractionPromptBuildConfig(
         provider_settings=provider_settings,
         timezone=(cfg.get("timezone") if isinstance(cfg, dict) else None),
@@ -66,6 +74,7 @@ def build_interaction_prompt_build_config(
             provider_settings.get("max_quoted_fallback_images", 20) or 20
         ),
         contributor_timeout=max(0.1, contributor_timeout),
+        plugin_enrichment_timeout=max(0.1, plugin_enrichment_timeout),
     )
 
 

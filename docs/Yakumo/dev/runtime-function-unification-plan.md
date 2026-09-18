@@ -105,6 +105,11 @@ interaction turn
 | D-013 | 群聊 `silent` 必须与 Personal 发送权原子仲裁：pending 可取消，committed / emitted 不撤回；Router mode、Personal status 和 turn outcome 分开记录。 |
 | D-014 | Router 只决定 `silent/persona/hybrid`，Planner 只决定 Core 是否启动；二者都不得因任务类型或媒体输入取得 Personal 回复准入权。 |
 | D-015 | 插件生命周期、插件工具和插件 Prompt Extension 只挂载到 `personal_expression` 或 `core`；Router/Planner 不加载插件能力目录或插件业务事实。官方群聊上下文等控制面事实必须由核心 Collector 提供。 |
+| D-016 | **Permission 与 Applicability 是两个正交的准入轴。** `Permission = 全局启用 ∧ Owner 有效 ∧ plugin_set 允许 ∧ 当前会话未禁用`；`Applicability = 平台/设备/运行时匹配（由能力自身 event_filter 决定）`。任何轮次级插件能力都必须同时通过两者。 |
+| D-017 | **`hard` 只豁免软丢弃，不豁免准入。** 声明 `required_per_segment` 的贡献不得被超时或 `best_effort` 跳过而静默丢弃；但它在全局停用、所有权失效、`plugin_set` 排除或会话禁用时同样不生效。 |
+| D-018 | **Owner 必须是注册时记录的显式事实**，禁止从 `type(obj).__module__` 推断插件归属。加载期以 owner scope 记录；推断仅作为无 scope 时的兼容回退。卸载按 Owner 清理。 |
+| D-019 | **准入判定只有一个裁决点**（`astrbot/core/plugin_admission.py`），且每轮 Interaction 冻结一次快照。各注册表不得各自实现插件活动判断。准入只回答"允不允许"，不决定 Personal/Core target。 |
+| D-020 | **插件富化并发执行，共享一个由 `TurnDeadlineBudget` 派生的阶段预算**；不新增按插件或按项超时（与 D-004 一致），也不建立第二个 deadline owner。 |
 
 ## 三、目标与非目标
 
@@ -126,6 +131,11 @@ interaction turn
 1. 不改变 `plugin_runtime_targets` 和 `plugin_tool_targets` 的含义、默认值和优先级。
 2. 不把全部插件或工具默认迁入 Persona，也不把全部插件或工具强制迁回 Core。
 3. 不让 Prompt Collector、Router 或插件分别增加一轮“是否使用工具”的模型分类。
+4. 不为 Pipeline Handler、Prompt Extension 或 Persona Effect 增加可配置 target
+   （见 D-016~D-020 与 `plugin-capability-model-plan.md`）：三者的消费方由契约固定，
+   只增加"允不允许参与"的准入，不增加"放到哪里"的配置。
+5. 不把进程级能力（Web API、Provider、Platform Adapter、全局 Task、Cron）
+   纳入轮次准入快照；它们由插件启停与卸载生命周期管理。
 4. 不在 Phase 1 修改群聊概率、续接窗口、AngelHeart 判断或主动表达策略。
 5. 不在本计划中完成第三方 Execution Backend、MCP 全量迁移或 AG99 私有能力重写。
 6. 不为了减少文件行数机械拆类；只有 owner、生命周期或验证边界明确时才拆分。

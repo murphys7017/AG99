@@ -42,6 +42,19 @@ Interaction 不把所有插件都当作 Persona 输入。插件首先按行为�
 | 显式输出 | `event.send()`、`emit_output()`、`Context.send_message()` 等按 direct/persona 语义进入输出控制；显式目标不再经过“是否应该回复”的路由判断 | 否 |
 | Runtime Sensor | 只提交受限结构化 Observation，进入 Personal Runtime 的 Inbox/Gate/Policy；不能提交用户文本、工具调用或最终文案 | 否 |
 
+上表描述的是**消费方（target）**。是否允许参与由独立的正交准入决定：
+
+```text
+Permission    = 全局启用 ∧ Owner 有效 ∧ plugin_set 允许 ∧ 当前会话未禁用
+Applicability = 平台 / 设备 / 运行时匹配（能力自身 event_filter）
+```
+
+准入只有一个裁决点（`astrbot/core/plugin_admission.py`），并在每轮 Interaction 建立时
+冻结一份快照供该轮所有入口复用。任何轮次级能力都必须同时通过两个轴；`hard` 贡献
+（`required_per_segment`）只豁免软丢弃（超时 / `best_effort` 跳过），不豁免准入。
+进程级能力（Web API、Provider、Platform Adapter、全局 Task、Cron）不进入该快照，
+由插件启停与卸载生命周期管理。
+
 ### Handler 路径
 
 官方 Handler 仍然是插件接管消息的第一边界。Handler 如果产生终止结果或停止事件，可以阻止

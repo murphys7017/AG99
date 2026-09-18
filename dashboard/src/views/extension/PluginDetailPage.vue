@@ -7,6 +7,7 @@ import defaultPluginIcon from "/favicon.svg";
 import { useI18n } from "@/i18n/composables";
 import { usePluginI18n } from "@/utils/pluginI18n";
 import PluginPlatformChip from "@/components/shared/PluginPlatformChip.vue";
+import PluginCapabilityInventory from "@/components/shared/PluginCapabilityInventory.vue";
 
 const props = defineProps({
   plugin: {
@@ -587,6 +588,14 @@ onBeforeUnmount(() => {
         </p>
       </v-card-text>
     </v-card>
+
+    <section class="detail-section">
+      <v-card class="rounded-lg" variant="outlined">
+        <v-card-text>
+          <PluginCapabilityInventory :plugin-name="displayName" />
+        </v-card-text>
+      </v-card>
+    </section>
 
     <section v-if="groupedHandlerSections.length" class="detail-section">
       <h3 class="detail-section__title">{{ tm("detail.contents") }}</h3>

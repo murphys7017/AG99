@@ -23,6 +23,7 @@ from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.plugin_admission import resolve_event_plugins_name
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.permission import PermissionTypeFilter
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
@@ -102,9 +103,10 @@ async def _discover_activated_handlers(
 
     activated_handlers = []
     handlers_parsed_params = {}
-    enabled_plugins_name = config.get("plugin_set", ["*"])
-    event.plugins_name = None if enabled_plugins_name == ["*"] else enabled_plugins_name
-    logger.debug("enabled_plugins_name: %s", enabled_plugins_name)
+    # Shared whitelist rule: missing or ["*"] means no restriction, while an
+    # explicit list (including []) is used verbatim.
+    event.plugins_name = resolve_event_plugins_name(config)
+    logger.debug("enabled_plugins_name: %s", config.get("plugin_set", ["*"]))
 
     handler_woke = False
     for handler in star_handlers_registry.get_handlers_by_event_type(

@@ -225,6 +225,7 @@ DEFAULT_CONFIG = {
         "plugin_parallel_window_seconds": 3.0,
         "persona_plugin_context_mode": "wait_complete",
         "contributor_timeout": 1.0,
+        "plugin_enrichment_timeout": 3.0,
         "plugin_runtime_targets": {},
         "plugin_tool_targets": {},
         "memory_window_size": 8,
@@ -4462,6 +4463,11 @@ CONFIG_METADATA_3 = {
                         "description": "单个贡献者超时秒数",
                         "type": "float",
                         "hint": "普通 Prompt Contributor 与结果 Contributor 的单项时间上限。超时只丢弃该项贡献并记录诊断，不取消当前 Plugin Job 或整轮任务。",
+                    },
+                    "interaction_middleware.plugin_enrichment_timeout": {
+                        "description": "插件上下文总预算秒数",
+                        "type": "float",
+                        "hint": "所有普通 Prompt Extension 收集器共享的一个总时间上限。超时后停止等待并保留已完成的贡献；该预算只会在整轮 deadline 之内缩短等待，不是按插件的超时，也不会取消后台任务。",
                     },
                     "interaction_middleware.plugin_runtime_targets": {
                         "description": "插件对话钩子生效链路",

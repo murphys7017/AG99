@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import time
 from asyncio import Queue
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -25,6 +27,12 @@ from astrbot.core.platform import Platform
 from astrbot.core.platform.astr_message_event import AstrMessageEvent, MessageSesion
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
+from astrbot.core.plugin_admission import (
+    CapabilityKind,
+    capability_allowed,
+    get_plugin_admission_snapshot,
+    resolve_event_plugins_name,
+)
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest, ProviderType
 from astrbot.core.provider.func_tool_manager import FunctionTool, FunctionToolManager
 from astrbot.core.provider.manager import ProviderManager
@@ -112,6 +120,69 @@ def _legacy_plugin_module_path(parts: list[str]) -> str:
     return ".".join(resolved_parts)
 
 
+@dataclass(frozen=True, slots=True)
+class PluginOwnerScope:
+    """The plugin whose code is currently executing during load or initialize.
+
+    Registration used to infer ownership from ``type(obj).__module__``. That
+    fails whenever a plugin registers an instance of a Core-defined class (for
+    example the documented ``PersonaEffectSpec`` usage), because the inferred
+    owner then points at the Core module and the plugin metadata lookup misses.
+    The owner scope replaces that guess with an explicit, load-time fact.
+    """
+
+    module_path: str
+    plugin_name: str | None = None
+    root_dir_name: str | None = None
+
+
+# A ContextVar, deliberately: plugin loading runs inside one asyncio task, and a
+# context variable keeps the owner per-task so concurrent or nested loads cannot
+# observe each other's owner. A process-global fallback must NOT be used here -
+# it would stay visible for the whole duration of an ``await`` inside a plugin's
+# ``initialize()`` and attribute capabilities registered concurrently by other
+# plugins to the plugin currently loading.
+_PLUGIN_OWNER_SCOPE: ContextVar[PluginOwnerScope | None] = ContextVar(
+    "astrbot_plugin_owner_scope",
+    default=None,
+)
+
+
+def current_plugin_owner_scope() -> PluginOwnerScope | None:
+    """Return the plugin owner scope for the code currently executing, if any."""
+    return _PLUGIN_OWNER_SCOPE.get()
+
+
+@contextmanager
+def plugin_owner_scope(
+    module_path: str | None,
+    *,
+    plugin_name: str | None = None,
+    root_dir_name: str | None = None,
+) -> Iterator[PluginOwnerScope | None]:
+    """Mark ``module_path`` as the owner of capabilities registered in this block.
+
+    Must wrap every place where plugin-authored code runs during loading
+    (constructor and ``initialize``), not just ``initialize``: plugins such as
+    AG99Live register their capabilities from the plugin constructor.
+    """
+    clean_module_path = module_path.strip() if isinstance(module_path, str) else ""
+    if not clean_module_path:
+        yield None
+        return
+
+    scope = PluginOwnerScope(
+        module_path=clean_module_path,
+        plugin_name=plugin_name,
+        root_dir_name=root_dir_name,
+    )
+    token = _PLUGIN_OWNER_SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        _PLUGIN_OWNER_SCOPE.reset(token)
+
+
 def _resolve_tool_handler_module_path(tool: FunctionTool) -> str:
     module_path = getattr(tool, "__module__", None)
     module_parts = _split_module_path(module_path)
@@ -137,6 +208,8 @@ class _PromptExtensionCollectorRegistration:
     definition_module_path: str
     owner_module_path: str | None
     seq: int
+    owner_plugin_name: str | None = None
+    owner_source: str = "definition"
 
 
 @dataclass(slots=True)
@@ -148,6 +221,8 @@ class _InteractionContributorRegistration:
     definition_module_path: str
     owner_module_path: str | None
     seq: int
+    owner_plugin_name: str | None = None
+    owner_source: str = "definition"
 
 
 @dataclass(slots=True)
@@ -159,6 +234,8 @@ class _PersonaEffectRegistration:
     definition_module_path: str
     owner_module_path: str | None
     seq: int
+    owner_plugin_name: str | None = None
+    owner_source: str = "definition"
 
 
 @dataclass(slots=True)
@@ -170,6 +247,8 @@ class _RuntimeObservationSensorRegistration:
     definition_module_path: str
     owner_module_path: str | None
     seq: int
+    owner_plugin_name: str | None = None
+    owner_source: str = "definition"
 
 
 class PlatformManagerProtocol(Protocol):
@@ -837,9 +916,11 @@ class Context:
             "__module__",
             "",
         )
-        owner_module_path = self._normalize_plugin_owner_module(
-            str(definition_module_path)
-        )
+        (
+            owner_module_path,
+            owner_plugin_name,
+            owner_source,
+        ) = self._resolve_registration_owner(str(definition_module_path))
         self._runtime_observation_sensor_seq += 1
         registration = _RuntimeObservationSensorRegistration(
             plugin_id=plugin_id,
@@ -847,6 +928,8 @@ class Context:
             definition_module_path=str(definition_module_path),
             owner_module_path=owner_module_path,
             seq=self._runtime_observation_sensor_seq,
+            owner_plugin_name=owner_plugin_name,
+            owner_source=owner_source,
         )
         self._runtime_observation_sensors.append(registration)
         logger.info(
@@ -923,6 +1006,13 @@ class Context:
             raise RuntimeError("Runtime Observation sensor plugin is inactive")
 
         target_session = self._resolve_runtime_observation_session(session)
+        # A sensor submission carries no event, so admission is resolved against
+        # the target session's own plugin configuration instead of a turn
+        # snapshot (see the capability model plan, Q2 exception).
+        if not await self._runtime_sensor_admitted(registration, target_session):
+            raise RuntimeError(
+                "Runtime Observation sensor plugin is disabled for this session"
+            )
         platform = self.get_platform_inst(target_session.platform_id)
         if platform is None:
             raise RuntimeError(
@@ -959,6 +1049,83 @@ class Context:
         if dispatcher is None:
             raise RuntimeError("Runtime Observation dispatcher is unavailable")
         return await dispatcher(observation)
+
+    async def _runtime_sensor_admitted(
+        self,
+        registration: _RuntimeObservationSensorRegistration,
+        target_session: MessageSesion,
+    ) -> bool:
+        """Resolve admission for a Runtime Observation sensor without an event.
+
+        Sensors submit outside any Interaction turn, so there is no frozen
+        snapshot to read. The session-level plugin configuration is read
+        directly for the target session instead.
+        """
+        owner_module_path = registration.owner_module_path
+        owner_plugin_name = registration.owner_plugin_name
+        metadata = star_map.get(owner_module_path) if owner_module_path else None
+        if metadata is None:
+            return True
+        if metadata.reserved or not metadata.activated:
+            return bool(metadata.reserved)
+        plugin_name = owner_plugin_name or metadata.name
+        if not plugin_name:
+            return True
+
+        session_id = str(target_session)
+
+        # A sensor has no event, so the target session's own plugin whitelist is
+        # resolved here. Skipping this would let an observation be submitted by a
+        # plugin that ``plugin_set`` excluded.
+        try:
+            runtime_config = self.get_config(umo=session_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to resolve sensor target config: session=%s error=%s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            runtime_config = None
+        allowed_plugins = resolve_event_plugins_name(runtime_config)
+        if allowed_plugins is not None and plugin_name not in allowed_plugins:
+            logger.info(
+                "Runtime Observation sensor suppressed: plugin %s is not in "
+                "plugin_set for session %s",
+                plugin_name,
+                session_id,
+            )
+            return False
+
+        try:
+            from astrbot.core import sp
+
+            session_plugin_config = await sp.get_async(
+                scope="umo",
+                scope_id=session_id,
+                key="session_plugin_config",
+                default={},
+            )
+            if isinstance(session_plugin_config, dict):
+                session_config = session_plugin_config.get(session_id, {})
+                if isinstance(session_config, dict):
+                    disabled = session_config.get("disabled_plugins", []) or []
+                    if plugin_name in disabled:
+                        logger.info(
+                            "Runtime Observation sensor suppressed: plugin %s is "
+                            "disabled for session %s",
+                            plugin_name,
+                            session_id,
+                        )
+                        return False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to resolve sensor session admission: session=%s error=%s",
+                target_session,
+                exc,
+                exc_info=True,
+            )
+        return True
 
     def _resolve_runtime_observation_session(
         self,
@@ -1038,7 +1205,11 @@ class Context:
         definition_module_path = getattr(type(collector), "__module__", "") or getattr(
             collector, "__module__", ""
         )
-        owner_module_path = self._normalize_plugin_owner_module(definition_module_path)
+        (
+            owner_module_path,
+            owner_plugin_name,
+            owner_source,
+        ) = self._resolve_registration_owner(str(definition_module_path))
 
         self._prompt_extension_collector_seq += 1
         self._prompt_extension_collectors = [
@@ -1053,6 +1224,8 @@ class Context:
                 definition_module_path=str(definition_module_path),
                 owner_module_path=owner_module_path,
                 seq=self._prompt_extension_collector_seq,
+                owner_plugin_name=owner_plugin_name,
+                owner_source=owner_source,
             )
         )
         logger.info(
@@ -1061,12 +1234,23 @@ class Context:
             plugin_id,
         )
 
-    def list_prompt_extension_collectors(self) -> list[Any]:
-        """List active prompt extension collectors ordered by priority."""
+    def list_prompt_extension_collectors(self, event: Any = None) -> list[Any]:
+        """List active prompt extension collectors ordered by priority.
+
+        When ``event`` is provided the turn's frozen plugin admission is applied
+        as well, so a session-disabled or whitelist-excluded plugin no longer
+        contributes prompt extensions.
+        """
         active_registrations = [
             registration
             for registration in self._prompt_extension_collectors
-            if self._is_prompt_extension_collector_active(registration)
+            if self._capability_visible(
+                event,
+                kind=CapabilityKind.PROMPT_EXTENSION,
+                registration=registration,
+                live_active=self._is_prompt_extension_collector_active(registration),
+                item_name=registration.plugin_id,
+            )
         ]
         active_registrations.sort(
             key=lambda registration: (
@@ -1112,9 +1296,11 @@ class Context:
             contributor_type="prompt contributor",
         )
 
-    def list_interaction_prompt_contributors(self) -> list[Any]:
+    def list_interaction_prompt_contributors(self, event: Any = None) -> list[Any]:
         return self._list_interaction_contributors(
-            self._interaction_prompt_contributors
+            self._interaction_prompt_contributors,
+            event=event,
+            kind=CapabilityKind.INTERACTION_PROMPT,
         )
 
     def remove_interaction_prompt_contributors_by_module_prefix(
@@ -1135,9 +1321,11 @@ class Context:
             contributor_type="result contributor",
         )
 
-    def list_interaction_result_contributors(self) -> list[Any]:
+    def list_interaction_result_contributors(self, event: Any = None) -> list[Any]:
         return self._list_interaction_contributors(
-            self._interaction_result_contributors
+            self._interaction_result_contributors,
+            event=event,
+            kind=CapabilityKind.INTERACTION_RESULT,
         )
 
     def remove_interaction_result_contributors_by_module_prefix(
@@ -1158,8 +1346,12 @@ class Context:
             contributor_type="stream decider",
         )
 
-    def list_interaction_stream_deciders(self) -> list[Any]:
-        return self._list_interaction_contributors(self._interaction_stream_deciders)
+    def list_interaction_stream_deciders(self, event: Any = None) -> list[Any]:
+        return self._list_interaction_contributors(
+            self._interaction_stream_deciders,
+            event=event,
+            kind=CapabilityKind.STREAM_DECIDER,
+        )
 
     def remove_interaction_stream_deciders_by_module_prefix(
         self,
@@ -1179,9 +1371,11 @@ class Context:
             contributor_type="lifecycle observer",
         )
 
-    def list_interaction_lifecycle_observers(self) -> list[Any]:
+    def list_interaction_lifecycle_observers(self, event: Any = None) -> list[Any]:
         return self._list_interaction_contributors(
-            self._interaction_lifecycle_observers
+            self._interaction_lifecycle_observers,
+            event=event,
+            kind=CapabilityKind.LIFECYCLE_OBSERVER,
         )
 
     def remove_interaction_lifecycle_observers_by_module_prefix(
@@ -1215,7 +1409,11 @@ class Context:
             "__module__",
             "",
         )
-        owner_module_path = self._normalize_plugin_owner_module(definition_module_path)
+        (
+            owner_module_path,
+            owner_plugin_name,
+            owner_source,
+        ) = self._resolve_registration_owner(str(definition_module_path))
         self._persona_effect_seq += 1
         self._persona_effects.append(
             _PersonaEffectRegistration(
@@ -1224,6 +1422,8 @@ class Context:
                 definition_module_path=str(definition_module_path),
                 owner_module_path=owner_module_path,
                 seq=self._persona_effect_seq,
+                owner_plugin_name=owner_plugin_name,
+                owner_source=owner_source,
             )
         )
         logger.info(
@@ -1246,8 +1446,14 @@ class Context:
         registrations = [
             registration
             for registration in self._persona_effects
-            if self._is_persona_effect_active(registration)
-            and self._persona_effect_matches_event(registration, event)
+            if self._persona_effect_matches_event(registration, event)
+            and self._capability_visible(
+                event,
+                kind=CapabilityKind.PERSONA_EFFECT,
+                registration=registration,
+                live_active=self._is_persona_effect_active(registration),
+                item_name=registration.effect.name,
+            )
         ]
         registrations.sort(
             key=lambda registration: (
@@ -1348,6 +1554,31 @@ class Context:
                 return ".".join(parts[: index + 2] + ["main"])
         return module_path
 
+    @classmethod
+    def _resolve_registration_owner(        cls,
+        definition_module_path: str,
+    ) -> tuple[str | None, str | None, str]:
+        """Resolve the plugin that owns a registration.
+
+        Returns ``(owner_module_path, owner_plugin_name, owner_source)``.
+
+        Explicit load-time owner scope wins over the type-module inference,
+        because a plugin may legitimately register an instance of a
+        Core-defined class. Inference stays as the fallback so that builtin
+        capabilities and lazily registered plugins keep working.
+        """
+        scope = current_plugin_owner_scope()
+        if scope is not None and scope.module_path:
+            return scope.module_path, scope.plugin_name, "scope"
+
+        inferred = cls._normalize_plugin_owner_module(definition_module_path)
+        plugin_name: str | None = None
+        if inferred:
+            metadata = star_map.get(inferred)
+            if metadata is not None:
+                plugin_name = metadata.name
+        return inferred, plugin_name, "definition"
+
     def _register_interaction_contributor(
         self,
         contributor: Any,
@@ -1369,7 +1600,11 @@ class Context:
             "__module__",
             "",
         )
-        owner_module_path = self._normalize_plugin_owner_module(definition_module_path)
+        (
+            owner_module_path,
+            owner_plugin_name,
+            owner_source,
+        ) = self._resolve_registration_owner(str(definition_module_path))
 
         seq = getattr(self, seq_attr) + 1
         setattr(self, seq_attr, seq)
@@ -1386,6 +1621,8 @@ class Context:
                 definition_module_path=str(definition_module_path),
                 owner_module_path=owner_module_path,
                 seq=seq,
+                owner_plugin_name=owner_plugin_name,
+                owner_source=owner_source,
             )
         )
         setattr(self, registry_attr, registry)
@@ -1399,11 +1636,25 @@ class Context:
     def _list_interaction_contributors(
         self,
         registry: list[_InteractionContributorRegistration],
+        *,
+        event: Any = None,
+        kind: CapabilityKind | None = None,
     ) -> list[Any]:
         active_registrations = [
             registration
             for registration in registry
-            if self._is_interaction_contributor_active(registration)
+            if (
+                kind is None
+                or self._capability_visible(
+                    event,
+                    kind=kind,
+                    registration=registration,
+                    live_active=self._is_interaction_contributor_active(
+                        registration
+                    ),
+                    item_name=registration.plugin_id,
+                )
+            )
         ]
         active_registrations.sort(
             key=lambda registration: (
@@ -1528,6 +1779,67 @@ class Context:
         except (TypeError, ValueError):
             return 100
 
+    @staticmethod
+    def _capability_admitted(
+        event: Any,
+        *,
+        kind: CapabilityKind,
+        registration: Any,
+        item_name: str | None = None,
+    ) -> bool:
+        """Apply the single admission decision point for one registration.
+
+        Without an ``event`` there is no turn snapshot to read, so admission
+        cannot be decided per session and the caller's own activation check
+        remains the only filter. This keeps diagnostics and non-Interaction
+        callers working unchanged.
+        """
+        if event is None:
+            return True
+        return capability_allowed(
+            event,
+            kind=kind,
+            owner_module_path=getattr(registration, "owner_module_path", None),
+            owner_plugin_name=getattr(registration, "owner_plugin_name", None),
+            item_name=item_name,
+        )
+
+    @staticmethod
+    def _has_frozen_admission(event: Any) -> bool:
+        """Whether this event carries a turn snapshot with a frozen registry."""
+        if event is None:
+            return False
+        snapshot = get_plugin_admission_snapshot(event)
+        return snapshot is not None and bool(snapshot.owner_states)
+
+    def _capability_visible(
+        self,
+        event: Any,
+        *,
+        kind: CapabilityKind,
+        registration: Any,
+        live_active: bool,
+        item_name: str | None = None,
+    ) -> bool:
+        """Decide whether one registration should be visible for this event.
+
+        When the turn has a frozen admission snapshot it is authoritative: the
+        answer must not change mid-turn, so the live ``_is_*_active`` check is
+        deliberately not layered on top (that would let a mid-turn disable make
+        the registry disagree with the snapshot). Without a snapshot the live
+        check is still required, and admission is applied on top of it.
+        """
+        if not self._capability_admitted(
+            event,
+            kind=kind,
+            registration=registration,
+            item_name=item_name,
+        ):
+            return False
+        if self._has_frozen_admission(event):
+            return True
+        return live_active
+
     def _is_prompt_extension_collector_active(
         self,
         registration: _PromptExtensionCollectorRegistration,
@@ -1589,6 +1901,183 @@ class Context:
             if candidate == module_prefix or candidate.startswith(f"{module_prefix}."):
                 return True
         return False
+
+    def remove_capabilities_by_owner(
+        self,
+        *,
+        module_path: str | None = None,
+        plugin_name: str | None = None,
+    ) -> dict[str, int]:
+        """Remove every capability registration owned by one plugin.
+
+        Ownership-based teardown is authoritative: it removes what the plugin
+        actually registered during its owner scope, including capabilities that
+        use Core-defined classes (for example ``PersonaEffectSpec``), which the
+        old module-prefix inference could not attribute or clean up.
+
+        Returns a per-registry count of removed registrations.
+        """
+        clean_module_path = (
+            module_path.strip() if isinstance(module_path, str) else None
+        ) or None
+        clean_plugin_name = (
+            plugin_name.strip() if isinstance(plugin_name, str) else None
+        ) or None
+        if not clean_module_path and not clean_plugin_name:
+            return {}
+
+        def _owned(registration: Any) -> bool:
+            owner_module = getattr(registration, "owner_module_path", None)
+            owner_name = getattr(registration, "owner_plugin_name", None)
+            if clean_module_path and isinstance(owner_module, str):
+                if owner_module == clean_module_path or owner_module.startswith(
+                    f"{clean_module_path}."
+                ):
+                    return True
+            if clean_plugin_name and owner_name == clean_plugin_name:
+                return True
+            # A registration that was never attributed to a scope still falls
+            # back to its definition module so legacy plugins keep cleaning up.
+            definition_module = getattr(
+                registration,
+                "definition_module_path",
+                None,
+            )
+            if clean_module_path and isinstance(definition_module, str):
+                return definition_module == clean_module_path or (
+                    definition_module.startswith(f"{clean_module_path}.")
+                )
+            return False
+
+        removed: dict[str, int] = {}
+
+        def _sweep(attr: str, label: str) -> None:
+            registry = getattr(self, attr)
+            kept = [item for item in registry if not _owned(item)]
+            count = len(registry) - len(kept)
+            if count:
+                setattr(self, attr, kept)
+                removed[label] = count
+
+        _sweep("_prompt_extension_collectors", "prompt_extension_collectors")
+        _sweep("_interaction_prompt_contributors", "interaction_prompt_contributors")
+        _sweep("_interaction_result_contributors", "interaction_result_contributors")
+        _sweep("_interaction_stream_deciders", "interaction_stream_deciders")
+        _sweep("_interaction_lifecycle_observers", "interaction_lifecycle_observers")
+        _sweep("_persona_effects", "persona_effects")
+        _sweep("_runtime_observation_sensors", "runtime_observation_sensors")
+
+        if removed:
+            logger.info(
+                "removed plugin capability registrations by owner: "
+                "module_path=%s plugin_name=%s removed=%s",
+                clean_module_path or "",
+                clean_plugin_name or "",
+                removed,
+            )
+        return removed
+
+    def list_runtime_observation_sensors(self, event: Any = None) -> list[Any]:
+        """List runtime observation sensors, applying admission when possible.
+
+        Sensors register through a handle rather than an object accessor, so this
+        exists mainly for the capability inventory. With an ``event`` the turn's
+        frozen admission applies; without one, reporting is unfiltered because
+        a sensor submission is resolved against its target session instead.
+        """
+        if event is None:
+            return list(self._runtime_observation_sensors)
+        return [
+            registration
+            for registration in self._runtime_observation_sensors
+            if self._capability_visible(
+                event,
+                kind=CapabilityKind.RUNTIME_SENSOR,
+                registration=registration,
+                live_active=self._is_runtime_observation_sensor_active(registration),
+                item_name=f"{registration.plugin_id}.{registration.source_id}",
+            )
+        ]
+
+    def list_plugin_capability_owners(self) -> list[dict[str, Any]]:
+        """Return owner attribution for every registered capability.
+
+        Used to verify that explicit ownership replaced type-module inference.
+        """
+        entries: list[dict[str, Any]] = []
+
+        def _collect(
+            registry: Any,
+            kind: str,
+            plugin_id_getter: Callable[[Any], str],
+            metadata_getter: Callable[[Any], Any] | None = None,
+        ) -> None:
+            for registration in registry:
+                entries.append(
+                    {
+                        "kind": kind,
+                        "plugin_id": plugin_id_getter(registration),
+                        "metadata": (
+                            metadata_getter(registration)
+                            if metadata_getter is not None
+                            else None
+                        ),
+                        "owner_module_path": getattr(
+                            registration,
+                            "owner_module_path",
+                            None,
+                        ),
+                        "owner_plugin_name": getattr(
+                            registration,
+                            "owner_plugin_name",
+                            None,
+                        ),
+                        "owner_source": getattr(registration, "owner_source", None),
+                        "definition_module_path": getattr(
+                            registration,
+                            "definition_module_path",
+                            None,
+                        ),
+                    }
+                )
+
+        _collect(
+            self._prompt_extension_collectors,
+            "prompt_extension",
+            lambda r: r.plugin_id,
+        )
+        _collect(
+            self._interaction_prompt_contributors,
+            "interaction_prompt",
+            lambda r: r.plugin_id,
+        )
+        _collect(
+            self._interaction_result_contributors,
+            "interaction_result",
+            lambda r: r.plugin_id,
+        )
+        _collect(
+            self._interaction_stream_deciders,
+            "stream_decider",
+            lambda r: r.plugin_id,
+        )
+        _collect(
+            self._interaction_lifecycle_observers,
+            "lifecycle_observer",
+            lambda r: r.plugin_id,
+        )
+        _collect(
+            self._persona_effects,
+            "persona_effect",
+            lambda r: r.effect.name,
+            metadata_getter=lambda r: dict(r.effect.metadata or {}),
+        )
+        _collect(
+            self._runtime_observation_sensors,
+            "runtime_sensor",
+            lambda r: f"{r.plugin_id}.{r.source_id}",
+        )
+        return entries
 
     def register_web_api(
         self,

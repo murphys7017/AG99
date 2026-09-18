@@ -606,7 +606,10 @@ async def test_llm_hook_dispatch_uses_configured_plugin_runtime_target(monkeypat
     )
 
     class Event:
-        plugins_name = []
+        # This test covers target routing, not the plugin whitelist. ``None``
+        # means "no whitelist restriction"; an empty list would instead mean
+        # "no plugins allowed" and correctly deny every handler.
+        plugins_name = None
 
         def __init__(self):
             self._extras = {
@@ -642,6 +645,59 @@ async def test_llm_hook_dispatch_uses_configured_plugin_runtime_target(monkeypat
         execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
     )
     assert calls == ["core"]
+
+
+@pytest.mark.asyncio
+async def test_hook_dispatch_preserves_frozen_admission(monkeypatch):
+    from astrbot.core.plugin_admission import (
+        PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY,
+        build_plugin_admission_snapshot,
+    )
+    from astrbot.core.star.star_handler import StarHandlerMetadata
+
+    module = "data.plugins.snapshot_test.main"
+    metadata = StarMetadata(name="snapshot_test", activated=True)
+    monkeypatch.setitem(star_map, module, metadata)
+    callback = AsyncMock()
+    handler = StarHandlerMetadata(
+        event_type=EventType.OnLLMRequestEvent,
+        handler_full_name=f"{module}.on_request",
+        handler_name="on_request",
+        handler_module_path=module,
+        handler=callback,
+        event_filters=[],
+    )
+    monkeypatch.setattr(star_handlers_registry, "_handlers", [handler])
+    extras = {"_interaction_enabled": True}
+    event = SimpleNamespace(
+        plugins_name=None,
+        get_extra=lambda key, default=None: extras.get(key, default),
+        set_extra=lambda key, value: extras.__setitem__(key, value),
+        is_stopped=lambda: False,
+    )
+    await build_plugin_admission_snapshot(event=event)
+    metadata.activated = False
+    await call_event_hook(
+        event, EventType.OnLLMRequestEvent,
+        execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    )
+    callback.assert_awaited_once()
+
+    callback.reset_mock()
+    handler.enabled = False
+    await call_event_hook(
+        event, EventType.OnLLMRequestEvent,
+        execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    )
+    callback.assert_not_awaited()
+
+    handler.enabled = True
+    extras.pop(PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY)
+    await call_event_hook(
+        event, EventType.OnLLMRequestEvent,
+        execution_surface=PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION,
+    )
+    callback.assert_not_awaited()
 
 
 def test_plugin_tool_runtime_target_defaults_to_core_in_interaction_turn(

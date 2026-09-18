@@ -108,6 +108,19 @@ plugin_runtime_targets 和 plugin_tool_targets 不控制 Pipeline Handler、Prom
 Persona Effect。Router 和 Planner 不加载普通插件 Prompt、Hook 或工具，但官方群聊上下文等
 系统可信控制面事实必须保留。
 
+上表的"归属"是**消费方**（target），与"是否允许参与"（admission）是两个正交维度。
+所有轮次级能力都还要通过统一准入：
+
+```text
+Permission    = 全局启用 ∧ Owner 有效 ∧ plugin_set 允许 ∧ 当前会话未禁用
+Applicability = 平台 / 设备 / 运行时匹配（能力自身 event_filter）
+```
+
+准入只有一个裁决点（`astrbot/core/plugin_admission.py`），每轮 Interaction 冻结一次快照；
+`hard` 贡献只豁免软丢弃、不豁免准入。详见 `plugin-capability-model-plan.md`。
+进程级能力（Web API、Provider、Platform Adapter、全局 Task、Cron）**不进入**该快照，
+由插件启停与卸载生命周期管理。
+
 Prompt Extension / Contributor 的收集 owner 是独立插件上下文 pack，而不是 Router 或 Persona。
 该 pack 每个 turn 只构建一次，并按 `meta.targets` 投影给 Persona 或 Core；Router / Core Planner
 只消费基础 pack。`persona_plugin_context_mode=best_effort` 时，Persona 仅在插件 pack 已就绪时消费，

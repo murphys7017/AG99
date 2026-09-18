@@ -32,6 +32,8 @@ from .types import (
 )
 
 if TYPE_CHECKING:
+    from astrbot.core.plugin_admission import PluginAdmissionSnapshot
+
     from .persona_domain import EffectivePersonaContext, PersonaDefinition
     from .personal_runtime import PersonalRuntimeKey
 
@@ -312,6 +314,10 @@ class InteractionTurnState:
         default_factory=InteractionTurnCompletionState
     )
     failures: list[InteractionTurnFailure] = field(default_factory=list)
+    #: Frozen plugin capability admission for this turn. Built once at turn
+    #: start so every consumer agrees and a mid-turn plugin reload cannot change
+    #: the answer between two capability lookups.
+    plugin_admission: PluginAdmissionSnapshot | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     stream_interjection_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -444,6 +450,26 @@ def set_interaction_turn_runtime_config(
 def get_interaction_turn_deadline(event) -> TurnDeadlineBudget | None:
     state = get_interaction_turn_state(event)
     return state.deadline if state is not None else None
+
+
+def get_interaction_turn_plugin_admission(event) -> PluginAdmissionSnapshot | None:
+    """Return the frozen plugin admission snapshot for this turn."""
+    state = get_interaction_turn_state(event)
+    return state.plugin_admission if state is not None else None
+
+
+def set_interaction_turn_plugin_admission(
+    event,
+    snapshot: PluginAdmissionSnapshot,
+) -> None:
+    """Freeze plugin admission for this turn. First writer wins.
+
+    The snapshot must not be replaced mid-turn: replacing it would let two
+    consumers of the same turn observe different admission state.
+    """
+    state = ensure_interaction_turn_state(event)
+    if state.plugin_admission is None:
+        state.plugin_admission = snapshot
 
 
 def ensure_interaction_turn_state(

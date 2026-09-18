@@ -701,6 +701,12 @@ def test_direct_reply_keeps_media_slots():
 async def test_persona_projection_keeps_identity_history_memory_without_waiting(
     monkeypatch,
 ):
+    """Persona keeps identity/history/memory and defers plugin context to policy.
+
+    ``compact_context`` no longer selects the context pack: the configured
+    ``persona_plugin_context_mode`` is the only wait policy, so every expression
+    routes through ``get_or_build_interaction_persona_context_pack``.
+    """
     class Event:
         session_id = "fast-persona"
         unified_msg_origin = "webchat:friend:fast-persona"
@@ -837,9 +843,12 @@ async def test_persona_projection_keeps_identity_history_memory_without_waiting(
     } <= selected_slots
     assert "persona.segments" in selected_slots
     assert "persona.begin_dialogs" not in selected_slots
-    assert "extension.system" not in selected_slots
+    # Plugin enrichment now comes from the wait-policy entry point, not from a
+    # possibly-pending prefetch task, so extension slots are present even though
+    # compact_context was requested.
+    assert "extension.system" in selected_slots
     assert "extension.context" not in selected_slots
-    get_persona_context_pack.assert_not_awaited()
+    get_persona_context_pack.assert_awaited()
 
     material.target_context_packs["plugin"] = pack
     ready_result = await agent._prepare_render_result(
@@ -854,7 +863,8 @@ async def test_persona_projection_keeps_identity_history_memory_without_waiting(
     assert "persona.segments" in ready_slots
     assert "extension.system" in ready_slots
     assert "extension.context" not in ready_slots
-    get_persona_context_pack.assert_not_awaited()
+    # The cached plugin pack is reused without rebuilding.
+    assert get_persona_context_pack.await_count == 2
 
 
 def test_deepseek_first_turn_reasoning_marker_injects_once_for_v4_provider():
