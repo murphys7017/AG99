@@ -483,6 +483,36 @@ def test_core_execution_head_owns_one_ledger_settlement_claim():
     assert head.claim_ledger_settlement() is True
 
 
+@pytest.mark.asyncio
+async def test_core_execution_head_settles_ledger_once_and_releases_on_failure():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    calls = 0
+
+    async def append():
+        nonlocal calls
+        calls += 1
+        return True
+
+    assert await head.settle_ledger(append) is True
+    assert await head.settle_ledger(append) is None
+    assert calls == 1
+
+    failed_event = _interaction_event()
+    failed_head = start_core_execution_head(
+        failed_event,
+        failed_event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY),
+    )
+
+    async def fail():
+        raise RuntimeError("ledger unavailable")
+
+    with pytest.raises(RuntimeError, match="ledger unavailable"):
+        await failed_head.settle_ledger(fail)
+    assert failed_head.ledger_settled is False
+
+
 def test_legacy_lifecycle_event_entry_publishes_through_head():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)

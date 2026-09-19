@@ -883,10 +883,8 @@ class InternalAgentSubStage(Stage):
                 fallback_error=terminal_error,
             )
         )
-        if execution_head is not None and not execution_head.claim_ledger_settlement():
-            return
-        try:
-            inserted = await ledger.append_execution(
+        async def append_to_ledger() -> bool:
+            return await ledger.append_execution(
                 execution_spec=preparation.execution_spec,
                 conversation_id=req.conversation.cid,
                 executor_id="native",
@@ -900,10 +898,13 @@ class InternalAgentSubStage(Stage):
                     else None
                 ),
             )
-        except Exception:
-            if execution_head is not None:
-                execution_head.release_ledger_settlement()
-            raise
+
+        if execution_head is not None:
+            inserted = await execution_head.settle_ledger(append_to_ledger)
+            if inserted is None:
+                return
+        else:
+            inserted = await append_to_ledger()
         record_interaction_turn_core_execution_ledger_settlement(
             event,
             preparation,

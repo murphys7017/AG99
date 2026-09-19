@@ -4,7 +4,7 @@ import asyncio
 import json
 import math
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -1236,6 +1236,25 @@ class CoreExecutionHead:
         """Release a failed Ledger settlement attempt for retry."""
 
         self._ledger_settled = False
+
+    async def settle_ledger(
+        self,
+        append: Callable[[], Awaitable[bool]],
+    ) -> bool | None:
+        """Run the one allowed Ledger append through the Core Head.
+
+        The Head owns settlement idempotence and retry release, while the
+        callback keeps the concrete persistence backend outside Core.
+        ``None`` means another caller already settled this execution.
+        """
+
+        if not self.claim_ledger_settlement():
+            return None
+        try:
+            return await append()
+        except BaseException:
+            self.release_ledger_settlement()
+            raise
 
     @property
     def ledger_settled(self) -> bool:

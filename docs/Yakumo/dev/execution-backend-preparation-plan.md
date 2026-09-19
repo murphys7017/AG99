@@ -868,6 +868,10 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 结算归属继续按“材料与幂等由 Core、持久化由 Native Ledger”拆分：`CoreExecutionHead`
   现在持有一次性 Ledger settlement claim，避免取消/失败/正常收尾路径重复解释同一个
   execution；现有 SQLite Ledger 仍由 Native 调用，写入失败会释放 claim 允许重试。
+- 2026-09-19 起，`CoreExecutionHead.settle_ledger()` 负责执行这一次性结算的
+  claim/release 协调，并接收一个异步 append 回调；`InternalAgentSubStage` 不再直接
+  操作 claim 或在异常时自行释放。Head 不依赖 SQLite 或具体 Ledger，实现仍由 Native
+  通过回调提供，因此这是 owner 收口而不是存储层迁移。
 - 2026-09-19 时序复核确认：deadline 取消后的迟到终态不会覆盖已取消 Session，重复
   取消保持幂等，Ledger 写入失败后 claim 可释放并重试。该验证只覆盖当前 Native
   适配路径，尚未宣称 Personal/Core session ownership 或 Ledger 持久化 owner 已迁移。

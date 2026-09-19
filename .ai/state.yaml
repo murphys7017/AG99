@@ -186,6 +186,7 @@ context:
     - Interaction journal and trace are now a Head-bound local event consumer, so direct Head facts share the same projection path as Native compatibility calls.
     - Interaction journal binding subscribes before replaying retained Head events, so pre-bind facts are projected once in sequence; ProcessStage deadline cancellation records any non-fatal Executor stop callback failure through the same Interaction trace boundary.
     - Native Ledger persistence now emits one execution-scoped settlement trace with terminal provenance and inserted/deduplicated outcome; persistence failures retain the same execution identity for real trace audits.
+    - CoreExecutionHead now owns the one-shot Ledger settlement claim/release coordination through `settle_ledger(append)`. The Native stage supplies the persistence callback; Core remains independent of SQLite and concrete Ledger storage.
     - CoreExecutionLedgerPreparation derives Ledger status, error, and result policy from the Core terminal outcome while leaving runner evidence and SQLite persistence at their existing boundaries.
     - InteractionTurnState is now the typed owner for the event interaction state, CoreExecutionSpec, and plugin output transaction state; legacy event.extra keys remain one-way projections. Plugin branch events clear the typed owner to prevent parent/branch mutation sharing.
     - The owner migration slice passed 80 focused Core/Interaction/Plugin tests, compileall, Ruff, and git diff --check.
