@@ -38,7 +38,7 @@ def _make_context(
             event=event,
             context=SimpleNamespace(
                 get_config=lambda umo: cfg,
-                send_message=AsyncMock(),
+                send_message=AsyncMock(return_value=True),
             ),
         )
     )
@@ -134,6 +134,23 @@ async def test_send_message_defaults_to_current_session():
     assert ctx.context.event.get_extra(
         "_send_message_to_user_current_session_plain_texts",
     ) == ["hello"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session", [None, "feishu:GroupMessage:other"])
+async def test_send_message_reports_failed_delivery_without_dedupe(session):
+    ctx = _make_context()
+    ctx.context.context.send_message.return_value = False
+    result = await SendMessageToUserTool().call(
+        ctx,
+        messages=[{"type": "plain", "text": "hello"}],
+        session=session,
+    )
+    assert result.startswith("error:")
+    assert ctx.context.event._has_send_oper is False
+    assert ctx.context.event.get_extra(
+        "_send_message_to_user_current_session_plain_texts"
+    ) is None
 
 
 @pytest.mark.asyncio

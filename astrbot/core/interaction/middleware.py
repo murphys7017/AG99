@@ -566,7 +566,7 @@ class InteractionMiddleware:
         message: MessageChain,
         *,
         platform_extras: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Deliver an admitted proactive plugin output through the turn runtime."""
         if turn.event is not event or turn.observation is not event.observation:
             raise ValueError("Runtime output does not match the admitted turn")
@@ -583,7 +583,7 @@ class InteractionMiddleware:
             metadata={"source": "proactive_output"},
         )
         if not await reserve_interaction_turn_final_output(event):
-            return
+            return False
         try:
             # Proactive plain text belongs to the unified Persona output surface.
             # Keep media-bearing plugin output direct so attachments are not rewritten.
@@ -610,6 +610,7 @@ class InteractionMiddleware:
             InteractionFinalOutputStatus.DELIVERED,
         )
         event.set_extra("_interaction_runtime_output_handled", True)
+        return True
 
     async def handle_active_turn_output(
         self,
@@ -617,7 +618,7 @@ class InteractionMiddleware:
         message: MessageChain,
         *,
         finalize: bool,
-    ) -> None:
+    ) -> bool:
         """Emit output through the active turn's existing output transaction."""
         if not finalize:
             await self.output_controller.capture_plugin_output(
@@ -626,9 +627,9 @@ class InteractionMiddleware:
                 mode="direct",
                 finalize=False,
             )
-            return
+            return True
         if not await reserve_interaction_turn_final_output(turn.event):
-            return
+            return False
         try:
             await self.output_controller.capture_plugin_output(
                 message,
@@ -646,6 +647,7 @@ class InteractionMiddleware:
             turn.event,
             InteractionFinalOutputStatus.DELIVERED,
         )
+        return True
 
     @staticmethod
     def _has_routeable_user_content(event: AstrMessageEvent) -> bool:

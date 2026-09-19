@@ -407,6 +407,7 @@ async def test_context_send_message_keeps_proactive_message_boundary():
     class Middleware:
         async def handle_runtime_output(self, event, _turn, message):
             await _deliver_runtime_output(event, message)
+            return True
 
     async def dispatcher(session, message, finalize):
         return await manager.dispatch_proactive_message(
@@ -1489,6 +1490,7 @@ async def test_cron_send_uses_context_send_message_compatibility_path():
     class Middleware:
         async def handle_runtime_output(self, event, _turn, message):
             await _deliver_runtime_output(event, message)
+            return True
 
     async def dispatcher(session, message, finalize):
         return await manager.dispatch_proactive_message(
@@ -2528,7 +2530,7 @@ async def test_pipeline_scheduler_preserves_active_turn_for_downstream_stages():
         SimpleNamespace(get_config=lambda **_kwargs: runtime_config),
     )
     middleware.handle_pipeline_event = AsyncMock()
-    middleware.handle_active_turn_output = AsyncMock()
+    middleware.handle_active_turn_output = AsyncMock(return_value=True)
     session = MessageSession("demo", MessageType.FRIEND_MESSAGE, "target")
     message = MessageChain([Plain("downstream")])
 

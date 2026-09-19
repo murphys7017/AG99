@@ -1923,12 +1923,11 @@ class PersonalRuntimeManager:
             and not active_turn.state.execution_scope.closed
             and active_turn.session.unified_msg_origin == str(session)
         ):
-            await middleware.handle_active_turn_output(
+            return await middleware.handle_active_turn_output(
                 active_turn,
                 message,
                 finalize=finalize,
             )
-            return True
 
         platform = next(
             (
@@ -1969,8 +1968,7 @@ class PersonalRuntimeManager:
         )
 
         async def _deliver(runtime_event, turn):
-            await middleware.handle_runtime_output(runtime_event, turn, message)
-            return True
+            return await middleware.handle_runtime_output(runtime_event, turn, message)
 
         return bool(
             await self.submit_runtime_observation_event(

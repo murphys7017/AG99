@@ -1188,12 +1188,13 @@ async def test_visible_message_partial_delivery_does_not_complete_logical_messag
     event = Event()
     message = MessageChain([Record(file="reply.wav"), Plain("caption")])
 
-    await controller._deliver_visible_message(
-        event,
-        message,
-        message_kind="core_reply",
-        output_segment_id="logical-message",
-    )
+    with pytest.raises(RuntimeError, match="partially delivered"):
+        await controller._deliver_visible_message(
+            event,
+            message,
+            message_kind="core_reply",
+            output_segment_id="logical-message",
+        )
 
     assert completed == []
     assert get_interaction_turn_visible_message_fingerprints(event) == set()

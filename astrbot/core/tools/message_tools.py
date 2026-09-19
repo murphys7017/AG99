@@ -338,11 +338,13 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
 
         message_chain = MessageChain(chain=components)
         if str(target_session) == current_session:
-            await context.context.context.send_message(
+            delivered = await context.context.context.send_message(
                 target_session,
                 message_chain,
                 finalize=False,
             )
+            if not delivered:
+                return f"error: message was not delivered to session {target_session}"
             context.context.event._has_send_oper = True
             sent_plain_text = message_chain.get_plain_text().strip()
             if sent_plain_text:
@@ -358,7 +360,11 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                     sent_plain_texts,
                 )
         else:
-            await context.context.context.send_message(target_session, message_chain)
+            delivered = await context.context.context.send_message(
+                target_session, message_chain
+            )
+            if not delivered:
+                return f"error: message was not delivered to session {target_session}"
         return f"Message sent to session {target_session}"
 
 

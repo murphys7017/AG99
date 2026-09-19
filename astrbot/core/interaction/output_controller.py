@@ -2650,15 +2650,18 @@ class InteractionOutputController:
             raise RuntimeError(
                 f"Interaction output was not delivered: {message_kind}"
             )
-        if output_segment_id and delivery.all_succeeded:
+        if not delivery.all_succeeded:
+            raise RuntimeError(
+                f"Interaction output was only partially delivered: {message_kind}"
+            )
+        if output_segment_id:
             await event.complete_visible_message(
                 message_id=output_segment_id,
             )
-        if delivery.all_succeeded:
-            record_interaction_turn_visible_message_fingerprint(
-                event,
-                fingerprint_visible_message(message),
-            )
+        record_interaction_turn_visible_message_fingerprint(
+            event,
+            fingerprint_visible_message(message),
+        )
         return delivered_message_ids
 
     async def _notify_lifecycle(
