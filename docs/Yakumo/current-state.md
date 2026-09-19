@@ -29,6 +29,9 @@ turn owner。该切片通过 80 项针对性测试、compileall 和 diff check�
 Core 工具阶段观察的任务/state 已迁入 `InteractionTurnState`，旧 extra 仅保留兼容投影；
 这不等于 Output Runtime 已完成，物理组件完成和 artifact receipt 仍待收口。
 
+插件输出的模式、种类和 effect 调用元数据也已迁入 `InteractionTurnState`，旧 extra
+仅作为兼容投影；Output Runtime 的物理投递身份仍未统一。
+
 ## 2026-09-19 全局架构收口基线
 
 全局复核确认项目当前进入“前置主链收口”阶段，而不是继续横向增加功能的阶段。

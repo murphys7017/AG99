@@ -54,6 +54,10 @@
 `InteractionTurnState`，旧 key 仅作为兼容投影；下一步仍需确认是否应拆成独立
 `ToolObservationRuntime`，目前不影响逻辑输出完成语义。
 
+插件输出的 `last_mode`、`last_kind` 和 `effect_calls` 也已在 2026-09-19 迁入
+`InteractionTurnState`，Output Controller 与 Persona Runtime 通过 typed accessor 写入，
+旧 key 仅作为兼容投影。它们仍属于当前 turn 的输出事实，不是平台适配状态。
+
 ### 2.3 TurnState 中已有但仍需核对读取面的状态
 
 - `visible_outputs`
