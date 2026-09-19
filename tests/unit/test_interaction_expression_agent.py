@@ -633,6 +633,8 @@ def test_persona_runtime_prompt_constrains_result_free_immediate_requests():
 
     assert "需要查询实时信息、外部能力、执行操作或继续未完成工作时选 delegate" in prompt
     assert "不能伪装成最终事实答案" in prompt
+    assert "必须选 delegate" in prompt
+    assert "不等于任务已创建" in prompt
 
 
 def test_persona_progress_prompt_keeps_single_tool_completion_local():

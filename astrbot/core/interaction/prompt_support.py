@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -9,6 +10,7 @@ from astrbot.core.provider.modalities import (
 )
 from astrbot.core.star.context import Context
 
+from .turn_state import get_interaction_turn_runtime_config
 from .types import InteractionPromptBuildConfig
 
 
@@ -16,31 +18,32 @@ def build_interaction_prompt_build_config(
     plugin_context: Context,
     event,
 ) -> InteractionPromptBuildConfig:
-    cfg = plugin_context.get_config(umo=event.unified_msg_origin)
-    provider_settings = (
-        cfg.get("provider_settings", {}) if isinstance(cfg, dict) else {}
-    )
+    cfg = get_interaction_turn_runtime_config(event)
+    if cfg is None:
+        cfg = plugin_context.get_config(umo=event.unified_msg_origin)
+    if not isinstance(cfg, Mapping):
+        cfg = {}
+    provider_settings = cfg.get("provider_settings", {})
+    if not isinstance(provider_settings, Mapping):
+        provider_settings = {}
+    provider_settings = deepcopy(dict(provider_settings))
+    file_extract = provider_settings.get("file_extract", {})
+    if not isinstance(file_extract, Mapping):
+        file_extract = {}
     provider_wake_prefix = ""
-    if isinstance(cfg, dict):
-        wake_prefix = cfg.get("wake_prefix", "")
-        if isinstance(wake_prefix, str):
-            provider_wake_prefix = wake_prefix
-        elif isinstance(wake_prefix, list):
-            provider_wake_prefix = next(
-                (
-                    str(item)
-                    for item in wake_prefix
-                    if isinstance(item, str) and item
-                ),
-                "",
-            )
-    interaction_settings = (
-        cfg.get("interaction_middleware", {}) if isinstance(cfg, dict) else {}
-    )
+    wake_prefix = cfg.get("wake_prefix", "")
+    if isinstance(wake_prefix, str):
+        provider_wake_prefix = wake_prefix
+    elif isinstance(wake_prefix, list):
+        provider_wake_prefix = next(
+            (item for item in wake_prefix if isinstance(item, str) and item),
+            "",
+        )
+    interaction_settings = cfg.get("interaction_middleware", {})
     try:
         contributor_timeout = float(
             interaction_settings.get("contributor_timeout", 1.0)
-            if isinstance(interaction_settings, dict)
+            if isinstance(interaction_settings, Mapping)
             else 1.0
         )
     except (TypeError, ValueError):
@@ -48,28 +51,18 @@ def build_interaction_prompt_build_config(
     try:
         plugin_enrichment_timeout = float(
             interaction_settings.get("plugin_enrichment_timeout", 3.0)
-            if isinstance(interaction_settings, dict)
+            if isinstance(interaction_settings, Mapping)
             else 3.0
         )
     except (TypeError, ValueError):
         plugin_enrichment_timeout = 3.0
     return InteractionPromptBuildConfig(
         provider_settings=provider_settings,
-        timezone=(cfg.get("timezone") if isinstance(cfg, dict) else None),
+        timezone=cfg.get("timezone"),
         provider_wake_prefix=provider_wake_prefix,
-        file_extract_enabled=bool(
-            cfg.get("file_extract_enabled", False) if isinstance(cfg, dict) else False
-        ),
-        file_extract_prov=str(
-            cfg.get("file_extract_prov", "moonshotai")
-            if isinstance(cfg, dict)
-            else "moonshotai"
-        ),
-        file_extract_msh_api_key=str(
-            cfg.get("file_extract_msh_api_key", "")
-            if isinstance(cfg, dict)
-            else ""
-        ),
+        file_extract_enabled=bool(file_extract.get("enable", False)),
+        file_extract_prov=str(file_extract.get("provider", "moonshotai")),
+        file_extract_msh_api_key=str(file_extract.get("moonshotai_api_key", "")),
         max_quoted_fallback_images=int(
             provider_settings.get("max_quoted_fallback_images", 20) or 20
         ),

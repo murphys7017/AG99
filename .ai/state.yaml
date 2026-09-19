@@ -1,3 +1,22 @@
+scheduled_output_closure:
+  date: '2026-09-19'
+  class: bugfix
+  risk: high
+  status: in_progress
+  scope: >-
+    Close confirmed cross-component defects in task admission, admitted prompt
+    configuration, proactive execution, scheduler failure settlement and delivery
+    acknowledgements. Preserve Personal as the visible output owner.
+  evidence: >-
+    Live log at 2026-09-19 02:41:32 shows a reminder request returning reply,
+    with a verbal promise but no Core delegation. Context.send_message false
+    results are ignored by SendMessageToUserTool. Prompt build configuration reads
+    live settings and the wrong file-extraction nesting.
+  non_goals: New Executor Body, automatic restart, AG99live edits, broad prompt style rewrite.
+  validation: >-
+    Three focused prompt tests passed. Subsequent checks use an isolated
+    ASTRBOT_ROOT under .tmp to avoid mixing test logs with runtime evidence.
+  next: Validate delivery failures and proactive scheduler settlement before live acceptance.
 turn_diagnostics_and_routing:
   date: '2026-09-19'
   class: bugfix

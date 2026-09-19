@@ -722,6 +722,9 @@ def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
             "\n【本轮统一回复计划】必须使用 turn_action 决定本轮。已具备足够事实、无需继续执行时选 reply；"
             "需要查询实时信息、外部能力、执行操作或继续未完成工作时选 delegate，此时 spoken_reply 只能是一句自然、简短的处理中确认，"
             "不能伪装成最终事实答案。"
+            "请求创建、修改、取消或查询提醒、待办、定时任务等持久状态时，必须选 delegate；"
+            "说出“稍后提醒你”不等于任务已创建，历史中的成功记录也不是当前任务的执行结果。"
+            "只有当前执行结果明确确认后，才能声称已创建、已安排或已完成。"
             f"{silent_rule} 不要输出决策理由、置信度或任务规格。"
         )
         if req.source_text.strip() and req.preserve_facts:
