@@ -77,6 +77,20 @@ class NativeExecutorAdapter:
         """Withdraw a pending follow-up through the executor boundary."""
         return self._runner.cancel_follow_up(ticket)
 
+    def emit_event(
+        self,
+        *,
+        kind: CoreExecutionEventKind,
+        metadata: dict | None = None,
+    ) -> None:
+        """Publish one Native fact through the owning Core execution boundary."""
+        record_interaction_turn_core_execution_event(
+            self._runner.run_context.context.event,
+            kind=kind,
+            executor_id=self.executor_id,
+            metadata=metadata,
+        )
+
     def request_stop(self) -> None:
         self._runner.request_stop()
 
@@ -260,10 +274,8 @@ async def run_agent(
         else NativeExecutorAdapter(agent_runner)
     )
     astr_event = agent_runner.run_context.context.event
-    record_interaction_turn_core_execution_event(
-        astr_event,
+    executor.emit_event(
         kind=CoreExecutionEventKind.WORKING,
-        executor_id="native",
         metadata={"streaming": bool(agent_runner.streaming)},
     )
     tool_name_by_call_id: dict[str, str] = {}
@@ -321,10 +333,8 @@ async def run_agent(
                             pass
                     astr_event.set_extra("agent_user_aborted", True)
                     astr_event.set_extra("agent_stop_requested", False)
-                    record_interaction_turn_core_execution_event(
-                        astr_event,
+                    executor.emit_event(
                         kind=CoreExecutionEventKind.CANCELLED,
-                        executor_id="native",
                         metadata={"reason": "agent_aborted"},
                     )
                     return
@@ -471,18 +481,14 @@ async def run_agent(
                 break
 
         except TurnDeadlineExceeded:
-            record_interaction_turn_core_execution_event(
-                astr_event,
+            executor.emit_event(
                 kind=CoreExecutionEventKind.CANCELLED,
-                executor_id="native",
                 metadata={"reason": "deadline_exceeded"},
             )
             raise
         except asyncio.CancelledError:
-            record_interaction_turn_core_execution_event(
-                astr_event,
+            executor.emit_event(
                 kind=CoreExecutionEventKind.CANCELLED,
-                executor_id="native",
                 metadata={
                     "reason": _cancellation_reason(
                         astr_event,
@@ -527,10 +533,8 @@ async def run_agent(
                 yield MessageChain().message(err_msg)
             else:
                 astr_event.set_result(MessageEventResult().message(err_msg))
-            record_interaction_turn_core_execution_event(
-                astr_event,
+            executor.emit_event(
                 kind=CoreExecutionEventKind.FAILED,
-                executor_id="native",
                 metadata={
                     "error_type": type(e).__name__,
                     "error": str(e)[:2000],

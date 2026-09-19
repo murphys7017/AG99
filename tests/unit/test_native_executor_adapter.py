@@ -79,3 +79,31 @@ async def test_native_step_stream_preserves_response_and_closes_on_early_exit():
     assert await anext(stream) is response
     await stream.aclose()
     assert closed == [True]
+
+
+def test_native_executor_adapter_emits_through_core_boundary(monkeypatch):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+
+    adapter.emit_event(
+        kind="working",
+        metadata={"source": "test"},
+    )
+
+    assert emitted == [
+        (
+            event,
+            {
+                "kind": "working",
+                "executor_id": "native",
+                "metadata": {"source": "test"},
+            },
+        )
+    ]
