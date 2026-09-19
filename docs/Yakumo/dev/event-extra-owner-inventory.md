@@ -1,6 +1,6 @@
 # event.extra Owner Inventory
 
-更新时间：2026-09-20
+更新时间：2026-09-19
 
 本清单记录当前源码中 `AstrMessageEvent.extra` 的高风险内部字段，重点确认
 `ProviderRequest` 与 Interaction/Core 解耦的真实边界。它是迁移前的事实基线，不代表
