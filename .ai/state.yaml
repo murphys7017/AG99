@@ -199,7 +199,7 @@ context:
     - Persona Provider fallback preserves original image references before normalization and derives captions for a text-only fallback without replaying lifecycle hooks.
     - Targeted validation passed: 145 tests, compileall, Ruff, and git diff --check.
   open:
-    - Continue the owner migration by inventorying ProviderRequest, output delivery, plugin gate/lease, and stop-state extra keys before changing their write paths.
+    - ProviderRequest extra inventory is complete for the first pass: canonical Main Agent request, lifecycle Hook exposure, and plugin delegated request are separate semantics. Define ProviderRequestBuilder inputs before changing write paths.
     - Validate Personal reply, delegate, and eligible group silent decisions against real provider and platform traces before changing the default parallel-plugin runtime switch or output policy.
     - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Core Head Executor adapter.
     - Complete the Personal/Core Head asynchronous consumption boundary and validate the

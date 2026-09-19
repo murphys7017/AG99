@@ -10,6 +10,17 @@ turn owner。该切片通过 80 项针对性测试、compileall 和 diff check�
 这只是 `event.extra` 收口的第一批，ProviderRequest、输出生命周期和插件专属状态仍未
 完成迁移；项目仍未达到可替换 Executor Body 的闸门。
 
+## 2026-09-20 ProviderRequest 边界盘点
+
+已完成 `event.extra` 第一轮事实盘点，确认 `provider_request` 不是单一状态字段，而是
+三种不同语义的临时汇合点：Main Agent 的规范请求、Agent lifecycle Hook 的临时暴露
+请求，以及插件 `yield ProviderRequest` 的 Core 交接请求。当前不直接把可变
+`ProviderRequest` 放入 `InteractionTurnState`，避免 Persona/Core 并发请求互相覆盖。
+详细清单见 `docs/Yakumo/dev/event-extra-owner-inventory.md`。
+
+下一步应先建立 `ProviderRequestBuilder` 的显式输入边界，再分别收口 lifecycle overlay
+和 PluginJob 交接，最后才迁移 Prompt/Output/ProcessStage 的兼容读取。
+
 ## 2026-09-19 全局架构收口基线
 
 全局复核确认项目当前进入“前置主链收口”阶段，而不是继续横向增加功能的阶段。

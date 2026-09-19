@@ -83,7 +83,7 @@ owner 的写入边界。旧路径可以短期保留为只读校验或公开兼�
 
 | 顺序 | 工作切片 | 主要产物 | 进入下一项的条件 |
 |---|---|---|---|
-| 1 | `event.extra` owner 盘点 | 读写清单、字段 owner 表、单向兼容投影表 | 每个内部字段都有唯一主写者；旧读取点已标注为迁移/兼容/诊断 |
+| 1 | `event.extra` owner 盘点 | 读写清单、字段 owner 表、单向兼容投影表 | 已完成第一轮清单；ProviderRequest 三种语义已拆分，待按边界迁移 |
 | 2 | Output Runtime 边界收口 | 输出状态机、组件完成规则、Delayed/Artifact/Turn Delivery 关系图 | 一条逻辑消息的物理组件完成、失败、重复和迟到行为可追踪 |
 | 3 | 双插件运行路径验收 | Handler-first 与协调 Plugin Runtime 对照 trace | 私聊、群聊、取消、reload、迟到输出、重复投递均有结论 |
 | 4 | Agent 装配拆分 | `astr_main_agent.py` 调用图、Provider/Prompt/Capability/Execution 边界 | 新增能力不再要求修改主装配器的跨层逻辑 |
