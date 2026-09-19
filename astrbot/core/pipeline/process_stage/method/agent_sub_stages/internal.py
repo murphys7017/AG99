@@ -219,7 +219,6 @@ class InternalAgentSubStage(Stage):
         self, event: AstrMessageEvent, provider_wake_prefix: str
     ) -> AsyncGenerator[None, None]:
         typing_requested = False
-        agent_runner: AgentRunner | None = None
         native_executor: NativeExecutorAdapter | None = None
         req: ProviderRequest | None = None
         try:
@@ -334,8 +333,7 @@ class InternalAgentSubStage(Stage):
                         )
                     return
 
-                agent_runner = build_result.agent_runner
-                native_executor = NativeExecutorAdapter(agent_runner)
+                native_executor = NativeExecutorAdapter(build_result.agent_runner)
                 req = build_result.provider_request
                 provider = build_result.provider
                 reset_coro = build_result.reset_coro
