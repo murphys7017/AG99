@@ -65,7 +65,12 @@ from astrbot.core.provider.entities import (
 )
 from astrbot.core.utils.metrics import Metric
 
-from .....astr_agent_run_util import AgentRunner, run_agent, run_live_agent
+from .....astr_agent_run_util import (
+    AgentRunner,
+    NativeExecutorAdapter,
+    run_agent,
+    run_live_agent,
+)
 from ....context import PipelineContext, call_event_hook
 
 
@@ -214,6 +219,7 @@ class InternalAgentSubStage(Stage):
     ) -> AsyncGenerator[None, None]:
         typing_requested = False
         agent_runner: AgentRunner | None = None
+        native_executor: NativeExecutorAdapter | None = None
         req: ProviderRequest | None = None
         try:
             runtime_config = get_interaction_turn_runtime_config(event)
@@ -328,6 +334,7 @@ class InternalAgentSubStage(Stage):
                     return
 
                 agent_runner = build_result.agent_runner
+                native_executor = NativeExecutorAdapter(agent_runner)
                 req = build_result.provider_request
                 provider = build_result.provider
                 reset_coro = build_result.reset_coro
@@ -384,7 +391,7 @@ class InternalAgentSubStage(Stage):
                             CoreExecutionDeadlineView.from_budget(deadline)
                         )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
-                    execution_head.bind_executor_stop_callback(agent_runner.request_stop)
+                    execution_head.bind_executor_stop_callback(native_executor.request_stop)
                     record_interaction_turn_core_execution_event(
                         event,
                         kind=CoreExecutionEventKind.SUBMITTED,
@@ -458,16 +465,16 @@ class InternalAgentSubStage(Stage):
                     yield
 
                     # 保存历史记录
-                    if agent_runner.done() and (
-                        not event.is_stopped() or agent_runner.was_aborted()
+                    if native_executor.done() and (
+                        not event.is_stopped() or native_executor.was_aborted()
                     ):
                         await self._save_to_history(
                             event,
                             req,
-                            agent_runner.get_final_llm_resp(),
-                            agent_runner.run_context.messages,
-                            agent_runner.stats,
-                            user_aborted=agent_runner.was_aborted(),
+                            native_executor.final_response(),
+                            native_executor.messages,
+                            native_executor.stats,
+                            user_aborted=native_executor.was_aborted(),
                         )
 
                 elif streaming_response and not stream_to_general:
@@ -487,8 +494,8 @@ class InternalAgentSubStage(Stage):
                         ),
                     )
                     yield
-                    if agent_runner.done():
-                        if final_llm_resp := agent_runner.get_final_llm_resp():
+                    if native_executor.done():
+                        if final_llm_resp := native_executor.final_response():
                             if final_llm_resp.completion_text:
                                 chain = (
                                     MessageChain()
@@ -517,10 +524,10 @@ class InternalAgentSubStage(Stage):
                     ):
                         yield
 
-                final_resp = agent_runner.get_final_llm_resp()
+                final_resp = native_executor.final_response()
                 execution_head = get_core_execution_head(event)
 
-                if agent_runner.done() and (
+                if native_executor.done() and (
                     final_resp is None or final_resp.role != "err"
                 ):
                     if final_resp is not None:
@@ -566,7 +573,7 @@ class InternalAgentSubStage(Stage):
                     failure_metadata = {
                         "reason": (
                             "runner_error"
-                            if agent_runner.done()
+                            if native_executor.done()
                             else "runner_not_completed"
                         )
                     }
@@ -590,7 +597,7 @@ class InternalAgentSubStage(Stage):
                 event.trace.record(
                     "astr_agent_complete",
                     request_lifecycle_id=request_lifecycle.lifecycle_id,
-                    stats=agent_runner.stats.to_dict(),
+                    stats=native_executor.stats.to_dict(),
                     resp=final_resp.completion_text if final_resp else None,
                 )
 
@@ -600,27 +607,28 @@ class InternalAgentSubStage(Stage):
                         req,
                         agent_runner,
                         final_resp,
+                        native_executor=native_executor,
                     )
                 )
 
                 # 检查事件是否被停止，如果被停止则不保存历史记录
                 if (
-                    not event.is_stopped() or agent_runner.was_aborted()
+                    not event.is_stopped() or native_executor.was_aborted()
                 ):
                     await self._save_to_history(
                         event,
                         req,
                         final_resp,
-                        agent_runner.run_context.messages,
-                        agent_runner.stats,
-                        user_aborted=agent_runner.was_aborted(),
+                        native_executor.messages,
+                        native_executor.stats,
+                        user_aborted=native_executor.was_aborted(),
                     )
 
                 asyncio.create_task(
                     Metric.upload(
                         llm_tick=1,
-                        model_name=agent_runner.provider.get_model(),
-                        provider_type=agent_runner.provider.meta().type,
+                        model_name=native_executor.provider.get_model(),
+                        provider_type=native_executor.provider.meta().type,
                     ),
                 )
             finally:
@@ -640,7 +648,7 @@ class InternalAgentSubStage(Stage):
             await self._save_cancelled_interaction_core_state(
                 event,
                 req,
-                agent_runner,
+                native_executor=native_executor,
                 cancellation_reason=cancellation_reason,
             )
             raise
@@ -660,7 +668,7 @@ class InternalAgentSubStage(Stage):
             await self._save_cancelled_interaction_core_state(
                 event,
                 req,
-                agent_runner,
+                native_executor=native_executor,
                 cancellation_reason=cancellation_reason,
             )
             raise
@@ -678,8 +686,8 @@ class InternalAgentSubStage(Stage):
             await self._save_failed_interaction_core_state(
                 event,
                 req,
-                agent_runner,
-                e,
+                native_executor=native_executor,
+                error=e,
             )
             custom_error_message = extract_persona_custom_error_message_from_event(
                 event
@@ -926,8 +934,8 @@ class InternalAgentSubStage(Stage):
         self,
         event: AstrMessageEvent,
         req: ProviderRequest | None,
-        agent_runner: AgentRunner | None,
         *,
+        native_executor: NativeExecutorAdapter | None,
         cancellation_reason: str,
     ) -> None:
         """Persist a cancelled interaction execution without mutating dialogue history."""
@@ -941,14 +949,14 @@ class InternalAgentSubStage(Stage):
         messages: list[Message] = []
         final_response = None
         runner_stats = None
-        if agent_runner is not None:
+        if native_executor is not None:
             try:
-                messages = agent_runner.run_context.messages
+                messages = native_executor.messages
             except Exception:  # noqa: BLE001
                 messages = []
             try:
-                final_response = agent_runner.get_final_llm_resp()
-                runner_stats = agent_runner.stats
+                final_response = native_executor.final_response()
+                runner_stats = native_executor.stats
             except Exception:  # noqa: BLE001
                 pass
         try:
@@ -977,7 +985,8 @@ class InternalAgentSubStage(Stage):
         self,
         event: AstrMessageEvent,
         req: ProviderRequest | None,
-        agent_runner: AgentRunner | None,
+        *,
+        native_executor: NativeExecutorAdapter | None,
         error: Exception,
     ) -> None:
         if (
@@ -993,15 +1002,15 @@ class InternalAgentSubStage(Stage):
         final_response = None
         runner_stats = None
         user_aborted = False
-        if agent_runner is not None:
+        if native_executor is not None:
             try:
-                messages = agent_runner.run_context.messages
+                messages = native_executor.messages
             except Exception:  # noqa: BLE001
                 messages = []
             try:
-                final_response = agent_runner.get_final_llm_resp()
-                runner_stats = agent_runner.stats
-                user_aborted = agent_runner.was_aborted()
+                final_response = native_executor.final_response()
+                runner_stats = native_executor.stats
+                user_aborted = native_executor.was_aborted()
             except Exception:  # noqa: BLE001
                 pass
         try:
@@ -1066,13 +1075,19 @@ async def _record_internal_agent_stats(
     req: ProviderRequest | None,
     agent_runner: AgentRunner | None,
     final_resp: LLMResponse | None,
+    *,
+    native_executor: NativeExecutorAdapter | None = None,
 ) -> None:
     """Persist internal agent stats without affecting the user response flow."""
     if agent_runner is None:
         return
 
-    provider = agent_runner.provider
-    stats = agent_runner.stats
+    provider = (
+        native_executor.provider
+        if native_executor is not None
+        else agent_runner.provider
+    )
+    stats = native_executor.stats if native_executor is not None else agent_runner.stats
     if provider is None or stats is None:
         return
 
@@ -1084,7 +1099,12 @@ async def _record_internal_agent_stats(
             else None
         )
 
-        if agent_runner.was_aborted():
+        was_aborted = (
+            native_executor.was_aborted()
+            if native_executor is not None
+            else agent_runner.was_aborted()
+        )
+        if was_aborted:
             status = "aborted"
         elif final_resp is not None and final_resp.role == "err":
             status = "error"

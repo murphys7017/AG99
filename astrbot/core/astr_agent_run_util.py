@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 from astrbot.core import logger
 from astrbot.core.agent.message import Message
+from astrbot.core.agent.response import AgentStats
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.deadline import TurnDeadlineExceeded
@@ -31,9 +32,55 @@ from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_event,
 )
 from astrbot.core.provider.entities import LLMResponse
-from astrbot.core.provider.provider import TTSProvider
+from astrbot.core.provider.provider import Provider, TTSProvider
 
 AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
+
+
+class NativeExecutorAdapter:
+    """Expose the Native runner through the Core execution boundary.
+
+    This first adapter slice owns only executor control and observation. The
+    existing stream/output loop still drives ``runner.step()`` directly until
+    a separate execution stream contract is defined.
+    """
+
+    executor_id = "native"
+
+    def __init__(self, runner: AgentRunner) -> None:
+        self._runner = runner
+
+    @property
+    def runner(self) -> AgentRunner:
+        """Return the legacy runner for the transitional stream bridge."""
+
+        return self._runner
+
+    def request_stop(self) -> None:
+        self._runner.request_stop()
+
+    @property
+    def provider(self) -> Provider:
+        """Return the provider used by the transitional Native runner."""
+
+        return self._runner.provider
+
+    def done(self) -> bool:
+        return self._runner.done()
+
+    def was_aborted(self) -> bool:
+        return self._runner.was_aborted()
+
+    def final_response(self) -> LLMResponse | None:
+        return self._runner.get_final_llm_resp()
+
+    @property
+    def messages(self) -> list[Message]:
+        return self._runner.run_context.messages
+
+    @property
+    def stats(self) -> AgentStats:
+        return self._runner.stats
 
 
 def _should_stop_agent(astr_event) -> bool:

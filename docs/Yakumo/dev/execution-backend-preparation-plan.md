@@ -825,6 +825,20 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   Native Executor Adapter 的真实最小契约；实现范围应只覆盖 Native runner 的启动、
   事件回流、停止和关闭，不迁移 Output、TTS、Ledger 持久化或 Personal turn owner。
 
+### 2026-09-19 Phase 9 第十六个 Native Adapter 最小切片
+
+- 新增 `NativeExecutorAdapter`，将当前 Native `ToolLoopAgentRunner` 暴露为
+  Core 内部的控制/观测边界。当前契约只包括 `request_stop()`、完成状态、取消状态、
+  最终响应、消息证据、统计数据和 provider 观测。
+- `InternalAgentSubStage` 的正常完成、取消、失败、历史保存和 provider 统计路径现在
+  统一通过该适配器读取执行证据；底层 runner 仍仅保留给运行时注册/注销和现有流式桥接
+  使用，避免出现成功路径已解耦、异常路径仍直接读取 runner 的半套边界。
+- 本切片没有迁移 `step()`、stream contract、Output/TTS、Ledger 持久化或 Personal
+  turn owner，也没有伪造 `close()`。当前 `runner` 属性是明确标注的过渡桥接访问面，
+  后续在定义执行事件/流契约后再移除。
+- 增加适配器的最小控制与观测边界验证。下一步应在不改变可见输出的前提下，继续明确
+  Native 执行事件如何由 Adapter 回流到 Core Head，再决定是否需要独立的关闭语义。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

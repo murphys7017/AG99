@@ -178,6 +178,10 @@ context:
     - Native Interaction execution emits submitted, working, visible-progress, artifact-ready, completed, failed, and cancelled facts at existing lifecycle boundaries; terminal first-write wins and retained progress is evicted first when the journal reaches its bound.
     - Focused Core execution-event and bridge tests passed, along with targeted Ruff, compileall, and git diff --check.
     - CoreExecutionHead now provides the explicit in-process command/event entry point; its subscription and cancellation routing are covered by the focused event tests.
+    - NativeExecutorAdapter now provides the first Core-internal Native control/observation
+      boundary for stop, completion, cancellation, final response, messages, stats, and
+      provider facts; normal, cancellation, failure, history, and provider-stat paths use
+      the adapter consistently.
     - CoreExecutionHead isolates subscriber failures, rejects inconsistent Head/Lifecycle/Session bindings, and uses artifact_id-scoped replay keys for artifact events.
     - Interaction journal and trace are now a Head-bound local event consumer, so direct Head facts share the same projection path as Native compatibility calls.
     - Interaction journal binding subscribes before replaying retained Head events, so pre-bind facts are projected once in sequence; ProcessStage deadline cancellation records any non-fatal Executor stop callback failure through the same Interaction trace boundary.
@@ -198,6 +202,9 @@ context:
     - Complete the Personal/Core Head asynchronous consumption boundary and validate the
       CoreExecution session ownership/command direction without coupling it to Personal
       turn locks or directly releasing a Personal turn on delegation.
+    - Define the Native Adapter execution-event/stream contract before removing its
+      transitional runner bridge; do not introduce a fake close or migrate Output, TTS,
+      Ledger persistence, or Personal turn ownership in that slice.
     - Validate deadline expiry, outer task cancellation, repeated cancellation, and late-result isolation through real Interaction traces before introducing any Executor Adapter.
     - Run real OLV/platform regression with vision and text-only Providers.
     - Decide whether unavailable visual fallback should become a typed Core failure rather than existing empty-enrichment behavior.
