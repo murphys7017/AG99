@@ -60,7 +60,21 @@ class SQLiteDatabase(BaseDatabase):
             await self._ensure_platform_message_history_checkpoint_column(conn)
             await self._ensure_chatui_project_workspace_columns(conn)
             await self._ensure_personal_runtime_state_columns(conn)
+            await self._ensure_cron_execution_columns(conn)
             await conn.commit()
+
+    async def _ensure_cron_execution_columns(self, conn) -> None:
+        result = await conn.execute(text("PRAGMA table_info(cron_jobs)"))
+        columns = {row[1] for row in result.fetchall()}
+        for name, definition in (
+            ("revision", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_execution_id", "VARCHAR(64)"),
+            ("delivery_status", "VARCHAR(32)"),
+        ):
+            if name not in columns:
+                await conn.execute(
+                    text(f"ALTER TABLE cron_jobs ADD COLUMN {name} {definition}")
+                )
 
     async def _ensure_persona_folder_columns(self, conn) -> None:
         """确保 personas 表有 folder_id 和 sort_order 列。
@@ -2234,6 +2248,11 @@ class SQLiteDatabase(BaseDatabase):
         next_run_time: datetime | None | object = CRON_FIELD_NOT_SET,
         last_run_at: datetime | None | object = CRON_FIELD_NOT_SET,
         last_error: str | None | object = CRON_FIELD_NOT_SET,
+        last_execution_id: str | None | object = CRON_FIELD_NOT_SET,
+        delivery_status: str | None | object = CRON_FIELD_NOT_SET,
+        advance_revision: bool = False,
+        expected_revision: int | None = None,
+        expected_execution_id: str | None = None,
     ) -> CronJob | None:
         async with self.get_db() as session:
             session: AsyncSession
@@ -2252,30 +2271,44 @@ class SQLiteDatabase(BaseDatabase):
                     "next_run_time": next_run_time,
                     "last_run_at": last_run_at,
                     "last_error": last_error,
+                    "last_execution_id": last_execution_id,
+                    "delivery_status": delivery_status,
                 }.items():
                     if val is CRON_FIELD_NOT_SET:
                         continue
                     updates[key] = val
 
+                if advance_revision:
+                    updates["revision"] = CronJob.revision + 1
                 stmt = (
                     update(CronJob)
                     .where(col(CronJob.job_id) == job_id)
                     .values(**updates)
                     .execution_options(synchronize_session="fetch")
                 )
-                await session.execute(stmt)
+                if expected_revision is not None:
+                    stmt = stmt.where(CronJob.revision == expected_revision)
+                if expected_execution_id is not None:
+                    stmt = stmt.where(CronJob.last_execution_id == expected_execution_id)
+                changed = await session.execute(stmt)
+                if not changed.rowcount:
+                    return None
                 result = await session.execute(
                     select(CronJob).where(col(CronJob.job_id) == job_id)
                 )
                 return result.scalar_one_or_none()
 
-    async def delete_cron_job(self, job_id: str) -> None:
+    async def delete_cron_job(
+        self, job_id: str, *, expected_revision: int | None = None
+    ) -> bool:
         async with self.get_db() as session:
             session: AsyncSession
             async with session.begin():
-                await session.execute(
-                    delete(CronJob).where(col(CronJob.job_id) == job_id)
-                )
+                stmt = delete(CronJob).where(col(CronJob.job_id) == job_id)
+                if expected_revision is not None:
+                    stmt = stmt.where(CronJob.revision == expected_revision)
+                result = await session.execute(stmt)
+                return bool(result.rowcount)
 
     async def get_cron_job(self, job_id: str) -> CronJob | None:
         async with self.get_db() as session:

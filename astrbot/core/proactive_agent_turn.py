@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from astrbot import logger
 from astrbot.core.agent.tool import ToolSet
+from astrbot.core.db.po import CoreExecutionRecord
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.plugin_admission import (
     build_plugin_admission_snapshot,
@@ -98,38 +101,82 @@ async def run_proactive_agent_turn(
             context.get_llm_tool_manager().get_builtin_tool(SendMessageToUserTool)
         )
 
-    result = await build_main_agent(
-        event=event,
-        plugin_context=context,
-        config=config,
-        req=request,
-    )
-    if result is None:
-        raise RuntimeError("Proactive Core could not be built")
-
-    provider_settings = getattr(config, "provider_settings", {}) or {}
-    agent_max_step = coerce_int_config(
-        provider_settings.get("max_agent_step", 30),
-        default=30,
-        min_value=1,
-        field_name="provider_settings.max_agent_step",
-    )
-    async for _ in result.agent_runner.step_until_done(agent_max_step):
-        pass
-    response = result.agent_runner.get_final_llm_resp()
-    if (
-        not result.agent_runner.done()
-        or result.agent_runner.was_aborted()
-        or response is None
-        or response.role == "err"
-    ):
-        raise RuntimeError("Proactive Core did not complete successfully")
-    return ProactiveAgentTurnResult(
-        event=event,
-        request=result.provider_request,
-        response=response,
-        delivery_confirmed=bool(event._has_send_oper),
-    )
+    result = None
+    response = None
+    status, error = "failed", None
+    try:
+        result = await build_main_agent(
+            event=event,
+            plugin_context=context,
+            config=config,
+            req=request,
+        )
+        if result is None:
+            raise RuntimeError("Proactive Core could not be built")
+        provider_settings = config.provider_settings
+        agent_max_step = coerce_int_config(
+            provider_settings.get("max_agent_step", 30),
+            default=30,
+            min_value=1,
+            field_name="provider_settings.max_agent_step",
+        )
+        async for _ in result.agent_runner.step_until_done(agent_max_step):
+            pass
+        response = result.agent_runner.get_final_llm_resp()
+        if (
+            not result.agent_runner.done()
+            or result.agent_runner.was_aborted()
+            or response is None
+            or response.role == "err"
+        ):
+            raise RuntimeError("Proactive Core did not complete successfully")
+        status = "completed"
+        return ProactiveAgentTurnResult(
+            event=event,
+            request=result.provider_request,
+            response=response,
+            delivery_confirmed=bool(event._has_send_oper),
+        )
+    except asyncio.CancelledError:
+        status, error = "cancelled", "Proactive execution cancelled"
+        raise
+    except Exception as exc:
+        error = str(exc)[:2000]
+        raise
+    finally:
+        # Execution evidence is not visible dialogue. Personal owns that history.
+        ledger = getattr(context, "core_execution_ledger", None)
+        if ledger is not None:
+            spec = result.execution_spec if result is not None else None
+            turn_id = str(event.get_extra("_turn_id"))
+            cron = extras.get("cron_job", {})
+            background = extras.get("background_task_result", {})
+            record = CoreExecutionRecord(
+                execution_id=spec.execution_id if spec else uuid.uuid4().hex,
+                conversation_id=conversation.cid,
+                turn_id=turn_id,
+                core_task_id=str(
+                    cron.get("id") or background.get("task_id") or turn_id
+                ),
+                status=status,
+                task_spec={
+                    "source": "cron" if cron else "background",
+                    "schedule_revision": cron.get("revision"),
+                    "schedule_execution_id": cron.get("execution_id"),
+                    "message": message,
+                    "background_result": background,
+                    "delivery_confirmed": bool(event._has_send_oper),
+                },
+                result=response.completion_text if response is not None else None,
+                error=error,
+            )
+            try:
+                await ledger.append(record)
+            except Exception:
+                logger.exception(
+                    "Proactive execution ledger persistence failed: execution_id=%s",
+                    record.execution_id,
+                )
 
 
 __all__ = ["ProactiveAgentTurnResult", "run_proactive_agent_turn"]

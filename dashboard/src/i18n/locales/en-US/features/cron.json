@@ -54,7 +54,24 @@
       "title": "Supported Platforms"
     }
   },
+  "executionStatus": {
+    "scheduled": "Not run yet",
+    "running": "Running",
+    "completed": "Completed",
+    "completed_without_delivery": "Completed without confirmed delivery",
+    "failed": "Failed",
+    "cancelled": "Cancelled",
+    "missed": "Missed"
+  },
+  "deliveryStatus": {
+    "confirmed": "Confirmed by output pipeline",
+    "unconfirmed": "Unconfirmed",
+    "not_required": "Not required",
+    "unknown": "Unknown"
+  },
   "table": {
+    "execution": "Execution",
+    "delivery": "Delivery",
     "title": "Registered Tasks",
     "subtitle": "Track cron setup, session target, last run history, and enabled state",
     "empty": "No tasks yet.",

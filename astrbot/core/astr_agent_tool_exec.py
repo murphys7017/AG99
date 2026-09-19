@@ -55,7 +55,6 @@ from astrbot.core.tools.computer_tools import (
     PythonTool,
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.history_saver import persist_agent_history
 from astrbot.core.utils.image_ref_utils import is_supported_image_ref
 from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
@@ -630,26 +629,11 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             require_delivery_tool=True,
             include_history_fences=False,
         )
-        llm_resp = turn.response
-        task_meta = extras.get("background_task_result", {})
-        summary_note = (
-            f"[BackgroundTask] {summary_name} "
-            f"(task_id={task_meta.get('task_id', task_id)}) finished. "
-            f"Result: {task_meta.get('result') or result_text or 'no content'}"
-        )
-        if llm_resp and llm_resp.completion_text:
-            summary_note += (
-                f"I finished the task, here is the result: {llm_resp.completion_text}"
+        if not turn.delivery_confirmed:
+            logger.info(
+                "Background result processed without confirmed delivery: task_id=%s name=%s",
+                task_id, summary_name,
             )
-        await persist_agent_history(
-            ctx.conversation_manager,
-            event=turn.event,
-            req=turn.request,
-            summary_note=summary_note,
-        )
-        if not llm_resp:
-            logger.warning("background task agent got no response")
-            return
 
     @classmethod
     async def _execute_local(

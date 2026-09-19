@@ -54,7 +54,24 @@
       "title": "适用平台"
     }
   },
+  "executionStatus": {
+    "scheduled": "尚未执行",
+    "running": "执行中",
+    "completed": "执行完成",
+    "completed_without_delivery": "执行完成，未确认投递",
+    "failed": "失败",
+    "cancelled": "已取消",
+    "missed": "错过执行时间"
+  },
+  "deliveryStatus": {
+    "confirmed": "输出链已确认",
+    "unconfirmed": "未确认",
+    "not_required": "无需投递",
+    "unknown": "未知"
+  },
   "table": {
+    "execution": "执行",
+    "delivery": "投递",
     "title": "已注册任务",
     "subtitle": "支持查看 cron、会话、最近执行记录与启用状态",
     "empty": "暂无任务。",

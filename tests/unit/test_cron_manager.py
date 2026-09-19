@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 
 from astrbot.core.cron.manager import (
     CronJobManager,
@@ -18,12 +19,23 @@ from astrbot.core.db.sqlite import SQLiteDatabase
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fails", [False, True])
-async def test_one_shot_scheduler_preserves_failure_evidence(tmp_path, fails):
+@pytest.mark.parametrize("reschedule", [False, True])
+async def test_one_shot_scheduler_preserves_failure_evidence(
+    tmp_path, fails, reschedule
+):
     db = SQLiteDatabase(str(tmp_path / "cron.db"))
     manager = CronJobManager(db)
     await db.initialize()
 
-    def handler(**kwargs):
+    entered, release = asyncio.Event(), asyncio.Event()
+    finished = asyncio.Event()
+    manager.scheduler.add_listener(
+        lambda event: finished.set(), EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
+    )
+
+    async def handler(**kwargs):
+        entered.set()
+        await release.wait()
         if fails:
             raise RuntimeError("delivery unavailable")
 
@@ -45,6 +57,25 @@ async def test_one_shot_scheduler_preserves_failure_evidence(tmp_path, fails):
                 ).isoformat()
             },
         )
+        await asyncio.wait_for(entered.wait(), 5)
+        if reschedule:
+            updated = await manager.update_job(
+                job.job_id,
+                payload={
+                    "run_at": (
+                        datetime.now(timezone.utc) + timedelta(minutes=10)
+                    ).isoformat()
+                },
+            )
+        release.set()
+        if reschedule:
+            await asyncio.wait_for(finished.wait(), 5)
+            saved = await db.get_cron_job(job.job_id)
+            assert saved is not None and saved.enabled is True
+            assert saved.revision == updated.revision
+            assert saved.status == "scheduled"
+            assert saved.last_execution_id is None
+            return
         async with asyncio.timeout(5):
             while True:
                 saved = await db.get_cron_job(job.job_id)
@@ -59,7 +90,41 @@ async def test_one_shot_scheduler_preserves_failure_evidence(tmp_path, fails):
         else:
             assert saved is None
     finally:
+        release.set()
         await manager.shutdown()
+        await db.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drains_manual_execution_settlement(tmp_path):
+    db = SQLiteDatabase(str(tmp_path / "shutdown.db"))
+    manager = CronJobManager(db)
+    await db.initialize()
+    entered = asyncio.Event()
+
+    async def handler():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0.05)
+
+    task = None
+    try:
+        job = await manager.add_basic_job(
+            name="shutdown", cron_expression="* * * * *", handler=handler, enabled=False
+        )
+        task = asyncio.create_task(manager.run_job_now(job.job_id))
+        await asyncio.wait_for(entered.wait(), 5)
+        await manager.shutdown()
+        saved = await db.get_cron_job(job.job_id)
+        assert task.done()
+        assert saved.status == "cancelled"
+        assert saved.last_execution_id
+    finally:
+        await manager.shutdown()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
         await db.engine.dispose()
 
 

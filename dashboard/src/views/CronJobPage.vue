@@ -117,6 +117,8 @@
                 </td>
                 <td>
                   <div class="task-text">{{ formatTime(item.last_run_at) }}</div>
+                  <div class="task-subline">{{ tm('table.execution') }}: {{ executionLabel(item.status) }}</div>
+                  <div class="task-subline">{{ tm('table.delivery') }}: {{ deliveryLabel(item.delivery_status) }}</div>
                   <div v-if="item.last_error" class="task-error">{{ item.last_error }}</div>
                 </td>
                 <td class="actions-col">
@@ -308,6 +310,16 @@ function jobTypeLabel(item: any): string {
     workflow: tm('table.type.workflow')
   }
   return map[type] || tm('table.type.unknown', { type })
+}
+
+function executionLabel(status: string | undefined): string {
+  const known = ['scheduled', 'running', 'completed', 'completed_without_delivery', 'failed', 'cancelled', 'missed']
+  return status && known.includes(status) ? tm(`executionStatus.${status}`) : tm('table.notAvailable')
+}
+
+function deliveryLabel(status: string | undefined): string {
+  const known = ['confirmed', 'unconfirmed', 'not_required', 'unknown']
+  return status && known.includes(status) ? tm(`deliveryStatus.${status}`) : tm('table.notAvailable')
 }
 
 function scheduleLabel(item: any): string {

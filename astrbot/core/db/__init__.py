@@ -799,12 +799,19 @@ class BaseDatabase(abc.ABC):
         next_run_time: datetime.datetime | None = None,
         last_run_at: datetime.datetime | None = None,
         last_error: str | None = None,
+        last_execution_id: str | None = None,
+        delivery_status: str | None = None,
+        advance_revision: bool = False,
+        expected_revision: int | None = None,
+        expected_execution_id: str | None = None,
     ) -> CronJob | None:
         """Update fields of a cron job by job_id."""
         ...
 
     @abc.abstractmethod
-    async def delete_cron_job(self, job_id: str) -> None:
+    async def delete_cron_job(
+        self, job_id: str, *, expected_revision: int | None = None
+    ) -> bool:
         """Delete a cron job by its public job_id."""
         ...
 

@@ -54,7 +54,24 @@
             "title": "Поддерживаемые платформы"
         }
     },
-    "table": {
+  "executionStatus": {
+    "scheduled": "Ещё не выполнялась",
+    "running": "Выполняется",
+    "completed": "Выполнена",
+    "completed_without_delivery": "Выполнена без подтверждения доставки",
+    "failed": "Ошибка",
+    "cancelled": "Отменена",
+    "missed": "Пропущена"
+  },
+  "deliveryStatus": {
+    "confirmed": "Подтверждена системой вывода",
+    "unconfirmed": "Не подтверждена",
+    "not_required": "Не требуется",
+    "unknown": "Неизвестно"
+  },
+  "table": {
+    "execution": "Выполнение",
+    "delivery": "Доставка",
         "title": "Список задач",
         "subtitle": "Отслеживайте cron, целевую сессию, историю запусков и состояние",
         "empty": "Задач пока нет.",

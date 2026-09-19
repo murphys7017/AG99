@@ -40,8 +40,7 @@ class CronRoute(Route):
         data["note"] = payload.get("note") or data.get("description") or ""
         data["run_at"] = payload.get("run_at")
         data["run_once"] = data.get("run_once", False)
-        # status is internal; hide to avoid implying one-time completion for recurring jobs
-        data.pop("status", None)
+        # Execution state is independent of whether the plan remains enabled.
         return data
 
     async def list_jobs(self):

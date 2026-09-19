@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -17,7 +18,6 @@ from astrbot.core.db.po import CronJob
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
-from astrbot.core.utils.history_saver import persist_agent_history
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
@@ -86,6 +86,10 @@ class CronJobManager:
         self.scheduler = AsyncIOScheduler()
         self.scheduler.add_listener(self._on_job_missed, EVENT_JOB_MISSED)
         self._status_tasks: set[asyncio.Task] = set()
+        self._execution_tasks: set[asyncio.Task] = set()
+        self._running_versions: set[tuple[str, int]] = set()
+        self._job_lock = asyncio.Lock()
+        self._closing = False
         self._basic_handlers: dict[str, Callable[..., Any]] = {}
         self._lock = asyncio.Lock()
         self._started = False
@@ -95,6 +99,9 @@ class CronJobManager:
     async def start(self, ctx: "Context") -> None:
         self.ctx: Context = ctx  # star context
         async with self._lock:
+            if self._closing and self._execution_tasks:
+                raise RuntimeError("Cannot start cron while executions are draining")
+            self._closing = False
             if self._db_synced:
                 return
             if not self._started:
@@ -105,14 +112,25 @@ class CronJobManager:
 
     async def shutdown(self) -> None:
         async with self._lock:
-            if not self._started:
-                return
-            self.scheduler.shutdown(wait=False)
-            await asyncio.sleep(0)
-            if self._status_tasks:
-                await asyncio.gather(*tuple(self._status_tasks))
-            self._started = False
+            self._closing = True
             self._db_synced = False
+            if self._started:
+                self.scheduler.shutdown(wait=False)
+                self._started = False
+                await asyncio.sleep(0)
+            tasks = self._execution_tasks | self._status_tasks
+            for task in self._execution_tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            if tasks:
+                done, pending = await asyncio.wait(tasks, timeout=15)
+                for task in done:
+                    if not task.cancelled():
+                        task.exception()
+                if pending:
+                    raise RuntimeError(
+                        f"Cron shutdown incomplete: {len(pending)} tasks still draining"
+                    )
 
     def _on_job_missed(self, event: JobExecutionEvent) -> None:
         task = asyncio.create_task(
@@ -139,6 +157,7 @@ class CronJobManager:
                 return
             await self.db.update_cron_job(
                 job_id,
+                expected_revision=job.revision,
                 status="missed",
                 last_error="Scheduled execution missed its grace period",
                 next_run_time=self._get_next_run_time(job_id),
@@ -178,6 +197,8 @@ class CronJobManager:
         enabled: bool = True,
         persistent: bool = False,
     ) -> CronJob:
+        if self._closing:
+            raise RuntimeError("Cron manager is shutting down")
         job = await self.db.create_cron_job(
             name=name,
             job_type="basic",
@@ -206,6 +227,8 @@ class CronJobManager:
         run_once: bool = False,
         run_at: datetime | None = None,
     ) -> CronJob:
+        if self._closing:
+            raise RuntimeError("Cron manager is shutting down")
         # If run_once with run_at, store run_at in payload for later reference.
         if run_once and run_at:
             payload = {**payload, "run_at": run_at.isoformat()}
@@ -225,18 +248,35 @@ class CronJobManager:
         return job
 
     async def update_job(self, job_id: str, **kwargs) -> CronJob | None:
-        job = await self.db.update_cron_job(job_id, **kwargs)
-        if not job:
-            return None
-        self._remove_scheduled(job_id)
-        if job.enabled:
-            await self._schedule_persisted_job(job)
-        return job
+        async with self._job_lock:
+            if self._closing:
+                raise RuntimeError("Cron manager is shutting down")
+            kwargs.update(
+                status="scheduled",
+                last_execution_id=None,
+                delivery_status=None,
+                last_run_at=None,
+                last_error=None,
+            )
+            job = await self.db.update_cron_job(
+                job_id,
+                **kwargs,
+                advance_revision=True,
+            )
+            if not job:
+                return None
+            self._remove_scheduled(job_id)
+            if job.enabled:
+                await self._schedule_persisted_job(job)
+            else:
+                await self.db.update_cron_job(job_id, next_run_time=None)
+            return job
 
     async def delete_job(self, job_id: str) -> None:
-        self._remove_scheduled(job_id)
-        self._basic_handlers.pop(job_id, None)
-        await self.db.delete_cron_job(job_id)
+        async with self._job_lock:
+            self._remove_scheduled(job_id)
+            self._basic_handlers.pop(job_id, None)
+            await self.db.delete_cron_job(job_id)
 
     async def list_jobs(self, job_type: str | None = None) -> list[CronJob]:
         return await self.db.list_cron_jobs(job_type)
@@ -246,7 +286,9 @@ class CronJobManager:
             self.scheduler.remove_job(job_id)
 
     async def _schedule_persisted_job(self, job: CronJob) -> None:
-        await self.db.update_cron_job(job.job_id, status="scheduled", last_error=None)
+        if self._closing:
+            raise RuntimeError("Cron manager is shutting down")
+        # Synchronizing an unchanged plan must not erase its execution outcome.
         try:
             self._schedule_job(job)
         except CronJobSchedulingError as exc:
@@ -264,6 +306,8 @@ class CronJobManager:
         )
 
     def _schedule_job(self, job: CronJob) -> None:
+        if self._closing:
+            raise RuntimeError("Cron manager is shutting down")
         if not self._started:
             self.scheduler.start()
             self._started = True
@@ -290,7 +334,9 @@ class CronJobManager:
                     run_at = run_at.replace(tzinfo=tzinfo)
                 trigger = DateTrigger(run_date=run_at, timezone=tzinfo)
                 if trigger.run_date <= datetime.now(timezone.utc):
-                    raise ValueError("run_once timestamp is in the past; reschedule explicitly")
+                    raise ValueError(
+                        "run_once timestamp is in the past; reschedule explicitly"
+                    )
             else:
                 if not job.cron_expression:
                     raise ValueError("recurring job missing cron_expression")
@@ -313,6 +359,7 @@ class CronJobManager:
                 id=job.job_id,
                 trigger=trigger,
                 args=[job.job_id],
+                kwargs={"scheduled_revision": job.revision},
                 replace_existing=True,
                 misfire_grace_time=30,
             )
@@ -328,6 +375,8 @@ class CronJobManager:
         return aps_job.next_run_time.astimezone(timezone.utc)
 
     async def run_job_now(self, job_id: str) -> None:
+        if self._closing:
+            raise RuntimeError("Cron manager is shutting down")
         await self._run_job(job_id, ignore_enabled=True, delete_run_once=False)
 
     async def _run_job(
@@ -336,22 +385,68 @@ class CronJobManager:
         *,
         ignore_enabled: bool = False,
         delete_run_once: bool = True,
+        scheduled_revision: int | None = None,
     ) -> None:
-        job = await self.db.get_cron_job(job_id)
-        if not job or (not job.enabled and not ignore_enabled):
+        task = asyncio.current_task()
+        if task is None or self._closing:
             return
+        self._execution_tasks.add(task)
+        version = None
+        try:
+            async with self._job_lock:
+                job = await self.db.get_cron_job(job_id)
+                if not job or (not job.enabled and not ignore_enabled):
+                    return
+                if (
+                    scheduled_revision is not None
+                    and job.revision != scheduled_revision
+                ):
+                    return
+                version = (job_id, job.revision)
+                if version in self._running_versions:
+                    version = None
+                    raise RuntimeError(f"Cron job is already running: {job_id}")
+                self._running_versions.add(version)
+            await self._execute_job(job, delete_run_once=delete_run_once)
+        finally:
+            if version is not None:
+                self._running_versions.discard(version)
+            self._execution_tasks.discard(task)
+
+    async def _execute_job(self, job: CronJob, *, delete_run_once: bool) -> None:
+        job_id = job.job_id
+        execution_id = uuid.uuid4().hex
         start_time = datetime.now(timezone.utc)
-        await self.db.update_cron_job(
-            job_id, status="running", last_run_at=start_time, last_error=None
-        )
         status = "completed"
         last_error = None
+        delivery_status = "not_required" if job.job_type == "basic" else "unknown"
         try:
+            async with self._job_lock:
+                admitted = await self.db.update_cron_job(
+                    job_id,
+                    status="running",
+                    last_run_at=start_time,
+                    last_error=None,
+                    expected_revision=job.revision,
+                    last_execution_id=execution_id,
+                    delivery_status=None,
+                )
+            if admitted is None:
+                status = "superseded"
+                return
+            job.last_execution_id = execution_id
             if job.job_type == "basic":
                 await self._run_basic_job(job)
             elif job.job_type == "active_agent":
                 delivered = await self._run_active_agent_job(job, start_time=start_time)
-                if not delivered:
+                delivery_status = (
+                    "not_required"
+                    if delivered is None
+                    else "confirmed"
+                    if delivered
+                    else "unconfirmed"
+                )
+                if delivered is False:
                     status = "completed_without_delivery"
             else:
                 raise ValueError(f"Unknown cron job type: {job.job_type}")
@@ -364,19 +459,43 @@ class CronJobManager:
             last_error = "Cron execution was cancelled"
             raise
         finally:
-            next_run = self._get_next_run_time(job_id)
-            disable_failed_once = job.run_once and delete_run_once and status != "completed"
-            await self.db.update_cron_job(
+            async with self._job_lock:
+                next_run = self._get_next_run_time(job_id)
+                disable_once = (
+                    job.run_once and delete_run_once and status != "completed"
+                )
+                settled = await self.db.update_cron_job(
+                    job_id,
+                    expected_revision=job.revision,
+                    expected_execution_id=execution_id,
+                    status=status,
+                    last_run_at=start_time,
+                    last_error=last_error,
+                    delivery_status=delivery_status,
+                    next_run_time=next_run,
+                    **({"enabled": False} if disable_once else {}),
+                )
+                if (
+                    settled is not None
+                    and job.run_once
+                    and delete_run_once
+                    and status == "completed"
+                ):
+                    if await self.db.delete_cron_job(
+                        job_id, expected_revision=job.revision
+                    ):
+                        self._remove_scheduled(job_id)
+                        self._basic_handlers.pop(job_id, None)
+            logger.info(
+                "Cron execution settled: job_id=%s revision=%s execution_id=%s "
+                "status=%s delivery=%s current_plan_updated=%s",
                 job_id,
-                status=status,
-                last_run_at=start_time,
-                last_error=last_error,
-                next_run_time=next_run,
-                **({"enabled": False} if disable_failed_once else {}),
+                job.revision,
+                execution_id,
+                status,
+                delivery_status,
+                settled is not None,
             )
-            if job.run_once and delete_run_once and status == "completed":
-                # Keep failed one-shot evidence, without automatically retrying.
-                await self.delete_job(job_id)
 
     async def _run_basic_job(self, job: CronJob) -> None:
         handler = self._basic_handlers.get(job.job_id)
@@ -387,7 +506,9 @@ class CronJobManager:
         if asyncio.iscoroutine(result):
             await result
 
-    async def _run_active_agent_job(self, job: CronJob, start_time: datetime) -> bool:
+    async def _run_active_agent_job(
+        self, job: CronJob, start_time: datetime
+    ) -> bool | None:
         payload = job.payload or {}
         delivery_session_str = str(payload.get("session") or "").strip()
         if not delivery_session_str:
@@ -406,6 +527,8 @@ class CronJobManager:
         extras = {
             "cron_job": {
                 "id": job.job_id,
+                "revision": job.revision,
+                "execution_id": job.last_execution_id,
                 "name": job.name,
                 "type": job.job_type,
                 "run_once": job.run_once,
@@ -434,7 +557,7 @@ class CronJobManager:
         session_str: str,
         extras: dict,
         delivery_session_str: str = "",
-    ) -> bool:
+    ) -> bool | None:
         """Woke the main agent to handle the cron job message."""
         from astrbot.core.astr_main_agent import MainAgentBuildConfig
         from astrbot.core.astr_main_agent_resources import (
@@ -491,30 +614,14 @@ class CronJobManager:
             require_delivery_tool=bool(delivery_session_str),
             include_history_fences=False,
         )
-        llm_resp = turn.response
         cron_meta = extras.get("cron_job", {}) if extras else {}
-        summary_note = (
-            f"[CronJob] {cron_meta.get('name') or cron_meta.get('id', 'unknown')}: {cron_meta.get('description', '')} "
-            f" triggered at {cron_meta.get('run_started_at', 'unknown time')}, "
-        )
-        if llm_resp and llm_resp.role == "assistant":
-            summary_note += (
-                f"I finished this job, here is the result: {llm_resp.completion_text}"
-            )
-
-        await persist_agent_history(
-            self.ctx.conversation_manager,
-            event=turn.event,
-            req=turn.request,
-            summary_note=summary_note,
-        )
         if delivery_session_str and not turn.delivery_confirmed:
             logger.warning(
                 "Cron execution completed without confirmed delivery: job_id=%s target=%s",
                 cron_meta.get("id", ""),
                 delivery_session_str,
             )
-        return turn.delivery_confirmed or not delivery_session_str
+        return turn.delivery_confirmed if delivery_session_str else None
 
 
 __all__ = ["CronJobManager"]

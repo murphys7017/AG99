@@ -1,3 +1,19 @@
+scheduled_output_review_fixes:
+  date: '2026-09-19'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Remove proactive dialogue overwrite in favor of the existing Core execution
+    ledger; isolate schedule revisions and execution identities; drain active Cron
+    executions before shutdown; expose execution and delivery outcomes in the UI.
+  non_goals: Executor replacement, AG99live edits, production restart, ignored configuration changes.
+  validation: >-
+    First related run passed 70 tests; the updated proactive/Cron suite passed 49,
+    including real scheduler/SQLite rescheduling, shutdown and ledger/history isolation.
+    Existing-schema upgrade smoke, dashboard typecheck and production build passed.
+    Browser display checked using mocked API data, not a live backend. Two existing
+    MDI subsetting warnings remain. No production restart or live OLV acceptance.
 scheduled_output_closure:
   date: '2026-09-19'
   class: bugfix

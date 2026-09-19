@@ -1,6 +1,5 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import mcp
 import pytest
@@ -404,6 +403,12 @@ class _DoneRunner:
     def get_final_llm_resp(self):
         return SimpleNamespace(role="assistant", completion_text="done")
 
+    def done(self):
+        return True
+
+    def was_aborted(self):
+        return False
+
 
 @pytest.mark.asyncio
 async def test_collect_handoff_image_urls_normalizes_filters_and_appends_event_image(
@@ -713,7 +718,7 @@ async def test_background_wakeup_passes_provider_settings_to_main_agent(
 
     async def _fake_build_main_agent(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(agent_runner=_DoneRunner())
+        return SimpleNamespace(agent_runner=_DoneRunner(), provider_request=kwargs["req"])
 
     monkeypatch.setattr(
         "astrbot.core.astr_main_agent._get_session_conv",
@@ -722,10 +727,6 @@ async def test_background_wakeup_passes_provider_settings_to_main_agent(
     monkeypatch.setattr(
         "astrbot.core.astr_main_agent.build_main_agent",
         _fake_build_main_agent,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_tool_exec.persist_agent_history",
-        AsyncMock(),
     )
 
     send_tool = FunctionTool(
