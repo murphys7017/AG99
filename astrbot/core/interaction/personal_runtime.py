@@ -295,50 +295,50 @@ class _FollowUpCapture:
 
 class _FollowUpCoordinator:
     def __init__(self) -> None:
-        self.active_runner: Any | None = None
+        self.active_executor: Any | None = None
         self.condition = asyncio.Condition()
         self.statuses: dict[int, str] = {}
         self.next_order = 0
         self.next_turn = 0
 
-    def register(self, runner: Any) -> None:
-        self.active_runner = runner
+    def register(self, executor: Any) -> None:
+        self.active_executor = executor
 
-    def unregister(self, runner: Any) -> None:
-        if self.active_runner is runner:
-            self.active_runner = None
+    def unregister(self, executor: Any) -> None:
+        if self.active_executor is executor:
+            self.active_executor = None
 
-    def _active_runner_for_actor(self, actor_id: str) -> Any | None:
+    def _active_executor_for_actor(self, actor_id: str) -> Any | None:
         normalized_actor_id = str(actor_id or "").strip()
-        runner = self.active_runner
-        if not normalized_actor_id or runner is None:
+        executor = self.active_executor
+        if not normalized_actor_id or executor is None:
             return None
-        runner_event = getattr(
-            getattr(runner.run_context, "context", None),
+        executor_event = getattr(
+            getattr(executor.run_context, "context", None),
             "event",
             None,
         )
-        if runner_event is None:
+        if executor_event is None:
             return None
-        if str(runner_event.get_sender_id() or "").strip() != normalized_actor_id:
+        if str(executor_event.get_sender_id() or "").strip() != normalized_actor_id:
             return None
-        if runner_event.get_extra("agent_stop_requested"):
+        if executor_event.get_extra("agent_stop_requested"):
             return None
-        return runner
+        return executor
 
-    def has_active_runner_for_actor(self, actor_id: str) -> bool:
-        return self._active_runner_for_actor(actor_id) is not None
+    def has_active_executor_for_actor(self, actor_id: str) -> bool:
+        return self._active_executor_for_actor(actor_id) is not None
 
     def try_capture(self, event: Any) -> _FollowUpCapture | None:
         sender_id = event.get_sender_id()
-        runner = self._active_runner_for_actor(sender_id)
-        if runner is None:
+        executor = self._active_executor_for_actor(sender_id)
+        if executor is None:
             return None
 
         message_text = (event.get_message_str() or "").strip()
         if not message_text:
             message_text = event.get_message_outline().strip()
-        ticket = runner.follow_up(message_text=message_text)
+        ticket = executor.follow_up(message_text=message_text)
         if ticket is None:
             return None
 
@@ -350,7 +350,7 @@ class _FollowUpCoordinator:
             name=f"personal_runtime_follow_up_{order_seq}",
         )
         return _FollowUpCapture(
-            executor=runner,
+            executor=executor,
             ticket=ticket,
             order_seq=order_seq,
             monitor_task=monitor_task,
@@ -395,7 +395,7 @@ class _FollowUpCoordinator:
             await self._mark_consumed(capture.order_seq)
 
     def is_idle(self) -> bool:
-        return self.active_runner is None and not self.statuses
+        return self.active_executor is None and not self.statuses
 
     async def _monitor_ticket(self, ticket: Any, order_seq: int) -> None:
         await ticket.resolved.wait()
@@ -1648,7 +1648,7 @@ class PersonalRuntimeManager:
             elif state.active_actor_id == actor_id:
                 return (
                     "active"
-                    if runtime.follow_ups.has_active_runner_for_actor(actor_id)
+                    if runtime.follow_ups.has_active_executor_for_actor(actor_id)
                     else "direct"
                 )
             else:
@@ -2135,7 +2135,7 @@ class PersonalRuntimeManager:
             wait_if_busy=wait_if_busy,
         )
 
-    def register_active_runner(self, event: Any, runner: Any) -> bool:
+    def register_active_runner(self, event: Any, executor: Any) -> bool:
         runtime = self._event_sessions.get(event)
         if runtime is None:
             logger.warning(
@@ -2143,13 +2143,13 @@ class PersonalRuntimeManager:
                 event.unified_msg_origin,
             )
             return False
-        runtime.follow_ups.register(runner)
+        runtime.follow_ups.register(executor)
         return True
 
-    def unregister_active_runner(self, event: Any, runner: Any) -> None:
+    def unregister_active_runner(self, event: Any, executor: Any) -> None:
         runtime = self._event_sessions.get(event)
         if runtime is not None:
-            runtime.follow_ups.unregister(runner)
+            runtime.follow_ups.unregister(executor)
 
     @staticmethod
     def _record_deadline_diagnostics(reservation: PendingTurnReservation) -> None:

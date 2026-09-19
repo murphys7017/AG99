@@ -941,6 +941,15 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   内部调用的 fallback，并明确命名为 `legacy_agent_runner`；这次不改变旧调用行为，
   也不把它重新作为 Core 执行边界。
 
+### 2026-09-20 Personal Follow-up 执行器命名收口
+
+- Personal Runtime 的 follow-up 协调器内部状态、actor 查找和注册参数统一使用
+  `executor` 命名；它实际保存的是 `NativeExecutorAdapter`，不再把 Native runner
+  误称为 Personal 的长期执行对象。
+- 对外已有的 `register_active_runner()` / `unregister_active_runner()` 方法名暂不改，
+  以避免扩大 Personal Runtime 公共调用面的变更；方法内部已转交 executor。
+- 该切片只改变命名和边界表达，不改变 follow-up 捕获、顺序激活、取消或清理行为。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
