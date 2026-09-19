@@ -19,6 +19,7 @@ class FakeNativeRunner:
         self.req = None
         self.agent_hooks = object()
         self.follow_up_messages = []
+        self.req = SimpleNamespace(func_tool="tools")
 
     def request_stop(self):
         self.stop_requested = True
@@ -60,6 +61,9 @@ def test_native_executor_adapter_exposes_control_and_observation_boundary():
     assert adapter.follow_up(message_text="follow-up") == "follow-up"
     assert runner.follow_up_messages == ["follow-up"]
     assert adapter.cancel_follow_up("ticket") is True
+    adapter.force_final_response(instruction="finish")
+    assert runner.req.func_tool is None
+    assert runner.run_context.messages[-1].content == "finish"
 
 
 @pytest.mark.asyncio

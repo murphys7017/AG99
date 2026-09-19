@@ -98,6 +98,14 @@ class NativeExecutorAdapter:
         """Open one Native step stream; the consumer must close it on exit."""
         return self._runner.step()
 
+    def force_final_response(self, *, instruction: str) -> None:
+        """Disable further tools and append the bounded final-response prompt."""
+        if self._runner.req:
+            self._runner.req.func_tool = None
+        self._runner.run_context.messages.append(
+            Message(role="user", content=instruction)
+        )
+
     @property
     def provider(self) -> Provider:
         """Return the provider used by the transitional Native runner."""
@@ -294,13 +302,10 @@ async def run_agent(
             )
             if not agent_runner.done():
                 # 拔掉所有工具
-                if agent_runner.req:
-                    agent_runner.req.func_tool = None
-                # 注入提示词
-                agent_runner.run_context.messages.append(
-                    Message(
-                        role="user",
-                        content="工具调用次数已达到上限，请停止使用工具，并根据已经收集到的信息，对你的任务和发现进行总结，然后直接回复用户。",
+                executor.force_final_response(
+                    instruction=(
+                        "工具调用次数已达到上限，请停止使用工具，并根据已经收集到的信息，"
+                        "对你的任务和发现进行总结，然后直接回复用户。"
                     )
                 )
 
