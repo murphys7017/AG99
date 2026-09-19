@@ -322,6 +322,10 @@ class InteractionTurnState:
     plugin_output_transaction_artifacts: list[dict[str, Any]] = field(
         default_factory=list
     )
+    tool_stage_observation_records: list[dict[str, Any]] = field(default_factory=list)
+    tool_stage_observation_states: dict[str, dict[str, bool]] = field(
+        default_factory=dict
+    )
     visible_message_fingerprints: set[str] = field(default_factory=set)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)
     output_segment_counter: int = 0
@@ -960,6 +964,48 @@ def set_interaction_turn_plugin_output_transaction(
         if state.plugin_output_transaction_artifacts
         else None,
     )
+
+
+def get_interaction_turn_tool_stage_observation_records(
+    event,
+) -> list[dict[str, Any]]:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return state.tool_stage_observation_records
+    records = event.get_extra("_interaction_tool_stage_observation_tasks", [])
+    return records if isinstance(records, list) else []
+
+
+def set_interaction_turn_tool_stage_observation_records(
+    event,
+    records: list[dict[str, Any]],
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.tool_stage_observation_records = records
+    # Compatibility projection only.
+    event.set_extra("_interaction_tool_stage_observation_tasks", records)
+
+
+def get_interaction_turn_tool_stage_observation_state(
+    event,
+    descriptor: str,
+) -> dict[str, bool]:
+    state = ensure_interaction_turn_state(event)
+    result = state.tool_stage_observation_states.get(descriptor)
+    if not isinstance(result, dict):
+        result = {
+            "running_attempt_started": False,
+            "running_emitted": False,
+            "completed_attempt_started": False,
+            "completed_emitted": False,
+        }
+        state.tool_stage_observation_states[descriptor] = result
+    # Compatibility projection only.
+    event.set_extra(
+        "_interaction_tool_stage_observation_state",
+        state.tool_stage_observation_states,
+    )
+    return result
 
 
 def mark_interaction_turn_core_delegated(event) -> None:

@@ -78,6 +78,8 @@ from .turn_state import (
     get_interaction_turn_stream_observation_tasks,
     get_interaction_turn_stream_pending_text,
     get_interaction_turn_stream_text,
+    get_interaction_turn_tool_stage_observation_records,
+    get_interaction_turn_tool_stage_observation_state,
     get_interaction_turn_visible_outputs,
     has_interaction_turn_core_streaming_result_consumed,
     has_interaction_turn_final_output_claimed,
@@ -107,6 +109,7 @@ from .turn_state import (
     set_interaction_turn_pipeline_output_suppressed,
     set_interaction_turn_plugin_output_transaction,
     set_interaction_turn_stream_observation_count,
+    set_interaction_turn_tool_stage_observation_records,
     update_interaction_turn_stream_buffer,
 )
 from .types import InteractionAgentConfig, InteractionRouteMode
@@ -1147,11 +1150,9 @@ class InteractionOutputController:
             "descriptor": descriptor,
             "emitted": False,
         }
-        records = event.get_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, [])
-        if not isinstance(records, list):
-            records = []
+        records = get_interaction_turn_tool_stage_observation_records(event)
         records.append(record)
-        event.set_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, records)
+        set_interaction_turn_tool_stage_observation_records(event, records)
 
         async def emit_delayed_stage() -> None:
             await asyncio.sleep(
@@ -1191,16 +1192,14 @@ class InteractionOutputController:
         _tool_result: Any = None,
     ) -> None:
         """Emit one completion-stage update without exposing a tool's raw result."""
-        records = event.get_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, [])
-        if not isinstance(records, list):
-            return
+        records = get_interaction_turn_tool_stage_observation_records(event)
         record = next(
             (item for item in reversed(records) if item.get("tool") is tool), None
         )
         if record is None:
             return
         records.remove(record)
-        event.set_extra(TOOL_STAGE_OBSERVATION_TASKS_EXTRA_KEY, records)
+        set_interaction_turn_tool_stage_observation_records(event, records)
         task = record.get("task")
         if isinstance(task, asyncio.Task) and not task.done():
             task.cancel()
@@ -1235,20 +1234,7 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         descriptor: str,
     ) -> dict[str, bool]:
-        states = event.get_extra(TOOL_STAGE_OBSERVATION_STATE_EXTRA_KEY, {})
-        if not isinstance(states, dict):
-            states = {}
-        state = states.get(descriptor)
-        if not isinstance(state, dict):
-            state = {
-                "running_attempt_started": False,
-                "running_emitted": False,
-                "completed_attempt_started": False,
-                "completed_emitted": False,
-            }
-            states[descriptor] = state
-            event.set_extra(TOOL_STAGE_OBSERVATION_STATE_EXTRA_KEY, states)
-        return state
+        return get_interaction_turn_tool_stage_observation_state(event, descriptor)
 
     def _tool_stage_observation_allowed(self, event: AstrMessageEvent) -> bool:
         config = self._get_interaction_config(event)

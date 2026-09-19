@@ -50,6 +50,10 @@
 这些字段混合了结果事实和诊断信息。当前不能直接删除，需先确认是否有插件、Dashboard、
 测试或平台适配器读取；但它们不能继续作为第二个输出状态机。
 
+其中 Tool Stage observation 的 `tasks/state` 已在 2026-09-19 迁入
+`InteractionTurnState`，旧 key 仅作为兼容投影；下一步仍需确认是否应拆成独立
+`ToolObservationRuntime`，目前不影响逻辑输出完成语义。
+
 ### 2.3 TurnState 中已有但仍需核对读取面的状态
 
 - `visible_outputs`
