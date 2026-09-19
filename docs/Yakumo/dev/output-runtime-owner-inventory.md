@@ -71,6 +71,11 @@
 这些字段是逻辑输出事实，但物理投递成功、部分失败、重复和迟到行为仍跨多个组件，
 尚未形成一份公开的 `DeliveryReceipt`/`OutputSegmentReceipt` 契约。
 
+2026-09-19 起，Controller 会在每次物理投递后把
+`message_id/message_kind/attempted_count/failed_count/status` 写入
+`InteractionTurnState.output_delivery_receipts`，并同步写入 trace。当前这是内部事实
+记录，不改变平台发送 API；后续仍需让 Artifact/Delayed Delivery 复用同一 identity。
+
 ## 3. 必须保持的完成语义
 
 1. 一条逻辑消息的所有物理组件成功后，才能发出该逻辑消息完成回调。

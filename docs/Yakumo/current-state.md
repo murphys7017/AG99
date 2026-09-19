@@ -32,6 +32,10 @@ Core 工具阶段观察的任务/state 已迁入 `InteractionTurnState`，旧 ex
 插件输出的模式、种类和 effect 调用元数据也已迁入 `InteractionTurnState`，旧 extra
 仅作为兼容投影；Output Runtime 的物理投递身份仍未统一。
 
+当前逻辑消息的物理投递结果已记录为 turn-owned delivery receipt，明确区分 delivered、
+partial 和 failed，并写入 Interaction trace。Artifact、Delayed Delivery 和最终 turn
+完成仍需继续接入同一身份关系。
+
 ## 2026-09-19 全局架构收口基线
 
 全局复核确认项目当前进入“前置主链收口”阶段，而不是继续横向增加功能的阶段。
