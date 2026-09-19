@@ -106,6 +106,13 @@ class NativeExecutorAdapter:
             Message(role="user", content=instruction)
         )
 
+    async def notify_agent_done(self, response: LLMResponse) -> None:
+        """Notify Native lifecycle hooks without exposing the runner object."""
+        await self._runner.agent_hooks.on_agent_done(
+            self._runner.run_context,
+            response,
+        )
+
     @property
     def provider(self) -> Provider:
         """Return the provider used by the transitional Native runner."""
@@ -528,9 +535,7 @@ async def run_agent(
                 completion_text=err_msg,
             )
             try:
-                await agent_runner.agent_hooks.on_agent_done(
-                    agent_runner.run_context, error_llm_response
-                )
+                await executor.notify_agent_done(error_llm_response)
             except Exception:
                 logger.exception("Error in on_agent_done hook")
 

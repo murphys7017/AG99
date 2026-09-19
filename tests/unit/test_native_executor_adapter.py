@@ -17,7 +17,6 @@ class FakeNativeRunner:
         self.completed = True
         self.streaming = False
         self.req = None
-        self.agent_hooks = object()
         self.follow_up_messages = []
         self.req = SimpleNamespace(func_tool="tools")
 
@@ -39,6 +38,12 @@ class FakeNativeRunner:
 
     def cancel_follow_up(self, ticket):
         return ticket == "ticket"
+
+    class Hooks:
+        async def on_agent_done(self, context, response):
+            context.done_response = response
+
+    agent_hooks = Hooks()
 
 
 def test_native_executor_adapter_exposes_control_and_observation_boundary():
