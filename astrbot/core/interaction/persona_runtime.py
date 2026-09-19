@@ -14,6 +14,7 @@ from .expression_agent import (
     PersonaExpressionIntent,
     PersonaExpressionRequest,
 )
+from .turn_state import set_interaction_turn_plugin_output_metadata
 from .types import InteractionAgentConfig
 
 
@@ -67,9 +68,9 @@ class InteractionPersonaRuntime:
             ),
         )
         if result.effect_calls:
-            event.set_extra(
-                "_interaction_plugin_output_effect_calls",
-                list(result.effect_calls),
+            set_interaction_turn_plugin_output_metadata(
+                event,
+                effect_calls=list(result.effect_calls),
             )
         return replace_plain_text_preserving_components(
             message,

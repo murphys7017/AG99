@@ -322,6 +322,9 @@ class InteractionTurnState:
     plugin_output_transaction_artifacts: list[dict[str, Any]] = field(
         default_factory=list
     )
+    plugin_output_last_mode: str | None = None
+    plugin_output_last_kind: str | None = None
+    plugin_output_effect_calls: list[Any] = field(default_factory=list)
     tool_stage_observation_records: list[dict[str, Any]] = field(default_factory=list)
     tool_stage_observation_states: dict[str, dict[str, bool]] = field(
         default_factory=dict
@@ -1006,6 +1009,28 @@ def get_interaction_turn_tool_stage_observation_state(
         state.tool_stage_observation_states,
     )
     return result
+
+
+def set_interaction_turn_plugin_output_metadata(
+    event,
+    *,
+    mode: str | None = None,
+    kind: str | None = None,
+    effect_calls: list[Any] | None = None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    if mode is not None:
+        state.plugin_output_last_mode = mode
+        event.set_extra("_interaction_plugin_output_last_mode", mode)
+    if kind is not None:
+        state.plugin_output_last_kind = kind
+        event.set_extra("_interaction_plugin_output_last_kind", kind)
+    if effect_calls is not None:
+        state.plugin_output_effect_calls = list(effect_calls)
+        event.set_extra(
+            "_interaction_plugin_output_effect_calls",
+            list(state.plugin_output_effect_calls),
+        )
 
 
 def mark_interaction_turn_core_delegated(event) -> None:

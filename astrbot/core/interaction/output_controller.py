@@ -48,8 +48,6 @@ from .expression_agent import (
 from .output_modes import (
     CORE_OUTPUT_DELIVERY_EXTRA_KEY,
     OUTPUT_ORIGIN_EXTRA_KEY,
-    PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY,
-    PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY,
     CoreOutputDelivery,
     OutputOrigin,
     PluginOutputMode,
@@ -107,6 +105,7 @@ from .turn_state import (
     set_interaction_turn_finalized_material,
     set_interaction_turn_immediate_reply,
     set_interaction_turn_pipeline_output_suppressed,
+    set_interaction_turn_plugin_output_metadata,
     set_interaction_turn_plugin_output_transaction,
     set_interaction_turn_stream_observation_count,
     set_interaction_turn_tool_stage_observation_records,
@@ -517,7 +516,7 @@ class InteractionOutputController:
         if message is None:
             return
 
-        event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, mode)
+        set_interaction_turn_plugin_output_metadata(event, mode=mode)
         resolved_kind = "plugin_direct"
         resolved_mode = PluginOutputMode(mode)
 
@@ -536,9 +535,9 @@ class InteractionOutputController:
                     ),
                 )
                 if result.effect_calls:
-                    event.set_extra(
-                        "_interaction_plugin_output_effect_calls",
-                        list(result.effect_calls),
+                    set_interaction_turn_plugin_output_metadata(
+                        event,
+                        effect_calls=list(result.effect_calls),
                     )
                 message = replace_plain_text_preserving_components(
                     message,
@@ -548,7 +547,7 @@ class InteractionOutputController:
             else:
                 resolved_kind = "plugin_direct"
 
-        event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
+        set_interaction_turn_plugin_output_metadata(event, kind=resolved_kind)
         semantic_text = message.get_plain_text()
         message_id = self._next_output_segment_id(event, resolved_kind)
         deferred_by_transaction = finalize and self._begin_plugin_output_transaction(
@@ -618,8 +617,11 @@ class InteractionOutputController:
                     stream_text_parts.append(chunk_text)
 
             text = "".join(stream_text_parts).strip()
-            event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
-            event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, "plugin_persona")
+            set_interaction_turn_plugin_output_metadata(
+                event,
+                mode=resolved_mode.value,
+                kind="plugin_persona",
+            )
             if text:
                 await self.capture_plugin_output(
                     MessageChain([Plain(text)]),
@@ -630,8 +632,11 @@ class InteractionOutputController:
             return
 
         resolved_kind = "plugin_direct"
-        event.set_extra(PLUGIN_OUTPUT_LAST_MODE_EXTRA_KEY, resolved_mode.value)
-        event.set_extra(PLUGIN_OUTPUT_LAST_KIND_EXTRA_KEY, resolved_kind)
+        set_interaction_turn_plugin_output_metadata(
+            event,
+            mode=resolved_mode.value,
+            kind=resolved_kind,
+        )
         deferred_by_transaction = self._begin_plugin_output_transaction(event)
         stream_text_parts: list[str] = []
         message_id = self._next_output_segment_id(event, resolved_kind)
