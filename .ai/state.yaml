@@ -1,3 +1,20 @@
+turn_diagnostics_and_routing:
+  date: '2026-09-19'
+  class: bugfix
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Freeze admission-time diagnostic facts without replacing them on Persona
+    resolution; log subsequent Persona identity separately. Rank overlapping UMO
+    routes by exact segments and literal characters, excluding glob class contents.
+    Report recognized mounted search tools, not credential or network availability.
+  non_goals: Prompt changes, execution-policy changes, AG99live changes, restart, scheduled-reminder repair.
+  validation: >-
+    Six focused snapshot/router/search-diagnostic cases passed. Scoped Ruff and
+    git diff --check passed. No live OLV or scheduler acceptance performed.
+    Prior broader run had 94 passed and two video-path assertion failures;
+    that unchanged suite was not rerun for this slice.
+  next: Review shared fact ownership and task failure reporting before changing execution behavior.
 plugin_capability_cleanup:
   date: '2026-09-18'
   class: refactor

@@ -43,6 +43,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_state,
     is_interaction_turn_core_delegated,
 )
+from astrbot.core.interaction.types import CoreTaskSpec
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
@@ -132,6 +133,33 @@ from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
 CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY = "conversation_save_user_message"
 LLM_ERROR_MESSAGE_EXTRA_KEY = "_llm_error_message"
+
+
+def diagnose_direct_web_research_capability(
+    task_spec: CoreTaskSpec | None,
+    capabilities: CapabilitySnapshot,
+) -> tuple[bool, list[str]]:
+    """Report requested research and recognized mounted search tools.
+
+    This is not a permission, credential or connectivity check. Extraction-only
+    tools and unrecognized plugin/provider search capabilities are not counted.
+    """
+    required = bool(task_spec and task_spec.requires_direct_web_research())
+    mounted_tools = sorted(
+        name
+        for name in capabilities.names()
+        if name == "web_search"
+        or (
+            is_web_search_tool_name(name)
+            and name
+            not in {
+                "tavily_extract_web_page",
+                "firecrawl_extract_web_page",
+                "exa_get_contents",
+            }
+        )
+    )
+    return required, mounted_tools
 
 
 @dataclass(slots=True)
@@ -1124,24 +1152,41 @@ async def build_main_agent(
             exclude_handoff_tools=exclude_handoff_tools,
         )
     req.func_tool = capabilities.to_toolset()
-    if exclude_handoff_tools:
-        web_tool_names = sorted(
-            name for name in capabilities.names() if is_web_search_tool_name(name)
-        )
-        logger.info(
+    required_web_research, web_tool_names = diagnose_direct_web_research_capability(
+        task_spec,
+        capabilities,
+    )
+    if interaction_core:
+        turn_state = get_interaction_turn_state(event)
+        config_id = str(
+            getattr(turn_state, "runtime_config_id", "")
+            or event.get_extra("_astrbot_config_id", "")
+            or "default"
+        ).strip() or "default"
+        logger.debug(
             "DIAG interaction.direct_web_research_capability: turn_id=%s "
-            "platform_id=%s session_id=%s available=%s tool_names=%s",
+            "config_id=%s required_web_research=%s recognized_search_tools_mounted=%s tool_names=%s",
             str(event.get_extra("_turn_id", "") or ""),
-            event.get_platform_id(),
-            event.session_id,
+            config_id,
+            required_web_research,
             bool(web_tool_names),
             web_tool_names,
         )
+        if required_web_research and not web_tool_names:
+            logger.warning(
+                "No recognized search tools mounted for direct web research: "
+                "turn_id=%s config_id=%s; custom tools and provider-native search "
+                "are not checked",
+                str(event.get_extra("_turn_id", "") or ""),
+                config_id,
+            )
         try:
             event.trace.record(
                 "interaction_direct_web_research_capability",
-                available=bool(web_tool_names),
+                required=required_web_research,
+                recognized_search_tools_mounted=bool(web_tool_names),
                 tool_names=web_tool_names,
+                config_id=config_id,
             )
         except Exception:
             pass

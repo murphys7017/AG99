@@ -8,8 +8,10 @@ import pytest
 from astrbot.core import astr_main_agent as ama
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.capabilities import CapabilitySnapshot
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.interaction.turn_state import set_interaction_turn_core_provider_id
+from astrbot.core.interaction.types import CoreTaskSpec
 from astrbot.core.message.components import Image, Plain, Reply, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
@@ -117,6 +119,47 @@ def _setup_conversation_for_build(conv_mgr, cid: str = "conv-id") -> MagicMock:
     conversation = _new_mock_conversation(cid=cid)
     conv_mgr.get_conversation = AsyncMock(return_value=conversation)
     return conversation
+
+
+def test_diagnose_direct_web_research_capability_reports_recognized_mounted_search():
+    task_spec = CoreTaskSpec(suggested_capabilities=["web_research"])
+    web_capabilities = CapabilitySnapshot(
+        target="core",
+        persona_id=None,
+        selection_mode="test",
+        tools=(
+            FunctionTool(
+                name="web_search_tavily",
+                description="search",
+                parameters={"type": "object", "properties": {}},
+            ),
+        ),
+    )
+
+    assert ama.diagnose_direct_web_research_capability(
+        task_spec,
+        web_capabilities,
+    ) == (True, ["web_search_tavily"])
+    assert ama.diagnose_direct_web_research_capability(
+        task_spec,
+        CapabilitySnapshot.empty(target="core"),
+    ) == (True, [])
+    extraction_only = CapabilitySnapshot(
+        target="core",
+        persona_id=None,
+        selection_mode="test",
+        tools=(
+            FunctionTool(
+                name="exa_get_contents",
+                description="extract",
+                parameters={"type": "object", "properties": {}},
+            ),
+        ),
+    )
+    assert ama.diagnose_direct_web_research_capability(
+        task_spec,
+        extraction_only,
+    ) == (True, [])
 
 
 @pytest.mark.asyncio

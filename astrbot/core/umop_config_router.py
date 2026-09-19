@@ -1,5 +1,6 @@
 import fnmatch
 
+from astrbot import logger
 from astrbot.core.utils.shared_preferences import SharedPreferences
 
 
@@ -45,6 +46,41 @@ class UmopConfigRouter:
 
         return all(p == "" or fnmatch.fnmatchcase(t, p) for p, t in zip(p1_ls, p2_ls))
 
+    @staticmethod
+    def _specificity(pattern: str) -> tuple[int, int]:
+        """Rank exact segments first, then the fixed text in wildcard segments."""
+        parts = UmopConfigRouter._split_umo(pattern)
+        if parts is None:
+            return (-1, -1)
+        exact_segments = 0
+        fixed_characters = 0
+        for part in parts:
+            has_wildcard = not part
+            index = 0
+            while index < len(part):
+                char = part[index]
+                if char in "*?":
+                    has_wildcard = True
+                elif char == "[":
+                    # Match fnmatch's class boundaries, including [!...] and
+                    # a leading literal ]. An unclosed [ is a literal.
+                    end = index + 1
+                    if part[end : end + 1] == "!":
+                        end += 1
+                    if part[end : end + 1] == "]":
+                        end += 1
+                    end = part.find("]", end)
+                    if end != -1:
+                        has_wildcard = True
+                        index = end
+                    else:
+                        fixed_characters += 1
+                else:
+                    fixed_characters += 1
+                index += 1
+            exact_segments += not has_wildcard
+        return exact_segments, fixed_characters
+
     def get_conf_id_for_umop(self, umo: str) -> str | None:
         """根据 UMO 获取对应的配置文件 ID
 
@@ -55,10 +91,30 @@ class UmopConfigRouter:
             str | None: 配置文件 ID，如果没有找到则返回 None
 
         """
+        best_conf_id: str | None = None
+        best_pattern: str | None = None
+        best_specificity = (-1, -1)
         for pattern, conf_id in self.umop_to_conf_id.items():
-            if self._is_umo_match(pattern, umo):
-                return conf_id
-        return None
+            if not self._is_umo_match(pattern, umo):
+                continue
+            specificity = self._specificity(pattern)
+            if specificity > best_specificity:
+                best_pattern = pattern
+                best_conf_id = conf_id
+                best_specificity = specificity
+                continue
+            if specificity == best_specificity and pattern != best_pattern:
+                logger.debug(
+                    "UMO config route specificity tie: umo=%s specificity=%s "
+                    "kept_pattern=%s kept_config=%s ignored_pattern=%s ignored_config=%s",
+                    umo,
+                    specificity,
+                    best_pattern,
+                    best_conf_id,
+                    pattern,
+                    conf_id,
+                )
+        return best_conf_id
 
     async def update_routing_data(self, new_routing: dict[str, str]) -> None:
         """更新路由表

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from astrbot import logger
 from astrbot.core.deadline import TurnDeadlineBudget
 from astrbot.core.execution import (
     CORE_EXECUTION_SPEC_EXTRA_KEY,
@@ -128,6 +129,18 @@ class InteractionContextMaterial:
     capability_payload: dict[str, Any] = field(default_factory=dict)
     context_snapshot: dict[str, Any] = field(default_factory=dict)
     collected_scopes: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnAdmissionSnapshot:
+    """Read-only diagnostic facts frozen when a turn is admitted."""
+
+    turn_id: str
+    unified_msg_origin: str
+    config_id: str
+    persona_id_at_admission: str | None
+    has_runtime_config: bool
+    has_plugin_admission: bool
 
 
 @dataclass(slots=True)
@@ -318,6 +331,7 @@ class InteractionTurnState:
     #: start so every consumer agrees and a mid-turn plugin reload cannot change
     #: the answer between two capability lookups.
     plugin_admission: PluginAdmissionSnapshot | None = None
+    admission_snapshot: TurnAdmissionSnapshot | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     stream_interjection_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -472,6 +486,32 @@ def set_interaction_turn_plugin_admission(
         state.plugin_admission = snapshot
 
 
+def freeze_interaction_turn_admission_snapshot(
+    event,
+) -> TurnAdmissionSnapshot:
+    """Freeze admission diagnostics without changing runtime behavior."""
+    state = ensure_interaction_turn_state(event)
+    if state.admission_snapshot is not None:
+        return state.admission_snapshot
+
+    config_id = str(
+        state.runtime_config_id
+        or event.get_extra("_astrbot_config_id", "")
+        or "default"
+    ).strip() or "default"
+    persona_id = str(state.persona_id or "").strip() or None
+    snapshot = TurnAdmissionSnapshot(
+        turn_id=state.turn_id,
+        unified_msg_origin=str(getattr(event, "unified_msg_origin", "") or ""),
+        config_id=config_id,
+        persona_id_at_admission=persona_id,
+        has_runtime_config=state.runtime_config_snapshot is not None,
+        has_plugin_admission=state.plugin_admission is not None,
+    )
+    state.admission_snapshot = snapshot
+    return snapshot
+
+
 def ensure_interaction_turn_state(
     event,
     *,
@@ -496,6 +536,14 @@ def set_interaction_turn_persona_id(event, persona_id: str) -> None:
     normalized_persona_id = str(persona_id or "")
     state = get_interaction_turn_state(event)
     if state is not None:
+        if state.persona_id != normalized_persona_id:
+            logger.debug(
+                "DIAG interaction.persona_identity: turn_id=%s "
+                "previous_persona_id=%s persona_id=%s",
+                state.turn_id,
+                state.persona_id or "",
+                normalized_persona_id,
+            )
         state.persona_id = normalized_persona_id
 
 

@@ -57,6 +57,7 @@ from .turn_state import (
     build_interaction_turn_reply,
     ensure_interaction_turn_state,
     finish_interaction_turn_final_output,
+    freeze_interaction_turn_admission_snapshot,
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_delivery_metadata,
@@ -322,6 +323,17 @@ class InteractionMiddleware:
         event.set_extra(
             PLUGIN_ADMISSION_SNAPSHOT_EXTRA_KEY,
             turn_state.plugin_admission,
+        )
+        admission = freeze_interaction_turn_admission_snapshot(event)
+        logger.debug(
+            "DIAG interaction.turn_admission_snapshot: turn_id=%s umo=%s "
+            "config_id=%s persona_id_at_admission=%s config_snapshot=%s plugin_admission=%s",
+            admission.turn_id,
+            admission.unified_msg_origin,
+            admission.config_id,
+            admission.persona_id_at_admission or "",
+            admission.has_runtime_config,
+            admission.has_plugin_admission,
         )
 
     def attach_event_context(
