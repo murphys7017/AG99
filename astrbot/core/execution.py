@@ -657,6 +657,7 @@ class CoreExecutionLifecycle:
         init=False,
         repr=False,
     )
+    _executor_id: str | None = field(default=None, init=False, repr=False)
     _executor_stop_error: str | None = field(default=None, init=False, repr=False)
     _deadline_view: CoreExecutionDeadlineView | None = field(
         default=None,
@@ -707,6 +708,7 @@ class CoreExecutionLifecycle:
     def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
         """Sequence an executor fact through the owning Core session."""
 
+        self._validate_executor_identity(execution_event.executor_id)
         envelope = self.session.record_event(execution_event)
         if self._event_publisher is not None:
             self._event_publisher(envelope)
@@ -736,6 +738,42 @@ class CoreExecutionLifecycle:
                 return
             raise ValueError("CoreExecutionLifecycle already has an executor callback")
         self._executor_stop_callback = callback
+
+    @property
+    def executor_id(self) -> str | None:
+        """Return the executor currently attached to this lifecycle."""
+
+        return self._executor_id
+
+    def bind_executor(
+        self,
+        *,
+        executor_id: str,
+        stop_callback: Callable[[], None],
+    ) -> None:
+        """Attach one executor identity and its stop operation to this session."""
+
+        normalized_executor_id = str(executor_id or "").strip()
+        if not normalized_executor_id:
+            raise ValueError("CoreExecutionLifecycle requires a non-empty executor_id")
+        if self._executor_id is not None and self._executor_id != normalized_executor_id:
+            raise ValueError("CoreExecutionLifecycle already has another executor")
+        self.bind_executor_stop_callback(stop_callback)
+        self._executor_id = normalized_executor_id
+
+    def release_executor(self, *, executor_id: str) -> bool:
+        """Release a completed executor without dropping active cancel support."""
+
+        normalized_executor_id = str(executor_id or "").strip()
+        if self._executor_id is None:
+            return False
+        if self._executor_id != normalized_executor_id:
+            raise ValueError("CoreExecutionLifecycle executor identity does not match")
+        if not self.session.status.is_terminal:
+            return False
+        self._executor_stop_callback = None
+        self._executor_id = None
+        return True
 
     @property
     def deadline_view(self) -> CoreExecutionDeadlineView | None:
@@ -890,6 +928,12 @@ class CoreExecutionLifecycle:
         except Exception as exc:  # noqa: BLE001
             self._executor_stop_error = f"{type(exc).__name__}: {exc}"
 
+    def _validate_executor_identity(self, executor_id: str) -> None:
+        if self._executor_id is None:
+            return
+        if self._executor_id != str(executor_id or "").strip():
+            raise ValueError("CoreExecutionEvent executor identity does not match")
+
     def ledger_status(self, *, user_aborted: bool = False) -> str | None:
         """Project the terminal Core fact to the existing Ledger status value."""
 
@@ -988,6 +1032,30 @@ class CoreExecutionHead:
         """Bind the active Executor Body stop request."""
 
         self.lifecycle.bind_executor_stop_callback(callback)
+
+    @property
+    def executor_id(self) -> str | None:
+        """Return the executor currently attached to this Core session."""
+
+        return self.lifecycle.executor_id
+
+    def bind_executor(
+        self,
+        *,
+        executor_id: str,
+        stop_callback: Callable[[], None],
+    ) -> None:
+        """Attach one active Executor Body to this Core session."""
+
+        self.lifecycle.bind_executor(
+            executor_id=executor_id,
+            stop_callback=stop_callback,
+        )
+
+    def release_executor(self, *, executor_id: str) -> bool:
+        """Release a terminal Executor Body from this Core session."""
+
+        return self.lifecycle.release_executor(executor_id=executor_id)
 
     @property
     def deadline_view(self) -> CoreExecutionDeadlineView | None:

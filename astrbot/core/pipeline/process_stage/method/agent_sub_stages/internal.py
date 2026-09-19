@@ -388,7 +388,7 @@ class InternalAgentSubStage(Stage):
                             CoreExecutionDeadlineView.from_budget(deadline)
                         )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
-                    execution_head.bind_executor_stop_callback(native_executor.request_stop)
+                    native_executor.bind_to_core_head()
                     native_executor.submit(
                         metadata={
                             "provider_id": str(
@@ -564,6 +564,8 @@ class InternalAgentSubStage(Stage):
                     ),
                 )
             finally:
+                if native_executor is not None:
+                    native_executor.release_from_core_head()
                 if runner_registered and native_executor is not None:
                     runtime_manager = self.ctx.personal_runtime_manager
                     if runtime_manager is not None:
@@ -620,6 +622,8 @@ class InternalAgentSubStage(Stage):
             with temporary_output_origin(event, OutputOrigin.CORE.value):
                 await event.send(MessageChain().message(error_text))
         finally:
+            if native_executor is not None:
+                native_executor.release_from_core_head()
             if typing_requested:
                 try:
                     await event.stop_typing()

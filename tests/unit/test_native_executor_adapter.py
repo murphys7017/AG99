@@ -102,6 +102,10 @@ def test_native_executor_adapter_emits_through_core_boundary(monkeypatch):
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
     )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: None,
+    )
 
     adapter.emit_event(
         kind="working",
@@ -173,6 +177,29 @@ def test_native_executor_adapter_keeps_earlier_terminal_outcome(monkeypatch):
     assert emitted == []
 
 
+def test_native_executor_adapter_binds_and_releases_core_head(monkeypatch):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    calls = []
+    head = SimpleNamespace(
+        bind_executor=lambda **kwargs: calls.append(("bind", kwargs)),
+        release_executor=lambda **kwargs: calls.append(("release", kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: head,
+    )
+
+    assert adapter.bind_to_core_head() is True
+    assert adapter.release_from_core_head() is True
+    assert calls[0][0] == "bind"
+    assert calls[0][1]["executor_id"] == "native"
+    assert calls[0][1]["stop_callback"] == adapter.request_stop
+    assert calls[1] == ("release", {"executor_id": "native"})
+
+
 def test_native_executor_adapter_projects_final_response_metadata():
     runner = FakeNativeRunner()
     runner.final_response = SimpleNamespace(
@@ -206,6 +233,10 @@ def test_native_executor_adapter_observes_tool_progress_without_result_content(
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: None,
     )
 
     assert adapter.observe_response(

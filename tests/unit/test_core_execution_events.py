@@ -453,6 +453,33 @@ def test_core_execution_head_complete_orders_artifact_before_terminal():
     ]
 
 
+def test_core_execution_head_keeps_executor_bound_until_terminal():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    stop_calls = []
+
+    head.bind_executor(
+        executor_id="native",
+        stop_callback=lambda: stop_calls.append(True),
+    )
+
+    assert head.executor_id == "native"
+    assert head.release_executor(executor_id="native") is False
+    with pytest.raises(ValueError, match="executor identity"):
+        head.emit_event(
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="other",
+        )
+
+    head.emit_event(kind=CoreExecutionEventKind.SUBMITTED, executor_id="native")
+    head.cancel(executor_id="native", metadata={"reason": "cancelled"})
+
+    assert stop_calls == [True]
+    assert head.release_executor(executor_id="native") is True
+    assert head.executor_id is None
+
+
 def test_core_execution_head_fail_emits_only_one_terminal_fact():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)

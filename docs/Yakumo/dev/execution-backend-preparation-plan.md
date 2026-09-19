@@ -971,6 +971,17 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   反向决定 Core progress。Personal 仍是 delegated Interaction 的唯一对外表达窗口。
 - Native 的取消和失败分支也统一调用 Adapter 的终态 API，避免执行循环绕过终态 owner。
 
+### 2026-09-19 Core Head Executor 绑定与终态释放
+
+- `CoreExecutionLifecycle` 现在显式绑定一个 executor identity 与停止回调；绑定期间，
+  其他 executor 的执行事实会被拒绝，防止同一 Core session 的状态来源漂移。
+- 只有 session 已进入终态后才能释放 executor identity 和停止回调。外层异常路径会再次
+  尝试释放，确保在其写入 `failed` / `cancelled` 终态后完成清理；活跃任务不会提前失去
+  Core cancel 能力。
+- `NativeExecutorAdapter` 负责绑定和释放自身，Stage 不再直接操作 Core Head 的 Native
+  stop callback。该语义仍不伪造 runner `close()`，Native step stream 的关闭继续由其
+  消费方在 `finally` 负责。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

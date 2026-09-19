@@ -84,8 +84,12 @@ class NativeExecutorAdapter:
         metadata: dict | None = None,
     ):
         """Publish one Native fact through the owning Core execution boundary."""
+        event = self._runner.run_context.context.event
+        execution_head = get_core_execution_head(event)
+        if execution_head is not None and execution_head.terminal_event is not None:
+            return execution_head.terminal_event.execution
         return record_interaction_turn_core_execution_event(
-            self._runner.run_context.context.event,
+            event,
             kind=kind,
             executor_id=self.executor_id,
             metadata=metadata,
@@ -110,11 +114,6 @@ class NativeExecutorAdapter:
         earlier cancellation or failure therefore remains authoritative when a
         late Native completion arrives.
         """
-        execution_head = get_core_execution_head(
-            self._runner.run_context.context.event
-        )
-        if execution_head is not None and execution_head.terminal_event is not None:
-            return execution_head.terminal_event.execution
         if artifact_metadata is not None:
             self.emit_event(
                 kind=CoreExecutionEventKind.ARTIFACT_READY,
@@ -217,6 +216,30 @@ class NativeExecutorAdapter:
 
     def request_stop(self) -> None:
         self._runner.request_stop()
+
+    def bind_to_core_head(self) -> bool:
+        """Attach this executor's identity and stop operation to the Core Head."""
+
+        execution_head = get_core_execution_head(
+            self._runner.run_context.context.event
+        )
+        if execution_head is None:
+            return False
+        execution_head.bind_executor(
+            executor_id=self.executor_id,
+            stop_callback=self.request_stop,
+        )
+        return True
+
+    def release_from_core_head(self) -> bool:
+        """Release this executor only after the Core session becomes terminal."""
+
+        execution_head = get_core_execution_head(
+            self._runner.run_context.context.event
+        )
+        if execution_head is None:
+            return False
+        return execution_head.release_executor(executor_id=self.executor_id)
 
     def step(self) -> AsyncGenerator[AgentResponse, None]:
         """Open one Native step stream; the consumer must close it on exit."""
