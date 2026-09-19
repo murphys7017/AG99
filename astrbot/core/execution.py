@@ -1028,6 +1028,41 @@ class CoreExecutionHead:
             )
         return envelope.execution
 
+    def complete(
+        self,
+        *,
+        executor_id: str,
+        artifact_metadata: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent:
+        """Finalize successfully, preserving artifact-before-terminal order."""
+
+        if artifact_metadata is not None:
+            self.emit_event(
+                kind=CoreExecutionEventKind.ARTIFACT_READY,
+                executor_id=executor_id,
+                metadata=artifact_metadata,
+            )
+        return self.emit_event(
+            kind=CoreExecutionEventKind.COMPLETED,
+            executor_id=executor_id,
+            metadata=metadata,
+        )
+
+    def fail(
+        self,
+        *,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent:
+        """Finalize with one failed terminal fact through the Head."""
+
+        return self.emit_event(
+            kind=CoreExecutionEventKind.FAILED,
+            executor_id=executor_id,
+            metadata=metadata,
+        )
+
     def cancel(
         self,
         *,

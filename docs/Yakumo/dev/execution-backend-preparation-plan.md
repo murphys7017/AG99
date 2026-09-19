@@ -809,6 +809,10 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 2026-09-19 时序复核确认：deadline 取消后的迟到终态不会覆盖已取消 Session，重复
   取消保持幂等，Ledger 写入失败后 claim 可释放并重试。该验证只覆盖当前 Native
   适配路径，尚未宣称 Personal/Core session ownership 或 Ledger 持久化 owner 已迁移。
+- `CoreExecutionHead.complete()` / `fail()` 收拢了 Native 的终态收尾入口：成功路径由
+  Head 保证 `artifact_ready -> completed` 顺序，失败路径统一发布 `failed`；无 Head
+  的 Legacy 桥接继续使用原有投影。该切片不改变可见输出、Ledger 持久化或 Executor
+  选择，只减少 Native 分支对终态顺序的重复解释。
 
 ## 非目标
 

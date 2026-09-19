@@ -518,6 +518,7 @@ class InternalAgentSubStage(Stage):
                         yield
 
                 final_resp = agent_runner.get_final_llm_resp()
+                execution_head = get_core_execution_head(event)
 
                 if agent_runner.done() and (
                     final_resp is None or final_resp.role != "err"
@@ -525,32 +526,42 @@ class InternalAgentSubStage(Stage):
                     if final_resp is not None:
                         completion_text = str(final_resp.completion_text or "")
                         result_chain = final_resp.result_chain
+                        artifact_metadata = {
+                            "artifact_id": "final_response",
+                            "artifact_kind": (
+                                "text"
+                                if completion_text
+                                else "message_chain"
+                                if result_chain is not None
+                                else "empty"
+                            ),
+                            "text_length": len(completion_text),
+                            "component_count": (
+                                len(result_chain.chain)
+                                if result_chain is not None
+                                else 0
+                            ),
+                        }
+                    else:
+                        artifact_metadata = None
+                    if execution_head is not None:
+                        execution_head.complete(
+                            executor_id="native",
+                            artifact_metadata=artifact_metadata,
+                        )
+                    else:
+                        if artifact_metadata is not None:
+                            record_interaction_turn_core_execution_event(
+                                event,
+                                kind=CoreExecutionEventKind.ARTIFACT_READY,
+                                executor_id="native",
+                                metadata=artifact_metadata,
+                            )
                         record_interaction_turn_core_execution_event(
                             event,
-                            kind=CoreExecutionEventKind.ARTIFACT_READY,
+                            kind=CoreExecutionEventKind.COMPLETED,
                             executor_id="native",
-                            metadata={
-                                "artifact_id": "final_response",
-                                "artifact_kind": (
-                                    "text"
-                                    if completion_text
-                                    else "message_chain"
-                                    if result_chain is not None
-                                    else "empty"
-                                ),
-                                "text_length": len(completion_text),
-                                "component_count": (
-                                    len(result_chain.chain)
-                                    if result_chain is not None
-                                    else 0
-                                ),
-                            },
                         )
-                    record_interaction_turn_core_execution_event(
-                        event,
-                        kind=CoreExecutionEventKind.COMPLETED,
-                        executor_id="native",
-                    )
                 else:
                     failure_metadata = {
                         "reason": (
@@ -563,12 +574,18 @@ class InternalAgentSubStage(Stage):
                         failure_metadata["error"] = str(
                             final_resp.completion_text
                         )[:2000]
-                    record_interaction_turn_core_execution_event(
-                        event,
-                        kind=CoreExecutionEventKind.FAILED,
-                        executor_id="native",
-                        metadata=failure_metadata,
-                    )
+                    if execution_head is not None:
+                        execution_head.fail(
+                            executor_id="native",
+                            metadata=failure_metadata,
+                        )
+                    else:
+                        record_interaction_turn_core_execution_event(
+                            event,
+                            kind=CoreExecutionEventKind.FAILED,
+                            executor_id="native",
+                            metadata=failure_metadata,
+                        )
 
                 event.trace.record(
                     "astr_agent_complete",
