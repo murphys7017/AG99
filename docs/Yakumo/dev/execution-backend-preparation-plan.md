@@ -933,6 +933,14 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 这一步只清理 Native runner 直连的内部残留，不引入新的执行器协议，也不删除
   过渡期的外部兼容参数。
 
+### 2026-09-20 Internal Agent 统计兼容边界标注
+
+- `InternalAgentSubStage` 的生产路径已经始终通过 `NativeExecutorAdapter` 读取
+  provider、stats 和 aborted 状态。
+- `_record_internal_agent_stats()` 仍保留旧的 positional runner 参数，仅作为历史
+  内部调用的 fallback，并明确命名为 `legacy_agent_runner`；这次不改变旧调用行为，
+  也不把它重新作为 Core 执行边界。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
