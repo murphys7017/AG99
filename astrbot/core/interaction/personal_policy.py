@@ -276,6 +276,14 @@ def extract_personal_policy_decision(
     output_contract: OutputContract,
     compiled_output_contract: CompiledOutputContract,
 ) -> PersonalPolicyDecision:
+    if compiled_output_contract.strategy == "prompt_only":
+        payload = extract_json_object(
+            getattr(llm_response, "completion_text", "") or ""
+        )
+        decision = PersonalPolicyDecision.from_mapping(payload)
+        if decision is not None:
+            return decision
+        raise PersonalPolicyError("invalid_policy_json")
     if (
         compiled_output_contract.strategy != "protocol_tool_call"
         or compiled_output_contract.degraded
@@ -368,19 +376,10 @@ class PersonalPolicyAgent:
                 failure_code="unsupported_output_contract",
                 selected_slot_names=slot_names,
             )
-        if compiled.strategy != "protocol_tool_call" or compiled.degraded:
-            return PersonalPolicyEvaluation.fail_closed(
-                batch_id=batch.batch_id,
-                evaluated_at=gate_result.evaluated_at,
-                provider_id=provider_id,
-                failure_code="unsupported_policy_tool_call",
-                selected_slot_names=slot_names,
-            )
         try:
             validated_contract = provider.ensure_output_contract_supported(
                 output_contract=contract,
                 compiled_output_contract=compiled,
-                allow_prompt_only_degrade=False,
             )
         except Exception:
             return PersonalPolicyEvaluation.fail_closed(
@@ -392,8 +391,12 @@ class PersonalPolicyAgent:
             )
         if (
             not isinstance(validated_contract, CompiledOutputContract)
-            or validated_contract.strategy != "protocol_tool_call"
-            or validated_contract.degraded
+            or validated_contract.strategy
+            not in {"protocol_tool_call", "prompt_only"}
+            or (
+                validated_contract.strategy == "protocol_tool_call"
+                and validated_contract.degraded
+            )
         ):
             return PersonalPolicyEvaluation.fail_closed(
                 batch_id=batch.batch_id,
@@ -426,7 +429,11 @@ class PersonalPolicyAgent:
                     ),
                     system_prompt=render_result.system_prompt or "",
                     temperature=interaction_config.personal_policy_temperature,
-                    tool_choice="required",
+                    tool_choice=(
+                        "required"
+                        if compiled.strategy == "protocol_tool_call"
+                        else "auto"
+                    ),
                     output_contract=contract,
                     compiled_output_contract=compiled,
                 ),

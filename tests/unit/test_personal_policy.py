@@ -29,6 +29,16 @@ def _compiled_contract():
     )
 
 
+def _prompt_only_contract():
+    contract = build_personal_policy_output_contract()
+    return contract, CompiledOutputContract(
+        contract=contract,
+        strategy="prompt_only",
+        degraded=True,
+        degrade_reason="renderer_has_no_protocol_support",
+    )
+
+
 def test_policy_extraction_reports_invalid_matching_tool_call():
     contract, compiled = _compiled_contract()
     response = SimpleNamespace(
@@ -68,3 +78,33 @@ def test_policy_extraction_accepts_valid_matching_tool_call():
     decision = extract_personal_policy_decision(response, contract, compiled)
 
     assert decision.action is PersonalPolicyAction.IGNORE
+
+
+def test_policy_extraction_accepts_valid_prompt_only_json():
+    contract, compiled = _prompt_only_contract()
+    response = SimpleNamespace(
+        completion_text=(
+            '{"action":"ignore","reason_code":"insufficient_value",'
+            '"reply_intent":"","importance":0.0,"defer_seconds":0}'
+        ),
+        tools_call_name=[],
+        tools_call_args=[],
+    )
+
+    decision = extract_personal_policy_decision(response, contract, compiled)
+
+    assert decision.action is PersonalPolicyAction.IGNORE
+
+
+def test_policy_extraction_rejects_prompt_only_plain_text():
+    contract, compiled = _prompt_only_contract()
+    response = SimpleNamespace(
+        completion_text="Nothing needs to be done.",
+        tools_call_name=[],
+        tools_call_args=[],
+    )
+
+    with pytest.raises(PersonalPolicyError) as exc_info:
+        extract_personal_policy_decision(response, contract, compiled)
+
+    assert exc_info.value.reason == "invalid_policy_json"

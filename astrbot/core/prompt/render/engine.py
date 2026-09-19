@@ -225,7 +225,19 @@ class PromptRenderEngine:
         provider_config = getattr(provider, "provider_config", None)
         if not isinstance(provider_config, dict):
             return False
-        value = provider_config.get("minimax_enable_tool_call", True)
+        supports_strategy = getattr(
+            provider,
+            "supports_output_contract_strategy",
+            None,
+        )
+        if not (
+            callable(supports_strategy)
+            and supports_strategy("protocol_tool_call")
+        ):
+            return False
+        value = provider_config.get("minimax_enable_tool_call")
+        if value is None:
+            return True
         if isinstance(value, bool):
             return value
         if isinstance(value, str):

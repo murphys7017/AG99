@@ -101,7 +101,9 @@ renderer 负责把声明编译成策略：
 - `BasePromptRenderer`: 对非 text 输出契约默认编译为 `prompt_only`；仅 `strict tool_call` 降到 `prompt_only` 时记为 `degraded`。
 - `OpenAIPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 OpenAI-compatible message/tool schema 形态。
 - `AnthropicPromptRenderer`: 对 `tool_call` 编译为 `protocol_tool_call`，保持 Anthropic content block/tool schema 形态。
-- `MiniMaxPromptRenderer`: 默认把 `tool_call` 编译为 `protocol_tool_call`；只有 provider 显式配置 `minimax_enable_tool_call=False` 时才降级到 `prompt_only`。
+- `MiniMaxPromptRenderer`: 根据 provider 是否支持强制 tool choice 决定策略；MiniMax
+  Token Plan 不支持这一能力，因此严格 `tool_call` 编译为 `prompt_only`。只有明确声明
+  支持该能力的其他 MiniMax renderer provider 才使用 `protocol_tool_call`。
 
 renderer 不负责：
 
@@ -121,7 +123,12 @@ provider 负责把 compiled binding 落到自身协议：
 当前已真实处理 `protocol_tool_call` 的基础 provider：
 
 - `ProviderOpenAIOfficial` 及其 OpenAI-compatible 子类
-- `ProviderAnthropic` 及其 Anthropic-compatible 子类
+- `ProviderAnthropic` 及支持强制 tool choice 的 Anthropic-compatible 子类
+
+MiniMax Token Plan 的 Anthropic-compatible API 支持普通工具调用，但不支持
+`required` / `any` 或指定工具形式的强制 `tool_choice`。因此它的严格输出契约编译为
+`prompt_only`，继续使用同一 schema、JSON 修复和严格校验；普通业务 FunctionTool
+仍按 MiniMax 原生 `auto` 工具调用运行。
 
 Gemini、VolcEngine Ark 等 provider 当前没有 provider-specific renderer。strict contract 到达这些 provider 时，应按场景策略显式失败或受控降级。
 

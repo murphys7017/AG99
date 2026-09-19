@@ -51,6 +51,12 @@ class ProviderMiniMaxTokenPlan(ProviderAnthropic):
         configured_model = provider_config.get("model", "MiniMax-M3")
         self.set_model(configured_model)
 
+    def supports_output_contract_strategy(self, strategy: str) -> bool:
+        # MiniMax's Anthropic-compatible API accepts tools, but its documented
+        # tool_choice modes cannot require a tool call. Strict output contracts
+        # therefore use the renderer's validated prompt-only JSON path.
+        return strategy == "prompt_only"
+
     async def get_models(self) -> list[str]:
         key = self.chosen_api_key
         if not key:

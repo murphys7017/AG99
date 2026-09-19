@@ -421,7 +421,7 @@ def test_minimax_renderer_can_opt_out_to_prompt_only():
     )
 
 
-def test_render_engine_enables_minimax_tool_call_by_default():
+def test_render_engine_uses_minimax_provider_output_contract_capability():
     from astrbot.core.output_contract import OutputContract
 
     pack = ContextPack(slots={})
@@ -438,7 +438,10 @@ def test_render_engine_enables_minimax_tool_call_by_default():
         {
             "provider_config": {
                 "type": "minimax_token_plan",
-            }
+            },
+            "supports_output_contract_strategy": lambda self, strategy: (
+                strategy == "protocol_tool_call"
+            ),
         },
     )()
 
@@ -451,6 +454,73 @@ def test_render_engine_enables_minimax_tool_call_by_default():
     assert result.compiled_output_contract is not None
     assert result.compiled_output_contract.strategy == "protocol_tool_call"
     assert result.compiled_output_contract.tool_name == "persona_expression"
+
+
+def test_render_engine_uses_prompt_only_for_minimax_token_plan_contract():
+    from astrbot.core.output_contract import OutputContract
+    from astrbot.core.provider.sources.minimax_token_plan_source import (
+        ProviderMiniMaxTokenPlan,
+    )
+
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="persona_expression",
+        allow_text_fallback=False,
+    ).to_dict()
+    provider = ProviderMiniMaxTokenPlan(
+        provider_config={
+            "id": "minimax-test",
+            "type": "minimax_token_plan",
+            "key": ["test-key"],
+        },
+        provider_settings={},
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": provider})(),
+    )
+
+    assert result.compiled_output_contract is not None
+    assert result.compiled_output_contract.strategy == "prompt_only"
+    assert result.compiled_output_contract.degraded is True
+    assert "仅返回一个" in (result.compiled_output_contract.fallback_prompt_text or "")
+
+
+def test_minimax_token_plan_config_cannot_enable_unsupported_required_tool_choice():
+    from astrbot.core.output_contract import OutputContract
+    from astrbot.core.provider.sources.minimax_token_plan_source import (
+        ProviderMiniMaxTokenPlan,
+    )
+
+    pack = ContextPack(slots={})
+    pack.meta["output_contract"] = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {}},
+        preferred_tool_name="persona_expression",
+        allow_text_fallback=False,
+    ).to_dict()
+    provider = ProviderMiniMaxTokenPlan(
+        provider_config={
+            "id": "minimax-test",
+            "type": "minimax_token_plan",
+            "key": ["test-key"],
+            "minimax_enable_tool_call": True,
+        },
+        provider_settings={},
+    )
+
+    result = PromptRenderEngine().render(
+        pack,
+        provider_request=type("RequestStub", (), {"provider": provider})(),
+    )
+
+    assert result.compiled_output_contract is not None
+    assert result.compiled_output_contract.strategy == "prompt_only"
 
 
 def test_render_engine_can_disable_minimax_tool_call_from_provider_config():

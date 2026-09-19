@@ -1,3 +1,19 @@
+minimax_strict_output_contract:
+  date: '2026-09-19'
+  class: bugfix
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Stop treating MiniMax Token Plan's Anthropic-compatible endpoint as capable
+    of required tool choice. Compile strict output contracts to the existing
+    prompt-only JSON path while preserving ordinary business tool calls.
+  non_goals: Persona schema changes, effect changes, provider replacement, restart.
+  validation: >-
+    Focused renderer, Persona and Personal Policy suite passed 93 tests. Ruff,
+    compileall and git diff checks passed. Direct MiniMax-M3 prompt-only probes
+    returned parseable Persona JSON. Full OLV/effect live acceptance
+    remains pending and AstrBot was not restarted.
+
 persona_context_image_fix:
   date: '2026-09-19'
   class: bugfix
