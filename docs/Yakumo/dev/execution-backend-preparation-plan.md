@@ -774,7 +774,7 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 才建立 Native Executor Adapter。
 不得把现有 Lifecycle 直接更名为 `ExecutionBackend`，也不得先接入第二个执行器来反向逼迫接口设计。
 
-### 2026-09-20 Phase 9 第十五个通信契约切片
+### 2026-09-19 Phase 9 第十五个通信契约切片
 
 - `CoreExecutionHead` 新增 `dispatch_command()`，通过 `CoreCommandReceipt` 明确返回
   `accepted` 或幂等 `duplicate`。命令接收不再被误解为执行完成；真正的执行状态仍只能由
