@@ -54,6 +54,15 @@ class PluginDeliveryKey:
     artifact_sequence: int
 
 
+def serialize_plugin_delivery_key(key: PluginDeliveryKey) -> dict[str, Any]:
+    """Return the stable, trace-safe form of an artifact delivery key."""
+    return {
+        "plugin_job_id": key.plugin_job_id,
+        "handler_invocation_id": key.handler_invocation_id,
+        "artifact_sequence": key.artifact_sequence,
+    }
+
+
 @dataclass(slots=True)
 class PluginOutputArtifact:
     sequence: int

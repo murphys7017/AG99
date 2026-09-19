@@ -12,6 +12,7 @@ from .plugin_execution_types import (
     PluginBranchResult,
     PluginDeliveryDisposition,
     PluginOutputArtifact,
+    serialize_plugin_delivery_key,
 )
 from .turn_state import (
     InteractionFinalOutputStatus,
@@ -116,15 +117,9 @@ class PluginArtifactDeliveryCoordinator:
                             "scope": "plugin_artifact",
                             "delivery_mode": "inline",
                             "delivery_group_id": artifact.delivery_group_id,
-                            "delivery_key": {
-                                "plugin_job_id": artifact.delivery_key.plugin_job_id,
-                                "handler_invocation_id": (
-                                    artifact.delivery_key.handler_invocation_id
-                                ),
-                                "artifact_sequence": (
-                                    artifact.delivery_key.artifact_sequence
-                                ),
-                            },
+                            "delivery_key": serialize_plugin_delivery_key(
+                                artifact.delivery_key
+                            ),
                         },
                     },
                 )

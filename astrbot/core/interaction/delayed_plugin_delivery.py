@@ -22,6 +22,7 @@ from .plugin_execution_types import (
     PluginBranchResult,
     PluginDeliveryDisposition,
     PluginOutputArtifact,
+    serialize_plugin_delivery_key,
 )
 from .runtime_event import RuntimeObservationEvent
 from .turn_state import (
@@ -495,11 +496,7 @@ class DelayedPluginDeliveryCoordinator:
     ) -> dict[str, Any]:
         first = artifacts[0]
         delivery_keys = [
-            {
-                "plugin_job_id": artifact.plugin_job_id,
-                "handler_invocation_id": artifact.handler_invocation_id,
-                "artifact_sequence": artifact.sequence,
-            }
+            serialize_plugin_delivery_key(artifact.delivery_key)
             for artifact in artifacts
         ]
         delivery_fingerprint = hashlib.sha256(
@@ -550,11 +547,7 @@ class DelayedPluginDeliveryCoordinator:
         delivery_drop_reason: str = "",
     ) -> None:
         delivery_keys = [
-            {
-                "plugin_job_id": artifact.plugin_job_id,
-                "handler_invocation_id": artifact.handler_invocation_id,
-                "artifact_sequence": artifact.sequence,
-            }
+            serialize_plugin_delivery_key(artifact.delivery_key)
             for artifact in artifacts
         ]
         logger.debug(
