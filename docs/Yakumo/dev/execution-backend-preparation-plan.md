@@ -922,7 +922,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   Interaction 记录函数。
 - 该入口只负责事件归属和 executor identity，不转换用户输出、不改变 TTS、Prompt、
   Personal 或 Ledger 行为。Native 响应仍是当前过渡期的 Adapter 内部类型。
-- Adapter 边界测试覆盖事件回流；Core/Interaction 定向测试 82 项通过。
+- Adapter 边界测试覆盖事件回流；Core/Interaction 定向测试 83 项通过。
+
+### 2026-09-20 Native 执行循环内部边界统一
+
+- `run_agent()`、`run_live_agent()` 和 TTS feeder 的内部状态读取统一经由
+  `NativeExecutorAdapter`，包括上下文、流式模式、完成状态、统计数据和 provider。
+- 外部入口仍接受 `AgentRunner | NativeExecutorAdapter`，仅在入口处完成一次适配；
+  不改变现有响应、工具状态、TTS 或输出时序。
+- 这一步只清理 Native runner 直连的内部残留，不引入新的执行器协议，也不删除
+  过渡期的外部兼容参数。
 
 ## 非目标
 

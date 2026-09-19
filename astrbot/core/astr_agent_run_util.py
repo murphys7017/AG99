@@ -251,12 +251,12 @@ def _build_tool_result_status_message(
 def _should_buffer_llm_result(
     buffer_intermediate_messages: bool,
     stream_to_general: bool,
-    agent_runner: AgentRunner,
+    executor: NativeExecutorAdapter,
 ) -> bool:
     return (
         buffer_intermediate_messages
         and not stream_to_general
-        and not agent_runner.streaming
+        and not executor.streaming
     )
 
 
@@ -288,17 +288,17 @@ async def run_agent(
         if isinstance(agent_runner, NativeExecutorAdapter)
         else NativeExecutorAdapter(agent_runner)
     )
-    astr_event = agent_runner.run_context.context.event
+    astr_event = executor.run_context.context.event
     executor.emit_event(
         kind=CoreExecutionEventKind.WORKING,
-        metadata={"streaming": bool(agent_runner.streaming)},
+        metadata={"streaming": bool(executor.streaming)},
     )
     tool_name_by_call_id: dict[str, str] = {}
     buffered_llm_chains: list[MessageChain] = []
     can_buffer_llm_result = _should_buffer_llm_result(
         buffer_intermediate_messages,
         stream_to_general,
-        agent_runner,
+        executor,
     )
     while step_idx < max_step + 1:
         step_idx += 1
@@ -307,7 +307,7 @@ async def run_agent(
             logger.warning(
                 f"Agent reached max steps ({max_step}), forcing a final response."
             )
-            if not agent_runner.done():
+            if not executor.done():
                 # 拔掉所有工具
                 executor.force_final_response(
                     instruction=(
@@ -390,7 +390,7 @@ async def run_agent(
                     # 对于其他情况，暂时先不处理
                     continue
                 elif resp.type == "tool_call":
-                    if agent_runner.streaming and show_tool_use:
+                    if executor.streaming and show_tool_use:
                         # 向下游平台发送 "break" 分段信号（空 MessageChain，不携带数据）。
                         # 平台适配器收到后会关闭当前流式消息，并在后续文本到来时创建新消息。
                         # 仅在 show_tool_use 为 True 时才发送：此时紧接着会通过
@@ -435,7 +435,7 @@ async def run_agent(
                 if stream_to_general and resp.type == "streaming_delta":
                     continue
 
-                if stream_to_general or not agent_runner.streaming:
+                if stream_to_general or not executor.streaming:
                     if can_buffer_llm_result and resp.type == "llm_result":
                         buffered_llm_chains.append(resp.data["chain"])
                         continue
@@ -460,7 +460,7 @@ async def run_agent(
                         continue
                     yield resp.data["chain"]  # MessageChain
 
-            if can_buffer_llm_result and agent_runner.done():
+            if can_buffer_llm_result and executor.done():
                 merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
                 if merged_chain:
                     astr_event.set_result(
@@ -478,14 +478,14 @@ async def run_agent(
                     await stop_watcher
                 except asyncio.CancelledError:
                     pass
-            if agent_runner.done():
+            if executor.done():
                 # send agent stats to webchat
                 if astr_event.get_platform_name() == "webchat":
                     await _send_core_event_message(
                         astr_event,
                         MessageChain(
                             type="agent_stats",
-                            chain=[Json(data=agent_runner.stats.to_dict())],
+                            chain=[Json(data=executor.stats.to_dict())],
                         ),
                         delivery=CoreOutputDelivery.PROGRESS,
                     )
@@ -539,7 +539,7 @@ async def run_agent(
             except Exception:
                 logger.exception("Error in on_agent_done hook")
 
-            if agent_runner.streaming:
+            if executor.streaming:
                 yield MessageChain().message(err_msg)
             else:
                 astr_event.set_result(MessageEventResult().message(err_msg))
@@ -593,10 +593,15 @@ async def run_live_agent(
     Yields:
         MessageChain: 包含文本或音频数据的消息链
     """
+    executor = (
+        agent_runner
+        if isinstance(agent_runner, NativeExecutorAdapter)
+        else NativeExecutorAdapter(agent_runner)
+    )
     # 如果没有 TTS Provider，直接发送文本
     if not tts_provider:
         async for chain in run_agent(
-            agent_runner,
+            executor,
             max_step=max_step,
             show_tool_use=show_tool_use,
             show_tool_call_result=show_tool_call_result,
@@ -629,7 +634,7 @@ async def run_live_agent(
     # 1. 启动 Agent Feeder 任务：负责运行 Agent 并将文本分句喂给 text_queue
     feeder_task = asyncio.create_task(
         _run_agent_feeder(
-            agent_runner,
+            executor,
             text_queue,
             max_step,
             show_tool_use,
@@ -694,7 +699,7 @@ async def run_live_agent(
 
     # 发送 TTS 统计信息
     try:
-        astr_event = agent_runner.run_context.context.event
+        astr_event = executor.run_context.context.event
         if astr_event.get_platform_name() == "webchat":
             tts_duration = tts_end_time - tts_start_time
             await _send_core_event_message(
@@ -707,7 +712,7 @@ async def run_live_agent(
                                 "tts_total_time": tts_duration,
                                 "tts_first_frame_time": tts_first_frame_time,
                                 "tts": tts_provider.meta().type,
-                                "chat_model": agent_runner.provider.get_model(),
+                                "chat_model": executor.provider.get_model(),
                             }
                         )
                     ],
@@ -719,7 +724,7 @@ async def run_live_agent(
 
 
 async def _run_agent_feeder(
-    agent_runner: AgentRunner | NativeExecutorAdapter,
+    executor: NativeExecutorAdapter,
     text_queue: asyncio.Queue,
     max_step: int,
     show_tool_use: bool,
@@ -731,7 +736,7 @@ async def _run_agent_feeder(
     buffer = ""
     try:
         async for chain in run_agent(
-            agent_runner,
+            executor,
             max_step=max_step,
             show_tool_use=show_tool_use,
             show_tool_call_result=show_tool_call_result,

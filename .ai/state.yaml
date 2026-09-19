@@ -5,7 +5,7 @@ native_step_boundary:
   scope: Native step driving through the existing adapter and deterministic step/watcher cleanup.
   non_goals: Generic executor protocol, Personal mailbox consumption, Output/TTS changes, service restart.
   validation: Adapter and Core execution suites passed 48 tests. Live platform acceptance remains pending.
-  followup: Native execution facts now enter Core Head through NativeExecutorAdapter.emit_event; focused Core/Interaction validation passed 82 tests.
+  followup: Native execution facts now enter Core Head through NativeExecutorAdapter.emit_event; run_agent and Live/TTS paths now read execution state through the adapter; focused Core/Interaction validation passed 83 tests.
 
 minimax_stt_silence_handling:
   date: '2026-09-19'
