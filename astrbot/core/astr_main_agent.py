@@ -25,7 +25,6 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.execution import (
-    CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreCapabilitySnapshot,
     CoreExecutionSpec,
     NativeExecutionAdapter,
@@ -43,6 +42,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     is_interaction_turn_core_delegated,
+    set_interaction_turn_core_execution_spec,
 )
 from astrbot.core.interaction.types import CoreTaskSpec
 from astrbot.core.message.components import File, Image, Record, Reply, Video
@@ -1366,7 +1366,7 @@ async def build_main_agent(
             tools=capabilities.to_toolset(),
         ),
     )
-    event.set_extra(CORE_EXECUTION_SPEC_EXTRA_KEY, execution_spec)
+    set_interaction_turn_core_execution_spec(event, execution_spec)
     render_result = _render_prompt_pipeline(
         event=event,
         plugin_context=plugin_context,

@@ -61,6 +61,7 @@ from .turn_state import (
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_assistant_artifacts,
     append_interaction_turn_visible_output,
+    begin_interaction_turn_plugin_output_transaction,
     build_interaction_turn_reply,
     consume_interaction_turn_finalization_pending,
     finish_interaction_turn_final_output,
@@ -69,6 +70,7 @@ from .turn_state import (
     get_interaction_turn_delivery_metadata,
     get_interaction_turn_finalized_material,
     get_interaction_turn_immediate_reply,
+    get_interaction_turn_plugin_output_transaction,
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     get_interaction_turn_stream_interjections_emitted,
@@ -103,6 +105,7 @@ from .turn_state import (
     set_interaction_turn_finalized_material,
     set_interaction_turn_immediate_reply,
     set_interaction_turn_pipeline_output_suppressed,
+    set_interaction_turn_plugin_output_transaction,
     set_interaction_turn_stream_observation_count,
     update_interaction_turn_stream_buffer,
 )
@@ -692,17 +695,15 @@ class InteractionOutputController:
         delegated_to_core: bool,
     ) -> None:
         """Commit pending plugin output only when the handler owns the final reply."""
-        active = bool(event.get_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY))
-        start = event.get_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY)
-        pending_artifacts = event.get_extra(
-            PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY,
-            [],
+        active, start, pending_artifacts = (
+            get_interaction_turn_plugin_output_transaction(event)
         )
-        if not isinstance(pending_artifacts, list):
-            pending_artifacts = []
-        event.set_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY, False)
-        event.set_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY, None)
-        event.set_extra(PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY, None)
+        set_interaction_turn_plugin_output_transaction(
+            event,
+            active=False,
+            start=None,
+            artifacts=[],
+        )
         if not active or delegated_to_core or not isinstance(start, int):
             return
 
@@ -728,13 +729,9 @@ class InteractionOutputController:
 
     @staticmethod
     def _begin_plugin_output_transaction(event: AstrMessageEvent) -> bool:
-        if not event.get_extra(PLUGIN_OUTPUT_TRANSACTION_ACTIVE_EXTRA_KEY, False):
+        start = begin_interaction_turn_plugin_output_transaction(event)
+        if start is None:
             return False
-        start = event.get_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY)
-        if not isinstance(start, int):
-            turn_state = get_interaction_turn_state(event)
-            start = len(turn_state.visible_outputs) if turn_state is not None else 0
-            event.set_extra(PLUGIN_OUTPUT_TRANSACTION_START_EXTRA_KEY, start)
         return True
 
     @staticmethod
@@ -748,16 +745,15 @@ class InteractionOutputController:
             return
         artifacts = serialize_assistant_message_chain(message)
         if deferred_by_transaction:
-            pending = event.get_extra(
-                PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY,
-                [],
+            active, start, pending = get_interaction_turn_plugin_output_transaction(
+                event
             )
-            if not isinstance(pending, list):
-                pending = []
-            event.set_extra(
-                PLUGIN_OUTPUT_TRANSACTION_ARTIFACTS_EXTRA_KEY,
-                [*pending, *artifacts],
-            )
+            if active:
+                set_interaction_turn_plugin_output_transaction(
+                    event,
+                    start=start,
+                    artifacts=[*pending, *artifacts],
+                )
             return
         InteractionOutputController._append_assistant_artifacts(event, artifacts)
 

@@ -14,6 +14,9 @@ from astrbot.core.interaction.plugin_execution_types import (
     PluginGateResolution,
     PluginJobState,
 )
+from astrbot.core.interaction.turn_state import (
+    set_interaction_turn_plugin_output_transaction,
+)
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -87,10 +90,7 @@ class PluginHandlerExecutor:
                     result.freeze_t1_artifact_boundary()
             return result.gate_resolution
 
-        event.set_extra(
-            "_interaction_plugin_output_transaction_active",
-            True,
-        )
+        set_interaction_turn_plugin_output_transaction(event, active=True)
         result.started_at = time.time()
         started_perf = time.perf_counter()
         try:

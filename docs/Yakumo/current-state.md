@@ -1,5 +1,35 @@
 # Yakumo Current State
 
+## 2026-09-19 收口进展
+
+已完成第一项 owner 迁移切片：`InteractionTurnState` 与 `CoreExecutionSpec` 的主写入
+事实已从 `event.extra` 移到 `AstrMessageEvent` 的 typed storage / turn state。旧 extra
+键仍作为兼容投影保留，分支事件会隔离 typed state；插件输出事务状态也已迁入同一
+turn owner。该切片通过 80 项针对性测试、compileall 和 diff check。
+
+这只是 `event.extra` 收口的第一批，ProviderRequest、输出生命周期和插件专属状态仍未
+完成迁移；项目仍未达到可替换 Executor Body 的闸门。
+
+## 2026-09-19 全局架构收口基线
+
+全局复核确认项目当前进入“前置主链收口”阶段，而不是继续横向增加功能的阶段。
+Personal、Core Head、Prompt、Capability、Output 和插件运行时的局部边界已经形成，
+但旧路径、兼容投影和双轨运行时仍然同时存在。
+
+当前工作优先级：
+
+1. 固定 `InteractionTurnState`、Output Runtime、`CoreExecutionHead` 和
+   `CapabilitySnapshot` 的唯一内部写入 owner；
+2. 清点 `event.extra`，逐步改为单向兼容投影；
+3. 完成输出生命周期和两条插件运行路径的真实验收；
+4. 收窄 `astr_main_agent.py` 与 Prompt/Capability/ProviderRequest 的转换边界；
+5. 统一 Cron/主动任务与普通 Interaction 的可见输出、TTS、历史和完成回执；
+6. 满足以上条件后再继续 Executor Body 解耦。
+
+因此当前不能将项目描述为“Core Head 已完成”或“Executor 已可替换”。准确表述是：
+Native Core 已有进程内的执行事实、命令、事件、取消和终态基础；完整 Core owner、
+统一执行器回流和第二个真实 Executor Body 仍未完成。
+
 ## 2026-09-19 定时任务与投递收尾
 
 - 已确认的一次真实失败发生在 `02:41:32`：Personal 对“三分钟后提醒”选择了

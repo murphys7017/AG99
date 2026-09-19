@@ -73,6 +73,10 @@ class AstrMessageEvent(abc.ABC):
         self.is_at_or_wake_command = False
         """是否是 At 机器人或者带有唤醒词或者是私聊(插件注册的事件监听器会让 is_wake 设为 True, 但是不会让这个属性置为 True)"""
         self._extras: dict[str, Any] = {}
+        # Interaction state has a typed owner on the event.  The legacy extra
+        # key remains a compatibility projection for external callers and
+        # branch snapshots, but is not the primary storage.
+        self._interaction_turn_state: Any | None = None
         # Platform-owned storage for interaction compatibility hooks. The legacy
         # extra keys remain as a projection for branch events and external callers.
         self._interaction_output_hooks: dict[str, Any] = {}

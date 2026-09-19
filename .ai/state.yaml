@@ -187,6 +187,8 @@ context:
     - Interaction journal binding subscribes before replaying retained Head events, so pre-bind facts are projected once in sequence; ProcessStage deadline cancellation records any non-fatal Executor stop callback failure through the same Interaction trace boundary.
     - Native Ledger persistence now emits one execution-scoped settlement trace with terminal provenance and inserted/deduplicated outcome; persistence failures retain the same execution identity for real trace audits.
     - CoreExecutionLedgerPreparation derives Ledger status, error, and result policy from the Core terminal outcome while leaving runner evidence and SQLite persistence at their existing boundaries.
+    - InteractionTurnState is now the typed owner for the event interaction state, CoreExecutionSpec, and plugin output transaction state; legacy event.extra keys remain one-way projections. Plugin branch events clear the typed owner to prevent parent/branch mutation sharing.
+    - The owner migration slice passed 80 focused Core/Interaction/Plugin tests, compileall, Ruff, and git diff --check.
     - CoreExecutionDeadlineView is a read-only projection of Personal's TurnDeadlineBudget; only Personal/ProcessStage reports expiry, while Core Head owns cancellation and stop-callback ordering.
     - Deadline cancellation is terminal and idempotent: late Native terminal facts are ignored by the existing Interaction bridge after `cancelled` is recorded.
     - Interaction base InputCollector no longer performs media enrichment when building the shared facts pack.
@@ -197,6 +199,7 @@ context:
     - Persona Provider fallback preserves original image references before normalization and derives captions for a text-only fallback without replaying lifecycle hooks.
     - Targeted validation passed: 145 tests, compileall, Ruff, and git diff --check.
   open:
+    - Continue the owner migration by inventorying ProviderRequest, output delivery, plugin gate/lease, and stop-state extra keys before changing their write paths.
     - Validate Personal reply, delegate, and eligible group silent decisions against real provider and platform traces before changing the default parallel-plugin runtime switch or output policy.
     - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Core Head Executor adapter.
     - Complete the Personal/Core Head asynchronous consumption boundary and validate the

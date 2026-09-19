@@ -301,6 +301,7 @@ class InteractionTurnState:
     route_decision: InteractionRouteDecision | None = None
     core_planning_decision: CorePlanningDecision | None = None
     core_task_spec: CoreTaskSpec | None = None
+    core_execution_spec: CoreExecutionSpec | None = None
     core_delegated: bool = False
     core_provider_id: str | None = None
     finalized_turn_material: dict[str, Any] | None = None
@@ -316,6 +317,11 @@ class InteractionTurnState:
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
     assistant_artifacts: list[dict[str, Any]] = field(default_factory=list)
+    plugin_output_transaction_active: bool = False
+    plugin_output_transaction_start: int | None = None
+    plugin_output_transaction_artifacts: list[dict[str, Any]] = field(
+        default_factory=list
+    )
     visible_message_fingerprints: set[str] = field(default_factory=set)
     stream_state: InteractionStreamState = field(default_factory=InteractionStreamState)
     output_segment_counter: int = 0
@@ -414,8 +420,17 @@ def build_interaction_turn_reply(
 
 
 def get_interaction_turn_state(event) -> InteractionTurnState | None:
+    state = getattr(event, "_interaction_turn_state", None)
+    if isinstance(state, InteractionTurnState):
+        return state
     state = event.get_extra(INTERACTION_TURN_STATE_EXTRA_KEY)
     if isinstance(state, InteractionTurnState):
+        # Read legacy events and promote them to the typed owner.  This is a
+        # one-way compatibility bridge; new writes go through private storage.
+        try:
+            event._interaction_turn_state = state
+        except AttributeError:
+            pass
         return state
     return None
 
@@ -523,7 +538,14 @@ def ensure_interaction_turn_state(
         state = InteractionTurnState(
             turn_id=resolved_turn_id,
         )
-        event.set_extra(INTERACTION_TURN_STATE_EXTRA_KEY, state)
+        try:
+            event._interaction_turn_state = state
+        except AttributeError:
+            # Minimal test/event doubles may only expose the public extra API.
+            event.set_extra(INTERACTION_TURN_STATE_EXTRA_KEY, state)
+        else:
+            # Keep the old key as a one-way compatibility projection.
+            event.set_extra(INTERACTION_TURN_STATE_EXTRA_KEY, state)
     elif turn_id and not state.turn_id:
         state.turn_id = turn_id
 
@@ -849,6 +871,97 @@ def set_interaction_turn_core_task_spec(
     state.core_task_spec = task_spec
 
 
+def set_interaction_turn_core_execution_spec(
+    event,
+    execution_spec: CoreExecutionSpec | None,
+) -> CoreExecutionSpec | None:
+    """Store the Core execution contract on the typed turn owner."""
+
+    state = ensure_interaction_turn_state(event)
+    current_head = get_core_execution_head(event)
+    if execution_spec is not None and (
+        state.core_execution_spec is None or current_head is None
+    ):
+        state.core_execution_spec = execution_spec
+        # Preserve the public/legacy projection for plugins and diagnostics.
+        event.set_extra(CORE_EXECUTION_SPEC_EXTRA_KEY, execution_spec)
+    return state.core_execution_spec
+
+
+def get_interaction_turn_core_execution_spec(
+    event,
+) -> CoreExecutionSpec | None:
+    state = get_interaction_turn_state(event)
+    if state is not None and state.core_execution_spec is not None:
+        return state.core_execution_spec
+    legacy = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    if isinstance(legacy, CoreExecutionSpec):
+        if state is not None:
+            state.core_execution_spec = legacy
+        return legacy
+    return None
+
+
+def begin_interaction_turn_plugin_output_transaction(event) -> int | None:
+    state = get_interaction_turn_state(event)
+    if state is None or not state.plugin_output_transaction_active:
+        return None
+    if state.plugin_output_transaction_start is None:
+        state.plugin_output_transaction_start = len(state.visible_outputs)
+    return state.plugin_output_transaction_start
+
+
+def get_interaction_turn_plugin_output_transaction(
+    event,
+) -> tuple[bool, int | None, list[dict[str, Any]]]:
+    state = get_interaction_turn_state(event)
+    if state is not None:
+        return (
+            state.plugin_output_transaction_active,
+            state.plugin_output_transaction_start,
+            [dict(item) for item in state.plugin_output_transaction_artifacts],
+        )
+    active = bool(event.get_extra("_interaction_plugin_output_transaction_active", False))
+    start = event.get_extra("_interaction_plugin_output_transaction_start")
+    artifacts = event.get_extra("_interaction_plugin_output_transaction_artifacts", [])
+    return active, start if isinstance(start, int) else None, (
+        [dict(item) for item in artifacts] if isinstance(artifacts, list) else []
+    )
+
+
+def set_interaction_turn_plugin_output_transaction(
+    event,
+    *,
+    active: bool | None = None,
+    start: int | None = None,
+    artifacts: list[dict[str, Any]] | None = None,
+) -> None:
+    state = ensure_interaction_turn_state(event)
+    if active is not None:
+        state.plugin_output_transaction_active = bool(active)
+    if start is not None or not state.plugin_output_transaction_active:
+        state.plugin_output_transaction_start = start
+    if artifacts is not None:
+        state.plugin_output_transaction_artifacts = [
+            dict(item) for item in artifacts if isinstance(item, dict)
+        ]
+    # Compatibility projection only.
+    event.set_extra(
+        "_interaction_plugin_output_transaction_active",
+        state.plugin_output_transaction_active,
+    )
+    event.set_extra(
+        "_interaction_plugin_output_transaction_start",
+        state.plugin_output_transaction_start,
+    )
+    event.set_extra(
+        "_interaction_plugin_output_transaction_artifacts",
+        [dict(item) for item in state.plugin_output_transaction_artifacts]
+        if state.plugin_output_transaction_artifacts
+        else None,
+    )
+
+
 def mark_interaction_turn_core_delegated(event) -> None:
     ensure_interaction_turn_state(event).core_delegated = True
 
@@ -1002,7 +1115,7 @@ def _project_core_execution_event_to_interaction_turn(
     if envelope is None or not event.get_extra("_interaction_enabled", False):
         return None
     state = get_interaction_turn_state(event)
-    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    execution_spec = get_interaction_turn_core_execution_spec(event)
     if state is None or not isinstance(execution_spec, CoreExecutionSpec):
         return None
     execution_event = envelope.execution
@@ -1112,7 +1225,7 @@ def record_interaction_turn_core_execution_ledger_settlement(
     if not event.get_extra("_interaction_enabled", False):
         return
     state = get_interaction_turn_state(event)
-    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    execution_spec = get_interaction_turn_core_execution_spec(event)
     prepared_spec = preparation.execution_spec
     if (
         state is None
@@ -1155,7 +1268,7 @@ def record_interaction_turn_core_execution_ledger_persist_failure(
     """Record an execution-scoped Ledger persistence failure."""
 
     error_text = str(error)[:2000]
-    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    execution_spec = get_interaction_turn_core_execution_spec(event)
     state = get_interaction_turn_state(event)
     if (
         not event.get_extra("_interaction_enabled", False)
@@ -1191,7 +1304,7 @@ def bind_interaction_turn_core_execution_journal(
     if not event.get_extra("_interaction_enabled", False):
         return False
     state = get_interaction_turn_state(event)
-    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    execution_spec = get_interaction_turn_core_execution_spec(event)
     if (
         state is None
         or not isinstance(execution_spec, CoreExecutionSpec)
@@ -1228,7 +1341,7 @@ def record_interaction_turn_core_execution_event(
     if not event.get_extra("_interaction_enabled", False):
         return None
     state = get_interaction_turn_state(event)
-    execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    execution_spec = get_interaction_turn_core_execution_spec(event)
     if state is None or not isinstance(execution_spec, CoreExecutionSpec):
         return None
     if execution_spec.turn_id != state.turn_id:

@@ -319,6 +319,10 @@ def create_plugin_branch_event(
     branch.message_obj = snapshot_astrbot_message(event.message_obj)
     branch.session = copy.copy(event.session)
     branch._extras = snapshot_branch_extras(event.get_extra(default={}))
+    # Branch output must never mutate the parent InteractionTurnState.  The
+    # legacy extra projection is removed below as well, so the branch starts
+    # without an interaction state owner.
+    branch._interaction_turn_state = None
     # Parent-bound platform hooks must not bypass the branch output sink.
     branch._interaction_output_hooks = {}
     branch._result = None

@@ -26,7 +26,6 @@ from astrbot.core.astr_main_agent import (
 )
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
-    CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreExecutionDeadlineView,
     CoreExecutionEventKind,
     CoreExecutionLedgerPreparation,
@@ -40,12 +39,14 @@ from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
     bind_interaction_turn_core_execution_journal,
+    get_interaction_turn_core_execution_spec,
     get_interaction_turn_deadline,
     get_interaction_turn_runtime_config,
     is_interaction_turn_core_delegated,
     record_interaction_turn_core_execution_event,
     record_interaction_turn_core_execution_ledger_persist_failure,
     record_interaction_turn_core_execution_ledger_settlement,
+    set_interaction_turn_core_execution_spec,
 )
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
@@ -378,8 +379,8 @@ class InternalAgentSubStage(Stage):
                 build_result.capabilities = effective_capabilities
                 build_result.execution_spec = effective_execution_spec
                 if effective_execution_spec is not None:
-                    event.set_extra(
-                        CORE_EXECUTION_SPEC_EXTRA_KEY,
+                    set_interaction_turn_core_execution_spec(
+                        event,
                         effective_execution_spec,
                     )
                     execution_head = start_core_execution_head(
@@ -820,7 +821,7 @@ class InternalAgentSubStage(Stage):
         if not req or not req.conversation:
             return
 
-        execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+        execution_spec = get_interaction_turn_core_execution_spec(event)
         if not isinstance(execution_spec, CoreExecutionSpec):
             return
         execution_head = get_core_execution_head(event)
@@ -995,7 +996,7 @@ class InternalAgentSubStage(Stage):
             or req.conversation is None
         ):
             return
-        execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+        execution_spec = get_interaction_turn_core_execution_spec(event)
         if not isinstance(execution_spec, CoreExecutionSpec):
             return
         messages: list[Message] = []

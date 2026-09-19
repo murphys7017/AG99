@@ -1,6 +1,6 @@
 # Personal Runtime 前置主链清理计划
 
-当前复核基线：2026-09-15。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
+当前复核基线：2026-09-19。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
 Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完整 Core Head、统一队列或
 可替换 Executor Body。本文的“已完成”只表示源码中已经存在的边界，不表示后续目标已经实现。
 
@@ -40,6 +40,68 @@ Prompt、Memory、Interaction、Personal 输出链与 Core Head 的设计以本�
 
 执行后台是最后一段替换点，不是当前架构工作的中心。前置主链完成后，Executor Body 应只
 负责“如何执行”，不再重新实现 Prompt、知识库、工具、插件、会话和输出。
+
+## 2026-09-19 全局架构收口门槛
+
+本次全局审阅确认：当前最大的风险不是缺少新的执行器抽象，而是多个局部正确的 owner
+仍通过兼容路径、事件 extra 和双轨运行时互相连接。后续工作进入“架构收口优先”阶段，
+在收口完成前不继续扩展新的 Executor Body、输出类型或插件主链。
+
+当前必须冻结的四个长期 owner：
+
+1. `InteractionTurnState`：一次 InteractionTurn 的内部事实和状态转换。
+2. `InteractionOutputController` / 后续 `OutputRuntime`：所有用户可见输出的意图、
+   产物、物理投递和完成语义。
+3. `CoreExecutionHead`：CoreExecution 的命令、事件、取消、终态和结果事实。
+4. `CapabilitySnapshot`：一轮执行中模型可见能力、可执行能力、策略和来源。
+
+这四个 owner 不是要求立刻重写成四个新类，而是要求后续每一批代码只能新增或迁移一个
+owner 的写入边界。旧路径可以短期保留为只读校验或公开兼容适配，但不得继续形成第二个
+内部主写者。
+
+### 收口前置条件
+
+在进入下一个 Executor Body 设计或实现切片前，必须完成：
+
+- 对 `event.extra` 的读写清单和单向兼容投影表；
+- Output Controller、Plugin Artifact Delivery、Delayed Delivery、Turn Delivery
+  的状态写入规则与端到端完成语义；
+- 旧 Handler-first 路径与协调 Plugin Runtime 的真实私聊、群聊、取消、reload、
+  迟到输出和重复投递验收；
+- `astr_main_agent.py` 中 Provider、Prompt、Capability、Execution 装配职责的调用图；
+- `CoreExecutionSpec -> ProviderRequest -> Runner` 的单向关系核对；
+- `InteractionTurn -> PluginInvocation/CoreExecution -> OutputArtifact` 的身份关系表；
+- Cron、主动任务和普通 Interaction 是否共用同一可见输出/语音完成边界的验收。
+
+未满足这些条件时，Phase 9 的状态只能写作“Native 进程内事实边界已建立”，不能写作
+“Core Head 已完成”或“Executor 已可替换”。
+
+## 近期推进队列（2026-09-19）
+
+以下队列是当前收口期的实际执行顺序。每一项先完成事实盘点和边界说明，再进行最小
+代码迁移；后一项不得用设计稿替代前一项的真实验收。
+
+| 顺序 | 工作切片 | 主要产物 | 进入下一项的条件 |
+|---|---|---|---|
+| 1 | `event.extra` owner 盘点 | 读写清单、字段 owner 表、单向兼容投影表 | 每个内部字段都有唯一主写者；旧读取点已标注为迁移/兼容/诊断 |
+| 2 | Output Runtime 边界收口 | 输出状态机、组件完成规则、Delayed/Artifact/Turn Delivery 关系图 | 一条逻辑消息的物理组件完成、失败、重复和迟到行为可追踪 |
+| 3 | 双插件运行路径验收 | Handler-first 与协调 Plugin Runtime 对照 trace | 私聊、群聊、取消、reload、迟到输出、重复投递均有结论 |
+| 4 | Agent 装配拆分 | `astr_main_agent.py` 调用图、Provider/Prompt/Capability/Execution 边界 | 新增能力不再要求修改主装配器的跨层逻辑 |
+| 5 | Core 输入关系收口 | `CoreExecutionSpec -> ProviderRequest -> Runner` 关系和身份表 | 每次 Core 执行只存在一条规范化输入链，失败/取消仍可定位到同一执行 |
+| 6 | 主动任务统一验收 | Cron/主动任务与普通 Interaction 的输出、TTS、历史、完成回执 trace | 成功、失败、取消、无目标和迟到场景语义一致 |
+| 7 | Executor Body 决策闸门 | 前置主链就绪报告、Native Adapter 最小方案 | 仅当第 1-6 项通过后，才开始第二个 Executor Body 或正式 Adapter |
+
+### 队列执行规则
+
+- 第 1-6 项允许修复已确认的边界缺陷，但不得借机新增对外输出通道、第二个
+  Personal 决策 Agent 或新的插件主链。
+- 任何只通过静态代码推断的项目都只能记录为风险；必须有运行 trace、最小端到端
+  验收或明确的调用图，才能改变状态。
+- 若某一切片发现多个内部主写者，先停止扩展该方向，补齐 owner 和迁移边界后再继续。
+- 旧 Handler-first、官方 Event API、`ProviderRequest` 和 `CoreExecutionSpec` 在
+  调用图与真实验收完成前不得删除；它们可以被标记为待迁移，但不是当前的清理目标。
+- 这 7 项完成前，Phase 9 仍标记为“通信状态边界/Execution Preparation”，不标记为
+  “Core Head 完成”或“Executor 可替换”。
 
 ## 边界校正：Personal、Core Head 与 Executor Body
 
@@ -107,9 +169,9 @@ Platform / Internal Event
        -> Personal Runtime Adapter activates or settles the bound turn
             -> PersonalSessionRuntime mailbox
             -> Observation / active conversational turn
-            -> Router
-                -> persona -> Personal Expression
-                -> hybrid -> Core Head
+            -> Personal Response Plan
+                -> reply -> Personal Expression
+                -> delegate -> Core Head
                     -> CoreExecution session
                     -> Planner / internal scheduling
                     -> ContextSnapshot + CapabilitySnapshot
@@ -117,7 +179,7 @@ Platform / Internal Event
                     -> replaceable Executor Body
                     -> normalized Execution Events / Artifacts
                     -> Core Head -> Personal Expression
-                    -> not_required -> Personal Expression
+                -> Core result -> Personal Expression
        -> Output Dispatcher
   -> Official Platform Sink
   -> Finalized Turn
@@ -143,7 +205,7 @@ Platform / Internal Event
 - 从源码事实和实际运行日志出发，不从理想接口反推空置抽象。
 - 一次只迁移一个 owner；新 owner 接管后删除旧 owner 的写入路径。
 - 新旧路径短暂并存时只能有一个主写者，另一条只能做只读校验或边界适配。
-- Router、Planner 和 Personal Expression 保持独立，但消费同一事实快照的不同投影。
+- Personal Response Plan、Planner 和 Personal Expression 保持独立，但消费同一事实快照的不同投影。
 - 不把所有官方能力转换成 MCP；内部先形成统一 Capability，再由 Core Head 为 Executor
   Body 选择直接调用、MCP、RPC、CLI 或其他桥接。
 - 不为了文件变小而拆类；只有所有权、生命周期或测试边界发生变化时才拆模块。
@@ -175,7 +237,7 @@ Executor Body 的解耦需要明确任务委托、生命周期、进度和产物
 
 明确不做的事：
 
-- 不把 Persona、Router、Core Planner、本地插件或 `FunctionTool` 全部抽象成互相通信的 Agent。
+- 不把 Persona、Personal Response Plan、Core Planner、本地插件或 `FunctionTool` 全部抽象成互相通信的 Agent。
 - 不让 Executor Body 的能力登记或未来远程 Adapter 绕过管理员配置、会话权限、Capability Snapshot 或网络边界。
 - 不把执行器的消息或 artifact 直接映射为平台消息；它们先是执行事实，是否形成用户表达仍由
   Persona 和 Output Runtime 决定。
@@ -305,13 +367,13 @@ adapter 执行。
 实施内容：
 
 - 将基础事实固定为不可变 `BaseContextSnapshot`。
-- Router、Planner、Persona、Execution 使用显式 Projection 和 Phase Overlay。
+- Personal Response Plan、Planner、Persona、Execution 使用显式 Projection 和 Phase Overlay。
 - 静态与动态 collector 由 Prompt 系统统一调度，业务模块不自行查询同类事实。
 - Core 需要的工具绑定、任务材料和执行时状态进入 Execution Overlay，不替换基础 Pack。
 - ContextSnapshot 记录版本、来源、阶段和 lineage，诊断能够还原每次模型请求使用的事实。
 - Planner 只生成 `execute/not_required + CoreTaskSpec`，不拥有执行上下文构建。
 
-退出条件：模型请求不受 Router、Persona、Planner 或 Core 的完成顺序影响；同一阶段使用
+退出条件：模型请求不受 Personal Response Plan、Persona、Planner 或 Core 的完成顺序影响；同一阶段使用
 哪个快照可以被确定地重放。
 
 ## Phase 5：统一 Capability Snapshot
@@ -339,7 +401,7 @@ AgentRunner 才能被发现。
   PersonaState，也不会触发 consolidation。
 - Interaction 私有 Memory Store 已删除；ConversationHistoryCollector 与 MemoryCollector
   是当前唯一读取入口。
-- Persona、Router、Planner 和 Execution 通过 Prompt Projection 使用相同的历史与记忆
+- Persona、Personal Response Plan、Planner 和 Execution 通过 Prompt Projection 使用相同的历史与记忆
   事实，不各自维护副本。
 - finalized turn 是 Conversation 和 Memory 的唯一提交材料，cancelled/failed 有
   明确持久化策略。
@@ -526,7 +588,7 @@ Conversation 和 Memory 后，确认总体分层方向成立，但以下问题�
 - Personal Runtime 现在在插件 Handler 前完成 persona bind、follow-up admission 和 session
   lease；插件、Router/Persona、Core 与输出共享同一 turn 生命周期。存在 activated handler
   时不尝试 active-runner follow-up，避免插件命令被提前吸收。
-- Router、Planner、Persona、Context Material 和 Stream Observation task 已归属 TurnExecutionScope；
+- Personal Response Plan、Planner、Persona、Context Material 和 Stream Observation task 已归属 TurnExecutionScope；
   普通显式消息并发启动 Router 与 Persona，`hybrid` 放行 Core 时保留已提交的即时表达，lease
   释放前统一完成或取消所有 turn-owned task。
 - Persona-only、即时 Persona 与 Core-final 使用同一 turn 级 materialization 和 completion 边界。
