@@ -139,6 +139,45 @@ class NativeExecutorAdapter:
             metadata=metadata,
         )
 
+    def observe_response(self, response: AgentResponse):
+        """Project non-visible Native execution progress into Core facts.
+
+        Only tool boundaries are execution progress. Text and reasoning remain
+        owned by the existing output path, so this method cannot create another
+        user-visible response stream.
+        """
+        if response.type not in {"tool_call", "tool_call_result"}:
+            return None
+        chain = response.data.get("chain")
+        if not isinstance(chain, MessageChain):
+            return None
+        metadata: dict[str, object] = {
+            "source": "native_response",
+            "response_type": response.type,
+            "message_type": str(chain.type or ""),
+            "component_count": len(chain.chain),
+        }
+        details = _extract_chain_json_data(chain)
+        if isinstance(details, dict):
+            tool_name = str(details.get("name", "") or "").strip()
+            if tool_name:
+                metadata["tool_name"] = tool_name
+            tool_call_id = str(details.get("id", "") or "").strip()
+            if tool_call_id:
+                metadata["tool_call_id"] = tool_call_id
+            if response.type == "tool_call_result":
+                result = details.get("result")
+                if result is not None:
+                    metadata["result_length"] = len(str(result))
+        if response.type == "tool_call_result" and "result_length" not in metadata:
+            metadata["result_length"] = len(
+                chain.get_plain_text(with_other_comps_mark=True)
+            )
+        return self.emit_event(
+            kind=CoreExecutionEventKind.PROGRESS,
+            metadata=metadata,
+        )
+
     def final_response_artifact_metadata(self) -> dict | None:
         """Describe the Native final response without exposing it to Core."""
         response = self.final_response()
@@ -243,34 +282,13 @@ async def _send_core_event_message(
         delivery is CoreOutputDelivery.PROGRESS
         and is_interaction_turn_core_delegated(astr_event)
     ):
-        # Personal owns the user-visible Interaction surface. Keep tool status as
-        # execution evidence, rather than emitting a second raw Core utterance.
-        record_interaction_turn_core_execution_event(
-            astr_event,
-            kind=CoreExecutionEventKind.PROGRESS,
-            executor_id="native",
-            metadata={
-                "source": "suppressed_visible_core_progress",
-                "message_type": str(message.type or ""),
-                "component_count": len(message.chain),
-            },
-        )
+        # Personal owns the user-visible Interaction surface. Non-visible
+        # execution progress is emitted by NativeExecutorAdapter.
         return
 
     with temporary_output_origin(astr_event, OutputOrigin.CORE.value):
         with temporary_core_output_delivery(astr_event, delivery.value):
             await astr_event.send(message)
-    if delivery is CoreOutputDelivery.PROGRESS:
-        record_interaction_turn_core_execution_event(
-            astr_event,
-            kind=CoreExecutionEventKind.PROGRESS,
-            executor_id="native",
-            metadata={
-                "source": "visible_core_progress",
-                "message_type": str(message.type or ""),
-                "component_count": len(message.chain),
-            },
-        )
 
 
 def _truncate_tool_result(text: str, limit: int = 70) -> str:
@@ -430,14 +448,13 @@ async def run_agent(
                             pass
                     astr_event.set_extra("agent_user_aborted", True)
                     astr_event.set_extra("agent_stop_requested", False)
-                    executor.emit_event(
-                        kind=CoreExecutionEventKind.CANCELLED,
-                        metadata={"reason": "agent_aborted"},
-                    )
+                    executor.cancel(metadata={"reason": "agent_aborted"})
                     return
 
                 if _should_stop_agent(astr_event):
                     continue
+
+                executor.observe_response(resp)
 
                 if resp.type == "tool_call_result":
                     msg_chain = resp.data["chain"]
@@ -578,14 +595,10 @@ async def run_agent(
                 break
 
         except TurnDeadlineExceeded:
-            executor.emit_event(
-                kind=CoreExecutionEventKind.CANCELLED,
-                metadata={"reason": "deadline_exceeded"},
-            )
+            executor.cancel(metadata={"reason": "deadline_exceeded"})
             raise
         except asyncio.CancelledError:
-            executor.emit_event(
-                kind=CoreExecutionEventKind.CANCELLED,
+            executor.cancel(
                 metadata={
                     "reason": _cancellation_reason(
                         astr_event,
@@ -628,8 +641,7 @@ async def run_agent(
                 yield MessageChain().message(err_msg)
             else:
                 astr_event.set_result(MessageEventResult().message(err_msg))
-            executor.emit_event(
-                kind=CoreExecutionEventKind.FAILED,
+            executor.fail(
                 metadata={
                     "error_type": type(e).__name__,
                     "error": str(e)[:2000],

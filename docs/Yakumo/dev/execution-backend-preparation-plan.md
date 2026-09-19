@@ -962,6 +962,15 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 这仍不是跨执行器 response/stream 协议：`AgentResponse` 留在 Native Adapter 和
   现有输出桥接内部，尚未迁移 Core 的完整执行循环或 Artifact 实体。
 
+### 2026-09-19 Native 进度事实与输出投递分离
+
+- `NativeExecutorAdapter.observe_response()` 仅将 Native tool call / tool result
+  转为非可见的 `progress` 事实，记录调用 ID、工具名、消息类型、组件数和结果长度；
+  不记录工具结果正文、模型 token 或推理文本。
+- `_send_core_event_message()` 只保留当前的可见投递/抑制职责，不再以是否发送状态消息
+  反向决定 Core progress。Personal 仍是 delegated Interaction 的唯一对外表达窗口。
+- Native 的取消和失败分支也统一调用 Adapter 的终态 API，避免执行循环绕过终态 owner。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

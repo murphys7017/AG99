@@ -4,6 +4,8 @@ import pytest
 
 from astrbot.core.agent.response import AgentResponse
 from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
+from astrbot.core.message.components import Json
+from astrbot.core.message.message_event_result import MessageChain
 
 
 class FakeNativeRunner:
@@ -190,4 +192,60 @@ def test_native_executor_adapter_projects_final_response_metadata():
     assert adapter.failure_metadata() == {
         "reason": "runner_error",
         "error": "hello",
+    }
+
+
+def test_native_executor_adapter_observes_tool_progress_without_result_content(
+    monkeypatch,
+):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+
+    assert adapter.observe_response(
+        AgentResponse(
+            type="tool_call",
+            data={
+                "chain": MessageChain(
+                    chain=[Json(data={"id": "call-1", "name": "search"})],
+                    type="tool_call",
+                )
+            },
+        )
+    ) is None
+    assert adapter.observe_response(
+        AgentResponse(
+            type="tool_call_result",
+            data={
+                "chain": MessageChain(
+                    chain=[Json(data={"id": "call-1", "result": "secret output"})],
+                    type="tool_call_result",
+                )
+            },
+        )
+    ) is None
+    assert adapter.observe_response(AgentResponse(type="llm_result", data={})) is None
+
+    assert [item[1]["kind"] for item in emitted] == ["progress", "progress"]
+    assert emitted[0][1]["metadata"] == {
+        "source": "native_response",
+        "response_type": "tool_call",
+        "message_type": "tool_call",
+        "component_count": 1,
+        "tool_name": "search",
+        "tool_call_id": "call-1",
+    }
+    assert emitted[1][1]["metadata"] == {
+        "source": "native_response",
+        "response_type": "tool_call_result",
+        "message_type": "tool_call_result",
+        "component_count": 1,
+        "tool_call_id": "call-1",
+        "result_length": len("secret output"),
     }
