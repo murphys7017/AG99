@@ -298,6 +298,17 @@ async def test_core_execution_head_command_mailbox_receives_initial_submit():
 
 
 @pytest.mark.asyncio
+async def test_core_execution_head_command_mailbox_does_not_replay_initial_submit():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    mailbox = head.subscribe_command_mailbox()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(mailbox.receive(), timeout=0.01)
+
+
+@pytest.mark.asyncio
 async def test_core_execution_head_close_closes_command_mailbox_without_changing_state():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)

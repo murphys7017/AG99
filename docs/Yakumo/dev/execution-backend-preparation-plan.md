@@ -788,9 +788,9 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   订阅继续保留，便于逐步迁移观察者。
 - mailbox 在检查队列前清除唤醒标记，确保发布发生在检查与等待之间时不会丢失唤醒；
   该顺序是异步消费边界的必要不变量。
-- `CoreExecutionHead.subscribe_command_mailbox()` 现在观察所有已接受的
-  `CoreCommand`，包括初始 `submit`、`cancel` 和 `provide_input`；重复 command 不会
-  再次发布。它是旁路观察者而不是可靠命令队列：压力下只允许丢弃旧的
+- `CoreExecutionHead.subscribe_command_mailbox()` 现在观察订阅后被接受的
+  `CoreCommand`，包括后续 `cancel` 和 `provide_input`，以及在订阅前尚未启动时的
+  初始 `submit`；它不回放订阅前历史，重复 command 不会再次发布。它是旁路观察者而不是可靠命令队列：压力下只允许丢弃旧的
   `provide_input` 观察项，`submit/cancel` 控制事实保留；实际命令是否接受仍以 Head
   回执和 Session 为准。它不执行命令、不拥有 session，也不引入后台 worker。
 - `CoreExecutionHead.close()` 现在只关闭事件投递，不改变 `CoreExecutionSession` 状态；

@@ -399,7 +399,7 @@ class CoreExecutionEventMailbox:
 class CoreExecutionCommandMailbox:
     """Async, in-process delivery boundary for accepted Core commands.
 
-    The mailbox observes commands after the Head accepts them. It does not
+    The mailbox observes commands accepted after subscription. It does not
     execute commands, replay history, or change command acknowledgement
     semantics. Duplicate command attempts are therefore not published.
     """
