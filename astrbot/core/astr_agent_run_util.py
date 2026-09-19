@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 
 from astrbot.core import logger
 from astrbot.core.agent.message import Message
-from astrbot.core.agent.response import AgentStats
+from astrbot.core.agent.response import AgentResponse, AgentStats
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.deadline import TurnDeadlineExceeded
@@ -40,9 +40,9 @@ AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
 class NativeExecutorAdapter:
     """Expose the Native runner through the Core execution boundary.
 
-    This first adapter slice owns only executor control and observation. The
-    existing stream/output loop still drives ``runner.step()`` directly until
-    a separate execution stream contract is defined.
+    The adapter exposes Native step responses and stop/state operations. The
+    caller owns iteration and closing the step stream; output conversion stays
+    outside this boundary. AgentResponse is still a Native-specific contract.
     """
 
     executor_id = "native"
@@ -58,6 +58,10 @@ class NativeExecutorAdapter:
 
     def request_stop(self) -> None:
         self._runner.request_stop()
+
+    def step(self) -> AsyncGenerator[AgentResponse, None]:
+        """Open one Native step stream; the consumer must close it on exit."""
+        return self._runner.step()
 
     @property
     def provider(self) -> Provider:
@@ -229,6 +233,7 @@ async def run_agent(
     buffer_intermediate_messages: bool = False,
 ) -> AsyncGenerator[MessageChain | None, None]:
     step_idx = 0
+    executor = NativeExecutorAdapter(agent_runner)
     astr_event = agent_runner.run_context.context.event
     record_interaction_turn_core_execution_event(
         astr_event,
@@ -263,12 +268,13 @@ async def run_agent(
                 )
 
         stop_watcher = asyncio.create_task(
-            _watch_agent_stop_signal(agent_runner, astr_event),
+            _watch_agent_stop_signal(executor, astr_event),
         )
+        step_stream = executor.step()
         try:
-            async for resp in agent_runner.step():
+            async for resp in step_stream:
                 if _should_stop_agent(astr_event):
-                    agent_runner.request_stop()
+                    executor.request_stop()
 
                 if resp.type == "aborted":
                     if can_buffer_llm_result:
@@ -507,10 +513,21 @@ async def run_agent(
             )
             return
 
-async def _watch_agent_stop_signal(agent_runner: AgentRunner, astr_event) -> None:
-    while not agent_runner.done():
+        finally:
+            if not stop_watcher.done():
+                stop_watcher.cancel()
+            try:
+                await stop_watcher
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await step_stream.aclose()
+
+
+async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) -> None:
+    while not executor.done():
         if _should_stop_agent(astr_event):
-            agent_runner.request_stop()
+            executor.request_stop()
             return
         await asyncio.sleep(0.5)
 

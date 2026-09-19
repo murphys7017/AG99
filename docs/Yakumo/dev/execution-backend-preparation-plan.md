@@ -905,6 +905,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 增加适配器的最小控制与观测边界验证。下一步应在不改变可见输出的前提下，继续明确
   Native 执行事件如何由 Adapter 回流到 Core Head，再决定是否需要独立的关闭语义。
 
+### 2026-09-20 Native step 驱动与资源回收
+
+- `run_agent()` 通过 `NativeExecutorAdapter.step()` 消费 Native 响应，停止监视通过
+  Adapter 请求停止。返回值仍是 Native `AgentResponse`，不是跨执行器事件协议。
+- 每个 step 的消费方在 `finally` 中取消并等待停止监视任务、关闭 step 异步生成器，
+  覆盖正常结束、提前返回、deadline、任务取消和消费方关闭。
+- Prompt、最大步数处理、Hook、输出转换和 TTS 仍在现有边界；没有增加 worker，
+  没有接入 Personal 异步消费，也没有提前移除 runner 桥接访问。
+- 验证：Adapter 与 Core execution 定向测试 48 项通过；尚未做真实 OLV 验收。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

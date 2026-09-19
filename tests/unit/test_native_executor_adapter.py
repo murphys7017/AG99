@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 
+import pytest
+
+from astrbot.core.agent.response import AgentResponse
 from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
 
 
@@ -40,3 +43,22 @@ def test_native_executor_adapter_exposes_control_and_observation_boundary():
     assert adapter.messages == ["message"]
     assert adapter.stats is runner.stats
     assert adapter.runner is runner
+
+
+@pytest.mark.asyncio
+async def test_native_step_stream_preserves_response_and_closes_on_early_exit():
+    closed = []
+    response = AgentResponse(type="llm_result", data={})
+
+    class Runner(FakeNativeRunner):
+        async def step(self):
+            try:
+                yield response
+                yield response
+            finally:
+                closed.append(True)
+
+    stream = NativeExecutorAdapter(Runner()).step()
+    assert await anext(stream) is response
+    await stream.aclose()
+    assert closed == [True]

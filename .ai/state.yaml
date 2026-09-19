@@ -1,3 +1,11 @@
+native_step_boundary:
+  date: '2026-09-20'
+  class: refactor
+  risk: high
+  scope: Native step driving through the existing adapter and deterministic step/watcher cleanup.
+  non_goals: Generic executor protocol, Personal mailbox consumption, Output/TTS changes, service restart.
+  validation: Adapter and Core execution suites passed 48 tests. Live platform acceptance remains pending.
+
 minimax_stt_silence_handling:
   date: '2026-09-19'
   class: bugfix
