@@ -116,3 +116,78 @@ def test_native_executor_adapter_emits_through_core_boundary(monkeypatch):
             },
         )
     ]
+
+
+def test_native_executor_adapter_reports_normalized_lifecycle_facts(monkeypatch):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: None,
+    )
+
+    adapter.submit(metadata={"provider_id": "test"})
+    adapter.complete(artifact_metadata={"artifact_id": "final_response"})
+    adapter.fail(metadata={"error": "ignored by lifecycle"})
+    adapter.cancel(metadata={"reason": "cancelled"})
+
+    assert [item[1]["kind"] for item in emitted] == [
+        "submitted",
+        "artifact_ready",
+        "completed",
+        "failed",
+        "cancelled",
+    ]
+    assert all(item[1]["executor_id"] == "native" for item in emitted)
+
+
+def test_native_executor_adapter_keeps_earlier_terminal_outcome(monkeypatch):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    terminal = SimpleNamespace(execution=object())
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: SimpleNamespace(terminal_event=terminal),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+
+    assert (
+        adapter.complete(artifact_metadata={"artifact_id": "late_response"})
+        is terminal.execution
+    )
+    assert emitted == []
+
+
+def test_native_executor_adapter_projects_final_response_metadata():
+    runner = FakeNativeRunner()
+    runner.final_response = SimpleNamespace(
+        role="assistant",
+        completion_text="hello",
+        result_chain=None,
+    )
+    adapter = NativeExecutorAdapter(runner)
+
+    assert adapter.completed_successfully() is True
+    assert adapter.final_response_artifact_metadata() == {
+        "artifact_id": "final_response",
+        "artifact_kind": "text",
+        "text_length": 5,
+        "component_count": 0,
+    }
+    assert adapter.failure_metadata() == {
+        "reason": "runner_error",
+        "error": "hello",
+    }

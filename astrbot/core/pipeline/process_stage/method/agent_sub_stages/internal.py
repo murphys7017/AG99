@@ -27,7 +27,6 @@ from astrbot.core.astr_main_agent import (
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CoreExecutionDeadlineView,
-    CoreExecutionEventKind,
     CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
     bind_effective_core_request,
@@ -43,7 +42,6 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_deadline,
     get_interaction_turn_runtime_config,
     is_interaction_turn_core_delegated,
-    record_interaction_turn_core_execution_event,
     record_interaction_turn_core_execution_ledger_persist_failure,
     record_interaction_turn_core_execution_ledger_settlement,
     set_interaction_turn_core_execution_spec,
@@ -391,10 +389,7 @@ class InternalAgentSubStage(Stage):
                         )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
                     execution_head.bind_executor_stop_callback(native_executor.request_stop)
-                    record_interaction_turn_core_execution_event(
-                        event,
-                        kind=CoreExecutionEventKind.SUBMITTED,
-                        executor_id="native",
+                    native_executor.submit(
                         metadata={
                             "provider_id": str(
                                 provider.provider_config.get("id", "") or ""
@@ -524,74 +519,12 @@ class InternalAgentSubStage(Stage):
                         yield
 
                 final_resp = native_executor.final_response()
-                execution_head = get_core_execution_head(event)
-
-                if native_executor.done() and (
-                    final_resp is None or final_resp.role != "err"
-                ):
-                    if final_resp is not None:
-                        completion_text = str(final_resp.completion_text or "")
-                        result_chain = final_resp.result_chain
-                        artifact_metadata = {
-                            "artifact_id": "final_response",
-                            "artifact_kind": (
-                                "text"
-                                if completion_text
-                                else "message_chain"
-                                if result_chain is not None
-                                else "empty"
-                            ),
-                            "text_length": len(completion_text),
-                            "component_count": (
-                                len(result_chain.chain)
-                                if result_chain is not None
-                                else 0
-                            ),
-                        }
-                    else:
-                        artifact_metadata = None
-                    if execution_head is not None:
-                        execution_head.complete(
-                            executor_id="native",
-                            artifact_metadata=artifact_metadata,
-                        )
-                    else:
-                        if artifact_metadata is not None:
-                            record_interaction_turn_core_execution_event(
-                                event,
-                                kind=CoreExecutionEventKind.ARTIFACT_READY,
-                                executor_id="native",
-                                metadata=artifact_metadata,
-                            )
-                        record_interaction_turn_core_execution_event(
-                            event,
-                            kind=CoreExecutionEventKind.COMPLETED,
-                            executor_id="native",
-                        )
+                if native_executor.completed_successfully():
+                    native_executor.complete(
+                        artifact_metadata=native_executor.final_response_artifact_metadata(),
+                    )
                 else:
-                    failure_metadata = {
-                        "reason": (
-                            "runner_error"
-                            if native_executor.done()
-                            else "runner_not_completed"
-                        )
-                    }
-                    if final_resp is not None and final_resp.completion_text:
-                        failure_metadata["error"] = str(
-                            final_resp.completion_text
-                        )[:2000]
-                    if execution_head is not None:
-                        execution_head.fail(
-                            executor_id="native",
-                            metadata=failure_metadata,
-                        )
-                    else:
-                        record_interaction_turn_core_execution_event(
-                            event,
-                            kind=CoreExecutionEventKind.FAILED,
-                            executor_id="native",
-                            metadata=failure_metadata,
-                        )
+                    native_executor.fail(metadata=native_executor.failure_metadata())
 
                 event.trace.record(
                     "astr_agent_complete",
@@ -638,12 +571,8 @@ class InternalAgentSubStage(Stage):
 
         except TurnDeadlineExceeded:
             cancellation_reason = "deadline_exceeded"
-            record_interaction_turn_core_execution_event(
-                event,
-                kind=CoreExecutionEventKind.CANCELLED,
-                executor_id="native",
-                metadata={"reason": cancellation_reason},
-            )
+            if native_executor is not None:
+                native_executor.cancel(metadata={"reason": cancellation_reason})
             await self._save_cancelled_interaction_core_state(
                 event,
                 req,
@@ -658,12 +587,8 @@ class InternalAgentSubStage(Stage):
                 if deadline is not None and deadline.expired()
                 else "stage_cancelled"
             )
-            record_interaction_turn_core_execution_event(
-                event,
-                kind=CoreExecutionEventKind.CANCELLED,
-                executor_id="native",
-                metadata={"reason": cancellation_reason},
-            )
+            if native_executor is not None:
+                native_executor.cancel(metadata={"reason": cancellation_reason})
             await self._save_cancelled_interaction_core_state(
                 event,
                 req,
@@ -673,15 +598,13 @@ class InternalAgentSubStage(Stage):
             raise
         except Exception as e:
             logger.error(f"Error occurred while processing agent: {e}")
-            record_interaction_turn_core_execution_event(
-                event,
-                kind=CoreExecutionEventKind.FAILED,
-                executor_id="native",
-                metadata={
-                    "error_type": type(e).__name__,
-                    "error": str(e)[:2000],
-                },
-            )
+            if native_executor is not None:
+                native_executor.fail(
+                    metadata={
+                        "error_type": type(e).__name__,
+                        "error": str(e)[:2000],
+                    },
+                )
             await self._save_failed_interaction_core_state(
                 event,
                 req,

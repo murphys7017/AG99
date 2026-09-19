@@ -10,7 +10,7 @@ from astrbot.core.agent.response import AgentResponse, AgentStats
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.deadline import TurnDeadlineExceeded
-from astrbot.core.execution import CoreExecutionEventKind
+from astrbot.core.execution import CoreExecutionEventKind, get_core_execution_head
 from astrbot.core.interaction.output_modes import (
     CoreOutputDelivery,
     OutputOrigin,
@@ -82,14 +82,99 @@ class NativeExecutorAdapter:
         *,
         kind: CoreExecutionEventKind,
         metadata: dict | None = None,
-    ) -> None:
+    ):
         """Publish one Native fact through the owning Core execution boundary."""
-        record_interaction_turn_core_execution_event(
+        return record_interaction_turn_core_execution_event(
             self._runner.run_context.context.event,
             kind=kind,
             executor_id=self.executor_id,
             metadata=metadata,
         )
+
+    def submit(self, *, metadata: dict | None = None):
+        """Report the Native executor as accepted by the Core lifecycle."""
+        return self.emit_event(
+            kind=CoreExecutionEventKind.SUBMITTED,
+            metadata=metadata,
+        )
+
+    def complete(
+        self,
+        *,
+        artifact_metadata: dict | None = None,
+        metadata: dict | None = None,
+    ):
+        """Report one successful terminal outcome through the Core boundary.
+
+        The interaction bridge preserves terminal first-write semantics. An
+        earlier cancellation or failure therefore remains authoritative when a
+        late Native completion arrives.
+        """
+        execution_head = get_core_execution_head(
+            self._runner.run_context.context.event
+        )
+        if execution_head is not None and execution_head.terminal_event is not None:
+            return execution_head.terminal_event.execution
+        if artifact_metadata is not None:
+            self.emit_event(
+                kind=CoreExecutionEventKind.ARTIFACT_READY,
+                metadata=artifact_metadata,
+            )
+        return self.emit_event(
+            kind=CoreExecutionEventKind.COMPLETED,
+            metadata=metadata,
+        )
+
+    def fail(self, *, metadata: dict | None = None):
+        """Report one Native failure through the Core lifecycle boundary."""
+        return self.emit_event(
+            kind=CoreExecutionEventKind.FAILED,
+            metadata=metadata,
+        )
+
+    def cancel(self, *, metadata: dict | None = None):
+        """Report cancellation through the Core lifecycle and stop callback."""
+        return self.emit_event(
+            kind=CoreExecutionEventKind.CANCELLED,
+            metadata=metadata,
+        )
+
+    def final_response_artifact_metadata(self) -> dict | None:
+        """Describe the Native final response without exposing it to Core."""
+        response = self.final_response()
+        if response is None:
+            return None
+        completion_text = str(response.completion_text or "")
+        result_chain = response.result_chain
+        return {
+            "artifact_id": "final_response",
+            "artifact_kind": (
+                "text"
+                if completion_text
+                else "message_chain"
+                if result_chain is not None
+                else "empty"
+            ),
+            "text_length": len(completion_text),
+            "component_count": (
+                len(result_chain.chain) if result_chain is not None else 0
+            ),
+        }
+
+    def completed_successfully(self) -> bool:
+        """Return the Native terminal classification needed by the Core bridge."""
+        response = self.final_response()
+        return self.done() and (response is None or response.role != "err")
+
+    def failure_metadata(self) -> dict[str, str]:
+        """Project the Native failure state into bounded Core diagnostics."""
+        response = self.final_response()
+        metadata = {
+            "reason": "runner_error" if self.done() else "runner_not_completed"
+        }
+        if response is not None and response.completion_text:
+            metadata["error"] = str(response.completion_text)[:2000]
+        return metadata
 
     def request_stop(self) -> None:
         self._runner.request_stop()

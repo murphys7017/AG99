@@ -950,6 +950,18 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   以避免扩大 Personal Runtime 公共调用面的变更；方法内部已转交 executor。
 - 该切片只改变命名和边界表达，不改变 follow-up 捕获、顺序激活、取消或清理行为。
 
+### 2026-09-19 Native 生命周期事实归属收口
+
+- `InternalAgentSubStage` 不再直接写入 Native 的 `submitted`、最终 artifact、
+  `completed`、`failed` 或 `cancelled` 执行事实；它只负责装配、输出桥接、历史和
+  现有持久化调用。
+- `NativeExecutorAdapter` 现在拥有这些事实到 Core Head/Interaction bridge 的投影，
+  并在同一边界生成 final response 的可诊断 artifact metadata。
+- Adapter 在投递成功 artifact 前检查已存在的 Head 终态，确保取消或失败先到时，
+  Native 的迟到成功不会追加 artifact 或覆盖既有终态。
+- 这仍不是跨执行器 response/stream 协议：`AgentResponse` 留在 Native Adapter 和
+  现有输出桥接内部，尚未迁移 Core 的完整执行循环或 Artifact 实体。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
