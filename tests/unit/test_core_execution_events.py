@@ -4,11 +4,14 @@ from astrbot.core.execution import (
     CORE_EXECUTION_HEAD_EXTRA_KEY,
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreCommand,
+    CoreCommandDisposition,
     CoreCommandKind,
+    CoreCommandOrigin,
     CoreEvent,
     CoreExecutionDeadlineView,
     CoreExecutionEvent,
     CoreExecutionEventKind,
+    CoreExecutionEventMailbox,
     CoreExecutionHead,
     CoreExecutionLedgerPreparation,
     CoreExecutionLifecycle,
@@ -230,6 +233,102 @@ def test_core_execution_head_publishes_each_event_once_and_routes_cancel():
     assert [item.sequence for item in observed] == [1, 2]
     assert isinstance(get_core_execution_head(event), CoreExecutionHead)
     assert get_core_execution_lifecycle(event) is head.lifecycle
+
+
+def test_core_execution_head_returns_idempotent_command_receipts():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    command = CoreCommand(
+        execution_id=spec.execution_id,
+        turn_id=spec.turn_id,
+        kind=CoreCommandKind.CANCEL,
+        reason="user_cancelled",
+    )
+
+    first = head.dispatch_command(command)
+    second = head.dispatch_command(command)
+
+    assert first.disposition is CoreCommandDisposition.ACCEPTED
+    assert first.accepted is True
+    assert first.origin is CoreCommandOrigin.PERSONAL
+    assert first.session_status is CoreExecutionSessionStatus.CREATED
+    assert second.disposition is CoreCommandDisposition.DUPLICATE
+    assert second.accepted is False
+    assert second.session_status is CoreExecutionSessionStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_core_execution_head_mailbox_delivers_events_until_terminal():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    mailbox = head.subscribe_mailbox()
+
+    record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.WORKING,
+        executor_id="native",
+    )
+    record_interaction_turn_core_execution_event(
+        event,
+        kind=CoreExecutionEventKind.COMPLETED,
+        executor_id="native",
+    )
+
+    received = [await mailbox.receive() for _ in range(3)]
+    assert [item.kind for item in received] == [
+        CoreExecutionEventKind.SUBMITTED,
+        CoreExecutionEventKind.WORKING,
+        CoreExecutionEventKind.COMPLETED,
+    ]
+    with pytest.raises(StopAsyncIteration):
+        await mailbox.receive()
+
+
+def test_core_execution_mailbox_drops_progress_before_terminal_events():
+    mailbox = CoreExecutionEventMailbox(maxsize=2)
+    spec = CoreExecutionSpec.from_context_pack(
+        context_pack=ContextPack(),
+        turn_id="turn-mailbox",
+    )
+
+    submitted = CoreEvent(
+        sequence=1,
+        execution=CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id="native",
+        ),
+    )
+    progress = CoreEvent(
+        sequence=2,
+        execution=CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.PROGRESS,
+            executor_id="native",
+            metadata={"text": "working"},
+        ),
+    )
+    completed = CoreEvent(
+        sequence=3,
+        execution=CoreExecutionEvent.from_spec(
+            spec,
+            kind=CoreExecutionEventKind.COMPLETED,
+            executor_id="native",
+        ),
+    )
+
+    assert mailbox.publish(submitted) is True
+    assert mailbox.publish(progress) is True
+    assert mailbox.publish(completed) is True
+    assert mailbox.dropped_progress == 1
+    assert mailbox.closed is False
 
 
 def test_legacy_lifecycle_event_entry_publishes_through_head():

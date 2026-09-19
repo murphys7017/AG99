@@ -1,3 +1,35 @@
+minimax_stt_silence_handling:
+  date: '2026-09-19'
+  class: bugfix
+  risk: medium
+  status: validated_pending_live_acceptance
+  scope: >-
+    Treat MiniMax's successful empty speech-to-text response as a normal empty
+    transcription so OLV silently discards it instead of logging a provider
+    exception or treating it as a user turn.
+  non_goals: Silence detection thresholds and MiniMax API latency.
+  validation: >-
+    Focused MiniMax STT provider tests passed (5), including a Tencent-hosted
+    non-SILK audio regression. Scoped Ruff, compileall, and git diff --check
+    passed. Live OLV acceptance remains pending.
+
+minimax_stt_provider:
+  date: '2026-09-19'
+  class: feature
+  risk: medium
+  status: validated_pending_live_acceptance
+  scope: >-
+    Add MiniMax's multipart speech-to-text API as a selectable STT provider,
+    alongside the existing MiMo STT preset.
+  assumptions: >-
+    Use the documented POST https://api.minimax.cn/v1/speech_to_text endpoint,
+    asr-1.0 model, Bearer API key, JSON response format, and optional language
+    header. No streaming, speaker separation, or subtitle output is exposed.
+  validation: >-
+    Focused MiniMax STT provider tests passed (3), with scoped Ruff and
+    git diff --check passing. No live MiniMax request was made because no API
+    key was provided.
+
 minimax_strict_output_contract:
   date: '2026-09-19'
   class: bugfix
@@ -163,7 +195,9 @@ context:
   open:
     - Validate Personal reply, delegate, and eligible group silent decisions against real provider and platform traces before changing the default parallel-plugin runtime switch or output policy.
     - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Core Head Executor adapter.
-    - Define Personal/Core Head communication messages and CoreExecution session ownership without coupling them to Personal turn locks or directly releasing a Personal turn on delegation.
+    - Complete the Personal/Core Head asynchronous consumption boundary and validate the
+      CoreExecution session ownership/command direction without coupling it to Personal
+      turn locks or directly releasing a Personal turn on delegation.
     - Validate deadline expiry, outer task cancellation, repeated cancellation, and late-result isolation through real Interaction traces before introducing any Executor Adapter.
     - Run real OLV/platform regression with vision and text-only Providers.
     - Decide whether unavailable visual fallback should become a typed Core failure rather than existing empty-enrichment behavior.

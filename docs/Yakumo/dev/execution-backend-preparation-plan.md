@@ -774,6 +774,23 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 才建立 Native Executor Adapter。
 不得把现有 Lifecycle 直接更名为 `ExecutionBackend`，也不得先接入第二个执行器来反向逼迫接口设计。
 
+### 2026-09-20 Phase 9 第十五个通信契约切片
+
+- `CoreExecutionHead` 新增 `dispatch_command()`，通过 `CoreCommandReceipt` 明确返回
+  `accepted` 或幂等 `duplicate`。命令接收不再被误解为执行完成；真正的执行状态仍只能由
+  `CoreEvent` 回流。
+- `CoreCommand` 现在显式记录 `origin`（默认 `personal`），回执同时返回命令来源和接收后的
+  session 状态。该字段只描述进程内通信方向，不把 Personal 变成 `CoreExecutionSession`
+  的 owner；session 仍由 Core Head/Lifecycle 持有。
+- `CoreExecutionHead.subscribe_mailbox()` 提供了第一版异步事件消费边界。邮箱只接收订阅
+  后的新 `CoreEvent`，在终态事件后关闭；它不重放历史、不运行 Executor，也不拥有
+  Personal turn。邮箱有界，压力下只丢弃旧 `progress`，并支持主动取消订阅；原有同步
+  订阅继续保留，便于逐步迁移观察者。
+- 本切片没有引入后台队列、长期消费 worker、远程传输或新的 Executor Body，也没有改变
+  Native Runner、Personal turn lease、Output 或 Ledger owner。
+- 下一步仍是明确 Personal/Core Head 的 session ownership 与异步消费边界，再将 Native
+  生命周期适配逐步迁入 Core Head。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

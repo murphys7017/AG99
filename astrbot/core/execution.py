@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+from collections import deque
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -49,6 +51,20 @@ class CoreCommandKind(str, Enum):
     SUBMIT = "submit"
     PROVIDE_INPUT = "provide_input"
     CANCEL = "cancel"
+
+
+class CoreCommandOrigin(str, Enum):
+    """Logical sender of an in-process Core command."""
+
+    PERSONAL = "personal"
+    CORE_HEAD = "core_head"
+
+
+class CoreCommandDisposition(str, Enum):
+    """Receipt state returned by the Core Head for one command."""
+
+    ACCEPTED = "accepted"
+    DUPLICATE = "duplicate"
 
 
 _TERMINAL_CORE_EXECUTION_EVENT_KINDS = frozenset(
@@ -250,6 +266,7 @@ class CoreCommand:
     execution_id: str
     turn_id: str
     kind: CoreCommandKind
+    origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL
     command_id: str = field(default_factory=lambda: uuid4().hex)
     execution_spec: CoreExecutionSpec | None = None
     payload: Mapping[str, Any] = field(default_factory=dict)
@@ -275,6 +292,106 @@ class CoreCommand:
             or self.execution_spec.turn_id != turn_id
         ):
             raise ValueError("CoreCommand execution identity does not match execution_spec")
+
+
+@dataclass(frozen=True, slots=True)
+class CoreCommandReceipt:
+    """Structured acknowledgement for a Personal-to-Core command.
+
+    This is an in-process message contract only. It does not imply that the
+    command has completed execution; completion is reported through CoreEvent.
+    """
+
+    command_id: str
+    execution_id: str
+    turn_id: str
+    disposition: CoreCommandDisposition
+    origin: CoreCommandOrigin
+    session_status: CoreExecutionSessionStatus
+
+    @property
+    def accepted(self) -> bool:
+        return self.disposition is CoreCommandDisposition.ACCEPTED
+
+
+class CoreExecutionEventMailbox:
+    """Async, in-process delivery boundary for one Core event subscriber.
+
+    The mailbox receives only events published after subscription. It does not
+    replay history, run an executor, or grant the subscriber ownership of the
+    execution session.
+    """
+
+    def __init__(self, *, maxsize: int = 128) -> None:
+        if maxsize < 1:
+            raise ValueError("CoreExecutionEventMailbox maxsize must be positive")
+        self._events: deque[CoreEvent] = deque()
+        self._maxsize = maxsize
+        self._wake = asyncio.Event()
+        self._closed = False
+        self._dropped_progress = 0
+
+    def publish(self, event: CoreEvent) -> bool:
+        """Publish one event without blocking the Core publisher.
+
+        Progress is the only event kind that may be discarded under pressure.
+        Terminal events are always retained, even if that temporarily exceeds
+        the configured bound by one item.
+        """
+
+        if not self._closed:
+            if len(self._events) >= self._maxsize:
+                progress_index = next(
+                    (
+                        index
+                        for index, queued in enumerate(self._events)
+                        if queued.kind is CoreExecutionEventKind.PROGRESS
+                    ),
+                    None,
+                )
+                if progress_index is not None:
+                    del self._events[progress_index]
+                    self._dropped_progress += 1
+                # Keep submitted/working/artifact/terminal facts even when no
+                # progress remains to evict. The bound is a pressure guard
+                # for progress, not permission to lose execution facts.
+            self._events.append(event)
+            self._wake.set()
+            return True
+        return False
+
+    def close(self) -> None:
+        """Close the mailbox after already-published events are drained."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._wake.set()
+
+    async def receive(self) -> CoreEvent:
+        """Wait for the next event, raising StopAsyncIteration when closed."""
+
+        while True:
+            if self._events:
+                return self._events.popleft()
+            if self._closed:
+                raise StopAsyncIteration
+            self._wake.clear()
+            await self._wake.wait()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def dropped_progress(self) -> int:
+        return self._dropped_progress
+
+    def __aiter__(self) -> CoreExecutionEventMailbox:
+        return self
+
+    async def __anext__(self) -> CoreEvent:
+        return await self.receive()
 
 
 @dataclass(frozen=True, slots=True)
@@ -711,6 +828,11 @@ class CoreExecutionHead:
         init=False,
         repr=False,
     )
+    _event_mailboxes: list[CoreExecutionEventMailbox] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         # A Head may be attached after a legacy Lifecycle has recorded facts.
@@ -738,6 +860,28 @@ class CoreExecutionHead:
         """Accept a Personal/Core command for this execution."""
 
         return self.lifecycle.accept_command(command)
+
+    def dispatch_command(self, command: CoreCommand) -> CoreCommandReceipt:
+        """Accept one command and return an explicit in-process receipt.
+
+        A duplicate command is a successful idempotent delivery outcome, not
+        a second execution. Lifecycle violations still raise so callers cannot
+        mistake a rejected command for an accepted one.
+        """
+
+        accepted = self.accept_command(command)
+        return CoreCommandReceipt(
+            command_id=command.command_id,
+            execution_id=command.execution_id,
+            turn_id=command.turn_id,
+            disposition=(
+                CoreCommandDisposition.ACCEPTED
+                if accepted
+                else CoreCommandDisposition.DUPLICATE
+            ),
+            origin=command.origin,
+            session_status=self.session.status,
+        )
 
     def bind_executor_stop_callback(self, callback: Callable[[], None]) -> None:
         """Bind the active Executor Body stop request."""
@@ -789,10 +933,30 @@ class CoreExecutionHead:
         if callback not in self._event_subscribers:
             self._event_subscribers.append(callback)
 
+    def subscribe_mailbox(
+        self,
+        *,
+        maxsize: int = 128,
+    ) -> CoreExecutionEventMailbox:
+        """Create an async subscriber for future Core events."""
+
+        mailbox = CoreExecutionEventMailbox(maxsize=maxsize)
+        self._event_mailboxes.append(mailbox)
+        return mailbox
+
+    def unsubscribe_mailbox(self, mailbox: CoreExecutionEventMailbox) -> None:
+        """Stop one async subscriber and release it from the Head."""
+
+        if mailbox in self._event_mailboxes:
+            self._event_mailboxes.remove(mailbox)
+        mailbox.close()
+
     def _publish(self, envelope: CoreEvent) -> None:
         if envelope.sequence in self._published_sequences:
             return
         self._published_sequences.add(envelope.sequence)
+        for mailbox in tuple(self._event_mailboxes):
+            mailbox.publish(envelope)
         for callback in tuple(self._event_subscribers):
             try:
                 callback(envelope)
@@ -806,6 +970,10 @@ class CoreExecutionHead:
                     envelope.kind.value,
                     exc_info=True,
                 )
+        if envelope.kind in _TERMINAL_CORE_EXECUTION_EVENT_KINDS:
+            for mailbox in tuple(self._event_mailboxes):
+                mailbox.close()
+            self._event_mailboxes.clear()
 
     @property
     def events(self) -> tuple[CoreEvent, ...]:
@@ -1230,6 +1398,9 @@ __all__ = [
     "CoreCapabilitySnapshot",
     "CoreCommand",
     "CoreCommandKind",
+    "CoreCommandOrigin",
+    "CoreCommandDisposition",
+    "CoreCommandReceipt",
     "CoreEvent",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
