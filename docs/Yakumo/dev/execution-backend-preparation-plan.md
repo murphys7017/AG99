@@ -816,6 +816,14 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 终态 API 的回归验证覆盖了合法的 `submitted -> working -> artifact_ready ->
   completed` 顺序，以及失败终态的单一性；测试不会把 `start()` 的命令接收误当成
   `submitted` 事实。
+- 终态入口全覆盖审计确认：有 `CoreExecutionHead` 的 Native 主路径均经由 Head
+  生成终态，`astr_agent_run_util` 的取消/失败事实也只通过 Interaction bridge 投影；
+  仅 Legacy 无 Head 分支保留旧 Lifecycle 投影。当前已有的 `NativeExecutionAdapter`
+  仍只是 Prompt/Capability 投影器，不是 Executor Adapter，不能通过改名提前宣称
+  可替换执行器已经落地。
+- 因取消、终态顺序、结算幂等和迟到结果边界已经完成聚焦验证，下一切片可以开始设计
+  Native Executor Adapter 的真实最小契约；实现范围应只覆盖 Native runner 的启动、
+  事件回流、停止和关闭，不迁移 Output、TTS、Ledger 持久化或 Personal turn owner。
 
 ## 非目标
 
