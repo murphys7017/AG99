@@ -786,6 +786,19 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   后的新 `CoreEvent`，在终态事件后关闭；它不重放历史、不运行 Executor，也不拥有
   Personal turn。邮箱有界，压力下只丢弃旧 `progress`，并支持主动取消订阅；原有同步
   订阅继续保留，便于逐步迁移观察者。
+- mailbox 在检查队列前清除唤醒标记，确保发布发生在检查与等待之间时不会丢失唤醒；
+  该顺序是异步消费边界的必要不变量。
+- `CoreExecutionHead.subscribe_command_mailbox()` 现在观察所有已接受的
+  `CoreCommand`，包括初始 `submit`、`cancel` 和 `provide_input`；重复 command 不会
+  再次发布。它是旁路观察者而不是可靠命令队列：压力下只允许丢弃旧的
+  `provide_input` 观察项，`submit/cancel` 控制事实保留；实际命令是否接受仍以 Head
+  回执和 Session 为准。它不执行命令、不拥有 session，也不引入后台 worker。
+- `CoreExecutionHead.close()` 现在只关闭事件投递，不改变 `CoreExecutionSession` 状态；
+  适配器拆除或外层取消可以释放邮箱而不伪造 `cancelled` 事件。终态事件仍由 Head 自动
+  关闭所有邮箱。
+- `CoreExecutionHead.emit_event()` 现在负责从执行身份创建、排序并发布事件；Interaction
+  桥接层只负责准入校验和投影，不再在 Head 路径中自行构造事实对象。Legacy 无 Head
+  路径仍保留为兼容边界，尚未宣称完成 Native 生命周期迁移。
 - 本切片没有引入后台队列、长期消费 worker、远程传输或新的 Executor Body，也没有改变
   Native Runner、Personal turn lease、Output 或 Ledger owner。
 - 下一步仍是明确 Personal/Core Head 的 session ownership 与异步消费边界，再将 Native

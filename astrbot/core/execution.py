@@ -372,11 +372,13 @@ class CoreExecutionEventMailbox:
         """Wait for the next event, raising StopAsyncIteration when closed."""
 
         while True:
+            # Clear before inspecting the queue. Publishing between the
+            # inspection and clear would otherwise lose the wake-up signal.
+            self._wake.clear()
             if self._events:
                 return self._events.popleft()
             if self._closed:
                 raise StopAsyncIteration
-            self._wake.clear()
             await self._wake.wait()
 
     @property
@@ -391,6 +393,82 @@ class CoreExecutionEventMailbox:
         return self
 
     async def __anext__(self) -> CoreEvent:
+        return await self.receive()
+
+
+class CoreExecutionCommandMailbox:
+    """Async, in-process delivery boundary for accepted Core commands.
+
+    The mailbox observes commands after the Head accepts them. It does not
+    execute commands, replay history, or change command acknowledgement
+    semantics. Duplicate command attempts are therefore not published.
+    """
+
+    def __init__(self, *, maxsize: int = 128) -> None:
+        if maxsize < 1:
+            raise ValueError("CoreExecutionCommandMailbox maxsize must be positive")
+        self._commands: deque[CoreCommand] = deque()
+        self._maxsize = maxsize
+        self._wake = asyncio.Event()
+        self._closed = False
+        self._dropped_commands = 0
+
+    def publish(self, command: CoreCommand) -> bool:
+        """Publish one accepted command without blocking the Core caller."""
+
+        if self._closed:
+            return False
+        if len(self._commands) >= self._maxsize:
+            droppable_index = next(
+                (
+                    index
+                    for index, queued in enumerate(self._commands)
+                    if queued.kind is CoreCommandKind.PROVIDE_INPUT
+                ),
+                None,
+            )
+            if droppable_index is not None:
+                del self._commands[droppable_index]
+                self._dropped_commands += 1
+            else:
+                # Submit and cancel are control facts. Keep them even when
+                # that temporarily exceeds the nominal bound.
+                pass
+        self._commands.append(command)
+        self._wake.set()
+        return True
+
+    def close(self) -> None:
+        """Close the mailbox after already-published commands are drained."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._wake.set()
+
+    async def receive(self) -> CoreCommand:
+        """Wait for the next command, raising StopAsyncIteration when closed."""
+
+        while True:
+            self._wake.clear()
+            if self._commands:
+                return self._commands.popleft()
+            if self._closed:
+                raise StopAsyncIteration
+            await self._wake.wait()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def dropped_commands(self) -> int:
+        return self._dropped_commands
+
+    def __aiter__(self) -> CoreExecutionCommandMailbox:
+        return self
+
+    async def __anext__(self) -> CoreCommand:
         return await self.receive()
 
 
@@ -590,6 +668,11 @@ class CoreExecutionLifecycle:
         init=False,
         repr=False,
     )
+    _command_publisher: Callable[[CoreCommand], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     @property
     def spec(self) -> CoreExecutionSpec:
@@ -616,7 +699,10 @@ class CoreExecutionLifecycle:
     def accept_command(self, command: CoreCommand) -> bool:
         """Accept an external command through the owning Core session."""
 
-        return self.session.accept_command(command)
+        accepted = self.session.accept_command(command)
+        if accepted and self._command_publisher is not None:
+            self._command_publisher(command)
+        return accepted
 
     def record_event(self, execution_event: CoreExecutionEvent) -> CoreEvent:
         """Sequence an executor fact through the owning Core session."""
@@ -632,6 +718,13 @@ class CoreExecutionLifecycle:
         if self._event_publisher is not None:
             raise ValueError("CoreExecutionLifecycle already has an event publisher")
         self._event_publisher = callback
+
+    def bind_command_publisher(self, callback: Callable[[CoreCommand], None]) -> None:
+        """Bind the Head's one local command publication path."""
+
+        if self._command_publisher is not None:
+            raise ValueError("CoreExecutionLifecycle already has a command publisher")
+        self._command_publisher = callback
 
     def bind_executor_stop_callback(self, callback: Callable[[], None]) -> None:
         """Bind the active executor's idempotent stop request for this session."""
@@ -833,6 +926,12 @@ class CoreExecutionHead:
         init=False,
         repr=False,
     )
+    _command_mailboxes: list[CoreExecutionCommandMailbox] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
+    _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # A Head may be attached after a legacy Lifecycle has recorded facts.
@@ -842,6 +941,7 @@ class CoreExecutionHead:
             event.sequence for event in self.lifecycle.session.events
         )
         self.lifecycle.bind_event_publisher(self._publish)
+        self.lifecycle.bind_command_publisher(self._publish_command)
 
     @property
     def session(self) -> CoreExecutionSession:
@@ -902,6 +1002,31 @@ class CoreExecutionHead:
 
         return self.lifecycle.record_event(execution_event)
 
+    def emit_event(
+        self,
+        *,
+        kind: CoreExecutionEventKind,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent:
+        """Create, sequence, and publish one executor fact through the Head."""
+
+        if kind is CoreExecutionEventKind.CANCELLED:
+            envelope = self.cancel(
+                executor_id=executor_id,
+                metadata=metadata,
+            )
+        else:
+            envelope = self.record_event(
+                CoreExecutionEvent.from_spec(
+                    self.spec,
+                    kind=kind,
+                    executor_id=executor_id,
+                    metadata=metadata,
+                )
+            )
+        return envelope.execution
+
     def cancel(
         self,
         *,
@@ -940,8 +1065,27 @@ class CoreExecutionHead:
     ) -> CoreExecutionEventMailbox:
         """Create an async subscriber for future Core events."""
 
+        if self._closed:
+            mailbox = CoreExecutionEventMailbox(maxsize=maxsize)
+            mailbox.close()
+            return mailbox
         mailbox = CoreExecutionEventMailbox(maxsize=maxsize)
         self._event_mailboxes.append(mailbox)
+        return mailbox
+
+    def subscribe_command_mailbox(
+        self,
+        *,
+        maxsize: int = 128,
+    ) -> CoreExecutionCommandMailbox:
+        """Create an async subscriber for accepted commands."""
+
+        if self._closed:
+            mailbox = CoreExecutionCommandMailbox(maxsize=maxsize)
+            mailbox.close()
+            return mailbox
+        mailbox = CoreExecutionCommandMailbox(maxsize=maxsize)
+        self._command_mailboxes.append(mailbox)
         return mailbox
 
     def unsubscribe_mailbox(self, mailbox: CoreExecutionEventMailbox) -> None:
@@ -951,7 +1095,32 @@ class CoreExecutionHead:
             self._event_mailboxes.remove(mailbox)
         mailbox.close()
 
+    def unsubscribe_command_mailbox(
+        self,
+        mailbox: CoreExecutionCommandMailbox,
+    ) -> None:
+        """Stop one async command subscriber and release it from the Head."""
+
+        if mailbox in self._command_mailboxes:
+            self._command_mailboxes.remove(mailbox)
+        mailbox.close()
+
+    def close(self) -> None:
+        """Close event delivery without changing execution session state."""
+
+        if self._closed:
+            return
+        self._closed = True
+        for mailbox in tuple(self._event_mailboxes):
+            mailbox.close()
+        self._event_mailboxes.clear()
+        for mailbox in tuple(self._command_mailboxes):
+            mailbox.close()
+        self._command_mailboxes.clear()
+
     def _publish(self, envelope: CoreEvent) -> None:
+        if self._closed:
+            return
         if envelope.sequence in self._published_sequences:
             return
         self._published_sequences.add(envelope.sequence)
@@ -971,9 +1140,13 @@ class CoreExecutionHead:
                     exc_info=True,
                 )
         if envelope.kind in _TERMINAL_CORE_EXECUTION_EVENT_KINDS:
-            for mailbox in tuple(self._event_mailboxes):
-                mailbox.close()
-            self._event_mailboxes.clear()
+            self.close()
+
+    def _publish_command(self, command: CoreCommand) -> None:
+        if self._closed:
+            return
+        for mailbox in tuple(self._command_mailboxes):
+            mailbox.publish(command)
 
     @property
     def events(self) -> tuple[CoreEvent, ...]:
@@ -1402,6 +1575,7 @@ __all__ = [
     "CoreCommandDisposition",
     "CoreCommandReceipt",
     "CoreEvent",
+    "CoreExecutionCommandMailbox",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
     "CoreExecutionDeadlineView",

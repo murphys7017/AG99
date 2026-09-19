@@ -1257,19 +1257,18 @@ def record_interaction_turn_core_execution_event(
     execution_head = get_core_execution_head(event)
     if execution_head is not None:
         bind_interaction_turn_core_execution_journal(event, execution_head)
+        projected = execution_head.emit_event(
+            kind=kind,
+            executor_id=executor_id,
+            metadata=metadata,
+        )
         if kind is CoreExecutionEventKind.CANCELLED:
-            envelope = execution_head.cancel(
-                executor_id=executor_id,
-                metadata=metadata,
-            )
             record_interaction_turn_core_execution_stop_callback_failure(
                 event,
-                envelope.execution,
+                projected,
                 error=execution_head.executor_stop_error,
             )
-        else:
-            envelope = execution_head.record_event(execution_event)
-        return envelope.execution
+        return projected
 
     execution_lifecycle = get_core_execution_lifecycle(event)
     execution_session = get_core_execution_session(event)

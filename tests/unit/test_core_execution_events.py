@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from astrbot.core.execution import (
@@ -259,6 +261,58 @@ def test_core_execution_head_returns_idempotent_command_receipts():
 
 
 @pytest.mark.asyncio
+async def test_core_execution_head_command_mailbox_receives_only_accepted_commands():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    mailbox = head.subscribe_command_mailbox()
+    command = CoreCommand(
+        execution_id=spec.execution_id,
+        turn_id=spec.turn_id,
+        kind=CoreCommandKind.CANCEL,
+        reason="user_cancelled",
+    )
+
+    first = head.dispatch_command(command)
+    duplicate = head.dispatch_command(command)
+
+    assert first.accepted is True
+    assert duplicate.accepted is False
+    assert await mailbox.receive() is command
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(mailbox.receive(), timeout=0.01)
+
+
+@pytest.mark.asyncio
+async def test_core_execution_head_command_mailbox_receives_initial_submit():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = bind_core_execution_head(event, spec)
+    mailbox = head.subscribe_command_mailbox()
+
+    assert head.start() is True
+    command = await mailbox.receive()
+
+    assert command.kind is CoreCommandKind.SUBMIT
+    assert command.execution_spec is spec
+
+
+@pytest.mark.asyncio
+async def test_core_execution_head_close_closes_command_mailbox_without_changing_state():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    mailbox = head.subscribe_command_mailbox()
+
+    head.close()
+
+    assert mailbox.closed is True
+    assert head.session.status is CoreExecutionSessionStatus.CREATED
+    with pytest.raises(StopAsyncIteration):
+        await mailbox.receive()
+
+
+@pytest.mark.asyncio
 async def test_core_execution_head_mailbox_delivers_events_until_terminal():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
@@ -329,6 +383,36 @@ def test_core_execution_mailbox_drops_progress_before_terminal_events():
     assert mailbox.publish(completed) is True
     assert mailbox.dropped_progress == 1
     assert mailbox.closed is False
+
+
+def test_core_execution_head_close_only_closes_event_delivery():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    mailbox = head.subscribe_mailbox()
+
+    head.close()
+
+    assert mailbox.closed is True
+    assert head.session.status is CoreExecutionSessionStatus.CREATED
+    late_mailbox = head.subscribe_mailbox()
+    assert late_mailbox.closed is True
+
+
+def test_core_execution_head_emits_events_from_execution_identity():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+
+    submitted = head.emit_event(
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+        metadata={"source": "head"},
+    )
+
+    assert submitted.kind is CoreExecutionEventKind.SUBMITTED
+    assert submitted.execution_id == spec.execution_id
+    assert head.session.events[-1].metadata_for_trace()["source"] == "head"
 
 
 def test_legacy_lifecycle_event_entry_publishes_through_head():
