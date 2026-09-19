@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -83,6 +84,8 @@ class CronJobManager:
     def __init__(self, db: BaseDatabase) -> None:
         self.db = db
         self.scheduler = AsyncIOScheduler()
+        self.scheduler.add_listener(self._on_job_missed, EVENT_JOB_MISSED)
+        self._status_tasks: set[asyncio.Task] = set()
         self._basic_handlers: dict[str, Callable[..., Any]] = {}
         self._lock = asyncio.Lock()
         self._started = False
@@ -106,8 +109,46 @@ class CronJobManager:
                 return
             self.scheduler.shutdown(wait=False)
             await asyncio.sleep(0)
+            if self._status_tasks:
+                await asyncio.gather(*tuple(self._status_tasks))
             self._started = False
             self._db_synced = False
+
+    def _on_job_missed(self, event: JobExecutionEvent) -> None:
+        task = asyncio.create_task(
+            self._record_missed_job(event.job_id, event.scheduled_run_time)
+        )
+        self._status_tasks.add(task)
+        task.add_done_callback(self._status_tasks.discard)
+
+    async def _record_missed_job(
+        self, job_id: str, scheduled_run_time: datetime
+    ) -> None:
+        try:
+            job = await self.db.get_cron_job(job_id)
+            if job is None or not job.enabled:
+                return
+            last_run = job.last_run_at
+            if last_run is not None:
+                if last_run.tzinfo is None:
+                    last_run = last_run.replace(tzinfo=timezone.utc)
+                if last_run >= scheduled_run_time:
+                    return
+            # A replaced one-shot job must not inherit the old schedule's miss.
+            if job.run_once and self.scheduler.get_job(job_id) is not None:
+                return
+            await self.db.update_cron_job(
+                job_id,
+                status="missed",
+                last_error="Scheduled execution missed its grace period",
+                next_run_time=self._get_next_run_time(job_id),
+                **({"enabled": False} if job.run_once else {}),
+            )
+            logger.warning("Cron execution missed its grace period: job_id=%s", job_id)
+        except Exception:
+            logger.exception(
+                "Failed to record missed cron execution: job_id=%s", job_id
+            )
 
     async def sync_from_db(self) -> None:
         jobs = await self.db.list_cron_jobs()
@@ -121,7 +162,7 @@ class CronJobManager:
                 )
                 continue
             try:
-                self._schedule_job(job)
+                await self._schedule_persisted_job(job)
             except CronJobSchedulingError:
                 continue  # Error already logged in _schedule_job
 
@@ -149,7 +190,7 @@ class CronJobManager:
         )
         self._basic_handlers[job.job_id] = handler
         if enabled:
-            self._schedule_job(job)
+            await self._schedule_persisted_job(job)
         return job
 
     async def add_active_job(
@@ -180,7 +221,7 @@ class CronJobManager:
             run_once=run_once,
         )
         if enabled:
-            self._schedule_job(job)
+            await self._schedule_persisted_job(job)
         return job
 
     async def update_job(self, job_id: str, **kwargs) -> CronJob | None:
@@ -189,7 +230,7 @@ class CronJobManager:
             return None
         self._remove_scheduled(job_id)
         if job.enabled:
-            self._schedule_job(job)
+            await self._schedule_persisted_job(job)
         return job
 
     async def delete_job(self, job_id: str) -> None:
@@ -203,6 +244,24 @@ class CronJobManager:
     def _remove_scheduled(self, job_id: str) -> None:
         if self.scheduler.get_job(job_id):
             self.scheduler.remove_job(job_id)
+
+    async def _schedule_persisted_job(self, job: CronJob) -> None:
+        await self.db.update_cron_job(job.job_id, status="scheduled", last_error=None)
+        try:
+            self._schedule_job(job)
+        except CronJobSchedulingError as exc:
+            await self.db.update_cron_job(
+                job.job_id,
+                enabled=False,
+                status="failed",
+                last_error=str(exc),
+                next_run_time=None,
+            )
+            raise
+        await self.db.update_cron_job(
+            job.job_id,
+            next_run_time=job.next_run_time,
+        )
 
     def _schedule_job(self, job: CronJob) -> None:
         if not self._started:
@@ -230,6 +289,8 @@ class CronJobManager:
                 if run_at.tzinfo is None and tzinfo is not None:
                     run_at = run_at.replace(tzinfo=tzinfo)
                 trigger = DateTrigger(run_date=run_at, timezone=tzinfo)
+                if trigger.run_date <= datetime.now(timezone.utc):
+                    raise ValueError("run_once timestamp is in the past; reschedule explicitly")
             else:
                 if not job.cron_expression:
                     raise ValueError("recurring job missing cron_expression")
@@ -255,11 +316,7 @@ class CronJobManager:
                 replace_existing=True,
                 misfire_grace_time=30,
             )
-            asyncio.create_task(
-                self.db.update_cron_job(
-                    job.job_id, next_run_time=self._get_next_run_time(job.job_id)
-                )
-            )
+            job.next_run_time = self._get_next_run_time(job.job_id)
         except (ValueError, TypeError) as e:
             logger.exception("Failed to schedule cron job %s", job.job_id)
             raise CronJobSchedulingError(str(e)) from e
@@ -293,24 +350,32 @@ class CronJobManager:
             if job.job_type == "basic":
                 await self._run_basic_job(job)
             elif job.job_type == "active_agent":
-                await self._run_active_agent_job(job, start_time=start_time)
+                delivered = await self._run_active_agent_job(job, start_time=start_time)
+                if not delivered:
+                    status = "completed_without_delivery"
             else:
                 raise ValueError(f"Unknown cron job type: {job.job_type}")
         except Exception as e:  # noqa: BLE001
             status = "failed"
             last_error = str(e)
             logger.error(f"Cron job {job_id} failed: {e!s}", exc_info=True)
+        except asyncio.CancelledError:
+            status = "cancelled"
+            last_error = "Cron execution was cancelled"
+            raise
         finally:
             next_run = self._get_next_run_time(job_id)
+            disable_failed_once = job.run_once and delete_run_once and status != "completed"
             await self.db.update_cron_job(
                 job_id,
                 status=status,
                 last_run_at=start_time,
                 last_error=last_error,
                 next_run_time=next_run,
+                **({"enabled": False} if disable_failed_once else {}),
             )
-            if job.run_once and delete_run_once:
-                # one-shot: remove after execution regardless of success
+            if job.run_once and delete_run_once and status == "completed":
+                # Keep failed one-shot evidence, without automatically retrying.
                 await self.delete_job(job_id)
 
     async def _run_basic_job(self, job: CronJob) -> None:
@@ -322,7 +387,7 @@ class CronJobManager:
         if asyncio.iscoroutine(result):
             await result
 
-    async def _run_active_agent_job(self, job: CronJob, start_time: datetime) -> None:
+    async def _run_active_agent_job(self, job: CronJob, start_time: datetime) -> bool:
         payload = job.payload or {}
         delivery_session_str = str(payload.get("session") or "").strip()
         if not delivery_session_str:
@@ -355,7 +420,7 @@ class CronJobManager:
             "cron_payload": payload,
         }
 
-        await self._woke_main_agent(
+        return await self._woke_main_agent(
             message=note,
             session_str=session_str,
             extras=extras,
@@ -369,7 +434,7 @@ class CronJobManager:
         session_str: str,
         extras: dict,
         delivery_session_str: str = "",
-    ) -> None:
+    ) -> bool:
         """Woke the main agent to handle the cron job message."""
         from astrbot.core.astr_main_agent import MainAgentBuildConfig
         from astrbot.core.astr_main_agent_resources import (
@@ -383,8 +448,7 @@ class CronJobManager:
                 else MessageSession.from_str(session_str)
             )
         except Exception as e:  # noqa: BLE001
-            logger.error(f"Invalid session for cron job: {e}")
-            return
+            raise ValueError(f"Invalid session for cron job: {session_str}") from e
 
         # judge user's role
         umo = str(session)
@@ -403,7 +467,6 @@ class CronJobManager:
         tool_call_timeout = provider_settings.get("tool_call_timeout", 120)
         config = MainAgentBuildConfig(
             tool_call_timeout=tool_call_timeout,
-            llm_safety_mode=False,
             streaming_response=False,
             provider_settings=provider_settings,
         )
@@ -428,10 +491,6 @@ class CronJobManager:
             require_delivery_tool=bool(delivery_session_str),
             include_history_fences=False,
         )
-        if turn is None:
-            logger.error("Failed to build main agent for cron job.")
-            return
-
         llm_resp = turn.response
         cron_meta = extras.get("cron_job", {}) if extras else {}
         summary_note = (
@@ -449,9 +508,13 @@ class CronJobManager:
             req=turn.request,
             summary_note=summary_note,
         )
-        if not llm_resp:
-            logger.warning("Cron job agent got no response")
-            return
+        if delivery_session_str and not turn.delivery_confirmed:
+            logger.warning(
+                "Cron execution completed without confirmed delivery: job_id=%s target=%s",
+                cron_meta.get("id", ""),
+                delivery_session_str,
+            )
+        return turn.delivery_confirmed or not delivery_session_str
 
 
 __all__ = ["CronJobManager"]

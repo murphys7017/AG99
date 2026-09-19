@@ -630,10 +630,6 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             require_delivery_tool=True,
             include_history_fences=False,
         )
-        if turn is None:
-            logger.error(f"Failed to build main agent for background task {tool_name}.")
-            return
-
         llm_resp = turn.response
         task_meta = extras.get("background_task_result", {})
         summary_note = (

@@ -2,7 +2,7 @@ scheduled_output_closure:
   date: '2026-09-19'
   class: bugfix
   risk: high
-  status: in_progress
+  status: implemented_pending_live_acceptance
   scope: >-
     Close confirmed cross-component defects in task admission, admitted prompt
     configuration, proactive execution, scheduler failure settlement and delivery
@@ -14,9 +14,21 @@ scheduled_output_closure:
     live settings and the wrong file-extraction nesting.
   non_goals: New Executor Body, automatic restart, AG99live edits, broad prompt style rewrite.
   validation: >-
-    Three focused prompt tests passed. Subsequent checks use an isolated
-    ASTRBOT_ROOT under .tmp to avoid mixing test logs with runtime evidence.
-  next: Validate delivery failures and proactive scheduler settlement before live acceptance.
+    Three focused prompt tests and 92 delivery/runtime tests passed. The proactive,
+    Cron and interaction batch passed 80 cases; a real APScheduler/temporary SQLite
+    smoke then passed both one-shot success deletion and failure retention cases.
+    Subsequent checks use an isolated ASTRBOT_ROOT under .tmp to avoid mixing test
+    logs with runtime evidence. Live OLV/TTS acceptance remains pending.
+  changes: >-
+    Share admitted configuration projection with proactive Core; freeze target
+    session configuration and plugin admission. Propagate false/partial delivery
+    and unsuccessful proactive execution. Retain disabled failed one-shot records,
+    persist scheduling errors and missed executions, and distinguish computation
+    completion without confirmed target delivery. Do not auto-retry side effects.
+  next: >-
+    Operator restarts manually and validates reminder creation, trigger, one
+    Personal output, TTS and platform delivery. These changes do not complete
+    the broader Output Adapter or replaceable Executor Body migration.
 turn_diagnostics_and_routing:
   date: '2026-09-19'
   class: bugfix

@@ -1,5 +1,6 @@
 """Tests for CronJobManager."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -12,6 +13,54 @@ from astrbot.core.cron.manager import (
     _normalize_crontab_day_of_week,
 )
 from astrbot.core.db.po import CronJob
+from astrbot.core.db.sqlite import SQLiteDatabase
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_one_shot_scheduler_preserves_failure_evidence(tmp_path, fails):
+    db = SQLiteDatabase(str(tmp_path / "cron.db"))
+    manager = CronJobManager(db)
+    await db.initialize()
+
+    def handler(**kwargs):
+        if fails:
+            raise RuntimeError("delivery unavailable")
+
+    try:
+        job = await manager.add_basic_job(
+            name="one-shot smoke",
+            cron_expression="* * * * *",
+            handler=handler,
+            enabled=False,
+        )
+        await manager.update_job(
+            job.job_id,
+            enabled=True,
+            run_once=True,
+            cron_expression=None,
+            payload={
+                "run_at": (
+                    datetime.now(timezone.utc) + timedelta(seconds=0.3)
+                ).isoformat()
+            },
+        )
+        async with asyncio.timeout(5):
+            while True:
+                saved = await db.get_cron_job(job.job_id)
+                if saved is None or saved.status == "failed":
+                    break
+                await asyncio.sleep(0.02)
+        if fails:
+            assert saved is not None
+            assert saved.enabled is False
+            assert saved.last_error == "delivery unavailable"
+            assert saved.next_run_time is None
+        else:
+            assert saved is None
+    finally:
+        await manager.shutdown()
+        await db.engine.dispose()
 
 
 @pytest.fixture

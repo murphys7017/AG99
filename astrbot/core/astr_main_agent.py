@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Coroutine
-from dataclasses import dataclass, field
+from collections.abc import Coroutine, Mapping
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from astrbot.core import logger
@@ -224,6 +225,110 @@ class MainAgentBuildConfig:
     """Maximum number of images injected from quoted-message fallback extraction."""
     prompt_pipeline_strict_mode: bool = False
     """Whether to fail loudly when prompt-pipeline stages encounter errors."""
+
+    def with_runtime_config(
+        self, runtime_config: Mapping[str, Any]
+    ) -> MainAgentBuildConfig:
+        """Project one session's settings for both ordinary and proactive Core."""
+        settings = runtime_config.get("provider_settings", {})
+        if not isinstance(settings, Mapping):
+            settings = {}
+        file_extract = settings.get("file_extract", {})
+        if not isinstance(file_extract, Mapping):
+            file_extract = {}
+        sandbox_cfg = settings.get("sandbox", {})
+        if not isinstance(sandbox_cfg, Mapping):
+            sandbox_cfg = {}
+        proactive_cfg = settings.get("proactive_capability", {})
+        if not isinstance(proactive_cfg, Mapping):
+            proactive_cfg = {}
+        try:
+            max_context_length = int(
+                settings.get("max_context_length", self.max_context_length)
+            )
+        except (TypeError, ValueError):
+            max_context_length = self.max_context_length
+        try:
+            dequeue_context_length = min(
+                max(
+                    1,
+                    int(
+                        settings.get(
+                            "dequeue_context_length", self.dequeue_context_length
+                        )
+                    ),
+                ),
+                max_context_length - 1,
+            )
+        except (TypeError, ValueError):
+            dequeue_context_length = self.dequeue_context_length
+        dequeue_context_length = max(1, dequeue_context_length)
+        subagent_orchestrator = runtime_config.get(
+            "subagent_orchestrator", self.subagent_orchestrator
+        )
+        if not isinstance(subagent_orchestrator, Mapping):
+            subagent_orchestrator = self.subagent_orchestrator
+        return replace(
+            self,
+            tool_call_timeout=settings.get("tool_call_timeout", self.tool_call_timeout),
+            tool_schema_mode=settings.get("tool_schema_mode", self.tool_schema_mode),
+            sanitize_context_by_modalities=bool(
+                settings.get(
+                    "sanitize_context_by_modalities",
+                    self.sanitize_context_by_modalities,
+                )
+            ),
+            kb_agentic_mode=bool(
+                runtime_config.get("kb_agentic_mode", self.kb_agentic_mode)
+            ),
+            file_extract_enabled=bool(
+                file_extract.get("enable", self.file_extract_enabled)
+            ),
+            file_extract_prov=str(file_extract.get("provider", self.file_extract_prov)),
+            file_extract_msh_api_key=str(
+                file_extract.get("moonshotai_api_key", self.file_extract_msh_api_key)
+            ),
+            context_limit_reached_strategy=str(
+                settings.get(
+                    "context_limit_reached_strategy",
+                    self.context_limit_reached_strategy,
+                )
+            ),
+            llm_compress_instruction=str(
+                settings.get("llm_compress_instruction", self.llm_compress_instruction)
+            ),
+            llm_compress_keep_recent=settings.get(
+                "llm_compress_keep_recent", self.llm_compress_keep_recent
+            ),
+            llm_compress_keep_recent_ratio=settings.get(
+                "llm_compress_keep_recent_ratio", self.llm_compress_keep_recent_ratio
+            ),
+            llm_compress_provider_id=str(
+                settings.get("llm_compress_provider_id", self.llm_compress_provider_id)
+            ),
+            max_context_length=max_context_length,
+            dequeue_context_length=dequeue_context_length,
+            fallback_max_context_tokens=settings.get(
+                "fallback_max_context_tokens", self.fallback_max_context_tokens
+            ),
+            llm_safety_mode=bool(settings.get("llm_safety_mode", self.llm_safety_mode)),
+            safety_mode_strategy=str(
+                settings.get("safety_mode_strategy", self.safety_mode_strategy)
+            ),
+            computer_use_runtime=str(
+                settings.get("computer_use_runtime", self.computer_use_runtime)
+            ),
+            sandbox_cfg=deepcopy(dict(sandbox_cfg)),
+            add_cron_tools=bool(
+                proactive_cfg.get("add_cron_tools", self.add_cron_tools)
+            ),
+            provider_settings=deepcopy(dict(settings)),
+            subagent_orchestrator=deepcopy(dict(subagent_orchestrator)),
+            timezone=runtime_config.get("timezone", self.timezone),
+            max_quoted_fallback_images=settings.get(
+                "max_quoted_fallback_images", self.max_quoted_fallback_images
+            ),
+        )
 
 
 @dataclass(slots=True)

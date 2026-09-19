@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.platform.message_session import MessageSession
-from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.plugin_admission import (
+    build_plugin_admission_snapshot,
+    resolve_event_plugins_name,
+)
+from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.utils.config_number import coerce_int_config
 
@@ -22,7 +27,8 @@ class ProactiveAgentTurnResult:
 
     event: CronMessageEvent
     request: ProviderRequest
-    response: Any | None
+    response: LLMResponse
+    delivery_confirmed: bool = False
 
 
 async def run_proactive_agent_turn(
@@ -37,7 +43,7 @@ async def run_proactive_agent_turn(
     prompt: str,
     require_delivery_tool: bool,
     include_history_fences: bool,
-) -> ProactiveAgentTurnResult | None:
+) -> ProactiveAgentTurnResult:
     """Run one proactive Core turn through the standard Main Agent builder.
 
     Cron and detached background tools have no ordinary platform Event after the
@@ -47,6 +53,10 @@ async def run_proactive_agent_turn(
     # Kept local to avoid making the Core builder import this proactive helper.
     from astrbot.core.astr_main_agent import _get_session_conv, build_main_agent
     from astrbot.core.cron.events import CronMessageEvent
+    from astrbot.core.interaction.turn_state import (
+        ensure_interaction_turn_state,
+        set_interaction_turn_runtime_config,
+    )
 
     event = CronMessageEvent(
         context=context,
@@ -57,6 +67,15 @@ async def run_proactive_agent_turn(
     )
     if role is not None:
         event.role = role
+
+    runtime_config = set_interaction_turn_runtime_config(
+        event, context.get_config(umo=str(session))
+    )
+    ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
+    event.set_extra("_astrbot_config", runtime_config)
+    event.plugins_name = resolve_event_plugins_name(runtime_config)
+    await build_plugin_admission_snapshot(event=event)
+    config = config.with_runtime_config(runtime_config)
 
     request = ProviderRequest()
     conversation = await _get_session_conv(event=event, plugin_context=context)
@@ -86,7 +105,7 @@ async def run_proactive_agent_turn(
         req=request,
     )
     if result is None:
-        return None
+        raise RuntimeError("Proactive Core could not be built")
 
     provider_settings = getattr(config, "provider_settings", {}) or {}
     agent_max_step = coerce_int_config(
@@ -97,10 +116,19 @@ async def run_proactive_agent_turn(
     )
     async for _ in result.agent_runner.step_until_done(agent_max_step):
         pass
+    response = result.agent_runner.get_final_llm_resp()
+    if (
+        not result.agent_runner.done()
+        or result.agent_runner.was_aborted()
+        or response is None
+        or response.role == "err"
+    ):
+        raise RuntimeError("Proactive Core did not complete successfully")
     return ProactiveAgentTurnResult(
         event=event,
-        request=request,
-        response=result.agent_runner.get_final_llm_resp(),
+        request=result.provider_request,
+        response=response,
+        delivery_confirmed=bool(event._has_send_oper),
     )
 
 
