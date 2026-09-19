@@ -426,6 +426,48 @@ def test_core_execution_head_emits_events_from_execution_identity():
     assert head.session.events[-1].metadata_for_trace()["source"] == "head"
 
 
+def test_core_execution_head_complete_orders_artifact_before_terminal():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+    head.emit_event(
+        kind=CoreExecutionEventKind.SUBMITTED,
+        executor_id="native",
+    )
+    head.emit_event(
+        kind=CoreExecutionEventKind.WORKING,
+        executor_id="native",
+    )
+
+    completed = head.complete(
+        executor_id="native",
+        artifact_metadata={"artifact_id": "final_response"},
+    )
+
+    assert completed.kind is CoreExecutionEventKind.COMPLETED
+    assert [item.kind for item in head.events] == [
+        CoreExecutionEventKind.SUBMITTED,
+        CoreExecutionEventKind.WORKING,
+        CoreExecutionEventKind.ARTIFACT_READY,
+        CoreExecutionEventKind.COMPLETED,
+    ]
+
+
+def test_core_execution_head_fail_emits_only_one_terminal_fact():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+
+    failed = head.fail(
+        executor_id="native",
+        metadata={"error_type": "RuntimeError", "error": "boom"},
+    )
+
+    assert failed.kind is CoreExecutionEventKind.FAILED
+    assert head.terminal_event is not None
+    assert head.terminal_event.execution is failed
+
+
 def test_core_execution_head_owns_one_ledger_settlement_claim():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)

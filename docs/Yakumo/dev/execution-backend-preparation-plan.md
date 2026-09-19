@@ -813,6 +813,9 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   Head 保证 `artifact_ready -> completed` 顺序，失败路径统一发布 `failed`；无 Head
   的 Legacy 桥接继续使用原有投影。该切片不改变可见输出、Ledger 持久化或 Executor
   选择，只减少 Native 分支对终态顺序的重复解释。
+- 终态 API 的回归验证覆盖了合法的 `submitted -> working -> artifact_ready ->
+  completed` 顺序，以及失败终态的单一性；测试不会把 `start()` 的命令接收误当成
+  `submitted` 事实。
 
 ## 非目标
 
