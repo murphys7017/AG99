@@ -287,7 +287,7 @@ class PendingTurnReservation:
 
 @dataclass(slots=True)
 class _FollowUpCapture:
-    runner: Any
+    executor: Any
     ticket: Any
     order_seq: int
     monitor_task: asyncio.Task[None]
@@ -350,7 +350,7 @@ class _FollowUpCoordinator:
             name=f"personal_runtime_follow_up_{order_seq}",
         )
         return _FollowUpCapture(
-            runner=runner,
+            executor=runner,
             ticket=ticket,
             order_seq=order_seq,
             monitor_task=monitor_task,
@@ -372,7 +372,7 @@ class _FollowUpCoordinator:
         consumed_marked: bool,
     ) -> None:
         if not activated and not consumed_marked:
-            cancel_follow_up = getattr(capture.runner, "cancel_follow_up", None)
+            cancel_follow_up = getattr(capture.executor, "cancel_follow_up", None)
             if callable(cancel_follow_up):
                 try:
                     cancel_follow_up(capture.ticket)
