@@ -18,6 +18,52 @@ from astrbot.core.prompt.render import (
 from astrbot.core.provider.entities import ProviderRequest
 
 
+@pytest.mark.parametrize(
+    ("source", "expected_url"),
+    [
+        (
+            {"type": "url", "url": "https://example.com/image.png"},
+            "https://example.com/image.png",
+        ),
+        (
+            {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="},
+            "data:image/png;base64,aW1hZ2U=",
+        ),
+    ],
+)
+@pytest.mark.parametrize("request_prompt", [None, "Return the persona expression."])
+def test_rendered_context_images_are_valid_agent_messages(
+    source, expected_url, request_prompt
+):
+    from astrbot.core.agent.message import bind_checkpoint_messages
+
+    messages = [
+        {
+            "role": "user",
+            "_no_save": True,
+            "content": [
+                {"type": "text", "text": "Describe this image"},
+                {"type": "image", "source": source, "_no_save": True},
+            ],
+        },
+        {"role": "user", "content": "Please answer"},
+    ]
+    request = ProviderRequest()
+    apply_render_result_to_request(
+        RenderResult(messages=messages, request_prompt=request_prompt), request
+    )
+
+    bound = bind_checkpoint_messages(request.contexts)
+    assert bound
+    assert request.contexts[0]["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": expected_url, "id": None},
+        "_no_save": True,
+    }
+    assert request.contexts[0]["_no_save"] is True
+    assert messages[0]["content"][1]["type"] == "image"
+
+
 def test_render_result_preserves_legacy_positional_field_order():
     messages = [{"role": "user", "content": "hello"}]
     metadata = {"legacy": True}

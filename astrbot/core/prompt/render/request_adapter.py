@@ -234,7 +234,23 @@ class ProviderRequestAdapter:
         self,
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        return [deepcopy(message) for message in messages]
+        cloned = deepcopy(messages)
+        # Contexts enter the agent runner before provider-specific serialization.
+        for message in cloned:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for index, part in enumerate(content):
+                if not isinstance(part, dict) or part.get("type") != "image":
+                    continue
+                image = self._convert_anthropic_image_part(part.get("source"))
+                if image is None:
+                    raise ValueError("Invalid Anthropic image source in prompt context")
+                normalized = image.model_dump()
+                if part.get("_no_save"):
+                    normalized["_no_save"] = True
+                content[index] = normalized
+        return cloned
 
 
 def apply_render_result_to_request(

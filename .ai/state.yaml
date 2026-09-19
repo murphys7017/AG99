@@ -1,3 +1,15 @@
+persona_context_image_fix:
+  date: '2026-09-19'
+  class: bugfix
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: Normalize Anthropic context image blocks at the ProviderRequest boundary.
+  non_goals: Search configuration, prompt style, provider changes, restart, frontend deployment.
+  validation: >-
+    Request adapter suite passed 17 tests including URL/base64 context images
+    through agent message binding with and without a separate request prompt.
+    Ruff and diff checks passed. Two existing dependency deprecation warnings.
+    No live model request or QQ image acceptance performed.
 scheduled_output_review_fixes:
   date: '2026-09-19'
   class: bugfix
