@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
+from apscheduler.events import (
+    EVENT_JOB_MAX_INSTANCES,
+    EVENT_JOB_MISSED,
+    JobExecutionEvent,
+    JobSubmissionEvent,
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -84,10 +89,13 @@ class CronJobManager:
     def __init__(self, db: BaseDatabase) -> None:
         self.db = db
         self.scheduler = AsyncIOScheduler()
-        self.scheduler.add_listener(self._on_job_missed, EVENT_JOB_MISSED)
+        self.scheduler.add_listener(
+            self._on_job_not_run, EVENT_JOB_MISSED | EVENT_JOB_MAX_INSTANCES
+        )
         self._status_tasks: set[asyncio.Task] = set()
         self._execution_tasks: set[asyncio.Task] = set()
         self._running_versions: set[tuple[str, int]] = set()
+        self._scheduled_job_ids: dict[str, str] = {}
         self._job_lock = asyncio.Lock()
         self._closing = False
         self._basic_handlers: dict[str, Callable[..., Any]] = {}
@@ -132,41 +140,57 @@ class CronJobManager:
                         f"Cron shutdown incomplete: {len(pending)} tasks still draining"
                     )
 
-    def _on_job_missed(self, event: JobExecutionEvent) -> None:
+    def _on_job_not_run(self, event: JobExecutionEvent | JobSubmissionEvent) -> None:
+        if isinstance(event, JobSubmissionEvent):
+            scheduled_run_time = max(event.scheduled_run_times)
+            reason = "Scheduled execution rejected: maximum running instances reached"
+        else:
+            scheduled_run_time = event.scheduled_run_time
+            reason = "Scheduled execution missed its grace period"
         task = asyncio.create_task(
-            self._record_missed_job(event.job_id, event.scheduled_run_time)
+            self._record_unexecuted_job(event.job_id, scheduled_run_time, reason)
         )
         self._status_tasks.add(task)
         task.add_done_callback(self._status_tasks.discard)
 
-    async def _record_missed_job(
-        self, job_id: str, scheduled_run_time: datetime
+    async def _record_unexecuted_job(
+        self, scheduler_id: str, scheduled_run_time: datetime, reason: str
     ) -> None:
         try:
-            job = await self.db.get_cron_job(job_id)
-            if job is None or not job.enabled:
-                return
-            last_run = job.last_run_at
-            if last_run is not None:
-                if last_run.tzinfo is None:
-                    last_run = last_run.replace(tzinfo=timezone.utc)
-                if last_run >= scheduled_run_time:
-                    return
-            # A replaced one-shot job must not inherit the old schedule's miss.
-            if job.run_once and self.scheduler.get_job(job_id) is not None:
-                return
-            await self.db.update_cron_job(
+            job_id, revision = json.loads(scheduler_id)
+            logger.warning(
+                "Cron trigger did not run: job_id=%s revision=%s scheduled_at=%s reason=%s",
                 job_id,
-                expected_revision=job.revision,
-                status="missed",
-                last_error="Scheduled execution missed its grace period",
-                next_run_time=self._get_next_run_time(job_id),
-                **({"enabled": False} if job.run_once else {}),
+                revision,
+                scheduled_run_time.isoformat(),
+                reason,
             )
-            logger.warning("Cron execution missed its grace period: job_id=%s", job_id)
+            async with self._job_lock:
+                job = await self.db.get_cron_job(job_id)
+                if job is None or not job.enabled or job.revision != revision:
+                    return
+                # A rejected trigger must not overwrite an in-flight or newer outcome.
+                if (job_id, revision) in self._running_versions:
+                    return
+                last_run = job.last_run_at
+                if last_run is not None:
+                    if last_run.tzinfo is None:
+                        last_run = last_run.replace(tzinfo=timezone.utc)
+                    if last_run >= scheduled_run_time:
+                        return
+                await self.db.update_cron_job(
+                    job_id,
+                    expected_revision=revision,
+                    status="missed",
+                    last_error=reason,
+                    delivery_status="unconfirmed",
+                    next_run_time=self._get_next_run_time(job_id),
+                    **({"enabled": False} if job.run_once else {}),
+                )
         except Exception:
             logger.exception(
-                "Failed to record missed cron execution: job_id=%s", job_id
+                "Failed to record unexecuted cron trigger: scheduler_id=%s",
+                scheduler_id,
             )
 
     async def sync_from_db(self) -> None:
@@ -282,8 +306,13 @@ class CronJobManager:
         return await self.db.list_cron_jobs(job_type)
 
     def _remove_scheduled(self, job_id: str) -> None:
-        if self.scheduler.get_job(job_id):
-            self.scheduler.remove_job(job_id)
+        scheduler_id = self._scheduled_job_ids.pop(job_id, None)
+        if scheduler_id and self.scheduler.get_job(scheduler_id):
+            self.scheduler.remove_job(scheduler_id)
+
+    @staticmethod
+    def _scheduler_job_id(job_id: str, revision: int) -> str:
+        return json.dumps([job_id, revision], separators=(",", ":"))
 
     async def _schedule_persisted_job(self, job: CronJob) -> None:
         if self._closing:
@@ -354,22 +383,25 @@ class CronJobManager:
                     normalized_cron_expression,
                     timezone=tzinfo,
                 )
+            scheduler_id = self._scheduler_job_id(job.job_id, job.revision)
             self.scheduler.add_job(
                 self._run_job,
-                id=job.job_id,
+                id=scheduler_id,
                 trigger=trigger,
                 args=[job.job_id],
                 kwargs={"scheduled_revision": job.revision},
                 replace_existing=True,
                 misfire_grace_time=30,
             )
+            self._scheduled_job_ids[job.job_id] = scheduler_id
             job.next_run_time = self._get_next_run_time(job.job_id)
         except (ValueError, TypeError) as e:
             logger.exception("Failed to schedule cron job %s", job.job_id)
             raise CronJobSchedulingError(str(e)) from e
 
     def _get_next_run_time(self, job_id: str):
-        aps_job = self.scheduler.get_job(job_id)
+        scheduler_id = self._scheduled_job_ids.get(job_id)
+        aps_job = self.scheduler.get_job(scheduler_id) if scheduler_id else None
         if not aps_job or aps_job.next_run_time is None:
             return None
         return aps_job.next_run_time.astimezone(timezone.utc)

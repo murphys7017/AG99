@@ -14,6 +14,15 @@ scheduled_output_review_fixes:
     Existing-schema upgrade smoke, dashboard typecheck and production build passed.
     Browser display checked using mocked API data, not a live backend. Two existing
     MDI subsetting warnings remain. No production restart or live OLV acceptance.
+  scheduler_identity_followup: >-
+    APScheduler entry identity now includes job_id and revision, so an older
+    running version cannot consume the new version's max_instances slot. Missed
+    and max-instance-rejected triggers carry their originating revision; stale
+    events cannot overwrite a replacement plan or active/newer execution outcome.
+    Cron suite passed 43 tests, plus real-scheduler misfire and max-instance
+    rejection smoke checks. Ruff lint, compile and diff checks passed; the existing
+    test file still has whole-file formatting differences outside the edited region.
+    Frontend deployment and service restart were not performed.
 scheduled_output_closure:
   date: '2026-09-19'
   class: bugfix

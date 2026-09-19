@@ -128,6 +128,66 @@ async def test_shutdown_drains_manual_execution_settlement(tmp_path):
         await db.engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_rescheduled_revision_runs_while_previous_revision_is_in_flight(tmp_path):
+    db = SQLiteDatabase(str(tmp_path / "revision-overlap.db"))
+    manager = CronJobManager(db)
+    await db.initialize()
+    entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    completed = asyncio.Event()
+    manager.scheduler.add_listener(lambda event: completed.set(), EVENT_JOB_EXECUTED)
+    release = asyncio.Event()
+    executions = 0
+
+    async def handler(**kwargs):
+        nonlocal executions
+        executions += 1
+        entered.set()
+        if executions == 2:
+            second_entered.set()
+        else:
+            await release.wait()
+
+    try:
+        job = await manager.add_basic_job(
+            name="revision overlap",
+            cron_expression="* * * * *",
+            handler=handler,
+            enabled=False,
+        )
+        await manager.update_job(
+            job.job_id,
+            enabled=True,
+            run_once=True,
+            cron_expression=None,
+            payload={
+                "run_at": (
+                    datetime.now(timezone.utc) + timedelta(seconds=0.3)
+                ).isoformat()
+            },
+        )
+        await asyncio.wait_for(entered.wait(), 5)
+        await manager.update_job(
+            job.job_id,
+            payload={
+                "run_at": (
+                    datetime.now(timezone.utc) + timedelta(seconds=0.3)
+                ).isoformat()
+            },
+        )
+        await asyncio.wait_for(second_entered.wait(), 5)
+        assert executions == 2
+        await asyncio.wait_for(completed.wait(), 5)
+        assert await db.get_cron_job(job.job_id) is None
+        assert not release.is_set()
+        release.set()
+    finally:
+        release.set()
+        await manager.shutdown()
+        await db.engine.dispose()
+
+
 @pytest.fixture
 def mock_db():
     """Create a mock database."""
@@ -249,7 +309,7 @@ class TestCronJobManagerStart:
 
         assert cron_manager._started is True
         assert cron_manager._db_synced is True
-        assert cron_manager.scheduler.get_job(sample_cron_job.job_id) is not None
+        assert len(cron_manager.scheduler.get_jobs()) == 1
         assert mock_db.list_cron_jobs.call_count == 1
 
         await cron_manager.shutdown()
@@ -544,7 +604,7 @@ class TestScheduleJob:
         cron_manager._schedule_job(sample_cron_job)
 
         # Verify job was added to scheduler
-        assert cron_manager.scheduler.get_job("test-job-id") is not None
+        assert len(cron_manager.scheduler.get_jobs()) == 1
 
     @pytest.mark.asyncio
     async def test_schedule_job_uses_standard_crontab_weekday_numbers(
@@ -560,7 +620,7 @@ class TestScheduleJob:
         await cron_manager.start(mock_context)
         cron_manager._schedule_job(sample_cron_job)
 
-        aps_job = cron_manager.scheduler.get_job("test-job-id")
+        aps_job = cron_manager.scheduler.get_jobs()[0]
         assert aps_job is not None
         next_fire_time = aps_job.trigger.get_next_fire_time(
             None,
@@ -580,7 +640,7 @@ class TestScheduleJob:
         await cron_manager.start(mock_context)
         cron_manager._schedule_job(sample_cron_job)
 
-        assert cron_manager.scheduler.get_job("test-job-id") is not None
+        assert len(cron_manager.scheduler.get_jobs()) == 1
 
     @pytest.mark.asyncio
     async def test_schedule_job_invalid_timezone(self, cron_manager, sample_cron_job, mock_context):
@@ -595,7 +655,7 @@ class TestScheduleJob:
             cron_manager._schedule_job(sample_cron_job)
 
         # Should still schedule with system timezone
-        assert cron_manager.scheduler.get_job("test-job-id") is not None
+        assert len(cron_manager.scheduler.get_jobs()) == 1
         mock_logger.warning.assert_called()
 
     @pytest.mark.asyncio
@@ -617,7 +677,7 @@ class TestScheduleJob:
         await cron_manager.start(mock_context)
         cron_manager._schedule_job(job)
 
-        assert cron_manager.scheduler.get_job("run-once-job") is not None
+        assert len(cron_manager.scheduler.get_jobs()) == 1
 
 
 class TestRunJob:
