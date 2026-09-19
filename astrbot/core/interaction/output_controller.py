@@ -94,6 +94,7 @@ from .turn_state import (
     next_interaction_turn_output_segment_id,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
+    record_interaction_turn_delivery_receipt,
     record_interaction_turn_failure,
     record_interaction_turn_finalization_failure,
     record_interaction_turn_stream_observation_failure,
@@ -2633,6 +2634,23 @@ class InteractionOutputController:
                 and supports_personal_runtime(event.platform_meta)
             ),
         )
+        receipt = record_interaction_turn_delivery_receipt(
+            event,
+            message_id=output_segment_id,
+            message_kind=message_kind,
+            sent_any=delivery.sent_any,
+            all_succeeded=delivery.all_succeeded,
+            attempted_count=delivery.attempted_count,
+            failed_count=delivery.failed_count,
+        )
+        try:
+            event.trace.record("interaction_output_delivery_receipt", **receipt)
+        except Exception:
+            logger.debug(
+                "Failed to record output delivery receipt trace: turn_id=%s",
+                event.get_extra("_turn_id"),
+                exc_info=True,
+            )
         if not delivery.sent_any:
             raise RuntimeError(
                 f"Interaction output was not delivered: {message_kind}"

@@ -316,6 +316,7 @@ class InteractionTurnState:
     execution_scope: TurnExecutionScope = field(default_factory=TurnExecutionScope)
     utterances: list[InteractionUtterance] = field(default_factory=list)
     visible_outputs: list[dict[str, Any]] = field(default_factory=list)
+    output_delivery_receipts: list[dict[str, Any]] = field(default_factory=list)
     assistant_artifacts: list[dict[str, Any]] = field(default_factory=list)
     plugin_output_transaction_active: bool = False
     plugin_output_transaction_start: int | None = None
@@ -1643,6 +1644,47 @@ def append_interaction_turn_visible_output(
         "memory_relevant": memory_relevant,
     }
     state.visible_outputs.append(item)
+
+
+def record_interaction_turn_delivery_receipt(
+    event,
+    *,
+    message_id: str | None,
+    message_kind: str,
+    sent_any: bool,
+    all_succeeded: bool,
+    attempted_count: int,
+    failed_count: int,
+) -> dict[str, Any]:
+    state = ensure_interaction_turn_state(event)
+    status = (
+        "delivered"
+        if all_succeeded
+        else "partial"
+        if sent_any
+        else "failed"
+    )
+    receipt = {
+        "turn_id": state.turn_id,
+        "message_id": str(message_id or ""),
+        "message_kind": message_kind,
+        "status": status,
+        "sent_any": bool(sent_any),
+        "all_succeeded": bool(all_succeeded),
+        "attempted_count": int(attempted_count),
+        "failed_count": int(failed_count),
+    }
+    state.output_delivery_receipts.append(receipt)
+    return dict(receipt)
+
+
+def get_interaction_turn_delivery_receipts(event) -> list[dict[str, Any]]:
+    state = get_interaction_turn_state(event)
+    return (
+        [dict(item) for item in state.output_delivery_receipts]
+        if state is not None
+        else []
+    )
 
 
 def get_interaction_turn_visible_outputs(event) -> list[dict[str, Any]]:
