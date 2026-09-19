@@ -56,6 +56,29 @@ class NativeExecutorAdapter:
 
         return self._runner
 
+    @property
+    def run_context(self) -> AstrAgentContext:
+        """Expose the execution context needed by follow-up admission."""
+        return self._runner.run_context
+
+    @property
+    def streaming(self) -> bool:
+        """Expose the runner's response mode at the executor boundary."""
+        return self._runner.streaming
+
+    @property
+    def req(self):
+        """Expose the mutable request used for the max-step fallback."""
+        return self._runner.req
+
+    @property
+    def agent_hooks(self):
+        return self._runner.agent_hooks
+
+    def follow_up(self, *, message_text: str):
+        """Capture a follow-up without requiring callers to unwrap the runner."""
+        return self._runner.follow_up(message_text=message_text)
+
     def request_stop(self) -> None:
         self._runner.request_stop()
 
@@ -224,7 +247,7 @@ def _merge_buffered_llm_chains(
 
 
 async def run_agent(
-    agent_runner: AgentRunner,
+    agent_runner: AgentRunner | NativeExecutorAdapter,
     max_step: int = 30,
     show_tool_use: bool = True,
     show_tool_call_result: bool = False,
@@ -233,7 +256,11 @@ async def run_agent(
     buffer_intermediate_messages: bool = False,
 ) -> AsyncGenerator[MessageChain | None, None]:
     step_idx = 0
-    executor = NativeExecutorAdapter(agent_runner)
+    executor = (
+        agent_runner
+        if isinstance(agent_runner, NativeExecutorAdapter)
+        else NativeExecutorAdapter(agent_runner)
+    )
     astr_event = agent_runner.run_context.context.event
     record_interaction_turn_core_execution_event(
         astr_event,
@@ -533,7 +560,7 @@ async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) 
 
 
 async def run_live_agent(
-    agent_runner: AgentRunner,
+    agent_runner: AgentRunner | NativeExecutorAdapter,
     tts_provider: TTSProvider | None = None,
     max_step: int = 30,
     show_tool_use: bool = True,
@@ -680,7 +707,7 @@ async def run_live_agent(
 
 
 async def _run_agent_feeder(
-    agent_runner: AgentRunner,
+    agent_runner: AgentRunner | NativeExecutorAdapter,
     text_queue: asyncio.Queue,
     max_step: int,
     show_tool_use: bool,

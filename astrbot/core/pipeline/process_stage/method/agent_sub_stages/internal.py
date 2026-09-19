@@ -414,7 +414,7 @@ class InternalAgentSubStage(Stage):
                 if runtime_manager is not None:
                     runner_registered = runtime_manager.register_active_runner(
                         event,
-                        agent_runner,
+                        native_executor,
                     )
                 action_type = event.get_extra("action_type")
 
@@ -453,7 +453,7 @@ class InternalAgentSubStage(Stage):
                         .set_result_content_type(ResultContentType.STREAMING_RESULT)
                         .set_async_stream(
                             run_live_agent(
-                                agent_runner,
+                                native_executor,
                                 tts_provider,
                                 max_step,
                                 show_tool_use,
@@ -485,7 +485,7 @@ class InternalAgentSubStage(Stage):
                         .set_result_content_type(ResultContentType.STREAMING_RESULT)
                         .set_async_stream(
                             run_agent(
-                                agent_runner,
+                                native_executor,
                                 max_step,
                                 show_tool_use,
                                 show_tool_call_result,
@@ -515,7 +515,7 @@ class InternalAgentSubStage(Stage):
                             )
                 else:
                     async for _ in run_agent(
-                        agent_runner,
+                        native_executor,
                         max_step,
                         show_tool_use,
                         show_tool_call_result,
@@ -606,7 +606,7 @@ class InternalAgentSubStage(Stage):
                     _record_internal_agent_stats(
                         event,
                         req,
-                        agent_runner,
+                        None,
                         final_resp,
                         native_executor=native_executor,
                     )
@@ -633,10 +633,10 @@ class InternalAgentSubStage(Stage):
                     ),
                 )
             finally:
-                if runner_registered and agent_runner is not None:
+                if runner_registered and native_executor is not None:
                     runtime_manager = self.ctx.personal_runtime_manager
                     if runtime_manager is not None:
-                        runtime_manager.unregister_active_runner(event, agent_runner)
+                        runtime_manager.unregister_active_runner(event, native_executor)
 
         except TurnDeadlineExceeded:
             cancellation_reason = "deadline_exceeded"
@@ -1081,7 +1081,7 @@ async def _record_internal_agent_stats(
     native_executor: NativeExecutorAdapter | None = None,
 ) -> None:
     """Persist internal agent stats without affecting the user response flow."""
-    if agent_runner is None:
+    if agent_runner is None and native_executor is None:
         return
 
     provider = (

@@ -15,6 +15,10 @@ class FakeNativeRunner:
         self.stop_requested = False
         self.aborted = False
         self.completed = True
+        self.streaming = False
+        self.req = None
+        self.agent_hooks = object()
+        self.follow_up_messages = []
 
     def request_stop(self):
         self.stop_requested = True
@@ -27,6 +31,10 @@ class FakeNativeRunner:
 
     def get_final_llm_resp(self):
         return self.final_response
+
+    def follow_up(self, *, message_text):
+        self.follow_up_messages.append(message_text)
+        return message_text
 
 
 def test_native_executor_adapter_exposes_control_and_observation_boundary():
@@ -43,6 +51,12 @@ def test_native_executor_adapter_exposes_control_and_observation_boundary():
     assert adapter.messages == ["message"]
     assert adapter.stats is runner.stats
     assert adapter.runner is runner
+    assert adapter.run_context is runner.run_context
+    assert adapter.streaming is runner.streaming
+    assert adapter.req is runner.req
+    assert adapter.agent_hooks is runner.agent_hooks
+    assert adapter.follow_up(message_text="follow-up") == "follow-up"
+    assert runner.follow_up_messages == ["follow-up"]
 
 
 @pytest.mark.asyncio
