@@ -932,6 +932,7 @@ class CoreExecutionHead:
         repr=False,
     )
     _closed: bool = field(default=False, init=False, repr=False)
+    _ledger_settled: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # A Head may be attached after a legacy Lifecycle has recorded facts.
@@ -1187,6 +1188,23 @@ class CoreExecutionHead:
 
     def ledger_status(self, *, user_aborted: bool = False) -> str | None:
         return self.lifecycle.ledger_status(user_aborted=user_aborted)
+
+    def claim_ledger_settlement(self) -> bool:
+        """Claim the one Ledger settlement slot for this execution."""
+
+        if self._ledger_settled:
+            return False
+        self._ledger_settled = True
+        return True
+
+    def release_ledger_settlement(self) -> None:
+        """Release a failed Ledger settlement attempt for retry."""
+
+        self._ledger_settled = False
+
+    @property
+    def ledger_settled(self) -> bool:
+        return self._ledger_settled
 
 
 def bind_core_execution_lifecycle(

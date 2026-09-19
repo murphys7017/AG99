@@ -426,6 +426,21 @@ def test_core_execution_head_emits_events_from_execution_identity():
     assert head.session.events[-1].metadata_for_trace()["source"] == "head"
 
 
+def test_core_execution_head_owns_one_ledger_settlement_claim():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = start_core_execution_head(event, spec)
+
+    assert head.claim_ledger_settlement() is True
+    assert head.ledger_settled is True
+    assert head.claim_ledger_settlement() is False
+
+    head.release_ledger_settlement()
+
+    assert head.ledger_settled is False
+    assert head.claim_ledger_settlement() is True
+
+
 def test_legacy_lifecycle_event_entry_publishes_through_head():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)

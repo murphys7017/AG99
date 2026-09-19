@@ -798,7 +798,8 @@ class InternalAgentSubStage(Stage):
         execution_spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
         if not isinstance(execution_spec, CoreExecutionSpec):
             return
-        if (
+        execution_head = get_core_execution_head(event)
+        if execution_head is None and (
             event.get_extra("_core_execution_ledger_recorded_id")
             == execution_spec.execution_id
         ):
@@ -828,7 +829,6 @@ class InternalAgentSubStage(Stage):
         completion_text = str(
             llm_response.completion_text if llm_response is not None else ""
         )
-        execution_head = get_core_execution_head(event)
         lifecycle = (
             execution_head.lifecycle
             if execution_head is not None
@@ -857,18 +857,27 @@ class InternalAgentSubStage(Stage):
                 fallback_error=terminal_error,
             )
         )
-        inserted = await ledger.append_execution(
-            execution_spec=preparation.execution_spec,
-            conversation_id=req.conversation.cid,
-            executor_id="native",
-            status=preparation.status,
-            messages=messages,
-            result=preparation.result,
-            error=preparation.error,
-            token_usage=(
-                runner_stats.token_usage.__dict__ if runner_stats is not None else None
-            ),
-        )
+        if execution_head is not None and not execution_head.claim_ledger_settlement():
+            return
+        try:
+            inserted = await ledger.append_execution(
+                execution_spec=preparation.execution_spec,
+                conversation_id=req.conversation.cid,
+                executor_id="native",
+                status=preparation.status,
+                messages=messages,
+                result=preparation.result,
+                error=preparation.error,
+                token_usage=(
+                    runner_stats.token_usage.__dict__
+                    if runner_stats is not None
+                    else None
+                ),
+            )
+        except Exception:
+            if execution_head is not None:
+                execution_head.release_ledger_settlement()
+            raise
         record_interaction_turn_core_execution_ledger_settlement(
             event,
             preparation,

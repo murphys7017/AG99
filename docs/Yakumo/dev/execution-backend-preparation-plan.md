@@ -803,6 +803,9 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   Native Runner、Personal turn lease、Output 或 Ledger owner。
 - 下一步仍是明确 Personal/Core Head 的 session ownership 与异步消费边界，再将 Native
   生命周期适配逐步迁入 Core Head。
+- 结算归属继续按“材料与幂等由 Core、持久化由 Native Ledger”拆分：`CoreExecutionHead`
+  现在持有一次性 Ledger settlement claim，避免取消/失败/正常收尾路径重复解释同一个
+  execution；现有 SQLite Ledger 仍由 Native 调用，写入失败会释放 claim 允许重试。
 
 ## 非目标
 
