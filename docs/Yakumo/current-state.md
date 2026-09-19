@@ -310,6 +310,11 @@ Head 仍是同步入口包装，不包含统一内部队列和可替换 Executor
 
 - output gateway：`capture_plugin_output()` 已建立，但 `event.send` / `event.send_streaming`
   interception 仍为 MethodType 替换形态，后续可演进为正式 Output Gateway
+- Output Runtime 已把插件 Artifact 的 delivery identity 接入统一
+  `InteractionTurnState.output_delivery_receipts`：inline 记录单个
+  `PluginDeliveryKey`，delayed 记录 delivery group 及其 keys；内部 identity 在平台
+  发送前剥离，Ledger 仍独立负责 reservation/disposition。当前仍未把 receipt 做成跨
+  组件公共接口，也未改变 delayed delivery 的时序或完成策略。
 - live audio 缺 provider / 文本降级 / completion diagnostics 仍需进一步统一
 - 真实平台手动日志断点仍需补齐，尤其是 Record/Image/Text 投递形态与 ledger metadata 的一致性
 - `platform_settings.personal_runtime_observation_targets` 可以显式选择多个 Personal Runtime 观察目标；留空时兼容使用 `proactive_message_target`，且不改变无目标主动消息的发送位置。Context 汇总所有已加载配置文件中声明、且 UMO 实际路由回声明配置的目标；Heartbeat 按每个目标实际命中的 Runtime 配置读取开关与间隔，并为每个启用目标维护独立 due time，只重评已有 retained batch，空 Inbox 不创建材料或唤醒任务；当 retained batch 没有更早的 lifecycle wake deadline 时，Heartbeat 会请求一次重评，但不会创建新材料或直接调用模型。群聊环境观察默认关闭，启用后仅放行该范围内、且当前会话配置已开启功能的非唤醒群聊文本，经官方白名单和会话状态检查后转换为不含原文的 `conversation_activity` fact，并在进入限流、插件、普通 Personal 计划和 Core 前停止原事件。两类 Source 都不构造平台事件、不直接调用 Persona/Core/Output。插件可通过 `Context.register_runtime_observation_sensor()` 注册受限的结构化事实来源；Context 只解析目标并经 Lifecycle dispatcher 交给已有 Runtime Manager，注册随插件卸载清理。

@@ -1655,6 +1655,7 @@ def record_interaction_turn_delivery_receipt(
     all_succeeded: bool,
     attempted_count: int,
     failed_count: int,
+    delivery_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     state = ensure_interaction_turn_state(event)
     status = (
@@ -1674,6 +1675,8 @@ def record_interaction_turn_delivery_receipt(
         "attempted_count": int(attempted_count),
         "failed_count": int(failed_count),
     }
+    if isinstance(delivery_identity, Mapping):
+        receipt["delivery_identity"] = dict(delivery_identity)
     state.output_delivery_receipts.append(receipt)
     return dict(receipt)
 

@@ -53,6 +53,9 @@ from .output_modes import (
     PluginOutputMode,
     temporary_output_origin,
 )
+from .plugin_execution_types import (
+    PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY,
+)
 from .personal_expression_guard import fingerprint_personal_expression
 from .turn_state import (
     InteractionFinalOutputStatus,
@@ -2561,7 +2564,11 @@ class InteractionOutputController:
           and deliver the chain to the platform adapter.  It is unaware of
           turn state, utterances, or memory semantics.
         """
-        base_extras = self._strip_message_identity_extras(platform_extras or {})
+        raw_platform_extras = platform_extras or {}
+        delivery_identity = raw_platform_extras.get(
+            PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY
+        )
+        base_extras = self._strip_message_identity_extras(raw_platform_extras)
         delivered_message_ids: list[str] = []
         semantic_text = (
             message.get_plain_text() if semantic_text is None else semantic_text
@@ -2642,6 +2649,11 @@ class InteractionOutputController:
             all_succeeded=delivery.all_succeeded,
             attempted_count=delivery.attempted_count,
             failed_count=delivery.failed_count,
+            delivery_identity=(
+                delivery_identity
+                if isinstance(delivery_identity, Mapping)
+                else None
+            ),
         )
         try:
             event.trace.record("interaction_output_delivery_receipt", **receipt)
@@ -2691,6 +2703,7 @@ class InteractionOutputController:
                 "visible_message_id",
                 "message_kind",
                 "composite_message_id",
+                PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY,
             }
         }
 

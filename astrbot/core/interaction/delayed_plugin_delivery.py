@@ -17,6 +17,7 @@ from .observation import RuntimeObservation, RuntimeObservationTarget
 from .personal_expression_guard import fingerprint_personal_expression
 from .plugin_execution_runtime import PluginExecutionRuntime
 from .plugin_execution_types import (
+    PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY,
     PluginArtifactKind,
     PluginBranchResult,
     PluginDeliveryDisposition,
@@ -522,6 +523,12 @@ class DelayedPluginDeliveryCoordinator:
             "delivery_keys": delivery_keys,
             "delivery_fingerprint": delivery_fingerprint,
             "delayed_turn_id": uuid.uuid4().hex,
+            PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY: {
+                "scope": "plugin_artifact_group",
+                "delivery_mode": "delayed",
+                "delivery_group_id": group_id,
+                "delivery_keys": delivery_keys,
+            },
         }
 
     @staticmethod

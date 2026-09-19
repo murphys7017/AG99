@@ -8,6 +8,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .plugin_execution_runtime import PluginExecutionRuntime
 from .plugin_execution_types import (
+    PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY,
     PluginBranchResult,
     PluginDeliveryDisposition,
     PluginOutputArtifact,
@@ -109,7 +110,23 @@ class PluginArtifactDeliveryCoordinator:
                     event,
                     mode=artifact.mode,
                     finalize=finalize,
-                    platform_extras=dict(artifact.metadata),
+                    platform_extras={
+                        **artifact.metadata,
+                        PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY: {
+                            "scope": "plugin_artifact",
+                            "delivery_mode": "inline",
+                            "delivery_group_id": artifact.delivery_group_id,
+                            "delivery_key": {
+                                "plugin_job_id": artifact.delivery_key.plugin_job_id,
+                                "handler_invocation_id": (
+                                    artifact.delivery_key.handler_invocation_id
+                                ),
+                                "artifact_sequence": (
+                                    artifact.delivery_key.artifact_sequence
+                                ),
+                            },
+                        },
+                    },
                 )
                 await self.runtime.finish_delivery(
                     artifact.delivery_key,

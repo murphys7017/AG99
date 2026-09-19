@@ -202,7 +202,7 @@ context:
     - ProviderRequest extra inventory is complete for the first pass: canonical Main Agent request, lifecycle Hook exposure, and plugin delegated request are separate semantics. Output Runtime owner inventory is also complete for the first pass; next define DeliveryReceipt identity before changing write paths.
     - Core tool-stage observation task/state is now typed on InteractionTurnState with legacy extra projections; logical output receipt ownership remains unresolved.
     - Plugin output mode/kind/effect metadata is now typed on InteractionTurnState with legacy extra projections; physical delivery receipt ownership remains unresolved.
-    - Logical message delivery receipts are now recorded on InteractionTurnState and trace with delivered/partial/failed status; artifact and delayed delivery still need the same identity.
+    - Logical message delivery receipts are recorded on InteractionTurnState and trace with delivered/partial/failed status; inline Plugin Artifact receipts now carry one serialized delivery key, while delayed artifact-group receipts carry the group and serialized keys. The internal identity is stripped before platform sending, and Runtime ledger reservation/disposition remains the artifact owner.
     - Validate Personal reply, delegate, and eligible group silent decisions against real provider and platform traces before changing the default parallel-plugin runtime switch or output policy.
     - Validate the Native execution event sequence against a real Core tool-call trace before routing events to new observers, user-visible progress policy, or a future Core Head Executor adapter.
     - Complete the Personal/Core Head asynchronous consumption boundary and validate the

@@ -8,6 +8,11 @@ from typing import Any
 from astrbot.core.message.message_event_result import MessageChain
 
 
+PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY = (
+    "_interaction_output_delivery_identity"
+)
+
+
 class PluginGateResolution(str, Enum):
     PENDING = "pending"
     PASSED = "passed"

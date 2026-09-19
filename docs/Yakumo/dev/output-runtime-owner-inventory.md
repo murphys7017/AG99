@@ -73,8 +73,19 @@
 
 2026-09-19 起，Controller 会在每次物理投递后把
 `message_id/message_kind/attempted_count/failed_count/status` 写入
-`InteractionTurnState.output_delivery_receipts`，并同步写入 trace。当前这是内部事实
-记录，不改变平台发送 API；后续仍需让 Artifact/Delayed Delivery 复用同一 identity。
+`InteractionTurnState.output_delivery_receipts`，并同步写入 trace。2026-09-19 起，
+插件 Artifact 与 Delayed Delivery 通过内部
+`_interaction_output_delivery_identity` 传入可序列化的 identity：
+
+- inline artifact：`scope=plugin_artifact`、`delivery_mode=inline`、单个
+  `delivery_key` 和可选 `delivery_group_id`；
+- delayed artifact group：`scope=plugin_artifact_group`、`delivery_mode=delayed`、
+  `delivery_group_id` 和该组的 `delivery_keys`。
+
+Controller 在平台发送前剥离这个内部字段，只将它写入 turn receipt/trace，因此
+平台适配器不会依赖插件 Runtime ledger 的对象类型。Ledger 仍负责 reservation、
+duplicate suppression 和 disposition；TurnState receipt 只记录可见投递事实。重复抑制、
+目标不支持和投递失败的 artifact 不会伪造 `delivered` receipt。
 
 ## 3. 必须保持的完成语义
 
@@ -95,7 +106,8 @@
 3. 确认 Tool Stage observation 的 task/state 是否属于 turn state，或应由独立
    `ToolObservationRuntime` 持有。
 4. 让 Plugin Artifact、Delayed Delivery 和 Turn Delivery 只通过 receipt/identity
-   与 Controller 协作，不直接修改彼此的内部状态。
+   与 Controller 协作，不直接修改彼此的内部状态。（Artifact 与 Delayed Delivery
+   的第一步 identity 接入已完成。）
 5. 在真实私聊、群聊、取消、reload、迟到输出和重复投递 trace 通过前，不删除旧
    `send*` 兼容拦截。
 
