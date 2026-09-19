@@ -51,12 +51,6 @@ class NativeExecutorAdapter:
         self._runner = runner
 
     @property
-    def runner(self) -> AgentRunner:
-        """Return the legacy runner for the transitional stream bridge."""
-
-        return self._runner
-
-    @property
     def run_context(self) -> AstrAgentContext:
         """Expose the execution context needed by follow-up admission."""
         return self._runner.run_context
@@ -78,6 +72,10 @@ class NativeExecutorAdapter:
     def follow_up(self, *, message_text: str):
         """Capture a follow-up without requiring callers to unwrap the runner."""
         return self._runner.follow_up(message_text=message_text)
+
+    def cancel_follow_up(self, ticket) -> bool:
+        """Withdraw a pending follow-up through the executor boundary."""
+        return self._runner.cancel_follow_up(ticket)
 
     def request_stop(self) -> None:
         self._runner.request_stop()

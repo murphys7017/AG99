@@ -36,6 +36,9 @@ class FakeNativeRunner:
         self.follow_up_messages.append(message_text)
         return message_text
 
+    def cancel_follow_up(self, ticket):
+        return ticket == "ticket"
+
 
 def test_native_executor_adapter_exposes_control_and_observation_boundary():
     runner = FakeNativeRunner()
@@ -50,13 +53,13 @@ def test_native_executor_adapter_exposes_control_and_observation_boundary():
     assert adapter.final_response() is runner.final_response
     assert adapter.messages == ["message"]
     assert adapter.stats is runner.stats
-    assert adapter.runner is runner
     assert adapter.run_context is runner.run_context
     assert adapter.streaming is runner.streaming
     assert adapter.req is runner.req
     assert adapter.agent_hooks is runner.agent_hooks
     assert adapter.follow_up(message_text="follow-up") == "follow-up"
     assert runner.follow_up_messages == ["follow-up"]
+    assert adapter.cancel_follow_up("ticket") is True
 
 
 @pytest.mark.asyncio
