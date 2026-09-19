@@ -915,6 +915,15 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   没有接入 Personal 异步消费，也没有提前移除 runner 桥接访问。
 - 验证：Adapter 与 Core execution 定向测试 48 项通过；尚未做真实 OLV 验收。
 
+### 2026-09-20 Native 事实回流收口
+
+- `NativeExecutorAdapter.emit_event()` 成为 Native 执行事实进入 Core Head/Interaction
+  journal 的入口；`run_agent()` 的 working、cancelled、failed 事件不再直接调用
+  Interaction 记录函数。
+- 该入口只负责事件归属和 executor identity，不转换用户输出、不改变 TTS、Prompt、
+  Personal 或 Ledger 行为。Native 响应仍是当前过渡期的 Adapter 内部类型。
+- Adapter 边界测试覆盖事件回流；Core/Interaction 定向测试 82 项通过。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
