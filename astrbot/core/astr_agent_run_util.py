@@ -561,7 +561,43 @@ def _require_executor_stream_chain(item: ExecutorStreamItem) -> MessageChain:
     return item.chain
 
 
-async def run_agent(
+class NativeExecutionOutputBridge:
+    """Project Native loop items into the existing AstrBot output boundary."""
+
+    def __init__(
+        self,
+        executor: NativeExecutorAdapter,
+        *,
+        max_step: int = 30,
+        show_tool_use: bool = True,
+        show_tool_call_result: bool = False,
+        stream_to_general: bool = False,
+        show_reasoning: bool = False,
+        buffer_intermediate_messages: bool = False,
+    ) -> None:
+        self._executor = executor
+        self._max_step = max_step
+        self._show_tool_use = show_tool_use
+        self._show_tool_call_result = show_tool_call_result
+        self._stream_to_general = stream_to_general
+        self._show_reasoning = show_reasoning
+        self._buffer_intermediate_messages = buffer_intermediate_messages
+
+    def stream(self) -> AsyncGenerator[MessageChain | None, None]:
+        """Open the existing visible-output stream for one Native execution."""
+
+        return _stream_native_agent_output(
+            self._executor,
+            max_step=self._max_step,
+            show_tool_use=self._show_tool_use,
+            show_tool_call_result=self._show_tool_call_result,
+            stream_to_general=self._stream_to_general,
+            show_reasoning=self._show_reasoning,
+            buffer_intermediate_messages=self._buffer_intermediate_messages,
+        )
+
+
+async def _stream_native_agent_output(
     executor: NativeExecutorAdapter,
     max_step: int = 30,
     show_tool_use: bool = True,
@@ -777,6 +813,30 @@ async def run_agent(
             },
         )
         return
+
+
+async def run_agent(
+    executor: NativeExecutorAdapter,
+    max_step: int = 30,
+    show_tool_use: bool = True,
+    show_tool_call_result: bool = False,
+    stream_to_general: bool = False,
+    show_reasoning: bool = False,
+    buffer_intermediate_messages: bool = False,
+) -> AsyncGenerator[MessageChain | None, None]:
+    """Compatibility entry for the Native visible-output bridge."""
+
+    bridge = NativeExecutionOutputBridge(
+        executor,
+        max_step=max_step,
+        show_tool_use=show_tool_use,
+        show_tool_call_result=show_tool_call_result,
+        stream_to_general=stream_to_general,
+        show_reasoning=show_reasoning,
+        buffer_intermediate_messages=buffer_intermediate_messages,
+    )
+    async for chain in bridge.stream():
+        yield chain
 
 
 async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) -> None:

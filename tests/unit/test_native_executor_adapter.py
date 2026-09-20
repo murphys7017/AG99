@@ -286,6 +286,43 @@ async def test_run_agent_preserves_non_streaming_visible_output(monkeypatch):
     assert executor.run_context.context.event.results[0].chain == response.data["chain"].chain
 
 
+def test_run_agent_entry_builds_explicit_output_bridge(monkeypatch):
+    executor = NativeExecutorAdapter(FakeNativeRunner())
+    calls = []
+
+    class Bridge:
+        def __init__(self, actual_executor, **kwargs):
+            calls.append((actual_executor, kwargs))
+
+        async def stream(self):
+            yield MessageChain().message("bridged")
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.NativeExecutionOutputBridge",
+        Bridge,
+    )
+
+    async def collect():
+        return [chain async for chain in run_agent(executor, max_step=7)]
+
+    outputs = asyncio.run(collect())
+
+    assert [chain.get_plain_text() for chain in outputs] == ["bridged"]
+    assert calls == [
+        (
+            executor,
+            {
+                "max_step": 7,
+                "show_tool_use": True,
+                "show_tool_call_result": False,
+                "stream_to_general": False,
+                "show_reasoning": False,
+                "buffer_intermediate_messages": False,
+            },
+        )
+    ]
+
+
 @pytest.mark.asyncio
 async def test_native_executor_adapter_closes_native_stream_on_early_exit():
     closed = []

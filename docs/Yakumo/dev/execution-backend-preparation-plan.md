@@ -1116,6 +1116,12 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - `aborted` 不再由 loop 交叉边界直接 yield；loop 先关闭 Native stream 并记录状态，输出桥在 loop 完整收尾后处理缓冲和用户中止标记。
 - 新增两条边界测试覆盖 `working -> progress` 事件、终态 step 输出以及非流式文本输出链；在隔离 `ASTRBOT_ROOT` 下，完整 Native Adapter 套件 `18 passed`。当前未做真实 OLV 或取消/超时验收。
 
+### 2026-09-21 Native 可见输出桥显式化
+
+- 新增 `NativeExecutionOutputBridge`，显式持有 Native 响应到现有 AstrBot 可见输出的投影配置：工具状态、流式转换、推理显示与中间消息缓冲。
+- `run_agent()` 保留原签名，仅构造 Output Bridge 并转发其 stream；实际投影仍使用原有 `MessageChain`、`MessageEventResult` 和 `_send_core_event_message()`，没有引入第二套输出协议。
+- `NativeExecutionLoop` 不读取这些可见输出配置，Output Bridge 也不重新实现步骤、watcher 或 Native stream 关闭，两个 owner 的边界因此可独立验证。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
