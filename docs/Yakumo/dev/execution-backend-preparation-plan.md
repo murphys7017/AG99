@@ -1091,9 +1091,9 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 | --- | --- | --- | --- |
 | 执行身份、激活、事件顺序、终态、取消命令 | Core Head | Core Head | 已收口 |
 | Runner 停止、Native stream、响应证据、终态投影 | Native Adapter | Native Adapter | 已收口 |
-| 执行循环步骑、停止观察、最大步数、响应分类 | `astr_agent_run_util.py` 的函数 | Core 内部的 Native loop owner，但仍使用 Adapter 与既有 Output bridge | 未迁移 |
+| 执行循环步驱动、停止观察、最大步数、响应分类 | `NativeExecutionLoop` | Core 内部的 Native loop owner，使用 Adapter 与既有 Output bridge | 已收口 |
 | Prompt/Provider 请求装配、Hook、重置、配置快照 | `InternalAgentSubStage` | Core turn preparation boundary | 暂保持 |
-| 文本/工具状态/流式 TTS 可见输出 | `run_agent` / `run_live_agent` + Output bridge | Personal/Output 责任不变，Core 只提供执行材料 | 禁止随循环迁移一并改变 |
+| 文本/工具状态/流式 TTS 可见输出 | `NativeExecutionOutputBridge` + Output Runtime | Personal/Output 责任不变，Core 只提供执行材料 | 已显式化，禁止改变语义 |
 | 历史、Provider stats、Core Ledger | Stage 现有持久化路径 | 后续按类型化证据迁移，不由 Head 直接写库 | 暂保持 |
 
 #### 执行循环迁移顺序
@@ -1134,6 +1134,13 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - Core Head 在激活 Executor 时同时绑定停止能力和同步补充输入能力；`provide_input` 只有在 Native 真正返回 follow-up ticket 后才记录并发布命令。
 - `NativeExecutorAdapter.follow_up()` 在有 Head 时经该入口路由，无 Head 的兼容路径仍直接调用 Native runner；Personal 的 ticket、消费确认、撤回和顺序激活语义保持不变。
 - 命令 mailbox 继续作为可选观察边界，不承担唯一投递，因此不存在订阅前接受输入导致丢命令的窗口。
+
+### 2026-09-20 Phase 9 当前状态校正
+
+- 当前 Native 主链已经具备 `CoreExecutionHead`、`NativeExecutorAdapter`、`NativeExecutionLoop` 和 `NativeExecutionOutputBridge` 四个明确边界；Interaction 与 Cron/后台主动任务共用同一个 Native loop owner。
+- Personal 的 follow-up ticket 仍由 Personal Runtime 管理，但输入请求在有 Head 时先经 `CoreExecutionHead.provide_input()`，由 Head 记录 `provide_input` 命令并转交 Native；这不是第二条输出路径，也不是异步 mailbox 的可靠投递。
+- 当前仍未完成的是“完整生命周期 owner”而非基础执行循环：Head 尚未接管 Prompt/Provider 装配、历史与 Ledger 持久化、可靠的后台命令消费、重试/调度和第三方 Runner 迁移。
+- 因此下一阶段不应再拆分 `run_agent` 的可见语义，也不应把 Personal 或 Output 迁入 Head；应优先验证真实 OLV/Cron 的成功、取消、超时、follow-up 与迟到结果时序，再决定是否收口 Head 的 task 启动/取消 owner。
 
 ## 非目标
 
