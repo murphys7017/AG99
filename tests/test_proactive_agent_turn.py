@@ -32,14 +32,6 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
     response_role,
 ):
     class Runner:
-        def __init__(self):
-            self.max_step = None
-
-        async def step_until_done(self, max_step):
-            self.max_step = max_step
-            if False:
-                yield None
-
         def get_final_llm_resp(self):
             return LLMResponse(role=response_role, completion_text="done")
 
@@ -64,6 +56,17 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
     monkeypatch.setattr(
         "astrbot.core.astr_main_agent.build_main_agent", build_main_agent
     )
+    loop_max_steps = []
+
+    class Loop:
+        def __init__(self, executor, *, max_step):
+            loop_max_steps.append(max_step)
+
+        async def stream(self):
+            if False:
+                yield None
+
+    monkeypatch.setattr("astrbot.core.astr_agent_run_util.NativeExecutionLoop", Loop)
     provider_settings = (
         configured_value
         if isinstance(configured_value, dict)
@@ -100,7 +103,7 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
     result = await turn
 
     assert result is not None
-    assert runner.max_step == expected_max_step
+    assert loop_max_steps == [expected_max_step]
     assert result.event.plugins_name == []
     assert result.delivery_confirmed is False
 
@@ -115,15 +118,6 @@ async def test_proactive_result_does_not_replace_visible_history(tmp_path, monke
     snapshot = SimpleNamespace(cid=cid, history="[]")
 
     class Runner:
-        async def step_until_done(self, max_step):
-            await conversation_manager.append_assistant_turn(
-                cid,
-                turn_id="visible-output",
-                assistant_message={"role": "assistant", "content": "Personal reminder"},
-            )
-            if False:
-                yield None
-
         def done(self):
             return True
 
@@ -145,6 +139,21 @@ async def test_proactive_result_does_not_replace_visible_history(tmp_path, monke
         AsyncMock(return_value=snapshot),
     )
     monkeypatch.setattr("astrbot.core.astr_main_agent.build_main_agent", build)
+
+    class Loop:
+        def __init__(self, executor, *, max_step):
+            pass
+
+        async def stream(self):
+            await conversation_manager.append_assistant_turn(
+                cid,
+                turn_id="visible-output",
+                assistant_message={"role": "assistant", "content": "Personal reminder"},
+            )
+            if False:
+                yield None
+
+    monkeypatch.setattr("astrbot.core.astr_agent_run_util.NativeExecutionLoop", Loop)
     try:
         await run_proactive_agent_turn(
             context=SimpleNamespace(

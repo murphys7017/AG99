@@ -274,27 +274,6 @@ class NativeExecutorAdapter:
         """Open one Native step stream; the consumer must close it on exit."""
         return self._runner.step()
 
-    async def run_until_done(
-        self,
-        max_step: int,
-    ) -> AsyncGenerator[ExecutorStreamItem, None]:
-        """Drive the Native runner to completion through the adapter boundary.
-
-        Proactive Core turns have no visible-output bridge, but they still need
-        the same Native response normalization and generator cleanup as an
-        Interaction turn.
-        """
-
-        native_stream = self._runner.step_until_done(max_step)
-        try:
-            async for response in native_stream:
-                yield ExecutorStreamItem(
-                    kind=response.type,
-                    chain=response.data.get("chain"),
-                )
-        finally:
-            await native_stream.aclose()
-
     async def stream(self) -> AsyncGenerator[ExecutorStreamItem, None]:
         """Normalize Native response containers for the Core output bridge."""
 
@@ -390,6 +369,9 @@ class NativeExecutionLoop:
             kind=CoreExecutionEventKind.WORKING,
             metadata={"streaming": bool(self._executor.streaming)},
         )
+        if self._executor.done():
+            return
+
         step_idx = 0
         while step_idx < self._max_step + 1:
             step_idx += 1

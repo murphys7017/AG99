@@ -56,11 +56,13 @@ async def run_proactive_agent_turn(
     optional delivery tool, Core build, and runner lifecycle.
     """
     # Kept local to avoid making the Core builder import this proactive helper.
-    from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
+    from astrbot.core.astr_agent_run_util import (
+        NativeExecutionLoop,
+        NativeExecutorAdapter,
+    )
     from astrbot.core.astr_main_agent import _get_session_conv, build_main_agent
     from astrbot.core.cron.events import CronMessageEvent
     from astrbot.core.execution import (
-        CoreExecutionEventKind,
         CoreExecutionSpec,
         bind_core_execution_head,
     )
@@ -143,10 +145,6 @@ async def run_proactive_agent_turn(
                 },
             )
             executor_activated = True
-            native_executor.emit_event(
-                kind=CoreExecutionEventKind.WORKING,
-                metadata={"streaming": False},
-            )
         provider_settings = config.provider_settings
         agent_max_step = coerce_int_config(
             provider_settings.get("max_agent_step", 30),
@@ -154,9 +152,12 @@ async def run_proactive_agent_turn(
             min_value=1,
             field_name="provider_settings.max_agent_step",
         )
-        async for item in native_executor.run_until_done(agent_max_step):
-            if execution_head is not None:
-                native_executor.observe_response(item)
+        native_loop = NativeExecutionLoop(
+            native_executor,
+            max_step=agent_max_step,
+        )
+        async for _ in native_loop.stream():
+            pass
         response = native_executor.final_response()
         if (
             not native_executor.done()

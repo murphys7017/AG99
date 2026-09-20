@@ -1123,6 +1123,12 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - Live TTS 投影作为 bridge 的 `stream_live()` 入口；feeder 只消费 bridge 的文本流并交给既有音频队列，不再重新传递或解释可见输出配置。
 - `NativeExecutionLoop` 不读取这些可见输出配置，Output Bridge 也不重新实现步骤、watcher 或 Native stream 关闭，两个 owner 的边界因此可独立验证。
 
+### 2026-09-20 主动 Native 执行循环统一
+
+- Cron 与后台主动任务不再经 `step_until_done()` 驱动 Native runner；它们现在消费同一 `NativeExecutionLoop`，但不接入可见输出桥。
+- 因此交互和主动路径共用步数上限、停止观察、Native stream 关闭及 `working/progress` 事实投影；主动任务仍保留自己的 synthetic event、发送工具和 Ledger 持久化。
+- Loop 在启动时已完成的 Native runner 上不再请求额外 step，保持原有空执行完成语义。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
