@@ -333,7 +333,8 @@ async def test_run_live_agent_without_tts_reuses_output_bridge(monkeypatch):
         def __init__(self, actual_executor, **kwargs):
             calls.append((actual_executor, kwargs))
 
-        async def stream(self):
+        async def stream_live(self, tts_provider):
+            assert tts_provider is None
             yield MessageChain().message("live bridged")
 
     monkeypatch.setattr(

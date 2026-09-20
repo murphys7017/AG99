@@ -594,6 +594,12 @@ class NativeExecutionOutputBridge:
         self._show_reasoning = show_reasoning
         self._buffer_intermediate_messages = buffer_intermediate_messages
 
+    @property
+    def executor(self) -> NativeExecutorAdapter:
+        """Return the executor whose visible output this bridge projects."""
+
+        return self._executor
+
     def stream(self) -> AsyncGenerator[MessageChain | None, None]:
         """Open the existing visible-output stream for one Native execution."""
 
@@ -606,6 +612,15 @@ class NativeExecutionOutputBridge:
             show_reasoning=self._show_reasoning,
             buffer_intermediate_messages=self._buffer_intermediate_messages,
         )
+
+    async def stream_live(
+        self,
+        tts_provider: TTSProvider | None = None,
+    ) -> AsyncGenerator[MessageChain | None, None]:
+        """Project this execution through the existing Live TTS output path."""
+
+        async for chain in _stream_live_native_agent_output(self, tts_provider):
+            yield chain
 
 
 async def _stream_native_agent_output(
@@ -859,19 +874,7 @@ async def run_live_agent(
     show_reasoning: bool = False,
     buffer_intermediate_messages: bool = False,
 ) -> AsyncGenerator[MessageChain | None, None]:
-    """Live Mode 的 Agent 运行器，支持流式 TTS
-
-    Args:
-        executor: Native 执行器适配器
-        tts_provider: TTS Provider 实例
-        max_step: 最大步数
-        show_tool_use: 是否显示工具使用
-        show_tool_call_result: 是否显示工具返回结果
-        show_reasoning: 是否显示推理过程
-
-    Yields:
-        MessageChain: 包含文本或音频数据的消息链
-    """
+    """Compatibility entry for the Native Live output bridge."""
     output_bridge = NativeExecutionOutputBridge(
         executor,
         max_step=max_step,
@@ -881,6 +884,17 @@ async def run_live_agent(
         show_reasoning=show_reasoning,
         buffer_intermediate_messages=buffer_intermediate_messages,
     )
+    async for chain in output_bridge.stream_live(tts_provider):
+        yield chain
+
+
+async def _stream_live_native_agent_output(
+    output_bridge: NativeExecutionOutputBridge,
+    tts_provider: TTSProvider | None = None,
+) -> AsyncGenerator[MessageChain | None, None]:
+    """Keep the existing Live TTS projection behind the output bridge."""
+
+    executor = output_bridge.executor
 
     # 如果没有 TTS Provider，直接发送文本
     if not tts_provider:

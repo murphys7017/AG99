@@ -65,9 +65,8 @@ from astrbot.core.provider.entities import (
 from astrbot.core.utils.metrics import Metric
 
 from .....astr_agent_run_util import (
+    NativeExecutionOutputBridge,
     NativeExecutorAdapter,
-    run_agent,
-    run_live_agent,
 )
 from ....context import PipelineContext, call_event_hook
 
@@ -423,7 +422,19 @@ class InternalAgentSubStage(Stage):
                     },
                 )
 
-                # 检测 Live Mode
+                output_bridge = NativeExecutionOutputBridge(
+                    native_executor,
+                    max_step=max_step,
+                    show_tool_use=show_tool_use,
+                    show_tool_call_result=show_tool_call_result,
+                    stream_to_general=(
+                        False if action_type == "live" else stream_to_general
+                    ),
+                    show_reasoning=show_reasoning,
+                    buffer_intermediate_messages=buffer_intermediate_messages,
+                )
+
+                # 检测 Live Mode。
                 if action_type == "live":
                     # Live Mode: 使用 run_live_agent
                     logger.info("[Internal Agent] 检测到 Live Mode，启用 TTS 处理")
@@ -440,20 +451,12 @@ class InternalAgentSubStage(Stage):
                             "[Live Mode] TTS Provider 未配置，将使用普通流式模式"
                         )
 
-                    # 使用 run_live_agent，总是使用流式响应
+                    # Live Mode 总是使用流式响应。
                     event.set_result(
                         MessageEventResult()
                         .set_result_content_type(ResultContentType.STREAMING_RESULT)
                         .set_async_stream(
-                            run_live_agent(
-                                native_executor,
-                                tts_provider,
-                                max_step,
-                                show_tool_use,
-                                show_tool_call_result,
-                                show_reasoning=show_reasoning,
-                                buffer_intermediate_messages=buffer_intermediate_messages,
-                            ),
+                            output_bridge.stream_live(tts_provider),
                         ),
                     )
                     yield
@@ -477,14 +480,7 @@ class InternalAgentSubStage(Stage):
                         MessageEventResult()
                         .set_result_content_type(ResultContentType.STREAMING_RESULT)
                         .set_async_stream(
-                            run_agent(
-                                native_executor,
-                                max_step,
-                                show_tool_use,
-                                show_tool_call_result,
-                                show_reasoning=show_reasoning,
-                                buffer_intermediate_messages=buffer_intermediate_messages,
-                            ),
+                            output_bridge.stream(),
                         ),
                     )
                     yield
@@ -497,15 +493,7 @@ class InternalAgentSubStage(Stage):
                                 ),
                             )
                 else:
-                    async for _ in run_agent(
-                        native_executor,
-                        max_step,
-                        show_tool_use,
-                        show_tool_call_result,
-                        stream_to_general,
-                        show_reasoning=show_reasoning,
-                        buffer_intermediate_messages=buffer_intermediate_messages,
-                    ):
+                    async for _ in output_bridge.stream():
                         yield
 
                 native_executor.finalize()
