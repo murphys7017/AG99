@@ -1020,6 +1020,14 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - `CoreExecutionProgress` 的保留字段不可被属性覆盖，属性同样采用不可变快照。它是 Core
   内部事实边界，不是新的输出消息或跨进程传输协议。
 
+### 2026-09-20 Native 输入结果携带执行规格
+
+- `NativeExecutionInput` 现在显式携带生成该 `ProviderRequest` 的同一份
+  `CoreExecutionSpec`，与 `prompt_apply_result` 和请求本身保持同一输入身份。
+- 这只是把执行身份、任务和能力快照沿 Adapter 结果返回，避免未来 Executor Body 通过
+  ProviderRequest 反向猜测 `execution_id` 或能力来源；当前 Native 请求内容和调用时序不变。
+- `CoreExecutionSpec` 仍是进程内准备事实，不是远程协议；第三方 Executor 尚未接入。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

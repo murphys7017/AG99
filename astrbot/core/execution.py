@@ -1667,6 +1667,7 @@ class CoreExecutionSpec:
 
 @dataclass(frozen=True, slots=True)
 class NativeExecutionInput:
+    execution_spec: CoreExecutionSpec
     provider_request: ProviderRequest
     prompt_apply_result: PromptApplyResult
 
@@ -1689,6 +1690,7 @@ class NativeExecutionAdapter:
         )
         provider_request.func_tool = spec.capabilities.tools
         return NativeExecutionInput(
+            execution_spec=spec,
             provider_request=provider_request,
             prompt_apply_result=apply_result,
         )
