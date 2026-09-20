@@ -6,6 +6,7 @@ from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
 from astrbot.core.agent.response import AgentStats
+from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
 from astrbot.core.db.po import ProviderStat
 from astrbot.core.pipeline.process_stage.method.agent_sub_stages import internal
 from astrbot.core.provider.entities import ProviderRequest, TokenUsage
@@ -43,8 +44,8 @@ async def test_record_internal_agent_stats_persists_provider_stat(
     await internal._record_internal_agent_stats(
         event,
         req,
-        agent_runner,
         final_resp,
+        NativeExecutorAdapter(agent_runner),
     )
 
     async with temp_db.get_db() as session:
@@ -80,7 +81,12 @@ def _provider_stats_recording_args():
         stats=AgentStats(),
         was_aborted=lambda: False,
     )
-    return event, req, agent_runner, SimpleNamespace(role="assistant")
+    return (
+        event,
+        req,
+        SimpleNamespace(role="assistant"),
+        NativeExecutorAdapter(agent_runner),
+    )
 
 
 def _provider_stats_operational_error(message: str) -> OperationalError:

@@ -65,7 +65,6 @@ from astrbot.core.provider.entities import (
 from astrbot.core.utils.metrics import Metric
 
 from .....astr_agent_run_util import (
-    AgentRunner,
     NativeExecutorAdapter,
     run_agent,
     run_live_agent,
@@ -524,9 +523,8 @@ class InternalAgentSubStage(Stage):
                     _record_internal_agent_stats(
                         event,
                         req,
-                        None,
                         final_resp,
-                        native_executor=native_executor,
+                        native_executor,
                     )
                 )
 
@@ -987,29 +985,12 @@ def _is_sqlite_database_locked_error(exc: OperationalError) -> bool:
 async def _record_internal_agent_stats(
     event: AstrMessageEvent,
     req: ProviderRequest | None,
-    legacy_agent_runner: AgentRunner | None,
     final_resp: LLMResponse | None,
-    *,
-    native_executor: NativeExecutorAdapter | None = None,
+    native_executor: NativeExecutorAdapter,
 ) -> None:
-    """Persist internal agent stats without affecting the user response flow.
-
-    ``legacy_agent_runner`` remains a positional fallback for older internal
-    callers. The Core path always supplies ``native_executor``.
-    """
-    if legacy_agent_runner is None and native_executor is None:
-        return
-
-    provider = (
-        native_executor.provider
-        if native_executor is not None
-        else legacy_agent_runner.provider
-    )
-    stats = (
-        native_executor.stats
-        if native_executor is not None
-        else legacy_agent_runner.stats
-    )
+    """Persist Adapter-backed internal agent stats outside the response flow."""
+    provider = native_executor.provider
+    stats = native_executor.stats
     if provider is None or stats is None:
         return
 
@@ -1021,11 +1002,7 @@ async def _record_internal_agent_stats(
             else None
         )
 
-        was_aborted = (
-            native_executor.was_aborted()
-            if native_executor is not None
-            else legacy_agent_runner.was_aborted()
-        )
+        was_aborted = native_executor.was_aborted()
         if was_aborted:
             status = "aborted"
         elif final_resp is not None and final_resp.role == "err":

@@ -930,16 +930,15 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   `NativeExecutorAdapter`，包括上下文、流式模式、完成状态、统计数据和 provider。
 - 生产调用链已全部在 Stage 构造一次 `NativeExecutorAdapter`，因此这两个执行入口现在只接受 Adapter，不再在入口处隐式包装裸 `AgentRunner`。
   这能让绕开 Core Head 的内部调用在立即暴露，而不改变响应、工具状态、TTS 或输出时序。
-- `AgentRunner` 类型别名仍仅供 Adapter 构造和统计 fallback 读取使用；它不再是主执行循环的入口契约。
+- `AgentRunner` 类型别名仍仅供 Adapter 构造使用；它不再是主执行循环或统计写入的入口契约。
 - 这一步不引入新执行器协议，不迁移执行循环 owner，也不触动现有可见输出、TTS、历史或 Ledger。
 
-### 2026-09-20 Internal Agent 统计兼容边界标注
+### 2026-09-20 Internal Agent 统计边界收口
 
 - `InternalAgentSubStage` 的生产路径已经始终通过 `NativeExecutorAdapter` 读取
   provider、stats 和 aborted 状态。
-- `_record_internal_agent_stats()` 仍保留旧的 positional runner 参数，仅作为历史
-  内部调用的 fallback，并明确命名为 `legacy_agent_runner`；这次不改变旧调用行为，
-  也不把它重新作为 Core 执行边界。
+- `_record_internal_agent_stats()` 现在只接受 Adapter，删除无生产调用的裸 `AgentRunner` positional fallback。
+  统计写入、状态分类和 SQLite 锁重试语义不变；这个函数不再是 Core 执行边界的双轨入口。
 
 ### 2026-09-20 Personal Follow-up 执行器命名收口
 
