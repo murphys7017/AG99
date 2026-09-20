@@ -14,8 +14,8 @@ Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完�
 
 2026-09-21 全局复核后的函数级修复提案见
 [跨组件一致性整改实施方案](cross-component-convergence-plan.md)。
-该提案尚未实施或冻结，不改变下文已完成记录；先评审跨入口生命周期与输出完成契约，
-再决定后续 Executor 解耦批次。
+该方案的 B1 至 B7 已完成源码实施与离线验证；真实 OLV/Cron/Live 验收仍待用户重启后
+执行。它不改变下文历史记录在各自日期的事实状态，也不提前开启新的 Executor Body。
 
 ## 2026-09 Interaction 主链修订
 
@@ -1147,6 +1147,23 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - Personal 的 follow-up ticket 仍由 Personal Runtime 管理，但输入请求在有 Head 时先经 `CoreExecutionHead.provide_input()`，由 Head 记录 `provide_input` 命令并转交 Native；这不是第二条输出路径，也不是异步 mailbox 的可靠投递。
 - 当前仍未完成的是“完整生命周期 owner”而非基础执行循环：Head 尚未接管 Prompt/Provider 装配、历史与 Ledger 持久化、可靠的后台命令消费、重试/调度和第三方 Runner 迁移。
 - 因此下一阶段不应再拆分 `run_agent` 的可见语义，也不应把 Personal 或 Output 迁入 Head；应优先验证真实 OLV/Cron 的成功、取消、超时、follow-up 与迟到结果时序，再决定是否收口 Head 的 task 启动/取消 owner。
+
+### 跨组件一致性收口
+
+- 普通与主动 Core 已共用请求准备生命周期；主动执行的唯一总预算来自目标会话配置，
+  覆盖准入、历史、Hook、构建、reset、激活和执行循环，资源清理仍在预算外完成。
+- Core Head 的业务控制入口收窄为 `activate_executor()`、`provide_input()` 和 `cancel()`。
+  2026-09-19 通信契约切片中的 `dispatch_command()`、`CoreCommandReceipt` 和命令
+  mailbox 已被后续减法清理删除；该历史章节只记录当时实现，不代表当前 API。
+  Event mailbox 与同步 journal subscriber 保留，不能与已删除的命令观察面混淆。
+- 输出回执现在区分物理投递、逻辑完成通知和未知外部效果；发送前检查与策略抑制已覆盖
+  模型表达和插件 Persona 路径，不把抑制冒充投递失败或成功。
+- 插件能力清单按所选配置文件解析 Hook/Tool target，并明确配置视图没有进行 session
+  permission 与 applicability 评估；该页面仍为只读诊断。
+- Live 模式删除了流消费后的重复普通成功历史保存，仅保留 `finalize()` 后的公共成功
+  提交点；deadline、外层取消和失败仍走各自的独立证据持久化路径。
+- 上述收口完成的是进入真实验收前的代码条件。下一步先执行 OLV/Cron/Live 验收矩阵，
+  不据此宣称完整生命周期 owner 或可替换 Executor Body 已完成。
 
 ## 非目标
 

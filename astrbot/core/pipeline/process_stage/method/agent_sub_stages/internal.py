@@ -445,19 +445,6 @@ class InternalAgentSubStage(Stage):
                     )
                     yield
 
-                    # 保存历史记录
-                    if native_executor.done():
-                        evidence = native_executor.evidence()
-                        if not event.is_stopped() or evidence.was_aborted:
-                            await self._save_to_history(
-                                event,
-                                req,
-                                evidence.final_response,
-                                evidence.messages,
-                                evidence.stats,
-                                user_aborted=evidence.was_aborted,
-                            )
-
                 elif streaming_response and not stream_to_general:
                     # 流式响应
                     event.set_result(

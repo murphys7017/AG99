@@ -1,3 +1,26 @@
+cross_component_convergence:
+  date: '2026-09-20'
+  class: refactor
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Complete convergence batches B1-B7: delivery completion receipts,
+    pre-output policy consistency, shared Core request preparation, proactive
+    execution deadline ownership, Core control entry-point cleanup,
+    configuration-scoped plugin inventory, and removal of duplicate Live
+    success-history persistence.
+  validation: >-
+    Each batch received focused tests and static checks. The final combined
+    run had 174 passed and 3 unrelated baseline failures; four B7-specific
+    Live/history/cancellation checks passed. Dashboard typecheck and production
+    build passed with two existing MDI subset warnings. Ruff, compileall, YAML
+    parsing, and diff checks passed.
+  followup: >-
+    Redeploy the Dashboard assets, then manually validate OLV ordinary and
+    delegated turns, follow-up/cancel/timeout, Cron success/failure, two-config
+    inventory switching, and Live success/cancellation. Do not treat this as a
+    completed replaceable Executor Body.
+
 native_step_boundary:
   date: '2026-09-20'
   class: refactor

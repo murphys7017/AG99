@@ -1,5 +1,28 @@
 # Yakumo Current State
 
+## 2026-09-20 跨组件一致性收口
+
+跨组件整改 B1 至 B7 已完成源码实施与离线验证：
+
+- 可见消息回执分别记录物理投递、逻辑完成通知与最终状态，部分发送、完成通知失败和
+  取消未知状态不再被压成同一个布尔成功。
+- 模型表达、插件 Persona 和主动表达共享发送前检查；策略抑制不会继续写 artifact、
+  投递成功或 `_has_send_oper`。
+- 普通与主动 Core 共用请求准备生命周期；主动 Core 的总 deadline 来自目标会话配置，
+  不读取所有配置，也不建立第二个预算 owner。
+- Core Head 只保留真实业务控制入口：激活 Executor、补充输入和取消。通用
+  `dispatch_command`、命令回执与命令 mailbox 已删除；Event mailbox/journal 仍用于
+  执行事实观察。
+- Dashboard 插件能力清单按配置文件解析，配置切换不会被迟到请求覆盖；配置视图明确
+  标记 session permission 与 applicability 尚未评估。该批前端资源需要重新部署。
+- Live 模式普通成功只在公共收尾提交一次历史；Interaction Core 仍只保存 Ledger
+  执行证据，取消和失败继续使用独立出口。
+
+离线检查已覆盖相关 Core/Interaction/主动任务用例、Ruff、compileall、Dashboard
+typecheck 与生产构建。真实 OLV 普通/工具/follow-up/取消、Cron 成功/失败、双配置页面
+和 Live 成功/取消尚未执行，因此当前仍不能宣布完整 Core 生命周期 owner 或可替换
+Executor Body 已完成。
+
 ## 2026-09-19 收口进展
 
 已完成第一项 owner 迁移切片：`InteractionTurnState` 与 `CoreExecutionSpec` 的主写入
