@@ -1079,6 +1079,12 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 此切片不改变主动消息的发送、Personal 的可见表达责任、Cron 重试、历史保留或台平发送路径。
 - 新增 Adapter 生成器关闭边界测试；当前 Windows 运行环境下，这两个定向 pytest 模块会在导入初始化链卡住，因此未将 pytest 记为通过；`compileall`、Ruff 和 diff 校验已通过，仍需一次实际 Cron/后台任务验收。
 
+### 2026-09-20 Native Runner 调用面边界审计
+
+- `InternalAgentSubStage` 以外仍存在的裸 `step_until_done()` 不应被批量迁移：`InteractionExpressionAgent` 是 Personal 快速/统一表达，`third_party.py` 是官方第三方 Runner 兼容路径，`star/context.py` 是插件直接调用 Provider 的独立 helper。
+- 这些路径不能因为都使用 Runner 就被强行塞入 Core Head；否则会把 Personal 和第三方兼容误认成 Native Body，恢复职责混淆。
+- 下一阶段的执行循环 owner 迁移范围只限 `InternalAgentSubStage` 的 Native 主链；但是先冻结输出、TTS、历史、取消和 Ledger 责任后再开始，不为“所有 Runner 统一化”新建第二套协议。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
