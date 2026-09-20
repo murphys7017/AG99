@@ -302,6 +302,18 @@ class NativeExecutorAdapter:
     def final_response(self) -> LLMResponse | None:
         return self._runner.get_final_llm_resp()
 
+    def final_response_chain(self) -> MessageChain | None:
+        """Build the final visible chain without exposing response internals."""
+
+        response = self.final_response()
+        if response is None:
+            return None
+        if response is not None and response.completion_text:
+            return MessageChain().message(response.completion_text)
+        if response.result_chain is not None:
+            return response.result_chain
+        return MessageChain()
+
     @property
     def messages(self) -> list[Message]:
         return self._runner.run_context.messages

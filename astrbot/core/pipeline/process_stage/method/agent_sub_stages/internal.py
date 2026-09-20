@@ -489,20 +489,10 @@ class InternalAgentSubStage(Stage):
                     )
                     yield
                     if native_executor.done():
-                        if final_llm_resp := native_executor.final_response():
-                            if final_llm_resp.completion_text:
-                                chain = (
-                                    MessageChain()
-                                    .message(final_llm_resp.completion_text)
-                                    .chain
-                                )
-                            elif final_llm_resp.result_chain:
-                                chain = final_llm_resp.result_chain.chain
-                            else:
-                                chain = MessageChain().chain
+                        if final_chain := native_executor.final_response_chain():
                             event.set_result(
                                 MessageEventResult(
-                                    chain=chain,
+                                    chain=final_chain.chain,
                                     result_content_type=ResultContentType.STREAMING_FINISH,
                                 ),
                             )

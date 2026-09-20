@@ -268,6 +268,28 @@ def test_native_executor_adapter_projects_final_response_metadata():
     }
 
 
+def test_native_executor_adapter_builds_final_response_chain():
+    runner = FakeNativeRunner()
+    runner.final_response = SimpleNamespace(
+        role="assistant",
+        completion_text="hello",
+        result_chain=None,
+    )
+    adapter = NativeExecutorAdapter(runner)
+
+    assert adapter.final_response_chain().get_plain_text() == "hello"
+
+    runner.final_response = SimpleNamespace(
+        role="assistant",
+        completion_text="",
+        result_chain=MessageChain().message("chain"),
+    )
+    assert adapter.final_response_chain().get_plain_text() == "chain"
+
+    runner.final_response = None
+    assert adapter.final_response_chain() is None
+
+
 def test_native_executor_adapter_observes_tool_progress_without_result_content(
     monkeypatch,
 ):
