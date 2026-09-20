@@ -987,6 +987,8 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - `NativeExecutorAdapter.stream()` 将 Native `AgentResponse` 转换为内部
   `ExecutorStreamItem(kind, chain)`；`run_agent()` 不再直接读取 `AgentResponse.data`，
   Native response 容器只保留在 Adapter 内部。
+- Adapter 在 `stream()` 的 `finally` 中关闭底层 Native step 流，因此提前结束、取消、
+  超时和异常不会只关闭包装层而遗留 Native 生成器。
 - 现有输出桥接仍消费 `MessageChain`，因此没有改变文本、工具状态、流式 TTS 或平台
   投递行为；这一步只是缩小 Core 执行循环对 Native response 结构的依赖。
 - 该流项目仍是进程内过渡契约，不等同于最终跨 Executor 的 `ExecutionEvent`/Artifact
