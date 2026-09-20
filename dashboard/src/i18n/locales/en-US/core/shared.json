@@ -36,6 +36,11 @@
     "capabilityInventory": {
       "title": "Plugin Capability Inventory",
       "subtitle": "Read-only: kind, owner, fixed consumer, admission state and migration state",
+      "configScope": "Configuration scope",
+      "sessionNotEvaluated": "Session not evaluated",
+      "allowed": "Allowed",
+      "denied": "Denied",
+      "applicability": "Applicability",
       "loadFailed": "Failed to load the plugin capability inventory",
       "empty": "No registered plugin capabilities detected",
       "kind": "Kind",

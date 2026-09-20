@@ -8,6 +8,10 @@
         <div class="text-caption text-medium-emphasis">
           {{ tm('runtimeTargetEditor.capabilityInventory.subtitle') }}
         </div>
+        <div class="text-caption text-medium-emphasis">
+          {{ tm('runtimeTargetEditor.capabilityInventory.configScope') }}:
+          {{ evaluationContext.config_id || props.configId }}
+        </div>
       </div>
       <v-spacer />
       <v-btn
@@ -16,7 +20,7 @@
         icon="mdi-refresh"
         :loading="loading"
         :aria-label="tm('runtimeTargetEditor.capabilityInventory.title')"
-        @click="load"
+        @click="load(props.configId)"
       />
     </div>
 
@@ -49,6 +53,7 @@
           <th>{{ tm('runtimeTargetEditor.capabilityInventory.kind') }}</th>
           <th>{{ tm('runtimeTargetEditor.capabilityInventory.target') }}</th>
           <th>{{ tm('runtimeTargetEditor.capabilityInventory.permission') }}</th>
+          <th>{{ tm('runtimeTargetEditor.capabilityInventory.applicability') }}</th>
           <th>{{ tm('runtimeTargetEditor.capabilityInventory.hardness') }}</th>
           <th>{{ tm('runtimeTargetEditor.capabilityInventory.owner') }}</th>
         </tr>
@@ -81,7 +86,12 @@
               :color="cap.permission_state === 'allowed' ? 'success' : 'warning'"
               variant="tonal"
             >
-              {{ cap.permission_state }}
+              {{ permissionLabel(cap) }}
+            </v-chip>
+          </td>
+          <td>
+            <v-chip size="small" color="warning" variant="tonal">
+              {{ applicabilityLabel(cap) }}
             </v-chip>
           </td>
           <td>{{ hardnessLabel(cap) }}</td>
@@ -122,7 +132,7 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useModuleI18n } from '@/i18n/composables'
 
 const props = defineProps({
@@ -133,6 +143,10 @@ const props = defineProps({
   pluginName: {
     type: String,
     default: ''
+  },
+  configId: {
+    type: String,
+    required: true
   }
 })
 
@@ -141,6 +155,8 @@ const { tm } = useModuleI18n('core.shared')
 const loading = ref(false)
 const loadFailed = ref(false)
 const capabilities = ref([])
+const evaluationContext = ref({})
+let requestSequence = 0
 
 const visibleCapabilities = computed(() => {
   if (!props.pluginName) {
@@ -191,13 +207,42 @@ function hardnessLabel(cap) {
     : tm('runtimeTargetEditor.capabilityInventory.soft')
 }
 
-async function load() {
+function permissionLabel(cap) {
+  if (
+    cap.permission_state === 'not_evaluated'
+    || evaluationContext.value.session_evaluated === false
+  ) {
+    return tm('runtimeTargetEditor.capabilityInventory.sessionNotEvaluated')
+  }
+  return cap.permission_state === 'allowed'
+    ? tm('runtimeTargetEditor.capabilityInventory.allowed')
+    : tm('runtimeTargetEditor.capabilityInventory.denied')
+}
+
+function applicabilityLabel(cap) {
+  if (
+    cap.applicability_state === 'not_evaluated'
+    || evaluationContext.value.applicability_evaluated === false
+  ) {
+    return tm('runtimeTargetEditor.capabilityInventory.sessionNotEvaluated')
+  }
+  return cap.applicability_state
+}
+
+async function load(configId) {
+  const sequence = ++requestSequence
   loading.value = true
   loadFailed.value = false
+  capabilities.value = []
+  evaluationContext.value = {}
   try {
-    const response = await axios.get('/api/plugin/capabilities')
+    const response = await axios.get('/api/plugin/capabilities', {
+      params: { config_id: configId }
+    })
+    if (sequence !== requestSequence) return
     if (response.data?.status === 'ok') {
       const plugins = response.data.data?.plugins || []
+      evaluationContext.value = response.data.data?.evaluation_context || {}
       capabilities.value = plugins.flatMap(plugin =>
         (plugin.capabilities || []).map(cap => ({
           ...cap,
@@ -208,13 +253,18 @@ async function load() {
       loadFailed.value = true
     }
   } catch (error) {
+    if (sequence !== requestSequence) return
     loadFailed.value = true
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) loading.value = false
   }
 }
 
-onMounted(load)
+watch(
+  () => props.configId,
+  configId => load(configId),
+  { immediate: true }
+)
 </script>
 
 <style scoped>

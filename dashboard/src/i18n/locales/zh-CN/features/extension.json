@@ -98,6 +98,7 @@
     "noPluginsDesc": "尝试安装插件或调整搜索条件"
   },
   "detail": {
+    "capabilityConfig": "能力清单配置",
     "contents": "插件行为",
     "noContents": "暂无行为",
     "notFound": "未找到该插件",

@@ -98,6 +98,7 @@
     "noPluginsDesc": "Try installing extensions or adjusting the search"
   },
   "detail": {
+    "capabilityConfig": "Capability inventory configuration",
     "contents": "Plugin Handlers",
     "noContents": "No handlers",
     "notFound": "Plugin not found",

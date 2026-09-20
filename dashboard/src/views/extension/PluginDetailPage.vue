@@ -84,6 +84,8 @@ const expandedCommandGroups = ref(new Set());
 const logoLoadFailed = ref(false);
 const detailPageRef = ref(null);
 const isHeaderStuck = ref(false);
+const configOptions = ref([]);
+const selectedConfigId = ref("default");
 
 const displayName = computed(() => pluginName(props.plugin));
 const detailSourceTab = computed(() =>
@@ -533,6 +535,18 @@ const fetchReadme = async () => {
 
 const showDocsSection = computed(() => !isMarketDetail.value);
 
+const fetchConfigOptions = async () => {
+  try {
+    const response = await axios.get("/api/config/abconfs");
+    configOptions.value = response.data?.data?.info_list || [];
+    if (!configOptions.value.some((item) => item.id === selectedConfigId.value)) {
+      selectedConfigId.value = configOptions.value[0]?.id || "default";
+    }
+  } catch {
+    configOptions.value = [{ id: "default", name: "default" }];
+  }
+};
+
 watch(
   () => props.plugin?.name,
   () => {
@@ -543,6 +557,7 @@ watch(
 );
 
 onMounted(() => {
+  fetchConfigOptions();
   updateHeaderStuckState();
   window.addEventListener("scroll", updateHeaderStuckState, { passive: true });
   document.addEventListener("scroll", updateHeaderStuckState, {
@@ -592,7 +607,21 @@ onBeforeUnmount(() => {
     <section class="detail-section">
       <v-card class="rounded-lg" variant="outlined">
         <v-card-text>
-          <PluginCapabilityInventory :plugin-name="displayName" />
+          <v-select
+            v-model="selectedConfigId"
+            :items="configOptions"
+            item-title="name"
+            item-value="id"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="mb-3 capability-config-select"
+            :label="tm('detail.capabilityConfig')"
+          />
+          <PluginCapabilityInventory
+            :plugin-name="displayName"
+            :config-id="selectedConfigId"
+          />
         </v-card-text>
       </v-card>
     </section>

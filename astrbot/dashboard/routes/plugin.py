@@ -25,12 +25,12 @@ from astrbot.api import sp
 from astrbot.core import DEMO_MODE, file_token_service, logger
 from astrbot.core.computer.computer_client import sync_skills_to_active_sandboxes
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
+from astrbot.core.plugin_capability_inventory import build_capability_inventory
 from astrbot.core.skills.skill_manager import SkillManager
 from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.permission import PermissionTypeFilter
 from astrbot.core.star.filter.regex import RegexFilter
-from astrbot.core.plugin_capability_inventory import build_capability_inventory
 from astrbot.core.star.star import StarMetadata
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 from astrbot.core.star.star_manager import (
@@ -1394,15 +1394,25 @@ class PluginRoute(Route):
         offer a target for a capability whose consumer is fixed by contract.
         """
         try:
-            runtime_config = None
+            config_id = str(request.args.get("config_id", "default") or "").strip()
+            config_id = config_id or "default"
             config_mgr = getattr(self.core_lifecycle, "astrbot_config_mgr", None)
-            if config_mgr is not None:
-                runtime_config = getattr(config_mgr, "default_conf", None)
+            configs = getattr(config_mgr, "confs", {}) if config_mgr is not None else {}
+            if config_id not in configs:
+                return Response().error(
+                    f"配置文件不存在: {config_id}"
+                ).__dict__
             inventory = build_capability_inventory(
                 event=None,
                 context=self.plugin_manager.context,
-                runtime_config=runtime_config,
+                runtime_config=configs[config_id],
             )
+            inventory["evaluation_context"] = {
+                "config_id": config_id,
+                "scope": "configuration",
+                "session_evaluated": False,
+                "applicability_evaluated": False,
+            }
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Failed to build plugin capability inventory: %s",

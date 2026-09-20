@@ -36,6 +36,11 @@
     "capabilityInventory": {
       "title": "插件能力清单",
       "subtitle": "只读展示：能力类型、归属、固定消费方、准入状态与迁移状态",
+      "configScope": "配置作用域",
+      "sessionNotEvaluated": "未进行会话评估",
+      "allowed": "允许",
+      "denied": "拒绝",
+      "applicability": "适用性",
       "loadFailed": "未能加载插件能力清单",
       "empty": "未检测到已注册的插件能力",
       "kind": "能力类型",
