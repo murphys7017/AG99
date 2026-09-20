@@ -4,7 +4,12 @@ from types import SimpleNamespace
 import pytest
 
 from astrbot.core.agent.response import AgentResponse
-from astrbot.core.astr_agent_run_util import ExecutorStreamItem, NativeExecutorAdapter
+from astrbot.core.astr_agent_run_util import (
+    ExecutorStreamItem,
+    NativeExecutionLoop,
+    NativeExecutorAdapter,
+    run_agent,
+)
 from astrbot.core.execution import CoreExecutionArtifact, CoreExecutionProgress
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import MessageChain
@@ -138,6 +143,107 @@ async def test_native_executor_adapter_normalizes_complete_native_run_and_closes
     await stream.aclose()
 
     assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_native_execution_loop_keeps_progress_and_output_boundary(monkeypatch):
+    class Event:
+        def is_stopped(self):
+            return False
+
+        def get_extra(self, key):
+            return None
+
+    response = AgentResponse(
+        type="tool_call",
+        data={
+            "chain": MessageChain(
+                chain=[Json(data={"id": "call-1", "name": "search"})],
+                type="tool_call",
+            )
+        },
+    )
+
+    class Runner(FakeNativeRunner):
+        def __init__(self):
+            super().__init__()
+            self.completed = False
+            self.run_context.context = SimpleNamespace(event=Event())
+
+        async def step(self):
+            self.completed = True
+            yield response
+
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda event, **kwargs: emitted.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda event: None,
+    )
+
+    loop = NativeExecutionLoop(NativeExecutorAdapter(Runner()), max_step=1)
+    items = [item async for item in loop.stream()]
+
+    assert items == [ExecutorStreamItem(kind="tool_call", chain=response.data["chain"])]
+    assert [item["kind"] for item in emitted] == ["working", "progress"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_preserves_non_streaming_visible_output(monkeypatch):
+    class Event:
+        def __init__(self):
+            self.results = []
+
+        def is_stopped(self):
+            return False
+
+        def get_extra(self, key):
+            return None
+
+        def set_result(self, result):
+            self.results.append(result)
+
+        def clear_result(self):
+            pass
+
+        def get_platform_name(self):
+            return "test"
+
+        def get_platform_id(self):
+            return "test"
+
+    response = AgentResponse(
+        type="llm_result",
+        data={"chain": MessageChain().message("loop output")},
+    )
+
+    class Runner(FakeNativeRunner):
+        def __init__(self):
+            super().__init__()
+            self.completed = False
+            self.run_context.context = SimpleNamespace(event=Event())
+
+        async def step(self):
+            self.completed = True
+            yield response
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda event, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda event: None,
+    )
+
+    executor = NativeExecutorAdapter(Runner())
+    outputs = [chain async for chain in run_agent(executor, max_step=1)]
+
+    assert [chain.get_plain_text() for chain in outputs] == ["loop output"]
+    assert executor.run_context.context.event.results[0].chain == response.data["chain"].chain
 
 
 @pytest.mark.asyncio

@@ -369,6 +369,82 @@ class NativeExecutorAdapter:
         return self._runner.stats
 
 
+class NativeExecutionLoop:
+    """Drive one Native Core execution without owning visible output.
+
+    This owner centralizes step limits, stop observation, progress projection,
+    and stream cleanup. Callers still decide how a normalized response becomes
+    text, tool status, TTS input, history, or platform output.
+    """
+
+    def __init__(self, executor: NativeExecutorAdapter, *, max_step: int) -> None:
+        self._executor = executor
+        self._max_step = max_step
+        self._event = executor.run_context.context.event
+
+    async def stream(self) -> AsyncGenerator[ExecutorStreamItem, None]:
+        """Yield normalized responses while preserving Native loop controls."""
+
+        self._executor.emit_event(
+            kind=CoreExecutionEventKind.WORKING,
+            metadata={"streaming": bool(self._executor.streaming)},
+        )
+        step_idx = 0
+        while step_idx < self._max_step + 1:
+            step_idx += 1
+            if step_idx == self._max_step + 1:
+                logger.warning(
+                    "Agent reached max steps (%s), forcing a final response.",
+                    self._max_step,
+                )
+                if not self._executor.done():
+                    self._executor.force_final_response(
+                        instruction=(
+                            "工具调用次数已达到上限，请停止使用工具，并根据已经收集到的信息，"
+                            "对你的任务和发现进行总结，然后直接回复用户。"
+                        )
+                    )
+
+            stop_watcher = asyncio.create_task(
+                _watch_agent_stop_signal(self._executor, self._event),
+            )
+            step_stream = self._executor.stream()
+            try:
+                async for response in step_stream:
+                    if _should_stop_agent(self._event):
+                        self._executor.request_cancellation(
+                            metadata={"reason": "agent_aborted"}
+                        )
+
+                    if response.kind == "aborted":
+                        if not stop_watcher.done():
+                            stop_watcher.cancel()
+                            try:
+                                await stop_watcher
+                            except asyncio.CancelledError:
+                                pass
+                        yield response
+                        return
+
+                    if _should_stop_agent(self._event):
+                        continue
+
+                    self._executor.observe_response(response)
+                    yield response
+
+                if self._executor.done():
+                    return
+            finally:
+                if not stop_watcher.done():
+                    stop_watcher.cancel()
+                try:
+                    await stop_watcher
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    await step_stream.aclose()
+
+
 def _should_stop_agent(astr_event) -> bool:
     return astr_event.is_stopped() or bool(astr_event.get_extra("agent_stop_requested"))
 
@@ -499,12 +575,7 @@ async def run_agent(
     show_reasoning: bool = False,
     buffer_intermediate_messages: bool = False,
 ) -> AsyncGenerator[MessageChain | None, None]:
-    step_idx = 0
     astr_event = executor.run_context.context.event
-    executor.emit_event(
-        kind=CoreExecutionEventKind.WORKING,
-        metadata={"streaming": bool(executor.streaming)},
-    )
     tool_name_by_call_id: dict[str, str] = {}
     buffered_llm_chains: list[MessageChain] = []
     can_buffer_llm_result = _should_buffer_llm_result(
@@ -512,264 +583,205 @@ async def run_agent(
         stream_to_general,
         executor,
     )
-    while step_idx < max_step + 1:
-        step_idx += 1
+    loop = NativeExecutionLoop(executor, max_step=max_step)
+    try:
+        async for resp in loop.stream():
+            if resp.kind == "aborted":
+                if can_buffer_llm_result:
+                    merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
+                    if merged_chain:
+                        astr_event.set_result(
+                            MessageEventResult(
+                                chain=merged_chain.chain,
+                                result_content_type=ResultContentType.LLM_RESULT,
+                            ),
+                        )
+                        yield merged_chain
+                        astr_event.clear_result()
+                astr_event.set_extra("agent_user_aborted", True)
+                astr_event.set_extra("agent_stop_requested", False)
+                executor.cancel(metadata={"reason": "agent_aborted"})
+                return
 
-        if step_idx == max_step + 1:
-            logger.warning(
-                f"Agent reached max steps ({max_step}), forcing a final response."
-            )
-            if not executor.done():
-                # 拔掉所有工具
-                executor.force_final_response(
-                    instruction=(
-                        "工具调用次数已达到上限，请停止使用工具，并根据已经收集到的信息，"
-                        "对你的任务和发现进行总结，然后直接回复用户。"
-                    )
+            if resp.kind == "tool_call_result":
+                msg_chain = _require_executor_stream_chain(resp)
+
+                astr_event.trace.record(
+                    "agent_tool_result",
+                    tool_result=msg_chain.get_plain_text(
+                        with_other_comps_mark=True
+                    ),
                 )
 
-        stop_watcher = asyncio.create_task(
-            _watch_agent_stop_signal(executor, astr_event),
-        )
-        step_stream = executor.stream()
-        try:
-            async for resp in step_stream:
-                if _should_stop_agent(astr_event):
-                    executor.request_cancellation(
-                        metadata={"reason": "agent_aborted"}
+                if msg_chain.type == "tool_direct_result":
+                    # tool_direct_result 用于标记 llm tool 需要直接发送给用户的内容
+                    await _send_core_event_message(
+                        astr_event,
+                        msg_chain,
+                        delivery=CoreOutputDelivery.FINAL,
                     )
-
-                if resp.kind == "aborted":
-                    if can_buffer_llm_result:
-                        merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
-                        if merged_chain:
-                            astr_event.set_result(
-                                MessageEventResult(
-                                    chain=merged_chain.chain,
-                                    result_content_type=ResultContentType.LLM_RESULT,
-                                ),
-                            )
-                            yield merged_chain
-                            astr_event.clear_result()
-                    if not stop_watcher.done():
-                        stop_watcher.cancel()
-                        try:
-                            await stop_watcher
-                        except asyncio.CancelledError:
-                            pass
-                    astr_event.set_extra("agent_user_aborted", True)
-                    astr_event.set_extra("agent_stop_requested", False)
-                    executor.cancel(metadata={"reason": "agent_aborted"})
-                    return
-
-                if _should_stop_agent(astr_event):
                     continue
-
-                executor.observe_response(resp)
-
-                if resp.kind == "tool_call_result":
-                    msg_chain = _require_executor_stream_chain(resp)
-
-                    astr_event.trace.record(
-                        "agent_tool_result",
-                        tool_result=msg_chain.get_plain_text(
-                            with_other_comps_mark=True
-                        ),
+                if astr_event.get_platform_id() == "webchat":
+                    await _send_core_event_message(
+                        astr_event,
+                        msg_chain,
+                        delivery=CoreOutputDelivery.PROGRESS,
                     )
-
-                    if msg_chain.type == "tool_direct_result":
-                        # tool_direct_result 用于标记 llm tool 需要直接发送给用户的内容
-                        await _send_core_event_message(
-                            astr_event,
-                            msg_chain,
-                            delivery=CoreOutputDelivery.FINAL,
-                        )
-                        continue
-                    if astr_event.get_platform_id() == "webchat":
-                        await _send_core_event_message(
-                            astr_event,
-                            msg_chain,
-                            delivery=CoreOutputDelivery.PROGRESS,
-                        )
-                    elif show_tool_use and show_tool_call_result:
-                        status_msg = _build_tool_result_status_message(
-                            msg_chain, tool_name_by_call_id
-                        )
-                        await _send_core_event_message(
-                            astr_event,
-                            MessageChain(type="tool_call").message(status_msg),
-                            delivery=CoreOutputDelivery.PROGRESS,
-                        )
-                    # 对于其他情况，暂时先不处理
-                    continue
-                elif resp.kind == "tool_call":
-                    if executor.streaming and show_tool_use:
-                        # 向下游平台发送 "break" 分段信号（空 MessageChain，不携带数据）。
-                        # 平台适配器收到后会关闭当前流式消息，并在后续文本到来时创建新消息。
-                        # 仅在 show_tool_use 为 True 时才发送：此时紧接着会通过
-                        # astr_event.send() 独立发送工具状态消息（如"🔨 调用工具: xxx"），
-                        # 需要分段才能保证消息顺序正确。
-                        # 若 show_tool_use 为 False，不会有独立消息插入，无需分段。
-                        yield MessageChain(chain=[], type="break")
-
-                    tool_chain = _require_executor_stream_chain(resp)
-                    tool_info = _extract_chain_json_data(tool_chain)
-                    astr_event.trace.record(
-                        "agent_tool_call",
-                        tool_name=tool_info if tool_info else "unknown",
+                elif show_tool_use and show_tool_call_result:
+                    status_msg = _build_tool_result_status_message(
+                        msg_chain, tool_name_by_call_id
                     )
-                    _record_tool_call_name(tool_info, tool_name_by_call_id)
-
-                    if astr_event.get_platform_name() == "webchat":
-                        await _send_core_event_message(
-                            astr_event,
-                            tool_chain,
-                            delivery=CoreOutputDelivery.PROGRESS,
-                        )
-                    elif show_tool_use:
-                        if show_tool_call_result and isinstance(tool_info, dict):
-                            # Delay tool status notification until tool_call_result.
-                            continue
-                        chain = MessageChain(type="tool_call").message(
-                            _build_tool_call_status_message(tool_info)
-                        )
-                        await _send_core_event_message(
-                            astr_event,
-                            chain,
-                            delivery=CoreOutputDelivery.PROGRESS,
-                        )
-                    continue
-                elif resp.kind == "llm_result":
-                    chain = _require_executor_stream_chain(resp)
-                    if chain.type == "reasoning":
-                        # For non-streaming mode, we handle reasoning in astrbot/core/astr_agent_hooks.py.
-                        # For streaming mode, we yield content immediately when received a reasoning chunk but not in here, see below.
-                        continue
-
-                if stream_to_general and resp.kind == "streaming_delta":
-                    continue
-
-                if stream_to_general or not executor.streaming:
-                    if can_buffer_llm_result and resp.kind == "llm_result":
-                        buffered_llm_chains.append(_require_executor_stream_chain(resp))
-                        continue
-
-                    content_typ = (
-                        ResultContentType.LLM_RESULT
-                        if resp.kind == "llm_result"
-                        else ResultContentType.GENERAL_RESULT
+                    await _send_core_event_message(
+                        astr_event,
+                        MessageChain(type="tool_call").message(status_msg),
+                        delivery=CoreOutputDelivery.PROGRESS,
                     )
-                    astr_event.set_result(
-                        MessageEventResult(
-                            chain=_require_executor_stream_chain(resp).chain,
-                            result_content_type=content_typ,
-                        ),
-                    )
-                    yield _require_executor_stream_chain(resp)
-                    astr_event.clear_result()
-                elif resp.kind == "streaming_delta":
-                    chain = _require_executor_stream_chain(resp)
-                    if chain.type == "reasoning" and not show_reasoning:
-                        # display the reasoning content only when configured
-                        continue
-                    yield chain
+                # 对于其他情况，暂时先不处理
+                continue
+            elif resp.kind == "tool_call":
+                if executor.streaming and show_tool_use:
+                    # 向下游平台发送 "break" 分段信号（空 MessageChain，不携带数据）。
+                    # 平台适配器收到后会关闭当前流式消息，并在后续文本到来时创建新消息。
+                    # 仅在 show_tool_use 为 True 时才发送：此时紧接着会通过
+                    # astr_event.send() 独立发送工具状态消息（如"🔨 调用工具: xxx"），
+                    # 需要分段才能保证消息顺序正确。
+                    # 若 show_tool_use 为 False，不会有独立消息插入，无需分段。
+                    yield MessageChain(chain=[], type="break")
 
-            if can_buffer_llm_result and executor.done():
-                merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
-                if merged_chain:
-                    astr_event.set_result(
-                        MessageEventResult(
-                            chain=merged_chain.chain,
-                            result_content_type=ResultContentType.LLM_RESULT,
-                        ),
-                    )
-                    yield merged_chain
-                    astr_event.clear_result()
+                tool_chain = _require_executor_stream_chain(resp)
+                tool_info = _extract_chain_json_data(tool_chain)
+                astr_event.trace.record(
+                    "agent_tool_call",
+                    tool_name=tool_info if tool_info else "unknown",
+                )
+                _record_tool_call_name(tool_info, tool_name_by_call_id)
 
-            if not stop_watcher.done():
-                stop_watcher.cancel()
-                try:
-                    await stop_watcher
-                except asyncio.CancelledError:
-                    pass
-            if executor.done():
-                # send agent stats to webchat
                 if astr_event.get_platform_name() == "webchat":
                     await _send_core_event_message(
                         astr_event,
-                        MessageChain(
-                            type="agent_stats",
-                            chain=[Json(data=executor.stats.to_dict())],
-                        ),
+                        tool_chain,
                         delivery=CoreOutputDelivery.PROGRESS,
                     )
-
-                break
-
-        except TurnDeadlineExceeded:
-            executor.cancel(metadata={"reason": "deadline_exceeded"})
-            raise
-        except asyncio.CancelledError:
-            executor.cancel(
-                metadata={
-                    "reason": _cancellation_reason(
-                        astr_event,
-                        fallback="task_cancelled",
+                elif show_tool_use:
+                    if show_tool_call_result and isinstance(tool_info, dict):
+                        # Delay tool status notification until tool_call_result.
+                        continue
+                    chain = MessageChain(type="tool_call").message(
+                        _build_tool_call_status_message(tool_info)
                     )
-                },
-            )
-            raise
-        except Exception as e:
-            if "stop_watcher" in locals() and not stop_watcher.done():
-                stop_watcher.cancel()
-                try:
-                    await stop_watcher
-                except asyncio.CancelledError:
-                    pass
-            logger.error(traceback.format_exc())
+                    await _send_core_event_message(
+                        astr_event,
+                        chain,
+                        delivery=CoreOutputDelivery.PROGRESS,
+                    )
+                continue
+            elif resp.kind == "llm_result":
+                chain = _require_executor_stream_chain(resp)
+                if chain.type == "reasoning":
+                    # For non-streaming mode, we handle reasoning in astrbot/core/astr_agent_hooks.py.
+                    # For streaming mode, we yield content immediately when received a reasoning chunk but not in here, see below.
+                    continue
 
-            custom_error_message = extract_persona_custom_error_message_from_event(
-                astr_event
-            )
-            if custom_error_message:
-                err_msg = custom_error_message
-            else:
-                err_msg = (
-                    f"Error occurred during AI execution.\n"
-                    f"Error Type: {type(e).__name__}\n"
-                    f"Error Message: {str(e)}"
+            if stream_to_general and resp.kind == "streaming_delta":
+                continue
+
+            if stream_to_general or not executor.streaming:
+                if can_buffer_llm_result and resp.kind == "llm_result":
+                    buffered_llm_chains.append(_require_executor_stream_chain(resp))
+                    continue
+
+                content_typ = (
+                    ResultContentType.LLM_RESULT
+                    if resp.kind == "llm_result"
+                    else ResultContentType.GENERAL_RESULT
+                )
+                astr_event.set_result(
+                    MessageEventResult(
+                        chain=_require_executor_stream_chain(resp).chain,
+                        result_content_type=content_typ,
+                    ),
+                )
+                yield _require_executor_stream_chain(resp)
+                astr_event.clear_result()
+            elif resp.kind == "streaming_delta":
+                chain = _require_executor_stream_chain(resp)
+                if chain.type == "reasoning" and not show_reasoning:
+                    # display the reasoning content only when configured
+                    continue
+                yield chain
+
+        if can_buffer_llm_result and executor.done():
+            merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
+            if merged_chain:
+                astr_event.set_result(
+                    MessageEventResult(
+                        chain=merged_chain.chain,
+                        result_content_type=ResultContentType.LLM_RESULT,
+                    ),
+                )
+                yield merged_chain
+                astr_event.clear_result()
+
+        if executor.done():
+            # send agent stats to webchat
+            if astr_event.get_platform_name() == "webchat":
+                await _send_core_event_message(
+                    astr_event,
+                    MessageChain(
+                        type="agent_stats",
+                        chain=[Json(data=executor.stats.to_dict())],
+                    ),
+                    delivery=CoreOutputDelivery.PROGRESS,
                 )
 
-            error_llm_response = LLMResponse(
-                role="err",
-                completion_text=err_msg,
-            )
-            try:
-                await executor.notify_agent_done(error_llm_response)
-            except Exception:
-                logger.exception("Error in on_agent_done hook")
+    except TurnDeadlineExceeded:
+        executor.cancel(metadata={"reason": "deadline_exceeded"})
+        raise
+    except asyncio.CancelledError:
+        executor.cancel(
+            metadata={
+                "reason": _cancellation_reason(
+                    astr_event,
+                    fallback="task_cancelled",
+                )
+            },
+        )
+        raise
+    except Exception as e:
+        logger.error(traceback.format_exc())
 
-            if executor.streaming:
-                yield MessageChain().message(err_msg)
-            else:
-                astr_event.set_result(MessageEventResult().message(err_msg))
-            executor.fail(
-                metadata={
-                    "error_type": type(e).__name__,
-                    "error": str(e)[:2000],
-                },
+        custom_error_message = extract_persona_custom_error_message_from_event(
+            astr_event
+        )
+        if custom_error_message:
+            err_msg = custom_error_message
+        else:
+            err_msg = (
+                f"Error occurred during AI execution.\n"
+                f"Error Type: {type(e).__name__}\n"
+                f"Error Message: {str(e)}"
             )
-            return
 
-        finally:
-            if not stop_watcher.done():
-                stop_watcher.cancel()
-            try:
-                await stop_watcher
-            except asyncio.CancelledError:
-                pass
-            finally:
-                await step_stream.aclose()
+        error_llm_response = LLMResponse(
+            role="err",
+            completion_text=err_msg,
+        )
+        try:
+            await executor.notify_agent_done(error_llm_response)
+        except Exception:
+            logger.exception("Error in on_agent_done hook")
+
+        if executor.streaming:
+            yield MessageChain().message(err_msg)
+        else:
+            astr_event.set_result(MessageEventResult().message(err_msg))
+        executor.fail(
+            metadata={
+                "error_type": type(e).__name__,
+                "error": str(e)[:2000],
+            },
+        )
+        return
 
 
 async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) -> None:

@@ -1108,6 +1108,13 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - `InternalAgentSubStage` 只保留请求装配、生命周期钩子、历史/持久化和输出绑定，不再解释 Native response 容器。
 - 至少一次真实 OLV 成功+取消/超时和一次 Cron 成功+失败记录，确认没有重复发送、丢音频、重复 Ledger 或迟到结果覆盖。
 
+### 2026-09-21 Native loop owner 首个内部切片
+
+- 新增 `NativeExecutionLoop`，只负责 Native 步骤驱动、最大步数、停止观察、`working/progress` 事件和 stream 关闭。
+- `run_agent()` 保留为现有可见输出桥：它仍负责文本、工具状态、流式分段、TTS 输入、错误文案和 `MessageEventResult`，没有将这些职责移入 Core Head。
+- 保持原有中止顺序：停止请求先经 Adapter/Core，`aborted` 先清理 watcher 再交由输出桥；每个 step 仍在 `finally` 关闭 Native stream。
+- 新增两条边界测试覆盖 `working -> progress` 事件、终态 step 输出以及非流式文本输出链；在隔离 `ASTRBOT_ROOT` 下，完整 Native Adapter 套件 `17 passed`。当前未做真实 OLV 或取消/超时验收。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
