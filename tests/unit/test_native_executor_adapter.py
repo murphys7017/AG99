@@ -1,9 +1,10 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from astrbot.core.agent.response import AgentResponse
-from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
+from astrbot.core.astr_agent_run_util import ExecutorStreamItem, NativeExecutorAdapter
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -89,6 +90,51 @@ async def test_native_step_stream_preserves_response_and_closes_on_early_exit():
     stream = NativeExecutorAdapter(Runner()).step()
     assert await anext(stream) is response
     await stream.aclose()
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_native_executor_adapter_normalizes_native_step_responses():
+    native_response = AgentResponse(
+        type="tool_call",
+        data={
+            "chain": MessageChain(
+                chain=[Json(data={"id": "call-1", "name": "search"})],
+                type="tool_call",
+            )
+        },
+    )
+
+    class Runner(FakeNativeRunner):
+        async def step(self):
+            yield native_response
+
+    stream = NativeExecutorAdapter(Runner()).stream()
+    item = await anext(stream)
+    await stream.aclose()
+
+    assert item == ExecutorStreamItem(
+        kind="tool_call",
+        chain=native_response.data["chain"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_executor_adapter_closes_native_stream_on_early_exit():
+    closed = []
+
+    class Runner(FakeNativeRunner):
+        async def step(self):
+            try:
+                yield AgentResponse(type="llm_result", data={})
+                await asyncio.sleep(60)
+            finally:
+                closed.append(True)
+
+    stream = NativeExecutorAdapter(Runner()).stream()
+    await anext(stream)
+    await stream.aclose()
+
     assert closed == [True]
 
 
@@ -240,28 +286,24 @@ def test_native_executor_adapter_observes_tool_progress_without_result_content(
     )
 
     assert adapter.observe_response(
-        AgentResponse(
-            type="tool_call",
-            data={
-                "chain": MessageChain(
-                    chain=[Json(data={"id": "call-1", "name": "search"})],
-                    type="tool_call",
-                )
-            },
+        ExecutorStreamItem(
+            kind="tool_call",
+            chain=MessageChain(
+                chain=[Json(data={"id": "call-1", "name": "search"})],
+                type="tool_call",
+            ),
         )
     ) is None
     assert adapter.observe_response(
-        AgentResponse(
-            type="tool_call_result",
-            data={
-                "chain": MessageChain(
-                    chain=[Json(data={"id": "call-1", "result": "secret output"})],
-                    type="tool_call_result",
-                )
-            },
+        ExecutorStreamItem(
+            kind="tool_call_result",
+            chain=MessageChain(
+                chain=[Json(data={"id": "call-1", "result": "secret output"})],
+                type="tool_call_result",
+            ),
         )
     ) is None
-    assert adapter.observe_response(AgentResponse(type="llm_result", data={})) is None
+    assert adapter.observe_response(ExecutorStreamItem(kind="llm_result")) is None
 
     assert [item[1]["kind"] for item in emitted] == ["progress", "progress"]
     assert emitted[0][1]["metadata"] == {

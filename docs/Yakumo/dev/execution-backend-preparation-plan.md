@@ -982,6 +982,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   stop callback。该语义仍不伪造 runner `close()`，Native step stream 的关闭继续由其
   消费方在 `finally` 负责。
 
+### 2026-09-19 Native 响应容器收口
+
+- `NativeExecutorAdapter.stream()` 将 Native `AgentResponse` 转换为内部
+  `ExecutorStreamItem(kind, chain)`；`run_agent()` 不再直接读取 `AgentResponse.data`，
+  Native response 容器只保留在 Adapter 内部。
+- 现有输出桥接仍消费 `MessageChain`，因此没有改变文本、工具状态、流式 TTS 或平台
+  投递行为；这一步只是缩小 Core 执行循环对 Native response 结构的依赖。
+- 该流项目仍是进程内过渡契约，不等同于最终跨 Executor 的 `ExecutionEvent`/Artifact
+  协议；后续仍需把第三方 Runner 映射到相同的 Core 事实边界。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

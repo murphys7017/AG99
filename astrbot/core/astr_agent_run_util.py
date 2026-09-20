@@ -3,6 +3,7 @@ import re
 import time
 import traceback
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 
 from astrbot.core import logger
 from astrbot.core.agent.message import Message
@@ -35,6 +36,19 @@ from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.provider.provider import Provider, TTSProvider
 
 AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutorStreamItem:
+    """One executor-neutral item consumed by the existing output bridge.
+
+    ``MessageChain`` remains an AstrBot output material type. The item hides the
+    Native runner's ``AgentResponse`` container without creating a second
+    visible-output contract.
+    """
+
+    kind: str
+    chain: MessageChain | None = None
 
 
 class NativeExecutorAdapter:
@@ -138,21 +152,21 @@ class NativeExecutorAdapter:
             metadata=metadata,
         )
 
-    def observe_response(self, response: AgentResponse):
+    def observe_response(self, response: ExecutorStreamItem):
         """Project non-visible Native execution progress into Core facts.
 
         Only tool boundaries are execution progress. Text and reasoning remain
         owned by the existing output path, so this method cannot create another
         user-visible response stream.
         """
-        if response.type not in {"tool_call", "tool_call_result"}:
+        if response.kind not in {"tool_call", "tool_call_result"}:
             return None
-        chain = response.data.get("chain")
-        if not isinstance(chain, MessageChain):
+        chain = response.chain
+        if chain is None:
             return None
         metadata: dict[str, object] = {
             "source": "native_response",
-            "response_type": response.type,
+            "response_type": response.kind,
             "message_type": str(chain.type or ""),
             "component_count": len(chain.chain),
         }
@@ -164,11 +178,11 @@ class NativeExecutorAdapter:
             tool_call_id = str(details.get("id", "") or "").strip()
             if tool_call_id:
                 metadata["tool_call_id"] = tool_call_id
-            if response.type == "tool_call_result":
+            if response.kind == "tool_call_result":
                 result = details.get("result")
                 if result is not None:
                     metadata["result_length"] = len(str(result))
-        if response.type == "tool_call_result" and "result_length" not in metadata:
+        if response.kind == "tool_call_result" and "result_length" not in metadata:
             metadata["result_length"] = len(
                 chain.get_plain_text(with_other_comps_mark=True)
             )
@@ -244,6 +258,19 @@ class NativeExecutorAdapter:
     def step(self) -> AsyncGenerator[AgentResponse, None]:
         """Open one Native step stream; the consumer must close it on exit."""
         return self._runner.step()
+
+    async def stream(self) -> AsyncGenerator[ExecutorStreamItem, None]:
+        """Normalize Native response containers for the Core output bridge."""
+
+        native_stream = self.step()
+        try:
+            async for response in native_stream:
+                yield ExecutorStreamItem(
+                    kind=response.type,
+                    chain=response.data.get("chain"),
+                )
+        finally:
+            await native_stream.aclose()
 
     def force_final_response(self, *, instruction: str) -> None:
         """Disable further tools and append the bounded final-response prompt."""
@@ -399,6 +426,12 @@ def _merge_buffered_llm_chains(
     return merged_chain
 
 
+def _require_executor_stream_chain(item: ExecutorStreamItem) -> MessageChain:
+    if item.chain is None:
+        raise RuntimeError(f"executor stream item {item.kind!r} has no message chain")
+    return item.chain
+
+
 async def run_agent(
     agent_runner: AgentRunner | NativeExecutorAdapter,
     max_step: int = 30,
@@ -445,13 +478,13 @@ async def run_agent(
         stop_watcher = asyncio.create_task(
             _watch_agent_stop_signal(executor, astr_event),
         )
-        step_stream = executor.step()
+        step_stream = executor.stream()
         try:
             async for resp in step_stream:
                 if _should_stop_agent(astr_event):
                     executor.request_stop()
 
-                if resp.type == "aborted":
+                if resp.kind == "aborted":
                     if can_buffer_llm_result:
                         merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
                         if merged_chain:
@@ -479,8 +512,8 @@ async def run_agent(
 
                 executor.observe_response(resp)
 
-                if resp.type == "tool_call_result":
-                    msg_chain = resp.data["chain"]
+                if resp.kind == "tool_call_result":
+                    msg_chain = _require_executor_stream_chain(resp)
 
                     astr_event.trace.record(
                         "agent_tool_result",
@@ -514,7 +547,7 @@ async def run_agent(
                         )
                     # 对于其他情况，暂时先不处理
                     continue
-                elif resp.type == "tool_call":
+                elif resp.kind == "tool_call":
                     if executor.streaming and show_tool_use:
                         # 向下游平台发送 "break" 分段信号（空 MessageChain，不携带数据）。
                         # 平台适配器收到后会关闭当前流式消息，并在后续文本到来时创建新消息。
@@ -524,7 +557,8 @@ async def run_agent(
                         # 若 show_tool_use 为 False，不会有独立消息插入，无需分段。
                         yield MessageChain(chain=[], type="break")
 
-                    tool_info = _extract_chain_json_data(resp.data["chain"])
+                    tool_chain = _require_executor_stream_chain(resp)
+                    tool_info = _extract_chain_json_data(tool_chain)
                     astr_event.trace.record(
                         "agent_tool_call",
                         tool_name=tool_info if tool_info else "unknown",
@@ -534,7 +568,7 @@ async def run_agent(
                     if astr_event.get_platform_name() == "webchat":
                         await _send_core_event_message(
                             astr_event,
-                            resp.data["chain"],
+                            tool_chain,
                             delivery=CoreOutputDelivery.PROGRESS,
                         )
                     elif show_tool_use:
@@ -550,40 +584,40 @@ async def run_agent(
                             delivery=CoreOutputDelivery.PROGRESS,
                         )
                     continue
-                elif resp.type == "llm_result":
-                    chain = resp.data["chain"]
+                elif resp.kind == "llm_result":
+                    chain = _require_executor_stream_chain(resp)
                     if chain.type == "reasoning":
                         # For non-streaming mode, we handle reasoning in astrbot/core/astr_agent_hooks.py.
                         # For streaming mode, we yield content immediately when received a reasoning chunk but not in here, see below.
                         continue
 
-                if stream_to_general and resp.type == "streaming_delta":
+                if stream_to_general and resp.kind == "streaming_delta":
                     continue
 
                 if stream_to_general or not executor.streaming:
-                    if can_buffer_llm_result and resp.type == "llm_result":
-                        buffered_llm_chains.append(resp.data["chain"])
+                    if can_buffer_llm_result and resp.kind == "llm_result":
+                        buffered_llm_chains.append(_require_executor_stream_chain(resp))
                         continue
 
                     content_typ = (
                         ResultContentType.LLM_RESULT
-                        if resp.type == "llm_result"
+                        if resp.kind == "llm_result"
                         else ResultContentType.GENERAL_RESULT
                     )
                     astr_event.set_result(
                         MessageEventResult(
-                            chain=resp.data["chain"].chain,
+                            chain=_require_executor_stream_chain(resp).chain,
                             result_content_type=content_typ,
                         ),
                     )
-                    yield resp.data["chain"]
+                    yield _require_executor_stream_chain(resp)
                     astr_event.clear_result()
-                elif resp.type == "streaming_delta":
-                    chain = resp.data["chain"]
+                elif resp.kind == "streaming_delta":
+                    chain = _require_executor_stream_chain(resp)
                     if chain.type == "reasoning" and not show_reasoning:
                         # display the reasoning content only when configured
                         continue
-                    yield resp.data["chain"]  # MessageChain
+                    yield chain
 
             if can_buffer_llm_result and executor.done():
                 merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
