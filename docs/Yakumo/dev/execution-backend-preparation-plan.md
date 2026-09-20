@@ -939,6 +939,7 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   provider、stats 和 aborted 状态。
 - `_record_internal_agent_stats()` 现在只接受 Adapter，删除无生产调用的裸 `AgentRunner` positional fallback。
   统计写入、状态分类和 SQLite 锁重试语义不变；这个函数不再是 Core 执行边界的双轨入口。
+- Core Head 的 executor release 由 `process()` 外层 `finally` 统一执行；内层仅负责注销 Personal follow-up runner，不再重复 release 同一 Adapter。
 
 ### 2026-09-20 Personal Follow-up 执行器命名收口
 

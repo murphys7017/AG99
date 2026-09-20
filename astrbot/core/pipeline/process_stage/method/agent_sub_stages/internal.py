@@ -549,8 +549,6 @@ class InternalAgentSubStage(Stage):
                     ),
                 )
             finally:
-                if native_executor is not None:
-                    native_executor.release_from_core_head()
                 if runner_registered and native_executor is not None:
                     runtime_manager = self.ctx.personal_runtime_manager
                     if runtime_manager is not None:
