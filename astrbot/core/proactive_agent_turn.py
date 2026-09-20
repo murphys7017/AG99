@@ -205,6 +205,22 @@ async def run_proactive_agent_turn(
             turn_id = str(event.get_extra("_turn_id"))
             cron = extras.get("cron_job", {})
             background = extras.get("background_task_result", {})
+            ledger_result = response.completion_text if response is not None else None
+            ledger_error = error
+            if execution_head is not None and executor_activated:
+                preparation = execution_head.prepare_ledger_preparation(
+                    completion_text=ledger_result,
+                    user_aborted=(
+                        native_executor.was_aborted()
+                        if native_executor is not None
+                        else False
+                    ),
+                    fallback_status=status,
+                    fallback_error=error,
+                )
+                status = preparation.status
+                ledger_result = preparation.result
+                ledger_error = preparation.error
             record = CoreExecutionRecord(
                 execution_id=spec.execution_id if spec else uuid.uuid4().hex,
                 conversation_id=conversation.cid,
@@ -221,8 +237,8 @@ async def run_proactive_agent_turn(
                     "background_result": background,
                     "delivery_confirmed": bool(event._has_send_oper),
                 },
-                result=response.completion_text if response is not None else None,
-                error=error,
+                result=ledger_result,
+                error=ledger_error,
             )
             try:
                 if execution_head is not None:

@@ -1073,6 +1073,8 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 只有构建结果已带 `CoreExecutionSpec` 时，主动轮次才绑定并激活 Core Head，再回流
   `submitted -> working -> progress -> terminal` 事实。没有执行身份的旧路径仍只使用 Adapter 运行，不伪造新的执行会话。
 - 正常、取消和失败分支只在 Head 已激活后写入终态；Ledger 持久化仍留在主动轮次，但在有 Head 时经其一次性 settlement claim 协调。
+- 主动轮次的 Ledger 状态、结果与错误也优先使用 Head 的 `CoreExecutionLedgerPreparation`；因此取消/失败先到、
+  Native 迟到结束的时序不会写出与终态相冲突的 `completed` 记录。
 - 此切片不改变主动消息的发送、Personal 的可见表达责任、Cron 重试、历史保留或台平发送路径。
 - 新增 Adapter 生成器关闭边界测试；当前 Windows 运行环境下，这两个定向 pytest 模块会在导入初始化链卡住，因此未将 pytest 记为通过；`compileall`、Ruff 和 diff 校验已通过，仍需一次实际 Cron/后台任务验收。
 
