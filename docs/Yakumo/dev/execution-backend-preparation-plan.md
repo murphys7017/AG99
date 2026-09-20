@@ -928,10 +928,10 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 
 - `run_agent()`、`run_live_agent()` 和 TTS feeder 的内部状态读取统一经由
   `NativeExecutorAdapter`，包括上下文、流式模式、完成状态、统计数据和 provider。
-- 外部入口仍接受 `AgentRunner | NativeExecutorAdapter`，仅在入口处完成一次适配；
-  不改变现有响应、工具状态、TTS 或输出时序。
-- 这一步只清理 Native runner 直连的内部残留，不引入新的执行器协议，也不删除
-  过渡期的外部兼容参数。
+- 生产调用链已全部在 Stage 构造一次 `NativeExecutorAdapter`，因此这两个执行入口现在只接受 Adapter，不再在入口处隐式包装裸 `AgentRunner`。
+  这能让绕开 Core Head 的内部调用在立即暴露，而不改变响应、工具状态、TTS 或输出时序。
+- `AgentRunner` 类型别名仍仅供 Adapter 构造和统计 fallback 读取使用；它不再是主执行循环的入口契约。
+- 这一步不引入新执行器协议，不迁移执行循环 owner，也不触动现有可见输出、TTS、历史或 Ledger。
 
 ### 2026-09-20 Internal Agent 统计兼容边界标注
 

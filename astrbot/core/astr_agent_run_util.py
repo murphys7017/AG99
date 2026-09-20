@@ -470,7 +470,7 @@ def _require_executor_stream_chain(item: ExecutorStreamItem) -> MessageChain:
 
 
 async def run_agent(
-    agent_runner: AgentRunner | NativeExecutorAdapter,
+    executor: NativeExecutorAdapter,
     max_step: int = 30,
     show_tool_use: bool = True,
     show_tool_call_result: bool = False,
@@ -479,11 +479,6 @@ async def run_agent(
     buffer_intermediate_messages: bool = False,
 ) -> AsyncGenerator[MessageChain | None, None]:
     step_idx = 0
-    executor = (
-        agent_runner
-        if isinstance(agent_runner, NativeExecutorAdapter)
-        else NativeExecutorAdapter(agent_runner)
-    )
     astr_event = executor.run_context.context.event
     executor.emit_event(
         kind=CoreExecutionEventKind.WORKING,
@@ -765,7 +760,7 @@ async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) 
 
 
 async def run_live_agent(
-    agent_runner: AgentRunner | NativeExecutorAdapter,
+    executor: NativeExecutorAdapter,
     tts_provider: TTSProvider | None = None,
     max_step: int = 30,
     show_tool_use: bool = True,
@@ -776,7 +771,7 @@ async def run_live_agent(
     """Live Mode 的 Agent 运行器，支持流式 TTS
 
     Args:
-        agent_runner: Agent 运行器
+        executor: Native 执行器适配器
         tts_provider: TTS Provider 实例
         max_step: 最大步数
         show_tool_use: 是否显示工具使用
@@ -786,11 +781,6 @@ async def run_live_agent(
     Yields:
         MessageChain: 包含文本或音频数据的消息链
     """
-    executor = (
-        agent_runner
-        if isinstance(agent_runner, NativeExecutorAdapter)
-        else NativeExecutorAdapter(agent_runner)
-    )
     # 如果没有 TTS Provider，直接发送文本
     if not tts_provider:
         async for chain in run_agent(
