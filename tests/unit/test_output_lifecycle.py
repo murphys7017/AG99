@@ -4,6 +4,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from astrbot.core.agent_lifecycle_scope import (
+    _MISSING as LIFECYCLE_MISSING,
+)
+from astrbot.core.agent_lifecycle_scope import get_active_agent_lifecycle
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -18,6 +22,8 @@ from astrbot.core.star.star_handler import star_handlers_registry
 
 
 class OutputEvent:
+    _supports_agent_lifecycle_overlay = True
+
     def __init__(self) -> None:
         self._extras = {}
         self._result = None
@@ -33,15 +39,33 @@ class OutputEvent:
         self._extras[key] = value
 
     def set_result(self, result):
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.result = result
+            return
         self._result = result
 
     def get_result(self):
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            return (
+                overlay.result
+                if overlay.result is not LIFECYCLE_MISSING
+                else overlay.initial_result
+            )
         return self._result
 
     def stop_event(self):
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            overlay.force_stopped = True
+            return
         self._stopped = True
 
     def is_stopped(self):
+        overlay = get_active_agent_lifecycle(self)
+        if overlay is not None:
+            return overlay.force_stopped or overlay.initial_stopped
         return self._stopped
 
     def get_platform_id(self):
@@ -76,9 +100,10 @@ async def test_pre_output_processor_applies_legacy_decorating_hook_once(monkeypa
         ResultContentType.LLM_RESULT,
     )
 
-    assert prepared is not None
-    assert prepared.get_plain_text() == "decorated"
+    assert prepared.message is not None
+    assert prepared.message.get_plain_text() == "decorated"
     assert calls == ["decorate"]
+    assert event.get_result() is None
     assert "_interaction_pipeline_pre_output_callback" not in event._extras
 
 
@@ -120,8 +145,56 @@ async def test_pipeline_and_interaction_share_response_safety():
     )
 
     assert pipeline_event.is_stopped()
-    assert interaction_event.is_stopped()
-    assert prepared is None
+    assert not interaction_event.is_stopped()
+    assert prepared.message is None
+    assert prepared.reason == "unsafe_response"
+
+
+@pytest.mark.asyncio
+async def test_pre_output_processor_isolates_concurrent_result_mutation(monkeypatch):
+    event = OutputEvent()
+
+    async def decorate(target_event):
+        result = target_event.get_result()
+        source = result.get_plain_text()
+        await asyncio.sleep(0)
+        result.chain = [Plain(f"{source}:decorated")]
+
+    module_path = "tests.output_lifecycle_concurrent_plugin"
+    handler = SimpleNamespace(
+        handler_module_path=module_path,
+        handler_name="decorate",
+        handler=decorate,
+    )
+    monkeypatch.setitem(star_map, module_path, SimpleNamespace(name="test_plugin"))
+    monkeypatch.setattr(
+        star_handlers_registry,
+        "get_handlers_by_event_type",
+        Mock(return_value=[handler]),
+    )
+
+    first_source = MessageChain([Plain("first")])
+    second_source = MessageChain([Plain("second")])
+    first, second = await asyncio.gather(
+        PreOutputProcessor().prepare_interaction_message(
+            event,
+            first_source,
+            ResultContentType.LLM_RESULT,
+        ),
+        PreOutputProcessor().prepare_interaction_message(
+            event,
+            second_source,
+            ResultContentType.LLM_RESULT,
+        ),
+    )
+
+    assert first.message is not None
+    assert second.message is not None
+    assert first.message.get_plain_text() == "first:decorated"
+    assert second.message.get_plain_text() == "second:decorated"
+    assert first_source.get_plain_text() == "first"
+    assert second_source.get_plain_text() == "second"
+    assert event.get_result() is None
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,16 @@ import hashlib
 import json
 import traceback
 from collections.abc import Awaitable, Callable, Mapping
-from copy import copy
+from contextlib import nullcontext
+from copy import copy, deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 from astrbot.core import logger
+from astrbot.core.agent_lifecycle_scope import (
+    activate_agent_lifecycle,
+    create_agent_lifecycle_overlay,
+)
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -32,6 +38,13 @@ from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
 
+@dataclass(frozen=True, slots=True)
+class PreOutputResult:
+    message: MessageChain | None
+    reason: str | None = None
+    stop_requested: bool = False
+
+
 class PreOutputProcessor:
     """Own the response-safety and legacy decorating-hook boundary."""
 
@@ -43,25 +56,47 @@ class PreOutputProcessor:
         event: AstrMessageEvent,
         message: MessageChain,
         result_content_type: ResultContentType,
-    ) -> MessageChain | None:
+    ) -> PreOutputResult:
         result = MessageEventResult(
-            chain=list(message.chain),
+            chain=deepcopy(list(message.chain)),
             result_content_type=result_content_type,
         )
         result.use_t2i_ = message.use_t2i_
         result.use_markdown_ = message.use_markdown_
         result.type = message.type
-        event.set_result(result)
+        overlay = create_agent_lifecycle_overlay(event)
+        scope = (
+            activate_agent_lifecycle(overlay)
+            if getattr(event, "_supports_agent_lifecycle_overlay", False)
+            else nullcontext(overlay)
+        )
+        with scope:
+            event.set_result(result)
+            original_text = result.get_plain_text()
+            if result.is_llm_result() and not self.response_is_safe(event, result):
+                return PreOutputResult(message=None, reason="unsafe_response")
+            if await self.run_decorating_hooks(event):
+                return PreOutputResult(
+                    message=None,
+                    reason="decorator_stopped",
+                    stop_requested=True,
+                )
 
-        if result.is_llm_result() and not self.response_is_safe(event, result):
-            return None
-        if await self.run_decorating_hooks(event):
-            return None
-
-        decorated = event.get_result()
-        if decorated is None or not decorated.chain:
-            return None
-        return decorated.derive(list(decorated.chain))
+            decorated = event.get_result()
+            if decorated is None or not decorated.chain:
+                return PreOutputResult(
+                    message=None,
+                    reason="empty_after_decoration",
+                )
+            if (
+                result.is_llm_result()
+                and decorated.get_plain_text() != original_text
+                and not self.response_is_safe(event, decorated)
+            ):
+                return PreOutputResult(message=None, reason="unsafe_response")
+            return PreOutputResult(
+                message=decorated.derive(deepcopy(list(decorated.chain))),
+            )
 
     async def run_decorating_hooks(
         self,
@@ -313,4 +348,4 @@ class TurnDeliveryCoordinator:
             )
 
 
-__all__ = ["PreOutputProcessor", "TurnDeliveryCoordinator"]
+__all__ = ["PreOutputProcessor", "PreOutputResult", "TurnDeliveryCoordinator"]

@@ -455,8 +455,17 @@ class InteractionMiddleware:
             ):
                 await self._suppress_duplicate_personal_expression(event)
                 return None
-            await self._emit_immediate_reply_or_record_failure(event, expression)
-            await self._complete_persona_only_turn(event, expression)
+            delivered = await self._emit_immediate_reply_or_record_failure(
+                event,
+                expression,
+            )
+            if delivered:
+                await self._complete_persona_only_turn(event, expression)
+            else:
+                await self._complete_silent_or_committed_persona_turn(
+                    event,
+                    expression,
+                )
             event.set_extra("_interaction_runtime_observation_handled", True)
             return expression
         except TurnDeadlineExceeded as exc:
@@ -1017,7 +1026,10 @@ class InteractionMiddleware:
         if not await reserve_interaction_turn_immediate_output(event):
             return None
         try:
-            await self._emit_immediate_reply_or_record_failure(event, expression)
+            delivered = await self._emit_immediate_reply_or_record_failure(
+                event,
+                expression,
+            )
         except Exception:
             async with turn_state.lock:
                 self._set_speculative_persona_status(
@@ -1028,7 +1040,11 @@ class InteractionMiddleware:
         async with turn_state.lock:
             self._set_speculative_persona_status(
                 event,
-                InteractionSpeculativePersonaStatus.EMITTED,
+                (
+                    InteractionSpeculativePersonaStatus.EMITTED
+                    if delivered
+                    else InteractionSpeculativePersonaStatus.SUPPRESSED
+                ),
             )
         return expression
 
@@ -1083,7 +1099,7 @@ class InteractionMiddleware:
             is not InteractionSpeculativePersonaStatus.EMITTED
         ):
             return False
-        await self._complete_persona_only_turn(event, expression)
+        await self._complete_silent_or_committed_persona_turn(event, expression)
         return True
 
     async def _complete_silent_or_committed_persona_turn(
@@ -1098,6 +1114,12 @@ class InteractionMiddleware:
         ):
             await self._complete_persona_only_turn(event, expression)
             return
+        if event.get_extra("_interaction_immediate_output_suppressed_reason"):
+            if await reserve_interaction_turn_final_output(event):
+                await finish_interaction_turn_final_output(
+                    event,
+                    InteractionFinalOutputStatus.SUPPRESSED,
+                )
         self._materialize_silent_turn(event)
         await self._finalize_turn(event)
         event.stop_event()
@@ -1382,10 +1404,13 @@ class InteractionMiddleware:
         self,
         event: AstrMessageEvent,
         expression: PersonaExpressionResult,
-    ) -> None:
+    ) -> bool:
         if not expression.spoken_reply.strip():
-            return
-        await self.output_controller.emit_immediate_spoken_reply(expression, event)
+            return False
+        return await self.output_controller.emit_immediate_spoken_reply(
+            expression,
+            event,
+        )
 
     async def _emit_immediate_reply_or_record_failure(
         self,
@@ -1393,8 +1418,7 @@ class InteractionMiddleware:
         expression: PersonaExpressionResult,
     ) -> bool:
         try:
-            await self._emit_immediate_reply(event, expression)
-            return True
+            return await self._emit_immediate_reply(event, expression)
         except Exception as exc:  # noqa: BLE001
             event.set_extra("_interaction_immediate_reply_failed", True)
             event.set_extra("_interaction_immediate_reply_failure_reason", str(exc))

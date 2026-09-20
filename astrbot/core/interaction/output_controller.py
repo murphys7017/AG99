@@ -304,10 +304,16 @@ class InteractionOutputController:
         if not await reserve_interaction_turn_final_output(event):
             return False
         try:
-            await self.emit_immediate_spoken_reply(
+            delivered = await self.emit_immediate_spoken_reply(
                 PersonaExpressionResult(spoken_reply=reply),
                 event,
             )
+            if not delivered:
+                await finish_interaction_turn_final_output(
+                    event,
+                    InteractionFinalOutputStatus.SUPPRESSED,
+                )
+                return False
             self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(event)
         except BaseException:
@@ -326,15 +332,14 @@ class InteractionOutputController:
         self,
         result: PersonaExpressionResult,
         event: AstrMessageEvent,
-    ) -> None:
+    ) -> bool:
         reply = (result.spoken_reply or "").strip()
         if not reply:
-            return
-        set_interaction_turn_immediate_reply(event, reply)
+            return False
         set_interaction_turn_emitting_immediate_reply(event)
         try:
             with temporary_output_origin(event, OutputOrigin.CORE.value):
-                await self.capture_message_chain(
+                return await self.capture_message_chain(
                     MessageChain(
                         [
                             Plain(reply),
@@ -353,10 +358,10 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         *,
         prepared_expression: PersonaExpressionResult | None = None,
-    ) -> None:
+    ) -> bool:
         if message is None:
             await self.capture_visible_completion(event)
-            return
+            return True
 
         is_immediate = is_interaction_turn_emitting_immediate_reply(event)
         outbound_kind = self._classify_outbound_message(event, message, is_immediate)
@@ -383,7 +388,15 @@ class InteractionOutputController:
                     merged.final_text_override,
                 )
                 semantic_text = message.get_plain_text()
-                set_interaction_turn_immediate_reply(event, semantic_text)
+            message = await self._prepare_model_expression(
+                event,
+                message,
+                message_kind="immediate_reply",
+            )
+            if message is None:
+                return False
+            semantic_text = message.get_plain_text()
+            set_interaction_turn_immediate_reply(event, semantic_text)
             (
                 message,
                 materialization,
@@ -413,11 +426,11 @@ class InteractionOutputController:
                 delivered_message_ids=delivered_message_ids,
                 metadata=materialization,
             )
-            return
+            return True
 
         if outbound_kind == "streaming_finish_marker":
             if not await reserve_interaction_turn_final_output(event):
-                return
+                return False
             logger.warning(
                 "Interaction streaming finish marker skipped after streaming delivery: platform_id=%s session_id=%s turn_id=%s final_length=%s",
                 event.get_platform_id(),
@@ -438,7 +451,7 @@ class InteractionOutputController:
                 event,
                 InteractionFinalOutputStatus.DELIVERED,
             )
-            return
+            return True
 
         if outbound_kind in {"core_progress", "passthrough"}:
             is_progress = outbound_kind == "core_progress"
@@ -472,16 +485,16 @@ class InteractionOutputController:
                 memory_relevant=not is_progress,
             )
             if is_progress:
-                return
+                return True
             self._materialize_finalized_turn(event)
             await self._persist_interaction_turn(event)
-            return
+            return True
 
         if outbound_kind == "suppressed_duplicate_final":
-            return
+            return False
 
         if not await reserve_interaction_turn_final_output(event):
-            return
+            return False
         full_message = self._get_full_core_final_message(event, message)
         try:
             await self._deliver_core_reply(full_message, event)
@@ -497,6 +510,7 @@ class InteractionOutputController:
             else InteractionFinalOutputStatus.DELIVERED
         )
         await finish_interaction_turn_final_output(event, final_status)
+        return final_status is InteractionFinalOutputStatus.DELIVERED
 
     async def capture_plugin_output(
         self,
@@ -1093,15 +1107,16 @@ class InteractionOutputController:
                 >= self._get_interaction_config(event).stream_interjection_max_per_turn
             ):
                 return
-            observation_state["emitted"] = (
-                mark_interaction_turn_stream_interjection_emitted(event)
-            )
-            await self._emit_stream_interjection(
+            delivered = await self._emit_stream_interjection(
                 event,
                 decision.reply,
                 window_index=window_index,
                 reason=decision.reason,
             )
+            if delivered:
+                observation_state["emitted"] = (
+                    mark_interaction_turn_stream_interjection_emitted(event)
+                )
 
     def _on_stream_observation_task_done(
         self,
@@ -1344,14 +1359,18 @@ class InteractionOutputController:
                 >= self._get_interaction_config(event).stream_interjection_max_per_turn
             ):
                 return False
-            window_index = mark_interaction_turn_stream_interjection_emitted(event)
-            await self._emit_stream_interjection(
+            window_index = (
+                get_interaction_turn_stream_interjections_emitted(event) + 1
+            )
+            delivered = await self._emit_stream_interjection(
                 event,
                 decision.reply,
                 window_index=window_index,
                 reason=decision.reason or f"tool_{phase}",
             )
-        return True
+            if delivered:
+                mark_interaction_turn_stream_interjection_emitted(event)
+        return delivered
 
     async def _decide_stream_interjection(
         self,
@@ -1610,7 +1629,7 @@ class InteractionOutputController:
         *,
         window_index: int,
         reason: str,
-    ) -> None:
+    ) -> bool:
         text = reply.strip()
         if (
             not text
@@ -1618,9 +1637,17 @@ class InteractionOutputController:
             or is_interaction_turn_completed(event)
             or has_interaction_turn_final_output_claimed(event)
         ):
-            return
+            return False
         message = MessageChain([Plain(text)])
         message.type = "interaction_stream_reply"
+        message = await self._prepare_model_expression(
+            event,
+            message,
+            message_kind="stream_interjection",
+        )
+        if message is None:
+            return False
+        text = message.get_plain_text()
         message_id = self._next_output_segment_id(event, "stream_interjection")
         (
             materialized_message,
@@ -1651,6 +1678,7 @@ class InteractionOutputController:
             metadata=materialization,
             memory_relevant=False,
         )
+        return True
 
     async def _render_visible_reply(
         self,
@@ -1803,17 +1831,10 @@ class InteractionOutputController:
                 merged.final_text_override,
             )
 
-        source_result = event.get_result()
-        result_content_type = (
-            source_result.result_content_type
-            if source_result is not None
-            and source_result.result_content_type is not None
-            else ResultContentType.LLM_RESULT
-        )
-        final_message = await self.pre_output_processor.prepare_interaction_message(
+        final_message = await self._prepare_model_expression(
             event,
             final_message,
-            result_content_type,
+            message_kind="core_reply",
         )
         if final_message is None:
             set_interaction_turn_pipeline_output_suppressed(event)
@@ -1859,6 +1880,37 @@ class InteractionOutputController:
         )
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
+
+    async def _prepare_model_expression(
+        self,
+        event: AstrMessageEvent,
+        message: MessageChain,
+        *,
+        message_kind: str,
+    ) -> MessageChain | None:
+        prepared = await self.pre_output_processor.prepare_interaction_message(
+            event,
+            message,
+            ResultContentType.LLM_RESULT,
+        )
+        if prepared.message is not None:
+            return prepared.message
+        reason = prepared.reason or "pre_output_suppressed"
+        if message_kind == "immediate_reply":
+            event.set_extra(
+                "_interaction_immediate_output_suppressed_reason",
+                reason,
+            )
+        logger.info(
+            "Interaction model expression suppressed before materialization: "
+            "turn_id=%s message_kind=%s reason=%s",
+            event.get_extra("_turn_id"),
+            message_kind,
+            reason,
+        )
+        if prepared.stop_requested:
+            event.stop_event()
+        return None
 
     @staticmethod
     def _persona_tool_attachment_components(

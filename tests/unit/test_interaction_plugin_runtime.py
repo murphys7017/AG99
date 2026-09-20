@@ -30,6 +30,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
     get_interaction_turn_delivery_receipts,
+    get_interaction_turn_immediate_reply,
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     get_interaction_turn_visible_message_fingerprints,
@@ -1375,6 +1376,9 @@ async def test_immediate_text_override_keeps_persona_tool_rich_output():
     controller.materialize_immediate_interaction_outbound_message = AsyncMock(
         side_effect=lambda _event, message, **_kwargs: (message, {})
     )
+    controller._prepare_model_expression = AsyncMock(
+        side_effect=lambda _event, message, **_kwargs: message
+    )
     controller._deliver_visible_message = AsyncMock(
         side_effect=lambda _event, message, **_kwargs: delivered.append(message) or []
     )
@@ -1391,6 +1395,39 @@ async def test_immediate_text_override_keeps_persona_tool_rich_output():
     assert len(delivered) == 1
     assert delivered[0].get_plain_text() == "rewritten reply"
     assert [type(component) for component in delivered[0].chain] == [Plain, Image]
+
+
+@pytest.mark.asyncio
+async def test_immediate_output_policy_suppression_skips_materialization_and_delivery():
+    class Event:
+        def __init__(self):
+            self._extras = {"_interaction_emitting_immediate_reply": True}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    controller = object.__new__(InteractionOutputController)
+    controller._collect_result_contributions = AsyncMock(return_value=[])
+    controller._next_output_segment_id = lambda _event, _kind: "segment-1"
+    controller._prepare_model_expression = AsyncMock(return_value=None)
+    controller.materialize_immediate_interaction_outbound_message = AsyncMock()
+    controller._deliver_visible_message = AsyncMock()
+    controller._record_visible_output = Mock()
+    event = Event()
+
+    delivered = await controller.capture_message_chain(
+        MessageChain([Plain("blocked reply")]),
+        event,
+    )
+
+    assert delivered is False
+    assert get_interaction_turn_immediate_reply(event) is None
+    controller.materialize_immediate_interaction_outbound_message.assert_not_awaited()
+    controller._deliver_visible_message.assert_not_awaited()
+    controller._record_visible_output.assert_not_called()
 
 
 @pytest.mark.asyncio
