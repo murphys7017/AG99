@@ -517,7 +517,9 @@ def test_core_execution_head_activates_executor_in_submission_order():
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
     head = bind_core_execution_head(event, spec)
     stop_calls = []
-    stop_callback = lambda: stop_calls.append(True)
+
+    def stop_callback():
+        stop_calls.append(True)
 
     submitted = head.activate_executor(
         executor_id="native",
@@ -544,6 +546,32 @@ def test_core_execution_head_activates_executor_in_submission_order():
             executor_id="native",
             stop_callback=stop_callback,
         )
+
+
+@pytest.mark.asyncio
+async def test_core_execution_head_routes_accepted_supplemental_input():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = bind_core_execution_head(event, spec)
+    accepted = []
+
+    head.activate_executor(
+        executor_id="native",
+        stop_callback=lambda: None,
+        input_callback=lambda text: accepted.append(text) or "ticket-1",
+    )
+    mailbox = head.subscribe_command_mailbox()
+
+    ticket = head.provide_input(
+        executor_id="native",
+        message_text="  continue the task  ",
+    )
+
+    assert ticket == "ticket-1"
+    assert accepted == ["continue the task"]
+    command = await mailbox.receive()
+    assert command.kind is CoreCommandKind.PROVIDE_INPUT
+    assert command.payload == {"message_text": "continue the task"}
 
 
 def test_core_execution_head_fail_emits_only_one_terminal_fact():

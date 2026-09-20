@@ -99,7 +99,21 @@ class NativeExecutorAdapter:
         return self._runner.agent_hooks
 
     def follow_up(self, *, message_text: str):
-        """Capture a follow-up without requiring callers to unwrap the runner."""
+        """Capture a follow-up through Core when this execution has a Head."""
+
+        context = getattr(self._runner.run_context, "context", None)
+        event = getattr(context, "event", None)
+        execution_head = get_core_execution_head(event) if event is not None else None
+        if execution_head is not None:
+            return execution_head.provide_input(
+                executor_id=self.executor_id,
+                message_text=message_text,
+            )
+        return self._runner.follow_up(message_text=message_text)
+
+    def request_follow_up(self, message_text: str):
+        """Accept one already-authorized follow-up at the Native boundary."""
+
         return self._runner.follow_up(message_text=message_text)
 
     def cancel_follow_up(self, ticket) -> bool:

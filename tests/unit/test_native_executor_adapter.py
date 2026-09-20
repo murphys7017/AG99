@@ -81,6 +81,32 @@ def test_native_executor_adapter_exposes_control_and_observation_boundary():
     assert runner.run_context.messages[-1].content == "finish"
 
 
+def test_native_executor_adapter_routes_follow_up_through_core_head(monkeypatch):
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=object())
+    adapter = NativeExecutorAdapter(runner)
+    calls = []
+
+    class Head:
+        def provide_input(self, **kwargs):
+            calls.append(kwargs)
+            return "core-ticket"
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda event: Head(),
+    )
+
+    assert adapter.follow_up(message_text="continue") == "core-ticket"
+    assert calls == [
+        {
+            "executor_id": "native",
+            "message_text": "continue",
+        }
+    ]
+    assert runner.follow_up_messages == []
+
+
 @pytest.mark.asyncio
 async def test_native_step_stream_preserves_response_and_closes_on_early_exit():
     closed = []

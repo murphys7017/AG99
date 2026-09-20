@@ -1108,7 +1108,7 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - `InternalAgentSubStage` 只保留请求装配、生命周期钩子、历史/持久化和输出绑定，不再解释 Native response 容器。
 - 至少一次真实 OLV 成功+取消/超时和一次 Cron 成功+失败记录，确认没有重复发送、丢音频、重复 Ledger 或迟到结果覆盖。
 
-### 2026-09-21 Native loop owner 首个内部切片
+### 2026-09-20 Native loop owner 首个内部切片
 
 - 新增 `NativeExecutionLoop`，只负责 Native 步骤驱动、最大步数、停止观察、`working/progress` 事件和 stream 关闭。
 - `run_agent()` 保留为现有可见输出桥：它仍负责文本、工具状态、流式分段、TTS 输入、错误文案和 `MessageEventResult`，没有将这些职责移入 Core Head。
@@ -1128,6 +1128,12 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - Cron 与后台主动任务不再经 `step_until_done()` 驱动 Native runner；它们现在消费同一 `NativeExecutionLoop`，但不接入可见输出桥。
 - 因此交互和主动路径共用步数上限、停止观察、Native stream 关闭及 `working/progress` 事实投影；主动任务仍保留自己的 synthetic event、发送工具和 Ledger 持久化。
 - Loop 在启动时已完成的 Native runner 上不再请求额外 step，保持原有空执行完成语义。
+
+### 2026-09-20 Personal 补充输入经 Core Head 路由
+
+- Core Head 在激活 Executor 时同时绑定停止能力和同步补充输入能力；`provide_input` 只有在 Native 真正返回 follow-up ticket 后才记录并发布命令。
+- `NativeExecutorAdapter.follow_up()` 在有 Head 时经该入口路由，无 Head 的兼容路径仍直接调用 Native runner；Personal 的 ticket、消费确认、撤回和顺序激活语义保持不变。
+- 命令 mailbox 继续作为可选观察边界，不承担唯一投递，因此不存在订阅前接受输入导致丢命令的窗口。
 
 ## 非目标
 

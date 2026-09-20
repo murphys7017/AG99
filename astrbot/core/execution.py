@@ -755,6 +755,11 @@ class CoreExecutionLifecycle:
         init=False,
         repr=False,
     )
+    _executor_input_callback: Callable[[str], Any] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _executor_id: str | None = field(default=None, init=False, repr=False)
     _executor_stop_error: str | None = field(default=None, init=False, repr=False)
     _deadline_view: CoreExecutionDeadlineView | None = field(
@@ -837,6 +842,17 @@ class CoreExecutionLifecycle:
             raise ValueError("CoreExecutionLifecycle already has an executor callback")
         self._executor_stop_callback = callback
 
+    def bind_executor_input_callback(self, callback: Callable[[str], Any]) -> None:
+        """Bind the active executor's synchronous supplemental-input request."""
+
+        if self.session.status.is_terminal:
+            raise ValueError("cannot bind an executor callback after terminal state")
+        if self._executor_input_callback is not None:
+            if self._executor_input_callback == callback:
+                return
+            raise ValueError("CoreExecutionLifecycle already has an input callback")
+        self._executor_input_callback = callback
+
     @property
     def executor_id(self) -> str | None:
         """Return the executor currently attached to this lifecycle."""
@@ -848,6 +864,7 @@ class CoreExecutionLifecycle:
         *,
         executor_id: str,
         stop_callback: Callable[[], None],
+        input_callback: Callable[[str], Any] | None = None,
     ) -> None:
         """Attach one executor identity and its stop operation to this session."""
 
@@ -857,6 +874,8 @@ class CoreExecutionLifecycle:
         if self._executor_id is not None and self._executor_id != normalized_executor_id:
             raise ValueError("CoreExecutionLifecycle already has another executor")
         self.bind_executor_stop_callback(stop_callback)
+        if input_callback is not None:
+            self.bind_executor_input_callback(input_callback)
         self._executor_id = normalized_executor_id
 
     def release_executor(self, *, executor_id: str) -> bool:
@@ -870,8 +889,42 @@ class CoreExecutionLifecycle:
         if not self.session.status.is_terminal:
             return False
         self._executor_stop_callback = None
+        self._executor_input_callback = None
         self._executor_id = None
         return True
+
+    def provide_input(
+        self,
+        *,
+        executor_id: str,
+        message_text: str,
+        origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
+    ) -> Any | None:
+        """Deliver supplemental input and publish it only when accepted."""
+
+        self._validate_executor_identity(executor_id)
+        if (
+            self.session.status is CoreExecutionSessionStatus.CREATED
+            or self.session.status.is_terminal
+            or self._executor_input_callback is None
+        ):
+            return None
+        text = str(message_text or "").strip()
+        if not text:
+            return None
+        ticket = self._executor_input_callback(text)
+        if ticket is None:
+            return None
+        self.accept_command(
+            CoreCommand(
+                execution_id=self.spec.execution_id,
+                turn_id=self.spec.turn_id,
+                kind=CoreCommandKind.PROVIDE_INPUT,
+                origin=origin,
+                payload={"message_text": text},
+            )
+        )
+        return ticket
 
     @property
     def deadline_view(self) -> CoreExecutionDeadlineView | None:
@@ -1133,6 +1186,11 @@ class CoreExecutionHead:
 
         self.lifecycle.bind_executor_stop_callback(callback)
 
+    def bind_executor_input_callback(self, callback: Callable[[str], Any]) -> None:
+        """Bind the active Executor Body supplemental-input request."""
+
+        self.lifecycle.bind_executor_input_callback(callback)
+
     @property
     def executor_id(self) -> str | None:
         """Return the executor currently attached to this Core session."""
@@ -1144,12 +1202,14 @@ class CoreExecutionHead:
         *,
         executor_id: str,
         stop_callback: Callable[[], None],
+        input_callback: Callable[[str], Any] | None = None,
     ) -> None:
         """Attach one active Executor Body to this Core session."""
 
         self.lifecycle.bind_executor(
             executor_id=executor_id,
             stop_callback=stop_callback,
+            input_callback=input_callback,
         )
 
     def activate_executor(
@@ -1157,6 +1217,7 @@ class CoreExecutionHead:
         *,
         executor_id: str,
         stop_callback: Callable[[], None],
+        input_callback: Callable[[str], Any] | None = None,
         submission_metadata: Mapping[str, Any] | None = None,
     ) -> CoreExecutionEvent:
         """Start the session and attach one Executor Body as one Core action."""
@@ -1167,6 +1228,7 @@ class CoreExecutionHead:
         self.bind_executor(
             executor_id=executor_id,
             stop_callback=stop_callback,
+            input_callback=input_callback,
         )
         return self.emit_event(
             kind=CoreExecutionEventKind.SUBMITTED,
@@ -1178,6 +1240,21 @@ class CoreExecutionHead:
         """Release a terminal Executor Body from this Core session."""
 
         return self.lifecycle.release_executor(executor_id=executor_id)
+
+    def provide_input(
+        self,
+        *,
+        executor_id: str,
+        message_text: str,
+        origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
+    ) -> Any | None:
+        """Route one supplemental input through the active Executor Body."""
+
+        return self.lifecycle.provide_input(
+            executor_id=executor_id,
+            message_text=message_text,
+            origin=origin,
+        )
 
     @property
     def deadline_view(self) -> CoreExecutionDeadlineView | None:

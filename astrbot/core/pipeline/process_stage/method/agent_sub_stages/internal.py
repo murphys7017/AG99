@@ -389,6 +389,7 @@ class InternalAgentSubStage(Stage):
                     execution_head.activate_executor(
                         executor_id=native_executor.executor_id,
                         stop_callback=native_executor.request_stop,
+                        input_callback=native_executor.request_follow_up,
                         submission_metadata={
                             "provider_id": str(
                                 provider.provider_config.get("id", "") or ""
