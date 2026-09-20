@@ -853,7 +853,11 @@ def test_core_execution_outcome_aggregates_terminal_and_artifact_facts():
             spec,
             kind=CoreExecutionEventKind.ARTIFACT_READY,
             executor_id="native",
-            metadata={"artifact_id": "summary"},
+            metadata={
+                "artifact_id": "summary",
+                "artifact_kind": "text",
+                "text_length": 12,
+            },
         )
     )
     head.record_event(
@@ -871,7 +875,13 @@ def test_core_execution_outcome_aggregates_terminal_and_artifact_facts():
     assert outcome.status == "failed"
     assert outcome.terminal_error == "provider unavailable"
     assert outcome.terminal_event.kind is CoreExecutionEventKind.FAILED
-    assert [item.metadata["artifact_id"] for item in outcome.artifacts] == ["summary"]
+    assert outcome.artifacts == (
+        CoreExecutionArtifact(
+            artifact_id="summary",
+            artifact_kind="text",
+            attributes={"text_length": 12},
+        ),
+    )
 
 
 def test_core_execution_head_prepares_ledger_material_from_terminal_outcome():

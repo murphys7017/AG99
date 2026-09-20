@@ -90,6 +90,24 @@ class CoreExecutionArtifact:
             **_copy_execution_event_metadata(self.attributes),
         }
 
+    @classmethod
+    def from_event_metadata(
+        cls,
+        metadata: Mapping[str, Any],
+    ) -> CoreExecutionArtifact:
+        """Restore the typed artifact represented by an execution event."""
+
+        attributes = {
+            key: _copy_execution_event_metadata(value)
+            for key, value in metadata.items()
+            if key not in {"artifact_id", "artifact_kind"}
+        }
+        return cls(
+            artifact_id=str(metadata.get("artifact_id", "") or ""),
+            artifact_kind=str(metadata.get("artifact_kind", "") or ""),
+            attributes=attributes,
+        )
+
 
 class CoreCommandKind(str, Enum):
     """Commands accepted by the in-process Core Head boundary."""
@@ -231,7 +249,7 @@ class CoreExecutionOutcome:
     status: str
     terminal_event: CoreEvent
     terminal_error: str | None
-    artifacts: tuple[CoreExecutionEvent, ...]
+    artifacts: tuple[CoreExecutionArtifact, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -919,7 +937,9 @@ class CoreExecutionLifecycle:
             terminal_event=terminal,
             terminal_error=self.terminal_error(),
             artifacts=tuple(
-                envelope.execution
+                CoreExecutionArtifact.from_event_metadata(
+                    envelope.execution.metadata
+                )
                 for envelope in self.session.events
                 if envelope.kind is CoreExecutionEventKind.ARTIFACT_READY
             ),

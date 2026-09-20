@@ -1005,6 +1005,9 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   可见内容仍由现有 Output Runtime 和 Personal 边界负责。
 - 属性在构造时冻结并禁止覆盖 `artifact_id` / `artifact_kind` 保留字段，Core Head 再将其
   投影为现有 `artifact_ready` 事件 metadata，因此事件排序和按 artifact ID 去重保持不变。
+- `CoreExecutionOutcome.artifacts` 返回类型化 `CoreExecutionArtifact`，不再要求 Ledger
+  或后续协调者重新解析原始事件 metadata；原始 `CoreEvent` 仍保留在 Session journal
+  作为审计事实。
 - 这仍不是最终 Output Artifact 或跨进程传输协议；它先稳定 Core 内部 Executor 结果边界，
   后续再根据第二个真实 Executor 的需求扩展内容引用和产物交付。
 
