@@ -5,6 +5,7 @@ import pytest
 
 from astrbot.core.agent.response import AgentResponse
 from astrbot.core.astr_agent_run_util import ExecutorStreamItem, NativeExecutorAdapter
+from astrbot.core.execution import CoreExecutionArtifact
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -186,7 +187,12 @@ def test_native_executor_adapter_reports_normalized_lifecycle_facts(monkeypatch)
     )
 
     adapter.submit(metadata={"provider_id": "test"})
-    adapter.complete(artifact_metadata={"artifact_id": "final_response"})
+    adapter.complete(
+        artifact=CoreExecutionArtifact(
+            artifact_id="final_response",
+            artifact_kind="text",
+        )
+    )
     adapter.fail(metadata={"error": "ignored by lifecycle"})
     adapter.cancel(metadata={"reason": "cancelled"})
 
@@ -217,7 +223,12 @@ def test_native_executor_adapter_keeps_earlier_terminal_outcome(monkeypatch):
     )
 
     assert (
-        adapter.complete(artifact_metadata={"artifact_id": "late_response"})
+        adapter.complete(
+            artifact=CoreExecutionArtifact(
+                artifact_id="late_response",
+                artifact_kind="text",
+            )
+        )
         is terminal.execution
     )
     assert emitted == []
@@ -256,7 +267,7 @@ def test_native_executor_adapter_projects_final_response_metadata():
     adapter = NativeExecutorAdapter(runner)
 
     assert adapter.completed_successfully() is True
-    assert adapter.final_response_artifact_metadata() == {
+    assert adapter.final_response_artifact().event_metadata() == {
         "artifact_id": "final_response",
         "artifact_kind": "text",
         "text_length": 5,

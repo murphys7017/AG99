@@ -511,7 +511,7 @@ class InternalAgentSubStage(Stage):
                 final_resp = native_executor.final_response()
                 if native_executor.completed_successfully():
                     native_executor.complete(
-                        artifact_metadata=native_executor.final_response_artifact_metadata(),
+                        artifact=native_executor.final_response_artifact(),
                     )
                 else:
                     native_executor.fail(metadata=native_executor.failure_metadata())

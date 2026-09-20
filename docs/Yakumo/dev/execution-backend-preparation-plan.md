@@ -997,6 +997,17 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 该流项目仍是进程内过渡契约，不等同于最终跨 Executor 的 `ExecutionEvent`/Artifact
   协议；后续仍需把第三方 Runner 映射到相同的 Core 事实边界。
 
+### 2026-09-20 类型化执行产物描述
+
+- 新增 `CoreExecutionArtifact`，显式区分 `artifact_id`、`artifact_kind` 与只读诊断属性；
+  Native Adapter 不再向 Core Head 传递松散的 artifact metadata 字典。
+- Artifact 只描述执行产物身份和有界诊断，不承载回复正文、平台消息、TTS 或 effect；
+  可见内容仍由现有 Output Runtime 和 Personal 边界负责。
+- 属性在构造时冻结并禁止覆盖 `artifact_id` / `artifact_kind` 保留字段，Core Head 再将其
+  投影为现有 `artifact_ready` 事件 metadata，因此事件排序和按 artifact ID 去重保持不变。
+- 这仍不是最终 Output Artifact 或跨进程传输协议；它先稳定 Core 内部 Executor 结果边界，
+  后续再根据第二个真实 Executor 的需求扩展内容引用和产物交付。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

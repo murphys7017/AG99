@@ -45,6 +45,52 @@ class CoreExecutionEventKind(str, Enum):
     CANCELLED = "cancelled"
 
 
+@dataclass(frozen=True, slots=True)
+class CoreExecutionArtifact:
+    """Executor-neutral description of one result produced by an execution.
+
+    The artifact records identity and bounded diagnostics only. Visible content
+    remains owned by the existing output bridge and is not transported through
+    execution event metadata.
+    """
+
+    artifact_id: str
+    artifact_kind: str
+    attributes: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        artifact_id = str(self.artifact_id or "").strip()
+        artifact_kind = str(self.artifact_kind or "").strip()
+        if not artifact_id or not artifact_kind:
+            raise ValueError(
+                "CoreExecutionArtifact requires artifact_id and artifact_kind"
+            )
+        reserved_attributes = {"artifact_id", "artifact_kind"}.intersection(
+            self.attributes
+        )
+        if reserved_attributes:
+            names = ", ".join(sorted(reserved_attributes))
+            raise ValueError(
+                f"CoreExecutionArtifact attributes contain reserved keys: {names}"
+            )
+        object.__setattr__(self, "artifact_id", artifact_id)
+        object.__setattr__(self, "artifact_kind", artifact_kind)
+        object.__setattr__(
+            self,
+            "attributes",
+            _freeze_execution_event_metadata(self.attributes),
+        )
+
+    def event_metadata(self) -> dict[str, Any]:
+        """Return detached metadata for one ``artifact_ready`` event."""
+
+        return {
+            "artifact_id": self.artifact_id,
+            "artifact_kind": self.artifact_kind,
+            **_copy_execution_event_metadata(self.attributes),
+        }
+
+
 class CoreCommandKind(str, Enum):
     """Commands accepted by the in-process Core Head boundary."""
 
@@ -1100,16 +1146,16 @@ class CoreExecutionHead:
         self,
         *,
         executor_id: str,
-        artifact_metadata: Mapping[str, Any] | None = None,
+        artifact: CoreExecutionArtifact | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> CoreExecutionEvent:
         """Finalize successfully, preserving artifact-before-terminal order."""
 
-        if artifact_metadata is not None:
+        if artifact is not None:
             self.emit_event(
                 kind=CoreExecutionEventKind.ARTIFACT_READY,
                 executor_id=executor_id,
-                metadata=artifact_metadata,
+                metadata=artifact.event_metadata(),
             )
         return self.emit_event(
             kind=CoreExecutionEventKind.COMPLETED,
@@ -1715,6 +1761,7 @@ __all__ = [
     "CoreCommandDisposition",
     "CoreCommandReceipt",
     "CoreEvent",
+    "CoreExecutionArtifact",
     "CoreExecutionCommandMailbox",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",

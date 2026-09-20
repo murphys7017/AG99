@@ -11,7 +11,11 @@ from astrbot.core.agent.response import AgentResponse, AgentStats
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.deadline import TurnDeadlineExceeded
-from astrbot.core.execution import CoreExecutionEventKind, get_core_execution_head
+from astrbot.core.execution import (
+    CoreExecutionArtifact,
+    CoreExecutionEventKind,
+    get_core_execution_head,
+)
 from astrbot.core.interaction.output_modes import (
     CoreOutputDelivery,
     OutputOrigin,
@@ -119,7 +123,7 @@ class NativeExecutorAdapter:
     def complete(
         self,
         *,
-        artifact_metadata: dict | None = None,
+        artifact: CoreExecutionArtifact | None = None,
         metadata: dict | None = None,
     ):
         """Report one successful terminal outcome through the Core boundary.
@@ -128,10 +132,10 @@ class NativeExecutorAdapter:
         earlier cancellation or failure therefore remains authoritative when a
         late Native completion arrives.
         """
-        if artifact_metadata is not None:
+        if artifact is not None:
             self.emit_event(
                 kind=CoreExecutionEventKind.ARTIFACT_READY,
-                metadata=artifact_metadata,
+                metadata=artifact.event_metadata(),
             )
         return self.emit_event(
             kind=CoreExecutionEventKind.COMPLETED,
@@ -191,27 +195,29 @@ class NativeExecutorAdapter:
             metadata=metadata,
         )
 
-    def final_response_artifact_metadata(self) -> dict | None:
+    def final_response_artifact(self) -> CoreExecutionArtifact | None:
         """Describe the Native final response without exposing it to Core."""
         response = self.final_response()
         if response is None:
             return None
         completion_text = str(response.completion_text or "")
         result_chain = response.result_chain
-        return {
-            "artifact_id": "final_response",
-            "artifact_kind": (
+        return CoreExecutionArtifact(
+            artifact_id="final_response",
+            artifact_kind=(
                 "text"
                 if completion_text
                 else "message_chain"
                 if result_chain is not None
                 else "empty"
             ),
-            "text_length": len(completion_text),
-            "component_count": (
-                len(result_chain.chain) if result_chain is not None else 0
-            ),
-        }
+            attributes={
+                "text_length": len(completion_text),
+                "component_count": (
+                    len(result_chain.chain) if result_chain is not None else 0
+                ),
+            },
+        )
 
     def completed_successfully(self) -> bool:
         """Return the Native terminal classification needed by the Core bridge."""

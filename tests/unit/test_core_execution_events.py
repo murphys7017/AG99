@@ -10,6 +10,7 @@ from astrbot.core.execution import (
     CoreCommandKind,
     CoreCommandOrigin,
     CoreEvent,
+    CoreExecutionArtifact,
     CoreExecutionDeadlineView,
     CoreExecutionEvent,
     CoreExecutionEventKind,
@@ -441,7 +442,10 @@ def test_core_execution_head_complete_orders_artifact_before_terminal():
 
     completed = head.complete(
         executor_id="native",
-        artifact_metadata={"artifact_id": "final_response"},
+        artifact=CoreExecutionArtifact(
+            artifact_id="final_response",
+            artifact_kind="text",
+        ),
     )
 
     assert completed.kind is CoreExecutionEventKind.COMPLETED
@@ -451,6 +455,34 @@ def test_core_execution_head_complete_orders_artifact_before_terminal():
         CoreExecutionEventKind.ARTIFACT_READY,
         CoreExecutionEventKind.COMPLETED,
     ]
+    assert head.events[-2].metadata_for_trace() == {
+        "artifact_id": "final_response",
+        "artifact_kind": "text",
+    }
+
+
+def test_core_execution_artifact_freezes_attributes():
+    attributes = {"details": {"length": 5}}
+    artifact = CoreExecutionArtifact(
+        artifact_id="final_response",
+        artifact_kind="text",
+        attributes=attributes,
+    )
+
+    attributes["details"]["length"] = 99
+
+    assert artifact.event_metadata() == {
+        "artifact_id": "final_response",
+        "artifact_kind": "text",
+        "details": {"length": 5},
+    }
+
+    with pytest.raises(ValueError, match="reserved keys: artifact_id"):
+        CoreExecutionArtifact(
+            artifact_id="final_response",
+            artifact_kind="text",
+            attributes={"artifact_id": "overridden"},
+        )
 
 
 def test_core_execution_head_keeps_executor_bound_until_terminal():
