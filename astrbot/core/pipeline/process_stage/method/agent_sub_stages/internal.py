@@ -16,7 +16,6 @@ from astrbot.core.agent.message import (
     dump_messages_with_checkpoints,
 )
 from astrbot.core.agent.response import AgentStats
-from astrbot.core.agent_lifecycle import AgentRequestLifecycle
 from astrbot.core.astr_main_agent import (
     CONVERSATION_SAVE_USER_MESSAGE_EXTRA_KEY,
     LLM_ERROR_MESSAGE_EXTRA_KEY,
@@ -24,13 +23,16 @@ from astrbot.core.astr_main_agent import (
     MainAgentBuildResult,
     build_main_agent,
 )
+from astrbot.core.core_request_preparation import (
+    begin_core_request_lifecycle,
+    finalize_core_request_preparation,
+)
 from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CoreExecutionDeadlineView,
     CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
     bind_core_execution_head,
-    bind_effective_core_request,
     get_core_execution_head,
     get_core_execution_lifecycle,
 )
@@ -44,7 +46,6 @@ from astrbot.core.interaction.turn_state import (
     is_interaction_turn_core_delegated,
     record_interaction_turn_core_execution_ledger_persist_failure,
     record_interaction_turn_core_execution_ledger_settlement,
-    set_interaction_turn_core_execution_spec,
 )
 from astrbot.core.message.components import File, Image, Record, Reply, Video
 from astrbot.core.message.message_event_result import (
@@ -57,7 +58,6 @@ from astrbot.core.persona_error_reply import (
 )
 from astrbot.core.pipeline.stage import Stage
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.plugin_runtime import PLUGIN_RUNTIME_TARGET_CORE
 from astrbot.core.provider.entities import (
     LLMResponse,
     ProviderRequest,
@@ -217,6 +217,10 @@ class InternalAgentSubStage(Stage):
         typing_requested = False
         native_executor: NativeExecutorAdapter | None = None
         req: ProviderRequest | None = None
+        build_result: MainAgentBuildResult | None = None
+        execution_head = None
+        runner_reset_completed = False
+        executor_activated = False
         try:
             runtime_config = get_interaction_turn_runtime_config(event)
             runtime_settings = (
@@ -293,14 +297,11 @@ class InternalAgentSubStage(Stage):
                 await event.send_typing()
             except Exception:
                 logger.warning("send_typing failed", exc_info=True)
-            request_lifecycle = AgentRequestLifecycle(
+            request_lifecycle = await begin_core_request_lifecycle(
                 event,
-                execution_surface=PLUGIN_RUNTIME_TARGET_CORE,
                 hook_dispatcher=call_event_hook,
-                record_reasoning=True,
-                dispatch_response_postprocess=True,
             )
-            if await request_lifecycle.dispatch_waiting():
+            if request_lifecycle is None:
                 return
 
             runner_registered = False
@@ -311,7 +312,7 @@ class InternalAgentSubStage(Stage):
                     streaming_response=bool(streaming_response),
                 )
 
-                build_result: MainAgentBuildResult | None = await build_main_agent(
+                build_result = await build_main_agent(
                     event=event,
                     plugin_context=self.ctx.plugin_manager.context,
                     config=build_cfg,
@@ -332,11 +333,9 @@ class InternalAgentSubStage(Stage):
                 native_executor = NativeExecutorAdapter(build_result.agent_runner)
                 req = build_result.provider_request
                 provider = build_result.provider
-                reset_coro = build_result.reset_coro
                 request_lifecycle = (
                     build_result.request_lifecycle or request_lifecycle
                 )
-                request_lifecycle.bind_request(req)
 
                 api_base = provider.provider_config.get("api_base", "")
                 for host in decoded_blocked:
@@ -354,29 +353,11 @@ class InternalAgentSubStage(Stage):
                     and not event.platform_meta.support_streaming_message
                 )
 
-                if await request_lifecycle.dispatch_request():
-                    if reset_coro:
-                        reset_coro.close()
+                if not await finalize_core_request_preparation(event, build_result):
                     return
 
-                effective_capabilities, effective_execution_spec = bind_effective_core_request(
-                    event=event,
-                    provider_request=req,
-                    persona_id=(
-                        build_result.capabilities.persona_id
-                        if build_result.capabilities is not None
-                        else None
-                    ),
-                    execution_spec=build_result.execution_spec,
-                    prompt_apply_result=request_lifecycle.prompt_apply_result,
-                )
-                build_result.capabilities = effective_capabilities
-                build_result.execution_spec = effective_execution_spec
+                effective_execution_spec = build_result.execution_spec
                 if effective_execution_spec is not None:
-                    set_interaction_turn_core_execution_spec(
-                        event,
-                        effective_execution_spec,
-                    )
                     execution_head = bind_core_execution_head(
                         event,
                         effective_execution_spec,
@@ -386,6 +367,11 @@ class InternalAgentSubStage(Stage):
                             CoreExecutionDeadlineView.from_budget(deadline)
                         )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
+
+                await build_result.reset_prepared_runner()
+                runner_reset_completed = True
+
+                if execution_head is not None:
                     execution_head.activate_executor(
                         executor_id=native_executor.executor_id,
                         stop_callback=native_executor.request_stop,
@@ -398,10 +384,7 @@ class InternalAgentSubStage(Stage):
                             "streaming": bool(streaming_response),
                         },
                     )
-
-                # apply reset
-                if reset_coro:
-                    await reset_coro
+                    executor_activated = True
 
                 runtime_manager = self.ctx.personal_runtime_manager
                 if runtime_manager is not None:
@@ -545,12 +528,19 @@ class InternalAgentSubStage(Stage):
 
         except TurnDeadlineExceeded:
             cancellation_reason = "deadline_exceeded"
-            if native_executor is not None:
+            if native_executor is not None and executor_activated:
                 native_executor.cancel(metadata={"reason": cancellation_reason})
+            elif native_executor is not None and execution_head is not None:
+                execution_head.cancel(
+                    executor_id=native_executor.executor_id,
+                    metadata={"reason": cancellation_reason},
+                )
             await self._save_cancelled_interaction_core_state(
                 event,
                 req,
-                native_executor=native_executor,
+                native_executor=(
+                    native_executor if runner_reset_completed else None
+                ),
                 cancellation_reason=cancellation_reason,
             )
             raise
@@ -561,19 +551,34 @@ class InternalAgentSubStage(Stage):
                 if deadline is not None and deadline.expired()
                 else "stage_cancelled"
             )
-            if native_executor is not None:
+            if native_executor is not None and executor_activated:
                 native_executor.cancel(metadata={"reason": cancellation_reason})
+            elif native_executor is not None and execution_head is not None:
+                execution_head.cancel(
+                    executor_id=native_executor.executor_id,
+                    metadata={"reason": cancellation_reason},
+                )
             await self._save_cancelled_interaction_core_state(
                 event,
                 req,
-                native_executor=native_executor,
+                native_executor=(
+                    native_executor if runner_reset_completed else None
+                ),
                 cancellation_reason=cancellation_reason,
             )
             raise
         except Exception as e:
             logger.error(f"Error occurred while processing agent: {e}")
-            if native_executor is not None:
+            if native_executor is not None and executor_activated:
                 native_executor.fail(
+                    metadata={
+                        "error_type": type(e).__name__,
+                        "error": str(e)[:2000],
+                    },
+                )
+            elif native_executor is not None and execution_head is not None:
+                execution_head.fail(
+                    executor_id=native_executor.executor_id,
                     metadata={
                         "error_type": type(e).__name__,
                         "error": str(e)[:2000],
@@ -582,7 +587,9 @@ class InternalAgentSubStage(Stage):
             await self._save_failed_interaction_core_state(
                 event,
                 req,
-                native_executor=native_executor,
+                native_executor=(
+                    native_executor if runner_reset_completed else None
+                ),
                 error=e,
             )
             custom_error_message = extract_persona_custom_error_message_from_event(
@@ -594,7 +601,9 @@ class InternalAgentSubStage(Stage):
             with temporary_output_origin(event, OutputOrigin.CORE.value):
                 await event.send(MessageChain().message(error_text))
         finally:
-            if native_executor is not None:
+            if build_result is not None:
+                build_result.discard_pending_reset()
+            if native_executor is not None and executor_activated:
                 native_executor.release_from_core_head()
             if typing_requested:
                 try:

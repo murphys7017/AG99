@@ -1110,7 +1110,13 @@ class TestBuildMainAgent:
         assert result is not None
         assert result.reset_coro is not None
         mock_runner.reset.assert_called_once()
-        result.reset_coro.close()
+        await result.reset_prepared_runner()
+        assert result.reset_coro is None
+        with pytest.raises(
+            RuntimeError,
+            match="prepared runner reset was already consumed",
+        ):
+            await result.reset_prepared_runner()
 
     @pytest.mark.asyncio
     async def test_build_main_agent_with_existing_request(

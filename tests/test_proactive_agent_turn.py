@@ -1,16 +1,21 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from astrbot.core.astr_main_agent import MainAgentBuildConfig
+from astrbot.core.astr_main_agent import MainAgentBuildConfig, MainAgentBuildResult
 from astrbot.core.conversation_mgr import ConversationManager
+from astrbot.core.core_request_preparation import (
+    CoreRequestPreparationStopped,
+    begin_core_request_lifecycle,
+)
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.execution_ledger import CoreExecutionLedger
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
 from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.star.star_handler import EventType
 
 
 @pytest.mark.asyncio
@@ -51,7 +56,21 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
         config = kwargs["config"]
         assert config.computer_use_runtime == "none"
         assert config.add_cron_tools is False
-        return SimpleNamespace(agent_runner=runner, provider_request=kwargs["req"])
+        kwargs["request_lifecycle"].bind_request(
+            kwargs["req"],
+            prompt_apply_result=SimpleNamespace(tool_schema_count=0),
+        )
+
+        async def reset():
+            return None
+
+        return MainAgentBuildResult(
+            agent_runner=runner,
+            provider_request=kwargs["req"],
+            provider=SimpleNamespace(),
+            reset_coro=reset(),
+            request_lifecycle=kwargs["request_lifecycle"],
+        )
 
     monkeypatch.setattr(
         "astrbot.core.astr_main_agent.build_main_agent", build_main_agent
@@ -130,8 +149,21 @@ async def test_proactive_result_does_not_replace_visible_history(tmp_path, monke
             )
 
     async def build(**kwargs):
-        return SimpleNamespace(
-            agent_runner=Runner(), provider_request=kwargs["req"], execution_spec=None
+        kwargs["request_lifecycle"].bind_request(
+            kwargs["req"],
+            prompt_apply_result=SimpleNamespace(tool_schema_count=0),
+        )
+
+        async def reset():
+            return None
+
+        return MainAgentBuildResult(
+            agent_runner=Runner(),
+            provider_request=kwargs["req"],
+            provider=SimpleNamespace(),
+            execution_spec=None,
+            reset_coro=reset(),
+            request_lifecycle=kwargs["request_lifecycle"],
         )
 
     monkeypatch.setattr(
@@ -179,3 +211,139 @@ async def test_proactive_result_does_not_replace_visible_history(tmp_path, monke
         assert records[0].task_spec["schedule_revision"] == 2
     finally:
         await db.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_proactive_request_hook_mutation_reaches_execution(monkeypatch):
+    observed_prompts = []
+
+    async def hook(_event, hook_type, *args, **kwargs):
+        assert kwargs["execution_surface"] == "core"
+        if hook_type is EventType.OnLLMRequestEvent:
+            args[0].prompt = "hooked prompt"
+        return False
+
+    async def begin(event):
+        return await begin_core_request_lifecycle(event, hook_dispatcher=hook)
+
+    class Runner:
+        def done(self):
+            return True
+
+        def was_aborted(self):
+            return False
+
+        def get_final_llm_resp(self):
+            return LLMResponse(role="assistant", completion_text="done")
+
+    async def build(**kwargs):
+        kwargs["request_lifecycle"].bind_request(
+            kwargs["req"],
+            prompt_apply_result=SimpleNamespace(tool_schema_count=0),
+        )
+
+        async def reset():
+            observed_prompts.append(kwargs["req"].prompt)
+
+        return MainAgentBuildResult(
+            agent_runner=Runner(),
+            provider_request=kwargs["req"],
+            provider=SimpleNamespace(),
+            reset_coro=reset(),
+            request_lifecycle=kwargs["request_lifecycle"],
+        )
+
+    monkeypatch.setattr(
+        "astrbot.core.proactive_agent_turn.begin_core_request_lifecycle",
+        begin,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_main_agent._get_session_conv",
+        AsyncMock(return_value=SimpleNamespace(history="[]")),
+    )
+    monkeypatch.setattr("astrbot.core.astr_main_agent.build_main_agent", build)
+
+    class Loop:
+        def __init__(self, _executor, *, max_step):
+            assert max_step == 30
+
+        async def stream(self):
+            if False:
+                yield None
+
+    monkeypatch.setattr("astrbot.core.astr_agent_run_util.NativeExecutionLoop", Loop)
+    result = await run_proactive_agent_turn(
+        context=SimpleNamespace(
+            get_config=lambda **kwargs: {"plugin_set": [], "provider_settings": {}}
+        ),
+        session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
+        message="run",
+        extras={},
+        role=None,
+        config=MainAgentBuildConfig(tool_call_timeout=60),
+        system_prompt="",
+        prompt="original prompt",
+        require_delivery_tool=False,
+        include_history_fences=False,
+    )
+
+    assert observed_prompts == ["hooked prompt"]
+    assert result.request.prompt == "hooked prompt"
+
+
+@pytest.mark.asyncio
+async def test_proactive_request_hook_stop_discards_deferred_reset(monkeypatch):
+    async def hook(_event, hook_type, *_args, **_kwargs):
+        return hook_type is EventType.OnLLMRequestEvent
+
+    async def begin(event):
+        return await begin_core_request_lifecycle(event, hook_dispatcher=hook)
+
+    reset_coro = MagicMock()
+
+    async def build(**kwargs):
+        kwargs["request_lifecycle"].bind_request(
+            kwargs["req"],
+            prompt_apply_result=SimpleNamespace(tool_schema_count=0),
+        )
+        return MainAgentBuildResult(
+            agent_runner=SimpleNamespace(),
+            provider_request=kwargs["req"],
+            provider=SimpleNamespace(),
+            reset_coro=reset_coro,
+            request_lifecycle=kwargs["request_lifecycle"],
+        )
+
+    monkeypatch.setattr(
+        "astrbot.core.proactive_agent_turn.begin_core_request_lifecycle",
+        begin,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_main_agent._get_session_conv",
+        AsyncMock(return_value=SimpleNamespace(history="[]")),
+    )
+    monkeypatch.setattr("astrbot.core.astr_main_agent.build_main_agent", build)
+
+    with pytest.raises(
+        CoreRequestPreparationStopped,
+        match="request_stopped_by_plugin",
+    ):
+        await run_proactive_agent_turn(
+            context=SimpleNamespace(
+                get_config=lambda **kwargs: {
+                    "plugin_set": [],
+                    "provider_settings": {},
+                }
+            ),
+            session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
+            message="run",
+            extras={},
+            role=None,
+            config=MainAgentBuildConfig(tool_call_timeout=60),
+            system_prompt="",
+            prompt="original prompt",
+            require_delivery_tool=False,
+            include_history_fences=False,
+        )
+
+    reset_coro.close.assert_called_once_with()

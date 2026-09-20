@@ -721,10 +721,14 @@ async def test_internal_agent_preserves_post_render_on_llm_request_hook():
         request.system_prompt += "\nplugin hook prompt"
         return True
 
+    async def _build_main_agent(**kwargs):
+        build_result.request_lifecycle = kwargs["request_lifecycle"]
+        return build_result
+
     with (
         patch(
             "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.build_main_agent",
-            new=AsyncMock(return_value=build_result),
+            new=_build_main_agent,
         ),
         patch(
             "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal.call_event_hook",

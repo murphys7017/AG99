@@ -340,6 +340,30 @@ class MainAgentBuildResult:
     execution_spec: CoreExecutionSpec | None = None
     reset_coro: Coroutine | None = None
     request_lifecycle: AgentRequestLifecycle | None = None
+    _reset_consumed: bool = field(default=False, init=False, repr=False)
+
+    async def reset_prepared_runner(self) -> None:
+        """Apply the one deferred runner reset owned by this build result."""
+
+        if self._reset_consumed:
+            raise RuntimeError("prepared runner reset was already consumed")
+        reset_coro = self.reset_coro
+        if reset_coro is None:
+            raise RuntimeError("prepared runner reset is unavailable")
+        self.reset_coro = None
+        self._reset_consumed = True
+        await reset_coro
+
+    def discard_pending_reset(self) -> None:
+        """Close an unstarted deferred reset when request preparation exits early."""
+
+        if self._reset_consumed:
+            return
+        reset_coro = self.reset_coro
+        self.reset_coro = None
+        self._reset_consumed = True
+        if reset_coro is not None:
+            reset_coro.close()
 
 
 def _set_llm_error_message(event: AstrMessageEvent, message: str) -> None:

@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot import logger
 from astrbot.core.agent.tool import ToolSet
+from astrbot.core.core_request_preparation import (
+    CoreRequestPreparationStopped,
+    begin_core_request_lifecycle,
+    finalize_core_request_preparation,
+)
 from astrbot.core.db.po import CoreExecutionRecord
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.plugin_admission import (
@@ -63,12 +68,14 @@ async def run_proactive_agent_turn(
     from astrbot.core.astr_main_agent import _get_session_conv, build_main_agent
     from astrbot.core.cron.events import CronMessageEvent
     from astrbot.core.execution import (
+        CoreExecutionDeadlineView,
         CoreExecutionSpec,
         bind_core_execution_head,
     )
     from astrbot.core.interaction.turn_state import (
+        bind_interaction_turn_core_execution_journal,
         ensure_interaction_turn_state,
-        set_interaction_turn_core_execution_spec,
+        get_interaction_turn_deadline,
         set_interaction_turn_runtime_config,
     )
 
@@ -116,22 +123,39 @@ async def run_proactive_agent_turn(
     native_executor: NativeExecutorAdapter | None = None
     execution_head: CoreExecutionHead | None = None
     executor_activated = False
+    runner_reset_completed = False
     response = None
     status, error = "failed", None
     try:
+        request_lifecycle = await begin_core_request_lifecycle(event)
+        if request_lifecycle is None:
+            event.set_extra("_core_request_preparation_stopped", True)
+            raise CoreRequestPreparationStopped("request_stopped_by_plugin")
         result = await build_main_agent(
             event=event,
             plugin_context=context,
             config=config,
             req=request,
+            apply_reset=False,
+            request_lifecycle=request_lifecycle,
         )
         if result is None:
             raise RuntimeError("Proactive Core could not be built")
+        if not await finalize_core_request_preparation(event, result):
+            event.set_extra("_core_request_preparation_stopped", True)
+            raise CoreRequestPreparationStopped("request_stopped_by_plugin")
         native_executor = NativeExecutorAdapter(result.agent_runner)
         execution_spec = getattr(result, "execution_spec", None)
         if isinstance(execution_spec, CoreExecutionSpec):
-            set_interaction_turn_core_execution_spec(event, execution_spec)
             execution_head = bind_core_execution_head(event, execution_spec)
+            if deadline := get_interaction_turn_deadline(event):
+                execution_head.bind_deadline_view(
+                    CoreExecutionDeadlineView.from_budget(deadline)
+                )
+            bind_interaction_turn_core_execution_journal(event, execution_head)
+        await result.reset_prepared_runner()
+        runner_reset_completed = True
+        if execution_head is not None:
             execution_head.activate_executor(
                 executor_id=native_executor.executor_id,
                 stop_callback=native_executor.request_stop,
@@ -184,6 +208,11 @@ async def run_proactive_agent_turn(
             and executor_activated
         ):
             native_executor.cancel(metadata={"reason": "task_cancelled"})
+        elif native_executor is not None and execution_head is not None:
+            execution_head.cancel(
+                executor_id=native_executor.executor_id,
+                metadata={"reason": "task_cancelled"},
+            )
         raise
     except Exception as exc:
         error = str(exc)[:2000]
@@ -198,8 +227,18 @@ async def run_proactive_agent_turn(
                     "error": error,
                 }
             )
+        elif native_executor is not None and execution_head is not None:
+            execution_head.fail(
+                executor_id=native_executor.executor_id,
+                metadata={
+                    "error_type": type(exc).__name__,
+                    "error": error,
+                },
+            )
         raise
     finally:
+        if result is not None:
+            result.discard_pending_reset()
         # Execution evidence is not visible dialogue. Personal owns that history.
         ledger = getattr(context, "core_execution_ledger", None)
         if ledger is not None:
@@ -209,7 +248,11 @@ async def run_proactive_agent_turn(
             background = extras.get("background_task_result", {})
             ledger_result = response.completion_text if response is not None else None
             ledger_error = error
-            if execution_head is not None and executor_activated:
+            if (
+                execution_head is not None
+                and executor_activated
+                and runner_reset_completed
+            ):
                 preparation = execution_head.prepare_ledger_preparation(
                     completion_text=ledger_result,
                     user_aborted=(
