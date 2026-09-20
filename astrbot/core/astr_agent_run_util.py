@@ -56,6 +56,16 @@ class ExecutorStreamItem:
     chain: MessageChain | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class NativeExecutionEvidence:
+    """Native evidence bundle; response, messages, and stats remain live references."""
+
+    final_response: LLMResponse | None
+    messages: list[Message]
+    stats: AgentStats
+    was_aborted: bool
+
+
 class NativeExecutorAdapter:
     """Expose the Native runner through the Core execution boundary.
 
@@ -319,6 +329,16 @@ class NativeExecutorAdapter:
 
     def final_response(self) -> LLMResponse | None:
         return self._runner.get_final_llm_resp()
+
+    def evidence(self) -> NativeExecutionEvidence:
+        """Return post-execution evidence without exposing the runner."""
+
+        return NativeExecutionEvidence(
+            final_response=self.final_response(),
+            messages=self.messages,
+            stats=self.stats,
+            was_aborted=self.was_aborted(),
+        )
 
     def final_response_chain(self) -> MessageChain | None:
         """Build the final visible chain without exposing response internals."""

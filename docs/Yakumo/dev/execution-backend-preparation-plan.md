@@ -1038,6 +1038,15 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 这一步进一步缩小了 Stage 对 Native runner 状态的解释职责，但尚未把执行循环本身迁入
   Core Head，也没有创建新的 Executor Body。
 
+### 2026-09-20 Native 收尾证据读取
+
+- `NativeExecutionEvidence` 汇总正常收尾和 Live 历史保存使用的响应、消息、统计和中止标记，
+  由 Adapter 提供。它是 Native 内部证据集合，不是通用执行协议或深度不可变快照；
+  响应、消息和统计仍引用现有对象。
+- 取消及失败路径保留分项读取和容错，避免某一项无法读取时丢失其他可保存证据。
+- Ledger 仍消费 Core Head 的终态准备结果并通过其结算入口写入；本次没有迁移历史或
+  Ledger owner。定向验证 67 项通过，真实 OLV 验收尚未执行。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

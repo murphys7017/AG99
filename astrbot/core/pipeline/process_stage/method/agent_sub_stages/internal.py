@@ -459,17 +459,17 @@ class InternalAgentSubStage(Stage):
                     yield
 
                     # 保存历史记录
-                    if native_executor.done() and (
-                        not event.is_stopped() or native_executor.was_aborted()
-                    ):
-                        await self._save_to_history(
-                            event,
-                            req,
-                            native_executor.final_response(),
-                            native_executor.messages,
-                            native_executor.stats,
-                            user_aborted=native_executor.was_aborted(),
-                        )
+                    if native_executor.done():
+                        evidence = native_executor.evidence()
+                        if not event.is_stopped() or evidence.was_aborted:
+                            await self._save_to_history(
+                                event,
+                                req,
+                                evidence.final_response,
+                                evidence.messages,
+                                evidence.stats,
+                                user_aborted=evidence.was_aborted,
+                            )
 
                 elif streaming_response and not stream_to_general:
                     # 流式响应
@@ -508,13 +508,14 @@ class InternalAgentSubStage(Stage):
                     ):
                         yield
 
-                final_resp = native_executor.final_response()
                 native_executor.finalize()
+                evidence = native_executor.evidence()
+                final_resp = evidence.final_response
 
                 event.trace.record(
                     "astr_agent_complete",
                     request_lifecycle_id=request_lifecycle.lifecycle_id,
-                    stats=native_executor.stats.to_dict(),
+                    stats=evidence.stats.to_dict(),
                     resp=final_resp.completion_text if final_resp else None,
                 )
 
@@ -530,15 +531,15 @@ class InternalAgentSubStage(Stage):
 
                 # 检查事件是否被停止，如果被停止则不保存历史记录
                 if (
-                    not event.is_stopped() or native_executor.was_aborted()
+                    not event.is_stopped() or evidence.was_aborted
                 ):
                     await self._save_to_history(
                         event,
                         req,
                         final_resp,
-                        native_executor.messages,
-                        native_executor.stats,
-                        user_aborted=native_executor.was_aborted(),
+                        evidence.messages,
+                        evidence.stats,
+                        user_aborted=evidence.was_aborted,
                     )
 
                 asyncio.create_task(
