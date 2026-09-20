@@ -872,17 +872,19 @@ async def run_live_agent(
     Yields:
         MessageChain: 包含文本或音频数据的消息链
     """
+    output_bridge = NativeExecutionOutputBridge(
+        executor,
+        max_step=max_step,
+        show_tool_use=show_tool_use,
+        show_tool_call_result=show_tool_call_result,
+        stream_to_general=False,
+        show_reasoning=show_reasoning,
+        buffer_intermediate_messages=buffer_intermediate_messages,
+    )
+
     # 如果没有 TTS Provider，直接发送文本
     if not tts_provider:
-        async for chain in run_agent(
-            executor,
-            max_step=max_step,
-            show_tool_use=show_tool_use,
-            show_tool_call_result=show_tool_call_result,
-            stream_to_general=False,
-            show_reasoning=show_reasoning,
-            buffer_intermediate_messages=buffer_intermediate_messages,
-        ):
+        async for chain in output_bridge.stream():
             yield chain
         return
 
@@ -908,13 +910,8 @@ async def run_live_agent(
     # 1. 启动 Agent Feeder 任务：负责运行 Agent 并将文本分句喂给 text_queue
     feeder_task = asyncio.create_task(
         _run_agent_feeder(
-            executor,
+            output_bridge,
             text_queue,
-            max_step,
-            show_tool_use,
-            show_tool_call_result,
-            show_reasoning,
-            buffer_intermediate_messages,
         )
     )
 
@@ -998,26 +995,13 @@ async def run_live_agent(
 
 
 async def _run_agent_feeder(
-    executor: NativeExecutorAdapter,
+    output_bridge: NativeExecutionOutputBridge,
     text_queue: asyncio.Queue,
-    max_step: int,
-    show_tool_use: bool,
-    show_tool_call_result: bool,
-    show_reasoning: bool,
-    buffer_intermediate_messages: bool,
 ) -> None:
     """运行 Agent 并将文本输出分句放入队列"""
     buffer = ""
     try:
-        async for chain in run_agent(
-            executor,
-            max_step=max_step,
-            show_tool_use=show_tool_use,
-            show_tool_call_result=show_tool_call_result,
-            stream_to_general=False,
-            show_reasoning=show_reasoning,
-            buffer_intermediate_messages=buffer_intermediate_messages,
-        ):
+        async for chain in output_bridge.stream():
             if chain is None:
                 continue
 

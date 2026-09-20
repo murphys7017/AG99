@@ -9,6 +9,7 @@ from astrbot.core.astr_agent_run_util import (
     NativeExecutionLoop,
     NativeExecutorAdapter,
     run_agent,
+    run_live_agent,
 )
 from astrbot.core.execution import CoreExecutionArtifact, CoreExecutionProgress
 from astrbot.core.message.components import Json
@@ -318,6 +319,51 @@ def test_run_agent_entry_builds_explicit_output_bridge(monkeypatch):
                 "stream_to_general": False,
                 "show_reasoning": False,
                 "buffer_intermediate_messages": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_live_agent_without_tts_reuses_output_bridge(monkeypatch):
+    executor = NativeExecutorAdapter(FakeNativeRunner())
+    calls = []
+
+    class Bridge:
+        def __init__(self, actual_executor, **kwargs):
+            calls.append((actual_executor, kwargs))
+
+        async def stream(self):
+            yield MessageChain().message("live bridged")
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.NativeExecutionOutputBridge",
+        Bridge,
+    )
+
+    outputs = [
+        chain
+        async for chain in run_live_agent(
+            executor,
+            max_step=9,
+            show_tool_use=False,
+            show_tool_call_result=True,
+            show_reasoning=True,
+            buffer_intermediate_messages=True,
+        )
+    ]
+
+    assert [chain.get_plain_text() for chain in outputs] == ["live bridged"]
+    assert calls == [
+        (
+            executor,
+            {
+                "max_step": 9,
+                "show_tool_use": False,
+                "show_tool_call_result": True,
+                "stream_to_general": False,
+                "show_reasoning": True,
+                "buffer_intermediate_messages": True,
             },
         )
     ]

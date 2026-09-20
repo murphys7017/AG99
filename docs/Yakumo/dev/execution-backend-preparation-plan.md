@@ -1120,6 +1120,7 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 
 - 新增 `NativeExecutionOutputBridge`，显式持有 Native 响应到现有 AstrBot 可见输出的投影配置：工具状态、流式转换、推理显示与中间消息缓冲。
 - `run_agent()` 保留原签名，仅构造 Output Bridge 并转发其 stream；实际投影仍使用原有 `MessageChain`、`MessageEventResult` 和 `_send_core_event_message()`，没有引入第二套输出协议。
+- Live TTS 入口也只构造一次同一 Output Bridge，feeder 只消费 bridge 的文本流并交给既有音频队列；它不再重新传递或解释可见输出配置。
 - `NativeExecutionLoop` 不读取这些可见输出配置，Output Bridge 也不重新实现步骤、watcher 或 Native stream 关闭，两个 owner 的边界因此可独立验证。
 
 ## 非目标
