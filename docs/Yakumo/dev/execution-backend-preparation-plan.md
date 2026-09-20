@@ -1057,6 +1057,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 该边界不把命令 mailbox 误作执行队列，也不让 Core Head 运行 `run_agent()`；Native 执行循环、
   可见输出、TTS、历史保存与平台投递仍在当前 owner。定向 Core/Adapter 验证 102 项通过。
 
+### 2026-09-20 Head-first 停止信号取消
+
+- Native step loop 和停止观察器检测到 turn stop signal 后，统一调用
+  `NativeExecutorAdapter.request_cancellation()`。存在 Core Head 时，先由 Head 接受并写入
+  `cancelled`，再通过已绑定的 stop callback 请求 Native runner 停止。
+- 没有 Core Head 的兼容路径才直接请求 Native stop，并继续投影原有 cancelled 事实；这保证
+  非 Interaction 或旧桥接路径不会因迁移而失去停止能力。
+- 终态仍遵从 first-write 规则，重复 stop signal 不会产生第二个取消事件或重复 callback；用户
+  中止仍保持既有 `agent_aborted` 原因。此切片不改变命令 mailbox、可见输出、TTS 或执行队列语义。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

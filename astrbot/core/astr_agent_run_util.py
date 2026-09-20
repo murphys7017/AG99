@@ -252,6 +252,14 @@ class NativeExecutorAdapter:
     def request_stop(self) -> None:
         self._runner.request_stop()
 
+    def request_cancellation(self, *, metadata: dict | None = None):
+        """Route a stop signal through Core before falling back to Native stop."""
+
+        event = self._runner.run_context.context.event
+        if get_core_execution_head(event) is None:
+            self.request_stop()
+        return self.cancel(metadata=metadata)
+
     def release_from_core_head(self) -> bool:
         """Release this executor only after the Core session becomes terminal."""
 
@@ -511,7 +519,9 @@ async def run_agent(
         try:
             async for resp in step_stream:
                 if _should_stop_agent(astr_event):
-                    executor.request_stop()
+                    executor.request_cancellation(
+                        metadata={"reason": "agent_aborted"}
+                    )
 
                 if resp.kind == "aborted":
                     if can_buffer_llm_result:
@@ -749,7 +759,7 @@ async def run_agent(
 async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) -> None:
     while not executor.done():
         if _should_stop_agent(astr_event):
-            executor.request_stop()
+            executor.request_cancellation(metadata={"reason": "agent_aborted"})
             return
         await asyncio.sleep(0.5)
 

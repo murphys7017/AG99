@@ -260,6 +260,36 @@ def test_native_executor_adapter_releases_core_head(monkeypatch):
     assert calls == [("release", {"executor_id": "native"})]
 
 
+def test_native_executor_adapter_falls_back_to_direct_stop_without_head(monkeypatch):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: None,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+
+    adapter.request_cancellation(metadata={"reason": "agent_aborted"})
+
+    assert runner.stop_requested is True
+    assert emitted == [
+        (
+            event,
+            {
+                "kind": "cancelled",
+                "executor_id": "native",
+                "metadata": {"reason": "agent_aborted"},
+            },
+        )
+    ]
+
+
 def test_native_executor_adapter_projects_final_response_metadata():
     runner = FakeNativeRunner()
     runner.final_response = SimpleNamespace(
