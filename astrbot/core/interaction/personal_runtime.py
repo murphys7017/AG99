@@ -1905,13 +1905,14 @@ class PersonalRuntimeManager:
             )
             capture_plugin_output = getattr(controller, "capture_plugin_output", None)
             if callable(capture_plugin_output):
-                await capture_plugin_output(
-                    message,
-                    plugin_branch_event,
-                    mode="direct",
-                    finalize=finalize,
+                return bool(
+                    await capture_plugin_output(
+                        message,
+                        plugin_branch_event,
+                        mode="direct",
+                        finalize=finalize,
+                    )
                 )
-                return True
 
         active_turn = _ACTIVE_PERSONAL_TURN.get()
         if (

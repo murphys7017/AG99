@@ -30,7 +30,7 @@ class PluginOutputSink(Protocol):
         mode: str,
         finalize: bool,
         platform_extras: dict[str, Any] | None = None,
-    ) -> None: ...
+    ) -> bool: ...
 
 
 @dataclass(slots=True)
@@ -106,7 +106,7 @@ class PluginArtifactDeliveryCoordinator:
                     reserved_artifact_key = None
                     summary.suppressed_artifact_count += 1
                     continue
-                await self.output_controller.capture_plugin_output(
+                delivered = await self.output_controller.capture_plugin_output(
                     artifact.message,
                     event,
                     mode=artifact.mode,
@@ -123,6 +123,14 @@ class PluginArtifactDeliveryCoordinator:
                         },
                     },
                 )
+                if not delivered:
+                    await self.runtime.finish_delivery(
+                        artifact.delivery_key,
+                        PluginDeliveryDisposition.SUPPRESSED_BY_OUTPUT_POLICY,
+                    )
+                    reserved_artifact_key = None
+                    summary.suppressed_artifact_count += 1
+                    continue
                 await self.runtime.finish_delivery(
                     artifact.delivery_key,
                     PluginDeliveryDisposition.DELIVERED_INLINE,

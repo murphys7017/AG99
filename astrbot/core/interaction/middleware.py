@@ -601,7 +601,7 @@ class InteractionMiddleware:
                 for component in (message.chain or [])
             )
             output_mode = "direct" if has_non_plain else "persona"
-            await self.output_controller.capture_plugin_output(
+            delivered = await self.output_controller.capture_plugin_output(
                 message,
                 event,
                 mode=output_mode,
@@ -616,10 +616,14 @@ class InteractionMiddleware:
             raise
         await finish_interaction_turn_final_output(
             event,
-            InteractionFinalOutputStatus.DELIVERED,
+            (
+                InteractionFinalOutputStatus.DELIVERED
+                if delivered
+                else InteractionFinalOutputStatus.SUPPRESSED
+            ),
         )
-        event.set_extra("_interaction_runtime_output_handled", True)
-        return True
+        event.set_extra("_interaction_runtime_output_handled", delivered)
+        return delivered
 
     async def handle_active_turn_output(
         self,
@@ -630,17 +634,16 @@ class InteractionMiddleware:
     ) -> bool:
         """Emit output through the active turn's existing output transaction."""
         if not finalize:
-            await self.output_controller.capture_plugin_output(
+            return await self.output_controller.capture_plugin_output(
                 message,
                 turn.event,
                 mode="direct",
                 finalize=False,
             )
-            return True
         if not await reserve_interaction_turn_final_output(turn.event):
             return False
         try:
-            await self.output_controller.capture_plugin_output(
+            delivered = await self.output_controller.capture_plugin_output(
                 message,
                 turn.event,
                 mode="direct",
@@ -654,9 +657,13 @@ class InteractionMiddleware:
             raise
         await finish_interaction_turn_final_output(
             turn.event,
-            InteractionFinalOutputStatus.DELIVERED,
+            (
+                InteractionFinalOutputStatus.DELIVERED
+                if delivered
+                else InteractionFinalOutputStatus.SUPPRESSED
+            ),
         )
-        return True
+        return delivered
 
     @staticmethod
     def _has_routeable_user_content(event: AstrMessageEvent) -> bool:

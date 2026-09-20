@@ -323,6 +323,7 @@ class PluginExecutionRuntime:
             PluginDeliveryDisposition.DELIVERED_DELAYED,
             PluginDeliveryDisposition.SUPPRESSED_DUPLICATE,
             PluginDeliveryDisposition.SUPPRESSED_DUPLICATE_VISIBLE_OUTPUT,
+            PluginDeliveryDisposition.SUPPRESSED_BY_OUTPUT_POLICY,
             PluginDeliveryDisposition.DELAYED_TARGET_UNSUPPORTED,
             PluginDeliveryDisposition.DELIVERY_FAILED,
         }:

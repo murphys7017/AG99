@@ -7,7 +7,6 @@ from typing import Any
 
 from astrbot.core.message.message_event_result import MessageChain
 
-
 PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY = (
     "_interaction_output_delivery_identity"
 )
@@ -43,6 +42,7 @@ class PluginDeliveryDisposition(str, Enum):
     DELIVERED_DELAYED = "delivered_delayed"
     SUPPRESSED_DUPLICATE = "suppressed_duplicate"
     SUPPRESSED_DUPLICATE_VISIBLE_OUTPUT = "suppressed_duplicate_visible_output"
+    SUPPRESSED_BY_OUTPUT_POLICY = "suppressed_by_output_policy"
     DELAYED_TARGET_UNSUPPORTED = "delayed_delivery_target_unsupported"
     DELIVERY_FAILED = "delivery_failed"
 

@@ -26,6 +26,8 @@ from .plugin_execution_types import (
 )
 from .runtime_event import RuntimeObservationEvent
 from .turn_state import (
+    InteractionFinalOutputStatus,
+    ensure_interaction_turn_state,
     get_interaction_turn_committed_conversation_id,
     get_interaction_turn_committed_turn_id,
     get_interaction_turn_delayed_history_skip_reason,
@@ -236,17 +238,32 @@ class DelayedPluginDeliveryCoordinator:
                 )
                 continue
             if not delivered:
+                output_policy_suppressed = (
+                    delivery_details.get("delivery_drop_reason")
+                    == "output_policy_suppressed"
+                )
                 await self._finish_artifacts(
                     reserved,
-                    PluginDeliveryDisposition.DELIVERY_FAILED,
+                    (
+                        PluginDeliveryDisposition.SUPPRESSED_BY_OUTPUT_POLICY
+                        if output_policy_suppressed
+                        else PluginDeliveryDisposition.DELIVERY_FAILED
+                    ),
                 )
-                summary.failed_group_count += 1
+                if output_policy_suppressed:
+                    summary.suppressed_group_count += 1
+                else:
+                    summary.failed_group_count += 1
                 self._log_group_result(
                     context,
                     result,
                     group_id,
                     profile,
-                    "delivery_failed",
+                    (
+                        "suppressed_by_output_policy"
+                        if output_policy_suppressed
+                        else "delivery_failed"
+                    ),
                     artifacts=reserved,
                     reserved_at=reserved_at,
                     delayed_turn_id=str(
@@ -334,13 +351,12 @@ class DelayedPluginDeliveryCoordinator:
         if profile == "delayed_plugin_direct":
             async def deliver_direct(runtime_event, turn):
                 prepare_parent_context(runtime_event)
-                await context.middleware.handle_runtime_output(
+                return await context.middleware.handle_runtime_output(
                     runtime_event,
                     turn,
                     message,
                     platform_extras=self._combine_platform_extras(artifacts),
                 )
-                return True
 
             handler = deliver_direct
         else:
@@ -376,13 +392,26 @@ class DelayedPluginDeliveryCoordinator:
         if delivered and not committed_turn_id and not history_status:
             history_status = "history_not_committed"
             record_interaction_turn_delayed_history_skip(event, history_status)
+        final_output_status = ensure_interaction_turn_state(event).final_output_status
+        output_policy_suppressed = (
+            not delivered
+            and final_output_status is InteractionFinalOutputStatus.SUPPRESSED
+        )
         return delivered, {
             "delayed_turn_id": metadata["delayed_turn_id"],
             "written_to_history": bool(
                 delivered and committed_turn_id and not history_status
             ),
             "history_status": history_status,
-            "delivery_drop_reason": "" if delivered else "delivery_rejected",
+            "delivery_drop_reason": (
+                ""
+                if delivered
+                else (
+                    "output_policy_suppressed"
+                    if output_policy_suppressed
+                    else "delivery_rejected"
+                )
+            ),
         }
 
     async def _reserve_artifacts(

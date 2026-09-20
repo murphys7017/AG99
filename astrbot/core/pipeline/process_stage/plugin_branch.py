@@ -227,13 +227,14 @@ class PluginBranchOutputSink:
         *,
         mode: str = "direct",
         finalize: bool = True,
-    ) -> None:
+    ) -> bool:
         self._append(
             message,
             event=_event,
             mode=mode,
             finalize=finalize,
         )
+        return True
 
     async def capture_send(
         self,

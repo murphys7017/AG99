@@ -520,7 +520,7 @@ class InteractionOutputController:
         mode: str = PluginOutputMode.DIRECT.value,
         finalize: bool = True,
         platform_extras: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Entry point for plugin-origin output through the Output Runtime.
 
         Two modes are supported:
@@ -533,7 +533,7 @@ class InteractionOutputController:
         followed by another output in the same interaction turn.
         """
         if message is None:
-            return
+            return False
 
         set_interaction_turn_plugin_output_metadata(event, mode=mode)
         resolved_kind = "plugin_direct"
@@ -567,6 +567,14 @@ class InteractionOutputController:
                 resolved_kind = "plugin_direct"
 
         set_interaction_turn_plugin_output_metadata(event, kind=resolved_kind)
+        if resolved_kind == "plugin_persona":
+            message = await self._prepare_model_expression(
+                event,
+                message,
+                message_kind=resolved_kind,
+            )
+            if message is None:
+                return False
         semantic_text = message.get_plain_text()
         message_id = self._next_output_segment_id(event, resolved_kind)
         deferred_by_transaction = finalize and self._begin_plugin_output_transaction(
@@ -608,9 +616,10 @@ class InteractionOutputController:
             memory_relevant=finalize and not deferred_by_transaction,
         )
         if not finalize or deferred_by_transaction:
-            return
+            return True
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
+        return True
 
     async def capture_plugin_streaming(
         self,
@@ -619,7 +628,7 @@ class InteractionOutputController:
         *,
         mode: str = PluginOutputMode.DIRECT.value,
         use_fallback: bool = False,
-    ) -> None:
+    ) -> bool:
         """Deliver plugin-origin streaming output without core stream semantics.
 
         Persona rewriting needs the complete semantic text before it can form one
@@ -642,13 +651,13 @@ class InteractionOutputController:
                 kind="plugin_persona",
             )
             if text:
-                await self.capture_plugin_output(
+                return await self.capture_plugin_output(
                     MessageChain([Plain(text)]),
                     event,
                     mode=resolved_mode.value,
                     finalize=True,
                 )
-            return
+            return False
 
         resolved_kind = "plugin_direct"
         set_interaction_turn_plugin_output_metadata(
@@ -701,7 +710,7 @@ class InteractionOutputController:
             raise
         text = "".join(stream_text_parts).strip()
         if not text:
-            return
+            return True
         self._record_visible_output(
             event,
             message_kind=resolved_kind,
@@ -711,9 +720,10 @@ class InteractionOutputController:
             memory_relevant=not deferred_by_transaction,
         )
         if deferred_by_transaction:
-            return
+            return True
         self._materialize_finalized_turn(event)
         await self._persist_interaction_turn(event)
+        return True
 
     async def finalize_plugin_output_transaction(
         self,

@@ -223,10 +223,10 @@ async def test_event_output_adapter_owns_event_send_routing():
     event = Event()
     platform_send = event.send
     controller = SimpleNamespace(
-        capture_message_chain=AsyncMock(),
-        capture_plugin_output=AsyncMock(),
+        capture_message_chain=AsyncMock(return_value=True),
+        capture_plugin_output=AsyncMock(return_value=True),
         capture_streaming=AsyncMock(),
-        capture_plugin_streaming=AsyncMock(),
+        capture_plugin_streaming=AsyncMock(return_value=True),
         capture_visible_completion=AsyncMock(),
     )
     InteractionEventOutputAdapter.install(event, controller)
@@ -259,6 +259,13 @@ async def test_event_output_adapter_owns_event_send_routing():
         event,
         use_fallback=True,
     )
+
+    event._has_send_oper = False
+    event.set_extra(OUTPUT_ORIGIN_EXTRA_KEY, "plugin")
+    controller.capture_plugin_streaming.return_value = False
+    suppressed_stream = chunks()
+    await event.send_streaming(suppressed_stream)
+    assert event._has_send_oper is False
 
     await event.complete_visible_turn()
     controller.capture_visible_completion.assert_awaited_once_with(event)
@@ -1450,6 +1457,9 @@ async def test_plugin_persona_output_keeps_non_text_components():
     controller._next_output_segment_id = lambda _event, _kind: "segment-1"
     controller._begin_plugin_output_transaction = lambda _event: False
     controller._record_plugin_assistant_artifacts = Mock()
+    controller._prepare_model_expression = AsyncMock(
+        side_effect=lambda _event, message, **_kwargs: message
+    )
     controller.materialize_interaction_outbound_message = AsyncMock(
         side_effect=lambda _event, message, **_kwargs: (message, {})
     )

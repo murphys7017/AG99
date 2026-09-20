@@ -33,6 +33,7 @@ from astrbot.core.interaction.turn_coordinator import (
     PluginJobLaunch,
 )
 from astrbot.core.interaction.turn_state import (
+    InteractionFinalOutputStatus,
     ensure_interaction_turn_state,
     record_interaction_turn_visible_message_fingerprint,
 )
@@ -300,6 +301,7 @@ async def test_handled_gate_freezes_the_t1_artifact_snapshot():
         ):
             del mode, finalize, platform_extras
             delivered.append(message.get_plain_text())
+            return True
 
     delivery = PluginArtifactDeliveryCoordinator(runtime, OutputSink())
     summary = await delivery.deliver_inline(
@@ -353,6 +355,7 @@ async def test_stopped_gate_keeps_later_same_handler_output_deliverable():
         ):
             del mode, finalize, platform_extras
             delivered.append(message.get_plain_text())
+            return True
 
     delivery = PluginArtifactDeliveryCoordinator(runtime, OutputSink())
     summary = await delivery.deliver_inline(
@@ -364,6 +367,57 @@ async def test_stopped_gate_keeps_later_same_handler_output_deliverable():
     assert result.t1_artifact_count is None
     assert summary.delivered_artifact_count == 1
     assert delivered == ["stopped result"]
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_inline_persona_suppression_is_not_recorded_as_delivered():
+    runtime = PluginExecutionRuntime()
+    artifact = PluginOutputArtifact(
+        sequence=0,
+        kind=PluginArtifactKind.SEMANTIC,
+        message=MessageChain([Plain("blocked result")]),
+        mode="persona",
+        finalize=True,
+        plugin_job_id="job-1",
+        handler_invocation_id="handler-1",
+    )
+    result = PluginBranchResult(
+        plugin_job_id="job-1",
+        gate_resolution=PluginGateResolution.HANDLED,
+        job_state=PluginJobState.COMPLETED,
+        output_artifacts=[artifact],
+    )
+
+    class OutputSink:
+        async def capture_plugin_output(
+            self,
+            message,
+            _event,
+            *,
+            mode,
+            finalize,
+            platform_extras=None,
+        ):
+            del message, mode, finalize, platform_extras
+            return False
+
+    event = _CoordinatorEvent()
+    delivery = PluginArtifactDeliveryCoordinator(runtime, OutputSink())
+    summary = await delivery.deliver_inline(
+        event,
+        result,
+        claim_final_output=True,
+    )
+
+    assert summary.delivered_artifact_count == 0
+    assert summary.suppressed_artifact_count == 1
+    assert not summary.final_output_delivered
+    assert (
+        await runtime.get_delivery_disposition(artifact.delivery_key)
+        is PluginDeliveryDisposition.SUPPRESSED_BY_OUTPUT_POLICY
+    )
+    assert ensure_interaction_turn_state(event).final_output_status.value == "suppressed"
     await runtime.shutdown()
 
 
@@ -506,6 +560,73 @@ async def test_delayed_media_duplicate_is_suppressed_before_t2_admission(
     assert (
         await runtime.get_delivery_disposition(artifact.delivery_key)
         is PluginDeliveryDisposition.SUPPRESSED_DUPLICATE_VISIBLE_OUTPUT
+    )
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_delayed_persona_policy_suppression_is_not_recorded_as_failure():
+    runtime = PluginExecutionRuntime()
+    event = _CoordinatorEvent()
+    artifact = PluginOutputArtifact(
+        sequence=0,
+        kind=PluginArtifactKind.SEMANTIC,
+        message=MessageChain([Plain("blocked result")]),
+        mode="persona",
+        finalize=True,
+        plugin_job_id="job-1",
+        handler_invocation_id="handler-1",
+    )
+    result = PluginBranchResult(
+        plugin_job_id="job-1",
+        gate_resolution=PluginGateResolution.EXPIRED,
+        output_artifacts=[artifact],
+    )
+
+    class Middleware:
+        async def handle_runtime_observation(self, runtime_event, _turn):
+            ensure_interaction_turn_state(
+                runtime_event
+            ).final_output_status = InteractionFinalOutputStatus.SUPPRESSED
+            return False
+
+    class Manager:
+        async def submit_delayed_plugin_event(
+            self,
+            runtime_event,
+            _config_id,
+            _plugin_context,
+            _runtime_config,
+            handler,
+            *,
+            profile,
+        ):
+            assert profile == "delayed_plugin_expression"
+            return await handler(runtime_event, SimpleNamespace())
+
+    context = SimpleNamespace(
+        parent_event=event,
+        parent_turn_id="turn-1",
+        parent_conversation_id="conversation-1",
+        resolve_parent_conversation_id=lambda: "conversation-1",
+        config_id="default",
+        plugin_context=SimpleNamespace(),
+        runtime_config={},
+        personal_runtime_manager=Manager(),
+        middleware=Middleware(),
+    )
+
+    summary = await DelayedPluginDeliveryCoordinator(runtime).deliver(
+        context,
+        result,
+    )
+
+    assert summary.delivered_group_count == 0
+    assert summary.failed_group_count == 0
+    assert summary.suppressed_group_count == 1
+    assert (
+        await runtime.get_delivery_disposition(artifact.delivery_key)
+        is PluginDeliveryDisposition.SUPPRESSED_BY_OUTPUT_POLICY
     )
     await runtime.shutdown()
 

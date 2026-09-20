@@ -69,16 +69,19 @@ class InteractionEventOutputAdapter:
         controller = InteractionEventOutputAdapter._get_controller(event)
         origin = event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
         if origin == OutputOrigin.CORE.value:
-            await controller.capture_message_chain(message, event)
+            delivered = await controller.capture_message_chain(message, event)
         else:
-            await controller.capture_plugin_output(
+            delivered = await controller.capture_plugin_output(
                 message,
                 event,
                 mode=event.get_extra("_interaction_plugin_output_mode", "direct"),
             )
         event._has_send_oper = (
             previous_has_send_oper
-            if is_interaction_turn_pipeline_output_suppressed(event)
+            if (
+                not delivered
+                or is_interaction_turn_pipeline_output_suppressed(event)
+            )
             else True
         )
 
@@ -93,6 +96,7 @@ class InteractionEventOutputAdapter:
             await capture.capture_stream(generator)
             return
 
+        previous_has_send_oper = event._has_send_oper
         controller = InteractionEventOutputAdapter._get_controller(event)
         origin = event.get_extra(OUTPUT_ORIGIN_EXTRA_KEY)
         if origin == OutputOrigin.CORE.value:
@@ -101,14 +105,22 @@ class InteractionEventOutputAdapter:
                 event,
                 use_fallback=use_fallback,
             )
+            delivered = True
         else:
-            await controller.capture_plugin_streaming(
+            delivered = await controller.capture_plugin_streaming(
                 generator,
                 event,
                 mode=event.get_extra("_interaction_plugin_output_mode", "direct"),
                 use_fallback=use_fallback,
             )
-        event._has_send_oper = True
+        event._has_send_oper = (
+            previous_has_send_oper
+            if (
+                not delivered
+                or is_interaction_turn_pipeline_output_suppressed(event)
+            )
+            else True
+        )
 
     @staticmethod
     async def _complete_visible_turn(event: AstrMessageEvent) -> None:
