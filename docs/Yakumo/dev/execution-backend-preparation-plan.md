@@ -1134,6 +1134,7 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - Core Head 在激活 Executor 时同时绑定停止能力和同步补充输入能力；`provide_input` 只有在 Native 真正返回 follow-up ticket 后才记录并发布命令。
 - `NativeExecutorAdapter.follow_up()` 在有 Head 时经该入口路由，无 Head 的兼容路径仍直接调用 Native runner；Personal 的 ticket、消费确认、撤回和顺序激活语义保持不变。
 - 命令 mailbox 继续作为可选观察边界，不承担唯一投递，因此不存在订阅前接受输入导致丢命令的窗口。
+- 输出桥、Native loop 与 Personal follow-up 通过 Adapter 的只读 event 事实访问执行事件，不再依赖 Native `run_context.context.event` 的内部形状。
 
 ### 2026-09-20 Phase 9 当前状态校正
 

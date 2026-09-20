@@ -313,11 +313,7 @@ class _FollowUpCoordinator:
         executor = self.active_executor
         if not normalized_actor_id or executor is None:
             return None
-        executor_event = getattr(
-            getattr(executor.run_context, "context", None),
-            "event",
-            None,
-        )
+        executor_event = getattr(executor, "event", None)
         if executor_event is None:
             return None
         if str(executor_event.get_sender_id() or "").strip() != normalized_actor_id:

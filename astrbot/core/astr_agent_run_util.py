@@ -85,6 +85,13 @@ class NativeExecutorAdapter:
         return self._runner.run_context
 
     @property
+    def event(self):
+        """Return the active AstrBot event without exposing Native context shape."""
+
+        context = getattr(self._runner.run_context, "context", None)
+        return getattr(context, "event", None)
+
+    @property
     def streaming(self) -> bool:
         """Expose the runner's response mode at the executor boundary."""
         return self._runner.streaming
@@ -101,8 +108,7 @@ class NativeExecutorAdapter:
     def follow_up(self, *, message_text: str):
         """Capture a follow-up through Core when this execution has a Head."""
 
-        context = getattr(self._runner.run_context, "context", None)
-        event = getattr(context, "event", None)
+        event = self.event
         execution_head = get_core_execution_head(event) if event is not None else None
         if execution_head is not None:
             return execution_head.provide_input(
@@ -127,7 +133,7 @@ class NativeExecutorAdapter:
         metadata: dict | None = None,
     ):
         """Publish one Native fact through the owning Core execution boundary."""
-        event = self._runner.run_context.context.event
+        event = self.event
         execution_head = get_core_execution_head(event)
         if execution_head is not None and execution_head.terminal_event is not None:
             return execution_head.terminal_event.execution
@@ -269,7 +275,7 @@ class NativeExecutorAdapter:
     def request_cancellation(self, *, metadata: dict | None = None):
         """Route a stop signal through Core before falling back to Native stop."""
 
-        event = self._runner.run_context.context.event
+        event = self.event
         if get_core_execution_head(event) is None:
             self.request_stop()
         return self.cancel(metadata=metadata)
@@ -277,9 +283,7 @@ class NativeExecutorAdapter:
     def release_from_core_head(self) -> bool:
         """Release this executor only after the Core session becomes terminal."""
 
-        execution_head = get_core_execution_head(
-            self._runner.run_context.context.event
-        )
+        execution_head = get_core_execution_head(self.event)
         if execution_head is None:
             return False
         return execution_head.release_executor(executor_id=self.executor_id)
@@ -373,7 +377,7 @@ class NativeExecutionLoop:
     def __init__(self, executor: NativeExecutorAdapter, *, max_step: int) -> None:
         self._executor = executor
         self._max_step = max_step
-        self._event = executor.run_context.context.event
+        self._event = executor.event
         self.aborted = False
 
     async def stream(self) -> AsyncGenerator[ExecutorStreamItem, None]:
@@ -628,7 +632,7 @@ async def _stream_native_agent_output(
     show_reasoning: bool = False,
     buffer_intermediate_messages: bool = False,
 ) -> AsyncGenerator[MessageChain | None, None]:
-    astr_event = executor.run_context.context.event
+    astr_event = executor.event
     tool_name_by_call_id: dict[str, str] = {}
     buffered_llm_chains: list[MessageChain] = []
     can_buffer_llm_result = _should_buffer_llm_result(
@@ -980,7 +984,7 @@ async def _stream_live_native_agent_output(
 
     # 发送 TTS 统计信息
     try:
-        astr_event = executor.run_context.context.event
+        astr_event = executor.event
         if astr_event.get_platform_name() == "webchat":
             tts_duration = tts_end_time - tts_start_time
             await _send_core_event_message(

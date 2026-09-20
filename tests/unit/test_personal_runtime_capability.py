@@ -983,6 +983,10 @@ async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
                 context=SimpleNamespace(event=first_event)
             )
 
+        @property
+        def event(self):
+            return self.run_context.context.event
+
         def follow_up(self, *, message_text: str) -> Ticket:
             assert message_text == "hello"
             return Ticket()
