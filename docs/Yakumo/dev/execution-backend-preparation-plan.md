@@ -1113,7 +1113,8 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 新增 `NativeExecutionLoop`，只负责 Native 步骤驱动、最大步数、停止观察、`working/progress` 事件和 stream 关闭。
 - `run_agent()` 保留为现有可见输出桥：它仍负责文本、工具状态、流式分段、TTS 输入、错误文案和 `MessageEventResult`，没有将这些职责移入 Core Head。
 - 保持原有中止顺序：停止请求先经 Adapter/Core，`aborted` 先清理 watcher 再交由输出桥；每个 step 仍在 `finally` 关闭 Native stream。
-- 新增两条边界测试覆盖 `working -> progress` 事件、终态 step 输出以及非流式文本输出链；在隔离 `ASTRBOT_ROOT` 下，完整 Native Adapter 套件 `17 passed`。当前未做真实 OLV 或取消/超时验收。
+- `aborted` 不再由 loop 交叉边界直接 yield；loop 先关闭 Native stream 并记录状态，输出桥在 loop 完整收尾后处理缓冲和用户中止标记。
+- 新增两条边界测试覆盖 `working -> progress` 事件、终态 step 输出以及非流式文本输出链；在隔离 `ASTRBOT_ROOT` 下，完整 Native Adapter 套件 `18 passed`。当前未做真实 OLV 或取消/超时验收。
 
 ## 非目标
 

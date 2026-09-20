@@ -381,6 +381,7 @@ class NativeExecutionLoop:
         self._executor = executor
         self._max_step = max_step
         self._event = executor.run_context.context.event
+        self.aborted = False
 
     async def stream(self) -> AsyncGenerator[ExecutorStreamItem, None]:
         """Yield normalized responses while preserving Native loop controls."""
@@ -417,13 +418,7 @@ class NativeExecutionLoop:
                         )
 
                     if response.kind == "aborted":
-                        if not stop_watcher.done():
-                            stop_watcher.cancel()
-                            try:
-                                await stop_watcher
-                            except asyncio.CancelledError:
-                                pass
-                        yield response
+                        self.aborted = True
                         return
 
                     if _should_stop_agent(self._event):
@@ -586,23 +581,6 @@ async def run_agent(
     loop = NativeExecutionLoop(executor, max_step=max_step)
     try:
         async for resp in loop.stream():
-            if resp.kind == "aborted":
-                if can_buffer_llm_result:
-                    merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
-                    if merged_chain:
-                        astr_event.set_result(
-                            MessageEventResult(
-                                chain=merged_chain.chain,
-                                result_content_type=ResultContentType.LLM_RESULT,
-                            ),
-                        )
-                        yield merged_chain
-                        astr_event.clear_result()
-                astr_event.set_extra("agent_user_aborted", True)
-                astr_event.set_extra("agent_stop_requested", False)
-                executor.cancel(metadata={"reason": "agent_aborted"})
-                return
-
             if resp.kind == "tool_call_result":
                 msg_chain = _require_executor_stream_chain(resp)
 
@@ -709,6 +687,23 @@ async def run_agent(
                     # display the reasoning content only when configured
                     continue
                 yield chain
+
+        if loop.aborted:
+            if can_buffer_llm_result:
+                merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)
+                if merged_chain:
+                    astr_event.set_result(
+                        MessageEventResult(
+                            chain=merged_chain.chain,
+                            result_content_type=ResultContentType.LLM_RESULT,
+                        ),
+                    )
+                    yield merged_chain
+                    astr_event.clear_result()
+            astr_event.set_extra("agent_user_aborted", True)
+            astr_event.set_extra("agent_stop_requested", False)
+            executor.cancel(metadata={"reason": "agent_aborted"})
+            return
 
         if can_buffer_llm_result and executor.done():
             merged_chain = _merge_buffered_llm_chains(buffered_llm_chains)

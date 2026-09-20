@@ -192,6 +192,46 @@ async def test_native_execution_loop_keeps_progress_and_output_boundary(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_native_execution_loop_closes_before_reporting_abort(monkeypatch):
+    closed = []
+
+    class Event:
+        def is_stopped(self):
+            return True
+
+        def get_extra(self, key):
+            return None
+
+    class Runner(FakeNativeRunner):
+        def __init__(self):
+            super().__init__()
+            self.completed = False
+            self.run_context.context = SimpleNamespace(event=Event())
+
+        async def step(self):
+            try:
+                yield AgentResponse(type="aborted", data={})
+            finally:
+                closed.append(True)
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda event, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda event: None,
+    )
+
+    loop = NativeExecutionLoop(NativeExecutorAdapter(Runner()), max_step=1)
+    items = [item async for item in loop.stream()]
+
+    assert items == []
+    assert loop.aborted is True
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
 async def test_run_agent_preserves_non_streaming_visible_output(monkeypatch):
     class Event:
         def __init__(self):
