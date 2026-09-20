@@ -1028,6 +1028,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
   ProviderRequest 反向猜测 `execution_id` 或能力来源；当前 Native 请求内容和调用时序不变。
 - `CoreExecutionSpec` 仍是进程内准备事实，不是远程协议；第三方 Executor 尚未接入。
 
+### 2026-09-20 Native 终态投影收口
+
+- `NativeExecutorAdapter.finalize()` 统一根据 Native 的完成状态和最终响应投影
+  `artifact_ready -> completed` 或 `failed`；`InternalAgentSubStage` 不再重新解释
+  Native 成功/失败并选择 artifact metadata。
+- 外层取消、deadline 和异常仍通过显式 `cancel()` / `fail()` 路径处理，保留 Core Head
+  的终态优先级和迟到结果保护；本切片不改变历史保存、输出、TTS 或 Ledger 时序。
+- 这一步进一步缩小了 Stage 对 Native runner 状态的解释职责，但尚未把执行循环本身迁入
+  Core Head，也没有创建新的 Executor Body。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

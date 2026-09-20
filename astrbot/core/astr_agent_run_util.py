@@ -150,6 +150,13 @@ class NativeExecutorAdapter:
             metadata=metadata,
         )
 
+    def finalize(self):
+        """Project the Native terminal state into one Core terminal outcome."""
+
+        if self.completed_successfully():
+            return self.complete(artifact=self.final_response_artifact())
+        return self.fail(metadata=self.failure_metadata())
+
     def cancel(self, *, metadata: dict | None = None):
         """Report cancellation through the Core lifecycle and stop callback."""
         return self.emit_event(

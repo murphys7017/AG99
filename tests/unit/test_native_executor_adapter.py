@@ -142,6 +142,11 @@ async def test_native_executor_adapter_closes_native_stream_on_early_exit():
 def test_native_executor_adapter_emits_through_core_boundary(monkeypatch):
     event = object()
     runner = FakeNativeRunner()
+    runner.final_response = SimpleNamespace(
+        role="assistant",
+        completion_text="done",
+        result_chain=None,
+    )
     runner.run_context.context = SimpleNamespace(event=event)
     adapter = NativeExecutorAdapter(runner)
     emitted = []
@@ -277,6 +282,35 @@ def test_native_executor_adapter_projects_final_response_metadata():
         "reason": "runner_error",
         "error": "hello",
     }
+
+
+def test_native_executor_adapter_finalizes_success_and_failure(monkeypatch):
+    event = object()
+    runner = FakeNativeRunner()
+    runner.final_response = SimpleNamespace(
+        role="assistant",
+        completion_text="done",
+        result_chain=None,
+    )
+    runner.run_context.context = SimpleNamespace(event=event)
+    adapter = NativeExecutorAdapter(runner)
+    emitted = []
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.get_core_execution_head",
+        lambda actual_event: None,
+    )
+
+    adapter.finalize()
+    assert [item[1]["kind"] for item in emitted] == ["artifact_ready", "completed"]
+
+    emitted.clear()
+    runner.completed = False
+    adapter.finalize()
+    assert [item[1]["kind"] for item in emitted] == ["failed"]
 
 
 def test_native_executor_adapter_builds_final_response_chain():
