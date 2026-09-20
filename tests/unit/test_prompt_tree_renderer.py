@@ -456,7 +456,7 @@ def test_render_engine_uses_minimax_provider_output_contract_capability():
     assert result.compiled_output_contract.tool_name == "persona_expression"
 
 
-def test_render_engine_uses_prompt_only_for_minimax_token_plan_contract():
+def test_render_engine_uses_protocol_tool_call_for_minimax_token_plan_contract():
     from astrbot.core.output_contract import OutputContract
     from astrbot.core.provider.sources.minimax_token_plan_source import (
         ProviderMiniMaxTokenPlan,
@@ -485,12 +485,12 @@ def test_render_engine_uses_prompt_only_for_minimax_token_plan_contract():
     )
 
     assert result.compiled_output_contract is not None
-    assert result.compiled_output_contract.strategy == "prompt_only"
-    assert result.compiled_output_contract.degraded is True
-    assert "仅返回一个" in (result.compiled_output_contract.fallback_prompt_text or "")
+    assert result.compiled_output_contract.strategy == "protocol_tool_call"
+    assert result.compiled_output_contract.degraded is False
+    assert result.compiled_output_contract.tool_name == "persona_expression"
 
 
-def test_minimax_token_plan_config_cannot_enable_unsupported_required_tool_choice():
+def test_minimax_token_plan_config_can_enable_required_tool_choice():
     from astrbot.core.output_contract import OutputContract
     from astrbot.core.provider.sources.minimax_token_plan_source import (
         ProviderMiniMaxTokenPlan,
@@ -520,7 +520,7 @@ def test_minimax_token_plan_config_cannot_enable_unsupported_required_tool_choic
     )
 
     assert result.compiled_output_contract is not None
-    assert result.compiled_output_contract.strategy == "prompt_only"
+    assert result.compiled_output_contract.strategy == "protocol_tool_call"
 
 
 def test_render_engine_can_disable_minimax_tool_call_from_provider_config():
@@ -553,6 +553,36 @@ def test_render_engine_can_disable_minimax_tool_call_from_provider_config():
     assert result.metadata["renderer_name"] == "minimax"
     assert result.compiled_output_contract is not None
     assert result.compiled_output_contract.strategy == "prompt_only"
+
+
+def test_minimax_token_plan_resolves_required_anthropic_tool_choice():
+    from astrbot.core.output_contract import CompiledOutputContract, OutputContract
+    from astrbot.core.provider.sources.anthropic_source import ProviderAnthropic
+
+    contract = OutputContract(
+        mode="tool_call",
+        strict=True,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}},
+        preferred_tool_name="persona_expression",
+        allow_text_fallback=False,
+    )
+    compiled = CompiledOutputContract(
+        contract=contract,
+        strategy="protocol_tool_call",
+        tool_name="persona_expression",
+        tool_schema=contract.schema,
+    )
+
+    tool_set, tool_choice = ProviderAnthropic._resolve_output_contract(
+        contract,
+        compiled,
+        None,
+        "auto",
+    )
+
+    assert tool_set is not None
+    assert tool_set.names() == ["persona_expression"]
+    assert tool_choice == "required"
 
 
 def test_openai_prompt_renderer_preserves_openai_messages_and_tool_schema():

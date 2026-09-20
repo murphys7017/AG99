@@ -1206,6 +1206,17 @@ async def test_persona_expression_keeps_prompt_only_contract(
     assert provider.calls[0]["compiled_output_contract"] is compiled
 
 
+def test_minimax_token_plan_supports_required_output_tool_call():
+    from astrbot.core.provider.sources.minimax_token_plan_source import (
+        ProviderMiniMaxTokenPlan,
+    )
+
+    assert ProviderMiniMaxTokenPlan.supports_output_contract_strategy(
+        None,
+        "protocol_tool_call",
+    )
+
+
 @pytest.mark.asyncio
 async def test_persona_expression_reuses_official_request_and_response_hooks(
     monkeypatch,
