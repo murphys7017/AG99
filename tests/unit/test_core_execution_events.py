@@ -1,14 +1,10 @@
-import asyncio
-
 import pytest
 
 from astrbot.core.execution import (
     CORE_EXECUTION_HEAD_EXTRA_KEY,
     CORE_EXECUTION_SPEC_EXTRA_KEY,
     CoreCommand,
-    CoreCommandDisposition,
     CoreCommandKind,
-    CoreCommandOrigin,
     CoreEvent,
     CoreExecutionArtifact,
     CoreExecutionDeadlineView,
@@ -236,92 +232,6 @@ def test_core_execution_head_publishes_each_event_once_and_routes_cancel():
     assert [item.sequence for item in observed] == [1, 2]
     assert isinstance(get_core_execution_head(event), CoreExecutionHead)
     assert get_core_execution_lifecycle(event) is head.lifecycle
-
-
-def test_core_execution_head_returns_idempotent_command_receipts():
-    event = _interaction_event()
-    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
-    head = start_core_execution_head(event, spec)
-    command = CoreCommand(
-        execution_id=spec.execution_id,
-        turn_id=spec.turn_id,
-        kind=CoreCommandKind.CANCEL,
-        reason="user_cancelled",
-    )
-
-    first = head.dispatch_command(command)
-    second = head.dispatch_command(command)
-
-    assert first.disposition is CoreCommandDisposition.ACCEPTED
-    assert first.accepted is True
-    assert first.origin is CoreCommandOrigin.PERSONAL
-    assert first.session_status is CoreExecutionSessionStatus.CREATED
-    assert second.disposition is CoreCommandDisposition.DUPLICATE
-    assert second.accepted is False
-    assert second.session_status is CoreExecutionSessionStatus.CREATED
-
-
-@pytest.mark.asyncio
-async def test_core_execution_head_command_mailbox_receives_only_accepted_commands():
-    event = _interaction_event()
-    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
-    head = start_core_execution_head(event, spec)
-    mailbox = head.subscribe_command_mailbox()
-    command = CoreCommand(
-        execution_id=spec.execution_id,
-        turn_id=spec.turn_id,
-        kind=CoreCommandKind.CANCEL,
-        reason="user_cancelled",
-    )
-
-    first = head.dispatch_command(command)
-    duplicate = head.dispatch_command(command)
-
-    assert first.accepted is True
-    assert duplicate.accepted is False
-    assert await mailbox.receive() is command
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(mailbox.receive(), timeout=0.01)
-
-
-@pytest.mark.asyncio
-async def test_core_execution_head_command_mailbox_receives_initial_submit():
-    event = _interaction_event()
-    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
-    head = bind_core_execution_head(event, spec)
-    mailbox = head.subscribe_command_mailbox()
-
-    assert head.start() is True
-    command = await mailbox.receive()
-
-    assert command.kind is CoreCommandKind.SUBMIT
-    assert command.execution_spec is spec
-
-
-@pytest.mark.asyncio
-async def test_core_execution_head_command_mailbox_does_not_replay_initial_submit():
-    event = _interaction_event()
-    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
-    head = start_core_execution_head(event, spec)
-    mailbox = head.subscribe_command_mailbox()
-
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(mailbox.receive(), timeout=0.01)
-
-
-@pytest.mark.asyncio
-async def test_core_execution_head_close_closes_command_mailbox_without_changing_state():
-    event = _interaction_event()
-    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
-    head = start_core_execution_head(event, spec)
-    mailbox = head.subscribe_command_mailbox()
-
-    head.close()
-
-    assert mailbox.closed is True
-    assert head.session.status is CoreExecutionSessionStatus.CREATED
-    with pytest.raises(StopAsyncIteration):
-        await mailbox.receive()
 
 
 @pytest.mark.asyncio
@@ -560,8 +470,6 @@ async def test_core_execution_head_routes_accepted_supplemental_input():
         stop_callback=lambda: None,
         input_callback=lambda text: accepted.append(text) or "ticket-1",
     )
-    mailbox = head.subscribe_command_mailbox()
-
     ticket = head.provide_input(
         executor_id="native",
         message_text="  continue the task  ",
@@ -569,9 +477,6 @@ async def test_core_execution_head_routes_accepted_supplemental_input():
 
     assert ticket == "ticket-1"
     assert accepted == ["continue the task"]
-    command = await mailbox.receive()
-    assert command.kind is CoreCommandKind.PROVIDE_INPUT
-    assert command.payload == {"message_text": "continue the task"}
 
 
 def test_core_execution_head_fail_emits_only_one_terminal_fact():
@@ -1352,8 +1257,8 @@ def test_core_execution_session_orders_events_and_accepts_commands_once():
         execution_spec=spec,
     )
 
-    assert session.accept_command(submit) is True
-    assert session.accept_command(submit) is False
+    assert session._record_command(submit) is True
+    assert session._record_command(submit) is False
     submitted = session.record_event(
         CoreExecutionEvent.from_spec(
             spec,
@@ -1397,7 +1302,7 @@ def test_core_execution_session_allows_cancellation_before_submission():
     )
     session = CoreExecutionSession(spec=spec)
 
-    assert session.accept_command(
+    assert session._record_command(
         CoreCommand(
             execution_id=spec.execution_id,
             turn_id=spec.turn_id,
