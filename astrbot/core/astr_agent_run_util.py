@@ -407,7 +407,7 @@ class NativeExecutionLoop:
                     )
 
             stop_watcher = asyncio.create_task(
-                _watch_agent_stop_signal(self._executor, self._event),
+                self._watch_stop_signal(),
             )
             step_stream = self._executor.stream()
             try:
@@ -438,6 +438,17 @@ class NativeExecutionLoop:
                     pass
                 finally:
                     await step_stream.aclose()
+
+    async def _watch_stop_signal(self) -> None:
+        """Request cancellation when the active turn asks the loop to stop."""
+
+        while not self._executor.done():
+            if _should_stop_agent(self._event):
+                self._executor.request_cancellation(
+                    metadata={"reason": "agent_aborted"}
+                )
+                return
+            await asyncio.sleep(0.5)
 
 
 def _should_stop_agent(astr_event) -> bool:
@@ -837,14 +848,6 @@ async def run_agent(
     )
     async for chain in bridge.stream():
         yield chain
-
-
-async def _watch_agent_stop_signal(executor: NativeExecutorAdapter, astr_event) -> None:
-    while not executor.done():
-        if _should_stop_agent(astr_event):
-            executor.request_cancellation(metadata={"reason": "agent_aborted"})
-            return
-        await asyncio.sleep(0.5)
 
 
 async def run_live_agent(
