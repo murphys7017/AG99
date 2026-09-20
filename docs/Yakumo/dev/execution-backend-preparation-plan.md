@@ -1011,6 +1011,15 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 这仍不是最终 Output Artifact 或跨进程传输协议；它先稳定 Core 内部 Executor 结果边界，
   后续再根据第二个真实 Executor 的需求扩展内容引用和产物交付。
 
+### 2026-09-20 类型化执行进度描述
+
+- 新增 `CoreExecutionProgress`，将执行进度的 `source`、`phase` 与有界属性分开；Native
+  Adapter 先构造该对象，再投影为现有 `progress` 事件 metadata。
+- 现阶段保留已有 `response_type`、工具 ID、工具名、组件数和结果长度字段，避免改变日志、
+  trace 或 Personal 的可见行为；进度正文、模型推理和原始工具结果仍不进入 Core 事件。
+- `CoreExecutionProgress` 的保留字段不可被属性覆盖，属性同样采用不可变快照。它是 Core
+  内部事实边界，不是新的输出消息或跨进程传输协议。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

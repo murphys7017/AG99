@@ -14,6 +14,7 @@ from astrbot.core.deadline import TurnDeadlineExceeded
 from astrbot.core.execution import (
     CoreExecutionArtifact,
     CoreExecutionEventKind,
+    CoreExecutionProgress,
     get_core_execution_head,
 )
 from astrbot.core.interaction.output_modes import (
@@ -168,8 +169,7 @@ class NativeExecutorAdapter:
         chain = response.chain
         if chain is None:
             return None
-        metadata: dict[str, object] = {
-            "source": "native_response",
+        attributes: dict[str, object] = {
             "response_type": response.kind,
             "message_type": str(chain.type or ""),
             "component_count": len(chain.chain),
@@ -178,21 +178,26 @@ class NativeExecutorAdapter:
         if isinstance(details, dict):
             tool_name = str(details.get("name", "") or "").strip()
             if tool_name:
-                metadata["tool_name"] = tool_name
+                attributes["tool_name"] = tool_name
             tool_call_id = str(details.get("id", "") or "").strip()
             if tool_call_id:
-                metadata["tool_call_id"] = tool_call_id
+                attributes["tool_call_id"] = tool_call_id
             if response.kind == "tool_call_result":
                 result = details.get("result")
                 if result is not None:
-                    metadata["result_length"] = len(str(result))
-        if response.kind == "tool_call_result" and "result_length" not in metadata:
-            metadata["result_length"] = len(
+                    attributes["result_length"] = len(str(result))
+        if response.kind == "tool_call_result" and "result_length" not in attributes:
+            attributes["result_length"] = len(
                 chain.get_plain_text(with_other_comps_mark=True)
             )
+        progress = CoreExecutionProgress(
+            source="native_response",
+            phase=response.kind,
+            attributes=attributes,
+        )
         return self.emit_event(
             kind=CoreExecutionEventKind.PROGRESS,
-            metadata=metadata,
+            metadata=progress.event_metadata(),
         )
 
     def final_response_artifact(self) -> CoreExecutionArtifact | None:

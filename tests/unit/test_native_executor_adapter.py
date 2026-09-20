@@ -5,7 +5,7 @@ import pytest
 
 from astrbot.core.agent.response import AgentResponse
 from astrbot.core.astr_agent_run_util import ExecutorStreamItem, NativeExecutorAdapter
-from astrbot.core.execution import CoreExecutionArtifact
+from astrbot.core.execution import CoreExecutionArtifact, CoreExecutionProgress
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -355,3 +355,12 @@ def test_native_executor_adapter_observes_tool_progress_without_result_content(
         "tool_call_id": "call-1",
         "result_length": len("secret output"),
     }
+
+
+def test_core_execution_progress_rejects_reserved_attributes():
+    with pytest.raises(ValueError, match="reserved keys: source"):
+        CoreExecutionProgress(
+            source="native_response",
+            phase="tool_call",
+            attributes={"source": "override"},
+        )

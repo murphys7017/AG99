@@ -109,6 +109,40 @@ class CoreExecutionArtifact:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CoreExecutionProgress:
+    """Bounded, non-visible description of one execution progress fact."""
+
+    source: str
+    phase: str
+    attributes: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        source = str(self.source or "").strip()
+        phase = str(self.phase or "").strip()
+        if not source or not phase:
+            raise ValueError("CoreExecutionProgress requires source and phase")
+        reserved = {"source", "phase"}.intersection(self.attributes)
+        if reserved:
+            names = ", ".join(sorted(reserved))
+            raise ValueError(
+                f"CoreExecutionProgress attributes contain reserved keys: {names}"
+            )
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "phase", phase)
+        object.__setattr__(
+            self,
+            "attributes",
+            _freeze_execution_event_metadata(self.attributes),
+        )
+
+    def event_metadata(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            **_copy_execution_event_metadata(self.attributes),
+        }
+
+
 class CoreCommandKind(str, Enum):
     """Commands accepted by the in-process Core Head boundary."""
 
@@ -1782,6 +1816,7 @@ __all__ = [
     "CoreCommandReceipt",
     "CoreEvent",
     "CoreExecutionArtifact",
+    "CoreExecutionProgress",
     "CoreExecutionCommandMailbox",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
