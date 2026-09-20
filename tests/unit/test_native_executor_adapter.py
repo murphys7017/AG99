@@ -121,6 +121,26 @@ async def test_native_executor_adapter_normalizes_native_step_responses():
 
 
 @pytest.mark.asyncio
+async def test_native_executor_adapter_normalizes_complete_native_run_and_closes_stream():
+    closed = []
+    native_response = AgentResponse(type="tool_call", data={})
+
+    class Runner(FakeNativeRunner):
+        async def step_until_done(self, max_step):
+            assert max_step == 3
+            try:
+                yield native_response
+            finally:
+                closed.append(True)
+
+    stream = NativeExecutorAdapter(Runner()).run_until_done(3)
+    assert await anext(stream) == ExecutorStreamItem(kind="tool_call")
+    await stream.aclose()
+
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
 async def test_native_executor_adapter_closes_native_stream_on_early_exit():
     closed = []
 

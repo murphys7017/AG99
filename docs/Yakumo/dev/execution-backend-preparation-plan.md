@@ -1067,6 +1067,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 终态仍遵从 first-write 规则，重复 stop signal 不会产生第二个取消事件或重复 callback；用户
   中止仍保持既有 `agent_aborted` 原因。此切片不改变命令 mailbox、可见输出、TTS 或执行队列语义。
 
+### 2026-09-20 主动 Core 轮次纳入 Native Adapter
+
+- Cron 与后台完成回调共用的主动 Core 轮次不再直接调用
+  `AgentRunner.step_until_done()`；`NativeExecutorAdapter.run_until_done()` 现在统一负责响应归一化和底层异步生成器关闭。
+- 只有构建结果已带 `CoreExecutionSpec` 时，主动轮次才绑定并激活 Core Head，再回流
+  `submitted -> working -> progress -> terminal` 事实。没有执行身份的旧路径仍只使用 Adapter 运行，不伪造新的执行会话。
+- 正常、取消和失败分支只在 Head 已激活后写入终态；Ledger 持久化仍留在主动轮次，但在有 Head 时经其一次性 settlement claim 协调。
+- 此切片不改变主动消息的发送、Personal 的可见表达责任、Cron 重试、历史保留或台平发送路径。
+- 新增 Adapter 生成器关闭边界测试；当前 Windows 运行环境下，这两个定向 pytest 模块会在导入初始化链卡住，因此未将 pytest 记为通过；`compileall`、Ruff 和 diff 校验已通过，仍需一次实际 Cron/后台任务验收。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

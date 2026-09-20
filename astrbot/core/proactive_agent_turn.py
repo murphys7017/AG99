@@ -21,7 +21,9 @@ from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.utils.config_number import coerce_int_config
 
 if TYPE_CHECKING:
+    from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
     from astrbot.core.cron.events import CronMessageEvent
+    from astrbot.core.execution import CoreExecutionHead
 
 
 @dataclass(slots=True)
@@ -54,10 +56,17 @@ async def run_proactive_agent_turn(
     optional delivery tool, Core build, and runner lifecycle.
     """
     # Kept local to avoid making the Core builder import this proactive helper.
+    from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
     from astrbot.core.astr_main_agent import _get_session_conv, build_main_agent
     from astrbot.core.cron.events import CronMessageEvent
+    from astrbot.core.execution import (
+        CoreExecutionEventKind,
+        CoreExecutionSpec,
+        bind_core_execution_head,
+    )
     from astrbot.core.interaction.turn_state import (
         ensure_interaction_turn_state,
+        set_interaction_turn_core_execution_spec,
         set_interaction_turn_runtime_config,
     )
 
@@ -102,6 +111,9 @@ async def run_proactive_agent_turn(
         )
 
     result = None
+    native_executor: NativeExecutorAdapter | None = None
+    execution_head: CoreExecutionHead | None = None
+    executor_activated = False
     response = None
     status, error = "failed", None
     try:
@@ -113,6 +125,28 @@ async def run_proactive_agent_turn(
         )
         if result is None:
             raise RuntimeError("Proactive Core could not be built")
+        native_executor = NativeExecutorAdapter(result.agent_runner)
+        execution_spec = getattr(result, "execution_spec", None)
+        if isinstance(execution_spec, CoreExecutionSpec):
+            set_interaction_turn_core_execution_spec(event, execution_spec)
+            execution_head = bind_core_execution_head(event, execution_spec)
+            execution_head.activate_executor(
+                executor_id=native_executor.executor_id,
+                stop_callback=native_executor.request_stop,
+                submission_metadata={
+                    "source": (
+                        "cron"
+                        if extras.get("cron_job")
+                        else "background"
+                    ),
+                    "streaming": False,
+                },
+            )
+            executor_activated = True
+            native_executor.emit_event(
+                kind=CoreExecutionEventKind.WORKING,
+                metadata={"streaming": False},
+            )
         provider_settings = config.provider_settings
         agent_max_step = coerce_int_config(
             provider_settings.get("max_agent_step", 30),
@@ -120,16 +154,19 @@ async def run_proactive_agent_turn(
             min_value=1,
             field_name="provider_settings.max_agent_step",
         )
-        async for _ in result.agent_runner.step_until_done(agent_max_step):
-            pass
-        response = result.agent_runner.get_final_llm_resp()
+        async for item in native_executor.run_until_done(agent_max_step):
+            if execution_head is not None:
+                native_executor.observe_response(item)
+        response = native_executor.final_response()
         if (
-            not result.agent_runner.done()
-            or result.agent_runner.was_aborted()
+            not native_executor.done()
+            or native_executor.was_aborted()
             or response is None
             or response.role == "err"
         ):
             raise RuntimeError("Proactive Core did not complete successfully")
+        if execution_head is not None:
+            native_executor.finalize()
         status = "completed"
         return ProactiveAgentTurnResult(
             event=event,
@@ -139,15 +176,32 @@ async def run_proactive_agent_turn(
         )
     except asyncio.CancelledError:
         status, error = "cancelled", "Proactive execution cancelled"
+        if (
+            native_executor is not None
+            and execution_head is not None
+            and executor_activated
+        ):
+            native_executor.cancel(metadata={"reason": "task_cancelled"})
         raise
     except Exception as exc:
         error = str(exc)[:2000]
+        if (
+            native_executor is not None
+            and execution_head is not None
+            and executor_activated
+        ):
+            native_executor.fail(
+                metadata={
+                    "error_type": type(exc).__name__,
+                    "error": error,
+                }
+            )
         raise
     finally:
         # Execution evidence is not visible dialogue. Personal owns that history.
         ledger = getattr(context, "core_execution_ledger", None)
         if ledger is not None:
-            spec = result.execution_spec if result is not None else None
+            spec = getattr(result, "execution_spec", None)
             turn_id = str(event.get_extra("_turn_id"))
             cron = extras.get("cron_job", {})
             background = extras.get("background_task_result", {})
@@ -171,12 +225,23 @@ async def run_proactive_agent_turn(
                 error=error,
             )
             try:
-                await ledger.append(record)
+                if execution_head is not None:
+                    await execution_head.settle_ledger(
+                        lambda: ledger.append(record)
+                    )
+                else:
+                    await ledger.append(record)
             except Exception:
                 logger.exception(
                     "Proactive execution ledger persistence failed: execution_id=%s",
                     record.execution_id,
                 )
+        if (
+            native_executor is not None
+            and execution_head is not None
+            and executor_activated
+        ):
+            native_executor.release_from_core_head()
 
 
 __all__ = ["ProactiveAgentTurnResult", "run_proactive_agent_turn"]
