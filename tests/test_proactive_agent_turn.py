@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +11,7 @@ from astrbot.core.core_request_preparation import (
     begin_core_request_lifecycle,
 )
 from astrbot.core.db.sqlite import SQLiteDatabase
+from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
 from astrbot.core.execution_ledger import CoreExecutionLedger
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
@@ -347,3 +349,79 @@ async def test_proactive_request_hook_stop_discards_deferred_reset(monkeypatch):
         )
 
     reset_coro.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_proactive_total_deadline_covers_conversation_resolution(monkeypatch):
+    async def slow_conversation(**_kwargs):
+        await asyncio.sleep(0.1)
+        return SimpleNamespace(history="[]")
+
+    monkeypatch.setattr(
+        "astrbot.core.proactive_agent_turn._ensure_proactive_execution_deadline",
+        lambda _event, _config: TurnDeadlineBudget.start(0.01),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_main_agent._get_session_conv",
+        slow_conversation,
+    )
+
+    with pytest.raises(
+        TurnDeadlineExceeded,
+        match="proactive_core_execution",
+    ):
+        await run_proactive_agent_turn(
+            context=SimpleNamespace(
+                get_config=lambda **kwargs: {
+                    "plugin_set": [],
+                    "provider_settings": {},
+                }
+            ),
+            session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
+            message="run",
+            extras={},
+            role=None,
+            config=MainAgentBuildConfig(tool_call_timeout=60),
+            system_prompt="",
+            prompt="",
+            require_delivery_tool=False,
+            include_history_fences=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_proactive_inner_timeout_is_not_reclassified_as_total_deadline(
+    monkeypatch,
+):
+    async def failing_conversation(**_kwargs):
+        raise TimeoutError("conversation backend timed out")
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_main_agent._get_session_conv",
+        failing_conversation,
+    )
+
+    with pytest.raises(
+        TimeoutError,
+        match="conversation backend timed out",
+    ) as raised:
+        await run_proactive_agent_turn(
+            context=SimpleNamespace(
+                get_config=lambda **kwargs: {
+                    "plugin_set": [],
+                    "provider_settings": {},
+                    "interaction_middleware": {"turn_timeout": 30},
+                }
+            ),
+            session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
+            message="run",
+            extras={},
+            role=None,
+            config=MainAgentBuildConfig(tool_call_timeout=60),
+            system_prompt="",
+            prompt="",
+            require_delivery_tool=False,
+            include_history_fences=False,
+        )
+
+    assert not isinstance(raised.value, TurnDeadlineExceeded)

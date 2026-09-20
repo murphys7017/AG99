@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,8 @@ from astrbot.core.core_request_preparation import (
     finalize_core_request_preparation,
 )
 from astrbot.core.db.po import CoreExecutionRecord
+from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
+from astrbot.core.interaction.config import load_interaction_agent_config
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.plugin_admission import (
     build_plugin_admission_snapshot,
@@ -39,6 +42,19 @@ class ProactiveAgentTurnResult:
     request: ProviderRequest
     response: LLMResponse
     delivery_confirmed: bool = False
+
+
+def _ensure_proactive_execution_deadline(
+    event: Any,
+    runtime_config: Mapping[str, Any],
+) -> TurnDeadlineBudget:
+    from astrbot.core.interaction.turn_state import ensure_interaction_turn_state
+
+    state = ensure_interaction_turn_state(event)
+    if state.deadline is None:
+        timeout = load_interaction_agent_config(runtime_config).turn_timeout
+        state.deadline = TurnDeadlineBudget.start(timeout)
+    return state.deadline
 
 
 async def run_proactive_agent_turn(
@@ -75,7 +91,6 @@ async def run_proactive_agent_turn(
     from astrbot.core.interaction.turn_state import (
         bind_interaction_turn_core_execution_journal,
         ensure_interaction_turn_state,
-        get_interaction_turn_deadline,
         set_interaction_turn_runtime_config,
     )
 
@@ -94,31 +109,10 @@ async def run_proactive_agent_turn(
     )
     ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
     event.set_extra("_astrbot_config", runtime_config)
+    deadline = _ensure_proactive_execution_deadline(event, runtime_config)
     event.plugins_name = resolve_event_plugins_name(runtime_config)
-    await build_plugin_admission_snapshot(event=event)
-    config = config.with_runtime_config(runtime_config)
-
     request = ProviderRequest()
-    conversation = await _get_session_conv(event=event, plugin_context=context)
-    request.conversation = conversation
-    history = json.loads(conversation.history)
-    if history and include_history_fences:
-        request.contexts = history
-        history_dump = request._print_friendly_context()
-        request.contexts = []
-        request.system_prompt += (
-            "\n\nBellow is you and user previous conversation history:\n"
-            f"---\n{history_dump}\n---\n"
-        )
-
-    request.system_prompt += system_prompt
-    request.prompt = prompt
-    if require_delivery_tool:
-        request.func_tool = ToolSet()
-        request.func_tool.add_tool(
-            context.get_llm_tool_manager().get_builtin_tool(SendMessageToUserTool)
-        )
-
+    conversation = None
     result = None
     native_executor: NativeExecutorAdapter | None = None
     execution_head: CoreExecutionHead | None = None
@@ -126,7 +120,42 @@ async def run_proactive_agent_turn(
     runner_reset_completed = False
     response = None
     status, error = "failed", None
-    try:
+
+    async def execute() -> ProactiveAgentTurnResult:
+        nonlocal config
+        nonlocal conversation
+        nonlocal executor_activated
+        nonlocal execution_head
+        nonlocal native_executor
+        nonlocal response
+        nonlocal result
+        nonlocal runner_reset_completed
+        nonlocal status
+
+        await build_plugin_admission_snapshot(event=event)
+        config = config.with_runtime_config(runtime_config)
+        conversation = await _get_session_conv(event=event, plugin_context=context)
+        request.conversation = conversation
+        history = json.loads(conversation.history)
+        if history and include_history_fences:
+            request.contexts = history
+            history_dump = request._print_friendly_context()
+            request.contexts = []
+            request.system_prompt += (
+                "\n\nBellow is you and user previous conversation history:\n"
+                f"---\n{history_dump}\n---\n"
+            )
+
+        request.system_prompt += system_prompt
+        request.prompt = prompt
+        if require_delivery_tool:
+            request.func_tool = ToolSet()
+            request.func_tool.add_tool(
+                context.get_llm_tool_manager().get_builtin_tool(
+                    SendMessageToUserTool
+                )
+            )
+
         request_lifecycle = await begin_core_request_lifecycle(event)
         if request_lifecycle is None:
             event.set_extra("_core_request_preparation_stopped", True)
@@ -148,10 +177,9 @@ async def run_proactive_agent_turn(
         execution_spec = getattr(result, "execution_spec", None)
         if isinstance(execution_spec, CoreExecutionSpec):
             execution_head = bind_core_execution_head(event, execution_spec)
-            if deadline := get_interaction_turn_deadline(event):
-                execution_head.bind_deadline_view(
-                    CoreExecutionDeadlineView.from_budget(deadline)
-                )
+            execution_head.bind_deadline_view(
+                CoreExecutionDeadlineView.from_budget(deadline)
+            )
             bind_interaction_turn_core_execution_journal(event, execution_head)
         await result.reset_prepared_runner()
         runner_reset_completed = True
@@ -161,11 +189,7 @@ async def run_proactive_agent_turn(
                 stop_callback=native_executor.request_stop,
                 input_callback=native_executor.request_follow_up,
                 submission_metadata={
-                    "source": (
-                        "cron"
-                        if extras.get("cron_job")
-                        else "background"
-                    ),
+                    "source": "cron" if extras.get("cron_job") else "background",
                     "streaming": False,
                 },
             )
@@ -200,6 +224,21 @@ async def run_proactive_agent_turn(
             response=response,
             delivery_confirmed=bool(event._has_send_oper),
         )
+
+    try:
+        async with deadline.enforce("proactive_core_execution"):
+            return await execute()
+    except TurnDeadlineExceeded as exc:
+        status, error = "cancelled", str(exc)
+        event.set_extra("_proactive_core_deadline_exceeded", True)
+        if native_executor is not None and executor_activated:
+            native_executor.cancel(metadata={"reason": "deadline_exceeded"})
+        elif native_executor is not None and execution_head is not None:
+            execution_head.cancel(
+                executor_id=native_executor.executor_id,
+                metadata={"reason": "deadline_exceeded"},
+            )
+        raise
     except asyncio.CancelledError:
         status, error = "cancelled", "Proactive execution cancelled"
         if (
@@ -239,70 +278,79 @@ async def run_proactive_agent_turn(
     finally:
         if result is not None:
             result.discard_pending_reset()
-        # Execution evidence is not visible dialogue. Personal owns that history.
-        ledger = getattr(context, "core_execution_ledger", None)
-        if ledger is not None:
-            spec = getattr(result, "execution_spec", None)
-            turn_id = str(event.get_extra("_turn_id"))
-            cron = extras.get("cron_job", {})
-            background = extras.get("background_task_result", {})
-            ledger_result = response.completion_text if response is not None else None
-            ledger_error = error
-            if (
-                execution_head is not None
-                and executor_activated
-                and runner_reset_completed
-            ):
-                preparation = execution_head.prepare_ledger_preparation(
-                    completion_text=ledger_result,
-                    user_aborted=(
-                        native_executor.was_aborted()
-                        if native_executor is not None
-                        else False
-                    ),
-                    fallback_status=status,
-                    fallback_error=error,
+        try:
+            # Execution evidence is not visible dialogue. Personal owns that history.
+            ledger = getattr(context, "core_execution_ledger", None)
+            if ledger is not None:
+                spec = getattr(result, "execution_spec", None)
+                turn_id = str(event.get_extra("_turn_id"))
+                cron = extras.get("cron_job", {})
+                background = extras.get("background_task_result", {})
+                ledger_result = (
+                    response.completion_text if response is not None else None
                 )
-                status = preparation.status
-                ledger_result = preparation.result
-                ledger_error = preparation.error
-            record = CoreExecutionRecord(
-                execution_id=spec.execution_id if spec else uuid.uuid4().hex,
-                conversation_id=conversation.cid,
-                turn_id=turn_id,
-                core_task_id=str(
-                    cron.get("id") or background.get("task_id") or turn_id
-                ),
-                status=status,
-                task_spec={
-                    "source": "cron" if cron else "background",
-                    "schedule_revision": cron.get("revision"),
-                    "schedule_execution_id": cron.get("execution_id"),
-                    "message": message,
-                    "background_result": background,
-                    "delivery_confirmed": bool(event._has_send_oper),
-                },
-                result=ledger_result,
-                error=ledger_error,
-            )
-            try:
-                if execution_head is not None:
-                    await execution_head.settle_ledger(
-                        lambda: ledger.append(record)
+                ledger_error = error
+                if (
+                    execution_head is not None
+                    and executor_activated
+                    and runner_reset_completed
+                ):
+                    preparation = execution_head.prepare_ledger_preparation(
+                        completion_text=ledger_result,
+                        user_aborted=(
+                            native_executor.was_aborted()
+                            if native_executor is not None
+                            else False
+                        ),
+                        fallback_status=status,
+                        fallback_error=error,
+                    )
+                    status = preparation.status
+                    ledger_result = preparation.result
+                    ledger_error = preparation.error
+                if conversation is None:
+                    event.set_extra("_proactive_conversation_unavailable", True)
+                    logger.warning(
+                        "Proactive execution ended before conversation resolution: "
+                        "turn_id=%s status=%s",
+                        turn_id,
+                        status,
                     )
                 else:
-                    await ledger.append(record)
-            except Exception:
-                logger.exception(
-                    "Proactive execution ledger persistence failed: execution_id=%s",
-                    record.execution_id,
-                )
-        if (
-            native_executor is not None
-            and execution_head is not None
-            and executor_activated
-        ):
-            native_executor.release_from_core_head()
+                    record = CoreExecutionRecord(
+                        execution_id=spec.execution_id if spec else uuid.uuid4().hex,
+                        conversation_id=conversation.cid,
+                        turn_id=turn_id,
+                        core_task_id=str(
+                            cron.get("id") or background.get("task_id") or turn_id
+                        ),
+                        status=status,
+                        task_spec={
+                            "source": "cron" if cron else "background",
+                            "schedule_revision": cron.get("revision"),
+                            "schedule_execution_id": cron.get("execution_id"),
+                            "message": message,
+                            "background_result": background,
+                            "delivery_confirmed": bool(event._has_send_oper),
+                        },
+                        result=ledger_result,
+                        error=ledger_error,
+                    )
+                    if execution_head is not None:
+                        await execution_head.settle_ledger(
+                            lambda: ledger.append(record)
+                        )
+                    else:
+                        await ledger.append(record)
+        except Exception:
+            logger.exception("Proactive execution ledger persistence failed")
+        finally:
+            if (
+                native_executor is not None
+                and execution_head is not None
+                and executor_activated
+            ):
+                native_executor.release_from_core_head()
 
 
 __all__ = ["ProactiveAgentTurnResult", "run_proactive_agent_turn"]
