@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -28,6 +29,7 @@ from astrbot.core.interaction.turn_state import (
     ensure_interaction_turn_state,
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
+    get_interaction_turn_delivery_receipts,
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     get_interaction_turn_visible_message_fingerprints,
@@ -1138,9 +1140,10 @@ async def test_visible_message_completion_follows_all_physical_deliveries():
         order.append(("send", [type(component).__name__ for component in message.chain]))
 
     controller._send_platform_message = send_platform_message
+    event = Event()
 
     await controller._deliver_visible_message(
-        Event(),
+        event,
         MessageChain(
             [
                 Record(file="reply.wav"),
@@ -1156,6 +1159,21 @@ async def test_visible_message_completion_follows_all_physical_deliveries():
         ("send", ["Record"]),
         ("send", ["Plain", "Image"]),
         ("complete", "logical-message"),
+    ]
+    assert get_interaction_turn_delivery_receipts(event) == [
+        {
+            "turn_id": "",
+            "message_id": "logical-message",
+            "message_kind": "core_reply",
+            "status": "delivered",
+            "physical_status": "delivered",
+            "completion_status": "completed",
+            "failure_stage": None,
+            "sent_any": True,
+            "all_succeeded": True,
+            "attempted_count": 2,
+            "failed_count": 0,
+        }
     ]
 
 
@@ -1197,6 +1215,110 @@ async def test_visible_message_partial_delivery_does_not_complete_logical_messag
         )
 
     assert completed == []
+    assert get_interaction_turn_visible_message_fingerprints(event) == set()
+    assert get_interaction_turn_delivery_receipts(event)[0] == {
+        "turn_id": "",
+        "message_id": "logical-message",
+        "message_kind": "core_reply",
+        "status": "partial",
+        "physical_status": "partial",
+        "completion_status": "not_attempted",
+        "failure_stage": "physical_send",
+        "sent_any": True,
+        "all_succeeded": False,
+        "attempted_count": 2,
+        "failed_count": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_visible_message_completion_failure_is_not_recorded_as_delivered():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        async def complete_visible_message(self, *, message_id):
+            raise RuntimeError(f"completion failed: {message_id}")
+
+    controller = InteractionOutputController()
+    controller._notify_lifecycle = AsyncMock()
+    controller.build_platform_output_extras = lambda *_args, **_kwargs: {}
+    controller._send_platform_message = AsyncMock()
+    event = Event()
+
+    with pytest.raises(RuntimeError, match="completion failed"):
+        await controller._deliver_visible_message(
+            event,
+            MessageChain([Plain("reply")]),
+            message_kind="core_reply",
+            output_segment_id="logical-message",
+        )
+
+    assert get_interaction_turn_delivery_receipts(event)[0] == {
+        "turn_id": "",
+        "message_id": "logical-message",
+        "message_kind": "core_reply",
+        "status": "failed",
+        "physical_status": "delivered",
+        "completion_status": "failed",
+        "failure_stage": "message_completion",
+        "sent_any": True,
+        "all_succeeded": True,
+        "attempted_count": 1,
+        "failed_count": 0,
+    }
+    assert get_interaction_turn_visible_message_fingerprints(event) == set()
+
+
+@pytest.mark.asyncio
+async def test_visible_message_completion_cancellation_records_unknown_effect():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+        async def complete_visible_message(self, *, message_id):
+            del message_id
+            raise asyncio.CancelledError
+
+    controller = InteractionOutputController()
+    controller._notify_lifecycle = AsyncMock()
+    controller.build_platform_output_extras = lambda *_args, **_kwargs: {}
+    controller._send_platform_message = AsyncMock()
+    event = Event()
+
+    with pytest.raises(asyncio.CancelledError):
+        await controller._deliver_visible_message(
+            event,
+            MessageChain([Plain("reply")]),
+            message_kind="core_reply",
+            output_segment_id="logical-message",
+        )
+
+    assert get_interaction_turn_delivery_receipts(event)[0] == {
+        "turn_id": "",
+        "message_id": "logical-message",
+        "message_kind": "core_reply",
+        "status": "unknown",
+        "physical_status": "delivered",
+        "completion_status": "unknown",
+        "failure_stage": "message_completion",
+        "sent_any": True,
+        "all_succeeded": True,
+        "attempted_count": 1,
+        "failed_count": 0,
+    }
     assert get_interaction_turn_visible_message_fingerprints(event) == set()
 
 

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from astrbot import logger
 from astrbot.core.deadline import TurnDeadlineBudget
@@ -33,6 +33,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
+    from astrbot.core.message.message_chain_delivery import MessageChainDeliveryResult
     from astrbot.core.plugin_admission import PluginAdmissionSnapshot
 
     from .persona_domain import EffectivePersonaContext, PersonaDefinition
@@ -1646,45 +1647,183 @@ def append_interaction_turn_visible_output(
     state.visible_outputs.append(item)
 
 
-def record_interaction_turn_delivery_receipt(
+_DELIVERY_COMPLETION_TERMINAL_STATUSES = frozenset(
+    {
+        "not_attempted",
+        "completed",
+        "failed",
+        "unknown",
+        "not_required",
+    }
+)
+_DELIVERY_FAILURE_STAGES = frozenset(
+    {
+        "physical_send",
+        "message_completion",
+    }
+)
+InteractionDeliveryCompletionStatus = Literal[
+    "not_attempted",
+    "completed",
+    "failed",
+    "unknown",
+    "not_required",
+]
+InteractionDeliveryFailureStage = Literal[
+    "physical_send",
+    "message_completion",
+]
+
+
+def begin_interaction_turn_delivery_receipt(
     event,
     *,
-    message_id: str | None,
+    message_id: str,
     message_kind: str,
-    sent_any: bool,
-    all_succeeded: bool,
-    attempted_count: int,
-    failed_count: int,
     delivery_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     state = ensure_interaction_turn_state(event)
-    status = (
-        "delivered"
-        if all_succeeded
-        else "partial"
-        if sent_any
-        else "failed"
-    )
+    normalized_message_id = str(message_id or "").strip()
+    if not normalized_message_id:
+        raise ValueError("Delivery receipt requires a non-empty message_id")
+    if any(
+        item.get("message_id") == normalized_message_id
+        for item in state.output_delivery_receipts
+    ):
+        raise ValueError(
+            f"Delivery receipt already exists: {normalized_message_id}"
+        )
     receipt = {
         "turn_id": state.turn_id,
-        "message_id": str(message_id or ""),
+        "message_id": normalized_message_id,
         "message_kind": message_kind,
-        "status": status,
-        "sent_any": bool(sent_any),
-        "all_succeeded": bool(all_succeeded),
-        "attempted_count": int(attempted_count),
-        "failed_count": int(failed_count),
+        "status": "pending",
+        "physical_status": "unknown",
+        "completion_status": "pending",
+        "failure_stage": None,
+        "sent_any": False,
+        "all_succeeded": False,
+        "attempted_count": 0,
+        "failed_count": 0,
     }
     if isinstance(delivery_identity, Mapping):
         receipt["delivery_identity"] = dict(delivery_identity)
     state.output_delivery_receipts.append(receipt)
-    return dict(receipt)
+    return deepcopy(receipt)
+
+
+def finish_interaction_turn_delivery_receipt(
+    event,
+    *,
+    message_id: str,
+    physical_result: MessageChainDeliveryResult | None,
+    completion_status: InteractionDeliveryCompletionStatus,
+    failure_stage: InteractionDeliveryFailureStage | None = None,
+) -> dict[str, Any]:
+    normalized_message_id = str(message_id or "").strip()
+    if not normalized_message_id:
+        raise ValueError("Delivery receipt requires a non-empty message_id")
+    if completion_status not in _DELIVERY_COMPLETION_TERMINAL_STATUSES:
+        raise ValueError(
+            f"Invalid delivery completion status: {completion_status}"
+        )
+    if failure_stage is not None and failure_stage not in _DELIVERY_FAILURE_STAGES:
+        raise ValueError(f"Invalid delivery failure stage: {failure_stage}")
+
+    state = ensure_interaction_turn_state(event)
+    receipt = next(
+        (
+            item
+            for item in state.output_delivery_receipts
+            if item.get("message_id") == normalized_message_id
+        ),
+        None,
+    )
+    if receipt is None:
+        raise ValueError(f"Delivery receipt does not exist: {normalized_message_id}")
+
+    if physical_result is None:
+        physical_status = "unknown"
+        sent_any = False
+        all_succeeded = False
+        attempted_count = 0
+        failed_count = 0
+    else:
+        sent_any = bool(physical_result.sent_any)
+        all_succeeded = bool(physical_result.all_succeeded)
+        attempted_count = int(physical_result.attempted_count)
+        failed_count = int(physical_result.failed_count)
+        physical_status = (
+            "delivered"
+            if all_succeeded
+            else "partial"
+            if sent_any
+            else "failed"
+        )
+
+    if (
+        physical_status != "delivered"
+        and completion_status != "not_attempted"
+    ):
+        raise ValueError(
+            "Message completion cannot finish before full physical delivery"
+        )
+
+    if physical_status == "unknown":
+        status = "unknown"
+    elif physical_status == "failed":
+        status = "failed"
+    elif physical_status == "partial":
+        status = "partial"
+    elif completion_status in {"completed", "not_required"}:
+        status = "delivered"
+    elif completion_status == "failed":
+        status = "failed"
+    elif completion_status == "unknown":
+        status = "unknown"
+    else:
+        raise ValueError(
+            "A complete physical delivery requires a terminal message completion"
+        )
+
+    if physical_status in {"failed", "partial", "unknown"}:
+        expected_failure_stage = "physical_send"
+    elif completion_status in {"failed", "unknown"}:
+        expected_failure_stage = "message_completion"
+    else:
+        expected_failure_stage = None
+    if failure_stage != expected_failure_stage:
+        raise ValueError(
+            "Delivery failure stage does not match the terminal delivery state"
+        )
+
+    completed = {
+        **receipt,
+        "status": status,
+        "physical_status": physical_status,
+        "completion_status": completion_status,
+        "failure_stage": failure_stage,
+        "sent_any": sent_any,
+        "all_succeeded": all_succeeded,
+        "attempted_count": attempted_count,
+        "failed_count": failed_count,
+    }
+    if receipt.get("status") != "pending":
+        if receipt != completed:
+            raise ValueError(
+                f"Delivery receipt already completed: {normalized_message_id}"
+            )
+        return deepcopy(receipt)
+
+    receipt.clear()
+    receipt.update(completed)
+    return deepcopy(receipt)
 
 
 def get_interaction_turn_delivery_receipts(event) -> list[dict[str, Any]]:
     state = get_interaction_turn_state(event)
     return (
-        [dict(item) for item in state.output_delivery_receipts]
+        deepcopy(state.output_delivery_receipts)
         if state is not None
         else []
     )

@@ -53,18 +53,20 @@ from .output_modes import (
     PluginOutputMode,
     temporary_output_origin,
 )
+from .personal_expression_guard import fingerprint_personal_expression
 from .plugin_execution_types import (
     PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY,
 )
-from .personal_expression_guard import fingerprint_personal_expression
 from .turn_state import (
     InteractionFinalOutputStatus,
     add_interaction_turn_stream_observation_task,
     append_interaction_turn_assistant_artifacts,
     append_interaction_turn_visible_output,
+    begin_interaction_turn_delivery_receipt,
     begin_interaction_turn_plugin_output_transaction,
     build_interaction_turn_reply,
     consume_interaction_turn_finalization_pending,
+    finish_interaction_turn_delivery_receipt,
     finish_interaction_turn_final_output,
     get_interaction_turn_assistant_artifacts,
     get_interaction_turn_config,
@@ -97,7 +99,6 @@ from .turn_state import (
     next_interaction_turn_output_segment_id,
     next_interaction_turn_visible_message_id,
     record_interaction_turn_completion_failure,
-    record_interaction_turn_delivery_receipt,
     record_interaction_turn_failure,
     record_interaction_turn_finalization_failure,
     record_interaction_turn_stream_observation_failure,
@@ -2545,7 +2546,7 @@ class InteractionOutputController:
         *,
         message_kind: str,
         platform_extras: dict[str, Any] | None = None,
-        output_segment_id: str | None = None,
+        output_segment_id: str,
         record_send_operation: bool = True,
         result_is_model_result: bool = False,
         allow_segmented_reply: bool = False,
@@ -2577,6 +2578,17 @@ class InteractionOutputController:
             event,
             "speaking",
             {"message_kind": message_kind},
+        )
+        normalized_segment_id = str(output_segment_id or "").strip()
+        begin_interaction_turn_delivery_receipt(
+            event,
+            message_id=normalized_segment_id,
+            message_kind=message_kind,
+            delivery_identity=(
+                delivery_identity
+                if isinstance(delivery_identity, Mapping)
+                else None
+            ),
         )
 
         async def _send(
@@ -2629,32 +2641,105 @@ class InteractionOutputController:
             if visible_message_id:
                 delivered_message_ids.append(visible_message_id)
 
-        delivery = await deliver_message_chain(
+        try:
+            delivery = await deliver_message_chain(
+                event,
+                message,
+                send_message=_send,
+                platform_settings=self.platform_settings,
+                result_is_model_result=result_is_model_result,
+                allow_segmented_reply=allow_segmented_reply,
+                preserve_record_delivery_groups=(
+                    bool(event.get_extra("_runtime_observation_event", False))
+                    and supports_personal_runtime(event.platform_meta)
+                ),
+            )
+        except asyncio.CancelledError:
+            receipt = finish_interaction_turn_delivery_receipt(
+                event,
+                message_id=normalized_segment_id,
+                physical_result=None,
+                completion_status="not_attempted",
+                failure_stage="physical_send",
+            )
+            self._trace_delivery_receipt(event, receipt)
+            raise
+        except Exception:
+            receipt = finish_interaction_turn_delivery_receipt(
+                event,
+                message_id=normalized_segment_id,
+                physical_result=None,
+                completion_status="not_attempted",
+                failure_stage="physical_send",
+            )
+            self._trace_delivery_receipt(event, receipt)
+            raise
+        if not delivery.sent_any:
+            receipt = finish_interaction_turn_delivery_receipt(
+                event,
+                message_id=normalized_segment_id,
+                physical_result=delivery,
+                completion_status="not_attempted",
+                failure_stage="physical_send",
+            )
+            self._trace_delivery_receipt(event, receipt)
+            raise RuntimeError(
+                f"Interaction output was not delivered: {message_kind}"
+            )
+        if not delivery.all_succeeded:
+            receipt = finish_interaction_turn_delivery_receipt(
+                event,
+                message_id=normalized_segment_id,
+                physical_result=delivery,
+                completion_status="not_attempted",
+                failure_stage="physical_send",
+            )
+            self._trace_delivery_receipt(event, receipt)
+            raise RuntimeError(
+                f"Interaction output was only partially delivered: {message_kind}"
+            )
+        try:
+            await event.complete_visible_message(
+                message_id=normalized_segment_id,
+            )
+        except asyncio.CancelledError:
+            receipt = finish_interaction_turn_delivery_receipt(
+                event,
+                message_id=normalized_segment_id,
+                physical_result=delivery,
+                completion_status="unknown",
+                failure_stage="message_completion",
+            )
+            self._trace_delivery_receipt(event, receipt)
+            raise
+        except Exception:
+            receipt = finish_interaction_turn_delivery_receipt(
+                event,
+                message_id=normalized_segment_id,
+                physical_result=delivery,
+                completion_status="failed",
+                failure_stage="message_completion",
+            )
+            self._trace_delivery_receipt(event, receipt)
+            raise
+        receipt = finish_interaction_turn_delivery_receipt(
             event,
-            message,
-            send_message=_send,
-            platform_settings=self.platform_settings,
-            result_is_model_result=result_is_model_result,
-            allow_segmented_reply=allow_segmented_reply,
-            preserve_record_delivery_groups=(
-                bool(event.get_extra("_runtime_observation_event", False))
-                and supports_personal_runtime(event.platform_meta)
-            ),
+            message_id=normalized_segment_id,
+            physical_result=delivery,
+            completion_status="completed",
         )
-        receipt = record_interaction_turn_delivery_receipt(
+        self._trace_delivery_receipt(event, receipt)
+        record_interaction_turn_visible_message_fingerprint(
             event,
-            message_id=output_segment_id,
-            message_kind=message_kind,
-            sent_any=delivery.sent_any,
-            all_succeeded=delivery.all_succeeded,
-            attempted_count=delivery.attempted_count,
-            failed_count=delivery.failed_count,
-            delivery_identity=(
-                delivery_identity
-                if isinstance(delivery_identity, Mapping)
-                else None
-            ),
+            fingerprint_visible_message(message),
         )
+        return delivered_message_ids
+
+    @staticmethod
+    def _trace_delivery_receipt(
+        event: AstrMessageEvent,
+        receipt: Mapping[str, Any],
+    ) -> None:
         try:
             event.trace.record("interaction_output_delivery_receipt", **receipt)
         except Exception:
@@ -2663,23 +2748,6 @@ class InteractionOutputController:
                 event.get_extra("_turn_id"),
                 exc_info=True,
             )
-        if not delivery.sent_any:
-            raise RuntimeError(
-                f"Interaction output was not delivered: {message_kind}"
-            )
-        if not delivery.all_succeeded:
-            raise RuntimeError(
-                f"Interaction output was only partially delivered: {message_kind}"
-            )
-        if output_segment_id:
-            await event.complete_visible_message(
-                message_id=output_segment_id,
-            )
-        record_interaction_turn_visible_message_fingerprint(
-            event,
-            fingerprint_visible_message(message),
-        )
-        return delivered_message_ids
 
     async def _notify_lifecycle(
         self,
