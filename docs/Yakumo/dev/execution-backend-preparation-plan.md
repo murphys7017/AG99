@@ -1085,6 +1085,29 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - 这些路径不能因为都使用 Runner 就被强行塞入 Core Head；否则会把 Personal 和第三方兼容误认成 Native Body，恢复职责混淆。
 - 下一阶段的执行循环 owner 迁移范围只限 `InternalAgentSubStage` 的 Native 主链；但是先冻结输出、TTS、历史、取消和 Ledger 责任后再开始，不为“所有 Runner 统一化”新建第二套协议。
 
+### 2026-09-20 Native 执行循环 owner 迁移前责任矩阵
+
+| 责任 | 当前所有者 | 迁移后的稳定边界 | 本阶段处理 |
+| --- | --- | --- | --- |
+| 执行身份、激活、事件顺序、终态、取消命令 | Core Head | Core Head | 已收口 |
+| Runner 停止、Native stream、响应证据、终态投影 | Native Adapter | Native Adapter | 已收口 |
+| 执行循环步骑、停止观察、最大步数、响应分类 | `astr_agent_run_util.py` 的函数 | Core 内部的 Native loop owner，但仍使用 Adapter 与既有 Output bridge | 未迁移 |
+| Prompt/Provider 请求装配、Hook、重置、配置快照 | `InternalAgentSubStage` | Core turn preparation boundary | 暂保持 |
+| 文本/工具状态/流式 TTS 可见输出 | `run_agent` / `run_live_agent` + Output bridge | Personal/Output 责任不变，Core 只提供执行材料 | 禁止随循环迁移一并改变 |
+| 历史、Provider stats、Core Ledger | Stage 现有持久化路径 | 后续按类型化证据迁移，不由 Head 直接写库 | 暂保持 |
+
+#### 执行循环迁移顺序
+
+1. 先把循环中的停止观察、步数超限和 Native response 分类抽成一个内部 Native loop owner，只接收 `NativeExecutorAdapter` 和现有输出回调；不让它创建 ProviderRequest 或操作历史。
+2. 再将 `run_agent` 的工具状态/文本输出转换改为显式 Output bridge 输入，保持 Personal 为唯一对外表达窗口。
+3. 最后才评估是否把 loop task 的启动/取消与 Core Head 连接；在没有实际 OLV/Cron 成功、取消、超时和迟到结果时序证据前，不调整对外输出、TTS 或历史 owner。
+
+#### 进入条件
+
+- Native loop 的每个可见输出、工具进度、取消、异常和结束都能通过同一个 Adapter/Core Head 身份回流。
+- `InternalAgentSubStage` 只保留请求装配、生命周期钩子、历史/持久化和输出绑定，不再解释 Native response 容器。
+- 至少一次真实 OLV 成功+取消/超时和一次 Cron 成功+失败记录，确认没有重复发送、丢音频、重复 Ledger 或迟到结果覆盖。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。
