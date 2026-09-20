@@ -29,10 +29,10 @@ from astrbot.core.execution import (
     CoreExecutionDeadlineView,
     CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
+    bind_core_execution_head,
     bind_effective_core_request,
     get_core_execution_head,
     get_core_execution_lifecycle,
-    start_core_execution_head,
 )
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -379,7 +379,7 @@ class InternalAgentSubStage(Stage):
                         event,
                         effective_execution_spec,
                     )
-                    execution_head = start_core_execution_head(
+                    execution_head = bind_core_execution_head(
                         event,
                         effective_execution_spec,
                     )
@@ -388,9 +388,10 @@ class InternalAgentSubStage(Stage):
                             CoreExecutionDeadlineView.from_budget(deadline)
                         )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
-                    native_executor.bind_to_core_head()
-                    native_executor.submit(
-                        metadata={
+                    execution_head.activate_executor(
+                        executor_id=native_executor.executor_id,
+                        stop_callback=native_executor.request_stop,
+                        submission_metadata={
                             "provider_id": str(
                                 provider.provider_config.get("id", "") or ""
                             ),

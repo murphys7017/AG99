@@ -512,6 +512,40 @@ def test_core_execution_head_keeps_executor_bound_until_terminal():
     assert head.executor_id is None
 
 
+def test_core_execution_head_activates_executor_in_submission_order():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = bind_core_execution_head(event, spec)
+    stop_calls = []
+    stop_callback = lambda: stop_calls.append(True)
+
+    submitted = head.activate_executor(
+        executor_id="native",
+        stop_callback=stop_callback,
+        submission_metadata={"provider_id": "test"},
+    )
+
+    duplicate = head.activate_executor(
+        executor_id="native",
+        stop_callback=stop_callback,
+        submission_metadata={"provider_id": "ignored"},
+    )
+
+    assert submitted.kind is CoreExecutionEventKind.SUBMITTED
+    assert duplicate is submitted
+    assert head.executor_id == "native"
+    assert head.session.status is CoreExecutionSessionStatus.SUBMITTED
+    assert head.events[-1].metadata_for_trace() == {"provider_id": "test"}
+
+    head.cancel(executor_id="native", metadata={"reason": "cancelled"})
+    assert stop_calls == [True]
+    with pytest.raises(ValueError, match="terminal Core session"):
+        head.activate_executor(
+            executor_id="native",
+            stop_callback=stop_callback,
+        )
+
+
 def test_core_execution_head_fail_emits_only_one_terminal_fact():
     event = _interaction_event()
     spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)

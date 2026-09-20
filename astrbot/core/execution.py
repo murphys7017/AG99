@@ -1152,6 +1152,28 @@ class CoreExecutionHead:
             stop_callback=stop_callback,
         )
 
+    def activate_executor(
+        self,
+        *,
+        executor_id: str,
+        stop_callback: Callable[[], None],
+        submission_metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent:
+        """Start the session and attach one Executor Body as one Core action."""
+
+        if self.session.status.is_terminal:
+            raise ValueError("cannot activate an executor for a terminal Core session")
+        self.start()
+        self.bind_executor(
+            executor_id=executor_id,
+            stop_callback=stop_callback,
+        )
+        return self.emit_event(
+            kind=CoreExecutionEventKind.SUBMITTED,
+            executor_id=executor_id,
+            metadata=submission_metadata,
+        )
+
     def release_executor(self, *, executor_id: str) -> bool:
         """Release a terminal Executor Body from this Core session."""
 

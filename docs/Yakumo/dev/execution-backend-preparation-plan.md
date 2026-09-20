@@ -1047,6 +1047,16 @@ Ledger 结果材料准备、Personal deadline 的只读协作与 Core 取消入�
 - Ledger 仍消费 Core Head 的终态准备结果并通过其结算入口写入；本次没有迁移历史或
   Ledger owner。定向验证 67 项通过，真实 OLV 验收尚未执行。
 
+### 2026-09-20 Core Head 执行器激活边界
+
+- `CoreExecutionHead.activate_executor()` 现在作为一次 Core 操作完成会话启动、唯一
+  executor identity/stop callback 绑定，以及 `submitted` 事实投影。Stage 只提供 Native
+  executor 的 ID、停止回调和提交诊断，不再分别调用 Adapter 的 bind/submit 方法。
+- 同一执行器与同一停止回调的重复激活复用已有 `submitted` 事实，不重复写入事件；终态后
+  的激活明确失败。取消仍由 Head 先写入 `cancelled` 再请求已绑定的停止回调。
+- 该边界不把命令 mailbox 误作执行队列，也不让 Core Head 运行 `run_agent()`；Native 执行循环、
+  可见输出、TTS、历史保存与平台投递仍在当前 owner。定向 Core/Adapter 验证 102 项通过。
+
 ## 非目标
 
 - 当前不实现 Claude Code、OpenCode 或新的 Executor Body。

@@ -191,7 +191,10 @@ def test_native_executor_adapter_reports_normalized_lifecycle_facts(monkeypatch)
         lambda actual_event: None,
     )
 
-    adapter.submit(metadata={"provider_id": "test"})
+    adapter.emit_event(
+        kind="submitted",
+        metadata={"provider_id": "test"},
+    )
     adapter.complete(
         artifact=CoreExecutionArtifact(
             artifact_id="final_response",
@@ -239,14 +242,13 @@ def test_native_executor_adapter_keeps_earlier_terminal_outcome(monkeypatch):
     assert emitted == []
 
 
-def test_native_executor_adapter_binds_and_releases_core_head(monkeypatch):
+def test_native_executor_adapter_releases_core_head(monkeypatch):
     event = object()
     runner = FakeNativeRunner()
     runner.run_context.context = SimpleNamespace(event=event)
     adapter = NativeExecutorAdapter(runner)
     calls = []
     head = SimpleNamespace(
-        bind_executor=lambda **kwargs: calls.append(("bind", kwargs)),
         release_executor=lambda **kwargs: calls.append(("release", kwargs)) or True,
     )
     monkeypatch.setattr(
@@ -254,12 +256,8 @@ def test_native_executor_adapter_binds_and_releases_core_head(monkeypatch):
         lambda actual_event: head,
     )
 
-    assert adapter.bind_to_core_head() is True
     assert adapter.release_from_core_head() is True
-    assert calls[0][0] == "bind"
-    assert calls[0][1]["executor_id"] == "native"
-    assert calls[0][1]["stop_callback"] == adapter.request_stop
-    assert calls[1] == ("release", {"executor_id": "native"})
+    assert calls == [("release", {"executor_id": "native"})]
 
 
 def test_native_executor_adapter_projects_final_response_metadata():

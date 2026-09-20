@@ -124,13 +124,6 @@ class NativeExecutorAdapter:
             metadata=metadata,
         )
 
-    def submit(self, *, metadata: dict | None = None):
-        """Report the Native executor as accepted by the Core lifecycle."""
-        return self.emit_event(
-            kind=CoreExecutionEventKind.SUBMITTED,
-            metadata=metadata,
-        )
-
     def complete(
         self,
         *,
@@ -258,20 +251,6 @@ class NativeExecutorAdapter:
 
     def request_stop(self) -> None:
         self._runner.request_stop()
-
-    def bind_to_core_head(self) -> bool:
-        """Attach this executor's identity and stop operation to the Core Head."""
-
-        execution_head = get_core_execution_head(
-            self._runner.run_context.context.event
-        )
-        if execution_head is None:
-            return False
-        execution_head.bind_executor(
-            executor_id=self.executor_id,
-            stop_callback=self.request_stop,
-        )
-        return True
 
     def release_from_core_head(self) -> bool:
         """Release this executor only after the Core session becomes terminal."""
