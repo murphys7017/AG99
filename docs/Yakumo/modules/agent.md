@@ -46,10 +46,15 @@ Native Agent 完成后把有限工具证据、结果、错误和 token usage 写
 
 当前 Ledger 的最终持久化调用仍位于 `InternalAgentSubStage`，但 Native 已通过
 `CoreExecutionLifecycle` 将 submitted、working、progress、artifact-ready、completed、
-failed 和 cancelled 等事实统一排序并投影到 Ledger。它仍只是 Native 执行准备和进程内
-生命周期边界，不是完整的 `ExecutionBackend` / 可替换 Executor 实现；当前 `CoreExecutionHead`
-只是同步入口，Core Head 队列、
-超时 owner、Artifact 汇总、错误翻译和第三方执行器回流仍需后续统一。
+failed 和 cancelled 等事实统一排序并投影到 Ledger。D5-A/D5-B 已额外完成
+`CoreExecutionPort` 的显式注入：Native adapter 不再通过 Event 反查 Head，普通 Interaction
+和主动任务都在装配时传入当前 Head。
+
+这仍不是完整的 `ExecutionBackend` / 可替换 Executor 实现。当前没有 executor factory、通用
+`ExecutorRun`、唯一运行 coordinator 或 executor-neutral 结果桥；`ProviderRequest`、Native
+runner、MessageChain 和可见输出仍分别属于 Native adapter 与 Output 边界。后续实现必须按
+[Core 内部执行器替换实施方案](../dev/internal-executor-replacement-plan.md) 先证明 Native 和
+测试 Body 共用同一生产装配入口，再接入任何真实外部执行器。
 
 ## Agent 上下文
 

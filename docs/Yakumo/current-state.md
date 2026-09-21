@@ -1,5 +1,22 @@
 # Yakumo Current State
 
+## 2026-09-21 Core 内部可替换执行器状态
+
+当前已经完成的是 D5-A/D5-B：`CoreExecutionPort` 显式注入 Native Body，普通 Interaction 和
+主动任务均不再让 Native adapter 通过 Event 反查 `CoreExecutionHead`。这解决的是控制端口的
+归属问题，不等于已经有可配置的 executor 选择、通用运行协调、通用结果桥或第二个生产 Body。
+
+后续 D5 采用 R1-R8 的小批次推进，架构口径见
+[Core 内部执行器替换实施方案](dev/internal-executor-replacement-plan.md)，编码步骤见
+[内部可替换执行器：5.6 操作级实施手册](dev/internal-executor-replacement-implementation-guide.md)。
+关键约束如下：
+
+- `ProviderRequest` 仍是 Native Provider 的目标请求，不能成为任意执行器的公共输入；
+- 执行器返回 executor-neutral 的结果材料，只有共享结果桥可转换为 MessageChain/平台输出；
+- Personal 保持统一对外表达，Core Head 保持唯一终态，Output Controller 保持可见输出和历史 owner；
+- R7 前的 Scripted Body 只证明 Head 控制协议，不能表述为生产执行链可替换；
+- D6 的 OLV/Cron/Live 验收仍待真实运行，当前仅可称“Native 内部控制边界已收口”。
+
 ## 2026-09-20 跨组件一致性收口
 
 跨组件整改 B1 至 B7 已完成源码实施与离线验证：

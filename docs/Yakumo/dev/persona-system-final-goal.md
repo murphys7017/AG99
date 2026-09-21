@@ -1,7 +1,10 @@
 # Persona Runtime 最终目标
 
 本文只定义 Yakumo 持续人格运行时的长期边界，不记录已经完成的迁移步骤。当前实现以
-`current-state.md` 和源码为准，实施顺序以 `execution-backend-preparation-plan.md` 为准。
+`current-state.md` 和源码为准，实施顺序以 `execution-backend-preparation-plan.md` 为准；
+Core 内部可替换执行器的架构和逐批编码约束分别见
+`internal-executor-replacement-plan.md` 与
+`internal-executor-replacement-implementation-guide.md`。
 自主人格观察、策略和 Heartbeat 的详细实施计划见
 `autonomous-persona-runtime-initial-plan.md`。
 
@@ -86,6 +89,9 @@ Personal 确认。
 Claude Code、OpenCode 等后端位于同一执行契约之后。
 
 执行层产出结构化进度与结果材料，不直接决定最终人格文案，也不直接拥有平台发送语义。
+它只消费由 Core 准备的执行事实，并通过 Core 的统一运行协调与结果桥回流；`ProviderRequest`、
+MessageChain、平台 Event、Persona 和 Memory 都不是执行器公共接口。这个约束保证后续更换
+Native、Claude Code 或其他 Body 时，Personal 和 Output 不会再被迫跟着分叉。
 
 ### Output Runtime
 

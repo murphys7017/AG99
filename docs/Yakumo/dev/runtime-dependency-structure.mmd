@@ -1,5 +1,6 @@
 flowchart LR
 %% AstrBot 当前 core 静态依赖结构。由 2026-07-21 源码顶层 import 图归纳。
+%% 2026-09-21：虚线 Executor Runtime 是 D5 的目标依赖，不是当前已落地的运行链。
 %% 474 个 core 模块；修正依赖初始化顺序的导入后，顶层运行时 import SCC 为 0。
 
     BOOT["InitialLoader / CoreLifecycle<br/>应用装配与服务生命周期"]
@@ -8,6 +9,7 @@ flowchart LR
     PROMPT["Prompt<br/>collect → ContextPack → project → render"]
     EXEC["Execution Contracts<br/>CoreExecutionSpec / CoreExecutionHead / Session / Lifecycle / Ledger"]
     AGENT["Native / Third-party Agent<br/>模型与工具执行（Executor Body）"]
+    EXEC_RUNTIME["Planned Executor Runtime<br/>factory / ExecutorRun / coordinator / result bridge"]
     OUTPUT["Output Controller / RespondStage<br/>可见输出、物理投递与完成"]
     HISTORY["Conversation / Postprocess / Memory<br/>可见历史、后台消费与长期状态"]
     PLUGIN["Plugin Context / Hooks<br/>官方扩展与兼容接口"]
@@ -41,6 +43,9 @@ flowchart LR
     EXEC --> PROMPT
     EXEC --> PROVIDER
     EXEC --> AGENT
+    EXEC -. D5 target .-> EXEC_RUNTIME
+    EXEC_RUNTIME -. prepares .-> AGENT
+    EXEC_RUNTIME -. result material .-> OUTPUT
     OUTPUT --> PLATFORM
     OUTPUT --> HISTORY
     HISTORY --> PROVIDER
@@ -53,7 +58,9 @@ flowchart LR
     CONTRACT_GAP["当前结构债务<br/>Prompt 仍直接依赖 Event、Context、ProviderRequest<br/>capability contract 仍携带 Native ToolSet"]
     STATE_GAP["当前状态债务<br/>PersonalTurnContext 已建立<br/>主链仍使用 117 个 literal event-extra key"]
     OUTPUT_GAP["当前输出债务<br/>纯媒体主动消息仍走平台 sink<br/>部分物理投递缺结构化 receipt"]
+    EXECUTOR_GAP["D5 当前缺口<br/>尚无 factory、通用 run/coordinator 或生产替换证明"]
 
     PROMPT -.-> CONTRACT_GAP
     RUNTIME -.-> STATE_GAP
     OUTPUT -.-> OUTPUT_GAP
+    EXEC_RUNTIME -.-> EXECUTOR_GAP

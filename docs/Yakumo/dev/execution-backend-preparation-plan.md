@@ -133,6 +133,12 @@ completed、cancel 和重复 cancel 验证；它尚未作为生产执行器注�
 
 #### D5：将 Native 从架构特例收口为默认实现
 
+后续内部可替换运行链的具体实施提案见
+[Core 内部执行器替换实施方案](internal-executor-replacement-plan.md)。
+5.6 的逐批编码约束见
+[内部可替换执行器：5.6 操作级实施手册](internal-executor-replacement-implementation-guide.md)。
+显式控制端口已经落地；执行器选择、通用运行/结果契约与生产链替换证明仍需该方案继续收口。
+
 第二 Body 验证通过后，再删除当前仅为 Native 保留的 Core Head 分支和泄漏的 Runner 细节。
 
 - Stage 只装配当前默认 executor，不再直接管理其控制句柄或写入执行事实。
@@ -149,6 +155,12 @@ completed、cancel 和重复 cancel 验证；它尚未作为生产执行器注�
 Adapter、Loop、Output Bridge 和默认 Body 装配，未进入 Core 事件载荷，也未改变 Personal 或
 可见输出 owner。D6 的真实 OLV/Cron/Live 验收仍未完成，验收通过前不删除剩余兼容入口，也不
 将此状态表述为完整可替换 Executor 已落地。
+
+2026-09-21 的 D5 后续实施按 R1-R8 逐批推进：先分离 executor-neutral 的请求准备，再定义
+运行/结果契约和唯一 coordinator，随后收口 follow-up、输出结算、factory 配置和测试 Body。
+`ProviderRequest` 与 MessageChain 分别留在 Native adapter、共享输出桥，不作为任意 Body 的
+通用输入或输出；在 R7 完成前，“第二 Body 已验证”仅限当前 Head 协议测试，不表示生产装配
+链已可替换。
 
 #### D6：真实平台验收和完成评审
 

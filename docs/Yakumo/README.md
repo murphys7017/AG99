@@ -24,7 +24,7 @@ AG99 将 AstrBot 从面向单次消息的 Bot Runtime 演进为持续运行的 P
 ## 当前稳定边界
 
 - Prompt 统一按 `Collector -> ContextPack -> target projection -> render profile -> Provider Renderer` 工作；Interaction 先形成 canonical base facts，再后台预取 Persona/Core 共用的 plugin enrichment。Persona 只消费已就绪结果，Router 与 Planner 不等待普通插件扩展，Core 等待并复用同一 task。
-- Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；Phase 9 已在其上建立进程内 `CoreExecutionHead` 入口以及 `CoreExecutionSession` / `CoreExecutionLifecycle` 事实边界，但第三方 Backend 尚未接入这一边界。
+- Core 执行前形成 `CoreExecutionSpec`，把任务、上下文、执行历史和能力快照与 Native `ProviderRequest` 分开；Phase 9 已在其上建立进程内 `CoreExecutionHead` 入口以及 `CoreExecutionSession` / `CoreExecutionLifecycle` 事实边界。D5-A/D5-B 已把 `CoreExecutionPort` 显式注入默认 Native Body，消除了 adapter 经 Event 反查 Head 的依赖；但尚无 executor factory、通用 `ExecutorRun`、运行 coordinator、结果桥或第二个生产 Body，不能表述为执行器已经可替换。
 - Personal Runtime 在 Plugin Handler body 执行前取得 session lease，并通过 `TurnExecutionScope` 持有 Router、Persona、Context Material 和流式观察任务；即时表达、Core 最终结果和插件最终输出共享 turn 级仲裁。默认兼容路径仍先保留 Handler 接管机会；默认关闭的并行插件路径会在 discovery 后从同一 `t0` 启动 Personal、Router 和 Plugin Job。
   reservation 同时启动一个 `TurnDeadlineBudget`；binding、queue、Router、Planner、Persona、
   Core、Provider fallback 与工具循环共享默认 120 秒的单调递减总预算。
@@ -100,6 +100,8 @@ Collector 负责收集事实，Projection 决定 Router、Planner、Personal Pol
 - `dev/runtime-function-unification-plan.md`
 - `dev/parallel-plugin-runtime-plan.md`
 - `dev/execution-backend-preparation-plan.md`
+- `dev/internal-executor-replacement-plan.md`
+- `dev/internal-executor-replacement-implementation-guide.md`
 - `prompt-development-plan.md`
 - `dev/cost-context-runtime-plan.md`
 
@@ -122,6 +124,8 @@ Memory 子系统：
 9. `dev/autonomous-persona-runtime-initial-plan.md`
 10. `dev/runtime-function-unification-plan.md`
 11. `dev/execution-backend-preparation-plan.md`
+12. `dev/internal-executor-replacement-plan.md`
+13. `dev/internal-executor-replacement-implementation-guide.md`
 
 ## 维护规则
 

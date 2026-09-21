@@ -245,3 +245,31 @@ Core/Stage 装配点应优先使用 Body 入口。
 这一步没有把 Native 的 stream、Provider、Prompt、Tool Loop 或可见输出暴露进通用协议。
 `NativeExecutorAdapter` 只是当前第一个 Body 实现，`NativeExecutionLoop` 和
 `NativeExecutionOutputBridge` 仍然保留 Native 专属职责。
+
+## 10. 2026-09-21 D5 后续边界
+
+D5-A/D5-B 已让 `CoreExecutionPort` 成为 Native Body 的显式控制端口。它解决了 Body 对
+Event 反查 Head 的隐式依赖，但没有新增一个可通用于所有 Body 的运行或结果协议。
+
+后续 R1-R8 的目标边界是：
+
+```text
+PreparedCoreExecution
+  -> ExecutorRun
+  -> Core coordinator
+  -> executor-neutral ExecutionResult
+  -> shared result bridge
+  -> InteractionOutputController
+```
+
+- `PreparedCoreExecution` 复用现有 CoreExecutionSpec、ContextPack、能力和 deadline 事实；
+  `ProviderRequest` 留给 Native adapter，不能成为通用输入；
+- `ExecutorRun` 接受控制、报告执行事实并关闭自身资源；它不直接调用平台、写历史或裁决终态；
+- coordinator 是 Body 生命周期、唯一终态和迟到结果抑制的运行 owner；
+- `ExecutionResult` 只包含执行器中立材料。MessageChain、物理投递和 DeliveryReceipt 继续由
+  输出边界拥有；
+- 当前 Scripted Body 只验证 Head 控制协议。只有它通过同一 factory/coordinator/输出桥运行后，
+  才能把“替换性”写为生产装配链事实。
+
+本节是后续实现约束，不改变本文此前记录的当前源码事实。详细实施顺序见
+[Core 内部执行器替换实施方案](internal-executor-replacement-plan.md)。

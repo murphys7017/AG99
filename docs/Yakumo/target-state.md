@@ -355,10 +355,15 @@ Dispatcher，确定 Prompt Snapshot、Capability Snapshot、Conversation/Memory 
 History、独立 Core Execution Ledger、能力快照和任务说明保持为不同事实，并与目标渲染结果
 分离，再由 Core 内部的 `NativeExecutionAdapter` 负责官方 `ProviderRequest` 转换。当前已建立
 第一版进程内 `CoreExecutionHead` / `CoreExecutionSession` / `CoreExecutionLifecycle`，用于承载
-执行入口、事件排序、命令幂等、取消和终态证据。Personal 最终只与稳定的 Core Head 通信；Native、Claude Code、
-OpenCode 等都是 Core 内部可替换的 Executor Body，仍等待完整 Core Head、统一事件回流和
-取消 owner 稳定后再接入。详细阶段和验收条件见
-[Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)。
+执行入口、事件排序、命令幂等、取消和终态证据。D5-A/D5-B 进一步让 Native 通过显式
+`CoreExecutionPort` 接入 Head；这不是配置化选择或完整替换链。
+
+Personal 最终只与稳定的 Core Head 通信；Native、Claude Code、OpenCode 等都只能作为 Core
+内部的 Executor Body。它们必须消费同一份执行事实、通过统一 coordinator 回流 executor-neutral
+结果，并由共享输出桥转换为现有可见输出。`ProviderRequest`、MessageChain、平台 Event、Persona
+和 Memory 均不能成为外部 Body 的公共依赖。详细阶段和验收条件见
+[Personal Runtime 前置主链清理计划](./dev/execution-backend-preparation-plan.md)、
+[Core 内部执行器替换实施方案](./dev/internal-executor-replacement-plan.md)。
 
 `CoreExecutionSpec` 当前只是 Core Head 到 Native Executor 的进程内事实边界，不是 Personal/Core
 通信协议，也不是最终 wire contract。`CoreExecutionSession` / `CoreExecutionLifecycle` 目前仍是

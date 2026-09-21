@@ -84,6 +84,17 @@ ProcessStage 对共享 event extra 的写入和清理路径。
 - 不在 ProviderRequest 迁移前拆 `astr_main_agent.py` 的全部职责；
 - 不开始第二个 Executor Body 或远程通信协议。
 
+## 5.1 2026-09-21 D5 实施约束
+
+后续内部执行器解耦会新增 executor-neutral 的请求准备和运行契约，但不改变本清单对
+`provider_request` 的事实判断：它仍是 Native Provider 的最终目标请求和 Hook 兼容绑定，
+不能进入通用 `PreparedCoreExecution`，也不能成为其他 Body 的默认输入。
+
+Native factory 将在消费规范 ContextPack、CoreExecutionSpec 和能力快照后自行构造
+`ProviderRequest`。外部 Body 应消费自己的目标输入；不能把 SDK/CLI 请求伪装为
+`ProviderRequest` 来宣称旧 LLM Hook 或官方 Provider 扩展仍然完全适用。详细边界见
+[Core 内部执行器替换实施方案](internal-executor-replacement-plan.md)。
+
 ## 6. 下一步验收
 
 - 同一 Interaction 中 Persona 与 Core 并发请求不会互相覆盖；
