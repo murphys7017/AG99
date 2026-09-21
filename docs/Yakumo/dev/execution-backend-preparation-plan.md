@@ -142,9 +142,13 @@ completed、cancel 和重复 cancel 验证；它尚未作为生产执行器注�
 
 退出条件：Native 是一个默认 Body，而不是 Core Head、Personal 或 Output 的特殊条件。
 
-状态：已完成边界审阅，暂不做删除性重构。Core Head 未导入 Native runner 类型；Native
-专属依赖集中在 Adapter、Loop、Output Bridge 和现有 Stage 装配。待 D6 真实验收通过后，再
-决定是否删除剩余过渡入口。
+状态：D5-A/D5-B 已完成。`CoreExecutionPort` 现在作为 Native Body 的显式控制与事件端口；
+`NativeExecutionRun` 负责默认 Native Body 的激活、终态投影与释放。`InternalAgentSubStage`
+和主动任务路径均在装配时注入当前 `CoreExecutionHead`，Adapter 不再通过 Event 反查 Head；
+没有 Head 的旧主动任务路径保留原有不投影 Core 终态的语义。Native 专属依赖仍集中在
+Adapter、Loop、Output Bridge 和默认 Body 装配，未进入 Core 事件载荷，也未改变 Personal 或
+可见输出 owner。D6 的真实 OLV/Cron/Live 验收仍未完成，验收通过前不删除剩余兼容入口，也不
+将此状态表述为完整可替换 Executor 已落地。
 
 #### D6：真实平台验收和完成评审
 

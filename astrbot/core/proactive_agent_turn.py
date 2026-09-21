@@ -29,7 +29,10 @@ from astrbot.core.tools.message_tools import SendMessageToUserTool
 from astrbot.core.utils.config_number import coerce_int_config
 
 if TYPE_CHECKING:
-    from astrbot.core.astr_agent_run_util import NativeExecutorAdapter
+    from astrbot.core.astr_agent_run_util import (
+        NativeExecutionRun,
+        NativeExecutorAdapter,
+    )
     from astrbot.core.cron.events import CronMessageEvent
     from astrbot.core.execution import CoreExecutionHead
 
@@ -79,7 +82,7 @@ async def run_proactive_agent_turn(
     # Kept local to avoid making the Core builder import this proactive helper.
     from astrbot.core.astr_agent_run_util import (
         NativeExecutionLoop,
-        NativeExecutorAdapter,
+        NativeExecutionRun,
     )
     from astrbot.core.astr_main_agent import _get_session_conv, build_main_agent
     from astrbot.core.cron.events import CronMessageEvent
@@ -115,6 +118,7 @@ async def run_proactive_agent_turn(
     conversation = None
     result = None
     native_executor: NativeExecutorAdapter | None = None
+    native_run: NativeExecutionRun | None = None
     execution_head: CoreExecutionHead | None = None
     executor_activated = False
     runner_reset_completed = False
@@ -173,7 +177,6 @@ async def run_proactive_agent_turn(
         if not await finalize_core_request_preparation(event, result):
             event.set_extra("_core_request_preparation_stopped", True)
             raise CoreRequestPreparationStopped("request_stopped_by_plugin")
-        native_executor = NativeExecutorAdapter(result.agent_runner)
         execution_spec = getattr(result, "execution_spec", None)
         if isinstance(execution_spec, CoreExecutionSpec):
             execution_head = bind_core_execution_head(event, execution_spec)
@@ -181,17 +184,20 @@ async def run_proactive_agent_turn(
                 CoreExecutionDeadlineView.from_budget(deadline)
             )
             bind_interaction_turn_core_execution_journal(event, execution_head)
+        native_run = NativeExecutionRun.from_runner(
+            result.agent_runner,
+            core_port=execution_head,
+        )
+        native_executor = native_run.executor
         await result.reset_prepared_runner()
         runner_reset_completed = True
-        if execution_head is not None:
-            execution_head.activate_executor_body(
-                native_executor,
-                submission_metadata={
-                    "source": "cron" if extras.get("cron_job") else "background",
-                    "streaming": False,
-                },
-            )
-            executor_activated = True
+        native_run.activate(
+            submission_metadata={
+                "source": "cron" if extras.get("cron_job") else "background",
+                "streaming": False,
+            },
+        )
+        executor_activated = native_run.activated
         provider_settings = config.provider_settings
         agent_max_step = coerce_int_config(
             provider_settings.get("max_agent_step", 30),
@@ -202,6 +208,7 @@ async def run_proactive_agent_turn(
         native_loop = NativeExecutionLoop(
             native_executor,
             max_step=agent_max_step,
+            should_stop=event.is_stopped,
         )
         async for _ in native_loop.stream():
             pass
@@ -214,7 +221,7 @@ async def run_proactive_agent_turn(
         ):
             raise RuntimeError("Proactive Core did not complete successfully")
         if execution_head is not None:
-            native_executor.finalize()
+            native_run.finalize()
         status = "completed"
         return ProactiveAgentTurnResult(
             event=event,
@@ -229,8 +236,8 @@ async def run_proactive_agent_turn(
     except TurnDeadlineExceeded as exc:
         status, error = "cancelled", str(exc)
         event.set_extra("_proactive_core_deadline_exceeded", True)
-        if native_executor is not None and executor_activated:
-            native_executor.cancel(metadata={"reason": "deadline_exceeded"})
+        if native_run is not None and executor_activated:
+            native_run.cancel(metadata={"reason": "deadline_exceeded"})
         elif native_executor is not None and execution_head is not None:
             execution_head.cancel(
                 executor_id=native_executor.executor_id,
@@ -240,11 +247,11 @@ async def run_proactive_agent_turn(
     except asyncio.CancelledError:
         status, error = "cancelled", "Proactive execution cancelled"
         if (
-            native_executor is not None
+            native_run is not None
             and execution_head is not None
             and executor_activated
         ):
-            native_executor.cancel(metadata={"reason": "task_cancelled"})
+            native_run.cancel(metadata={"reason": "task_cancelled"})
         elif native_executor is not None and execution_head is not None:
             execution_head.cancel(
                 executor_id=native_executor.executor_id,
@@ -254,11 +261,11 @@ async def run_proactive_agent_turn(
     except Exception as exc:
         error = str(exc)[:2000]
         if (
-            native_executor is not None
+            native_run is not None
             and execution_head is not None
             and executor_activated
         ):
-            native_executor.fail(
+            native_run.fail(
                 metadata={
                     "error_type": type(exc).__name__,
                     "error": error,
@@ -343,12 +350,8 @@ async def run_proactive_agent_turn(
         except Exception:
             logger.exception("Proactive execution ledger persistence failed")
         finally:
-            if (
-                native_executor is not None
-                and execution_head is not None
-                and executor_activated
-            ):
-                native_executor.release_from_core_head()
+            if native_run is not None and executor_activated:
+                native_run.release()
 
 
 __all__ = ["ProactiveAgentTurnResult", "run_proactive_agent_turn"]

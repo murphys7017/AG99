@@ -2,8 +2,9 @@ import asyncio
 import re
 import time
 import traceback
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from astrbot.core import logger
 from astrbot.core.agent.message import Message
@@ -15,7 +16,6 @@ from astrbot.core.execution import (
     CoreExecutionArtifact,
     CoreExecutionEventKind,
     CoreExecutionProgress,
-    get_core_execution_head,
 )
 from astrbot.core.interaction.output_modes import (
     CoreOutputDelivery,
@@ -42,6 +42,9 @@ from astrbot.core.provider.provider import Provider, TTSProvider
 
 AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
 
+if TYPE_CHECKING:
+    from astrbot.core.execution import CoreExecutionPort
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutorStreamItem:
@@ -66,6 +69,56 @@ class NativeExecutionEvidence:
     was_aborted: bool
 
 
+@dataclass(slots=True)
+class NativeExecutionRun:
+    """Own one default Native Body attachment and terminal projection."""
+
+    executor: "NativeExecutorAdapter"
+    core_port: "CoreExecutionPort | None" = None
+    activated: bool = False
+
+    @classmethod
+    def from_runner(
+        cls,
+        runner: AgentRunner,
+        *,
+        core_port: "CoreExecutionPort | None" = None,
+    ) -> "NativeExecutionRun":
+        return cls(
+            executor=NativeExecutorAdapter(runner, core_port=core_port),
+            core_port=core_port,
+        )
+
+    def activate(self, *, submission_metadata: dict | None = None) -> None:
+        if self.core_port is None:
+            return
+        self.core_port.activate_executor_body(
+            self.executor,
+            submission_metadata=submission_metadata,
+        )
+        self.activated = True
+
+    def finalize(self) -> NativeExecutionEvidence:
+        if self.activated:
+            self.executor.finalize()
+        return self.executor.evidence()
+
+    def cancel(self, *, metadata: dict | None = None) -> None:
+        if self.activated:
+            self.executor.cancel(metadata=metadata)
+            return
+        self.executor.request_cancellation(metadata=metadata)
+
+    def fail(self, *, metadata: dict | None = None) -> None:
+        if self.activated:
+            self.executor.fail(metadata=metadata)
+            return
+        self.executor.request_stop()
+
+    def release(self) -> bool:
+        return self.executor.release_from_core_port() if self.activated else False
+
+
 class NativeExecutorAdapter:
     """Expose the Native runner through the Core execution boundary.
 
@@ -76,8 +129,14 @@ class NativeExecutorAdapter:
 
     executor_id = "native"
 
-    def __init__(self, runner: AgentRunner) -> None:
+    def __init__(
+        self,
+        runner: AgentRunner,
+        *,
+        core_port: "CoreExecutionPort | None" = None,
+    ) -> None:
         self._runner = runner
+        self._core_port = core_port
 
     @property
     def run_context(self) -> AstrAgentContext:
@@ -106,12 +165,10 @@ class NativeExecutorAdapter:
         return self._runner.agent_hooks
 
     def follow_up(self, *, message_text: str):
-        """Capture a follow-up through Core when this execution has a Head."""
+        """Capture a follow-up through the injected Core control port."""
 
-        event = self.event
-        execution_head = get_core_execution_head(event) if event is not None else None
-        if execution_head is not None:
-            return execution_head.provide_input(
+        if self._core_port is not None:
+            return self._core_port.provide_input(
                 executor_id=self.executor_id,
                 message_text=message_text,
             )
@@ -133,12 +190,16 @@ class NativeExecutorAdapter:
         metadata: dict | None = None,
     ):
         """Publish one Native fact through the owning Core execution boundary."""
-        event = self.event
-        execution_head = get_core_execution_head(event)
-        if execution_head is not None and execution_head.terminal_event is not None:
-            return execution_head.terminal_event.execution
+        if self._core_port is not None:
+            if self._core_port.terminal_event is not None:
+                return self._core_port.terminal_event.execution
+            return self._core_port.emit_event(
+                kind=kind,
+                executor_id=self.executor_id,
+                metadata=metadata,
+            )
         return record_interaction_turn_core_execution_event(
-            event,
+            self.event,
             kind=kind,
             executor_id=self.executor_id,
             metadata=metadata,
@@ -156,6 +217,15 @@ class NativeExecutorAdapter:
         earlier cancellation or failure therefore remains authoritative when a
         late Native completion arrives.
         """
+        if self._core_port is not None:
+            terminal = self._core_port.terminal_event
+            if terminal is not None:
+                return terminal.execution
+            return self._core_port.complete(
+                executor_id=self.executor_id,
+                artifact=artifact,
+                metadata=metadata,
+            )
         if artifact is not None:
             self.emit_event(
                 kind=CoreExecutionEventKind.ARTIFACT_READY,
@@ -168,6 +238,14 @@ class NativeExecutorAdapter:
 
     def fail(self, *, metadata: dict | None = None):
         """Report one Native failure through the Core lifecycle boundary."""
+        if self._core_port is not None:
+            terminal = self._core_port.terminal_event
+            if terminal is not None:
+                return terminal.execution
+            return self._core_port.fail(
+                executor_id=self.executor_id,
+                metadata=metadata,
+            )
         return self.emit_event(
             kind=CoreExecutionEventKind.FAILED,
             metadata=metadata,
@@ -182,6 +260,14 @@ class NativeExecutorAdapter:
 
     def cancel(self, *, metadata: dict | None = None):
         """Report cancellation through the Core lifecycle and stop callback."""
+        if self._core_port is not None:
+            terminal = self._core_port.terminal_event
+            if terminal is not None:
+                return terminal.execution
+            return self._core_port.cancel(
+                executor_id=self.executor_id,
+                metadata=metadata,
+            )
         return self.emit_event(
             kind=CoreExecutionEventKind.CANCELLED,
             metadata=metadata,
@@ -273,20 +359,18 @@ class NativeExecutorAdapter:
         self._runner.request_stop()
 
     def request_cancellation(self, *, metadata: dict | None = None):
-        """Route a stop signal through Core before falling back to Native stop."""
+        """Request stop through Core, or use the non-Head compatibility path."""
 
-        event = self.event
-        if get_core_execution_head(event) is None:
+        if self._core_port is None:
             self.request_stop()
         return self.cancel(metadata=metadata)
 
-    def release_from_core_head(self) -> bool:
+    def release_from_core_port(self) -> bool:
         """Release this executor only after the Core session becomes terminal."""
 
-        execution_head = get_core_execution_head(self.event)
-        if execution_head is None:
+        if self._core_port is None:
             return False
-        return execution_head.release_executor(executor_id=self.executor_id)
+        return self._core_port.release_executor(executor_id=self.executor_id)
 
     def step(self) -> AsyncGenerator[AgentResponse, None]:
         """Open one Native step stream; the consumer must close it on exit."""
@@ -374,10 +458,16 @@ class NativeExecutionLoop:
     text, tool status, TTS input, history, or platform output.
     """
 
-    def __init__(self, executor: NativeExecutorAdapter, *, max_step: int) -> None:
+    def __init__(
+        self,
+        executor: NativeExecutorAdapter,
+        *,
+        max_step: int,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> None:
         self._executor = executor
         self._max_step = max_step
-        self._event = executor.event
+        self._should_stop = should_stop or (lambda: _should_stop_agent(executor.event))
         self.aborted = False
 
     async def stream(self) -> AsyncGenerator[ExecutorStreamItem, None]:
@@ -412,7 +502,7 @@ class NativeExecutionLoop:
             step_stream = self._executor.stream()
             try:
                 async for response in step_stream:
-                    if _should_stop_agent(self._event):
+                    if self._should_stop():
                         self._executor.request_cancellation(
                             metadata={"reason": "agent_aborted"}
                         )
@@ -421,7 +511,7 @@ class NativeExecutionLoop:
                         self.aborted = True
                         return
 
-                    if _should_stop_agent(self._event):
+                    if self._should_stop():
                         continue
 
                     self._executor.observe_response(response)
@@ -443,7 +533,7 @@ class NativeExecutionLoop:
         """Request cancellation when the active turn asks the loop to stop."""
 
         while not self._executor.done():
-            if _should_stop_agent(self._event):
+            if self._should_stop():
                 self._executor.request_cancellation(
                     metadata={"reason": "agent_aborted"}
                 )
@@ -585,6 +675,7 @@ class NativeExecutionOutputBridge:
         stream_to_general: bool = False,
         show_reasoning: bool = False,
         buffer_intermediate_messages: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ) -> None:
         self._executor = executor
         self._max_step = max_step
@@ -593,6 +684,7 @@ class NativeExecutionOutputBridge:
         self._stream_to_general = stream_to_general
         self._show_reasoning = show_reasoning
         self._buffer_intermediate_messages = buffer_intermediate_messages
+        self._should_stop = should_stop
 
     @property
     def executor(self) -> NativeExecutorAdapter:
@@ -611,6 +703,7 @@ class NativeExecutionOutputBridge:
             stream_to_general=self._stream_to_general,
             show_reasoning=self._show_reasoning,
             buffer_intermediate_messages=self._buffer_intermediate_messages,
+            should_stop=self._should_stop,
         )
 
     async def stream_live(
@@ -631,6 +724,7 @@ async def _stream_native_agent_output(
     stream_to_general: bool = False,
     show_reasoning: bool = False,
     buffer_intermediate_messages: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AsyncGenerator[MessageChain | None, None]:
     astr_event = executor.event
     tool_name_by_call_id: dict[str, str] = {}
@@ -640,7 +734,11 @@ async def _stream_native_agent_output(
         stream_to_general,
         executor,
     )
-    loop = NativeExecutionLoop(executor, max_step=max_step)
+    loop = NativeExecutionLoop(
+        executor,
+        max_step=max_step,
+        should_stop=should_stop,
+    )
     try:
         async for resp in loop.stream():
             if resp.kind == "tool_call_result":
@@ -849,18 +947,21 @@ async def run_agent(
     stream_to_general: bool = False,
     show_reasoning: bool = False,
     buffer_intermediate_messages: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AsyncGenerator[MessageChain | None, None]:
     """Compatibility entry for the Native visible-output bridge."""
 
-    bridge = NativeExecutionOutputBridge(
-        executor,
-        max_step=max_step,
-        show_tool_use=show_tool_use,
-        show_tool_call_result=show_tool_call_result,
-        stream_to_general=stream_to_general,
-        show_reasoning=show_reasoning,
-        buffer_intermediate_messages=buffer_intermediate_messages,
-    )
+    bridge_kwargs = {
+        "max_step": max_step,
+        "show_tool_use": show_tool_use,
+        "show_tool_call_result": show_tool_call_result,
+        "stream_to_general": stream_to_general,
+        "show_reasoning": show_reasoning,
+        "buffer_intermediate_messages": buffer_intermediate_messages,
+    }
+    if should_stop is not None:
+        bridge_kwargs["should_stop"] = should_stop
+    bridge = NativeExecutionOutputBridge(executor, **bridge_kwargs)
     async for chain in bridge.stream():
         yield chain
 
@@ -873,17 +974,20 @@ async def run_live_agent(
     show_tool_call_result: bool = False,
     show_reasoning: bool = False,
     buffer_intermediate_messages: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AsyncGenerator[MessageChain | None, None]:
     """Compatibility entry for the Native Live output bridge."""
-    output_bridge = NativeExecutionOutputBridge(
-        executor,
-        max_step=max_step,
-        show_tool_use=show_tool_use,
-        show_tool_call_result=show_tool_call_result,
-        stream_to_general=False,
-        show_reasoning=show_reasoning,
-        buffer_intermediate_messages=buffer_intermediate_messages,
-    )
+    bridge_kwargs = {
+        "max_step": max_step,
+        "show_tool_use": show_tool_use,
+        "show_tool_call_result": show_tool_call_result,
+        "stream_to_general": False,
+        "show_reasoning": show_reasoning,
+        "buffer_intermediate_messages": buffer_intermediate_messages,
+    }
+    if should_stop is not None:
+        bridge_kwargs["should_stop"] = should_stop
+    output_bridge = NativeExecutionOutputBridge(executor, **bridge_kwargs)
     async for chain in output_bridge.stream_live(tts_provider):
         yield chain
 

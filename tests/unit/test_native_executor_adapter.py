@@ -81,10 +81,9 @@ def test_native_executor_adapter_exposes_control_and_observation_boundary():
     assert runner.run_context.messages[-1].content == "finish"
 
 
-def test_native_executor_adapter_routes_follow_up_through_core_head(monkeypatch):
+def test_native_executor_adapter_routes_follow_up_through_core_port():
     runner = FakeNativeRunner()
     runner.run_context.context = SimpleNamespace(event=object())
-    adapter = NativeExecutorAdapter(runner)
     calls = []
 
     class Head:
@@ -92,10 +91,7 @@ def test_native_executor_adapter_routes_follow_up_through_core_head(monkeypatch)
             calls.append(kwargs)
             return "core-ticket"
 
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda event: Head(),
-    )
+    adapter = NativeExecutorAdapter(runner, core_port=Head())
 
     assert adapter.follow_up(message_text="continue") == "core-ticket"
     assert calls == [
@@ -105,6 +101,46 @@ def test_native_executor_adapter_routes_follow_up_through_core_head(monkeypatch)
         }
     ]
     assert runner.follow_up_messages == []
+
+
+def test_native_executor_adapter_projects_facts_through_core_port():
+    runner = FakeNativeRunner()
+    runner.run_context.context = SimpleNamespace(event=object())
+    calls = []
+
+    class Port:
+        terminal_event = None
+
+        def emit_event(self, **kwargs):
+            calls.append(("event", kwargs))
+            return "progress"
+
+        def complete(self, **kwargs):
+            calls.append(("complete", kwargs))
+            return "completed"
+
+    adapter = NativeExecutorAdapter(runner, core_port=Port())
+
+    assert adapter.emit_event(kind="working", metadata={"phase": "start"}) == "progress"
+    assert adapter.complete() == "completed"
+    assert calls == [
+        (
+            "event",
+            {
+                "kind": "working",
+                "executor_id": "native",
+                "metadata": {"phase": "start"},
+            },
+        ),
+        (
+            "complete",
+            {
+                "executor_id": "native",
+                "artifact": None,
+                "metadata": None,
+            },
+        ),
+    ]
 
 
 @pytest.mark.asyncio
@@ -186,10 +222,6 @@ async def test_native_execution_loop_keeps_progress_and_output_boundary(monkeypa
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda event, **kwargs: emitted.append(kwargs),
     )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda event: None,
-    )
 
     loop = NativeExecutionLoop(NativeExecutorAdapter(Runner()), max_step=1)
     items = [item async for item in loop.stream()]
@@ -224,10 +256,6 @@ async def test_native_execution_loop_closes_before_reporting_abort(monkeypatch):
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda event, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda event: None,
     )
 
     loop = NativeExecutionLoop(NativeExecutorAdapter(Runner()), max_step=1)
@@ -280,10 +308,6 @@ async def test_run_agent_preserves_non_streaming_visible_output(monkeypatch):
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda event, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda event: None,
     )
 
     executor = NativeExecutorAdapter(Runner())
@@ -410,10 +434,6 @@ def test_native_executor_adapter_emits_through_core_boundary(monkeypatch):
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
     )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: None,
-    )
 
     adapter.emit_event(
         kind="working",
@@ -441,10 +461,6 @@ def test_native_executor_adapter_reports_normalized_lifecycle_facts(monkeypatch)
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
-    )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: None,
     )
 
     adapter.emit_event(
@@ -474,12 +490,11 @@ def test_native_executor_adapter_keeps_earlier_terminal_outcome(monkeypatch):
     event = object()
     runner = FakeNativeRunner()
     runner.run_context.context = SimpleNamespace(event=event)
-    adapter = NativeExecutorAdapter(runner)
     terminal = SimpleNamespace(execution=object())
     emitted = []
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: SimpleNamespace(terminal_event=terminal),
+    adapter = NativeExecutorAdapter(
+        runner,
+        core_port=SimpleNamespace(terminal_event=terminal),
     )
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
@@ -498,21 +513,16 @@ def test_native_executor_adapter_keeps_earlier_terminal_outcome(monkeypatch):
     assert emitted == []
 
 
-def test_native_executor_adapter_releases_core_head(monkeypatch):
+def test_native_executor_adapter_releases_core_port():
     event = object()
     runner = FakeNativeRunner()
     runner.run_context.context = SimpleNamespace(event=event)
-    adapter = NativeExecutorAdapter(runner)
     calls = []
     head = SimpleNamespace(
         release_executor=lambda **kwargs: calls.append(("release", kwargs)) or True,
     )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: head,
-    )
-
-    assert adapter.release_from_core_head() is True
+    adapter = NativeExecutorAdapter(runner, core_port=head)
+    assert adapter.release_from_core_port() is True
     assert calls == [("release", {"executor_id": "native"})]
 
 
@@ -522,10 +532,6 @@ def test_native_executor_adapter_falls_back_to_direct_stop_without_head(monkeypa
     runner.run_context.context = SimpleNamespace(event=event)
     adapter = NativeExecutorAdapter(runner)
     emitted = []
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: None,
-    )
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
@@ -583,10 +589,6 @@ def test_native_executor_adapter_finalizes_success_and_failure(monkeypatch):
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
     )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: None,
-    )
 
     adapter.finalize()
     assert [item[1]["kind"] for item in emitted] == ["artifact_ready", "completed"]
@@ -630,10 +632,6 @@ def test_native_executor_adapter_observes_tool_progress_without_result_content(
     monkeypatch.setattr(
         "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
         lambda actual_event, **kwargs: emitted.append((actual_event, kwargs)),
-    )
-    monkeypatch.setattr(
-        "astrbot.core.astr_agent_run_util.get_core_execution_head",
-        lambda actual_event: None,
     )
 
     assert adapter.observe_response(

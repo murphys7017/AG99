@@ -98,6 +98,30 @@ native_step_boundary:
   validation: Focused Core execution, Native adapter, and proactive-turn suites passed 77 tests. Live platform acceptance remains pending.
   followup: Native execution facts, terminal outcomes, typed tool-boundary progress, executor attach/release, normalized ExecutorStreamItem flow, adapter-owned Native stream closure, final streaming-chain shaping, typed CoreExecutionArtifact descriptions, spec-carrying NativeExecutionInput, adapter-owned Native finalization, Head-owned executor activation, Head-first stop-signal cancellation, Personal supplemental input routing, proactive complete-run routing, NativeExecutionLoop, and an explicit NativeExecutionOutputBridge now enter Core through NativeExecutorAdapter. Interaction and proactive execution share the same loop owner; the output bridge retains MessageChain/MessageEventResult projection and TTS input, with run_agent/run_live_agent as stable wrappers. Personal follow-up tickets now pass synchronously through Core Head without making command mailboxes the delivery owner. Live OLV/Cron cancellation and timeout acceptance remain pending.
 
+native_default_body_port:
+  date: '2026-09-21'
+  class: refactor
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Complete D5-A/D5-B by injecting CoreExecutionPort into the default Native
+    Body and centralizing Native activation, terminal projection, cancellation,
+    and release in NativeExecutionRun.
+  non_goals: >-
+    A new Executor Body, remote transport or queue, Personal/OLV output changes,
+    prompt or capability changes, service restart, and removal of legacy no-Head
+    compatibility paths.
+  validation: >-
+    Ruff, compileall, and the focused Native adapter/Core execution/proactive
+    suite passed 79 tests. The suite verifies injected-port follow-up and fact
+    projection without an Event-bound Head, terminal first-write preservation,
+    and proactive compatibility without an execution spec.
+  followup: >-
+    Run D6 real OLV, Cron, and Live acceptance manually. Confirm delegated
+    execution, follow-up, cancellation, deadline, final output, TTS, and ledger
+    settlement retain the same lifecycle behavior before deleting compatibility
+    paths or claiming complete Executor replaceability.
+
 minimax_stt_silence_handling:
   date: '2026-09-19'
   class: bugfix

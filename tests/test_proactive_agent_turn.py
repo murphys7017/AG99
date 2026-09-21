@@ -80,7 +80,7 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
     loop_max_steps = []
 
     class Loop:
-        def __init__(self, executor, *, max_step):
+        def __init__(self, executor, *, max_step, should_stop=None):
             loop_max_steps.append(max_step)
 
         async def stream(self):
@@ -175,7 +175,7 @@ async def test_proactive_result_does_not_replace_visible_history(tmp_path, monke
     monkeypatch.setattr("astrbot.core.astr_main_agent.build_main_agent", build)
 
     class Loop:
-        def __init__(self, executor, *, max_step):
+        def __init__(self, executor, *, max_step, should_stop=None):
             pass
 
         async def stream(self):
@@ -266,7 +266,7 @@ async def test_proactive_request_hook_mutation_reaches_execution(monkeypatch):
     monkeypatch.setattr("astrbot.core.astr_main_agent.build_main_agent", build)
 
     class Loop:
-        def __init__(self, _executor, *, max_step):
+        def __init__(self, _executor, *, max_step, should_stop=None):
             assert max_step == 30
 
         async def stream(self):

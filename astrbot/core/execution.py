@@ -169,6 +169,61 @@ class CoreExecutorBody(Protocol):
     def request_follow_up(self, message_text: str) -> Any | None: ...
 
 
+class CoreExecutionPort(Protocol):
+    """Control and fact surface injected into one Executor Body."""
+
+    @property
+    def terminal_event(self) -> CoreEvent | None: ...
+
+    def activate_executor_body(
+        self,
+        body: CoreExecutorBody,
+        *,
+        submission_metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent: ...
+
+    def emit_event(
+        self,
+        *,
+        kind: CoreExecutionEventKind,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent: ...
+
+    def complete(
+        self,
+        *,
+        executor_id: str,
+        artifact: CoreExecutionArtifact | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent: ...
+
+    def fail(
+        self,
+        *,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent: ...
+
+    def cancel(
+        self,
+        *,
+        executor_id: str,
+        metadata: Mapping[str, Any] | None = None,
+        origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
+    ) -> CoreEvent: ...
+
+    def provide_input(
+        self,
+        *,
+        executor_id: str,
+        message_text: str,
+        origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
+    ) -> Any | None: ...
+
+    def release_executor(self, *, executor_id: str) -> bool: ...
+
+
 _TERMINAL_CORE_EXECUTION_EVENT_KINDS = frozenset(
     {
         CoreExecutionEventKind.COMPLETED,
@@ -1773,6 +1828,7 @@ __all__ = [
     "CoreExecutionHead",
     "CoreExecutionLedgerPreparation",
     "CoreExecutionLifecycle",
+    "CoreExecutionPort",
     "CoreExecutionOutcome",
     "CoreExecutionSession",
     "CoreExecutionSessionStatus",
