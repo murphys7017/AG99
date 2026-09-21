@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from astrbot.core.message.message_chain_delivery import MessageChainDeliveryResult
     from astrbot.core.plugin_admission import PluginAdmissionSnapshot
 
+    from .execution_capability_summary import ExecutionCapabilitySummary
     from .persona_domain import EffectivePersonaContext, PersonaDefinition
     from .personal_runtime import PersonalRuntimeKey
 
@@ -278,6 +279,7 @@ class InteractionTurnState:
     prompt_build_config: Any | None = None
     context_material: InteractionContextMaterial | None = None
     context_material_task: asyncio.Task[InteractionContextMaterial] | None = None
+    core_execution_capability_summary: ExecutionCapabilitySummary | None = None
     delivery_metadata: dict[str, Any] = field(default_factory=dict)
     fixed_conversation_required: bool = False
     fixed_conversation_id: str | None = None

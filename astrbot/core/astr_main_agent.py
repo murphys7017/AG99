@@ -29,6 +29,10 @@ from astrbot.core.execution import (
     CoreExecutionSpec,
     NativeExecutionAdapter,
 )
+from astrbot.core.execution_capabilities import (
+    WEB_RESEARCH_CAPABILITY,
+    semantic_capability_tool_names,
+)
 from astrbot.core.interaction.context_builder import (
     get_or_build_interaction_core_plugin_context_pack,
 )
@@ -123,7 +127,6 @@ from astrbot.core.tools.web_search_tools import (
     FirecrawlWebSearchTool,
     TavilyExtractWebPageTool,
     TavilyWebSearchTool,
-    is_web_search_tool_name,
     normalize_legacy_web_search_config,
 )
 from astrbot.core.utils.astrbot_path import (
@@ -140,25 +143,15 @@ def diagnose_direct_web_research_capability(
     task_spec: CoreTaskSpec | None,
     capabilities: CapabilitySnapshot,
 ) -> tuple[bool, list[str]]:
-    """Report requested research and recognized mounted search tools.
+    """Report requested research and admitted semantic search bindings.
 
-    This is not a permission, credential or connectivity check. Extraction-only
-    tools and unrecognized plugin/provider search capabilities are not counted.
+    This is not a credential or connectivity check. The semantic projection
+    owns legacy tool-name fallback so every caller reaches the same conclusion.
     """
     required = bool(task_spec and task_spec.requires_direct_web_research())
-    mounted_tools = sorted(
-        name
-        for name in capabilities.names()
-        if name == "web_search"
-        or (
-            is_web_search_tool_name(name)
-            and name
-            not in {
-                "tavily_extract_web_page",
-                "firecrawl_extract_web_page",
-                "exa_get_contents",
-            }
-        )
+    mounted_tools = semantic_capability_tool_names(
+        capabilities.tools,
+        WEB_RESEARCH_CAPABILITY,
     )
     return required, mounted_tools
 
@@ -1294,10 +1287,12 @@ async def build_main_agent(
         ).strip() or "default"
         logger.debug(
             "DIAG interaction.direct_web_research_capability: turn_id=%s "
-            "config_id=%s required_web_research=%s recognized_search_tools_mounted=%s tool_names=%s",
+            "config_id=%s required_web_research=%s capability_ids=%s "
+            "recognized_search_tools_mounted=%s tool_names=%s",
             str(event.get_extra("_turn_id", "") or ""),
             config_id,
             required_web_research,
+            [WEB_RESEARCH_CAPABILITY] if web_tool_names else [],
             bool(web_tool_names),
             web_tool_names,
         )
@@ -1313,6 +1308,9 @@ async def build_main_agent(
             event.trace.record(
                 "interaction_direct_web_research_capability",
                 required=required_web_research,
+                capability_ids=(
+                    [WEB_RESEARCH_CAPABILITY] if web_tool_names else []
+                ),
                 recognized_search_tools_mounted=bool(web_tool_names),
                 tool_names=web_tool_names,
                 config_id=config_id,

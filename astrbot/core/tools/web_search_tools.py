@@ -505,6 +505,9 @@ async def _baidu_search(
 @pydantic_dataclass
 class TavilyWebSearchTool(FunctionTool[AstrAgentContext]):
     name: str = "web_search_tavily"
+    semantic_capabilities: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"web_research"})
+    )
     description: str = (
         "A web search tool that uses Tavily to search the web for relevant content. "
         "Ideal for gathering current information, news, and detailed web content analysis."
@@ -639,6 +642,9 @@ class TavilyExtractWebPageTool(FunctionTool[AstrAgentContext]):
 @pydantic_dataclass
 class BochaWebSearchTool(FunctionTool[AstrAgentContext]):
     name: str = "web_search_bocha"
+    semantic_capabilities: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"web_research"})
+    )
     description: str = (
         "A web search tool based on Bocha Search API, used to retrieve web pages "
         "related to the user's query."
@@ -703,6 +709,9 @@ class BochaWebSearchTool(FunctionTool[AstrAgentContext]):
 @pydantic_dataclass
 class BraveWebSearchTool(FunctionTool[AstrAgentContext]):
     name: str = "web_search_brave"
+    semantic_capabilities: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"web_research"})
+    )
     description: str = "A web search tool based on Brave Search API."
     parameters: dict = Field(
         default_factory=lambda: {
@@ -761,6 +770,9 @@ class BraveWebSearchTool(FunctionTool[AstrAgentContext]):
 @pydantic_dataclass
 class FirecrawlWebSearchTool(FunctionTool[AstrAgentContext]):
     name: str = "web_search_firecrawl"
+    semantic_capabilities: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"web_research"})
+    )
     description: str = (
         "A web search tool based on Firecrawl Search API, used to retrieve web "
         "pages related to the user's query."
@@ -879,6 +891,9 @@ class FirecrawlExtractWebPageTool(FunctionTool[AstrAgentContext]):
 @pydantic_dataclass
 class BaiduWebSearchTool(FunctionTool[AstrAgentContext]):
     name: str = "web_search_baidu"
+    semantic_capabilities: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"web_research"})
+    )
     description: str = (
         "A web search tool based on Baidu AI Search. "
         "Use this for real-time web retrieval when Baidu AI Search is configured."
@@ -1022,6 +1037,9 @@ async def _exa_get_contents(
 @pydantic_dataclass
 class ExaWebSearchTool(FunctionTool[AstrAgentContext]):
     name: str = "web_search_exa"
+    semantic_capabilities: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"web_research"})
+    )
     description: str = (
         "A web search tool powered by Exa, an AI-native search engine. "
         "Supports keyword and semantic search with domain, date, and category filters."

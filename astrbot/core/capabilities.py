@@ -13,6 +13,8 @@ from astrbot.core.agent.tool import (
     TOOL_TARGET_PERSONAL_EXPRESSION,
     FunctionTool,
     ToolSet,
+    normalize_action_semantic_capabilities,
+    normalize_semantic_capabilities,
     normalize_tool_targets,
 )
 from astrbot.core.persona_resolution import resolve_event_persona
@@ -114,6 +116,14 @@ class CapabilitySnapshot:
             "tool_count": len(tools),
             "tools": tools,
         }
+
+    def semantic_capability_bindings(self) -> dict[str, tuple[Any, ...]]:
+        """Project semantic capabilities without changing tool admission."""
+        from astrbot.core.execution_capabilities import (
+            collect_semantic_capability_bindings,
+        )
+
+        return collect_semantic_capability_bindings(self.tools)
 
     def inventory_metadata(self) -> dict[str, Any]:
         return {
@@ -419,6 +429,17 @@ def _serialize_tool(tool: FunctionTool) -> dict[str, Any]:
         "execution_targets": sorted(
             normalize_tool_targets(getattr(tool, "execution_targets", None))
         ),
+        "semantic_capabilities": sorted(
+            normalize_semantic_capabilities(
+                getattr(tool, "semantic_capabilities", None)
+            )
+        ),
+        "action_semantic_capabilities": {
+            str(action): sorted(capabilities)
+            for action, capabilities in normalize_action_semantic_capabilities(
+                getattr(tool, "action_semantic_capabilities", None)
+            ).items()
+        },
         "schema": deepcopy(schema[0]) if schema else None,
     }
 

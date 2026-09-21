@@ -1,5 +1,5 @@
 import copy
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
 from typing import Any, Generic
 
 import jsonschema
@@ -58,6 +58,39 @@ def tool_supports_target(tool: object, target: str) -> bool:
     return target_name in normalize_tool_targets(raw_targets)
 
 
+def normalize_semantic_capabilities(
+    value: Iterable[str] | str | None = None,
+) -> frozenset[str]:
+    """Normalize declarative execution capability identifiers."""
+    if isinstance(value, FieldInfo) or value is None:
+        return frozenset()
+    raw_capabilities = [value] if isinstance(value, str) else list(value)
+    return frozenset(
+        str(capability).strip().lower()
+        for capability in raw_capabilities
+        if str(capability).strip()
+    )
+
+
+def normalize_action_semantic_capabilities(
+    value: Mapping[str, Iterable[str] | str] | None = None,
+) -> dict[str, frozenset[str]]:
+    """Normalize action-specific capabilities for multi-action tools."""
+    if isinstance(value, FieldInfo) or value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("action_semantic_capabilities must be a mapping")
+    normalized: dict[str, frozenset[str]] = {}
+    for raw_action, raw_capabilities in value.items():
+        action = str(raw_action).strip().lower()
+        if not action:
+            raise ValueError("action_semantic_capabilities contains an empty action")
+        capabilities = normalize_semantic_capabilities(raw_capabilities)
+        if capabilities:
+            normalized[action] = capabilities
+    return normalized
+
+
 @dataclass
 class ToolSchema:
     """A class representing the schema of a tool for function calling."""
@@ -109,10 +142,22 @@ class FunctionTool(ToolSchema, Generic[TContext]):
         default_factory=lambda: DEFAULT_TOOL_TARGETS
     )
     """Execution surfaces allowed to expose this tool; legacy default is Core only."""
+    semantic_capabilities: frozenset[str] = Field(default_factory=frozenset)
+    """Capabilities provided whenever this tool is admitted."""
+    action_semantic_capabilities: dict[str, frozenset[str]] = Field(
+        default_factory=dict
+    )
+    """Capabilities provided only by named actions of a multi-action tool."""
 
     @model_validator(mode="after")
     def validate_execution_targets(self) -> "FunctionTool[TContext]":
         self.execution_targets = normalize_tool_targets(self.execution_targets)
+        self.semantic_capabilities = normalize_semantic_capabilities(
+            self.semantic_capabilities
+        )
+        self.action_semantic_capabilities = normalize_action_semantic_capabilities(
+            self.action_semantic_capabilities
+        )
         return self
 
     def __repr__(self) -> str:
@@ -185,6 +230,9 @@ class ToolSet:
                     parameters=light_params,
                     description=tool.description,
                     handler=None,
+                    execution_targets=tool.execution_targets,
+                    semantic_capabilities=tool.semantic_capabilities,
+                    action_semantic_capabilities=tool.action_semantic_capabilities,
                 )
             )
         return ToolSet(light_tools)
@@ -206,6 +254,9 @@ class ToolSet:
                     parameters=params,
                     description="",
                     handler=None,
+                    execution_targets=tool.execution_targets,
+                    semantic_capabilities=tool.semantic_capabilities,
+                    action_semantic_capabilities=tool.action_semantic_capabilities,
                 )
             )
         return ToolSet(param_tools)

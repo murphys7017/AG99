@@ -1,3 +1,35 @@
+personal_core_capability_routing:
+  date: '2026-09-21'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Separate Personal's direct tool inventory from Core's semantic execution
+    capabilities; project the current turn's Core web_research admission to
+    Personal; unify Core web-research diagnosis; and narrowly correct an
+    explicit capability-denial reply that contradicts current turn facts.
+  non_goals: >-
+    Expose Core tools to Personal, add another router or planner, change the
+    persona_expression/effect contract, merge configuration profiles, modify
+    AG99live, restart AstrBot, or claim network/API availability before Core
+    actually executes a tool.
+  validation: >-
+    Ruff and compileall passed. Focused semantic capability, planner, prompt,
+    and Core diagnosis checks passed 23 tests; Interaction plugin runtime
+    passed 38 tests. InitialLoader imports successfully, confirming the
+    existing local circular-import fix. A broader related run passed 96 tests
+    and had two existing Windows video-path assertion failures plus one slow
+    Persona fallback timeout; the timeout repeated in isolation and is not on
+    the ordinary require_turn_action path changed here.
+  followup: >-
+    Restart manually and validate an OLV weather request, ordinary chat, an
+    unavailable-search configuration, and two adapters bound to different
+    config profiles. Confirm the trace shows Personal delegate, Core Planner,
+    a Core capability snapshot containing web_research, an actual search tool
+    call, and one final Personal expression. The ignored local MiniMax CLI
+    runtime copy contains the action-level declaration but needs separate
+    source-repository persistence if its canonical source is maintained.
+
 cross_component_convergence:
   date: '2026-09-20'
   class: refactor

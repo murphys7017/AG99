@@ -38,7 +38,6 @@ from astrbot.core.message.message_event_result import (
 )
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.plugin_runtime import tool_supports_runtime_target
-from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
 from astrbot.core.provider.register import llm_tools
 from astrbot.core.tools.computer_tools import (
     CuaKeyboardTypeTool,
@@ -584,6 +583,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         extra_result_fields: dict[str, T.Any] | None = None,
     ) -> None:
         from astrbot.core.astr_main_agent import MainAgentBuildConfig
+        from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
 
         event = run_context.context.event
         ctx = run_context.context.context

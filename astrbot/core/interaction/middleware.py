@@ -25,10 +25,14 @@ from astrbot.core.voice import (
     transcribe_record,
 )
 
+from .capability_route_guard import correct_contradictory_capability_denial
 from .config import is_middleware_enabled, load_interaction_agent_config
 from .conversation_history import commit_interaction_conversation_turn
 from .core_planner import CorePlannerAgent, CorePlannerError
 from .dialogue import build_canonical_user_message
+from .execution_capability_summary import (
+    get_core_execution_capability_summary,
+)
 from .expression_agent import (
     InteractionExpressionAgent,
     InteractionExpressionError,
@@ -1009,6 +1013,23 @@ class InteractionMiddleware:
                     )
             return None
 
+        capability_summary = get_core_execution_capability_summary(event)
+        if correct_contradictory_capability_denial(
+            request_text=str(getattr(event, "message_str", "") or ""),
+            expression=expression,
+            capability_summary=capability_summary,
+        ):
+            event.set_extra(
+                "_interaction_route_correction_reason",
+                "capability_denial_route_corrected",
+            )
+            logger.warning(
+                "Personal capability denial route corrected: turn_id=%s "
+                "config_id=%s capability=web_research",
+                str(event.get_extra("_turn_id", "") or ""),
+                capability_summary.config_id if capability_summary else "default",
+            )
+
         action = expression.turn_action
         if not isinstance(action, PersonalResponseAction):
             raise RuntimeError("Personal response plan did not return turn_action")
@@ -1208,12 +1229,37 @@ class InteractionMiddleware:
         route: InteractionRouteDecision,
         action: PersonalResponseAction,
     ) -> None:
+        capability_summary = get_core_execution_capability_summary(event)
+        admitted_capability_ids = (
+            list(capability_summary.admitted_ids())
+            if capability_summary is not None
+            else []
+        )
+        web_capability = (
+            capability_summary.get("web_research")
+            if capability_summary is not None
+            else None
+        )
         logger.info(
-            "DIAG interaction.personal_response_plan: platform_id=%s session_id=%s action=%s route_mode=%s",
+            "DIAG interaction.personal_response_plan: platform_id=%s "
+            "session_id=%s config_id=%s action=%s route_mode=%s "
+            "core_capability_ids=%s core_web_research_bindings=%s "
+            "route_correction_reason=%s",
             event.get_platform_id(),
             event.session_id,
+            capability_summary.config_id if capability_summary else "default",
             action.value,
             route.route_mode.value,
+            admitted_capability_ids,
+            list(web_capability.bindings) if web_capability is not None else [],
+            str(
+                getattr(
+                    event,
+                    "get_extra",
+                    lambda *_args: None,
+                )("_interaction_route_correction_reason", "")
+                or ""
+            ),
         )
 
     async def _emit_delegated(

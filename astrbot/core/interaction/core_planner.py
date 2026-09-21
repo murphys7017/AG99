@@ -49,6 +49,8 @@ def build_core_planner_system_prompt() -> str:
         "当前消息或引用图片的视觉理解不是 workspace_io；它应由 "
         "requires_visual_understanding 表达，且只有真正需要读取、写入或处理工作区文件时才填 workspace_io。"
         "web_research 表示必须留在当前 Core 回合直接完成，不能转交子 Agent 或后台任务。"
+        "Personal 是否直接持有工具与 Core 能力无关；只有当前 Core 工具快照和实际执行结果"
+        "可以确认能力是否可用，历史中的能力声明不能代替当前快照。"
         "不要编造未提供的事实，也不要重新决定是否进入执行层。\n"
         "不要生成用户可见回复，不要输出人格内容、effect、工具调用参数或思考过程。"
     )

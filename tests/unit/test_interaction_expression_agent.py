@@ -637,6 +637,14 @@ def test_persona_runtime_prompt_constrains_result_free_immediate_requests():
     assert "不等于任务已创建" in prompt
 
 
+def test_persona_system_prompt_distinguishes_personal_from_core_tools():
+    prompt = build_persona_runtime_system_prompt(require_turn_action=True)
+
+    assert "唯一的对外人格交流窗口" in prompt
+    assert "Personal 当前没有业务工具不代表系统整体没有工具" in prompt
+    assert "联网、文件、定时任务等业务工具" in prompt
+
+
 def test_persona_progress_prompt_keeps_single_tool_completion_local():
     prompt = _build_expression_prompt(
         PersonaExpressionRequest(

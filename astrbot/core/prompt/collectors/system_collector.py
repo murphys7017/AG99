@@ -251,13 +251,23 @@ class SystemCollector(ContextCollectorInterface):
 
         if direct_web_research:
             if self.capabilities is not None:
-                tool_names = set(self.capabilities.names())
+                tools = self.capabilities.tools
             else:
-                tools = provider_request.func_tool if provider_request is not None else None
-                tool_names = set(tools.names()) if tools is not None else set()
-            from astrbot.core.tools.web_search_tools import is_web_search_tool_name
+                toolset = (
+                    provider_request.func_tool
+                    if provider_request is not None
+                    else None
+                )
+                tools = tuple(toolset) if toolset is not None else ()
+            from astrbot.core.execution_capabilities import (
+                WEB_RESEARCH_CAPABILITY,
+                semantic_capability_tool_names,
+            )
 
-            if any(is_web_search_tool_name(name) for name in tool_names):
+            if semantic_capability_tool_names(
+                tools,
+                WEB_RESEARCH_CAPABILITY,
+            ):
                 tool_prompt += (
                     " This task requires direct web research in the current Core "
                     "turn. Use an authorized web-search tool; do not hand it off "

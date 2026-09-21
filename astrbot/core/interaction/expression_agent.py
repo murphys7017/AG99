@@ -88,6 +88,10 @@ from .effects import (
     normalize_persona_effect_parameters_schema,
     parse_persona_effect_calls_with_issues,
 )
+from .execution_capability_summary import (
+    ExecutionCapabilitySummary,
+    resolve_core_execution_capability_summary,
+)
 from .personal_expression_guard import (
     PREVIOUS_EXPRESSION_FINGERPRINT_METADATA_KEY,
     fingerprint_personal_expression,
@@ -349,10 +353,19 @@ def build_persona_runtime_system_prompt(
                 "speech_cues 和 effect_calls 都必须为空。\n"
             )
     output_fields = "spoken_reply、speech_cues 与 effect_calls"
+    role_guidance = (
+        "你是 Personal，是系统唯一的对外人格交流窗口。你负责理解当前请求、选择 reply / "
+        "delegate / silent，并生成当前人格的用户可见表达。\n"
+        if require_turn_action
+        else "你是 Personal，是系统唯一的对外人格交流窗口。你负责把本次调用提供的事实转化为当前人格的用户可见表达。\n"
+    )
     if require_turn_action:
         output_fields = "turn_action、spoken_reply、speech_cues 与 effect_calls"
     return (
-        "你是 Personal 的人格表达层，负责把本次调用提供的事实转化为当前人格的用户可见表达。\n"
+        f"{role_guidance}"
+        "Personal 不直接执行联网、文件、定时任务等业务工具；这些复杂工作由 Core 执行。"
+        "Personal 当前没有业务工具不代表系统整体没有工具，不得根据自己的 tool_count、"
+        "历史回复或 memory 声称系统缺少某项能力。\n"
         "根据 visible_reply_material、当前输入、历史与 memory 生成自然语言表达以及必要的人格 effect 调用。\n"
         f"必须按本次输出契约返回只包含 {output_fields} 的结构化结果。\n"
         "支持协议级 tool call 时，使用 persona_expression 工具承载结构化结果。\n"
@@ -705,7 +718,10 @@ def extract_persona_expression_result(
     return PersonaExpressionResult(spoken_reply=(str(text or "")).strip())
 
 
-def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
+def _build_expression_prompt(
+    req: PersonaExpressionRequest,
+    execution_capability_summary: ExecutionCapabilitySummary | None = None,
+) -> str:
     parts = ["请按输出契约生成当前人格的用户可见回应，不要输出额外自由文本。"]
     if req.avoid_previous_reply:
         parts.append(
@@ -727,6 +743,11 @@ def _build_expression_prompt(req: PersonaExpressionRequest) -> str:
             "只有当前执行结果明确确认后，才能声称已创建、已安排或已完成。"
             f"{silent_rule} 不要输出决策理由、置信度或任务规格。"
         )
+        if execution_capability_summary is not None:
+            parts.append(
+                "\n【当前 Core 执行能力】"
+                + execution_capability_summary.to_prompt_text()
+            )
         if req.source_text.strip() and req.preserve_facts:
             parts.append(
                 "\n【已确认材料】source_text 已提供本轮可见结果或失败事实。必须以它为准并选择 reply，"
@@ -1604,6 +1625,35 @@ class InteractionExpressionAgent:
                 )
             ),
         )
+        persona_definition = (
+            material.effective_persona_context.definition
+            if material.effective_persona_context is not None
+            else material.persona_definition
+        )
+        persona_selection = (
+            (
+                persona_definition.persona_id,
+                {
+                    "tools": (
+                        list(persona_definition.tools)
+                        if persona_definition.tools is not None
+                        else None
+                    )
+                },
+            )
+            if persona_definition is not None
+            else (None, None)
+        )
+        execution_capability_summary = (
+            await resolve_core_execution_capability_summary(
+                event=event,
+                plugin_context=plugin_context,
+                config=build_config,
+                persona_selection=persona_selection,
+            )
+            if req.require_turn_action
+            else None
+        )
         # Immediate and final expression share the same plugin wait policy.
         persona_context_pack = await get_or_build_interaction_persona_context_pack(
             event=event,
@@ -1669,7 +1719,10 @@ class InteractionExpressionAgent:
                 require_turn_action=req.require_turn_action,
                 allow_silent=req.allow_silent,
             ),
-            request_prompt=_build_expression_prompt(req),
+            request_prompt=_build_expression_prompt(
+                req,
+                execution_capability_summary,
+            ),
             output_contract=build_persona_expression_output_contract_for_effects(
                 persona_effect_specs,
                 allowed_turn_actions=allowed_turn_actions,
@@ -1696,6 +1749,10 @@ class InteractionExpressionAgent:
                 _resolve_provider_model(provider),
             )
         render_result.metadata["persona_effect_specs"] = persona_effect_specs
+        if execution_capability_summary is not None:
+            render_result.metadata["core_execution_capability_summary"] = (
+                execution_capability_summary.to_dict()
+            )
         if material.effective_persona_context is not None:
             render_result.metadata["effective_persona_context"] = (
                 material.effective_persona_context.to_dict()
