@@ -184,10 +184,8 @@ async def run_proactive_agent_turn(
         await result.reset_prepared_runner()
         runner_reset_completed = True
         if execution_head is not None:
-            execution_head.activate_executor(
-                executor_id=native_executor.executor_id,
-                stop_callback=native_executor.request_stop,
-                input_callback=native_executor.request_follow_up,
+            execution_head.activate_executor_body(
+                native_executor,
                 submission_metadata={
                     "source": "cron" if extras.get("cron_job") else "background",
                     "streaming": False,

@@ -1,8 +1,10 @@
 # Personal Runtime 前置主链清理计划
 
-当前复核基线：2026-09-19。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
-Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完整 Core Head、统一队列或
-可替换 Executor Body。本文的“已完成”只表示源码中已经存在的边界，不表示后续目标已经实现。
+当前复核基线：2026-09-21。Phase 0 至 Phase 8 的主要前置边界已落地或进入真实验收；
+Phase 9 已建立 Core Head、CoreExecutionSession、NativeExecutorAdapter、
+NativeExecutionLoop 和 NativeExecutionOutputBridge 的进程内 Native 主链。当前尚未
+证明第二个 Executor Body 可在不修改 Personal 主链的前提下接入，因此不能称为“执行器
+已可替换”。本文的“已完成”只表示源码中已经存在的边界，不表示后续目标已经实现。
 
 本文记录 Yakumo 下一阶段的总体实施计划。当前优先级不是实现可替换 Executor Body，
 而是把执行阶段之前仍然存在的过渡结构清理为稳定的 Personal Runtime 主链。只有这些
@@ -16,6 +18,157 @@ Phase 9 已进入 Core Head 的进程内通信状态基础，但尚未实现完�
 [跨组件一致性整改实施方案](cross-component-convergence-plan.md)。
 该方案的 B1 至 B7 已完成源码实施与离线验证；真实 OLV/Cron/Live 验收仍待用户重启后
 执行。它不改变下文历史记录在各自日期的事实状态，也不提前开启新的 Executor Body。
+
+## 2026-09-21 解耦进度校正与后续计划
+
+最初的解耦目标是：Personal 负责统一对外交流，Core Head 负责复杂工作的控制与事件
+协调，Executor Body 仅负责实际执行并可在 Core 内部替换。当前结论分为三层：
+
+| 层次 | 当前状态 | 结论 |
+| --- | --- | --- |
+| Personal / Core 职责 | 普通对话已由 Personal Response Plan 决定 `reply / delegate / silent`；仅 `delegate` 进入 Planner 和 Core | 已建立主边界 |
+| Core / Native 执行 | 已有 Core Head、Session、事件、取消、Ledger 结算、Native Adapter、Loop 与 Output Bridge | 已建立第一条 Native 实现链 |
+| 可替换 Executor | 尚无第二个独立 Executor Body 通过同一输入、控制、事件和终态契约 | 未完成，不能提前宣称 |
+
+因此，接下来的工作不再是继续泛化 Core Head，也不是直接接入 Claude Code、OpenCode
+或远程协议；重点是证明当前边界真的允许替换执行实现。
+
+### 后续阶段
+
+#### D1：冻结身份、状态和输出 owner
+
+D1 事实盘点见[Core Execution 身份与 Owner 盘点](core-execution-identity-owner-inventory.md)。
+
+补齐并维护以下关系表，作为后续每个改动的审阅基线：
+
+```text
+InteractionTurn
+  -> CoreExecution
+      -> ExecutorTask
+          -> OutputArtifact
+```
+
+- 每层只能有自己的 identity、状态机、终态和错误归属，不能以 `event.extra`、平台消息 ID
+  或另一个层的完成状态代替。
+- `InteractionTurnState`、`CoreExecutionHead`、`CapabilitySnapshot` 和
+  `InteractionOutputController` 仍是各自领域的唯一主写者；兼容 extra 只能单向投影。
+- 先核对当前 `CoreExecutionSpec -> ProviderRequest -> NativeExecutorAdapter -> Runner`
+  的单向输入关系，并明确 Input、Execution Event、Artifact、Output 的 owner。
+
+退出条件：每次 Core 执行都能以 `execution_id` 追踪到所属 turn、执行器和产物；取消或
+可见输出完成不再被其他层的同名状态隐式替代。
+
+状态：已完成事实盘点。关系表和未收口风险见 `core-execution-identity-owner-inventory.md`；
+尚未完成的是后续代码迁移，不在 D1 盘点批次中提前处理。
+
+#### D2：收紧 Personal 与 Core Head 的进程内通信
+
+保留“同进程内异步双向通信”的设计，不引入分布式消息系统或可靠后台队列。
+
+- Personal 只通过 Core Head 提交任务、补充输入和取消；Core Head 记录控制事实并决定是否
+  转交当前执行器。
+- Core Head 向 Personal 发布 `working`、`progress`、`input_required`、`artifact_ready`
+  和终态事实；Personal 决定哪些事实形成用户可见表达。
+- 委派只建立或更新 `CoreExecutionSession`，不释放 Personal 的输出所有权，也不让 Core
+  直接发送平台消息。
+- 验证同 session 的后续消息、追问、取消、deadline 和迟到结果，不得靠 turn lock、
+  临时回调或已删除的命令 mailbox 隐式传递控制。
+
+退出条件：Personal turn 和 Core execution session 可以独立结束；重复取消、超时和迟到
+终态不产生第二次副作用，也不覆盖已经确认的终态。
+
+状态：已完成最小通信收口。取消命令现在显式保留 `CoreCommandOrigin`，deadline 与用户
+主动取消可区分；真实 OLV/Cron/Live 的迟到与追问验收仍待执行。
+
+#### D3：固定 Executor Body 最小契约
+
+以当前 Native 适配器为事实来源，定义并收紧最小内部契约，而不是新建空置的大接口。
+
+输入应由已准备好的执行事实组成：
+
+```text
+execution_id + CoreExecutionSpec + CapabilitySnapshot + ContextSnapshot + deadline view
+```
+
+控制面只保留：
+
+```text
+activate / provide_input / cancel / close
+```
+
+观察面只回流规范化事实：
+
+```text
+submitted / working / progress / input_required / artifact_ready /
+completed / failed / cancelled
+```
+
+- Executor Body 不收集 Prompt、Memory、Persona 或插件事实，不决定平台发送、TTS、effect
+  或历史写入。
+- Core Head 不读取 Native Runner 的专有类型、流对象或工具循环细节。
+- `NativeExecutorAdapter` 与 `NativeExecutionLoop` 继续持有 Native 专属的步骤驱动、
+  stream 关闭、停止观察和响应归一化；Output Bridge 只投影现有可见输出语义。
+
+退出条件：Core Head 的生产调用点只依赖此契约，不需要判断当前执行器是否为 Native。
+
+状态：已建立 `CoreExecutorBody` 最小控制协议，并让 Native 的两个生产装配点通过
+`activate_executor_body()` 接入。Native stream、Provider、Prompt 和输出仍留在 Native
+adapter/loop/bridge；D4 的第二个 Body 验证尚未开始。
+
+#### D4：使用最小第二 Body 证明替换性
+
+先实现仅供验证的进程内 `ScriptedExecutorBody`，不直接接入外部编码 Agent。
+
+- 输入消费 D3 的执行事实。
+- 按预设脚本产生正常完成、失败、取消、超时、追问、迟到终态和重复 artifact。
+- 不接平台、Prompt、Memory、TTS、数据库或 Personal Runtime。
+- 通过同一个 Core Head 和 Output/Personal 回流路径运行。
+
+退出条件：替换 Native 与 Scripted Body 时，不修改 Personal 主链、Output Controller、
+历史提交和 Core Head 的事件处理逻辑；两者的终态、取消和 artifact 去重语义一致。
+
+状态：已完成协议级验证。测试内 `ScriptedExecutorBody` 通过同一个
+`CoreExecutionHead.activate_executor_body()` 完成 submit、provide_input、artifact、
+completed、cancel 和重复 cancel 验证；它尚未作为生产执行器注册，也未覆盖真实 OLV/Cron/Live。
+
+#### D5：将 Native 从架构特例收口为默认实现
+
+第二 Body 验证通过后，再删除当前仅为 Native 保留的 Core Head 分支和泄漏的 Runner 细节。
+
+- Stage 只装配当前默认 executor，不再直接管理其控制句柄或写入执行事实。
+- Native 专属字段留在 Native Adapter/Loop 内，不进入通用 CoreEvent payload。
+- 保留官方 Third-party Stage 的兼容路径，直到调用图和真实验收允许迁移；不得把它直接改名为
+  Executor Body。
+
+退出条件：Native 是一个默认 Body，而不是 Core Head、Personal 或 Output 的特殊条件。
+
+状态：已完成边界审阅，暂不做删除性重构。Core Head 未导入 Native runner 类型；Native
+专属依赖集中在 Adapter、Loop、Output Bridge 和现有 Stage 装配。待 D6 真实验收通过后，再
+决定是否删除剩余过渡入口。
+
+#### D6：真实平台验收和完成评审
+
+验收矩阵见[Execution Backend 真实验收矩阵](execution-backend-acceptance-matrix.md)。
+
+在 D4 前后分别执行真实 OLV、Cron 和 Live 验收，至少覆盖：
+
+- 委派工具任务、Personal 快速表达、Core progress、最终表达与 TTS；
+- 执行中追问、用户取消、deadline、重复取消和迟到结果；
+- 定时任务成功/失败/无目标、附件产物和逻辑消息完成通知；
+- 历史只提交一次、artifact 不重复投递、`control.synth_finished` 在最后一个逻辑输出之后；
+- Native 与第二 Body 的相同行为矩阵。
+
+只有同时满足以下条件，才能将最初的解耦计划标记为完成：
+
+1. Personal 不直接选择或调用 Executor Body。
+2. Core Head 不依赖 Native Runner 类型。
+3. 至少两个 Body 通过同一 Core Head 契约运行。
+4. Body 不能绕过 Personal、Output、Capability 或平台权限边界。
+5. 取消、超时、失败、迟到事件和 artifact 重复投递都有稳定、可观察的终态。
+6. OLV、Cron、Live 的真实验收通过，且代码、日志和本文状态一致。
+
+状态：未完成。需要用户启动当前服务并执行真实 OLV、Cron、Live 场景；本轮不自动重启服务，
+也不以离线单元测试替代平台验收。
 
 ## 2026-09 Interaction 主链修订
 

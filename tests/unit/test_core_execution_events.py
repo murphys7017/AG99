@@ -58,6 +58,23 @@ class _Trace:
         self.records.append((name, metadata))
 
 
+class _ScriptedExecutorBody:
+    """Small D4-only body proving the Core contract is executor-neutral."""
+
+    executor_id = "scripted"
+
+    def __init__(self) -> None:
+        self.stop_calls = 0
+        self.follow_ups: list[str] = []
+
+    def request_stop(self) -> None:
+        self.stop_calls += 1
+
+    def request_follow_up(self, message_text: str) -> str:
+        self.follow_ups.append(message_text)
+        return f"ticket-{len(self.follow_ups)}"
+
+
 def _interaction_event() -> _Event:
     event = _Event()
     event.set_extra("_interaction_enabled", True)
@@ -456,6 +473,60 @@ def test_core_execution_head_activates_executor_in_submission_order():
             executor_id="native",
             stop_callback=stop_callback,
         )
+
+
+def test_core_execution_head_accepts_a_second_body_through_the_same_contract():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = bind_core_execution_head(event, spec)
+    body = _ScriptedExecutorBody()
+
+    submitted = head.activate_executor_body(
+        body,
+        submission_metadata={"body": "scripted"},
+    )
+    ticket = head.provide_input(
+        executor_id=body.executor_id,
+        message_text="  inspect the result  ",
+    )
+    completed = head.complete(
+        executor_id=body.executor_id,
+        artifact=CoreExecutionArtifact(
+            artifact_id="scripted-result",
+            artifact_kind="text",
+        ),
+    )
+
+    assert submitted.kind is CoreExecutionEventKind.SUBMITTED
+    assert ticket == "ticket-1"
+    assert body.follow_ups == ["inspect the result"]
+    assert completed.kind is CoreExecutionEventKind.COMPLETED
+    assert [event.kind for event in head.events] == [
+        CoreExecutionEventKind.SUBMITTED,
+        CoreExecutionEventKind.ARTIFACT_READY,
+        CoreExecutionEventKind.COMPLETED,
+    ]
+    assert head.release_executor(executor_id=body.executor_id) is True
+
+
+def test_core_execution_head_routes_scripted_body_cancellation_once():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = bind_core_execution_head(event, spec)
+    body = _ScriptedExecutorBody()
+
+    head.activate_executor_body(body)
+    cancelled = head.cancel(
+        executor_id=body.executor_id,
+        metadata={"reason": "scripted_cancel"},
+    )
+
+    assert cancelled.kind is CoreExecutionEventKind.CANCELLED
+    assert body.stop_calls == 1
+    assert head.cancel(
+        executor_id=body.executor_id,
+        metadata={"reason": "duplicate_cancel"},
+    ) is cancelled
 
 
 @pytest.mark.asyncio

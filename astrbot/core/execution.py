@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from time import time
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from astrbot.core import logger
@@ -156,6 +156,17 @@ class CoreCommandOrigin(str, Enum):
 
     PERSONAL = "personal"
     CORE_HEAD = "core_head"
+
+
+class CoreExecutorBody(Protocol):
+    """Minimal control surface Core Head requires from an Executor Body."""
+
+    @property
+    def executor_id(self) -> str: ...
+
+    def request_stop(self) -> None: ...
+
+    def request_follow_up(self, message_text: str) -> Any | None: ...
 
 
 _TERMINAL_CORE_EXECUTION_EVENT_KINDS = frozenset(
@@ -828,6 +839,7 @@ class CoreExecutionLifecycle:
         *,
         executor_id: str,
         metadata: Mapping[str, Any] | None = None,
+        origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
     ) -> CoreEvent:
         """Accept cancellation and record its terminal fact once."""
 
@@ -843,6 +855,7 @@ class CoreExecutionLifecycle:
                 execution_id=self.spec.execution_id,
                 turn_id=self.spec.turn_id,
                 kind=CoreCommandKind.CANCEL,
+                origin=origin,
                 payload=details,
                 reason=str(details.get("reason", "") or "cancelled"),
             )
@@ -864,13 +877,14 @@ class CoreExecutionLifecycle:
         executor_id: str,
         stage: str,
         metadata: Mapping[str, Any] | None = None,
+        origin: CoreCommandOrigin = CoreCommandOrigin.CORE_HEAD,
     ) -> CoreEvent:
         """Route an upstream deadline expiry through the Core cancellation owner."""
 
         details = dict(metadata or {})
         details.setdefault("reason", "deadline_exceeded")
         details.setdefault("stage", str(stage or "turn"))
-        return self.cancel(executor_id=executor_id, metadata=details)
+        return self.cancel(executor_id=executor_id, metadata=details, origin=origin)
 
     @property
     def executor_stop_error(self) -> str | None:
@@ -1085,6 +1099,21 @@ class CoreExecutionHead:
             metadata=submission_metadata,
         )
 
+    def activate_executor_body(
+        self,
+        body: CoreExecutorBody,
+        *,
+        submission_metadata: Mapping[str, Any] | None = None,
+    ) -> CoreExecutionEvent:
+        """Attach a Body through the minimal Core-owned control contract."""
+
+        return self.activate_executor(
+            executor_id=body.executor_id,
+            stop_callback=body.request_stop,
+            input_callback=body.request_follow_up,
+            submission_metadata=submission_metadata,
+        )
+
     def release_executor(self, *, executor_id: str) -> bool:
         """Release a terminal Executor Body from this Core session."""
 
@@ -1184,10 +1213,15 @@ class CoreExecutionHead:
         *,
         executor_id: str,
         metadata: Mapping[str, Any] | None = None,
+        origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
     ) -> CoreEvent:
         """Accept cancellation and publish the resulting terminal event once."""
 
-        return self.lifecycle.cancel(executor_id=executor_id, metadata=metadata)
+        return self.lifecycle.cancel(
+            executor_id=executor_id,
+            metadata=metadata,
+            origin=origin,
+        )
 
     def cancel_for_deadline(
         self,
@@ -1195,6 +1229,7 @@ class CoreExecutionHead:
         executor_id: str,
         stage: str,
         metadata: Mapping[str, Any] | None = None,
+        origin: CoreCommandOrigin = CoreCommandOrigin.CORE_HEAD,
     ) -> CoreEvent:
         """Cancel the Core execution after Personal reports deadline expiry."""
 
@@ -1202,6 +1237,7 @@ class CoreExecutionHead:
             executor_id=executor_id,
             stage=stage,
             metadata=metadata,
+            origin=origin,
         )
 
     def subscribe(self, callback: Callable[[CoreEvent], None]) -> None:
