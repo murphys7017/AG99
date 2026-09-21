@@ -1,3 +1,39 @@
+olv_superseding_turn_lifecycle:
+  date: '2026-09-22'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Terminate the OLV frontend-visible turn before a newer user input is
+    announced, while Personal Runtime independently cancels the corresponding
+    active Core execution after admitting that newer input.
+  evidence: >-
+    The 2026-09-22 00:26 OLV weather trace shows Core cancelling AstrBot turn
+    6644510275a5433491cf50e414a6aa75 and completing its Baoding replacement,
+    but frontend turn 63521b72b3b444ad8a70b24bafc770d3 received neither
+    control.interrupt nor control.turn_finished. The replacement frontend
+    turn had already started, leaving two visible client lifecycles.
+  changes: >-
+    AstrMessageEvent now exposes a default no-op abort_visible_turn hook;
+    Personal Runtime invokes it during supersession without letting adapter
+    cleanup failures invalidate Core cancellation. AG99live maps it to a
+    unified adapter abort path. The adapter also terminates any current
+    frontend turn before publishing the next turn_started and deduplicates
+    concurrent frontend/Core abort requests.
+  validation: >-
+    Focused AG99live event and interruption tests passed (8). Scoped Core
+    runtime capability checks passed (42, with two pre-existing duplicate
+    autonomous-expression expectation failures excluded after confirming the
+    failures). Core Ruff and compileall passed; AG99live compileall and diff
+    checks passed. AG99live runtime files were SHA256-matched to the ignored
+    loaded plugin copy. No service restart or live acceptance was performed.
+  next: >-
+    Restart manually, then start a tool-backed OLV weather request and replace
+    it mid-execution. Confirm the old frontend turn receives exactly one
+    control.interrupt followed by one failed control.turn_finished, the new
+    frontend turn begins only after that closure, and it eventually emits
+    synth_finished/playback completion without late old-turn output.
+
 personal_core_capability_routing:
   date: '2026-09-21'
   class: bugfix

@@ -348,6 +348,16 @@ class AstrMessageEvent(abc.ABC):
         # completion signal, also dispatch the visible-turn postprocess hook with
         # the final visible reply snapshot.
 
+    async def abort_visible_turn(self, *, reason: str) -> None:
+        """Abort a previously started client-side visible turn when supported.
+
+        Most platforms have no separate visible-turn state, so the default is
+        intentionally a no-op. Protocol adapters with client playback queues
+        can override this to discard queued output before a superseding input
+        begins a new turn.
+        """
+        del reason
+
     async def complete_visible_message(self, *, message_id: str) -> None:
         """Mark one logical visible message's physical delivery as complete.
 

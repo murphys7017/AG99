@@ -1322,7 +1322,7 @@ class PersonalSessionRuntime:
         interrupted_core = (
             wait_if_busy
             and not isinstance(event, RuntimeObservationEvent)
-            and self._interrupt_active_core_turn_for_new_input()
+            and await self._interrupt_active_core_turn_for_new_input()
         )
         # A message that supersedes Core starts a fresh turn. Do not feed it
         # into the old executor's supplemental-input channel first.
@@ -1430,7 +1430,7 @@ class PersonalSessionRuntime:
             await finalize_capture(consumed_marked=False)
             raise
 
-    def _interrupt_active_core_turn_for_new_input(self) -> bool:
+    async def _interrupt_active_core_turn_for_new_input(self) -> bool:
         """Stop an active Core turn before a new platform message queues.
 
         Personal remains the session's single admission owner, but a new user
@@ -1448,11 +1448,28 @@ class PersonalSessionRuntime:
             return False
         executor_id = head.executor_id or "native"
         try:
+            # Block late output before notifying a protocol adapter. The adapter
+            # may await its client-side interrupt/turn-finished acknowledgement.
+            active_event.set_extra("agent_stop_requested", True)
             head.cancel(
                 executor_id=executor_id,
                 metadata={"reason": "superseded_by_new_user_input"},
                 origin=CoreCommandOrigin.PERSONAL,
             )
+            try:
+                await active_event.abort_visible_turn(
+                    reason="superseded_by_new_user_input"
+                )
+            except Exception:
+                # Core cancellation remains authoritative. A protocol-side
+                # cleanup failure must not reclassify this new input as a
+                # follow-up for the cancelled executor.
+                logger.exception(
+                    "Personal Runtime failed to abort previous visible turn: "
+                    "session_id=%s old_turn_id=%s",
+                    self.key.audience_key,
+                    active_turn.turn_id,
+                )
             active_event.stop_event()
             mark_interaction_turn_cancelled(active_event)
             active_task = self._active_turn_task
