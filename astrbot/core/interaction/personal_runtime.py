@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from astrbot import logger
 from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
+from astrbot.core.execution import CoreCommandOrigin, get_core_execution_head
 from astrbot.core.persona_error_reply import (
     resolve_conversation_persona_id,
     resolve_event_conversation_persona_id,
@@ -69,6 +70,7 @@ from .turn_state import (
     InteractionFinalOutputStatus,
     InteractionLifecycleStage,
     InteractionTurnStatus,
+    mark_interaction_turn_cancelled,
     mark_interaction_turn_failed,
     record_interaction_turn_failure,
     set_interaction_turn_persona_id,
@@ -592,6 +594,7 @@ class PersonalTurnLease:
                     )
                     self.runtime.active_turn_id = None
                     self.runtime._active_turn_context = None
+                    self.runtime._active_turn_task = None
                     self.runtime.touch()
                     self.reservation.transition(PendingTurnState.SETTLED)
                     await self.runtime.turn_lock.release()
@@ -613,6 +616,7 @@ class PersonalSessionRuntime:
         self.turn_lock = _TurnAdmissionGate()
         self.active_turn_id: str | None = None
         self._active_turn_context: PersonalTurnContext | None = None
+        self._active_turn_task: asyncio.Task[Any] | None = None
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
@@ -1315,7 +1319,18 @@ class PersonalSessionRuntime:
         delayed_admission = bool(
             event.get_extra("_personal_runtime_delayed_admission", False)
         )
-        capture = self.follow_ups.try_capture(event) if allow_follow_up else None
+        interrupted_core = (
+            wait_if_busy
+            and not isinstance(event, RuntimeObservationEvent)
+            and self._interrupt_active_core_turn_for_new_input()
+        )
+        # A message that supersedes Core starts a fresh turn. Do not feed it
+        # into the old executor's supplemental-input channel first.
+        capture = (
+            self.follow_ups.try_capture(event)
+            if allow_follow_up and not interrupted_core
+            else None
+        )
         deadline = turn.state.deadline
         queue_context = (
             deadline.enforce("session_queue")
@@ -1375,6 +1390,7 @@ class PersonalSessionRuntime:
             )
             self.active_turn_id = turn.turn_id
             self._active_turn_context = turn
+            self._active_turn_task = asyncio.current_task()
             manager._activate_group_conversation_turn(self, turn)
             group_owner_activated = True
             user_activity_at = (
@@ -1409,9 +1425,60 @@ class PersonalSessionRuntime:
                     )
                 self.active_turn_id = None
                 self._active_turn_context = None
+                self._active_turn_task = None
                 await self.turn_lock.release()
             await finalize_capture(consumed_marked=False)
             raise
+
+    def _interrupt_active_core_turn_for_new_input(self) -> bool:
+        """Stop an active Core turn before a new platform message queues.
+
+        Personal remains the session's single admission owner, but a new user
+        message must be able to supersede a long-running Core task.  Internal
+        runtime observations deliberately do not use this path: proactive
+        output and heartbeat work must retain the existing serialized policy.
+        """
+
+        active_turn = self._active_turn_context
+        if active_turn is None or active_turn.state.execution_scope.closed:
+            return False
+        active_event = active_turn.event
+        head = get_core_execution_head(active_event)
+        if head is None or head.terminal_event is not None:
+            return False
+        executor_id = head.executor_id or "native"
+        try:
+            head.cancel(
+                executor_id=executor_id,
+                metadata={"reason": "superseded_by_new_user_input"},
+                origin=CoreCommandOrigin.PERSONAL,
+            )
+            active_event.stop_event()
+            mark_interaction_turn_cancelled(active_event)
+            active_task = self._active_turn_task
+            current_task = asyncio.current_task()
+            if (
+                active_task is not None
+                and active_task is not current_task
+                and not active_task.done()
+            ):
+                active_task.cancel()
+            logger.info(
+                "Personal Runtime interrupted active Core turn for new input: "
+                "session_id=%s old_turn_id=%s executor_id=%s",
+                self.key.audience_key,
+                active_turn.turn_id,
+                executor_id,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "Personal Runtime failed to interrupt active Core turn: "
+                "session_id=%s old_turn_id=%s",
+                self.key.audience_key,
+                active_turn.turn_id,
+            )
+            return False
 
     @staticmethod
     def _turn_user_activity_at(turn: PersonalTurnContext) -> float | None:
