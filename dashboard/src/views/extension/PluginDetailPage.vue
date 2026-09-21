@@ -619,7 +619,7 @@ onBeforeUnmount(() => {
             :label="tm('detail.capabilityConfig')"
           />
           <PluginCapabilityInventory
-            :plugin-name="displayName"
+            :plugin-id="props.plugin.name"
             :config-id="selectedConfigId"
           />
         </v-card-text>

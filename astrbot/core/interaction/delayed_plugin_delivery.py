@@ -377,15 +377,13 @@ class DelayedPluginDeliveryCoordinator:
 
             handler = deliver_expression
 
-        delivered = bool(
-            await context.personal_runtime_manager.submit_delayed_plugin_event(
-                event,
-                context.config_id,
-                context.plugin_context,
-                dict(context.runtime_config),
-                handler,
-                profile=profile,
-            )
+        delivered = await context.personal_runtime_manager.submit_delayed_plugin_event(
+            event,
+            context.config_id,
+            context.plugin_context,
+            dict(context.runtime_config),
+            handler,
+            profile=profile,
         )
         history_status = get_interaction_turn_delayed_history_skip_reason(event) or ""
         committed_turn_id = get_interaction_turn_committed_turn_id(event) or ""

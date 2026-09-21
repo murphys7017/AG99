@@ -25,6 +25,7 @@ from astrbot.core.interaction.output_adapter import InteractionEventOutputAdapte
 from astrbot.core.interaction.output_controller import InteractionOutputController
 from astrbot.core.interaction.output_modes import OUTPUT_ORIGIN_EXTRA_KEY, OutputOrigin
 from astrbot.core.interaction.turn_state import (
+    InteractionSpeculativePersonaStatus,
     append_interaction_turn_assistant_artifacts,
     ensure_interaction_turn_state,
     get_interaction_turn_assistant_artifacts,
@@ -1114,6 +1115,7 @@ async def test_persona_materializes_turn_before_delivery_completion():
         side_effect=lambda _event: order.append("finalize")
     )
     event = Event()
+    set_interaction_turn_immediate_reply(event, "persona reply")
 
     await middleware._complete_persona_only_turn(
         event,
@@ -1122,6 +1124,41 @@ async def test_persona_materializes_turn_before_delivery_completion():
 
     assert order == ["materialize", "complete", "finalize"]
     event.stop_event.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_suppressed_persona_reply_does_not_materialize_raw_expression():
+    class Event:
+        def __init__(self):
+            self._extras = {}
+
+        def get_extra(self, key, default=None):
+            return self._extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self._extras[key] = value
+
+    async def suppressed_expression():
+        return PersonaExpressionResult(spoken_reply="must not enter history")
+
+    event = Event()
+    turn_state = ensure_interaction_turn_state(event)
+    turn_state.speculative_persona_status = (
+        InteractionSpeculativePersonaStatus.SUPPRESSED
+    )
+    middleware = object.__new__(InteractionMiddleware)
+    middleware._complete_silent_or_committed_persona_turn = AsyncMock()
+    middleware._complete_persona_only_turn = AsyncMock()
+
+    await middleware.complete_routed_turn(
+        event,
+        interaction_config=None,
+        persona_task=asyncio.create_task(suppressed_expression()),
+        route=InteractionRouteDecision(route_mode=InteractionRouteMode.PERSONA),
+    )
+
+    middleware._complete_silent_or_committed_persona_turn.assert_awaited_once()
+    middleware._complete_persona_only_turn.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -383,14 +383,14 @@ class InteractionMiddleware:
         self,
         event: RuntimeObservationEvent,
         turn: PersonalTurnContext,
-    ) -> PersonaExpressionResult | None:
+    ) -> bool:
         """Express one admitted system observation without ordinary Core routing."""
         if not isinstance(event, RuntimeObservationEvent):
             raise TypeError("event must be a RuntimeObservationEvent")
         if turn.event is not event or turn.observation is not event.observation:
             raise ValueError("Runtime observation does not match the admitted turn")
         if event.get_extra("_interaction_runtime_observation_handled", False):
-            return None
+            return False
 
         action_intent = event.get_extra("_personal_action_intent")
         is_personal_action = isinstance(action_intent, PersonalActionIntent)
@@ -400,7 +400,7 @@ class InteractionMiddleware:
                 "_interaction_runtime_observation_skipped_reason",
                 "missing_visible_reply_material",
             )
-            return None
+            return False
 
         runtime_config = self._admit_runtime_config(
             event,
@@ -414,7 +414,7 @@ class InteractionMiddleware:
                 "_interaction_runtime_observation_skipped_reason",
                 "interaction_middleware_disabled",
             )
-            return None
+            return False
 
         self.prepare_pipeline_event(event)
         ensure_interaction_turn_state(
@@ -454,7 +454,7 @@ class InteractionMiddleware:
                 expression,
             ):
                 await self._suppress_duplicate_personal_expression(event)
-                return None
+                return False
             delivered = await self._emit_immediate_reply_or_record_failure(
                 event,
                 expression,
@@ -467,7 +467,7 @@ class InteractionMiddleware:
                     expression,
                 )
             event.set_extra("_interaction_runtime_observation_handled", True)
-            return expression
+            return delivered
         except TurnDeadlineExceeded as exc:
             record_interaction_turn_failure(
                 event,
@@ -941,7 +941,11 @@ class InteractionMiddleware:
             return
 
         expression = await persona_task
-        if expression is None:
+        if (
+            expression is None
+            or turn_state.speculative_persona_status
+            is not InteractionSpeculativePersonaStatus.EMITTED
+        ):
             # A Persona hook may intentionally suppress the speculative reply
             # after the Personal plan selected the Persona route. Complete this as
             # a silent turn instead of turning a valid control outcome into a
@@ -1145,9 +1149,17 @@ class InteractionMiddleware:
             )
             raise RuntimeError("Interaction persona expression missing reply")
         reply = get_interaction_turn_immediate_reply(event)
+        if not reply:
+            record_interaction_turn_failure(
+                event,
+                stage="immediate_reply",
+                reason="missing_delivered_reply",
+                user_visible_action="none",
+            )
+            raise RuntimeError("Interaction persona reply was not delivered")
         self._materialize_persona_reply_turn(
             event,
-            reply=reply or expression.spoken_reply,
+            reply=reply,
         )
         completed = await self._complete_visible_turn_or_record_failure(event)
         if completed:

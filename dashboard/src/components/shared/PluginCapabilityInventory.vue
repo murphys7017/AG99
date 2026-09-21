@@ -138,9 +138,9 @@ import { useModuleI18n } from '@/i18n/composables'
 const props = defineProps({
   /**
    * Display-only: the inventory API reports every plugin at once, so this is
-   * used to highlight the current plugin rather than to filter the request.
+   * used to select the current plugin rather than to filter the request.
    */
-  pluginName: {
+  pluginId: {
     type: String,
     default: ''
   },
@@ -159,11 +159,11 @@ const evaluationContext = ref({})
 let requestSequence = 0
 
 const visibleCapabilities = computed(() => {
-  if (!props.pluginName) {
+  if (!props.pluginId) {
     return capabilities.value
   }
   return capabilities.value.filter(
-    cap => !cap.owner_plugin_name || cap.owner_plugin_name === props.pluginName
+    cap => !cap.owner_plugin_name || cap.owner_plugin_name === props.pluginId
   )
 })
 

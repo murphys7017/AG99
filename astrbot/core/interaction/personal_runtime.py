@@ -1862,12 +1862,17 @@ class PersonalRuntimeManager:
         plugin_context: Any,
         runtime_config: dict,
         handler: Callable[
-            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[Any]
+            [RuntimeObservationEvent, PersonalTurnContext], Awaitable[bool]
         ],
         *,
         profile: str,
-    ) -> Any:
-        """Submit a low-priority T2 whose deadline starts after admission."""
+    ) -> bool:
+        """Submit a low-priority T2 whose deadline starts after admission.
+
+        Delayed plugin delivery has one observable outcome: whether its logical
+        output reached the Personal surface. Keep that contract strict here so
+        callers cannot mistake an intermediate expression object for delivery.
+        """
         if profile not in {
             "delayed_plugin_expression",
             "delayed_plugin_direct",
@@ -1876,13 +1881,16 @@ class PersonalRuntimeManager:
         event.set_extra("_personal_runtime_submission_kind", profile)
         event.set_extra("_personal_runtime_delayed_admission", True)
         event.set_extra("_personal_runtime_deadline_after_admission", True)
-        return await self.submit_runtime_observation_event(
+        delivered = await self.submit_runtime_observation_event(
             event,
             config_id,
             plugin_context,
             runtime_config,
             handler,
         )
+        if not isinstance(delivered, bool):
+            raise TypeError("Delayed plugin delivery handler must return bool")
+        return delivered
 
     async def dispatch_proactive_message(
         self,
