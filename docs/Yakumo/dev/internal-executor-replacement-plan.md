@@ -2,7 +2,7 @@
 
 > 5.6 的逐批编码指令见 [`internal-executor-replacement-implementation-guide.md`](internal-executor-replacement-implementation-guide.md)。本文件保留架构目标、边界和批次定义；实施时以操作级手册中的文件、接口和退出条件为准。
 
-日期：2026-09-21。状态：待审阅的实施提案，尚未实施。
+日期：2026-09-21。状态：R1 已实现，待审阅；R2-R8 尚未实施。
 
 逐批编码步骤、修改范围和验证命令见
 [内部可替换执行器：5.6 操作级实施手册](internal-executor-replacement-implementation-guide.md)。
@@ -153,6 +153,14 @@ Session 继续严格拒绝非法迁移；运行协调器在接收迟到事实时
 | R8 真实适配 | 已选产品 Adapter、对应配置与基本真实验收 | 无关 SDK 细节泄漏 | Native 与真实 Body 通过相同核心验收 |
 
 R1-R5 作为 Native 等价迁移，逐批审阅，不堆积未验证改动。R6 可以先用配置 schema 的现有页面机制展示；新增专用前端界面另行评估。只有真的修改 Dashboard 资产时才需要重新打包。
+
+R1 实施记录（2026-09-21）：`prepare_core_execution()` 已冻结不持有
+`ProviderRequest` 的 `PreparedCoreExecution`（只含 `CoreExecutionSpec` 和只读
+deadline view）；Native 专属的 Provider 渲染、生命周期 Hook、Runner reset 与 fallback
+Provider 装配已收敛到 `_build_native_main_agent()`。普通交互与主动任务优先消费同一份
+准备 deadline view，测试桩仍保留旧路径 fallback。当前 Prompt collector 仅暂时以
+`ProviderRequest` 作为输入事实来源，不能把它提升为任意 Body 的运行契约；R2/R6 接入
+第二 Body 前应提供中立的 Prompt 输入载体。
 
 每批完成后同步实际进度，提交按用户指令执行；服务由用户手动启动。失败先修当前批，不以“下一批会解决”为理由继续扩大范围。
 

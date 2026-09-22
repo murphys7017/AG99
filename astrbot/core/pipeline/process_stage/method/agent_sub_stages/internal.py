@@ -363,7 +363,14 @@ class InternalAgentSubStage(Stage):
                         event,
                         effective_execution_spec,
                     )
-                    if deadline := get_interaction_turn_deadline(event):
+                    deadline_view = getattr(
+                        getattr(build_result, "prepared_execution", None),
+                        "deadline_view",
+                        None,
+                    )
+                    if deadline_view is not None:
+                        execution_head.bind_deadline_view(deadline_view)
+                    elif deadline := get_interaction_turn_deadline(event):
                         execution_head.bind_deadline_view(
                             CoreExecutionDeadlineView.from_budget(deadline)
                         )

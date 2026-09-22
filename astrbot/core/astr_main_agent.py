@@ -26,6 +26,7 @@ from astrbot.core.capabilities import CapabilityResolver, CapabilitySnapshot
 from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.execution import (
     CoreCapabilitySnapshot,
+    CoreExecutionDeadlineView,
     CoreExecutionSpec,
     NativeExecutionAdapter,
 )
@@ -331,6 +332,7 @@ class MainAgentBuildResult:
     provider: Provider
     capabilities: CapabilitySnapshot | None = None
     execution_spec: CoreExecutionSpec | None = None
+    prepared_execution: PreparedCoreExecution | None = None
     reset_coro: Coroutine | None = None
     request_lifecycle: AgentRequestLifecycle | None = None
     _reset_consumed: bool = field(default=False, init=False, repr=False)
@@ -357,6 +359,19 @@ class MainAgentBuildResult:
         self._reset_consumed = True
         if reset_coro is not None:
             reset_coro.close()
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCoreExecution:
+    """Executor-neutral Core facts prepared before Native request rendering.
+
+    ``CoreExecutionSpec`` remains the sole owner of the context and capability
+    snapshots.  The transient ProviderRequest used to collect those facts is
+    deliberately not retained here.
+    """
+
+    execution_spec: CoreExecutionSpec
+    deadline_view: CoreExecutionDeadlineView | None
 
 
 def _set_llm_error_message(event: AstrMessageEvent, message: str) -> None:
@@ -640,6 +655,177 @@ def _record_prompt_application(
             ensure_ascii=False,
             default=str,
         ),
+    )
+
+
+async def prepare_core_execution(
+    *,
+    event: AstrMessageEvent,
+    plugin_context: Context,
+    config: MainAgentBuildConfig,
+    provider_request: ProviderRequest,
+    capabilities: CapabilitySnapshot,
+    interaction_core: bool,
+    exclude_handoff_tools: bool,
+) -> PreparedCoreExecution:
+    """Freeze executor-neutral Core facts before a body renders its request.
+
+    Prompt collectors still consume the current request as transient source
+    material for conversation and attachment facts.  The resulting
+    ``CoreExecutionSpec`` removes that reference, so executor construction only
+    receives the immutable Core snapshot and the Personal-owned deadline view.
+    """
+
+    turn_state = get_interaction_turn_state(event)
+    context_material = getattr(turn_state, "context_material", None)
+    base_context_pack = None
+    if interaction_core and context_material is not None:
+        base_context_pack = await get_or_build_interaction_core_plugin_context_pack(
+            event=event,
+            plugin_context=plugin_context,
+            build_config=config,
+            material=context_material,
+        )
+    interaction_collectors = None
+    if interaction_core and base_context_pack is not None:
+        interaction_collectors = _build_interaction_core_collectors(
+            capabilities,
+            include_subagent_context=not exclude_handoff_tools,
+            input_context_pack=base_context_pack,
+            include_media_enrichment=bool(
+                get_core_task_spec(event)
+                and get_core_task_spec(event).requires_visual_understanding
+            ),
+        )
+    prompt_context_pack = await PromptContextBuilder(
+        event,
+        plugin_context,
+        config,
+    ).build(
+        collectors=interaction_collectors,
+        provider_request=provider_request,
+        capabilities=capabilities,
+        include_prompt_extensions=base_context_pack is None,
+        base=base_context_pack,
+        scope="core",
+    )
+    if context_material is not None:
+        context_material.target_context_packs["core_execution"] = prompt_context_pack
+    event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
+    log_context_pack(prompt_context_pack, event=event)
+
+    task_spec = get_core_task_spec(event)
+    execution_spec = CoreExecutionSpec.from_context_pack(
+        context_pack=prompt_context_pack,
+        turn_id=str(event.get_extra("_turn_id", "") or ""),
+        task_spec=task_spec.to_dict() if task_spec is not None else None,
+        parent_execution_id=event.get_extra("_core_parent_execution_id"),
+        capabilities=CoreCapabilitySnapshot.from_context_pack(
+            prompt_context_pack,
+            tools=capabilities.to_toolset(),
+        ),
+    )
+    set_interaction_turn_core_execution_spec(event, execution_spec)
+    deadline = get_interaction_turn_deadline(event)
+    return PreparedCoreExecution(
+        execution_spec=execution_spec,
+        deadline_view=(
+            CoreExecutionDeadlineView.from_budget(deadline)
+            if deadline is not None
+            else None
+        ),
+    )
+
+
+async def _build_native_main_agent(
+    *,
+    event: AstrMessageEvent,
+    plugin_context: Context,
+    config: MainAgentBuildConfig,
+    provider: Provider,
+    provider_request: ProviderRequest,
+    capabilities: CapabilitySnapshot,
+    prepared_execution: PreparedCoreExecution,
+    interaction_core: bool,
+    apply_reset: bool,
+    request_lifecycle: AgentRequestLifecycle | None,
+) -> MainAgentBuildResult:
+    """Render and reset AstrBot's built-in Native executor only."""
+
+    render_result = _render_prompt_pipeline(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
+        provider=provider,
+        provider_request=provider_request,
+        prompt_context_pack=prepared_execution.execution_spec.context_pack,
+        target=PromptTarget.CORE if interaction_core else None,
+    )
+    native_execution = NativeExecutionAdapter().adapt(
+        prepared_execution.execution_spec,
+        render_result,
+        provider_request,
+    )
+    req = native_execution.provider_request
+    if interaction_core:
+        ensure_interaction_core_execution_prompt(req, event)
+    _record_prompt_application(event, native_execution.prompt_apply_result, req)
+    if request_lifecycle is None:
+        request_lifecycle = AgentRequestLifecycle(
+            event,
+            execution_surface=TOOL_TARGET_CORE,
+            record_reasoning=True,
+            dispatch_response_postprocess=True,
+        )
+    request_lifecycle.bind_request(
+        req,
+        prompt_apply_result=native_execution.prompt_apply_result,
+    )
+    _modalities_fix(provider, req)
+    _sanitize_context_by_modalities(config, provider, req)
+
+    agent_runner = AgentRunner()
+    reset_coro = agent_runner.reset(
+        provider=provider,
+        request=req,
+        run_context=AgentContextWrapper(
+            context=AstrAgentContext(context=plugin_context, event=event),
+            tool_call_timeout=config.tool_call_timeout,
+        ),
+        tool_executor=FunctionToolExecutor(),
+        agent_hooks=AgentRequestLifecycleHooks(request_lifecycle),
+        streaming=config.streaming_response,
+        llm_compress_instruction=config.llm_compress_instruction,
+        llm_compress_keep_recent=config.llm_compress_keep_recent,
+        llm_compress_keep_recent_ratio=config.llm_compress_keep_recent_ratio,
+        llm_compress_provider=_get_compress_provider(config, plugin_context),
+        truncate_turns=config.dequeue_context_length,
+        enforce_max_turns=resolve_target_budget(
+            PromptTarget.CORE.value,
+            config=config,
+        ).history_turns,
+        tool_schema_mode=config.tool_schema_mode,
+        fallback_providers=resolve_fallback_chat_providers(
+            provider,
+            config.provider_settings,
+            plugin_context.get_provider_by_id,
+        ),
+        deadline=get_interaction_turn_deadline(event),
+        tool_result_overflow_dir=get_astrbot_system_tmp_path(),
+        buffer_streaming_tool_steps=interaction_core,
+    )
+    if apply_reset:
+        await reset_coro
+
+    return MainAgentBuildResult(
+        agent_runner=agent_runner,
+        provider_request=req,
+        provider=provider,
+        capabilities=capabilities,
+        execution_spec=prepared_execution.execution_spec,
+        prepared_execution=prepared_execution,
+        reset_coro=reset_coro if not apply_reset else None,
+        request_lifecycle=request_lifecycle,
     )
 
 
@@ -1233,12 +1419,6 @@ async def build_main_agent(
     elif config.computer_use_runtime == "local":
         _apply_local_env_tools(req, plugin_context)
 
-    agent_runner = AgentRunner()
-    astr_agent_ctx = AstrAgentContext(
-        context=plugin_context,
-        event=event,
-    )
-
     if config.add_cron_tools:
         _proactive_cron_job_tools(req, plugin_context)
 
@@ -1333,7 +1513,6 @@ async def build_main_agent(
                 "context"
             ]
         else:
-            # fallback: default to configured fallback value
             provider.provider_config["max_context_tokens"] = (
                 config.fallback_max_context_tokens
             )
@@ -1341,131 +1520,24 @@ async def build_main_agent(
     if event.get_platform_name() == "webchat":
         asyncio.create_task(_handle_webchat(event, req, provider))
 
-    prompt_target = PromptTarget.CORE if interaction_core else None
-    turn_state = get_interaction_turn_state(event)
-    context_material = getattr(turn_state, "context_material", None)
-    base_context_pack = None
-    if interaction_core and context_material is not None:
-        base_context_pack = await get_or_build_interaction_core_plugin_context_pack(
-            event=event,
-            plugin_context=plugin_context,
-            build_config=config,
-            material=context_material,
-        )
-    builder = PromptContextBuilder(event, plugin_context, config)
-    interaction_collectors = None
-    if interaction_core and base_context_pack is not None:
-        interaction_collectors = _build_interaction_core_collectors(
-            capabilities,
-            include_subagent_context=not exclude_handoff_tools,
-            input_context_pack=base_context_pack,
-            include_media_enrichment=bool(
-                get_core_task_spec(event)
-                and get_core_task_spec(event).requires_visual_understanding
-            ),
-        )
-    prompt_context_pack = await builder.build(
-        collectors=interaction_collectors,
+    prepared_execution = await prepare_core_execution(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
         provider_request=req,
         capabilities=capabilities,
-        include_prompt_extensions=base_context_pack is None,
-        base=base_context_pack,
-        scope="core",
+        interaction_core=interaction_core,
+        exclude_handoff_tools=exclude_handoff_tools,
     )
-    if context_material is not None:
-        context_material.target_context_packs["core_execution"] = prompt_context_pack
-    event.set_extra(PROMPT_CONTEXT_PACK_EXTRA_KEY, prompt_context_pack)
-    log_context_pack(prompt_context_pack, event=event)
-
-    task_spec = get_core_task_spec(event)
-    execution_spec = CoreExecutionSpec.from_context_pack(
-        context_pack=prompt_context_pack,
-        turn_id=str(event.get_extra("_turn_id", "") or ""),
-        task_spec=task_spec.to_dict() if task_spec is not None else None,
-        parent_execution_id=event.get_extra("_core_parent_execution_id"),
-        capabilities=CoreCapabilitySnapshot.from_context_pack(
-            prompt_context_pack,
-            tools=capabilities.to_toolset(),
-        ),
-    )
-    set_interaction_turn_core_execution_spec(event, execution_spec)
-    render_result = _render_prompt_pipeline(
+    return await _build_native_main_agent(
         event=event,
         plugin_context=plugin_context,
         config=config,
         provider=provider,
         provider_request=req,
-        prompt_context_pack=execution_spec.context_pack,
-        target=prompt_target,
-    )
-    native_execution = NativeExecutionAdapter().adapt(
-        execution_spec,
-        render_result,
-        req,
-    )
-    req = native_execution.provider_request
-    if interaction_core:
-        ensure_interaction_core_execution_prompt(req, event)
-    _record_prompt_application(
-        event,
-        native_execution.prompt_apply_result,
-        req,
-    )
-    if request_lifecycle is None:
-        request_lifecycle = AgentRequestLifecycle(
-            event,
-            execution_surface=TOOL_TARGET_CORE,
-            record_reasoning=True,
-            dispatch_response_postprocess=True,
-        )
-    request_lifecycle.bind_request(
-        req,
-        prompt_apply_result=native_execution.prompt_apply_result,
-    )
-    _modalities_fix(provider, req)
-    _sanitize_context_by_modalities(config, provider, req)
-
-    fallback_providers = resolve_fallback_chat_providers(
-        provider,
-        config.provider_settings,
-        plugin_context.get_provider_by_id,
-    )
-
-    reset_coro = agent_runner.reset(
-        provider=provider,
-        request=req,
-        run_context=AgentContextWrapper(
-            context=astr_agent_ctx,
-            tool_call_timeout=config.tool_call_timeout,
-        ),
-        tool_executor=FunctionToolExecutor(),
-        agent_hooks=AgentRequestLifecycleHooks(request_lifecycle),
-        streaming=config.streaming_response,
-        llm_compress_instruction=config.llm_compress_instruction,
-        llm_compress_keep_recent=config.llm_compress_keep_recent,
-        llm_compress_keep_recent_ratio=config.llm_compress_keep_recent_ratio,
-        llm_compress_provider=_get_compress_provider(config, plugin_context),
-        truncate_turns=config.dequeue_context_length,
-        enforce_max_turns=resolve_target_budget(
-            PromptTarget.CORE.value,
-            config=config,
-        ).history_turns,
-        tool_schema_mode=config.tool_schema_mode,
-        fallback_providers=fallback_providers,
-        deadline=get_interaction_turn_deadline(event),
-        tool_result_overflow_dir=get_astrbot_system_tmp_path(),
-        buffer_streaming_tool_steps=interaction_core,
-    )
-
-    if apply_reset:
-        await reset_coro
-
-    return MainAgentBuildResult(
-        agent_runner=agent_runner,
-        provider_request=req,
-        provider=provider,
         capabilities=capabilities,
-        execution_spec=execution_spec,
-        reset_coro=reset_coro if not apply_reset else None,
+        prepared_execution=prepared_execution,
+        interaction_core=interaction_core,
+        apply_reset=apply_reset,
         request_lifecycle=request_lifecycle,
     )

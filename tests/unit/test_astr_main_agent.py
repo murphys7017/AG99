@@ -579,6 +579,36 @@ class TestBuildMainAgent:
     """Tests for build_main_agent function."""
 
     @pytest.mark.asyncio
+    async def test_prepare_core_execution_freezes_runner_neutral_snapshot(
+        self,
+        mock_event,
+        mock_context,
+    ):
+        request = ProviderRequest(prompt="Hello")
+        request.conversation = _setup_conversation_for_build(
+            mock_context.conversation_manager
+        )
+
+        with patch("astrbot.core.astr_main_agent.AgentRunner") as runner_cls:
+            prepared = await ama.prepare_core_execution(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=ama.MainAgentBuildConfig(
+                    tool_call_timeout=60,
+                    computer_use_runtime="none",
+                    add_cron_tools=False,
+                ),
+                provider_request=request,
+                capabilities=CapabilitySnapshot.empty(target="core"),
+                interaction_core=False,
+                exclude_handoff_tools=False,
+            )
+
+        runner_cls.assert_not_called()
+        assert prepared.deadline_view is None
+        assert prepared.execution_spec.context_pack.provider_request_ref is None
+
+    @pytest.mark.asyncio
     async def test_build_main_agent_basic(
         self, mock_event, mock_context, mock_provider
     ):
@@ -607,6 +637,8 @@ class TestBuildMainAgent:
 
         assert result is not None
         assert isinstance(result, module.MainAgentBuildResult)
+        assert result.prepared_execution is not None
+        assert result.execution_spec is result.prepared_execution.execution_spec
         assert mock_runner.reset.await_args.kwargs["fallback_providers"] == []
 
     def test_get_fallback_chat_providers_filters_invalid_and_duplicate_entries(

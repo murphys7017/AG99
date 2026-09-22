@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from astrbot.core.agent_lifecycle import AgentRequestLifecycle
@@ -67,6 +68,14 @@ async def finalize_core_request_preparation(
     )
     build_result.capabilities = effective_capabilities
     build_result.execution_spec = effective_execution_spec
+    if (
+        build_result.prepared_execution is not None
+        and effective_execution_spec is not None
+    ):
+        build_result.prepared_execution = replace(
+            build_result.prepared_execution,
+            execution_spec=effective_execution_spec,
+        )
     if effective_execution_spec is not None:
         set_interaction_turn_core_execution_spec(event, effective_execution_spec)
     return True

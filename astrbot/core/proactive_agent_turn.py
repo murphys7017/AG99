@@ -180,9 +180,17 @@ async def run_proactive_agent_turn(
         execution_spec = getattr(result, "execution_spec", None)
         if isinstance(execution_spec, CoreExecutionSpec):
             execution_head = bind_core_execution_head(event, execution_spec)
-            execution_head.bind_deadline_view(
-                CoreExecutionDeadlineView.from_budget(deadline)
+            deadline_view = getattr(
+                getattr(result, "prepared_execution", None),
+                "deadline_view",
+                None,
             )
+            if deadline_view is not None:
+                execution_head.bind_deadline_view(deadline_view)
+            else:
+                execution_head.bind_deadline_view(
+                    CoreExecutionDeadlineView.from_budget(deadline)
+                )
             bind_interaction_turn_core_execution_journal(event, execution_head)
         native_run = NativeExecutionRun.from_runner(
             result.agent_runner,
