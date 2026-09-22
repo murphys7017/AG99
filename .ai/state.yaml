@@ -122,6 +122,87 @@ native_default_body_port:
     settlement retain the same lifecycle behavior before deleting compatibility
     paths or claiming complete Executor replaceability.
 
+executor_run_contract:
+  date: '2026-09-22'
+  class: refactor
+  risk: high
+  status: implemented_pending_review
+  scope: >-
+    Implement R2 of the internal executor replacement plan: establish a
+    platform-neutral ExecutorRun contract and a Native adapter without changing
+    production executor selection, Personal, output delivery, or Core terminal
+    ownership.
+  validation: >-
+    Focused Native adapter tests passed (22). Scoped Ruff and compileall passed.
+    No service restart or live platform validation was performed because the
+    current production path still uses NativeExecutionOutputBridge directly.
+  followup: >-
+    R3 may add one shared runtime coordinator and migrate the ordinary and
+    proactive assembly points only after this contract review is accepted.
+
+executor_run_coordinator:
+  date: '2026-09-22'
+  class: refactor
+  risk: high
+  status: implemented_pending_review
+  scope: >-
+    Implement R3's shared in-process executor-run coordinator and migrate the
+    non-visible proactive Native execution path to it. Preserve ordinary
+    Interaction's Native message-chain output bridge until R5 supplies a
+    neutral shared result bridge.
+  validation: >-
+    Proactive execution, Native adapter, and coordinator checks passed 36
+    cases. Scoped Ruff, compileall, and git diff checks passed. No restart or
+    live Cron/OLV acceptance occurred.
+  followup: >-
+    R4 should replace Personal's Native follow-up dependency with a narrow
+    Core input-control contract. Do not migrate ordinary streamed output before
+    R5 can preserve its existing output behavior.
+
+core_follow_up_control:
+  date: '2026-09-22'
+  class: refactor
+  risk: high
+  status: implemented_pending_review
+  scope: >-
+    Implement R4 by replacing Personal Runtime's direct Native executor and
+    ticket control with a Core Head-owned follow-up input control. Preserve the
+    existing accepted/consumed/withdrawn ticket behavior at the Native Body
+    boundary.
+  validation: >-
+    Core execution, proactive, Native adapter, and executor coordinator checks
+    passed 84 cases. Personal Runtime capability tests have two pre-existing
+    duplicate autonomous-expression expectation failures; the directly changed
+    group follow-up coverage passed. Ruff and compileall passed.
+  followup: >-
+    R5 must introduce a shared result/output bridge before ordinary Interaction
+    can use the executor-neutral run contract without losing message-chain,
+    streaming, TTS, or tool-status behavior.
+
+executor_result_and_selection_foundation:
+  date: '2026-09-22'
+  class: refactor
+  risk: high
+  status: reviewed_committed_pending_live_acceptance
+  scope: >-
+    Implement the R5 shared final-text bridge and the R6/R7 replacement
+    foundation: explicit built-in executor factories, active bot configuration
+    selection through core_execution.executor_id, and a scripted Body proof via
+    configuration, factory, and the shared driver. Preserve Native ordinary
+    interaction's message-chain, streaming, TTS, and tool-status output path.
+  validation: >-
+    Executor registry, result bridge, runtime coordinator, Native adapter, and
+    proactive turn checks passed 92 cases. The broader focused run passed 132
+    cases and retained two pre-existing duplicate autonomous-expression
+    expectation failures. Scoped Ruff, compileall, import, and git diff checks
+    passed. No restart, Dashboard build, or live platform/Cron acceptance was
+    performed.
+  followup: >-
+    A selected real Body must supply its explicit minimal factory inputs and
+    validate output, cancellation, supplemental input, asset delivery, and
+    Cron delivery receipt. Do not claim that a non-Native executor is available
+    to ordinary Interaction until its adapter preserves those contracts.
+
 minimax_stt_silence_handling:
   date: '2026-09-19'
   class: bugfix

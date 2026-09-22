@@ -2,7 +2,7 @@
 
 > 5.6 的逐批编码指令见 [`internal-executor-replacement-implementation-guide.md`](internal-executor-replacement-implementation-guide.md)。本文件保留架构目标、边界和批次定义；实施时以操作级手册中的文件、接口和退出条件为准。
 
-日期：2026-09-21。状态：R1 已实现，待审阅；R2-R8 尚未实施。
+日期：2026-09-22。状态：R1-R7 的最小替换基础已审阅并提交；仍待真实 OLV/Cron 验收；R8 需要选定真实执行器后实施。
 
 逐批编码步骤、修改范围和验证命令见
 [内部可替换执行器：5.6 操作级实施手册](internal-executor-replacement-implementation-guide.md)。
@@ -161,6 +161,47 @@ Provider 装配已收敛到 `_build_native_main_agent()`。普通交互与主动
 准备 deadline view，测试桩仍保留旧路径 fallback。当前 Prompt collector 仅暂时以
 `ProviderRequest` 作为输入事实来源，不能把它提升为任意 Body 的运行契约；R2/R6 接入
 第二 Body 前应提供中立的 Prompt 输入载体。
+
+R2 实施记录（2026-09-22）：新增 `astrbot.core.executors.contracts`，定义无平台、无
+`MessageChain` 的 `ExecutionProgressUpdate`、`ExecutionOutputMaterial`、`ExecutionResult`、
+`ExecutionOutputUpdate`、`ExecutionFinalUpdate` 和 `ExecutorRun`。Native 新增
+`NativeExecutorRun`，可将 Native 工具阶段归一成粗粒度非可见进度，并产生唯一中立最终结果；
+Native 专属的 token/tool/message-chain 解析仍留在 adapter，现有
+`NativeExecutionOutputBridge` 仍是生产输出路径。本批未接入运行协调器、没有改动 Head 终态、
+没有增加执行器配置或切换现有线上入口；R3 才负责把该契约接入两个生产装配点。
+
+R3 实施记录（2026-09-22）：新增 `drive_executor_run()` 作为 Head 绑定 Body 的激活、流消费、
+单终态投影、关闭与 release owner。它复用调用方已有的 `TurnDeadlineBudget`，不创建第二个
+deadline；无 final、多 final、取消、超时与异常各自进入既有 Head 终态，清理不覆盖原异常。
+主动 Core（Cron/后台）已改由该协调器驱动 Native Body，同时保留原有 Ledger 与投递确认边界。
+普通交互尚未迁入：它目前依赖 Native `MessageChain` 的流式、TTS、富组件与工具状态路径，必须等
+R5 的共享结果桥建立后再迁移，避免将中立结果契约错误地降级为纯文本输出。
+
+R4 实施记录（2026-09-22）：新增 `CoreFollowUpControl` 和最小 `CoreFollowUpTicket` 表面；
+Personal Runtime 现在按 Core Head、executor ID、actor ID 与停止谓词登记输入控制，而不再保存
+Native executor、读取 `runner.run_context` 或直接调用 Native `follow_up/cancel_follow_up`。
+Head/Lifecycle 负责将 accepted input 和撤回请求转交给当前 Body。Native 仍在 Body 边界实现 ticket；
+未支持执行中输入的后续 Body 可拒绝 `provide_input()`，不会伪造支持。
+
+R5 实施记录（2026-09-22）：新增 `ExecutionResultOutputBridge` 和
+`InteractionOutputController.deliver_core_execution_result()`，让中立最终文本可进入既有
+Core-final 表达、TTS、平台投递和历史边界。运行协调器现在先投影执行 completed，再将最终
+结果交给输出 sink；投递失败不会回写为执行 failed，执行完成与物理投递保持不同语义。取消或
+失败后的迟到结果会被桥丢弃；已完成执行的当前最终结果允许投递。`ExecutionOutputUpdate`
+仍不公开，因为尚未迁移既有流式/TTS/工具状态协议；`AssetRef` 也仍只记录为延迟资产，不能
+伪造平台附件发送。Native 普通交互继续使用 `NativeExecutionOutputBridge`，本批不改变线上
+富输出链。
+
+R6 实施记录（2026-09-22）：新增显式内建 factory registry 与
+`core_execution.executor_id` 配置（默认 `native`）。普通交互和主动任务都从当前适配器 bot
+绑定的运行时配置快照调用同一 `resolve_executor_id()`；未知或错误配置明确失败，不会静默回退
+Native。当前只有 Native factory，普通交互的 Native 富输出尚未可由通用 factory 直接构造，
+因此 R6 的“第二 Body 生产装配”仍依赖后续选定的适配器，而不是在当前路径伪造非 Native 支持。
+
+R7 实施记录（2026-09-22）：新增 Scripted test Body，验证它可经同一
+`core_execution.executor_id` 解析、factory 和 `drive_executor_run()` 返回中立结果并始终关闭。
+该验证证明注册/选择/驱动的替换骨架，不替代实际平台输出、取消、补输入和 Cron 投递的真实
+适配验收；这些仍是 R8 引入指定执行器时的门槛。
 
 每批完成后同步实际进度，提交按用户指令执行；服务由用户手动启动。失败先修当前批，不以“下一批会解决”为理由继续扩大范围。
 

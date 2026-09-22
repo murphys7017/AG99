@@ -168,6 +168,15 @@ class CoreExecutorBody(Protocol):
 
     def request_follow_up(self, message_text: str) -> Any | None: ...
 
+    def cancel_follow_up(self, ticket: Any) -> bool: ...
+
+
+class CoreFollowUpTicket(Protocol):
+    """Public ticket surface required by Personal follow-up ordering."""
+
+    consumed: bool
+    resolved: asyncio.Event
+
 
 class CoreExecutionPort(Protocol):
     """Control and fact surface injected into one Executor Body."""
@@ -220,6 +229,8 @@ class CoreExecutionPort(Protocol):
         message_text: str,
         origin: CoreCommandOrigin = CoreCommandOrigin.PERSONAL,
     ) -> Any | None: ...
+
+    def cancel_input(self, *, executor_id: str, ticket: CoreFollowUpTicket) -> bool: ...
 
     def release_executor(self, *, executor_id: str) -> bool: ...
 
@@ -723,6 +734,11 @@ class CoreExecutionLifecycle:
         init=False,
         repr=False,
     )
+    _executor_input_cancel_callback: Callable[[Any], bool] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _executor_id: str | None = field(default=None, init=False, repr=False)
     _executor_stop_error: str | None = field(default=None, init=False, repr=False)
     _deadline_view: CoreExecutionDeadlineView | None = field(
@@ -801,6 +817,20 @@ class CoreExecutionLifecycle:
             raise ValueError("CoreExecutionLifecycle already has an input callback")
         self._executor_input_callback = callback
 
+    def bind_executor_input_cancel_callback(
+        self,
+        callback: Callable[[Any], bool],
+    ) -> None:
+        """Bind the active Body's withdrawal operation for pending input."""
+
+        if self.session.status.is_terminal:
+            raise ValueError("cannot bind an input callback after terminal state")
+        if self._executor_input_cancel_callback is not None:
+            if self._executor_input_cancel_callback == callback:
+                return
+            raise ValueError("CoreExecutionLifecycle already has an input cancel callback")
+        self._executor_input_cancel_callback = callback
+
     @property
     def executor_id(self) -> str | None:
         """Return the executor currently attached to this lifecycle."""
@@ -813,6 +843,7 @@ class CoreExecutionLifecycle:
         executor_id: str,
         stop_callback: Callable[[], None],
         input_callback: Callable[[str], Any] | None = None,
+        input_cancel_callback: Callable[[Any], bool] | None = None,
     ) -> None:
         """Attach one executor identity and its stop operation to this session."""
 
@@ -824,6 +855,8 @@ class CoreExecutionLifecycle:
         self.bind_executor_stop_callback(stop_callback)
         if input_callback is not None:
             self.bind_executor_input_callback(input_callback)
+        if input_cancel_callback is not None:
+            self.bind_executor_input_cancel_callback(input_cancel_callback)
         self._executor_id = normalized_executor_id
 
     def release_executor(self, *, executor_id: str) -> bool:
@@ -838,6 +871,7 @@ class CoreExecutionLifecycle:
             return False
         self._executor_stop_callback = None
         self._executor_input_callback = None
+        self._executor_input_cancel_callback = None
         self._executor_id = None
         return True
 
@@ -873,6 +907,18 @@ class CoreExecutionLifecycle:
             )
         )
         return ticket
+
+    def cancel_input(self, *, executor_id: str, ticket: CoreFollowUpTicket) -> bool:
+        """Withdraw a previously accepted input ticket through the active Body."""
+
+        self._validate_executor_identity(executor_id)
+        if (
+            self.session.status is CoreExecutionSessionStatus.CREATED
+            or self.session.status.is_terminal
+            or self._executor_input_cancel_callback is None
+        ):
+            return False
+        return bool(self._executor_input_cancel_callback(ticket))
 
     @property
     def deadline_view(self) -> CoreExecutionDeadlineView | None:
@@ -1121,6 +1167,7 @@ class CoreExecutionHead:
         executor_id: str,
         stop_callback: Callable[[], None],
         input_callback: Callable[[str], Any] | None = None,
+        input_cancel_callback: Callable[[Any], bool] | None = None,
     ) -> None:
         """Attach one active Executor Body to this Core session."""
 
@@ -1128,6 +1175,7 @@ class CoreExecutionHead:
             executor_id=executor_id,
             stop_callback=stop_callback,
             input_callback=input_callback,
+            input_cancel_callback=input_cancel_callback,
         )
 
     def activate_executor(
@@ -1136,6 +1184,7 @@ class CoreExecutionHead:
         executor_id: str,
         stop_callback: Callable[[], None],
         input_callback: Callable[[str], Any] | None = None,
+        input_cancel_callback: Callable[[Any], bool] | None = None,
         submission_metadata: Mapping[str, Any] | None = None,
     ) -> CoreExecutionEvent:
         """Start the session and attach one Executor Body as one Core action."""
@@ -1147,6 +1196,7 @@ class CoreExecutionHead:
             executor_id=executor_id,
             stop_callback=stop_callback,
             input_callback=input_callback,
+            input_cancel_callback=input_cancel_callback,
         )
         return self.emit_event(
             kind=CoreExecutionEventKind.SUBMITTED,
@@ -1162,10 +1212,12 @@ class CoreExecutionHead:
     ) -> CoreExecutionEvent:
         """Attach a Body through the minimal Core-owned control contract."""
 
+        cancel_callback = getattr(body, "cancel_follow_up", None)
         return self.activate_executor(
             executor_id=body.executor_id,
             stop_callback=body.request_stop,
             input_callback=body.request_follow_up,
+            input_cancel_callback=cancel_callback if callable(cancel_callback) else None,
             submission_metadata=submission_metadata,
         )
 
@@ -1188,6 +1240,11 @@ class CoreExecutionHead:
             message_text=message_text,
             origin=origin,
         )
+
+    def cancel_input(self, *, executor_id: str, ticket: CoreFollowUpTicket) -> bool:
+        """Withdraw a pending supplemental input through the attached Body."""
+
+        return self.lifecycle.cancel_input(executor_id=executor_id, ticket=ticket)
 
     @property
     def deadline_view(self) -> CoreExecutionDeadlineView | None:
@@ -1354,6 +1411,7 @@ class CoreExecutionHead:
                     envelope.kind.value,
                     exc_info=True,
                 )
+
         if envelope.kind in _TERMINAL_CORE_EXECUTION_EVENT_KINDS:
             self.close()
 
@@ -1432,6 +1490,38 @@ class CoreExecutionHead:
     @property
     def ledger_settled(self) -> bool:
         return self._ledger_settled
+
+
+@dataclass(frozen=True, slots=True)
+class CoreFollowUpControl:
+    """Personal-facing input control for one active Core execution.
+
+    It intentionally exposes neither a runner nor an executor-specific ticket.
+    The actor binding belongs here because Personal uses it solely to decide
+    whether an incoming user message may supplement this execution.
+    """
+
+    head: CoreExecutionHead
+    executor_id: str
+    actor_id: str
+    is_stopping: Callable[[], bool]
+
+    def accepts_actor(self, actor_id: str) -> bool:
+        return (
+            not self.head.session.status.is_terminal
+            and not self.is_stopping()
+            and str(actor_id or "").strip() == self.actor_id
+        )
+
+    def provide_input(self, message_text: str) -> CoreFollowUpTicket | None:
+        ticket = self.head.provide_input(
+            executor_id=self.executor_id,
+            message_text=message_text,
+        )
+        return ticket if ticket is not None else None
+
+    def cancel_input(self, ticket: CoreFollowUpTicket) -> bool:
+        return self.head.cancel_input(executor_id=self.executor_id, ticket=ticket)
 
 
 def bind_core_execution_lifecycle(
@@ -1824,6 +1914,8 @@ __all__ = [
     "CoreExecutionProgress",
     "CoreExecutionEvent",
     "CoreExecutionEventKind",
+    "CoreFollowUpControl",
+    "CoreFollowUpTicket",
     "CoreExecutionDeadlineView",
     "CoreExecutionHead",
     "CoreExecutionLedgerPreparation",

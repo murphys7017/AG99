@@ -2,7 +2,7 @@ import asyncio
 import re
 import time
 import traceback
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -16,6 +16,13 @@ from astrbot.core.execution import (
     CoreExecutionArtifact,
     CoreExecutionEventKind,
     CoreExecutionProgress,
+)
+from astrbot.core.executors.contracts import (
+    ExecutionFinalUpdate,
+    ExecutionOutputMaterial,
+    ExecutionProgressUpdate,
+    ExecutionResult,
+    ExecutionUpdate,
 )
 from astrbot.core.interaction.output_modes import (
     CoreOutputDelivery,
@@ -37,7 +44,7 @@ from astrbot.core.message.message_event_result import (
 from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_event,
 )
-from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.provider.entities import LLMResponse, TokenUsage
 from astrbot.core.provider.provider import Provider, TTSProvider
 
 AgentRunner = ToolLoopAgentRunner[AstrAgentContext]
@@ -448,6 +455,99 @@ class NativeExecutorAdapter:
     @property
     def stats(self) -> AgentStats:
         return self._runner.stats
+
+
+class NativeExecutorRun:
+    """Expose the Native body through the executor-neutral run contract.
+
+    Proactive Core uses this run through the shared coordinator. Ordinary
+    Interaction continues to use ``NativeExecutionOutputBridge`` because it
+    owns Native message-chain rendering, streaming, TTS, and tool status.
+    """
+
+    executor_id = "native"
+
+    def __init__(
+        self,
+        executor: NativeExecutorAdapter,
+        *,
+        max_step: int,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> None:
+        self._executor = executor
+        self._max_step = max_step
+        self._should_stop = should_stop
+        self._active_stream: AsyncGenerator[ExecutorStreamItem, None] | None = None
+
+    def request_stop(self) -> None:
+        """Forward a non-blocking cancellation request to the Native runner."""
+
+        self._executor.request_stop()
+
+    async def aclose(self) -> None:
+        """Close an active Native stream without changing terminal state."""
+
+        stream = self._active_stream
+        if stream is not None:
+            await stream.aclose()
+
+    async def stream(self) -> AsyncIterator[ExecutionUpdate]:
+        """Convert Native execution facts into executor-neutral updates.
+
+        Native tool payloads and message chains remain private to the adapter.
+        This boundary emits only coarse progress and the final result material;
+        future shared runtime/output layers decide how those facts are exposed.
+        """
+
+        if self._active_stream is not None:
+            raise RuntimeError("native executor run stream is already active")
+
+        loop = NativeExecutionLoop(
+            self._executor,
+            max_step=self._max_step,
+            should_stop=self._should_stop,
+        )
+        stream = loop.stream()
+        self._active_stream = stream
+        try:
+            async for item in stream:
+                progress = _native_progress_update(item)
+                if progress is not None:
+                    yield progress
+
+            if bool(getattr(loop, "aborted", False)) or self._executor.was_aborted():
+                raise asyncio.CancelledError("native executor run was aborted")
+            if not self._executor.completed_successfully():
+                raise RuntimeError("native executor run did not complete successfully")
+
+            yield ExecutionFinalUpdate(result=self._build_result())
+        finally:
+            self._active_stream = None
+            await stream.aclose()
+
+    def _build_result(self) -> ExecutionResult:
+        response = self._executor.final_response()
+        text = str(getattr(response, "completion_text", "") or "") or None
+        artifact = self._executor.final_response_artifact()
+        usage = getattr(response, "usage", None)
+        return ExecutionResult(
+            output=ExecutionOutputMaterial(text=text) if text is not None else None,
+            artifacts=(artifact,) if artifact is not None else (),
+            token_usage=usage if isinstance(usage, TokenUsage) else None,
+        )
+
+
+def _native_progress_update(
+    item: ExecutorStreamItem,
+) -> ExecutionProgressUpdate | None:
+    """Reduce Native-only stream kinds to stable, non-visible progress facts."""
+
+    summaries = {
+        "tool_call": "native_tool_call",
+        "tool_call_result": "native_tool_result",
+    }
+    summary = summaries.get(item.kind)
+    return ExecutionProgressUpdate(summary=summary) if summary is not None else None
 
 
 class NativeExecutionLoop:

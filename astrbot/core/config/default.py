@@ -218,6 +218,9 @@ DEFAULT_CONFIG = {
         ),
         "agents": [],
     },
+    "core_execution": {
+        "executor_id": "native",
+    },
     "interaction_middleware": {
         "enabled": True,
         "turn_timeout": 120.0,
@@ -4474,6 +4477,12 @@ CONFIG_METADATA_3 = {
                         "description": "单轮总超时秒数",
                         "type": "float",
                         "hint": "从进入 Personal Runtime 排队开始计时，Personal、Planner、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
+                    },
+                    "core_execution.executor_id": {
+                        "description": "Core 执行器",
+                        "type": "string",
+                        "options": ["native"],
+                        "hint": "选择当前适配器 bot 配置中的 Core 执行实现。未知值会明确失败，不会静默回退。新增执行器接入后会在此列出。",
                     },
                 },
             },

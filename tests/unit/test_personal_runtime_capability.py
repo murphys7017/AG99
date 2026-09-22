@@ -9,6 +9,7 @@ import pytest
 from astrbot.api.event import request_group_reply_candidate
 from astrbot.core.cron.events import CronMessageEvent
 from astrbot.core.db.sqlite import SQLiteDatabase
+from astrbot.core.execution import CoreFollowUpControl
 from astrbot.core.interaction.expression_agent import PersonaExpressionResult
 from astrbot.core.interaction.group_reply import (
     GROUP_REPLY_CANDIDATE_EXTRA,
@@ -977,21 +978,25 @@ async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
             self.resolved.set()
             self.consumed = False
 
-    class Runner:
-        def __init__(self) -> None:
-            self.run_context = SimpleNamespace(
-                context=SimpleNamespace(event=first_event)
-            )
+    class Head:
+        session = SimpleNamespace(status=SimpleNamespace(is_terminal=False))
 
-        @property
-        def event(self):
-            return self.run_context.context.event
-
-        def follow_up(self, *, message_text: str) -> Ticket:
+        def provide_input(self, *, executor_id, message_text):
+            assert executor_id == "native"
             assert message_text == "hello"
             return Ticket()
 
-    runner = Runner()
+        def cancel_input(self, *, executor_id, ticket):
+            assert executor_id == "native"
+            ticket.resolved.set()
+            return True
+
+    control = CoreFollowUpControl(
+        head=Head(),
+        executor_id="native",
+        actor_id=str(first_event.get_sender_id()),
+        is_stopping=lambda: False,
+    )
     try:
         async with manager.submit_platform_event(
             first_event,
@@ -1001,7 +1006,7 @@ async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
         ) as first_submission:
             first_admission = await first_submission.admit(allow_follow_up=False)
             assert first_admission.lease is not None
-            assert manager.register_active_runner(first_event, runner)
+            assert manager.register_active_input_control(first_event, control)
             assert manager.classify_group_conversation_continuation(
                 busy_event,
                 config_id="default",
@@ -1034,7 +1039,7 @@ async def test_busy_group_follow_up_does_not_block_the_next_follow_up():
                 )
                 assert next_admission.lease is not None
                 await next_admission.lease.release()
-            manager.unregister_active_runner(first_event, runner)
+            manager.unregister_active_input_control(first_event, control)
     finally:
         await manager.shutdown()
 

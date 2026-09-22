@@ -14,7 +14,12 @@ from typing import Any, Protocol
 
 from astrbot import logger
 from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
-from astrbot.core.execution import CoreCommandOrigin, get_core_execution_head
+from astrbot.core.execution import (
+    CoreCommandOrigin,
+    CoreFollowUpControl,
+    CoreFollowUpTicket,
+    get_core_execution_head,
+)
 from astrbot.core.persona_error_reply import (
     resolve_conversation_persona_id,
     resolve_event_conversation_persona_id,
@@ -289,54 +294,47 @@ class PendingTurnReservation:
 
 @dataclass(slots=True)
 class _FollowUpCapture:
-    executor: Any
-    ticket: Any
+    control: CoreFollowUpControl
+    ticket: CoreFollowUpTicket
     order_seq: int
     monitor_task: asyncio.Task[None]
 
 
 class _FollowUpCoordinator:
     def __init__(self) -> None:
-        self.active_executor: Any | None = None
+        self.active_control: CoreFollowUpControl | None = None
         self.condition = asyncio.Condition()
         self.statuses: dict[int, str] = {}
         self.next_order = 0
         self.next_turn = 0
 
-    def register(self, executor: Any) -> None:
-        self.active_executor = executor
+    def register(self, control: CoreFollowUpControl) -> None:
+        self.active_control = control
 
-    def unregister(self, executor: Any) -> None:
-        if self.active_executor is executor:
-            self.active_executor = None
+    def unregister(self, control: CoreFollowUpControl) -> None:
+        if self.active_control is control:
+            self.active_control = None
 
-    def _active_executor_for_actor(self, actor_id: str) -> Any | None:
+    def _active_control_for_actor(self, actor_id: str) -> CoreFollowUpControl | None:
         normalized_actor_id = str(actor_id or "").strip()
-        executor = self.active_executor
-        if not normalized_actor_id or executor is None:
+        control = self.active_control
+        if not normalized_actor_id or control is None:
             return None
-        executor_event = getattr(executor, "event", None)
-        if executor_event is None:
-            return None
-        if str(executor_event.get_sender_id() or "").strip() != normalized_actor_id:
-            return None
-        if executor_event.get_extra("agent_stop_requested"):
-            return None
-        return executor
+        return control if control.accepts_actor(normalized_actor_id) else None
 
     def has_active_executor_for_actor(self, actor_id: str) -> bool:
-        return self._active_executor_for_actor(actor_id) is not None
+        return self._active_control_for_actor(actor_id) is not None
 
     def try_capture(self, event: Any) -> _FollowUpCapture | None:
         sender_id = event.get_sender_id()
-        executor = self._active_executor_for_actor(sender_id)
-        if executor is None:
+        control = self._active_control_for_actor(sender_id)
+        if control is None:
             return None
 
         message_text = (event.get_message_str() or "").strip()
         if not message_text:
             message_text = event.get_message_outline().strip()
-        ticket = executor.follow_up(message_text=message_text)
+        ticket = control.provide_input(message_text)
         if ticket is None:
             return None
 
@@ -348,7 +346,7 @@ class _FollowUpCoordinator:
             name=f"personal_runtime_follow_up_{order_seq}",
         )
         return _FollowUpCapture(
-            executor=executor,
+            control=control,
             ticket=ticket,
             order_seq=order_seq,
             monitor_task=monitor_task,
@@ -370,17 +368,15 @@ class _FollowUpCoordinator:
         consumed_marked: bool,
     ) -> None:
         if not activated and not consumed_marked:
-            cancel_follow_up = getattr(capture.executor, "cancel_follow_up", None)
-            if callable(cancel_follow_up):
-                try:
-                    cancel_follow_up(capture.ticket)
-                except Exception:
-                    logger.warning(
-                        "Failed to withdraw unresolved Personal Runtime follow-up: "
-                        "order_seq=%s",
-                        capture.order_seq,
-                        exc_info=True,
-                    )
+            try:
+                capture.control.cancel_input(capture.ticket)
+            except Exception:
+                logger.warning(
+                    "Failed to withdraw unresolved Personal Runtime follow-up: "
+                    "order_seq=%s",
+                    capture.order_seq,
+                    exc_info=True,
+                )
         if not capture.monitor_task.done():
             capture.monitor_task.cancel()
             try:
@@ -393,7 +389,7 @@ class _FollowUpCoordinator:
             await self._mark_consumed(capture.order_seq)
 
     def is_idle(self) -> bool:
-        return self.active_executor is None and not self.statuses
+        return self.active_control is None and not self.statuses
 
     async def _monitor_ticket(self, ticket: Any, order_seq: int) -> None:
         await ticket.resolved.wait()
@@ -2224,21 +2220,29 @@ class PersonalRuntimeManager:
             wait_if_busy=wait_if_busy,
         )
 
-    def register_active_runner(self, event: Any, executor: Any) -> bool:
+    def register_active_input_control(
+        self,
+        event: Any,
+        control: CoreFollowUpControl,
+    ) -> bool:
         runtime = self._event_sessions.get(event)
         if runtime is None:
             logger.warning(
-                "Cannot register active runner without Personal Runtime binding: session_id=%s",
+                "Cannot register active input control without Personal Runtime binding: session_id=%s",
                 event.unified_msg_origin,
             )
             return False
-        runtime.follow_ups.register(executor)
+        runtime.follow_ups.register(control)
         return True
 
-    def unregister_active_runner(self, event: Any, executor: Any) -> None:
+    def unregister_active_input_control(
+        self,
+        event: Any,
+        control: CoreFollowUpControl,
+    ) -> None:
         runtime = self._event_sessions.get(event)
         if runtime is not None:
-            runtime.follow_ups.unregister(executor)
+            runtime.follow_ups.unregister(control)
 
     @staticmethod
     def _record_deadline_diagnostics(reservation: PendingTurnReservation) -> None:

@@ -66,6 +66,7 @@ class _ScriptedExecutorBody:
     def __init__(self) -> None:
         self.stop_calls = 0
         self.follow_ups: list[str] = []
+        self.withdrawn: list[object] = []
 
     def request_stop(self) -> None:
         self.stop_calls += 1
@@ -73,6 +74,10 @@ class _ScriptedExecutorBody:
     def request_follow_up(self, message_text: str) -> str:
         self.follow_ups.append(message_text)
         return f"ticket-{len(self.follow_ups)}"
+
+    def cancel_follow_up(self, ticket: object) -> bool:
+        self.withdrawn.append(ticket)
+        return True
 
 
 def _interaction_event() -> _Event:
@@ -507,6 +512,22 @@ def test_core_execution_head_accepts_a_second_body_through_the_same_contract():
         CoreExecutionEventKind.COMPLETED,
     ]
     assert head.release_executor(executor_id=body.executor_id) is True
+
+
+def test_core_execution_head_withdraws_pending_input_through_body_contract():
+    event = _interaction_event()
+    spec = event.get_extra(CORE_EXECUTION_SPEC_EXTRA_KEY)
+    head = bind_core_execution_head(event, spec)
+    body = _ScriptedExecutorBody()
+    head.activate_executor_body(body)
+
+    ticket = head.provide_input(
+        executor_id=body.executor_id,
+        message_text="follow up",
+    )
+
+    assert head.cancel_input(executor_id=body.executor_id, ticket=ticket) is True
+    assert body.withdrawn == [ticket]
 
 
 def test_core_execution_head_routes_scripted_body_cancellation_once():

@@ -1700,6 +1700,20 @@ class InteractionOutputController:
             raise RuntimeError("interaction visible_reply_renderer unavailable")
         return await self.visible_reply_renderer(event, request)
 
+    async def deliver_core_execution_result(
+        self,
+        message: MessageChain,
+        event: AstrMessageEvent,
+    ) -> None:
+        """Deliver executor-neutral final text through the Core-final path.
+
+        The caller supplies material only. Persona rendering, contributions,
+        TTS, platform delivery, history and visible completion remain owned by
+        this controller and its established downstream services.
+        """
+
+        await self._deliver_core_reply(message, event)
+
     async def _deliver_core_reply(
         self,
         message: MessageChain,

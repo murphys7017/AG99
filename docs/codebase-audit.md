@@ -1,466 +1,342 @@
 # Executive Summary
 
-审计日期：2026-09-13。范围为当前工作区的 AstrBot/AG99 Runtime、Interaction、Persona、Core
-执行、Prompt、插件编排、主动唤醒、输出边界，以及相邻 Cron、平台 Event 和 Dashboard 入口。
-原始审计阶段只读，不修改业务代码、配置、测试或治理文件。随后开始的整改已单独记录在
-`docs/Yakumo/架构整改实施记录.md`；本报告同步反映当前工作区的已收敛边界与仍待验证的问题。
-工作区已有用户未提交改动仍视为当前状态背景，不将无关改动误记为本轮修复结果。
+Audit date: 2026-09-21. Scope: the repository's Python runtime, with representative tracing of startup, platform-event processing, Interaction/Personal runtime, Core execution, output delivery, plugin capability control, provider adapters, configuration, Cron/proactive work, tests, and recent Git history. This is a read-only architecture audit; no production code, configuration, tests, or governance files were changed. The only worktree change made by this audit is this report. `astrbot/core/astr_main_agent.py` was already modified before the audit and was not used as a source of new findings beyond its public call sites.
 
-2026-09-13 复核补充：Core 已建立过渡性的 `CoreExecutionHead` 同步入口，承接 Native
-执行的提交、事件记录、取消和本地订阅；它仍不拥有后台队列、Executor 选择、Artifact 汇总
-或最终 Ledger。完整 Core Head 与可替换 Executor Body 仍按
-`docs/Yakumo/dev/execution-backend-preparation-plan.md` 的 Phase 9 推进。
+The repository has a clear product-level intent: platform events enter a pipeline; Personal/Interaction decides whether to reply, delegate, or remain silent; Core executes provider/tool work; output is rendered and delivered through platform events; plugins extend several boundaries. The dominant architecture risk is not an absence of abstractions. It is a partially completed migration in which old pipeline/Event contracts and newer typed Interaction/Core contracts run together, linked by event extras, compatibility projections, method interception, and adapters.
 
-系统主意图是连贯的：Persona Agent 负责快速初期响应和最终拟人化表达，Core Agent 负责工作与
-工具执行，Personal Response Plan/Planner 只负责控制决策。主要腐化发生在这个模型与 AstrBot 旧 Event、Handler、
-ProviderRequest 和主动消息契约的交界处。新旧路径都能工作，但仍通过 raw event extra、方法拦截、
-callback 和多个 fallback 维持兼容，导致同一输出或状态规则需要在多处理解和修改。
+| Dimension | Score | Evidence-based assessment |
+| --- | ---: | --- |
+| Architecture clarity | 5/10 | The primary path is discoverable, but normal Pipeline and Personal/Core orchestration overlap. |
+| Concept consistency | 5/10 | `Context`, turn state, execution outcome, event extras, and capability targets have multiple representations. |
+| Single-responsibility ownership | 4/10 | Lifecycle, output, and Personal session decisions span several large coordinators. |
+| Change predictability | 4/10 | A new turn/output/capability behavior crosses pipeline, Interaction, platform event, and compatibility code. |
+| Deletability | 4/10 | Explicit compatibility seams exist, but most remain live and lack a removal gate. |
+| Observability | 5/10 | Execution events exist, but no single correlation record reconstructs the complete event-to-delivery path. |
+| AI-corruption risk | High | Recent history shows repeated incremental convergence changes, while raw extras, broad catches, mirrors, and very large coordinators still make additive patching easy. |
 
-| 维度 | 评分 | 依据 |
-| --- | --- | --- |
-| 架构清晰度 | 6/10 | 双 Agent 与控制面边界已有文档和类型，但输出、插件和主动唤醒仍跨旧契约。 |
-| 概念一致性 | 6/10 | Personal、Persona、expression、runtime-control 和 Core/plugin context 仍有过渡命名。 |
-| 单一职责归属 | 5/10 | TurnState、OutputController、Middleware、Event wrapper 和 PluginBranch 共同参与输出生命周期。 |
-| 变更可预测性 | 5/10 | 一个 capability、Prompt 约束或 fallback 需要同步多个 DTO、extra 和 adapter。 |
-| 可删除性 | 5/10 | 已识别 alias、镜像 DTO 和 wrapper 候选，但外部使用仍需确认。 |
-| 可观测性 | 6/10 | turn/route/deadline/表达诊断较丰富，但缺统一输出事务和新旧插件路径对照。 |
-| AI 代码腐化风险 | Medium-High | 过渡层、宽泛异常、重复 DTO/别名和隐式 callback 容易诱发继续叠加 fallback。 |
-
-结论：当前不应继续横向增加抽象。优先完成输出与 Turn 状态的边界收敛，给协调 Plugin Runtime
-建立真实生产验收，再删除已确认的 alias、镜像 DTO 和旧 wrapper。
+The recommended direction is subtractive: first make the typed turn/output/execution contracts authoritative; then remove compatibility projections and duplicate entry paths only after live acceptance. Do not add another manager, facade, callback, or event-extra namespace to bridge the current model.
 
 # System Mental Model
 
-启动链为 main.py -> InitialLoader.start() -> AstrBotCoreLifecycle.initialize()/start()。
-CoreLifecycle 装配 ProviderManager、PlatformManager、ConversationManager、PluginManager、
-PipelineScheduler、EventBus、CronJobManager、SubAgentOrchestrator、InteractionOutputController、
-InteractionMiddleware、PersonalRuntimeManager、PersonalHeartbeatSource 与唤醒调度器；插件通过
-Context 获得平台、会话、Provider、Cron、主动输出和运行时观察入口。
+## Entry and runtime map
 
-普通消息链为 Platform/EventBus -> PipelineScheduler -> waking/whitelist/session/rate/content/
-preprocess -> ProcessStage。ProcessStage 先调用 PersonalRuntimeManager.submit_platform_event()，
-再按条件选择：
+`main.py:main_async` creates `InitialLoader`; `InitialLoader.start` creates `AstrBotCoreLifecycle`; `AstrBotCoreLifecycle.initialize` assembles configuration routing, providers, platforms, conversations, plugins, Cron, pipeline schedulers, Interaction middleware, Personal runtime, execution ledger, output services, dashboard dependencies, and background lifecycle tasks. The lifecycle is currently the composition root and also owns environment mutation, reload, startup, shutdown, and service supervision.
 
-1. 默认 default_handler：PluginHandlerExecutor.process() 运行官方 Handler，必要时进入
-   InternalAgentSubStage。
-2. 开启 parallel_plugin_runtime_enabled 且事件合格时：建立 PluginBranchResult 和官方 Plugin Job，
-   由 InteractionTurnCoordinator 与 Personal 并行控制；Personal 的结构化计划选择 `delegate` 后，Core 才在 Plugin Gate 允许时启动。
+Normal platform work is:
 
-InteractionMiddleware 启动 Personal Response Plan。一次结构化 Persona Expression 同时返回自然表达和
-`reply / delegate / silent`；Planner 仅在 `delegate` 后生成 `execute + CoreTaskSpec`，不重新决定是否进入 Core。Persona 负责即时表达，Core 结果再经 Persona 生成最终表达。
+`platform adapter -> EventBus -> PipelineScheduler.execute -> ordered pipeline stages -> ProcessStage -> InternalAgentSubStage -> build_main_agent -> NativeExecutorAdapter/CoreExecutionHead -> provider/tool runner -> platform output`.
 
-Core 链为 InternalAgentSubStage -> build_main_agent()。后者负责 Provider、能力解析、PromptContext、
-CoreExecutionSpec、渲染适配和 AgentRunner；最终请求绑定过渡性的 CoreExecutionHead，由 Head
-承接进程内命令/事件入口。Prompt 采用 base Context Material single-flight，再共享
-plugin enrichment；Persona 可等待或 best-effort，Core 等待同一 enrichment task。
+`PipelineScheduler.execute` assigns config data to the event and registers it globally (`astrbot/core/pipeline/scheduler.py:88-109`). It also conditionally activates a Personal turn through `getattr`-based optional wiring (`:32-35`). `InternalAgentSubStage.process` builds or adapts the Core request, bridges execution through `NativeExecutorAdapter`, and maintains native-run cleanup (`astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py:215+`).
 
-Interaction 可见输出主要由 InteractionOutputController 物化、仲裁、持久化并交给平台。官方 event.send*
-拦截现已封装在 InteractionEventOutputAdapter，但 PluginBranch sink、RespondStage、延迟插件投递和
-主动消息仍是独立入口。Cron/后台结果另走
-CronMessageEvent -> build_main_agent() -> send_message_to_user。Personal Runtime 的观察和 idle
-initiation 不创建平台 Event，而是进入 RuntimeObservationEvent 和 Personal session runtime。
+The newer Interaction path is:
 
-关键 owner：普通轮次的控制由 Personal Response Plan/Planner 决定；表达由 InteractionPersonaRuntime/
-InteractionExpressionAgent 负责；工作由 Core Agent/AgentRunner 负责；内部 turn 状态由
-InteractionTurnState 负责；可见输出事务由 InteractionOutputController 负责；连续对话、观察、idle
-和主动人格状态由 PersonalRuntimeManager 负责。
+`ProcessStage/PersonalRuntimeManager -> InteractionMiddleware -> Personal planning/expression -> optional Core task spec -> InternalAgentSubStage/Core execution -> InteractionOutputController -> platform delivery/finalization`.
+
+For proactive work, `AstrBotCoreLifecycle` injects callbacks into `star.Context`, which dispatch to `PersonalRuntimeManager.dispatch_proactive_message` or `submit_observation` (`astrbot/core/core_lifecycle.py:350-404`). This is a separate entry route rather than a platform event.
+
+## Principal owners
+
+| Concern | Current primary owner | Adjacent competing owner(s) |
+| --- | --- | --- |
+| Plugin lifecycle and registries | `PluginManager` / Star registries | `plugin_admission`, `plugin_runtime`, `plugin_capability_inventory` |
+| Per-turn plugin permission | `PluginAdmissionSnapshot` | event `plugins_name`, session disabled lists, live registry lookup |
+| Personal session state and admission | `PersonalRuntimeManager` | `PersonalTurnContext`, `InteractionTurnState`, Pipeline event state |
+| Core execution state | `CoreExecutionHead` / `CoreExecutionLifecycle` | `NativeExecutionRun`, `InternalAgentSubStage`, event extras |
+| Output preparation and delivery | `InteractionOutputController` plus `PreOutputProcessor` / `TurnDeliveryCoordinator` | RespondStage, platform event methods, delayed/plugin/proactive paths |
+| Configuration selection | `AstrBotConfigManager` / `UmopConfigRouter` | scheduler context snapshots and event extras |
+
+## Confidence and scope limits
+
+Findings marked **Confirmed** are supported by source, call sites, tests, and/or explicit compatibility comments. **Strong candidate** items have a clear structural problem but require production traffic or external-plugin checks before deletion. **Needs confirmation** means static inspection cannot establish external usage or required compatibility. Broad test suites were deliberately not run: this audit does not treat test execution as proof that an architecture path should survive.
 
 # Top Problems
 
-## P1: 输出生命周期仍由多个入口共同拥有
+## P1: Turn-owner boundaries remain incomplete; duplicated terminal writes require proof
 
 ### Evidence
 
-- output_adapter.py 的 InteractionEventOutputAdapter 保存原始 event.send、send_streaming、
-  complete_visible_turn，再按 OUTPUT_ORIGIN_EXTRA_KEY 分流；middleware.py 仅安装该 adapter。
-- output_controller.py:335-487 的 capture_message_chain 同时处理即时、Core progress、streaming
-  finish、Core final 和重复抑制；:769-790 又通过 original completion wrapper 完成回合。
-- personal_runtime.py:1876-1967、plugin_branch.py:120-388 和 delayed_plugin_delivery.py 各自拥有
-  主动或插件输出入口。
-- 典型链为 InternalAgentSubStage -> event.send -> InteractionEventOutputAdapter ->
-  OutputController.capture_message_chain -> _deliver_core_reply -> PersonaRuntime renderer ->
-  OutputController.deliver_prepared_core_reply -> _deliver_core_final_message。
+- `PipelineScheduler` owns stage recursion, stopping, config attachment, active-event registration, temporary-file cleanup, and visible-turn completion (`astrbot/core/pipeline/scheduler.py:47-109`).
+- It conditionally binds the active Personal turn via `_activate_personal_turn`; the current implementation activates a ContextVar for an already-admitted turn and does not itself admit or finalize a turn (`:32-35`, `:72-73`; `personal_runtime.py:2114-2124`).
+- `PersonalRuntimeManager` independently owns admission, interruption, group/runtime binding, observation scheduling, proactive dispatch, and active-runner registration (`astrbot/core/interaction/personal_runtime.py:1309-1500`, `:1582-2260`).
+- `InternalAgentSubStage.process` decides whether an event has content, a provider request, a delegated Core task, or media before starting native execution (`astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py:272-294`).
+
+Call chain: `EventBus -> PipelineScheduler.execute -> ProcessStage -> PersonalRuntimeManager/InteractionMiddleware -> InternalAgentSubStage.process -> CoreExecutionHead`.
 
 ### Why It Exists
 
-官方 Handler、插件和平台仍依赖 Event 发送方法；OutputController 是事务层，显式 adapter 保留
-官方 Event 兼容，Persona renderer 是表达边界。
+Recent history records a migration from the established pipeline to typed Personal/Core lifecycle control, including commits such as `9f3ddd470 refactor(core): establish execution head boundary`, `f7581a1a9 refactor(execution): establish executor body boundary`, and `f5f37194f refactor(core): inject default executor port`.
 
 ### Why It Is Dangerous
 
-新增输出类型必须同时理解 origin、reservation、completion、artifact、effect、stream 和 wrapper。
-虽然 Core-final callback 回跳已移除，但 PluginBranch、主动输出和 Cron 仍绕开同一事务；输出入口、
-completion owner 与延迟投递语义仍可能漂移。
+Pipeline traversal, Personal session admission, Core execution state, and transport completion all participate in one user interaction. The current evidence establishes an ownership-boundary risk and an optional integration fallback, but does not by itself prove that they write the same terminal state. A duplicate completion or cancellation must be demonstrated by a common identity and write path before the architecture is collapsed.
 
 ### Recommended Direction
 
-将已有 Event adapter 扩展到内部单一 OutputIntent/Envelope，让 Core、Persona、PluginBranch、Cron
-和主动输出先进入 OutputController 事务。迁移完成前不删除 Event interception，但新状态不得再直接
-新增 raw output key。
+First record the canonical writer for admission, interruption, conversational terminal state, execution terminal state, visible completion, and cleanup. Retain Pipeline as stage traversal and Personal Runtime as session/admission owner unless a concrete duplicate writer proves otherwise. Replace optional activation only after scheduler construction can validate the required integration.
 
-Canonical owner：OutputController 负责投递事务，PersonaRuntime 负责表达内容。
-Change risk：High。Confidence：Confirmed。验证需覆盖即时/最终/流式、插件 artifact、effect、
-Persona 失败和平台 completion。
+Canonical direction: explicit owner table before any coordinator merge. Change risk: High. Validation: live ordinary, delegated, cancelled, timeout, media-only, proactive, and group-continuation turns; correlate every terminal write and verify one visible completion. Confidence: **Confirmed** for incomplete boundaries; duplicate orchestration is **Needs confirmation**.
 
-## P1: 默认 Handler 路径与协调 Plugin Runtime 并存，迁移终局没有证据门槛
+## P1: Output lifecycle is distributed across a 2,947-line controller and legacy delivery services
 
 ### Evidence
 
-- config/default.py:216-219 与 interaction/types.py:192-220 将 parallel_plugin_runtime_enabled
-  默认设为 False。
-- process_stage/stage.py:185-237 按开关与资格选择路径；:542-637 保留串行 Handler-first；:269-496
-  运行带 gate、Plugin Job、detach、delayed delivery 的协调路径。
-- 两条路径都调用 PluginHandlerExecutor，但默认路径传 run_agent_turn，协调路径传
-  delegate_provider_request，并由 InteractionTurnCoordinator 决定 PASSED/HANDLED/STOPPED/
-  DELEGATED/EXPIRED。
-- data/logs/astrbot.log 可见大量 path=default_handler 和少量 path=coordinated_plugin_runtime，
-  证明分叉正在运行，不证明协调路径已可替代默认路径。
+- `InteractionOutputController` is 2,947 lines and owns preparation, stream handling, output deduplication, persistence callbacks, artifacts, delivery, completion, and error recovery (`astrbot/core/interaction/output_controller.py`).
+- `PreOutputProcessor` separately owns response safety and decorating hooks; `TurnDeliveryCoordinator` owns after-send hooks, visible completion, postprocess scheduling, and request snapshots (`astrbot/core/output_lifecycle.py:48-203`, `:206-348`).
+- Legacy pipeline stages still instantiate or consume those services through `PipelineContext`, `result_decorate/stage.py`, and `respond/stage.py` (`astrbot/core/pipeline/context.py:16-34`).
+- `AstrMessageEvent` retains output hook installation, original-method references, legacy-extra mirrors, and fallback delivery paths (`astrbot/core/platform/astr_message_event.py:372-429`, `:752+`).
+
+Call chain: `InternalAgentSubStage -> event.send / output adapter -> InteractionOutputController -> PreOutputProcessor -> TurnDeliveryCoordinator -> event.complete_visible_turn -> postprocess`.
 
 ### Why It Exists
 
-协调路径要保护官方 Handler generator、ProviderRequest、module lease、reload 和延迟 artifact；
-默认关闭是有意的兼容策略。
+The system must preserve platform plugins that call Event send methods while Interaction takes over per-turn delivery. `PreOutputProcessor` and `TurnDeliveryCoordinator` are useful shared boundaries, but the controller has accumulated unrelated policy and transport responsibilities around them.
 
 ### Why It Is Dangerous
 
-同一插件行为在两条路径上可能有不同的停止、Core delegation、取消和延迟投递结果。只维护一条
-路径的测试会把生产问题表现成偶发多回复、无回复或任务未结束。
+Output suppression, safety, hooks, visible completion, persistence, artifacts, stream completion, and postprocess can diverge by source. A contributor can add a direct send or an extra callback that bypasses the desired transaction without an obvious compiler failure.
 
 ### Recommended Direction
 
-建立新旧路径同一组 production trace：Handler 终态、ProviderRequest 数、gate、detach、artifact、
-completion 和 reload。达成验收后删除另一套编排，不再增加第三条分支。
+Keep `PreOutputProcessor` as the policy boundary and `TurnDeliveryCoordinator` as post-delivery lifecycle. Split `InteractionOutputController` by the existing boundaries: output intent/arbitration, platform delivery, and turn settlement. Converge all origins, including pipeline, delayed plugins, and proactive delivery, through one typed output intent before removing Event interception.
 
-Canonical owner：PluginHandlerExecutor 负责 Handler/ProviderRequest 生命周期，单一协调器负责 turn gate。
-Change risk：High。Confidence：Confirmed structural fork；迁移结果 Needs confirmation。
+Canonical owner: an output transaction rooted in the controller's successor. Change risk: High. Validation: ordinary, Core-final, streaming, plugin-decorated, artifact, failed delivery, duplicate suppression, and visible completion behavior per platform. Confidence: **Confirmed**.
 
-## P1: TurnState 与 event extra 仍是双向可写边界
+## P1: Event extras are an untyped parallel state transport for typed turn and execution contracts
 
 ### Evidence
 
-- turn_state.py:232-460 的 InteractionTurnState 已包含 route、即时表达、stream、completion、
-  failure、execution scope 和 Core delegation。
-- middleware.py:333-371 同时写入 _interaction_enabled、_turn_id、_interaction_output_controller；
-  process_stage/stage.py:397-403 又把 gate 与 Core 延迟写入 extra；plugin_branch.py:304-306 保存
-  original send keys。
-- runtime_context_collector.py、context_builder.py 和平台/插件代码仍直接读取或写入
-  _interaction_*；类型 helper 只覆盖部分 key。
+- There are 329 `set_extra`/`get_extra` usages in Interaction, Pipeline, execution, and `AstrMessageEvent` alone.
+- `PipelineScheduler.execute` writes `_astrbot_config` and `_astrbot_config_id` to the event (`astrbot/core/pipeline/scheduler.py:95-96`).
+- `InternalAgentSubStage` reads `provider_request`, `enable_streaming`, Core task data, and Interaction runtime configuration from event state (`astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py:227-272`).
+- `AstrMessageEvent` explicitly states that typed Interaction state is mirrored to legacy extra keys and that copied branch events use legacy fallbacks (`astrbot/core/platform/astr_message_event.py:76-80`, `:387-429`).
+- Typed alternatives exist: `CoreExecutionSpec`, `CoreExecutionOutcome`, `InteractionTurnState`, `PersonalTurnContext`, `ContextPack`, and `PluginAdmissionSnapshot`.
 
 ### Why It Exists
 
-Event extra 是官方 Pipeline/Hook/Platform 的低侵入兼容媒介，TurnState 是新内部模型，迁移尚未完成。
+Event extras were the original extension envelope. Typed owners were added incrementally to avoid breaking platform adapters and plugins.
 
 ### Why It Is Dangerous
 
-核心事实可能在 typed state 与 raw extra 间漂移，key 拼写没有类型保护；新贡献者容易把兼容投影误当
-内部主状态，继续扩大隐式耦合。
+Ownership is no longer evident from a field's type or constructor. Copying an event can copy a stale compatibility projection, and an unset key often silently selects an old branch. This is the strongest local indicator of AI-era patch accumulation.
 
 ### Recommended Direction
 
-让 TurnState/类型化 Runtime Context 成为唯一内部可写 owner；列举并冻结必须投影给官方边界的 extra，
-只允许单向写出，不允许从 extra 恢复领域主状态。完成枚举和真实插件 trace 后再删除 original send keys。
+Define the permitted event-boundary fields and make typed turn state the source of truth. Treat each legacy extra as a named compatibility projection with a producer, consumers, deprecation criterion, and removal validation. Do not add new raw extras for Core, output, plugin admission, or configuration.
 
-Canonical owner：InteractionTurnState。Change risk：High。Confidence：Confirmed incomplete migration。
+Canonical owner: typed turn/execution objects. Change risk: High. Validation: branch/copy event handling, plugin hooks, delayed delivery, Core cancel/follow-up, and external adapter compatibility. Confidence: **Confirmed**.
 
-## P2: Core 构建集中了过多决策，能力、Prompt 与 ProviderRequest 存在转换链
+## P2: Lifecycle composition is concentrated in a god object with hidden global side effects
 
 ### Evidence
 
-- astr_main_agent.py:954-1264 的 build_main_agent 同时负责 Provider 选择、请求初始化、persona/
-  subagent 排除、知识库/网页/电脑/Cron 工具、CapabilityResolver、ContextPack、CoreExecutionSpec、
-  Prompt render、NativeExecutionAdapter、fallback provider 和 AgentRunner reset。
-- capabilities.py 的 CapabilitySnapshot 转成 ToolSet；astr_main_agent.py:1075-1096 再解析 ToolSet，
-  :1174-1199 从 ContextPack 构造 CoreExecutionSpec 并适配回 ProviderRequest。
-- InternalAgentSubStage.process()（agent_sub_stages/internal.py:170-470）还负责 request lifecycle、
-  Provider 安全检查、streaming 和历史落库。
+- `AstrBotCoreLifecycle.initialize` constructs or configures configuration routing, migrations, interaction services, memory, plugins, providers, knowledge, schedulers, event bus, platforms, background services, and dashboard shutdown (`astrbot/core/core_lifecycle.py:247-461`).
+- Its constructor also mutates process proxy environment variables (`:74-129`).
+- It owns pipeline reload, platform loading, service task tracking, start, stop, and restart (`:463-677`).
+- `InitialLoader.start` catches initialization failure, returns, then independently gathers the Core lifecycle and dashboard process (`astrbot/core/initial_loader.py:20-55`).
 
 ### Why It Exists
 
-这是从旧 Main Agent 入口向类型化 Core execution boundary 迁移时的集中装配点，各子步骤都有真实协议
-或生命周期价值。
+This is a conventional application composition root that has expanded as subsystems were added.
 
 ### Why It Is Dangerous
 
-增加一个 capability、Prompt 约束或 provider fallback 需要同步多个 DTO/适配器；转换顺序变化可能让
-模型看到的工具、Prompt 与实际执行边界不一致。
+Startup order, resource ownership, reload behavior, and process-wide settings are coupled. A subsystem's required dependencies cannot be seen from its constructor alone, and partial initialization can be logged and converted into a normal return rather than an explicit failed process state.
 
 ### Recommended Direction
 
-明确 CoreExecutionSpec 为 Core 内部 canonical contract，ProviderRequest 只作 Provider adapter；
-能力解析、Prompt build/render、runner lifecycle 分成稳定阶段，但不新增总管式 manager。
+Retain one composition root, but move environment/bootstrap, subsystem assembly, and run-supervision into explicit boot phases with declared return values. `InitialLoader` can then become a thin launcher or disappear. Do not introduce a second service locator.
 
-Canonical owner：CoreExecutionSpec、CapabilityResolver、PromptContextBuilder 分别拥有 Core contract、
-能力决策和上下文构建。Change risk：High。Confidence：Strong candidate。
+Canonical owner: application bootstrap composition root. Change risk: Medium-High. Validation: clean startup, config reload, failed migration, dashboard disabled, graceful stop, and restart. Confidence: **Confirmed**.
 
-## P2: Persona/Personal 命名与 runtime-control DTO 重叠
+## P2: Core execution is typed but still wrapped by several overlapping native adapters
 
 ### Evidence
 
-- persona_runtime.py:20-126 的 InteractionPersonaRuntime 是表达入口；personal_runtime.py:1447-2580
-  的 PersonalRuntimeManager 同时拥有会话、观察、idle、连续对话、主动输出和生命周期。
-- persona_domain.py:359-461 的 RuntimeControlSnapshot 通过 dataclasses.fields 全量镜像
-  personal_state.py::PersonalStateSnapshot；:517-537 的 adapt_personal_persistent_state 只暴露持久化字段。
-- EffectivePersonaContext（persona_domain.py:472-575）被 Prompt/Persona 组合使用；InteractionPersonaRuntime
-  的 render_core_reply 仓库内未找到生产 caller，但模块文档仍将其定义为 wrapper。
+- `execution.py` contains `CoreExecutionSession`, `CoreExecutionLifecycle`, `CoreExecutionHead`, synchronous command acceptance, event mailboxes, outcome construction, ledger settlement, and an execution-spec adapter in 1,848 lines (`astrbot/core/execution.py:583-1447`, `:1615-1720`).
+- `astr_agent_run_util.py` adds `NativeExecutionRun`, `NativeExecutorAdapter`, output bridging, and stable wrappers `run_agent`/`run_live_agent` (`astrbot/core/astr_agent_run_util.py:73-225`, `:942-1005`).
+- `InternalAgentSubStage` imports and activates all three native adapter abstractions while also binding the execution head and projecting results (`astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py:31-71`, `:215+`).
+- Recent Git history contains more than 25 consecutive Core/Native convergence commits around adapter activation, output bridges, executor binding, terminal projection, and settlement.
 
 ### Why It Exists
 
-Persona 是表达领域，Personal Runtime 是连续状态/观察领域；不可变 DTO 用来避免把可变 owner 直接交给
-Prompt。当前问题是命名和镜像范围没有把边界表达清楚。
+The repository is actively migrating a native agent runner toward an executor-body boundary without replacing the existing runner in one change.
 
 ### Why It Is Dangerous
 
-新增状态可能同时修改两套 snapshot，或把表达策略塞进 Personal Runtime；schema/version 漂移会被镜像掩盖。
+The same lifecycle facts can be represented by runner state, `NativeExecutionRun`, `CoreExecutionSession`, `CoreExecutionHead`, the execution ledger, and event extras. The wrapper count is justified during migration but makes terminal behavior difficult to prove and expensive to modify.
 
 ### Recommended Direction
 
-保留 PersonaDefinition、关系状态和 EffectivePersonaContext；先确认外部 API 是否需要完整
-RuntimeControlSnapshot，否则收窄为 Prompt/诊断真正需要的字段。
+After live acceptance, choose `CoreExecutionHead`/lifecycle as the sole state and command boundary. Collapse wrappers that only forward lifecycle calls, retaining exactly one native protocol translation layer. Preserve the stable public entry points only where external callers actually use them.
 
-Canonical owner：PersonalStateSnapshot（运行控制）+ EffectivePersonaContext（表达组合）。
-Change risk：Medium。Confidence：Strong candidate；外部 API 使用 Needs confirmation。
+Canonical owner: `CoreExecutionHead` plus its lifecycle. Change risk: High. Validation: interruption ordering, deadline, follow-up, stream closure, terminal-first behavior, ledger settlement, proactive execution, and external callers of the wrappers. Confidence: **Confirmed** for overlap; wrapper deletion is **Needs confirmation**.
 
-## P2: 后台任务结果与 Cron 主动唤醒仍有独立的主动输出策略
+## P2: Plugin capability governance is split between admission, target routing, and inventory reflection
 
 ### Evidence
 
-- astr_agent_tool_exec.py 的后台 handoff/function 与 cron/manager.py 的 active-agent job 都调用
-  `proactive_agent_turn.py::run_proactive_agent_turn`。
-- 该 helper 统一创建 `CronMessageEvent`、恢复会话历史、挂载可选 `SendMessageToUserTool`、调用
-  `build_main_agent` 并驱动 `runner.step_until_done(30)`；调用方保留各自的 Prompt、extras、角色、
-  直接投递资格和 summary 持久化。
-- Interaction 用户轮次在 astr_agent_tool_exec.py:161-224 将 background handoff/function 强制 foreground；
-  这保护当前 Interaction 轮，但不能消除非 Interaction 后台路径。
+- `plugin_admission.py` defines capability kinds, interaction/process scope, owner lookup, per-turn snapshots, and permission resolution (`astrbot/core/plugin_admission.py:1-330`, `:456-582`).
+- `plugin_runtime.py` independently resolves configured LLM-hook and tool targets (`astrbot/core/plugin_runtime.py:71-127`).
+- `plugin_capability_inventory.py` recreates registry traversal and calls both target resolvers to describe UI state (`astrbot/core/plugin_capability_inventory.py:262-345`). It also records migration states such as `legacy_compatibility`, `needs_review`, `leak_on_unload`, and `no_lifecycle_gate`.
+- `resolve_owner_metadata` lazy-imports the Star registry to avoid a circular dependency (`plugin_admission.py:~190`).
 
 ### Why It Exists
 
-Cron 与 detached background job 没有普通平台 Event 生命周期，必须能在原 turn 结束后唤醒 Main Agent。
+The model deliberately separates permission, applicability, and execution target. Inventory is a diagnostic/UI projection.
 
 ### Why It Is Dangerous
 
-合成 Core 的基础生命周期已不再复制，但两端仍不经过 InteractionOutputController；发送工具未调用时
-仍可能没有可见结果，且主动输出与 Persona 统一表达的关系尚未由显式策略定义。
+The separation is sound, but each axis has different live sources, snapshots, registry traversal, and fallback behavior. Adding a capability kind risks updating several switches and UI projections. Circular-import avoidance hides a core dependency edge.
 
 ### Recommended Direction
 
-以 `run_proactive_agent_turn` 作为合成 Core 生命周期的 canonical owner。后续定义
-ProactiveResult/delivery contract 时，Cron 与后台任务只提交事实和目标，由一个明确策略决定 Persona 或
-直接输出、投递与持久化；保留无 Event 生命周期边界，不重新复制 wake 逻辑。
+Keep permission, applicability, and target as separate domain axes. First compare the existing admission resolver, target resolver, and inventory projection on the same registry/configuration snapshot; only extract shared traversal or descriptor construction where a concrete divergent interpretation is found. Keep the UI inventory as a projection, not a second policy owner. Resolve the Star-registry dependency at bootstrap only if it improves the dependency graph without creating a second registry snapshot.
 
-Canonical owner：`run_proactive_agent_turn`（合成 Core 生命周期）；主动投递策略仍 Needs confirmation。
-Change risk：High。Confidence：基础重复已收敛；是否所有结果都必须 Persona 化 Needs confirmation。
+Canonical owner: capability descriptor plus per-turn snapshot. Change risk: Medium-High. Validation: plugin reload mid-turn, per-session disable, empty/`["*"]` plugin sets, process-level capabilities, dashboard inventory, and legacy external plugins. Confidence: **Strong candidate**.
 
-## P2: 运行配置在多个层级动态读取，冻结边界不完整
+## P2: Defensive fallback chains conceal integration-contract failures
 
 ### Evidence
 
-- interaction/config.py:20-110 将 mapping 转为 InteractionAgentConfig；Middleware 在四个
-  Interaction admission 点已合并会话覆盖并将完整配置深拷贝为独立快照到
-  `InteractionTurnState.runtime_config_snapshot`。
-- `PersonalTurnContext`、Output Controller 和 InternalAgentSubStage 已优先读取该 typed
-  快照；Core builder 将其投影为当轮 `MainAgentBuildConfig`，网页搜索、子代理装配和 Handoff
-  也使用该投影。`_astrbot_config` 仅保留同一快照的兼容投影。
-- Core 委派时的 Provider ID 已写入 TurnState 并由 `build_main_agent()` 优先使用；非 Interaction
-  兼容路径，以及快照版本/来源诊断仍未收敛。
+- `PipelineScheduler._activate_personal_turn` uses `getattr` for both manager and activation callback, returning `nullcontext()` when unavailable (`astrbot/core/pipeline/scheduler.py:32-35`).
+- `InternalAgentSubStage` repeatedly defaults runtime settings to instance defaults and normalizes invalid shapes (`astrbot/core/pipeline/process_stage/method/agent_sub_stages/internal.py:181-208`, `:227-270`).
+- `PreOutputProcessor.run_decorating_hooks` logs and continues after any plugin handler exception (`astrbot/core/output_lifecycle.py:125-154`).
+- `AstrMessageEvent` keeps method/reference fallbacks for legacy output hooks and copied events (`astrbot/core/platform/astr_message_event.py:372-429`, `:752+`).
+- The runtime contains 988 broad `except Exception` occurrences; 677 `getattr`/`.get` occurrences are concentrated in the inspected cross-boundary modules.
 
 ### Why It Exists
 
-官方配置允许会话覆盖，Provider/TTS/平台 adapter 尚未全部迁移到 Interaction turn contract。
+Most of these defenses protect third-party plugins, optional providers, platform adapters, or ongoing migrations. They are not all defects.
 
 ### Why It Is Dangerous
 
-Interaction 的 Middleware、Persona、Output、Core 构建、Core Provider 和网页搜索运行时的配置
-重读漂移已消除，但平台及其他非 Interaction 兼容入口仍可能读取不同运行设置，故障日志也难证明
-实际生效配置。
+At internal boundaries, a missing owner or malformed runtime contract can become an old default, a skipped hook, or an implicit no-op. This keeps service availability but makes incorrect lifecycle behavior hard to detect and encourages further compatibility patches.
 
 ### Recommended Direction
 
-保留现有 admission 快照，将其使用范围继续扩展到平台兼容层；补充版本和来源，避免各自重新合并。
+Classify every cross-boundary fallback as external-boundary defense, temporary migration, or invalid internal contract. Keep external plugin/provider isolation; replace internal optional wiring with validation at admission/bootstrap and a correlated diagnostic. Track a bounded removal date/condition for migration fallbacks.
 
-Canonical owner：InteractionTurnState 的 `interaction_config` 与 `runtime_config_snapshot`，由
-admission builder 写入。
-Change risk：Medium-High。Confidence：Confirmed partial convergence（Interaction 的 Core 构建
-配置和 Provider 选择已收敛）。
+Canonical owner: boundary-specific contract validators. Change risk: Medium. Validation: injected missing/malformed config, plugin exceptions, absent manager, copied events, and platform adapter failures. Confidence: **Confirmed** for the chains; repository-wide count is contextual evidence only.
 
-## P3: Context pack 历史 alias 制造 Persona/Core 双实体错觉
+## P3: Explicit compatibility residue has no unified retirement inventory
 
 ### Evidence
 
-- context_builder.py:292-310 的 get_or_build_interaction_core_context_pack 只是
-  get_or_build_interaction_core_plugin_context_pack 的历史 alias；最终都调用
-  _get_or_build_interaction_plugin_context_pack。
-- Persona 与 Core 实际共享同一 plugin enrichment task，文档也定义为共用 enrichment。
+- `astrbot/core/provider/entites.py` is a 407-byte misspelled re-export of `entities.py`; no in-repository textual references were found.
+- `astrbot/core/platform/message_session.py` retains `MessageSesion = MessageSession` backward compatibility.
+- `AstrMessageEvent` documents legacy output hook and extra-key compatibility (`astrbot/core/platform/astr_message_event.py:76-80`, `:372-429`, `:514+`).
+- `openai_source.py:~107` and `anthropic_source.py:~67` each retain a compatibility path for callers without compiled bindings, both annotated for deletion after migration.
+- Persona prompt collection still parses legacy free-form prompt text (`astrbot/core/prompt/persona_segments.py:142+`; `collectors/persona_collector.py:147-157`).
 
 ### Why It Exists
 
-历史 import 和测试需要旧名称，避免一次性破坏外部集成。
+Public plugins, persisted configurations, provider call styles, and platform adapters cannot necessarily migrate atomically.
 
 ### Why It Is Dangerous
 
-名称暗示存在独立 Persona pack/Core pack，未来贡献可能再次分叉收集逻辑。
+Each local compatibility clause appears reasonable, but without a system-level registry it cannot be retired confidently. This is the mechanism by which temporary migration code becomes permanent architecture.
 
 ### Recommended Direction
 
-新代码只使用中性 plugin_context_pack 语义；枚举外部 import 后删除 alias，并同步文档与测试命名。
+Create no new compatibility adapter. Instead, catalog existing clauses by external contract, current caller, telemetry/usage evidence, breaking-change policy, and removal release. Start with self-contained aliases and then internal mirrors.
 
-Canonical owner：_get_or_build_interaction_plugin_context_pack 及其中性公开接口。
-Change risk：Low-Medium。Confidence：Confirmed alias；删除 Needs confirmation。
+Canonical owner: a compatibility retirement register maintained with public-interface policy. Change risk: Low to High by item. Validation: external plugin/import scan, persisted-config migration, provider integration tests, and release notes. Confidence: **Confirmed** for existence; required status is mostly **Needs confirmation**.
 
 # Duplicate Concepts
 
-| 概念 | 竞争位置 | 实际重叠 | 建议 canonical |
+| Concept | Locations / names | Semantic overlap | Canonical direction |
 | --- | --- | --- | --- |
-| 可见输出入口 | Event send*、PluginBranchOutputSink、InteractionOutputController、Cron/后台 wake | 都决定消息何时、以何种 origin、是否 finalize 进入平台 | OutputController + 一个 Event adapter |
-| Core-final 拟人化 | Middleware core_reply_handler、OutputController _deliver_core_reply、PersonaRuntime render_core_reply | 都基于 core_final request 生成表达；callback 与 fallback 分担事务 | PersonaRuntime 表达，OutputController 投递/退化 |
-| Turn 状态 | InteractionTurnState、event.extra 的 _interaction_* | route、stream、completion、gate、原始方法引用分散 | TurnState 可写，extra 单向投影 |
-| Persona/Personal 状态 | PersonalStateSnapshot、RuntimeControlSnapshot、EffectivePersonaContext | runtime-control 全量镜像，表达组合另建模型 | PersonalStateSnapshot + 窄化组合模型 |
-| 插件上下文 | Persona/Core helper、plugin enrichment task、Core alias | 最终都是 base + 一次 plugin enrichment | 中性 plugin context pack |
-| 主动结果 | CronJobManager._woke_main_agent、FunctionToolExecutor._wake_main_agent_for_background_result | 都手工组装历史、Prompt、Main Agent 和 send_message_to_user | ProactiveResult contract |
+| Runtime context | `star.Context`, `PipelineContext`, `PersonalTurnContext`, `InteractionTurnState`, Prompt `ContextPack` | All carry combinations of request/session/config/plugin/runtime data, though at different scopes. | Keep scope in names and pass only typed, bounded views across layers; do not use event extras as a sixth context. |
+| Turn terminal result | `InteractionTurnOutcome`, `CoreExecutionOutcome`, visible completion flags, Event stopped/result state | Each expresses a terminal or semi-terminal outcome. | Core owns execution outcome; turn coordinator owns user-visible outcome; platform event owns transport completion only. |
+| Output lifecycle | `InteractionOutputController`, `PreOutputProcessor`, `TurnDeliveryCoordinator`, RespondStage, event output hooks | All participate in shaping or completing a reply. | Split policy, delivery, and settlement with one input contract. |
+| Plugin capability status | `CapabilityKind` + snapshot, target resolvers, inventory rows, Star handlers | Permission, routing target, and displayed state are repeatedly interpreted. | One descriptor resolved from one snapshot. |
+| Configuration projection | config manager/router, scheduler `PipelineContext`, event `_astrbot_config`, Interaction runtime config, `MainAgentBuildConfig` | Config is selected then copied/projection-bound several times. | Config manager selects; an immutable per-turn config projection crosses the boundary. |
 
 # Suspicious Compatibility Code
 
-## Confirmed required today
+## Confirmed required compatibility
 
-- platform/astr_message_event.py:46-47,389-459 的 original send/streaming/completion extra：官方
-  Event API、Handler 和平台仍依赖方法语义。
-- PluginProviderRequestBridge、module lease、detached/delegated Job 和 PluginHandlerExecutor：保护
-  官方插件 generator、ProviderRequest 和 reload 生命周期。
-- parallel_plugin_runtime_enabled=False：有意的迁移保护，不应仅凭默认关闭删除。
-- Cron/后台使用 CronMessageEvent：没有普通平台 Event 生命周期，当前边界仍有现实需求。
+- `AstrMessageEvent` output hook/original method compatibility is actively referenced by current Interaction output integration. It cannot be deleted before all platform and plugin delivery entry points use a typed output contract.
+- `openai_source.py` and `anthropic_source.py` legacy uncompiled-binding paths may protect provider callers outside the repository. Keep pending caller telemetry or a supported API version boundary.
+- Legacy persona prompt parsing can protect persisted user configuration. Treat it as a data migration, not a parser duplicate, until old persisted values are measured.
 
-## Likely removable after convergence
+## Likely removable
 
-- original send* extra 和 PluginBranch 中仅承担 Event forwarding 的 wrapper：Output adapter 接管全部
-  外部发送后。
-- get_or_build_interaction_core_context_pack alias：外部 import 迁移完成后。
-- adapt_personal_persistent_state：外部 DTO/API 确认无需求后。
-- RuntimeControlSnapshot 的未使用镜像字段：确认 Prompt/诊断真实需求后收窄。
+- `astrbot/core/provider/entites.py`: misspelled forwarding module. Deletion confidence: **Medium**. No repository references were found; raise to High only after packaged/external plugin import analysis and a deprecation window.
+- `MessageSesion` alias in `astrbot/core/platform/message_session.py`. Deletion confidence: **Low**; it is public-facing and external imports are unknown.
 
 ## Needs confirmation
 
-- InteractionPersonaRuntime.render_core_reply 是否被插件或外部 API 反射调用；仓库内未发现生产 caller。
-- core_reply_handler callback 与 OutputController fallback 哪一个应成为唯一 Core-final transaction owner。
-- 默认 Handler 与协调 Plugin Runtime 的最终取舍，必须用生产 trace 决定。
-- group_reply.py::select_legacy_active_reply_candidate 的 legacy 命名不能作为删除证据，它仍在群聊仲裁链。
+- Compatibility projections and fallback keys in `AstrMessageEvent` may be used by third-party platform adapters/plugins loaded from the data directory.
+- `plugin_capability_inventory` migration-state entries identify candidates, not evidence that a capability has no owner or callers.
 
 # Excessive Defensive Programming
 
-1. 输出 fallback 链：Middleware Persona final 失败后送 raw Core；OutputController 无 callback 时还有
-   _deliver_core_reply；Event/PluginBranch wrapper 再处理 origin 和 completion。每层有边界价值，但最终
-   退化规则应由一个 delivery transaction owner 统一记录。
-2. 配置重复合并：Middleware、OutputController、Core builder 各自从 runtime mapping、plugin context
-   和 provider settings 取值并默认化。会话覆盖是真需求，但同一轮不应多次重算。
-3. Context best-effort fallback：context_builder.py:225-270 在 plugin task pending/failed/cancelled
-   时回退 base pack。这是明确性能策略，应保留，但 fallback reason 应进入统一 Context snapshot。
-4. 宽泛异常与静默继续：astr_main_agent.py:1110-1117、:1120-1125 等 trace 记录用 broad
-   except Exception: pass；部分平台/Provider 读取也以 getattr/get_extra 静默默认。边界 telemetry 可
-   容忍失败，业务契约失败不应被同样吞掉。
+1. `PipelineScheduler._activate_personal_turn -> getattr(manager) -> getattr(activate) -> nullcontext()` turns a missing lifecycle integration into a normal pipeline execution. Establish the coordinator dependency when a scheduler is created.
+2. `InternalAgentSubStage.initialize/_build_turn_main_agent_config/process` first snapshots defaults, then conditionally replaces them from runtime mapping, then repeatedly falls back through `getattr`. Validate an immutable runtime config projection once at turn admission.
+3. `AstrMessageEvent` stores typed state, original methods, and legacy extras, then falls back to extras for copied events. Preserve this only at an adapter boundary; copied event behavior needs an explicit clone contract.
+4. Broad exception continuation around decoration hooks is justified for third-party isolation, but must emit a turn/plugin/correlation identifier and an outcome that permits diagnosis of suppressed output.
 
 # Excessive Abstraction
 
-- OutputController -> visible_reply_renderer/core_reply_handler -> Middleware -> PersonaRuntime ->
-  ExpressionAgent -> OutputController 是真实职责的 callback 回跳，但隐藏 owner；应改成明确
-  expression/delivery contract，不再增加 callback。
-- InteractionPersonaRuntime 对 InteractionExpressionAgent 的 wrapper 有领域命名价值，只有外部 API
-  确认没有独立调用才考虑合并。
-- RuntimeControlSnapshot 是最值得收窄的抽象：它全量镜像可变 owner，却没有证据表明所有字段跨边界需要。
-- main.py -> InitialLoader -> CoreLifecycle -> Context -> Managers 的装配层具有生命周期价值，不应为
-  减少类而删除；问题在 build_main_agent 决策过密。
+| Chain | Contribution | Assessment |
+| --- | --- | --- |
+| `InternalAgentSubStage -> NativeExecutionRun -> NativeExecutorAdapter -> CoreExecutionHead -> CoreExecutionLifecycle -> CoreExecutionSession` | Pipeline adaptation, native runner protocol adaptation, command/event boundary, lifecycle, state machine. | Each currently has a stated purpose. Remove only wrappers proven to be pure forwarding after the shared run coordinator replaces their behavior; do not prescribe a fixed layer count in advance. |
+| `Event send -> event output adapter/hooks -> InteractionOutputController -> PreOutputProcessor -> TurnDeliveryCoordinator -> event completion` | Compatibility interception, arbitration, policy, post-delivery lifecycle. | Too many owners for one output; preserve only policy/delivery/settlement. |
+| `plugin_admission -> plugin_runtime target resolver -> plugin_capability_inventory` | Permission, target selection, UI projection. | The split is domain-valid, but snapshot traversal should be shared rather than rebuilt in inventory. |
 
 # Dead / Legacy Code Candidates
 
-| 候选 | 当前证据 | 删除信心 | 提升信心所需验证 |
+| Candidate | Evidence | Deletion confidence | Future validation |
 | --- | --- | --- | --- |
-| InteractionPersonaRuntime.render_core_reply | 仓库内未找到生产调用；同类路径由 Middleware/OutputController 直接构造 request | Low-Medium | 外部插件/API import、反射调用和 fallback 收敛后的入口复核 |
-| adapt_personal_persistent_state | 仅 re-export/单元测试证据，未发现生产 caller | Medium | 外部 DTO、dashboard、插件生态搜索 |
-| get_or_build_interaction_core_context_pack | 明确指向 plugin helper 的历史 alias | Medium | 外部 import、下游插件迁移 |
-| _interaction_original_send* | 仍被平台 Event/测试和 wrapper 读取 | Low now / High after adapter | 完成统一 Output adapter 和真实插件 trace |
-| 默认/协调插件编排之一 | 两条均有当前 caller，日志也显示两者 | Low | 生产验收、reload/detach/artifact/completion 对照 |
+| `astrbot/core/provider/entites.py` | Pure re-export of `entities.py`; no in-repo references found. | Medium | Search installed/data-directory plugins, package consumers, release history. |
+| `MessageSesion` alias | Explicit backward-compatibility alias. | Low | Public API search and deprecation cycle. |
+| Provider uncompiled-binding compatibility paths | Explicit comments say delete after migration. | Low | Provider contract/version inventory and integration checks. |
+| Event extra compatibility mirrors | Explicitly described as legacy in `AstrMessageEvent`. | Low | Inventory every writer/reader including external plugins and copied event paths. |
 
 # Single Source of Truth Violations
 
-1. 输出事务：OutputController 负责大部分语义，但 Middleware callback、Event wrapper、PluginBranch
-   和主动 wake 仍参与最终入口、origin、completion 与发送。
-2. Turn 状态：TurnState 已是内部主模型，event extra 仍承担兼容引用、gate、管线标记、插件产物和
-   诊断；这是未完成迁移，而非所有字段完全双写。
-3. Core-final 内容与投递：PersonaRuntime/Middleware 决定表达，OutputController fallback 也能重建
-   表达并投递；request 已共享，但 failure/raw fallback 责任未完全单一化。
-4. 运行配置：Turn admission 有 InteractionAgentConfig 快照，OutputController/Middleware/Core 仍可
-   动态读取原始 mapping。
-5. 能力与请求 schema：CapabilitySnapshot -> ToolSet -> Prompt Context -> CoreExecutionSpec ->
-   NativeExecutionAdapter -> ProviderRequest 是多个内部形状，尚未证明每个转换都是协议边界。
-6. 主动结果模型：Cron 与 background executor 各自构建 wake event、历史 Prompt、工具和 summary。
+- **Turn state:** Pipeline stop/result/visible completion, `InteractionTurnState`, `PersonalTurnContext`, and Core session outcome overlap. The canonical split should be execution outcome in Core, conversational outcome in the turn coordinator, and transport outcome in the platform adapter.
+- **Configuration:** `AstrBotConfigManager` selects configuration, but scheduler context, event extras, Interaction runtime state, and `MainAgentBuildConfig` can each hold projections. First designate the existing admission-time projection and its permitted update phase; do not introduce another aggregate turn context solely to hold duplicate fields.
+- **Output decision:** OutputController, pipeline RespondStage, `TurnDeliveryCoordinator`, and event hooks all affect delivery/completion. Preserve exactly one delivery transaction.
+- **Plugin capability:** Snapshot permission and configured targets are intentionally separate owners. Confirm whether inventory produces a divergent result before extracting shared descriptor/traversal code.
 
 # Observability Gaps
 
-- 单条 turn 可通过 turn id、route、deadline、expression 和 plugin diagnostics 大致重建，但没有一个
-  标准 record 同时说明哪个 wrapper 接管、original send 是否调用、哪个 output reservation 获胜、
-  raw/Persona/plugin direct 选择原因和最终 completion。
-- process_stage.py:239-267 的 interaction.pipeline_path 已区分 default_handler 与
-  coordinated_plugin_runtime；日志中两者并存，但没有统一对照指标证明新路径覆盖所有 Handler 语义。
-- immediate/final、route 和 failure 已有 TurnState；effect、artifact、delayed delivery 与平台
-  message id 却横跨 Event extra、OutputController 和 PluginBranch，无法用一个 turn snapshot 还原完整事务。
-- data/logs/astrbot.log 同时包含实际平台和 demo/test 条目；不按 platform、session、turn 与时间窗过滤，
-  容易把测试失败当成生产故障。
-- 日志能看见 Persona provider fallback、Core raw fallback 和 background foreground forcing，但缺
-  Prompt/Capability snapshot 版本，难以证明模型实际拿到的工具集合与构建决策一致。
+- There is no demonstrated single correlation record that joins platform event ID, config ID, admission decision, Personal decision, Core execution ID, plugin capability decisions, output origin, platform delivery receipt, visible-turn completion, and ledger settlement.
+- Broad exception paths frequently log a local error but do not necessarily preserve the turn outcome or fallback selection in one queryable trace.
+- Compatibility branches are documented in comments but are not visibly metered. For public/external compatibility, usage evidence is required; for internal transition code in this development-stage repository, caller migration plus focused validation can be a sufficient deletion gate.
+- The current worktree state records live acceptance still pending for several recent Core/Interaction changes in `.ai/state.yaml`; static tests cannot establish platform lifecycle ordering.
 
 # Architectural Simplification Opportunities
 
-按 delete > merge > converge > refactor > new abstraction 排序：
-
-1. 外部契约确认后删除 Core context alias 和无生产 caller 的 persistent-state adapter。
-2. 收敛 OutputController、PluginBranch、主动输出到单一 OutputIntent/事务，最终删除 Event method interception。
-3. 让 TurnState/Runtime Context 成为唯一内部可写状态，event extra 只保留枚举后的兼容投影。
-4. 将 Core-final Persona 表达、raw fallback、effect attachment、completion 收敛到一个事务。
-5. 以 CoreExecutionSpec 作为 Core contract，减少 Capability/ToolSet/ProviderRequest 的无协议转换。
-6. 为 Cron 与 background result 建共享 ProactiveResult contract，避免两份 Main Agent wake 逻辑。
-7. 为协调 Plugin Runtime 建立生产验收门槛，最终只保留一套插件编排实现。
-8. 将配置冻结、来源和版本写入 turn snapshot，减少跨层动态读取。
+1. **Delete:** Remove `provider/entites.py` only after external-import confirmation.
+2. **Converge:** Designate existing typed per-turn owners and retire Core/output/config event extras one named key at a time; do not introduce an aggregate context that duplicates `InteractionTurnState` or a late-created `CoreExecutionSpec`.
+3. **Merge:** Route all output origins through a small typed intent and retain `PreOutputProcessor` and `TurnDeliveryCoordinator` as distinct policy/settlement services.
+4. **Converge:** Prove or disprove duplicate terminal writes, then remove only the redundant lifecycle path while retaining distinct Pipeline traversal, Personal admission, Core execution, and transport responsibilities.
+5. **Delete:** After live acceptance, remove forwarding Native execution wrappers that have no translation rule or external caller.
+6. **Converge:** Share capability registry traversal or descriptor construction only after same-snapshot comparison proves duplicated interpretation.
+7. **Refactor:** Break `AstrBotCoreLifecycle` into explicit bootstrap phases while retaining one composition root.
+8. **Delete:** Retire legacy persona/provider/event branches through measured compatibility milestones, not additional fallback layers.
 
 # Potential Delete List
 
-这不是立即执行清单；每项都依赖 caller、外部 API 或生产 trace 验证：
-
-- get_or_build_interaction_core_context_pack 历史 alias。
-- adapt_personal_persistent_state，若无外部 DTO/API 使用。
-- InteractionPersonaRuntime.render_core_reply，若无外部调用且 Core-final 入口已收敛。
-- RuntimeControlSnapshot 未被 Prompt/诊断使用的镜像字段，或整个 DTO（仅在不需要稳定 schema 时）。
-- _interaction_original_send、_interaction_original_send_streaming、_interaction_original_complete_visible_turn，
-  仅在 Output adapter 覆盖官方 Event API 后。
-- PluginBranch 内仅承担 Event forwarding 的 wrapper。
-- 默认 Handler-first 或 coordinated Plugin Runtime 中未被选中的整条编排路径，必须由生产验收决定。
-- Cron/background 中重复的历史拼接、Main Agent wake 和 summary 投递代码，共享 contract 后删除。
+- `astrbot/core/provider/entites.py` forwarding module, pending external usage confirmation.
+- `MessageSesion` compatibility alias, pending public API deprecation.
+- Legacy Event extra mirrors and original-method output hooks, after every internal/external consumer has moved to typed output intent.
+- Uncompiled provider binding compatibility branches in OpenAI/Anthropic sources, after caller/version evidence.
+- Native execution forwarding wrappers that only relay Head/Lifecycle calls, after real interruption/proactive acceptance and caller tracing.
 
 # Refactoring Order
 
-1. 证据补齐，不改行为：记录真实 turn 的 pipeline path、Handler 终态、ProviderRequest 数、route/gate、
-   Persona 状态、Core start、output reservation、effect/artifact、completion、detach、reload 和最终
-   平台 message id；过滤 demo/test 日志。
-2. 状态边界收敛：枚举所有 _interaction_* consumer，让 TurnState/Runtime Context 成为唯一内部 owner，
-   保留单向兼容投影并加入运行时断言。
-3. 输出边界收敛：定义 OutputIntent/Envelope，接入 Core、Persona、PluginBranch、Cron 和主动输出；在
-   官方 Event API 上只保留一个 adapter。
-4. Core contract 收敛：固定 CoreExecutionSpec、CapabilitySnapshot 和 PromptContext 边界，ProviderRequest
-   只作外部 adapter；拆分 build_main_agent 阶段，但不新增全局 manager。
-5. Core-final 与主动结果收敛：统一 Persona/raw fallback、effect、completion 和 ProactiveResult delivery；
-   先确认外部 callback、Cron、后台插件契约。
-6. 插件路径决策：以真实 trace 验收 coordinated runtime；确认后删除另一套编排，不再双写 gate/stop 规则。
-7. 低风险删除：删除 alias、无调用 adapter、未使用 helper 和已被 Output adapter 替代的 original send keys。
-8. 补充 rationale 与观测：为保留的兼容 adapter 写明外部契约、退出条件、版本来源和统一 turn/output trace。
+1. **Confirmed deletion preparation:** inventory compatibility writers/readers and external consumers. Instrument public boundaries where practical; internal transition code may be removed after callers migrate and focused validation passes.
+2. **Concept and contract convergence:** complete the existing typed owners for selected config, admission snapshot, Core spec, and correlation IDs; stop adding event extras. Do not create an aggregate turn context that duplicates those owners.
+3. **Responsibility ownership:** document and test terminal writers across Core, Personal, pipeline, and platform delivery. Selectively remove a path only after a duplicate write or obsolete transition path is proven.
+4. **Output convergence:** represent all output sources as typed intents; separate output policy, delivery, and settlement; prove one completion per turn.
+5. **Compatibility removal:** remove event-extra projections, aliases, old provider/persona paths, and optional wiring after their callers migrate and the appropriate internal or external deletion gate is met.
+6. **Call-chain simplification:** collapse native forwarding layers and make `InitialLoader`/bootstrap boundaries explicit.
+7. **Observability and rationale:** retain only diagnostics needed to reconstruct the canonical path; document why any remaining compatibility boundary exists and its removal gate.
 
-# Validation and Scope Notes
+## Reverse Check
 
-- 本轮只进行了源码、调用者、配置、Git 历史线索和现有日志的静态审计；没有运行全量测试，也没有进行真实
-  OLV/插件生产回放，因为用户要求只审计、不修改业务代码。
-- Confirmed 只表示当前代码和调用链已足以证明结构事实；外部插件、第三方平台或反射 API 无法由仓库文本
-  证明的部分均标为 Needs confirmation。
-- 当前工作区的 Python、Dashboard、测试和诊断改动未被回滚；本报告没有把这些未提交改动声称为已审计修复。
-
-# Reverse Check
-
-- 审计按入口、控制面、执行面、输出、状态、配置和副作用建立了系统模型，没有把 Personal Response Plan/Planner 当作第三个
-  对话 Agent。
-- 没有因为类名看起来专业就赋予其价值；callback、DTO、alias 和 wrapper 均追踪了 caller 与边界作用。
-- 没有把仍有 caller 的兼容代码直接判为死代码，也没有把日志中的测试条目当生产证据。
-- 简化建议优先删除/合并/收敛现有路径；只有在输出和状态边界稳定后才建议进一步抽象。
+This review assesses system coherence rather than local style. It does not assume that a wrapper, fallback, or test is valuable merely because it exists. Findings distinguish active compatibility from deletion candidates, name canonical owners, and assign **Needs confirmation** where external usage or live platform behavior cannot be established statically. No remediation is claimed complete.

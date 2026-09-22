@@ -32,10 +32,12 @@ from astrbot.core.execution import (
     CoreExecutionDeadlineView,
     CoreExecutionLedgerPreparation,
     CoreExecutionSpec,
+    CoreFollowUpControl,
     bind_core_execution_head,
     get_core_execution_head,
     get_core_execution_lifecycle,
 )
+from astrbot.core.executors.registry import resolve_executor_id
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
@@ -232,6 +234,15 @@ class InternalAgentSubStage(Stage):
             )
             if not isinstance(runtime_settings, Mapping):
                 runtime_settings = {}
+            executor_id = resolve_executor_id(
+                runtime_config if isinstance(runtime_config, Mapping) else {},
+                execution_source="interaction",
+            )
+            if executor_id != "native":
+                raise RuntimeError(
+                    "selected executor is not available on the Native interaction path: "
+                    f"{executor_id}"
+                )
             streaming_response = runtime_settings.get(
                 "streaming_response",
                 getattr(self, "streaming_response", self.main_agent_cfg.streaming_response),
@@ -306,7 +317,8 @@ class InternalAgentSubStage(Stage):
             if request_lifecycle is None:
                 return
 
-            runner_registered = False
+            input_control_registered = False
+            input_control: CoreFollowUpControl | None = None
             try:
                 build_cfg, _ = self._build_turn_main_agent_config(
                     event,
@@ -395,16 +407,27 @@ class InternalAgentSubStage(Stage):
                 executor_activated = native_run.activated
 
                 runtime_manager = self.ctx.personal_runtime_manager
-                if runtime_manager is not None:
-                    runner_registered = runtime_manager.register_active_runner(
-                        event,
-                        native_executor,
+                if runtime_manager is not None and execution_head is not None:
+                    input_control = CoreFollowUpControl(
+                        head=execution_head,
+                        executor_id=native_executor.executor_id,
+                        actor_id=str(event.get_sender_id() or "").strip(),
+                        is_stopping=lambda: bool(
+                            event.get_extra("agent_stop_requested")
+                        ),
+                    )
+                    input_control_registered = (
+                        runtime_manager.register_active_input_control(
+                            event,
+                            input_control,
+                        )
                     )
                 action_type = event.get_extra("action_type")
 
                 event.trace.record(
                     "astr_agent_prepare",
                     request_lifecycle_id=request_lifecycle.lifecycle_id,
+                    executor_id=executor_id,
                     system_prompt=req.system_prompt,
                     tools=req.func_tool.names() if req.func_tool else [],
                     stream=streaming_response,
@@ -516,10 +539,13 @@ class InternalAgentSubStage(Stage):
                     ),
                 )
             finally:
-                if runner_registered and native_executor is not None:
+                if input_control_registered and input_control is not None:
                     runtime_manager = self.ctx.personal_runtime_manager
                     if runtime_manager is not None:
-                        runtime_manager.unregister_active_runner(event, native_executor)
+                        runtime_manager.unregister_active_input_control(
+                            event,
+                            input_control,
+                        )
 
         except TurnDeadlineExceeded:
             cancellation_reason = "deadline_exceeded"

@@ -118,7 +118,10 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
         include_history_fences=False,
     )
     if response_role == "err":
-        with pytest.raises(RuntimeError, match="did not complete successfully"):
+        with pytest.raises(
+            RuntimeError,
+            match="native executor run did not complete successfully",
+        ):
             await turn
         return
     result = await turn

@@ -8,10 +8,15 @@ from astrbot.core.astr_agent_run_util import (
     ExecutorStreamItem,
     NativeExecutionLoop,
     NativeExecutorAdapter,
+    NativeExecutorRun,
     run_agent,
     run_live_agent,
 )
 from astrbot.core.execution import CoreExecutionArtifact, CoreExecutionProgress
+from astrbot.core.executors.contracts import (
+    ExecutionFinalUpdate,
+    ExecutionProgressUpdate,
+)
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -186,6 +191,55 @@ async def test_native_executor_adapter_normalizes_native_step_responses():
         kind="tool_call",
         chain=native_response.data["chain"],
     )
+
+
+@pytest.mark.asyncio
+async def test_native_executor_run_exposes_neutral_progress_and_final_result(
+    monkeypatch,
+):
+    class Event:
+        def is_stopped(self):
+            return False
+
+        def get_extra(self, key):
+            return None
+
+    tool_response = AgentResponse(
+        type="tool_call",
+        data={"chain": MessageChain(type="tool_call")},
+    )
+
+    class Runner(FakeNativeRunner):
+        def __init__(self):
+            super().__init__()
+            self.completed = False
+            self.final_response = SimpleNamespace(
+                role="assistant",
+                completion_text="finished",
+                result_chain=None,
+                usage=None,
+            )
+            self.run_context.context = SimpleNamespace(event=Event())
+
+        async def step(self):
+            self.completed = True
+            yield tool_response
+
+    monkeypatch.setattr(
+        "astrbot.core.astr_agent_run_util.record_interaction_turn_core_execution_event",
+        lambda event, **kwargs: None,
+    )
+
+    run = NativeExecutorRun(NativeExecutorAdapter(Runner()), max_step=1)
+    updates = [update async for update in run.stream()]
+
+    assert updates[0] == ExecutionProgressUpdate(summary="native_tool_call")
+    final_updates = [
+        update for update in updates if isinstance(update, ExecutionFinalUpdate)
+    ]
+    assert len(final_updates) == 1
+    assert final_updates[0].result.output.text == "finished"
+    assert final_updates[0].result.artifacts[0].artifact_id == "final_response"
 
 
 @pytest.mark.asyncio
