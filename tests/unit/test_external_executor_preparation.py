@@ -1,6 +1,6 @@
 import pytest
 
-from astrbot.core.execution import CoreExecutionSpec
+from astrbot.core.execution import CoreCapabilitySnapshot, CoreExecutionSpec
 from astrbot.core.executors.external import (
     ExternalExecutorConfigurationError,
     prepare_external_executor_request,
@@ -52,6 +52,26 @@ def _spec() -> CoreExecutionSpec:
     )
 
 
+def _spec_with_admitted_capability() -> CoreExecutionSpec:
+    spec = _spec()
+
+    class _WorkspaceTool:
+        name = "workspace_tool"
+        semantic_capabilities = ("workspace_io",)
+
+    return CoreExecutionSpec(
+        execution_id=spec.execution_id,
+        core_task_id=spec.core_task_id,
+        turn_id=spec.turn_id,
+        context_pack=spec.context_pack,
+        task_spec=spec.task_spec,
+        execution_history=spec.execution_history,
+        capabilities=CoreCapabilitySnapshot(tools=(_WorkspaceTool(),)),
+        parent_execution_id=spec.parent_execution_id,
+        attempt=spec.attempt,
+    )
+
+
 def test_prepare_external_request_uses_core_projection_and_scoped_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -74,11 +94,25 @@ def test_prepare_external_request_uses_core_projection_and_scoped_workspace(tmp_
     assert request.session_key.workspace_root == workspace.resolve()
     assert request.session_key.workspace == child.resolve()
     assert request.session_key.runtime_config_id == "bot-a"
-    assert request.capabilities == ("workspace_io",)
+    assert request.capabilities == ()
     assert "Inspect the repository and update one file." in request.prompt
     assert "conversation.history" in request.prompt
     assert "persona.prompt" not in request.prompt
     assert "astrbot_only_tool" not in request.prompt
+
+    admitted_request = prepare_external_executor_request(
+        execution_spec=_spec_with_admitted_capability(),
+        deadline_view=None,
+        executor_id="codex_cli",
+        runtime_config_id="bot-a",
+        session_id="qq:10001",
+        workspace_config={
+            "workspace_root": str(workspace),
+            "workspace": "project",
+        },
+        supported_capabilities=frozenset({"workspace_io", "shell"}),
+    )
+    assert admitted_request.capabilities == ("workspace_io",)
 
 
 def test_prepare_external_request_rejects_workspace_outside_root(tmp_path):

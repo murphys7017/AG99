@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.core.execution import CoreExecutionDeadlineView, CoreExecutionSpec
+from astrbot.core.execution_capabilities import collect_semantic_capability_bindings
 from astrbot.core.prompt.targets import PromptTarget, project_context_pack
 
 
@@ -55,6 +56,7 @@ def prepare_external_executor_request(
     runtime_config_id: str,
     session_id: str,
     workspace_config: Mapping[str, Any],
+    supported_capabilities: frozenset[str] = frozenset(),
 ) -> ExternalExecutorRequest:
     """Prepare one stateful external-executor request without Native artifacts."""
 
@@ -84,7 +86,10 @@ def prepare_external_executor_request(
         ),
         workspace=workspace,
         prompt=prompt,
-        capabilities=_extract_capability_names(execution_spec),
+        capabilities=_resolve_capabilities(
+            execution_spec,
+            supported_capabilities=supported_capabilities,
+        ),
     )
 
 
@@ -188,16 +193,23 @@ def _render_context_slots(context_pack) -> list[str]:
     return rendered
 
 
-def _extract_capability_names(execution_spec: CoreExecutionSpec) -> tuple[str, ...]:
-    task_spec = execution_spec.task_spec or {}
-    values = task_spec.get("suggested_capabilities", [])
-    if not isinstance(values, list):
+def _resolve_capabilities(
+    execution_spec: CoreExecutionSpec,
+    *,
+    supported_capabilities: frozenset[str],
+) -> tuple[str, ...]:
+    """Return actual admitted capabilities supported by this Body.
+
+    Planner suggestions live in ``task_spec`` and are intentionally excluded:
+    they describe intent, not authorization. The Core capability snapshot is
+    the only source of admitted capabilities at this boundary.
+    """
+
+    tools = execution_spec.capabilities.tools
+    if tools is None or not supported_capabilities:
         return ()
-    return tuple(
-        value.strip()
-        for value in values
-        if isinstance(value, str) and value.strip()
-    )
+    bindings = collect_semantic_capability_bindings(tools)
+    return tuple(sorted(set(bindings).intersection(supported_capabilities)))
 
 
 def _require_non_empty(value: object, field_name: str) -> str:
