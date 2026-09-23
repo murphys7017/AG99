@@ -80,7 +80,22 @@ def _build_native_executor_run(**kwargs: Any) -> ExecutorRun:
     return NativeExecutorRun(**kwargs)
 
 
+def _build_codex_executor_run(**kwargs: Any) -> ExecutorRun:
+    """Build Codex only when its external session and prompt are explicit."""
+
+    from .codex_cli import build_codex_executor_run
+
+    session = kwargs.pop("session", None)
+    prompt = kwargs.pop("prompt", None)
+    if kwargs or session is None or not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError(
+            "codex_cli requires explicit session and non-empty prompt construction inputs"
+        )
+    return build_codex_executor_run(session=session, prompt=prompt)
+
+
 register_executor_factory("native", _build_native_executor_run)
+register_executor_factory("codex_cli", _build_codex_executor_run)
 
 
 __all__ = [
