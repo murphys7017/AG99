@@ -57,6 +57,7 @@ def prepare_external_executor_request(
     session_id: str,
     workspace_config: Mapping[str, Any],
     supported_capabilities: frozenset[str] = frozenset(),
+    prompt_config: object | None = None,
 ) -> ExternalExecutorRequest:
     """Prepare one stateful external-executor request without Native artifacts."""
 
@@ -68,6 +69,7 @@ def prepare_external_executor_request(
     context_pack = project_context_pack(
         execution_spec.context_pack,
         PromptTarget.CORE,
+        config=prompt_config,
     )
     prompt = _render_external_prompt(
         execution_spec=execution_spec,

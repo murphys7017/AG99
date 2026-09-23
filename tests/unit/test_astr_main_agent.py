@@ -609,6 +609,28 @@ class TestBuildMainAgent:
         assert prepared.execution_spec.context_pack.provider_request_ref is None
 
     @pytest.mark.asyncio
+    async def test_prepare_external_core_execution_needs_no_provider_or_runner(
+        self,
+        mock_event,
+        mock_context,
+    ):
+        with patch("astrbot.core.astr_main_agent.AgentRunner") as runner_cls:
+            prepared = await ama.prepare_external_core_execution(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=ama.MainAgentBuildConfig(
+                    tool_call_timeout=60,
+                    computer_use_runtime="none",
+                    add_cron_tools=False,
+                ),
+                capabilities=CapabilitySnapshot.empty(target="core"),
+                interaction_core=False,
+            )
+
+        runner_cls.assert_not_called()
+        assert prepared.execution_spec.context_pack.provider_request_ref is None
+
+    @pytest.mark.asyncio
     async def test_build_main_agent_basic(
         self, mock_event, mock_context, mock_provider
     ):

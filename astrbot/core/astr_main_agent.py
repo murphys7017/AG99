@@ -663,7 +663,7 @@ async def prepare_core_execution(
     event: AstrMessageEvent,
     plugin_context: Context,
     config: MainAgentBuildConfig,
-    provider_request: ProviderRequest,
+    provider_request: ProviderRequest | None = None,
     capabilities: CapabilitySnapshot,
     interaction_core: bool,
     exclude_handoff_tools: bool,
@@ -734,6 +734,33 @@ async def prepare_core_execution(
             if deadline is not None
             else None
         ),
+    )
+
+
+async def prepare_external_core_execution(
+    *,
+    event: AstrMessageEvent,
+    plugin_context: Context,
+    config: MainAgentBuildConfig,
+    capabilities: CapabilitySnapshot,
+    interaction_core: bool = True,
+    exclude_handoff_tools: bool = False,
+) -> PreparedCoreExecution:
+    """Prepare Core facts for an external Body without Native artifacts.
+
+    This boundary deliberately does not select a chat Provider, construct a
+    ProviderRequest, or create/reset an AgentRunner.  The external Body only
+    receives the resulting executor-neutral snapshot.
+    """
+
+    return await prepare_core_execution(
+        event=event,
+        plugin_context=plugin_context,
+        config=config,
+        provider_request=None,
+        capabilities=capabilities,
+        interaction_core=interaction_core,
+        exclude_handoff_tools=exclude_handoff_tools,
     )
 
 
