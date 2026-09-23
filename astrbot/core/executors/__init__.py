@@ -13,6 +13,12 @@ from .contracts import (
     ExecutionUpdate,
     ExecutorRun,
 )
+from .external import (
+    ExternalExecutorConfigurationError,
+    ExternalExecutorRequest,
+    ExternalExecutorSessionKey,
+    prepare_external_executor_request,
+)
 from .registry import (
     register_executor_factory,
     resolve_executor_factory,
@@ -27,9 +33,13 @@ __all__ = [
     "ExecutionProgressUpdate",
     "ExecutionResult",
     "ExecutionUpdate",
+    "ExternalExecutorConfigurationError",
+    "ExternalExecutorRequest",
+    "ExternalExecutorSessionKey",
     "ExecutorRun",
     "drive_executor_run",
     "register_executor_factory",
     "resolve_executor_factory",
     "resolve_executor_id",
+    "prepare_external_executor_request",
 ]
