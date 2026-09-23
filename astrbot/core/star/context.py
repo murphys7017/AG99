@@ -267,10 +267,8 @@ class RuntimeObservationSensor(Protocol):
 class Context:
     """暴露给插件的接口上下文。"""
 
-    registered_web_apis: list[RegisteredWebApi] = []
-
-    # 向后兼容的变量
-    _register_tasks: list[Awaitable] = []
+    # Context-owned registries are initialized per instance below.
+    # Keep only process-wide compatibility state at class scope.
     _star_manager = None
 
     def __init__(
@@ -291,6 +289,10 @@ class Context:
     ) -> None:
         self._event_queue = event_queue
         """事件队列。消息平台通过事件队列传递消息事件。"""
+        self.registered_web_apis: list[RegisteredWebApi] = []
+        # Deprecated plugin tasks belong to this lifecycle, not to the Context
+        # class. A class-level list leaked tasks across reloads and instances.
+        self._register_tasks: list[Awaitable] = []
         self._config = config
         """AstrBot 默认配置"""
         self._db = db

@@ -514,8 +514,9 @@ class AstrBotCoreLifecycle:
 
         # 把插件中注册的所有协程函数注册到事件总线中并执行
         extra_tasks = []
-        for task in self.star_context._register_tasks:
-            extra_tasks.append(asyncio.create_task(task, name=task.__name__))  # type: ignore
+        for index, task in enumerate(self.star_context._register_tasks):
+            task_name = getattr(task, "__name__", f"plugin_task_{index}")
+            extra_tasks.append(asyncio.create_task(task, name=task_name))
 
         tasks_ = [event_bus_task, *(extra_tasks if extra_tasks else [])]
         if cron_task:
