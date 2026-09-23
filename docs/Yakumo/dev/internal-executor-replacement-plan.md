@@ -2,7 +2,7 @@
 
 > 5.6 的逐批编码指令见 [`internal-executor-replacement-implementation-guide.md`](internal-executor-replacement-implementation-guide.md)。本文件保留架构目标、边界和批次定义；实施时以操作级手册中的文件、接口和退出条件为准。
 
-日期：2026-09-22。状态：R1-R7 的最小替换基础已审阅并提交；仍待真实 OLV/Cron 验收；R8 需要选定真实执行器后实施。
+日期：2026-09-23。状态：R1-R7 的最小替换基础已审阅并提交；当前 Native 基线已完成用户手动 OLV/Cron smoke 验收；R8 需要选定真实执行器后实施。
 
 逐批编码步骤、修改范围和验证命令见
 [内部可替换执行器：5.6 操作级实施手册](internal-executor-replacement-implementation-guide.md)。
@@ -204,6 +204,11 @@ R7 实施记录（2026-09-22）：新增 Scripted test Body，验证它可经同
 适配验收；这些仍是 R8 引入指定执行器时的门槛。
 
 每批完成后同步实际进度，提交按用户指令执行；服务由用户手动启动。失败先修当前批，不以“下一批会解决”为理由继续扩大范围。
+
+Native 基线验收记录（2026-09-23）：用户已于 2026-09-22 完成当前 Native
+执行链的手动 OLV/Cron smoke 测试并确认没有阻塞问题。保留日志可见当前 bot
+配置下的能力快照、Personal 表达、OLV 图像输入和 turn settlement。此记录只允许
+继续收敛普通交互的装配边界；它不替代中断边界的专项验收，也不表示第二执行器已接入。
 
 ## 10. 最小验证与交付
 

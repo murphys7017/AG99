@@ -203,6 +203,30 @@ executor_result_and_selection_foundation:
     Cron delivery receipt. Do not claim that a non-Native executor is available
     to ordinary Interaction until its adapter preserves those contracts.
 
+native_executor_live_smoke_acceptance:
+  date: '2026-09-23'
+  class: validation
+  risk: high
+  status: accepted_as_native_baseline
+  scope: >-
+    Record the user's September 22, 2026 manual OLV/Cron smoke acceptance of
+    the current Native execution baseline before continuing executor assembly
+    convergence.
+  evidence: >-
+    The user confirmed the prior-day experiment had no blocking issue. The
+    retained OLV trace records current-bot capability snapshots, Personal
+    expression, visible-turn settlement, image input handling, and completed
+    turn diagnostics. Cron traces are retained in the same log window.
+  limits: >-
+    This accepts the current Native baseline for the next refactor batch. It
+    does not certify all interruption edge cases, replace the required R8
+    adapter acceptance, or establish that a non-Native executor is available.
+  next: >-
+    Move the remaining ordinary-interaction Native construction behind the
+    shared executor assembly boundary, preserving its existing rich output
+    bridge. Commit that bounded refactor separately before any result-bridge
+    production migration.
+
 minimax_stt_silence_handling:
   date: '2026-09-19'
   class: bugfix
