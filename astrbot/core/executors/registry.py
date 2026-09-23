@@ -72,6 +72,27 @@ def resolve_executor_id(
     return normalized
 
 
+def resolve_executor_config(
+    config_snapshot: Mapping[str, Any],
+    *,
+    executor_id: str,
+) -> Mapping[str, Any]:
+    """Return the selected executor's config from one frozen bot snapshot."""
+
+    normalized = _normalize_executor_id(executor_id)
+    raw_core = config_snapshot.get("core_execution")
+    if raw_core is None:
+        raw_core = {}
+    if not isinstance(raw_core, Mapping):
+        raise ValueError("core_execution must be an object")
+    raw_executor = raw_core.get(normalized)
+    if raw_executor is None:
+        return {}
+    if not isinstance(raw_executor, Mapping):
+        raise ValueError(f"core_execution.{normalized} must be an object")
+    return raw_executor
+
+
 def _build_native_executor_run(**kwargs: Any) -> ExecutorRun:
     """Build the built-in run without exposing its implementation to callers."""
 
@@ -102,5 +123,6 @@ __all__ = [
     "ExecutorFactory",
     "register_executor_factory",
     "resolve_executor_factory",
+    "resolve_executor_config",
     "resolve_executor_id",
 ]

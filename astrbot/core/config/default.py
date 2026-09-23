@@ -220,6 +220,13 @@ DEFAULT_CONFIG = {
     },
     "core_execution": {
         "executor_id": "native",
+        "codex_cli": {
+            "executable": "codex",
+            "workspace_root": "",
+            "workspace": "",
+            "request_timeout": 30.0,
+            "max_message_bytes": 4194304,
+        },
     },
     "interaction_middleware": {
         "enabled": True,
@@ -4481,8 +4488,36 @@ CONFIG_METADATA_3 = {
                     "core_execution.executor_id": {
                         "description": "Core 执行器",
                         "type": "string",
-                        "options": ["native"],
+                        "options": ["native", "codex_cli"],
                         "hint": "选择当前适配器 bot 配置中的 Core 执行实现。未知值会明确失败，不会静默回退。新增执行器接入后会在此列出。",
+                    },
+                    "core_execution.codex_cli.executable": {
+                        "description": "Codex 可执行文件",
+                        "type": "string",
+                        "hint": "Codex app-server 的可执行文件名或绝对路径，不要填写命令参数。仅在 executor_id=codex_cli 时使用。",
+                        "condition": {"core_execution.executor_id": "codex_cli"},
+                    },
+                    "core_execution.codex_cli.workspace_root": {
+                        "description": "Codex 工作区根目录",
+                        "type": "string",
+                        "hint": "必须是当前机器上的绝对目录，Codex 只能在该目录及其子目录中工作。",
+                        "condition": {"core_execution.executor_id": "codex_cli"},
+                    },
+                    "core_execution.codex_cli.workspace": {
+                        "description": "Codex 工作目录",
+                        "type": "string",
+                        "hint": "可选的 workspace_root 子目录；为空时使用 workspace_root。",
+                        "condition": {"core_execution.executor_id": "codex_cli"},
+                    },
+                    "core_execution.codex_cli.request_timeout": {
+                        "description": "Codex 请求超时秒数",
+                        "type": "float",
+                        "condition": {"core_execution.executor_id": "codex_cli"},
+                    },
+                    "core_execution.codex_cli.max_message_bytes": {
+                        "description": "Codex 最大消息字节数",
+                        "type": "int",
+                        "condition": {"core_execution.executor_id": "codex_cli"},
                     },
                 },
             },

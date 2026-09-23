@@ -70,20 +70,30 @@ class CodexSessionManager:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    # Keep StreamReader's line limit above the protocol limit
+                    # so oversized messages reach our explicit size check.
+                    limit=self.max_message_bytes + 1,
                 )
             except OSError as exc:
                 raise CodexSessionError(f"failed to start Codex app-server: {exc}") from exc
             self._reader_failure = None
             self._reader_task = asyncio.create_task(self._read_stdout())
             self._stderr_task = asyncio.create_task(self._read_stderr())
-            await self._request(
-                "initialize",
-                {
-                    "clientInfo": {"name": "astrbot", "version": "core"},
-                    "capabilities": {"experimentalApi": False},
-                },
-            )
-            await self._notify("initialized")
+            try:
+                await self._request(
+                    "initialize",
+                    {
+                        "clientInfo": {"name": "astrbot", "version": "core"},
+                        "capabilities": {"experimentalApi": False},
+                    },
+                )
+                await self._notify("initialized")
+            except BaseException:
+                # Do not leave an unregistered app-server process behind when
+                # initialization or protocol negotiation fails.
+                with contextlib.suppress(BaseException):
+                    await asyncio.shield(self.aclose())
+                raise
 
     async def start_thread(self, *, cwd: str | None = None) -> str:
         await self.start()

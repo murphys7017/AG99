@@ -21,6 +21,7 @@ from astrbot.core.astr_main_agent import (
     LLM_ERROR_MESSAGE_EXTRA_KEY,
     MainAgentBuildConfig,
     MainAgentBuildResult,
+    _get_session_conv,
     build_main_agent,
 )
 from astrbot.core.core_request_preparation import (
@@ -38,6 +39,7 @@ from astrbot.core.execution import (
     get_core_execution_lifecycle,
 )
 from astrbot.core.executors.assembly import build_native_executor_assembly
+from astrbot.core.executors.coordinator import execute_external_core_turn
 from astrbot.core.executors.registry import resolve_executor_id
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -326,6 +328,64 @@ class InternalAgentSubStage(Stage):
                     provider_wake_prefix=provider_wake_prefix,
                     streaming_response=bool(streaming_response),
                 )
+
+                if executor_id != "native":
+                    output_controller = event.get_extra(
+                        "_interaction_output_controller"
+                    )
+                    if output_controller is None:
+                        raise RuntimeError(
+                            "Core interaction output controller is unavailable"
+                        )
+                    core_deadline = get_interaction_turn_deadline(event)
+                    if core_deadline is None:
+                        raise RuntimeError("Core interaction deadline is unavailable")
+                    external = await execute_external_core_turn(
+                        context=self.ctx.plugin_manager.context,
+                        event=event,
+                        runtime_config=(
+                            runtime_config
+                            if isinstance(runtime_config, Mapping)
+                            else {}
+                        ),
+                        config=build_cfg,
+                        session_id=event.unified_msg_origin,
+                        prompt_config=build_cfg,
+                        deadline=core_deadline,
+                        output_controller=output_controller,
+                        submission_metadata={
+                            "source": "interaction_external",
+                            "executor_id": executor_id,
+                            "streaming": False,
+                        },
+                    )
+                    execution_head = external.head
+                    executor_activated = True
+                    runner_reset_completed = True
+                    req = ProviderRequest(
+                        prompt=external.request.prompt,
+                        conversation=await _get_session_conv(
+                            event,
+                            self.ctx.plugin_manager.context,
+                        ),
+                    )
+                    response = LLMResponse(
+                        role="assistant",
+                        completion_text=(
+                            external.result.output.text
+                            if external.result.output is not None
+                            else ""
+                        ),
+                    )
+                    await self._save_interaction_core_state(
+                        event,
+                        req,
+                        response,
+                        [],
+                        None,
+                        user_aborted=False,
+                    )
+                    return
 
                 build_result = await build_main_agent(
                     event=event,
@@ -755,6 +815,11 @@ class InternalAgentSubStage(Stage):
         if not isinstance(execution_spec, CoreExecutionSpec):
             return
         execution_head = get_core_execution_head(event)
+        executor_id = (
+            execution_head.executor_id
+            if execution_head is not None and execution_head.executor_id
+            else "native"
+        )
         if execution_head is None and (
             event.get_extra("_core_execution_ledger_recorded_id")
             == execution_spec.execution_id
@@ -817,7 +882,7 @@ class InternalAgentSubStage(Stage):
             return await ledger.append_execution(
                 execution_spec=preparation.execution_spec,
                 conversation_id=req.conversation.cid,
-                executor_id="native",
+                executor_id=executor_id,
                 status=preparation.status,
                 messages=messages,
                 result=preparation.result,
@@ -838,7 +903,7 @@ class InternalAgentSubStage(Stage):
         record_interaction_turn_core_execution_ledger_settlement(
             event,
             preparation,
-            executor_id="native",
+            executor_id=executor_id,
             inserted=inserted,
         )
         event.set_extra(
@@ -854,11 +919,17 @@ class InternalAgentSubStage(Stage):
         """Expose a terminal Ledger write failure to the owning turn diagnostics."""
 
         error_text = str(error)[:2000]
+        execution_head = get_core_execution_head(event)
+        executor_id = (
+            execution_head.executor_id
+            if execution_head is not None and execution_head.executor_id
+            else "native"
+        )
         event.set_extra("_core_execution_ledger_failed", True)
         event.set_extra("_core_execution_ledger_failure_reason", error_text)
         record_interaction_turn_core_execution_ledger_persist_failure(
             event,
-            executor_id="native",
+            executor_id=executor_id,
             error=error,
         )
 

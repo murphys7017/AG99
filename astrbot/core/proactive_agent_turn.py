@@ -46,6 +46,17 @@ class ProactiveAgentTurnResult:
     delivery_confirmed: bool = False
 
 
+@dataclass(slots=True)
+class _ExternalProactiveBuildResult:
+    """Compatibility bookkeeping for an external proactive Core run."""
+
+    provider_request: ProviderRequest
+    execution_spec: Any
+
+    def discard_pending_reset(self) -> None:
+        return None
+
+
 def _ensure_proactive_execution_deadline(
     event: Any,
     runtime_config: Mapping[str, Any],
@@ -102,6 +113,9 @@ async def run_proactive_agent_turn(
         extras=extras,
         message_type=session.message_type,
     )
+    output_controller = getattr(context, "interaction_output_controller", None)
+    if output_controller is not None:
+        event.set_extra("_interaction_output_controller", output_controller)
     if role is not None:
         event.role = role
 
@@ -145,6 +159,33 @@ async def run_proactive_agent_turn(
         await build_plugin_admission_snapshot(event=event)
         config = config.with_runtime_config(runtime_config)
         conversation = await _get_session_conv(event=event, plugin_context=context)
+        if executor_id != "native":
+            external_request, external_response, external_head = (
+                await _execute_external_proactive_turn(
+                    context=context,
+                    event=event,
+                    session=session,
+                    runtime_config=runtime_config,
+                    config=config,
+                    prompt=prompt,
+                    deadline=deadline,
+                    executor_id=executor_id,
+                )
+            )
+            result = _ExternalProactiveBuildResult(
+                provider_request=external_request,
+                execution_spec=external_head.spec,
+            )
+            response = external_response
+            execution_head = external_head
+            executor_activated = True
+            status = "completed"
+            return ProactiveAgentTurnResult(
+                event=event,
+                request=external_request,
+                response=external_response,
+                delivery_confirmed=bool(event._has_send_oper),
+            )
         request.conversation = conversation
         history = json.loads(conversation.history)
         if history and include_history_fences:
@@ -360,6 +401,50 @@ async def run_proactive_agent_turn(
                         await ledger.append(record)
         except Exception:
             logger.exception("Proactive execution ledger persistence failed")
+async def _execute_external_proactive_turn(
+    *,
+    context: Any,
+    event: Any,
+    session: MessageSession,
+    runtime_config: Mapping[str, Any],
+    config: Any,
+    prompt: str,
+    deadline: TurnDeadlineBudget,
+    executor_id: str,
+):
+    """Run a configured external Body without constructing a Native agent."""
+
+    if executor_id != "codex_cli":
+        raise RuntimeError(f"unsupported external proactive executor: {executor_id}")
+    output_controller = getattr(context, "interaction_output_controller", None)
+    if output_controller is None:
+        raise RuntimeError("Core interaction output controller is unavailable")
+    from astrbot.core.executors import execute_external_core_turn
+
+    execution = await execute_external_core_turn(
+        context=context,
+        event=event,
+        runtime_config=runtime_config,
+        config=config,
+        session_id=session.session_id,
+        prompt_config=config,
+        deadline=deadline,
+        output_controller=output_controller,
+        submission_metadata={
+            "source": "cron_external",
+            "executor_id": executor_id,
+            "streaming": False,
+        },
+    )
+    output = execution.result.output
+    return (
+        ProviderRequest(prompt=execution.request.prompt),
+        LLMResponse(
+            role="assistant",
+            completion_text=output.text if output is not None else "",
+        ),
+        execution.head,
+    )
 
 
 __all__ = ["ProactiveAgentTurnResult", "run_proactive_agent_turn"]

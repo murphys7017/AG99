@@ -16,6 +16,7 @@ from .codex_cli import build_codex_executor_run
 from .contracts import ExecutorRun
 from .external import ExternalExecutorRequest
 from .registry import resolve_executor_factory
+from .session_registry import ExternalExecutorSessionRegistry
 
 if TYPE_CHECKING:
     from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
@@ -71,6 +72,26 @@ class CodexExecutorAssembly:
         return build_codex_executor_run(session=self.session, prompt=request.prompt)
 
 
+async def build_codex_executor_assembly(
+    *,
+    request: ExternalExecutorRequest,
+    registry: ExternalExecutorSessionRegistry,
+    executor_config: dict,
+) -> CodexExecutorAssembly:
+    """Resolve the Core-owned long-lived session for one prepared request."""
+
+    if request.session_key.executor_id != "codex_cli":
+        raise ValueError(
+            "Codex assembly requires executor_id=codex_cli, got "
+            f"{request.session_key.executor_id}"
+        )
+    session = await registry.get_or_create(
+        key=request.session_key,
+        executor_config=executor_config,
+    )
+    return CodexExecutorAssembly(session=session)
+
+
 def build_native_executor_assembly(
     *,
     executor_id: str,
@@ -105,5 +126,6 @@ def build_native_executor_assembly(
 __all__ = [
     "CodexExecutorAssembly",
     "NativeExecutorAssembly",
+    "build_codex_executor_assembly",
     "build_native_executor_assembly",
 ]

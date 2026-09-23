@@ -356,6 +356,9 @@ class AstrBotCoreLifecycle:
             self.core_execution_ledger,
         )
         self.star_context.external_executor_sessions = self.external_executor_sessions
+        self.star_context.interaction_output_controller = (
+            self.interaction_output_controller
+        )
         self.interaction_middleware.set_plugin_context(self.star_context)
         self.personal_runtime_manager.bind_plugin_context(self.star_context)
         self.personal_runtime_manager.bind_personal_expression_handler(

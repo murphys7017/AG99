@@ -32,6 +32,8 @@ class ExternalExecutorSessionRegistry:
         if key.executor_id != "codex_cli":
             raise ValueError(f"unsupported external executor: {key.executor_id}")
         async with self._lock:
+            if self._closed:
+                raise RuntimeError("external executor session registry is closed")
             existing = self._sessions.get(key)
             fingerprint = _fingerprint_config(executor_config)
             if existing is not None and self._fingerprints.get(key) == fingerprint:
@@ -43,6 +45,14 @@ class ExternalExecutorSessionRegistry:
             manager = CodexSessionManager(
                 executable=_resolve_executable(executor_config),
                 cwd=key.workspace,
+                request_timeout=_positive_float(
+                    executor_config.get("request_timeout", 30.0),
+                    field_name="request_timeout",
+                ),
+                max_message_bytes=_positive_int(
+                    executor_config.get("max_message_bytes", 4 * 1024 * 1024),
+                    field_name="max_message_bytes",
+                ),
             )
             await manager.start()
             self._sessions[key] = manager
@@ -88,6 +98,28 @@ def _fingerprint_config(config: Mapping[str, Any]) -> str:
         return json.dumps(dict(config), ensure_ascii=False, sort_keys=True, default=str)
     except (TypeError, ValueError) as exc:
         raise ValueError("external executor configuration must be serializable") from exc
+
+
+def _positive_float(value: object, *, field_name: str) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"codex_cli.{field_name} must be a positive number") from exc
+    if result <= 0:
+        raise ValueError(f"codex_cli.{field_name} must be a positive number")
+    return result
+
+
+def _positive_int(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"codex_cli.{field_name} must be a positive integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"codex_cli.{field_name} must be a positive integer") from exc
+    if result <= 0:
+        raise ValueError(f"codex_cli.{field_name} must be a positive integer")
+    return result
 
 
 __all__ = ["ExternalExecutorSessionRegistry"]

@@ -98,6 +98,7 @@ async def drive_executor_run(
                 await sink_result
         return result
     except TurnDeadlineExceeded as exc:
+        _request_run_stop(run)
         if (
             head is not None
             and activated
@@ -110,6 +111,7 @@ async def drive_executor_run(
             )
         raise
     except asyncio.CancelledError:
+        _request_run_stop(run)
         if (
             head is not None
             and activated
@@ -122,6 +124,7 @@ async def drive_executor_run(
             )
         raise
     except Exception as exc:
+        _request_run_stop(run)
         if (
             head is not None
             and activated
@@ -154,3 +157,12 @@ async def drive_executor_run(
         finally:
             if head is not None and activated:
                 head.release_executor(executor_id=body.executor_id)
+
+
+def _request_run_stop(run: ExecutorRun) -> None:
+    """Issue the non-blocking Body stop signal before projecting terminal state."""
+
+    try:
+        run.request_stop()
+    except Exception:
+        logger.warning("Executor stop request failed", exc_info=True)
