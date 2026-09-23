@@ -10,6 +10,10 @@ from astrbot.core.interaction.delayed_plugin_delivery import (
     DelayedPluginDeliveryContext,
     DelayedPluginDeliveryCoordinator,
 )
+from astrbot.core.interaction.failure_policy import (
+    InteractionFailureKind,
+    should_emit_failure_reply,
+)
 from astrbot.core.interaction.group_reply import is_group_reply_candidate
 from astrbot.core.interaction.personal_runtime import (
     PersonalRuntimeManager,
@@ -686,15 +690,26 @@ class ProcessStage(Stage):
         error: BaseException,
     ) -> None:
         already_completed = is_interaction_turn_completed(event)
+        failure_kind = (
+            InteractionFailureKind.SESSION_QUEUE_TIMEOUT
+            if stage == "session_queue"
+            else InteractionFailureKind.TURN_TIMEOUT
+        )
+        emit_failure_reply = should_emit_failure_reply(event, failure_kind)
         record_interaction_turn_failure(
             event,
             stage=stage,
             reason="turn_deadline_exhausted",
+            failure_kind=failure_kind.value,
             exception=error,
             user_visible_action=(
                 "existing_persona_reply"
                 if already_completed
-                else "fallback_error_reply"
+                else (
+                    "fallback_error_reply"
+                    if emit_failure_reply
+                    else "failure_reply_suppressed"
+                )
             ),
         )
         execution_head = get_core_execution_head(event)
@@ -732,12 +747,24 @@ class ProcessStage(Stage):
         )
         delivered = False
         if output_controller is not None:
+            if not emit_failure_reply:
+                logger.warning(
+                    "Interaction failure reply suppressed for group message: "
+                    "turn_id=%s stage=%s failure_kind=%s",
+                    event.get_extra("_turn_id"),
+                    stage,
+                    failure_kind.value,
+                )
             reply = (
                 extract_persona_custom_error_message_from_event(event)
                 or TURN_DEADLINE_FALLBACK_TEXT
             )
             try:
-                delivered = await output_controller.emit_failure_reply(reply, event)
+                delivered = await output_controller.emit_failure_reply(
+                    reply,
+                    event,
+                    failure_kind=failure_kind,
+                )
             except Exception:
                 logger.exception(
                     "Interaction deadline fallback delivery failed: turn_id=%s",

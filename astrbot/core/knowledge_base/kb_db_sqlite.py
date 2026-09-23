@@ -29,7 +29,6 @@ def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
         cursor.execute("PRAGMA cache_size=20000")
         cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.execute("PRAGMA mmap_size=134217728")
-        cursor.execute("PRAGMA optimize")
     finally:
         cursor.close()
 
@@ -95,7 +94,6 @@ class KBSQLiteDatabase:
             await conn.execute(text("PRAGMA cache_size=20000"))
             await conn.execute(text("PRAGMA temp_store=MEMORY"))
             await conn.execute(text("PRAGMA mmap_size=134217728"))
-            await conn.execute(text("PRAGMA optimize"))
             await conn.commit()
 
         self.inited = True

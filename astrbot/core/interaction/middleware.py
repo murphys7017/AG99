@@ -40,6 +40,7 @@ from .expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
 )
+from .failure_policy import InteractionFailureKind, should_emit_failure_reply
 from .group_reply import group_conversation_allows_silent
 from .lifecycle import dispatch_interaction_lifecycle
 from .output_adapter import InteractionEventOutputAdapter
@@ -112,6 +113,10 @@ from .types import (
 LOCAL_FAST_EXPRESSION_FALLBACK_RESULT = PersonaExpressionResult(
     spoken_reply="模型服务暂时不可用，请稍后再试。",
     turn_action=PersonalResponseAction.REPLY,
+)
+
+LOCAL_FAST_EXPRESSION_SILENT_RESULT = PersonaExpressionResult(
+    turn_action=PersonalResponseAction.SILENT,
 )
 
 
@@ -1289,6 +1294,24 @@ class InteractionMiddleware:
                 event,
                 "plugin_context_unavailable",
             )
+            record_interaction_turn_failure(
+                event,
+                stage="fast_expression",
+                reason="plugin_context_unavailable",
+                failure_kind=InteractionFailureKind.PERSONA_EXPRESSION_FAILED.value,
+                user_visible_action=(
+                    "fallback_first_response"
+                    if should_emit_failure_reply(
+                        event, InteractionFailureKind.PERSONA_EXPRESSION_FAILED
+                    )
+                    else "failure_reply_suppressed"
+                ),
+            )
+            if not should_emit_failure_reply(
+                event,
+                InteractionFailureKind.PERSONA_EXPRESSION_FAILED,
+            ):
+                return LOCAL_FAST_EXPRESSION_SILENT_RESULT
             return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
         try:
             return await self.persona_runtime.express_visible_reply(
@@ -1313,8 +1336,15 @@ class InteractionMiddleware:
             event,
             stage="fast_expression",
             reason=reason,
+            failure_kind=InteractionFailureKind.PERSONA_EXPRESSION_FAILED.value,
             exception=error,
-            user_visible_action="fallback_first_response",
+            user_visible_action=(
+                "fallback_first_response"
+                if should_emit_failure_reply(
+                    event, InteractionFailureKind.PERSONA_EXPRESSION_FAILED
+                )
+                else "failure_reply_suppressed"
+            ),
         )
         logger.warning(
             "Interaction fast expression failed; using local fallback: platform_id=%s session_id=%s reason=%s error=%s",
@@ -1324,6 +1354,11 @@ class InteractionMiddleware:
             error,
             exc_info=(type(error), error, error.__traceback__),
         )
+        if not should_emit_failure_reply(
+            event,
+            InteractionFailureKind.PERSONA_EXPRESSION_FAILED,
+        ):
+            return LOCAL_FAST_EXPRESSION_SILENT_RESULT
         return LOCAL_FAST_EXPRESSION_FALLBACK_RESULT
 
     async def _materialize_inbound_media(self, event: AstrMessageEvent) -> None:

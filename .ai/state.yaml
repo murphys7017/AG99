@@ -1,3 +1,29 @@
+interaction_failure_and_sqlite_lock_repair:
+  date: '2026-09-24'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Suppress internal failure fallback replies in group chats while retaining
+    private-chat feedback, classify recorded interaction failures, and remove
+    SQLite PRAGMA optimize from runtime connection and initialization paths.
+  evidence: >-
+    Inspected September 24 Alice group database-lock stacks originate in
+    the BaseDatabase connect listener while executing PRAGMA optimize through
+    a NullPool connection, followed by Personal session_queue deadlines and
+    group-visible "model unavailable" fallback messages. This does not establish
+    that every queue deadline or provider failure was caused by SQLite.
+  validation: >-
+    Focused failure-policy and SQLite busy-timeout tests passed (4). Scoped
+    Ruff, compileall, and git diff checks passed. No restart or live platform
+    acceptance was performed.
+  followup: >-
+    Restart manually and exercise a busy QQ group plus one private failure
+    case. Confirm group logs contain failure_reply_suppressed with no visible
+    fallback, private chat remains user-visible, and no new database-is-locked
+    stack is rooted at PRAGMA optimize. Re-evaluate session queue policy only
+    after that trace, rather than changing its semantics preemptively.
+
 olv_superseding_turn_lifecycle:
   date: '2026-09-22'
   class: bugfix

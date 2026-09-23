@@ -178,6 +178,7 @@ class InteractionTurnCompletionState:
 class InteractionTurnFailure:
     stage: str
     reason: str
+    failure_kind: str | None = None
     exception_type: str | None = None
     message: str | None = None
     user_visible_action: str | None = None
@@ -1559,6 +1560,7 @@ def record_interaction_turn_failure(
     *,
     stage: str,
     reason: str,
+    failure_kind: str | None = None,
     exception: BaseException | None = None,
     message: str | None = None,
     user_visible_action: str | None = None,
@@ -1571,6 +1573,7 @@ def record_interaction_turn_failure(
     failure = InteractionTurnFailure(
         stage=clean_stage,
         reason=clean_reason,
+        failure_kind=str(failure_kind or "").strip() or None,
         exception_type=type(exception).__name__ if exception is not None else None,
         message=message
         if message is not None

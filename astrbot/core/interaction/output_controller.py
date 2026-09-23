@@ -45,6 +45,10 @@ from .expression_agent import (
     PersonaExpressionRequest,
     PersonaExpressionResult,
 )
+from .failure_policy import (
+    InteractionFailureKind,
+    should_emit_failure_reply,
+)
 from .output_modes import (
     CORE_OUTPUT_DELIVERY_EXTRA_KEY,
     OUTPUT_ORIGIN_EXTRA_KEY,
@@ -300,8 +304,16 @@ class InteractionOutputController:
         self,
         reply: str,
         event: AstrMessageEvent,
+        *,
+        failure_kind: InteractionFailureKind = InteractionFailureKind.INTERNAL_FAILURE,
     ) -> bool:
         if not await reserve_interaction_turn_final_output(event):
+            return False
+        if not should_emit_failure_reply(event, failure_kind):
+            await finish_interaction_turn_final_output(
+                event,
+                InteractionFinalOutputStatus.SUPPRESSED,
+            )
             return False
         try:
             delivered = await self.emit_immediate_spoken_reply(
@@ -1758,12 +1770,23 @@ class InteractionOutputController:
         exception: BaseException,
     ) -> None:
         """Finish the current output transaction without another Persona call."""
+        failure_kind = (
+            InteractionFailureKind.TURN_TIMEOUT
+            if isinstance(exception, TurnDeadlineExceeded)
+            else InteractionFailureKind.PERSONA_EXPRESSION_FAILED
+        )
         record_interaction_turn_failure(
             event,
             stage=stage,
             reason=reason,
+            failure_kind=failure_kind.value,
             exception=exception,
-            user_visible_action="deliver_core_result_without_persona",
+            user_visible_action=(
+                "failure_reply_suppressed"
+                if not message.chain
+                and not should_emit_failure_reply(event, failure_kind)
+                else "deliver_core_result_without_persona"
+            ),
         )
         logger.warning(
             "Core result Persona rendering failed; delivering the existing Core "
@@ -1774,6 +1797,18 @@ class InteractionOutputController:
         )
         fallback_message = message
         if not fallback_message.chain:
+            if not should_emit_failure_reply(
+                event,
+                failure_kind,
+            ):
+                set_interaction_turn_pipeline_output_suppressed(event)
+                logger.warning(
+                    "Core result fallback suppressed for group message: "
+                    "turn_id=%s stage=%s",
+                    event.get_extra("_turn_id"),
+                    stage,
+                )
+                return
             fallback_message = message.derive([Plain(CORE_REPLY_FALLBACK_TEXT)])
         await self.deliver_raw_core_reply(fallback_message, event)
 

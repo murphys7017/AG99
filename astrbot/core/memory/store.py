@@ -164,7 +164,6 @@ class MemoryStore:
                 await conn.execute(text("PRAGMA cache_size=20000"))
                 await conn.execute(text("PRAGMA temp_store=MEMORY"))
                 await conn.execute(text("PRAGMA mmap_size=134217728"))
-                await conn.execute(text("PRAGMA optimize"))
             self.inited = True
 
     async def _migrate_nullable_platform_user_key_columns(self, conn) -> None:
