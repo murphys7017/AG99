@@ -12,7 +12,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .codex_cli import build_codex_executor_run
 from .contracts import ExecutorRun
+from .external import ExternalExecutorRequest
 from .registry import resolve_executor_factory
 
 if TYPE_CHECKING:
@@ -54,6 +56,21 @@ class NativeExecutorAssembly:
         return run
 
 
+@dataclass(frozen=True, slots=True)
+class CodexExecutorAssembly:
+    """Production pairing of an external request with the Codex Body."""
+
+    session: object
+
+    def build_run(self, request: ExternalExecutorRequest) -> ExecutorRun:
+        if request.session_key.executor_id != "codex_cli":
+            raise ValueError(
+                "Codex assembly requires executor_id=codex_cli, got "
+                f"{request.session_key.executor_id}"
+            )
+        return build_codex_executor_run(session=self.session, prompt=request.prompt)
+
+
 def build_native_executor_assembly(
     *,
     executor_id: str,
@@ -85,4 +102,8 @@ def build_native_executor_assembly(
     )
 
 
-__all__ = ["NativeExecutorAssembly", "build_native_executor_assembly"]
+__all__ = [
+    "CodexExecutorAssembly",
+    "NativeExecutorAssembly",
+    "build_native_executor_assembly",
+]
