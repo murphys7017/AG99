@@ -123,23 +123,25 @@ class CodexSessionManager:
                 if isinstance(turn, dict) and turn.get("id")
                 else None
             )
-            while True:
-                message = await self._notifications.get()
-                if isinstance(message, BaseException):
-                    raise message
-                params = message.get("params")
-                if (
-                    self._active_turn_id
-                    and isinstance(params, dict)
-                    and params.get("turnId")
-                    and str(params["turnId"]) != self._active_turn_id
-                ):
-                    continue
-                yield message
-                method = message.get("method")
-                if method in {"turn/completed", "turn/failed", "turn/cancelled"}:
-                    self._active_turn_id = None
-                    return
+            try:
+                while True:
+                    message = await self._notifications.get()
+                    if isinstance(message, BaseException):
+                        raise message
+                    params = message.get("params")
+                    if (
+                        self._active_turn_id
+                        and isinstance(params, dict)
+                        and params.get("turnId")
+                        and str(params["turnId"]) != self._active_turn_id
+                    ):
+                        continue
+                    yield message
+                    method = message.get("method")
+                    if method in {"turn/completed", "turn/failed", "turn/cancelled"}:
+                        return
+            finally:
+                self._active_turn_id = None
 
     async def interrupt(self, turn_id: str | None = None) -> None:
         if self._process is None:
