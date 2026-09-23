@@ -35,8 +35,8 @@
 ### 仓库内部及公开兼容边界的 `MessageSesion` 使用
 
 - **类型**：`MessageSession` 的历史拼写别名。
-- **当前证据**：仓库内部仍有多个适配器、Dashboard、Context 和迁移脚本使用。
-- **处理策略**：先迁移内部调用到 `MessageSession`，暂时保留别名；完成公开 API 使用确认后再删除。
+- **当前证据**：仓库内部的适配器、Dashboard、Context 和迁移脚本已迁移到 `MessageSession`；兼容别名仍存在于平台边界。
+- **处理策略**：继续保留 `MessageSesion = MessageSession` 供外部插件使用；完成公开 API 使用确认和弃用周期后再删除。
 
 ## 暂不删除
 
