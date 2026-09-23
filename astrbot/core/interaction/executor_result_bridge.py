@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from astrbot.core import logger
+from astrbot.core.deadline import TurnDeadlineBudget
 from astrbot.core.execution import CoreExecutionEventKind, CoreExecutionHead
 from astrbot.core.executors.contracts import (
     ExecutionFinalUpdate,
@@ -12,6 +13,7 @@ from astrbot.core.executors.contracts import (
     ExecutionResult,
     ExecutionUpdate,
 )
+from astrbot.core.executors.runtime import drive_executor_run
 from astrbot.core.message.message_event_result import MessageChain
 
 from .output_controller import InteractionOutputController
@@ -80,4 +82,35 @@ class ExecutionResultOutputBridge:
         return getattr(terminal, "kind", None) is CoreExecutionEventKind.COMPLETED
 
 
-__all__ = ["ExecutionResultOutputBridge"]
+async def drive_executor_to_personal_output(
+    *,
+    event: object,
+    output_controller: InteractionOutputController,
+    head: CoreExecutionHead,
+    body,
+    run,
+    deadline: TurnDeadlineBudget | None = None,
+    submission_metadata: dict | None = None,
+):
+    """Drive any Executor Body and route its final material through Personal.
+
+    This is the shared C5 boundary: executor updates remain executor-neutral,
+    while only ``ExecutionResultOutputBridge`` can create visible Core output.
+    """
+
+    bridge = ExecutionResultOutputBridge(
+        event=event,
+        output_controller=output_controller,
+        head=head,
+    )
+    return await drive_executor_run(
+        head=head,
+        body=body,
+        run=run,
+        deadline=deadline,
+        submission_metadata=submission_metadata,
+        output_sink=bridge.accept,
+    )
+
+
+__all__ = ["ExecutionResultOutputBridge", "drive_executor_to_personal_output"]
