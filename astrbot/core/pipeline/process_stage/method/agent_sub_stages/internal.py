@@ -37,6 +37,7 @@ from astrbot.core.execution import (
     get_core_execution_head,
     get_core_execution_lifecycle,
 )
+from astrbot.core.executors.assembly import build_native_executor_assembly
 from astrbot.core.executors.registry import resolve_executor_id
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
@@ -67,8 +68,8 @@ from astrbot.core.provider.entities import (
 from astrbot.core.utils.metrics import Metric
 
 from .....astr_agent_run_util import (
+    NativeExecutionAttachment,
     NativeExecutionOutputBridge,
-    NativeExecutionRun,
     NativeExecutorAdapter,
 )
 from ....context import PipelineContext, call_event_hook
@@ -219,7 +220,7 @@ class InternalAgentSubStage(Stage):
     ) -> AsyncGenerator[None, None]:
         typing_requested = False
         native_executor: NativeExecutorAdapter | None = None
-        native_run: NativeExecutionRun | None = None
+        native_attachment: NativeExecutionAttachment | None = None
         req: ProviderRequest | None = None
         build_result: MainAgentBuildResult | None = None
         execution_head = None
@@ -388,23 +389,25 @@ class InternalAgentSubStage(Stage):
                         )
                     bind_interaction_turn_core_execution_journal(event, execution_head)
 
-                native_run = NativeExecutionRun.from_runner(
-                    build_result.agent_runner,
+                native_assembly = build_native_executor_assembly(
+                    executor_id=executor_id,
+                    runner=build_result.agent_runner,
                     core_port=execution_head,
                 )
-                native_executor = native_run.executor
+                native_attachment = native_assembly.attachment
+                native_executor = native_assembly.executor
 
                 await build_result.reset_prepared_runner()
                 runner_reset_completed = True
 
-                native_run.activate(
+                native_attachment.activate(
                     submission_metadata={
                         "provider_id": str(provider.provider_config.get("id", "") or ""),
                         "provider_model": str(provider.get_model() or ""),
                         "streaming": bool(streaming_response),
                     },
                 )
-                executor_activated = native_run.activated
+                executor_activated = native_attachment.activated
 
                 runtime_manager = self.ctx.personal_runtime_manager
                 if runtime_manager is not None and execution_head is not None:
@@ -499,7 +502,7 @@ class InternalAgentSubStage(Stage):
                     async for _ in output_bridge.stream():
                         yield
 
-                evidence = native_run.finalize()
+                evidence = native_attachment.finalize()
                 final_resp = evidence.final_response
 
                 event.trace.record(
@@ -549,8 +552,8 @@ class InternalAgentSubStage(Stage):
 
         except TurnDeadlineExceeded:
             cancellation_reason = "deadline_exceeded"
-            if native_run is not None and executor_activated:
-                native_run.cancel(metadata={"reason": cancellation_reason})
+            if native_attachment is not None and executor_activated:
+                native_attachment.cancel(metadata={"reason": cancellation_reason})
             elif native_executor is not None and execution_head is not None:
                 execution_head.cancel(
                     executor_id=native_executor.executor_id,
@@ -572,8 +575,8 @@ class InternalAgentSubStage(Stage):
                 if deadline is not None and deadline.expired()
                 else "stage_cancelled"
             )
-            if native_run is not None and executor_activated:
-                native_run.cancel(metadata={"reason": cancellation_reason})
+            if native_attachment is not None and executor_activated:
+                native_attachment.cancel(metadata={"reason": cancellation_reason})
             elif native_executor is not None and execution_head is not None:
                 execution_head.cancel(
                     executor_id=native_executor.executor_id,
@@ -590,8 +593,8 @@ class InternalAgentSubStage(Stage):
             raise
         except Exception as e:
             logger.error(f"Error occurred while processing agent: {e}")
-            if native_run is not None and executor_activated:
-                native_run.fail(
+            if native_attachment is not None and executor_activated:
+                native_attachment.fail(
                     metadata={
                         "error_type": type(e).__name__,
                         "error": str(e)[:2000],
@@ -624,8 +627,8 @@ class InternalAgentSubStage(Stage):
         finally:
             if build_result is not None:
                 build_result.discard_pending_reset()
-            if native_run is not None and executor_activated:
-                native_run.release()
+            if native_attachment is not None and executor_activated:
+                native_attachment.release()
             if typing_requested:
                 try:
                     await event.stop_typing()

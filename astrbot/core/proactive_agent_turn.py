@@ -79,7 +79,6 @@ async def run_proactive_agent_turn(
     optional delivery tool, Core build, and runner lifecycle.
     """
     # Kept local to avoid making the Core builder import this proactive helper.
-    from astrbot.core.astr_agent_run_util import NativeExecutionRun
     from astrbot.core.astr_main_agent import _get_session_conv, build_main_agent
     from astrbot.core.cron.events import CronMessageEvent
     from astrbot.core.execution import (
@@ -87,10 +86,8 @@ async def run_proactive_agent_turn(
         CoreExecutionSpec,
         bind_core_execution_head,
     )
-    from astrbot.core.executors.registry import (
-        resolve_executor_factory,
-        resolve_executor_id,
-    )
+    from astrbot.core.executors.assembly import build_native_executor_assembly
+    from astrbot.core.executors.registry import resolve_executor_id
     from astrbot.core.executors.runtime import drive_executor_run
     from astrbot.core.interaction.turn_state import (
         bind_interaction_turn_core_execution_journal,
@@ -201,11 +198,12 @@ async def run_proactive_agent_turn(
                     CoreExecutionDeadlineView.from_budget(deadline)
                 )
             bind_interaction_turn_core_execution_journal(event, execution_head)
-        native_attachment = NativeExecutionRun.from_runner(
-            result.agent_runner,
+        native_assembly = build_native_executor_assembly(
+            executor_id=executor_id,
+            runner=result.agent_runner,
             core_port=execution_head,
         )
-        native_executor = native_attachment.executor
+        native_executor = native_assembly.executor
         await result.reset_prepared_runner()
         runner_reset_completed = True
         provider_settings = config.provider_settings
@@ -215,8 +213,7 @@ async def run_proactive_agent_turn(
             min_value=1,
             field_name="provider_settings.max_agent_step",
         )
-        executor_run = resolve_executor_factory(executor_id)(
-            executor=native_executor,
+        executor_run = native_assembly.build_run(
             max_step=agent_max_step,
             should_stop=event.is_stopped,
         )

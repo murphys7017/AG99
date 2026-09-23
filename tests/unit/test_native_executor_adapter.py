@@ -13,10 +13,12 @@ from astrbot.core.astr_agent_run_util import (
     run_live_agent,
 )
 from astrbot.core.execution import CoreExecutionArtifact, CoreExecutionProgress
+from astrbot.core.executors.assembly import build_native_executor_assembly
 from astrbot.core.executors.contracts import (
     ExecutionFinalUpdate,
     ExecutionProgressUpdate,
 )
+from astrbot.core.executors.registry import register_executor_factory
 from astrbot.core.message.components import Json
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -106,6 +108,29 @@ def test_native_executor_adapter_routes_follow_up_through_core_port():
         }
     ]
     assert runner.follow_up_messages == []
+
+
+def test_native_executor_assembly_builds_attachment_and_registered_run():
+    runner = FakeNativeRunner()
+
+    assembly = build_native_executor_assembly(
+        executor_id="native",
+        runner=runner,
+    )
+
+    assert assembly.executor is assembly.attachment.executor
+    assert assembly.executor_id == "native"
+    assert isinstance(assembly.build_run(max_step=1), NativeExecutorRun)
+
+
+def test_native_executor_assembly_rejects_registered_non_native_runner_path():
+    register_executor_factory("assembly-test", lambda **_kwargs: object())
+
+    with pytest.raises(RuntimeError, match="not available on the Native assembly path"):
+        build_native_executor_assembly(
+            executor_id="assembly-test",
+            runner=FakeNativeRunner(),
+        )
 
 
 def test_native_executor_adapter_projects_facts_through_core_port():

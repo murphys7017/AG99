@@ -204,7 +204,7 @@ executor_result_and_selection_foundation:
     to ordinary Interaction until its adapter preserves those contracts.
 
 native_executor_live_smoke_acceptance:
-  date: '2026-09-23'
+  date: '2026-09-22'
   class: validation
   risk: high
   status: accepted_as_native_baseline
@@ -226,6 +226,32 @@ native_executor_live_smoke_acceptance:
     shared executor assembly boundary, preserving its existing rich output
     bridge. Commit that bounded refactor separately before any result-bridge
     production migration.
+
+native_executor_assembly_convergence:
+  date: '2026-09-22'
+  class: refactor
+  risk: high
+  status: reviewed_committed_pending_live_acceptance
+  scope: >-
+    Converge ordinary Interaction and proactive Core Native construction behind
+    one assembly boundary while retaining the existing Native rich output path.
+  changes: >-
+    Rename the lifecycle attachment to NativeExecutionAttachment, add
+    build_native_executor_assembly(), and use it from both production entry
+    points. The assembly builds the registry-selected neutral run for proactive
+    execution and exposes the Native Body used by ordinary rich output.
+  non_goals: >-
+    Do not migrate ordinary output to ExecutionResultOutputBridge, add a second
+    executor, change Expression/effect/Live2D behavior, or alter platform/TTS
+    delivery.
+  validation: >-
+    Scoped assembly, Native adapter, proactive-turn, and Core execution checks
+    passed 92 cases. Ruff, compileall, import, and git diff checks passed.
+    No service restart or additional live validation was performed because this
+    batch preserves the accepted Native runtime behavior.
+  next: >-
+    Select a real second executor and define its explicit assembly inputs,
+    output constraints, cancellation semantics, and supported capability set.
 
 minimax_stt_silence_handling:
   date: '2026-09-19'

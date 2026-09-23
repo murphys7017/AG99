@@ -2,7 +2,7 @@
 
 > 5.6 的逐批编码指令见 [`internal-executor-replacement-implementation-guide.md`](internal-executor-replacement-implementation-guide.md)。本文件保留架构目标、边界和批次定义；实施时以操作级手册中的文件、接口和退出条件为准。
 
-日期：2026-09-23。状态：R1-R7 的最小替换基础已审阅并提交；当前 Native 基线已完成用户手动 OLV/Cron smoke 验收；R8 需要选定真实执行器后实施。
+日期：2026-09-22。状态：R1-R7 的最小替换基础已审阅并提交；当前 Native 基线已完成用户手动 OLV/Cron smoke 验收；R8 需要选定真实执行器后实施。
 
 逐批编码步骤、修改范围和验证命令见
 [内部可替换执行器：5.6 操作级实施手册](internal-executor-replacement-implementation-guide.md)。
@@ -203,9 +203,17 @@ R7 实施记录（2026-09-22）：新增 Scripted test Body，验证它可经同
 该验证证明注册/选择/驱动的替换骨架，不替代实际平台输出、取消、补输入和 Cron 投递的真实
 适配验收；这些仍是 R8 引入指定执行器时的门槛。
 
+R1-R7 装配收敛记录（2026-09-22）：新增 `executors/assembly.py`，普通交互和主动
+任务均通过 `build_native_executor_assembly()` 将当前配置已解析的 `executor_id`、Native
+runner 和 Core port 装配为同一份 Native Body attachment。旧的 `NativeExecutionRun` 改名为
+`NativeExecutionAttachment`，与中立 `NativeExecutorRun` 明确区分。普通交互继续持有
+`NativeExecutionOutputBridge`，不会因此丢失流式、TTS、工具状态或富组件；主动任务从同一
+assembly 创建 registry 管理的中立 run。非 Native 仍会在 Native assembly 边界明确拒绝，等待
+真实 Adapter 自行提供装配路径。
+
 每批完成后同步实际进度，提交按用户指令执行；服务由用户手动启动。失败先修当前批，不以“下一批会解决”为理由继续扩大范围。
 
-Native 基线验收记录（2026-09-23）：用户已于 2026-09-22 完成当前 Native
+Native 基线验收记录（2026-09-22）：用户已完成当前 Native
 执行链的手动 OLV/Cron smoke 测试并确认没有阻塞问题。保留日志可见当前 bot
 配置下的能力快照、Personal 表达、OLV 图像输入和 turn settlement。此记录只允许
 继续收敛普通交互的装配边界；它不替代中断边界的专项验收，也不表示第二执行器已接入。

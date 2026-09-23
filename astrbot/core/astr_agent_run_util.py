@@ -77,8 +77,12 @@ class NativeExecutionEvidence:
 
 
 @dataclass(slots=True)
-class NativeExecutionRun:
-    """Own one default Native Body attachment and terminal projection."""
+class NativeExecutionAttachment:
+    """Own the Native Body attachment and legacy terminal projection.
+
+    This is intentionally distinct from :class:`NativeExecutorRun`, which is
+    the executor-neutral streamed run consumed by the shared coordinator.
+    """
 
     executor: "NativeExecutorAdapter"
     core_port: "CoreExecutionPort | None" = None
@@ -90,7 +94,7 @@ class NativeExecutionRun:
         runner: AgentRunner,
         *,
         core_port: "CoreExecutionPort | None" = None,
-    ) -> "NativeExecutionRun":
+    ) -> "NativeExecutionAttachment":
         return cls(
             executor=NativeExecutorAdapter(runner, core_port=core_port),
             core_port=core_port,
