@@ -24,6 +24,7 @@ from astrbot.core.conversation_mgr import ConversationManager
 from astrbot.core.cron import CronJobManager
 from astrbot.core.db import BaseDatabase
 from astrbot.core.execution_ledger import CoreExecutionLedger
+from astrbot.core.executors.session_registry import ExternalExecutorSessionRegistry
 from astrbot.core.interaction import (
     InteractionMiddleware,
     InteractionOutputController,
@@ -94,6 +95,7 @@ class AstrBotCoreLifecycle:
             self.personal_runtime_wake_scheduler
         )
         self.core_execution_ledger = CoreExecutionLedger(db)
+        self.external_executor_sessions = ExternalExecutorSessionRegistry()
         self.pre_output_processor = PreOutputProcessor()
         self.turn_delivery_coordinator = TurnDeliveryCoordinator()
         self._default_chat_provider_warning_emitted = False
@@ -353,6 +355,7 @@ class AstrBotCoreLifecycle:
             self.subagent_orchestrator,
             self.core_execution_ledger,
         )
+        self.star_context.external_executor_sessions = self.external_executor_sessions
         self.interaction_middleware.set_plugin_context(self.star_context)
         self.personal_runtime_manager.bind_plugin_context(self.star_context)
         self.personal_runtime_manager.bind_personal_expression_handler(
@@ -591,6 +594,7 @@ class AstrBotCoreLifecycle:
             await self.personal_runtime_wake_scheduler.shutdown()
             await self.plugin_execution_runtime.shutdown()
             await self.personal_runtime_manager.shutdown()
+            await self.external_executor_sessions.aclose()
             await get_postprocess_manager().shutdown()
 
             plugin_manager = getattr(self, "plugin_manager", None)

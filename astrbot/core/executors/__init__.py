@@ -28,6 +28,7 @@ from .registry import (
     resolve_executor_id,
 )
 from .runtime import drive_executor_run
+from .session_registry import ExternalExecutorSessionRegistry
 
 __all__ = [
     "ExecutionFinalUpdate",
@@ -41,6 +42,7 @@ __all__ = [
     "ExternalExecutorSessionKey",
     "ExecutorRun",
     "drive_executor_run",
+    "ExternalExecutorSessionRegistry",
     "register_executor_factory",
     "resolve_executor_factory",
     "resolve_executor_id",
