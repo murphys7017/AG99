@@ -57,9 +57,9 @@ def prepare_external_executor_request(
     session_id: str,
     workspace_config: Mapping[str, Any],
     supported_capabilities: frozenset[str] = frozenset(),
-    prompt_config: object | None = None,
+    prompt_config: object,
 ) -> ExternalExecutorRequest:
-    """Prepare one stateful external-executor request without Native artifacts."""
+    """Prepare one request using the active bot's frozen Core prompt budget."""
 
     normalized_executor_id = _require_non_empty(executor_id, "executor_id").lower()
     normalized_config_id = _require_non_empty(runtime_config_id, "runtime_config_id")

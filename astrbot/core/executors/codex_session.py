@@ -32,12 +32,14 @@ class CodexSessionManager:
         env: Mapping[str, str] | None = None,
         request_timeout: float = 30.0,
         stderr_limit: int = 16_384,
+        max_message_bytes: int = 4 * 1024 * 1024,
     ) -> None:
         self.executable = executable
         self.cwd = str(cwd) if cwd is not None else None
         self.env = dict(env) if env is not None else None
         self.request_timeout = request_timeout
         self.stderr_limit = max(1024, stderr_limit)
+        self.max_message_bytes = max(1024, max_message_bytes)
         self._process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
@@ -46,37 +48,42 @@ class CodexSessionManager:
         self._request_id = 0
         self._write_lock = asyncio.Lock()
         self._turn_lock = asyncio.Lock()
+        self._start_lock = asyncio.Lock()
         self._closed = False
+        self._reader_failure: CodexSessionError | None = None
         self.thread_id: str | None = None
+        self._active_turn_id: str | None = None
 
     async def start(self) -> None:
-        if self._closed:
-            raise CodexSessionError("Codex session is closed")
-        if self._process is not None:
-            return
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                self.executable,
-                "app-server",
-                "--stdio",
-                cwd=self.cwd,
-                env=self.env or os.environ.copy(),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        async with self._start_lock:
+            if self._closed:
+                raise CodexSessionError("Codex session is closed")
+            if self._process is not None:
+                return
+            try:
+                self._process = await asyncio.create_subprocess_exec(
+                    self.executable,
+                    "app-server",
+                    "--stdio",
+                    cwd=self.cwd,
+                    env=self.env or os.environ.copy(),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except OSError as exc:
+                raise CodexSessionError(f"failed to start Codex app-server: {exc}") from exc
+            self._reader_failure = None
+            self._reader_task = asyncio.create_task(self._read_stdout())
+            self._stderr_task = asyncio.create_task(self._read_stderr())
+            await self._request(
+                "initialize",
+                {
+                    "clientInfo": {"name": "astrbot", "version": "core"},
+                    "capabilities": {"experimentalApi": False},
+                },
             )
-        except OSError as exc:
-            raise CodexSessionError(f"failed to start Codex app-server: {exc}") from exc
-        self._reader_task = asyncio.create_task(self._read_stdout())
-        self._stderr_task = asyncio.create_task(self._read_stderr())
-        await self._request(
-            "initialize",
-            {
-                "clientInfo": {"name": "astrbot", "version": "core"},
-                "capabilities": {"experimentalApi": False},
-            },
-        )
-        await self._notify("initialized")
+            await self._notify("initialized")
 
     async def start_thread(self, *, cwd: str | None = None) -> str:
         await self.start()
@@ -106,21 +113,38 @@ class CodexSessionManager:
         if self.thread_id is None:
             await self.start_thread()
         async with self._turn_lock:
-            await self._request(
+            result = await self._request(
                 "turn/start",
                 {"threadId": self.thread_id, "input": [{"type": "text", "text": prompt}]},
             )
+            turn = result.get("turn") if isinstance(result, dict) else None
+            self._active_turn_id = (
+                str(turn.get("id"))
+                if isinstance(turn, dict) and turn.get("id")
+                else None
+            )
             while True:
                 message = await self._notifications.get()
+                if isinstance(message, BaseException):
+                    raise message
+                params = message.get("params")
+                if (
+                    self._active_turn_id
+                    and isinstance(params, dict)
+                    and params.get("turnId")
+                    and str(params["turnId"]) != self._active_turn_id
+                ):
+                    continue
                 yield message
                 method = message.get("method")
                 if method in {"turn/completed", "turn/failed", "turn/cancelled"}:
+                    self._active_turn_id = None
                     return
 
     async def interrupt(self, turn_id: str | None = None) -> None:
         if self._process is None:
             return
-        params = {"turnId": turn_id} if turn_id else None
+        params = {"turnId": turn_id or self._active_turn_id} if (turn_id or self._active_turn_id) else None
         await self._request("turn/interrupt", params)
 
     async def aclose(self) -> None:
@@ -183,7 +207,9 @@ class CodexSessionManager:
         assert self._process is not None and self._process.stdout is not None
         try:
             while True:
-                line = await self._process.stdout.readline()
+                line = await self._process.stdout.readuntil(b"\n")
+                if len(line) > self.max_message_bytes:
+                    raise CodexSessionError("Codex app-server message exceeds size limit")
                 if not line:
                     raise CodexSessionError("Codex app-server closed stdout")
                 message = decode_message(line)
@@ -197,6 +223,8 @@ class CodexSessionManager:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            self._reader_failure = exc if isinstance(exc, CodexSessionError) else CodexSessionError(str(exc))
+            await self._notifications.put(self._reader_failure)
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(exc)

@@ -44,7 +44,8 @@ class CodexExecutorRun:
 
     def request_stop(self) -> None:
         self._stop_requested = True
-        self._interrupt_task = asyncio.create_task(self._session.interrupt())
+        if self._interrupt_task is None or self._interrupt_task.done():
+            self._interrupt_task = asyncio.create_task(self._session.interrupt())
         if self._turn_task is None or self._turn_task.done():
             return
         self._turn_task.cancel()
@@ -66,9 +67,12 @@ class CodexExecutorRun:
                 await task
         interrupt_task = self._interrupt_task
         if interrupt_task is not None and not interrupt_task.done():
-            interrupt_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await interrupt_task
+            try:
+                await asyncio.wait_for(asyncio.shield(interrupt_task), timeout=2)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                interrupt_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await interrupt_task
 
     async def stream(self) -> AsyncIterator[ExecutionUpdate]:
         if self._closed:

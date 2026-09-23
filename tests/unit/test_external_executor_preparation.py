@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from astrbot.core.execution import CoreCapabilitySnapshot, CoreExecutionSpec
@@ -52,6 +54,10 @@ def _spec() -> CoreExecutionSpec:
     )
 
 
+def _prompt_config():
+    return SimpleNamespace(max_context_length=64)
+
+
 def _spec_with_admitted_capability() -> CoreExecutionSpec:
     spec = _spec()
 
@@ -88,6 +94,7 @@ def test_prepare_external_request_uses_core_projection_and_scoped_workspace(tmp_
             "workspace_root": str(workspace),
             "workspace": "project",
         },
+        prompt_config=_prompt_config(),
     )
 
     assert request.workspace == child.resolve()
@@ -111,6 +118,7 @@ def test_prepare_external_request_uses_core_projection_and_scoped_workspace(tmp_
             "workspace": "project",
         },
         supported_capabilities=frozenset({"workspace_io", "shell"}),
+        prompt_config=_prompt_config(),
     )
     assert admitted_request.capabilities == ("workspace_io",)
 
@@ -135,6 +143,7 @@ def test_prepare_external_request_rejects_workspace_outside_root(tmp_path):
                 "workspace_root": str(workspace),
                 "workspace": str(outside),
             },
+            prompt_config=_prompt_config(),
         )
 
 
@@ -153,4 +162,5 @@ def test_prepare_external_request_rejects_relative_workspace_root(tmp_path):
             runtime_config_id="bot-a",
             session_id="qq:10001",
             workspace_config={"workspace_root": "workspace"},
+            prompt_config=_prompt_config(),
         )

@@ -43,6 +43,7 @@ def _request(tmp_path: Path, executor_id="codex_cli"):
         runtime_config_id="bot-a",
         session_id="session-a",
         workspace_config={"workspace_root": str(root)},
+        prompt_config=type("Config", (), {"max_context_length": 64})(),
     )
 
 
