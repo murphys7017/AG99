@@ -291,6 +291,9 @@ class Context:
         self._event_queue = event_queue
         """事件队列。消息平台通过事件队列传递消息事件。"""
         self.registered_web_apis: list[RegisteredWebApi] = []
+        self._registered_web_api_owners: dict[
+            tuple[str, tuple[str, ...]], PluginOwnerScope
+        ] = {}
         # Deprecated plugin tasks belong to this lifecycle, not to the Context
         # class. A class-level list leaked tasks across reloads and instances.
         self._register_tasks: list[Awaitable] = []
@@ -1879,6 +1882,14 @@ class Context:
                 )
             return False
 
+        def _owner_scope_matches(scope: PluginOwnerScope) -> bool:
+            if clean_module_path and (
+                scope.module_path == clean_module_path
+                or scope.module_path.startswith(f"{clean_module_path}.")
+            ):
+                return True
+            return bool(clean_plugin_name and scope.plugin_name == clean_plugin_name)
+
         removed: dict[str, int] = {}
 
         def _sweep(attr: str, label: str) -> None:
@@ -1895,6 +1906,21 @@ class Context:
         _sweep("_interaction_lifecycle_observers", "interaction_lifecycle_observers")
         _sweep("_persona_effects", "persona_effects")
         _sweep("_runtime_observation_sensors", "runtime_observation_sensors")
+
+        kept_web_apis: list[RegisteredWebApi] = []
+        removed_web_apis = 0
+        for api in self.registered_web_apis:
+            route, _view_handler, methods, _desc = api
+            key = (route, tuple(methods))
+            owner = self._registered_web_api_owners.get(key)
+            if owner is not None and _owner_scope_matches(owner):
+                removed_web_apis += 1
+                self._registered_web_api_owners.pop(key, None)
+                continue
+            kept_web_apis.append(api)
+        if removed_web_apis:
+            self.registered_web_apis = kept_web_apis
+            removed["web_apis"] = removed_web_apis
 
         if removed:
             logger.info(
@@ -2021,11 +2047,19 @@ class Context:
         Note:
             如果相同路由和方法已注册，会替换现有的 API。
         """
+        key = (route, tuple(methods))
+        owner = current_plugin_owner_scope()
         for idx, api in enumerate(self.registered_web_apis):
             if api[0] == route and methods == api[2]:
                 self.registered_web_apis[idx] = (route, view_handler, methods, desc)
+                if owner is None:
+                    self._registered_web_api_owners.pop(key, None)
+                else:
+                    self._registered_web_api_owners[key] = owner
                 return
         self.registered_web_apis.append((route, view_handler, methods, desc))
+        if owner is not None:
+            self._registered_web_api_owners[key] = owner
 
     """
     以下的方法已经不推荐使用。请从 AstrBot 文档查看更好的注册方式。

@@ -19,9 +19,9 @@
 
 - **位置**：`astrbot/core/star/context.py`
 - **问题**：Web API 注册表原来是类属性，可能跨 Context 实例和 reload 生命周期共享。
-- **处理**：改为 Context 实例属性；Dashboard 继续从当前 `star_context` 读取。
-- **未完成**：Web API 尚未记录 owner，插件卸载时不会按插件自动撤销路由。
-- **验证**：静态检查、Dashboard 调用点检查；插件 reload 后路由回收仍需运行时验收。
+- **处理**：改为 Context 实例属性；Dashboard 继续从当前 `star_context` 读取；插件 owner scope 下注册的路由记录 owner，并在卸载时撤销。
+- **未完成**：无 owner 的旧注册仍无法按插件自动撤销；完整插件 reload 仍需运行时验收。
+- **验证**：静态检查、Dashboard 动态路由测试、owner 回收 smoke 通过。
 
 ## 低风险候选
 
