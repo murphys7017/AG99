@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +44,7 @@ async def execute_external_core_turn(
     deadline: TurnDeadlineBudget,
     output_controller: Any,
     submission_metadata: dict[str, Any] | None = None,
+    on_started: Callable[[CoreExecutionHead, str], None] | None = None,
 ) -> ExternalCoreExecutionResult:
     """Prepare, assemble, drive and output one configured external Body."""
 
@@ -85,6 +86,8 @@ async def execute_external_core_turn(
         executor_config=executor_config,
     )
     run = assembly.build_run(request)
+    if on_started is not None:
+        on_started(head, run.executor_id)
     result = await drive_executor_to_personal_output(
         event=event,
         output_controller=output_controller,

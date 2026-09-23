@@ -169,9 +169,13 @@ class CodexSessionManager:
             if not future.done():
                 future.set_exception(CodexSessionError("Codex session closed"))
         self._pending.clear()
-        for task in (self._reader_task, self._stderr_task):
-            if task is not None:
-                task.cancel()
+        tasks = tuple(
+            task
+            for task in (self._reader_task, self._stderr_task)
+            if task is not None
+        )
+        for task in tasks:
+            task.cancel()
         if process is not None:
             if process.returncode is None:
                 process.terminate()
@@ -181,6 +185,8 @@ class CodexSessionManager:
                     process.kill()
             with contextlib.suppress(Exception):
                 await process.wait()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._reader_task = None
         self._stderr_task = None
 

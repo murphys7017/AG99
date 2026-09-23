@@ -340,6 +340,27 @@ class InternalAgentSubStage(Stage):
                     core_deadline = get_interaction_turn_deadline(event)
                     if core_deadline is None:
                         raise RuntimeError("Core interaction deadline is unavailable")
+
+                    def register_external_input_control(head, selected_executor_id):
+                        nonlocal input_control, input_control_registered
+                        runtime_manager = self.ctx.personal_runtime_manager
+                        if runtime_manager is None:
+                            return
+                        input_control = CoreFollowUpControl(
+                            head=head,
+                            executor_id=selected_executor_id,
+                            actor_id=str(event.get_sender_id() or "").strip(),
+                            is_stopping=lambda: bool(
+                                event.get_extra("agent_stop_requested")
+                            ),
+                        )
+                        input_control_registered = (
+                            runtime_manager.register_active_input_control(
+                                event,
+                                input_control,
+                            )
+                        )
+
                     external = await execute_external_core_turn(
                         context=self.ctx.plugin_manager.context,
                         event=event,
@@ -358,6 +379,7 @@ class InternalAgentSubStage(Stage):
                             "executor_id": executor_id,
                             "streaming": False,
                         },
+                        on_started=register_external_input_control,
                     )
                     execution_head = external.head
                     executor_activated = True
