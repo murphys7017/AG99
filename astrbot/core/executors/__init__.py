@@ -4,6 +4,7 @@ This package intentionally contains only executor-facing contracts. Core
 lifecycle ownership remains in :mod:`astrbot.core.execution`.
 """
 
+from .codex_cli import CodexExecutorRun, build_codex_executor_run
 from .codex_session import CodexSessionError, CodexSessionManager
 from .contracts import (
     ExecutionFinalUpdate,
@@ -45,4 +46,6 @@ __all__ = [
     "prepare_external_executor_request",
     "CodexSessionError",
     "CodexSessionManager",
+    "CodexExecutorRun",
+    "build_codex_executor_run",
 ]
