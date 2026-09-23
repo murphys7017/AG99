@@ -16,6 +16,10 @@ def test_codex_protocol_round_trip_and_error():
     message = json.loads(encode_request(7, "thread/start").decode())
     assert decode_message(json.dumps(message)) == message
     assert parse_error({"jsonrpc": "2.0", "id": 7, "result": {}}) is None
+    assert decode_message(
+        '{"method":"remoteControl/status/changed","params":{},"emittedAtMs":1}'
+    )["method"] == "remoteControl/status/changed"
+    assert decode_message('{"id":7,"result":{}}')["id"] == 7
     with pytest.raises(CodexProtocolError):
         decode_message(b"not-json")
 

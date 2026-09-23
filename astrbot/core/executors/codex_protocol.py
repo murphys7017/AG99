@@ -37,8 +37,10 @@ def decode_message(raw: bytes | str) -> dict[str, Any]:
         value = json.loads(raw)
     except (TypeError, ValueError) as exc:
         raise CodexProtocolError("Codex app-server emitted invalid JSON") from exc
-    if not isinstance(value, dict) or value.get("jsonrpc") != "2.0":
+    if not isinstance(value, dict):
         raise CodexProtocolError("Codex app-server emitted an invalid JSON-RPC object")
+    if value.get("jsonrpc", "2.0") != "2.0":
+        raise CodexProtocolError("Codex app-server emitted an unsupported JSON-RPC version")
     if "method" not in value and "id" not in value:
         raise CodexProtocolError("Codex JSON-RPC object has neither method nor id")
     return value
