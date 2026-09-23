@@ -1100,6 +1100,7 @@ class ToolLoopAgentRunner(BaseAgentRunner[TContext]):
                 tool_calls_info=AssistantMessageSegment(
                     tool_calls=llm_resp.to_openai_to_calls_model(),
                     content=parts,
+                    anthropic_content_blocks=llm_resp.anthropic_content_blocks,
                 ),
                 tool_calls_result=tool_call_result_blocks,
             )

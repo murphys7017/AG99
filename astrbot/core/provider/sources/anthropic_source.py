@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
@@ -12,7 +13,13 @@ from anthropic.types.usage import Usage
 
 from astrbot import logger
 from astrbot.api.provider import Provider
-from astrbot.core.agent.message import AudioURLPart, ContentPart, ImageURLPart, TextPart
+from astrbot.core.agent.message import (
+    AudioURLPart,
+    ContentPart,
+    ImageURLPart,
+    TextPart,
+    is_checkpoint_message,
+)
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.output_contract import CompiledOutputContract, OutputContract
 from astrbot.core.provider.entities import LLMResponse, TokenUsage
@@ -43,6 +50,19 @@ from ..register import register_provider_adapter
 class ProviderAnthropic(Provider):
     def supports_output_contract_strategy(self, strategy: str) -> bool:
         return strategy in {"prompt_only", "protocol_tool_call"}
+
+    def _ensure_message_to_dicts(
+        self,
+        messages: list[dict] | list[Any] | None,
+    ) -> list[dict]:
+        """Retain Anthropic continuation blocks that generic providers discard."""
+        if not messages:
+            return []
+        return [
+            message.model_dump() if hasattr(message, "model_dump") else dict(message)
+            for message in messages
+            if not is_checkpoint_message(message)
+        ]
 
     @staticmethod
     def _resolve_output_contract(
@@ -242,6 +262,19 @@ class ProviderAnthropic(Provider):
             if message["role"] == "system":
                 system_prompt = message["content"] or "<empty system prompt>"
             elif message["role"] == "assistant":
+                original_blocks = message.get("anthropic_content_blocks")
+                if isinstance(original_blocks, list):
+                    # MiniMax M3 requires every thinking/text/tool_use block
+                    # from its previous assistant response to be round-tripped
+                    # unchanged when submitting tool results.
+                    new_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": copy.deepcopy(original_blocks),
+                        },
+                    )
+                    continue
+
                 blocks = []
                 reasoning_content = ""
                 thinking_signature = ""
@@ -564,7 +597,14 @@ class ProviderAnthropic(Provider):
                 f"Anthropic completion is empty. completion_id={completion.id}"
             )
 
-        llm_response = LLMResponse(role="assistant")
+        llm_response = LLMResponse(
+            role="assistant",
+            raw_completion=completion,
+            anthropic_content_blocks=[
+                content_block.model_dump(mode="json")
+                for content_block in completion.content
+            ],
+        )
 
         for content_block in completion.content:
             if content_block.type == "text":
@@ -622,6 +662,9 @@ class ProviderAnthropic(Provider):
                     payloads.get("tool_choice", "auto")
                 )
 
+        # Keep the SDK's original block shape so provider-specific blocks are
+        # not lost while the stream is being consumed.
+        content_blocks: dict[int, dict[str, Any]] = {}
         # 用于累积工具调用信息
         tool_use_buffer = {}
         # 用于累积最终结果
@@ -651,6 +694,9 @@ class ProviderAnthropic(Provider):
                     id = event.message.id
                     usage = self._extract_usage(event.message.usage)
                 if event.type == "content_block_start":
+                    content_blocks[event.index] = event.content_block.model_dump(
+                        mode="json"
+                    )
                     if event.content_block.type == "text":
                         # 文本块开始
                         yield LLMResponse(
@@ -672,6 +718,9 @@ class ProviderAnthropic(Provider):
                     if event.delta.type == "text_delta":
                         # 文本增量
                         final_text += event.delta.text
+                        content_blocks.setdefault(
+                            event.index, {"type": "text", "text": ""}
+                        )["text"] += event.delta.text
                         yield LLMResponse(
                             role="assistant",
                             completion_text=event.delta.text,
@@ -683,6 +732,11 @@ class ProviderAnthropic(Provider):
                         # 思考增量
                         reasoning = event.delta.thinking
                         if reasoning:
+                            block = content_blocks.setdefault(
+                                event.index,
+                                {"type": "thinking", "thinking": ""},
+                            )
+                            block["thinking"] = block.get("thinking", "") + reasoning
                             yield LLMResponse(
                                 role="assistant",
                                 reasoning_content=reasoning,
@@ -694,6 +748,13 @@ class ProviderAnthropic(Provider):
                             reasoning_content += reasoning
                     elif event.delta.type == "signature_delta":
                         reasoning_signature = event.delta.signature
+                        if event.index in content_blocks:
+                            content_blocks[event.index]["signature"] = event.delta.signature
+                    elif event.delta.type == "citations_delta":
+                        block = content_blocks.setdefault(event.index, {})
+                        block.setdefault("citations", []).append(
+                            event.delta.citation.model_dump(mode="json")
+                        )
                     elif event.delta.type == "input_json_delta":
                         # 工具调用参数增量
                         if event.index in tool_use_buffer:
@@ -712,6 +773,9 @@ class ProviderAnthropic(Provider):
                         try:
                             if "input_json" in tool_info:
                                 tool_info["input"] = json.loads(tool_info["input_json"])
+
+                            if event.index in content_blocks:
+                                content_blocks[event.index]["input"] = tool_info["input"]
 
                             # 添加到最终结果
                             final_tool_calls.append(
@@ -752,6 +816,9 @@ class ProviderAnthropic(Provider):
             id=id,
             reasoning_content=reasoning_content,
             reasoning_signature=reasoning_signature or None,
+            anthropic_content_blocks=[
+                content_blocks[index] for index in sorted(content_blocks)
+            ],
         )
 
         if final_tool_calls:

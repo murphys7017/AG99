@@ -366,6 +366,9 @@ class LLMResponse:
     reasoning_signature: str | None = None
     """The signature of the reasoning content, if any."""
 
+    anthropic_content_blocks: list[dict[str, Any]] | None = None
+    """Exact Anthropic assistant blocks for a following tool-result request."""
+
     raw_completion: (
         ChatCompletion | GenerateContentResponse | AnthropicMessage | None
         | Response
@@ -394,6 +397,7 @@ class LLMResponse:
         tools_call_extra_content: dict[str, dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
         reasoning_signature: str | None = None,
+        anthropic_content_blocks: list[dict[str, Any]] | None = None,
         raw_completion: ChatCompletion
         | GenerateContentResponse
         | AnthropicMessage
@@ -432,6 +436,7 @@ class LLMResponse:
         self.tools_call_extra_content = tools_call_extra_content
         self.reasoning_content = reasoning_content
         self.reasoning_signature = reasoning_signature
+        self.anthropic_content_blocks = anthropic_content_blocks
         self.raw_completion = raw_completion
         self.is_chunk = is_chunk
 

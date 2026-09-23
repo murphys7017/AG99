@@ -583,6 +583,52 @@ async def test_prepare_payload_does_not_merge_non_consecutive_tool_results():
     ]
 
 
+@pytest.mark.asyncio
+async def test_prepare_payload_preserves_exact_anthropic_assistant_blocks():
+    provider = object.__new__(anthropic_source.ProviderAnthropic)
+    original_blocks = [
+        {"type": "thinking", "thinking": "consider", "signature": "sig-1"},
+        {"type": "text", "text": "I will search."},
+        {
+            "type": "tool_use",
+            "id": "call_01",
+            "name": "web_search",
+            "input": {"query": "weather"},
+        },
+        {"type": "text", "text": "Waiting for the result."},
+    ]
+
+    _, messages = await provider._prepare_payload(
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "flattened"}],
+                "tool_calls": [],
+                "anthropic_content_blocks": original_blocks,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_01",
+                "content": "sunny",
+            },
+        ]
+    )
+
+    assert messages == [
+        {"role": "assistant", "content": original_blocks},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_01",
+                    "content": "sunny",
+                }
+            ],
+        },
+    ]
+
+
 def test_sanitize_assistant_messages_removes_orphaned_tool_results_and_merges():
     payloads = {
         "messages": [

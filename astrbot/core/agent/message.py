@@ -212,6 +212,9 @@ class Message(BaseModel):
     tool_call_id: str | None = None
     """The ID of the tool call."""
 
+    anthropic_content_blocks: list[dict[str, Any]] | None = None
+    """Exact Anthropic assistant blocks retained for the immediate tool continuation."""
+
     _no_save: bool = PrivateAttr(default=False)
     _checkpoint_after: CheckpointData | None = PrivateAttr(default=None)
 
@@ -243,6 +246,8 @@ class Message(BaseModel):
             data.pop("tool_calls", None)
         if self.tool_call_id is None:
             data.pop("tool_call_id", None)
+        if self.anthropic_content_blocks is None:
+            data.pop("anthropic_content_blocks", None)
         return data
 
 
@@ -347,6 +352,7 @@ def dump_messages_with_checkpoints(messages: list[Message]) -> list[dict]:
     dumped: list[dict] = []
     for message in messages:
         message_data = message.model_dump()
+        message_data.pop("anthropic_content_blocks", None)
         if isinstance(message.content, list):
             message_data["content"] = [
                 part.model_dump()

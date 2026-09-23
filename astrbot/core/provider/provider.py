@@ -243,9 +243,15 @@ class Provider(AbstractProvider):
             if is_checkpoint_message(message):
                 continue
             if isinstance(message, Message):
-                dicts.append(message.model_dump())
+                message_data = message.model_dump()
+                # This is an Anthropic continuation detail, not part of the
+                # provider-neutral conversation schema.
+                message_data.pop("anthropic_content_blocks", None)
+                dicts.append(message_data)
             else:
-                dicts.append(message)
+                message_data = dict(message)
+                message_data.pop("anthropic_content_blocks", None)
+                dicts.append(message_data)
 
         return dicts
 

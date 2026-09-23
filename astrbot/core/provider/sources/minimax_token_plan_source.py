@@ -52,10 +52,13 @@ class ProviderMiniMaxTokenPlan(ProviderAnthropic):
         self.set_model(configured_model)
 
     def supports_output_contract_strategy(self, strategy: str) -> bool:
-        # MiniMax's Anthropic-compatible API supports both tool definitions and
-        # required tool selection, so strict output contracts can use a real
-        # protocol-level tool call instead of relying on prompt-only JSON.
-        return strategy in {"prompt_only", "protocol_tool_call"}
+        if strategy == "prompt_only":
+            return True
+        # M3 accepts normal tool_choice=auto calls, but its Anthropic-compatible
+        # endpoint does not reliably honor the required/any selection used by
+        # strict output contracts. Keep protocol contracts for the older models.
+        model_name = str(self.get_model() or "").strip().casefold()
+        return strategy == "protocol_tool_call" and model_name != "minimax-m3"
 
     async def get_models(self) -> list[str]:
         key = self.chosen_api_key

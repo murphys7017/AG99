@@ -456,7 +456,7 @@ def test_render_engine_uses_minimax_provider_output_contract_capability():
     assert result.compiled_output_contract.tool_name == "persona_expression"
 
 
-def test_render_engine_uses_protocol_tool_call_for_minimax_token_plan_contract():
+def test_render_engine_degrades_m3_output_contract_to_prompt_only():
     from astrbot.core.output_contract import OutputContract
     from astrbot.core.provider.sources.minimax_token_plan_source import (
         ProviderMiniMaxTokenPlan,
@@ -485,12 +485,12 @@ def test_render_engine_uses_protocol_tool_call_for_minimax_token_plan_contract()
     )
 
     assert result.compiled_output_contract is not None
-    assert result.compiled_output_contract.strategy == "protocol_tool_call"
-    assert result.compiled_output_contract.degraded is False
-    assert result.compiled_output_contract.tool_name == "persona_expression"
+    assert result.compiled_output_contract.strategy == "prompt_only"
+    assert result.compiled_output_contract.degraded is True
+    assert result.compiled_output_contract.tool_name is None
 
 
-def test_minimax_token_plan_config_can_enable_required_tool_choice():
+def test_minimax_m27_keeps_required_tool_choice_for_output_contract():
     from astrbot.core.output_contract import OutputContract
     from astrbot.core.provider.sources.minimax_token_plan_source import (
         ProviderMiniMaxTokenPlan,
@@ -509,6 +509,7 @@ def test_minimax_token_plan_config_can_enable_required_tool_choice():
             "id": "minimax-test",
             "type": "minimax_token_plan",
             "key": ["test-key"],
+            "model": "MiniMax-M2.7",
             "minimax_enable_tool_call": True,
         },
         provider_settings={},

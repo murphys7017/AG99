@@ -1214,15 +1214,24 @@ async def test_persona_expression_keeps_prompt_only_contract(
     assert provider.calls[0]["compiled_output_contract"] is compiled
 
 
-def test_minimax_token_plan_supports_required_output_tool_call():
+def test_minimax_token_plan_only_supports_required_output_tool_call_before_m3():
     from astrbot.core.provider.sources.minimax_token_plan_source import (
         ProviderMiniMaxTokenPlan,
     )
 
-    assert ProviderMiniMaxTokenPlan.supports_output_contract_strategy(
-        None,
-        "protocol_tool_call",
+    provider = ProviderMiniMaxTokenPlan(
+        provider_config={
+            "id": "minimax-test",
+            "type": "minimax_token_plan",
+            "key": ["test-key"],
+            "model": "MiniMax-M2.7",
+        },
+        provider_settings={},
     )
+
+    assert provider.supports_output_contract_strategy("protocol_tool_call")
+    provider.set_model("MiniMax-M3")
+    assert not provider.supports_output_contract_strategy("protocol_tool_call")
 
 
 @pytest.mark.asyncio
