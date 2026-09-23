@@ -24,7 +24,8 @@ from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.platform import Platform
-from astrbot.core.platform.astr_message_event import AstrMessageEvent, MessageSesion
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.platform_metadata import supports_personal_runtime
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 from astrbot.core.plugin_admission import (
@@ -69,7 +70,7 @@ if TYPE_CHECKING:
 WebApiHandler = Callable[..., Awaitable[Any]]
 RegisteredWebApi = tuple[str, WebApiHandler, list[str], str]
 ProactiveMessageDispatcher = Callable[
-    [MessageSesion, MessageChain, bool],
+    [MessageSession, MessageChain, bool],
     Awaitable[bool],
 ]
 RuntimeObservationDispatcher = Callable[[Any], Awaitable[Any]]
@@ -693,7 +694,7 @@ class Context:
     def get_proactive_message_target(
         self,
         umo: str | None = None,
-    ) -> MessageSesion | None:
+    ) -> MessageSession | None:
         """Return the configured default target for targetless proactive output."""
         config = self.get_config(umo=umo)
         platform_settings = config.get("platform_settings", {})
@@ -703,7 +704,7 @@ class Context:
         if not target:
             return None
         try:
-            session = MessageSesion.from_str(target)
+            session = MessageSession.from_str(target)
         except (TypeError, ValueError) as exc:
             logger.warning("Invalid proactive message target %r: %s", target, exc)
             return None
@@ -726,13 +727,13 @@ class Context:
     def get_runtime_observation_targets(
         self,
         umo: str | None = None,
-    ) -> tuple[MessageSesion, ...]:
+    ) -> tuple[MessageSession, ...]:
         """Return configured Personal Runtime targets for a session or globally."""
         from astrbot.core.interaction.runtime_targets import (
             configured_runtime_observation_target_values,
         )
 
-        targets: list[MessageSesion] = []
+        targets: list[MessageSession] = []
         seen: set[str] = set()
         unsupported_targets: set[str] = set()
         warned_targets = getattr(
@@ -754,7 +755,7 @@ class Context:
         for config in configs:
             for target in configured_runtime_observation_target_values(config):
                 try:
-                    session = MessageSesion.from_str(target)
+                    session = MessageSession.from_str(target)
                 except (TypeError, ValueError):
                     logger.warning(
                         "Invalid Personal Runtime observation target %r",
@@ -799,7 +800,7 @@ class Context:
 
     async def send_message(
         self,
-        session: str | MessageSesion | None,
+        session: str | MessageSession | None,
         message_chain: MessageChain,
         *,
         finalize: bool = True,
@@ -832,7 +833,7 @@ class Context:
                 return False
         elif isinstance(session, str):
             try:
-                session = MessageSesion.from_str(session)
+                session = MessageSession.from_str(session)
             except BaseException as e:
                 raise ValueError("不合法的 session 字符串: " + str(e))
 
@@ -973,7 +974,7 @@ class Context:
         self,
         registration_id: int,
         kind: str,
-        session: str | MessageSesion | None,
+        session: str | MessageSession | None,
         payload: Mapping[str, Any] | None,
         expires_in_seconds: float,
         coalesce_key: str | None,
@@ -1053,7 +1054,7 @@ class Context:
     async def _runtime_sensor_admitted(
         self,
         registration: _RuntimeObservationSensorRegistration,
-        target_session: MessageSesion,
+        target_session: MessageSession,
     ) -> bool:
         """Resolve the same permission policy against the Sensor's target session."""
         session_id = str(target_session)
@@ -1073,8 +1074,8 @@ class Context:
 
     def _resolve_runtime_observation_session(
         self,
-        session: str | MessageSesion | None,
-    ) -> MessageSesion:
+        session: str | MessageSession | None,
+    ) -> MessageSession:
         if session is None:
             target = self.get_proactive_message_target()
             if target is None:
@@ -1085,20 +1086,20 @@ class Context:
             return target
         if isinstance(session, str):
             try:
-                return MessageSesion.from_str(session)
+                return MessageSession.from_str(session)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"Invalid Runtime Observation session: {session!r}"
                 ) from exc
-        if isinstance(session, MessageSesion):
+        if isinstance(session, MessageSession):
             return session
         raise TypeError(
-            "Runtime Observation session must be a MessageSesion, UMO string, or None"
+            "Runtime Observation session must be a MessageSession, UMO string, or None"
         )
 
     async def _send_message_direct(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> bool:
         """Send through the platform adapter without re-entering Personal Runtime."""

@@ -21,7 +21,7 @@ from astrbot.api.platform import (
     Platform,
     PlatformMetadata,
 )
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.group_reply_candidate import (
     mark_group_conversation_explicit_trigger,
 )
@@ -566,7 +566,7 @@ class WecomAIBotAdapter(Platform):
 
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         """通过消息推送 webhook 发送消息。"""

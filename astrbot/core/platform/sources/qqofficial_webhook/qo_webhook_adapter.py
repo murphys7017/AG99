@@ -9,7 +9,7 @@ from botpy import Client
 from astrbot import logger
 from astrbot.api.event import MessageChain
 from astrbot.api.platform import AstrBotMessage, MessageType, Platform, PlatformMetadata
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.utils.webhook_utils import log_webhook_info
 
 from ...register import register_platform_adapter
@@ -120,7 +120,7 @@ class QQOfficialWebhookPlatformAdapter(Platform):
 
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         await QQOfficialPlatformAdapter._send_by_session_common(

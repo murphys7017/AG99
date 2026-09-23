@@ -14,7 +14,7 @@ from astrbot.api.platform import (
     register_platform_adapter,
 )
 from astrbot.core.message.components import BaseMessageComponent, File, Record, Video
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 
 from .kook_client import KookClient
 from .kook_config import KookConfig
@@ -61,7 +61,7 @@ class KookPlatformAdapter(Platform):
         self._roles_cache = KookRolesRecord("", self.client.http_client)
 
     async def send_by_session(
-        self, session: MessageSesion, message_chain: MessageChain
+        self, session: MessageSession, message_chain: MessageChain
     ):
         inner_message = AstrBotMessage()
         inner_message.session_id = session.session_id

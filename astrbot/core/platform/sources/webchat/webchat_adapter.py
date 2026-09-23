@@ -16,7 +16,7 @@ from astrbot.core.platform import (
     Platform,
     PlatformMetadata,
 )
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from ...register import register_platform_adapter
@@ -85,7 +85,7 @@ class WebChatAdapter(Platform):
 
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         # Proactive sends intentionally bypass middleware in this MVP.

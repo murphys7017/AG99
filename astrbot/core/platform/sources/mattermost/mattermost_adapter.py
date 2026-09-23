@@ -17,7 +17,7 @@ from astrbot.api.platform import (
     Platform,
     PlatformMetadata,
 )
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 
 from ...register import register_platform_adapter
 from .client import MattermostClient
@@ -67,7 +67,7 @@ class MattermostPlatformAdapter(Platform):
 
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         await self.client.send_message_chain(session.session_id, message_chain)

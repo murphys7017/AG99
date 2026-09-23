@@ -12,7 +12,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.utils.metrics import Metric
 
 from .astr_message_event import AstrMessageEvent
-from .message_session import MessageSesion
+from .message_session import MessageSession
 from .platform_metadata import PlatformMetadata
 
 
@@ -133,7 +133,7 @@ class Platform(abc.ABC):
 
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         """通过会话发送消息。该方法旨在让插件能够直接通过**可持久化的会话数据**发送消息，而不需要保存 event 对象。

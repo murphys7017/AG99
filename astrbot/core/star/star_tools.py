@@ -27,7 +27,7 @@ from typing import Any, ClassVar
 from astrbot.api.platform import AstrBotMessage, MessageMember, MessageType
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -60,7 +60,7 @@ class StarTools:
     @classmethod
     async def send_message(
         cls,
-        session: str | MessageSesion,
+        session: str | MessageSession,
         message_chain: MessageChain,
     ) -> bool:
         """根据session(unified_msg_origin)主动发送消息

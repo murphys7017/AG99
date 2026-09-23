@@ -27,7 +27,7 @@ from astrbot.api.platform import (
     register_platform_adapter,
 )
 from astrbot.core import logger
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.media_utils import convert_audio_to_wav
 from astrbot.core.utils.webhook_utils import log_webhook_info
@@ -262,7 +262,7 @@ class WecomPlatformAdapter(Platform):
     @override
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         # 企业微信客服不支持主动发送

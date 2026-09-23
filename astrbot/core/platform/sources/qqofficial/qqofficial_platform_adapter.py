@@ -26,7 +26,7 @@ from astrbot.api.platform import (
     PlatformMetadata,
 )
 from astrbot.core.message.components import BaseMessageComponent
-from astrbot.core.platform.astr_message_event import MessageSesion
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_file
 
@@ -193,11 +193,11 @@ class QQOfficialPlatformAdapter(Platform):
 
     async def send_by_session(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         if session.message_type == MessageType.GROUP_MESSAGE:
-            session = MessageSesion(
+            session = MessageSession(
                 session.platform_id,
                 session.message_type,
                 session.session_id.rsplit("_", 1)[-1],
@@ -210,7 +210,7 @@ class QQOfficialPlatformAdapter(Platform):
 
     async def _send_by_session_common(
         self,
-        session: MessageSesion,
+        session: MessageSession,
         message_chain: MessageChain,
     ) -> None:
         (
