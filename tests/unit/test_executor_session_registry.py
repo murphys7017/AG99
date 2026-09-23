@@ -44,6 +44,23 @@ async def test_registry_reuses_key_and_closes_sessions(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_registry_replaces_session_when_configuration_changes(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "astrbot.core.executors.session_registry.CodexSessionManager", _Manager
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    key = ExternalExecutorSessionKey("codex_cli", "bot-a", "session-a", root, root)
+    registry = ExternalExecutorSessionRegistry()
+    first = await registry.get_or_create(key=key, executor_config={"model": "a"})
+    second = await registry.get_or_create(key=key, executor_config={"model": "b"})
+    assert first is not second
+    assert first.closed is True
+    assert second.closed is False
+    await registry.aclose()
+
+
+@pytest.mark.asyncio
 async def test_registry_rejects_command_arguments(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
