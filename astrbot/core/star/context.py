@@ -297,6 +297,8 @@ class Context:
         # Deprecated plugin tasks belong to this lifecycle, not to the Context
         # class. A class-level list leaked tasks across reloads and instances.
         self._register_tasks: list[Awaitable] = []
+        self._registered_task_owners: dict[int, PluginOwnerScope] = {}
+        self._registered_task_handles: dict[int, set[Any]] = {}
         self._config = config
         """AstrBot 默认配置"""
         self._db = db
@@ -1922,6 +1924,24 @@ class Context:
             self.registered_web_apis = kept_web_apis
             removed["web_apis"] = removed_web_apis
 
+        kept_tasks: list[Awaitable] = []
+        removed_tasks = 0
+        for task in self._register_tasks:
+            owner = self._registered_task_owners.get(id(task))
+            if owner is None or not _owner_scope_matches(owner):
+                kept_tasks.append(task)
+                continue
+            handles = self._registered_task_handles.pop(id(task), set())
+            for running_task in handles:
+                running_task.cancel()
+            self._registered_task_owners.pop(id(task), None)
+            if not handles and hasattr(task, "close"):
+                task.close()  # type: ignore[attr-defined]
+            removed_tasks += 1
+        if removed_tasks:
+            self._register_tasks = kept_tasks
+            removed["tasks"] = removed_tasks
+
         if removed:
             logger.info(
                 "removed plugin capability registrations by owner: "
@@ -2229,3 +2249,28 @@ class Context:
             该方法已弃用。
         """
         self._register_tasks.append(task)
+        owner = current_plugin_owner_scope()
+        if owner is not None:
+            self._registered_task_owners[id(task)] = owner
+
+    def _bind_registered_task_handle(
+        self,
+        registered_task: Awaitable,
+        running_task: Any,
+    ) -> None:
+        """Bind a started task to its owner-scoped registration when available."""
+        task_id = id(registered_task)
+        if task_id not in self._registered_task_owners:
+            return
+        handles = self._registered_task_handles.setdefault(task_id, set())
+        handles.add(running_task)
+
+        def _forget_finished_handle(finished_task: Any) -> None:
+            current = self._registered_task_handles.get(task_id)
+            if current is None:
+                return
+            current.discard(finished_task)
+            if not current:
+                self._registered_task_handles.pop(task_id, None)
+
+        running_task.add_done_callback(_forget_finished_handle)

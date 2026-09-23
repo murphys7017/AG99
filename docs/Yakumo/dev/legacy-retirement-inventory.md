@@ -12,8 +12,9 @@
 - **问题**：旧实现把 `_register_tasks` 定义为类属性，多个 `Context` 实例或 reload 生命周期可能共享任务。
 - **处理**：改为实例属性，解决多个 Context 实例之间共享列表的问题；启动时不再依赖 `task.__name__`。
 - **范围**：不改变 `register_task()` 的公开兼容入口。
-- **未完成**：已启动任务仍统一存放在 Core 生命周期的 `curr_tasks`，没有按插件 owner 回收；插件 reload 后的任务清理仍需单独处理。
-- **验证**：静态检查、最小导入检查；真实插件 reload 仍需运行时验收。
+- **处理补充**：owner scope 下注册的任务会绑定已启动的 Task，插件卸载时取消并移除；无 owner 的旧任务继续保留兼容行为。
+- **未完成**：完整插件 reload 后的任务回收仍需运行时验收，且 ownerless 任务无法自动归属。
+- **验证**：静态检查、owner task teardown smoke；真实插件 reload 仍需运行时验收。
 
 ### `Context.registered_web_apis` 类级共享状态
 

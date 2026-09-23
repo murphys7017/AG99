@@ -516,7 +516,9 @@ class AstrBotCoreLifecycle:
         extra_tasks = []
         for index, task in enumerate(self.star_context._register_tasks):
             task_name = getattr(task, "__name__", f"plugin_task_{index}")
-            extra_tasks.append(asyncio.create_task(task, name=task_name))
+            running_task = asyncio.create_task(task, name=task_name)
+            self.star_context._bind_registered_task_handle(task, running_task)
+            extra_tasks.append(running_task)
 
         tasks_ = [event_bus_task, *(extra_tasks if extra_tasks else [])]
         if cron_task:

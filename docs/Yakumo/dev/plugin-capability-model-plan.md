@@ -771,7 +771,7 @@ MCP lifecycle、computer 组件等），与本次改动无关。
 | 项 | 现状 | 结论 |
 | --- | --- | --- |
 | `get_full_tool_set`（`func_tool_manager.py:487`） | **全仓无生产调用方**，仅 `tests/unit/test_tool_conflict_resolution.py` 等测试直接调用；生产路径用的是带 target 过滤的 `get_tool_set_for_target` / `get_func(target=)` | **B7 关闭**：当前不构成绕过 `plugin_tool_targets` 的漏洞。保留为回归关注点，若将来新增生产调用方必须复审 |
-| `Context.register_task` / `_register_tasks` | `context.py:2210` 写入，`core_lifecycle.py:511` 消费；`star_manager._remove_plugin_runtime_extensions` **不清理** | **确认泄漏面**：插件反复 reload 会累积残留任务。属进程级治理，进第 7 阶段收口清单 |
+| `Context.register_task` / `_register_tasks` | `context.py:2221` 写入，`core_lifecycle.py:517` 消费；owner scope 下的已启动任务由 teardown 取消并移除，ownerless 旧任务仍无归属 | **部分收口**：有 owner 的插件任务已具备卸载回收，ownerless 兼容任务和真实 reload 仍需验收 |
 | `Context.get_event_queue()` | `context.py:2057` 返回 pipeline 队列；内置插件 `builtin_stars/astrbot/main.py:115` 有使用 | **确认第二输入通道**，可绕过统一入口，且无插件归属 |
 | `Context.register_web_api` / `registered_web_apis` | `dashboard/server.py:205-207` 消费实例注册表；显式 owner scope 下的路由会在 owner teardown 时移除，ownerless legacy route 仍无 activated / plugins_name 门禁 | **部分收口**：实例共享问题和有 owner 的卸载残留已修复；ownerless 旧注册仍属进程级兼容风险 |
 | `register_postprocessor` | 生产路径 `postprocess/manager.py:98-109` | 无门禁 |
