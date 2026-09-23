@@ -361,6 +361,11 @@ class InternalAgentSubStage(Stage):
                             )
                         )
 
+                    external_conversation = await _get_session_conv(
+                        event,
+                        self.ctx.plugin_manager.context,
+                    )
+                    req = ProviderRequest(conversation=external_conversation)
                     external = await execute_external_core_turn(
                         context=self.ctx.plugin_manager.context,
                         event=event,
@@ -386,10 +391,7 @@ class InternalAgentSubStage(Stage):
                     runner_reset_completed = True
                     req = ProviderRequest(
                         prompt=external.request.prompt,
-                        conversation=await _get_session_conv(
-                            event,
-                            self.ctx.plugin_manager.context,
-                        ),
+                        conversation=external_conversation,
                     )
                     response = LLMResponse(
                         role="assistant",
@@ -837,9 +839,14 @@ class InternalAgentSubStage(Stage):
         if not isinstance(execution_spec, CoreExecutionSpec):
             return
         execution_head = get_core_execution_head(event)
+        terminal_event = (
+            execution_head.terminal_event if execution_head is not None else None
+        )
         executor_id = (
             execution_head.executor_id
             if execution_head is not None and execution_head.executor_id
+            else terminal_event.execution.executor_id
+            if terminal_event is not None
             else "native"
         )
         if execution_head is None and (

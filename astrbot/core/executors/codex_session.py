@@ -9,6 +9,8 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from astrbot import logger
+
 from .codex_protocol import (
     decode_message,
     encode_notification,
@@ -51,6 +53,8 @@ class CodexSessionManager:
         self._start_lock = asyncio.Lock()
         self._closed = False
         self._reader_failure: CodexSessionError | None = None
+        self._stderr_tail = bytearray()
+        self._stderr_truncated = False
         self.thread_id: str | None = None
         self._active_turn_id: str | None = None
 
@@ -189,6 +193,12 @@ class CodexSessionManager:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._reader_task = None
         self._stderr_task = None
+        if self._stderr_truncated:
+            logger.warning(
+                "Codex app-server stderr exceeded its diagnostic limit; "
+                "retaining only the final %s bytes",
+                len(self._stderr_tail),
+            )
 
     async def _request(self, method: str, params: Any = None) -> dict[str, Any]:
         process = self._process
@@ -249,14 +259,22 @@ class CodexSessionManager:
 
     async def _read_stderr(self) -> None:
         assert self._process is not None and self._process.stderr is not None
-        consumed = 0
+        limit = self.stderr_limit
         while True:
-            line = await self._process.stderr.readline()
-            if not line:
+            chunk = await self._process.stderr.read(4096)
+            if not chunk:
                 return
-            consumed += len(line)
-            if consumed > self.stderr_limit:
-                await asyncio.sleep(0)
+            self._stderr_tail.extend(chunk)
+            excess = len(self._stderr_tail) - limit
+            if excess > 0:
+                del self._stderr_tail[:excess]
+                self._stderr_truncated = True
+
+    @property
+    def stderr_diagnostics(self) -> tuple[bytes, bool]:
+        """Return a bounded stderr tail and whether earlier output was dropped."""
+
+        return bytes(self._stderr_tail), self._stderr_truncated
 
 
 __all__ = ["CodexSessionError", "CodexSessionManager"]

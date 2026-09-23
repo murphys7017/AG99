@@ -91,3 +91,25 @@ async def test_codex_session_initializes_thread_and_yields_turn_notifications(mo
         ]
     finally:
         await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_codex_session_keeps_only_bounded_stderr_tail():
+    manager = CodexSessionManager(stderr_limit=1024)
+
+    class _Stderr:
+        def __init__(self):
+            self.chunks = [b"a" * 800, b"b" * 600, b""]
+
+        async def read(self, _size):
+            return self.chunks.pop(0)
+
+    class _Process:
+        stderr = _Stderr()
+
+    manager._process = _Process()
+    await manager._read_stderr()
+    tail, truncated = manager.stderr_diagnostics
+    assert len(tail) == 1024
+    assert tail == b"a" * 424 + b"b" * 600
+    assert truncated is True

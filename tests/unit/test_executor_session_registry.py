@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from astrbot.core.executors.external import ExternalExecutorSessionKey
@@ -70,3 +72,79 @@ async def test_registry_rejects_command_arguments(tmp_path):
             key=key,
             executor_config={"executable": "codex --unsafe"},
         )
+
+
+@pytest.mark.asyncio
+async def test_registry_starts_different_keys_without_serializing_io(monkeypatch, tmp_path):
+    start_count = 0
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowManager(_Manager):
+        async def start(self):
+            nonlocal start_count
+            start_count += 1
+            if start_count == 2:
+                all_started.set()
+            await release.wait()
+            self.started = True
+
+    monkeypatch.setattr(
+        "astrbot.core.executors.session_registry.CodexSessionManager", _SlowManager
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = ExternalExecutorSessionRegistry()
+    key_a = ExternalExecutorSessionKey("codex_cli", "bot", "a", root, root)
+    key_b = ExternalExecutorSessionKey("codex_cli", "bot", "b", root, root)
+    task_a = asyncio.create_task(
+        registry.get_or_create(key=key_a, executor_config={})
+    )
+    task_b = asyncio.create_task(
+        registry.get_or_create(key=key_b, executor_config={})
+    )
+    await asyncio.wait_for(all_started.wait(), timeout=1)
+    release.set()
+    await asyncio.gather(task_a, task_b)
+    await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_registry_serializes_configuration_replacement(monkeypatch, tmp_path):
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class _VersionedManager(_Manager):
+        async def start(self):
+            if self.kwargs["request_timeout"] == 5.0:
+                first_started.set()
+                await release_first.wait()
+            self.started = True
+
+    monkeypatch.setattr(
+        "astrbot.core.executors.session_registry.CodexSessionManager",
+        _VersionedManager,
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    key = ExternalExecutorSessionKey("codex_cli", "bot", "session", root, root)
+    registry = ExternalExecutorSessionRegistry()
+    first = asyncio.create_task(
+        registry.get_or_create(
+            key=key,
+            executor_config={"request_timeout": 5.0},
+        )
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        registry.get_or_create(
+            key=key,
+            executor_config={"request_timeout": 10.0},
+        )
+    )
+    release_first.set()
+    first_manager, second_manager = await asyncio.gather(first, second)
+    assert first_manager is not second_manager
+    assert first_manager.closed is True
+    assert second_manager.closed is False
+    await registry.aclose()

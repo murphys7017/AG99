@@ -12,10 +12,19 @@ from astrbot.core.core_request_preparation import (
 )
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
+from astrbot.core.execution import (
+    CoreExecutionSpec,
+    bind_core_execution_head,
+)
 from astrbot.core.execution_ledger import CoreExecutionLedger
+from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_state,
+    set_interaction_turn_core_execution_spec,
+)
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
+from astrbot.core.prompt.context_types import ContextPack
 from astrbot.core.provider.entities import LLMResponse
 from astrbot.core.star.star_handler import EventType
 
@@ -294,6 +303,93 @@ async def test_proactive_request_hook_mutation_reaches_execution(monkeypatch):
 
     assert observed_prompts == ["hooked prompt"]
     assert result.request.prompt == "hooked prompt"
+
+
+@pytest.mark.asyncio
+async def test_external_proactive_failure_settles_bound_execution_identity(
+    tmp_path,
+    monkeypatch,
+):
+    db = SQLiteDatabase(str(tmp_path / "external-proactive.db"))
+    await db.initialize()
+    conversation_manager = ConversationManager(db)
+    cid = "external-proactive-failure"
+    await db.create_conversation(user_id="user", platform_id="test", cid=cid)
+    snapshot = SimpleNamespace(cid=cid, history="[]")
+    runtime_config = {
+        "plugin_set": [],
+        "provider_settings": {},
+        "core_execution": {"executor_id": "codex_cli"},
+    }
+    config_info = {"id": "bot-config"}
+    captured = {}
+
+    class ConfigManager:
+        def get_conf_info(self, session):
+            assert str(session) == "test:FriendMessage:user"
+            return config_info
+
+    context = SimpleNamespace(
+        get_config=lambda **kwargs: runtime_config,
+        astrbot_config_mgr=ConfigManager(),
+        conversation_manager=conversation_manager,
+        core_execution_ledger=CoreExecutionLedger(db),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.proactive_agent_turn.build_plugin_admission_snapshot",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "astrbot.core.astr_main_agent._get_session_conv",
+        AsyncMock(return_value=snapshot),
+    )
+
+    async def fail_external_before_return(**kwargs):
+        event = kwargs["event"]
+        turn_id = get_interaction_turn_state(event).turn_id
+        spec = CoreExecutionSpec.from_context_pack(
+            context_pack=ContextPack(),
+            turn_id=turn_id,
+            task_spec={"source": "cron"},
+        )
+        set_interaction_turn_core_execution_spec(event, spec)
+        head = bind_core_execution_head(event, spec)
+        head.fail(
+            executor_id="codex_cli",
+            metadata={"error_type": "RuntimeError", "error": "startup failed"},
+        )
+        captured["event"] = event
+        captured["execution_id"] = spec.execution_id
+        raise RuntimeError("Codex startup failed")
+
+    monkeypatch.setattr(
+        "astrbot.core.proactive_agent_turn._execute_external_proactive_turn",
+        fail_external_before_return,
+    )
+
+    with pytest.raises(RuntimeError, match="Codex startup failed"):
+        await run_proactive_agent_turn(
+            context=context,
+            session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
+            message="run",
+            extras={"cron_job": {"id": "job"}},
+            role=None,
+            config=MainAgentBuildConfig(tool_call_timeout=60),
+            system_prompt="",
+            prompt="",
+            require_delivery_tool=False,
+            include_history_fences=False,
+        )
+
+    event = captured["event"]
+    assert event.get_extra("_astrbot_config_id") == "bot-config"
+    assert get_interaction_turn_state(event).runtime_config_id == "bot-config"
+    records = await db.get_recent_core_execution_records(cid)
+    assert len(records) == 1
+    assert records[0].execution_id == captured["execution_id"]
+    assert records[0].status == "failed"
+    assert records[0].error == "startup failed"
+    await db.engine.dispose()
 
 
 @pytest.mark.asyncio

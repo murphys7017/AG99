@@ -96,6 +96,7 @@ async def run_proactive_agent_turn(
         CoreExecutionDeadlineView,
         CoreExecutionSpec,
         bind_core_execution_head,
+        get_core_execution_head,
     )
     from astrbot.core.executors.assembly import build_native_executor_assembly
     from astrbot.core.executors.registry import resolve_executor_id
@@ -103,6 +104,7 @@ async def run_proactive_agent_turn(
     from astrbot.core.interaction.turn_state import (
         bind_interaction_turn_core_execution_journal,
         ensure_interaction_turn_state,
+        get_interaction_turn_core_execution_spec,
         set_interaction_turn_runtime_config,
     )
 
@@ -126,12 +128,19 @@ async def run_proactive_agent_turn(
         runtime_config,
         execution_source="proactive",
     )
-    if executor_id != "native":
-        raise RuntimeError(
-            "selected executor is not available on the Native proactive path: "
-            f"{executor_id}"
-        )
-    ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
+    turn_state = ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
+    config_manager = getattr(context, "astrbot_config_mgr", None)
+    get_conf_info = getattr(config_manager, "get_conf_info", None)
+    config_info = get_conf_info(session) if callable(get_conf_info) else None
+    runtime_config_id = str(
+        (config_info.get("id") if isinstance(config_info, Mapping) else "")
+        or extras.get("_astrbot_config_id")
+        or getattr(context, "astrbot_config_id", "")
+        or ""
+    ).strip()
+    if runtime_config_id:
+        turn_state.runtime_config_id = runtime_config_id
+        event.set_extra("_astrbot_config_id", runtime_config_id)
     event.set_extra("_astrbot_config", runtime_config)
     deadline = _ensure_proactive_execution_deadline(event, runtime_config)
     event.plugins_name = resolve_event_plugins_name(runtime_config)
@@ -160,18 +169,28 @@ async def run_proactive_agent_turn(
         config = config.with_runtime_config(runtime_config)
         conversation = await _get_session_conv(event=event, plugin_context=context)
         if executor_id != "native":
-            external_request, external_response, external_head = (
-                await _execute_external_proactive_turn(
-                    context=context,
-                    event=event,
-                    session=session,
-                    runtime_config=runtime_config,
-                    config=config,
-                    prompt=prompt,
-                    deadline=deadline,
-                    executor_id=executor_id,
+            try:
+                external_request, external_response, external_head = (
+                    await _execute_external_proactive_turn(
+                        context=context,
+                        event=event,
+                        session=session,
+                        runtime_config=runtime_config,
+                        config=config,
+                        prompt=prompt,
+                        deadline=deadline,
+                        executor_id=executor_id,
+                    )
                 )
-            )
+            except BaseException:
+                execution_head = get_core_execution_head(event)
+                execution_spec = get_interaction_turn_core_execution_spec(event)
+                if execution_spec is not None and conversation is not None:
+                    result = _ExternalProactiveBuildResult(
+                        provider_request=ProviderRequest(conversation=conversation),
+                        execution_spec=execution_spec,
+                    )
+                raise
             result = _ExternalProactiveBuildResult(
                 provider_request=external_request,
                 execution_spec=external_head.spec,
@@ -347,10 +366,9 @@ async def run_proactive_agent_turn(
                     response.completion_text if response is not None else None
                 )
                 ledger_error = error
-                if (
-                    execution_head is not None
-                    and executor_activated
-                    and runner_reset_completed
+                if execution_head is not None and (
+                    execution_head.terminal_event is not None
+                    or (executor_activated and runner_reset_completed)
                 ):
                     preparation = execution_head.prepare_ledger_preparation(
                         completion_text=ledger_result,

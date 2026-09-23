@@ -4489,7 +4489,7 @@ CONFIG_METADATA_3 = {
                         "description": "Core 执行器",
                         "type": "string",
                         "options": ["native", "codex_cli"],
-                        "hint": "选择当前适配器 bot 配置中的 Core 执行实现。未知值会明确失败，不会静默回退。新增执行器接入后会在此列出。",
+                        "hint": "选择当前适配器 bot 配置中的 Core 执行实现。Codex 当前以受限模式运行，不接入 AstrBot 插件 FunctionTool、联网搜索或其他 Core 工具。未知值会明确失败，不会静默回退。新增执行器接入后会在此列出。",
                     },
                     "core_execution.codex_cli.executable": {
                         "description": "Codex 可执行文件",

@@ -2,7 +2,7 @@
 
 > 5.6 的逐批编码指令见 [`internal-executor-replacement-implementation-guide.md`](internal-executor-replacement-implementation-guide.md)。本文件保留架构目标、边界和批次定义；实施时以操作级手册中的文件、接口和退出条件为准。
 
-日期：2026-09-22。状态：R1-R7 的最小替换基础已审阅并提交；当前 Native 基线已完成用户手动 OLV/Cron smoke 验收；R8 需要选定真实执行器后实施。
+日期：2026-09-23。状态：R1-R7 的最小替换基础已审阅并提交；Codex app-server 已进入普通交互与主动任务的外部执行路径，R8 真实平台验收仍待完成。Native 普通交互仍保留专用生产链路，因此整体执行器生命周期尚未收敛。
 
 逐批编码步骤、修改范围和验证命令见
 [内部可替换执行器：5.6 操作级实施手册](internal-executor-replacement-implementation-guide.md)。
@@ -217,6 +217,19 @@ Native 基线验收记录（2026-09-22）：用户已完成当前 Native
 执行链的手动 OLV/Cron smoke 测试并确认没有阻塞问题。保留日志可见当前 bot
 配置下的能力快照、Personal 表达、OLV 图像输入和 turn settlement。此记录只允许
 继续收敛普通交互的装配边界；它不替代中断边界的专项验收，也不表示第二执行器已接入。
+
+R8 Codex 初始接入记录（2026-09-23）：普通交互与主动任务现可按各自冻结的 bot
+配置选择 `codex_cli`，共用外部 Core coordinator、Head 终态、结果桥与 Core-owned
+session registry；取消与超时会向 Codex Body 发出停止请求。外部交互 Head 会绑定
+Interaction Core execution journal；session key 优先使用类型化轮次状态中的配置 ID，缺失时
+不再静默归入 `default`。Session registry 使用全局字典锁加按 key 串行锁，进程启动/关闭不占用
+全局锁；Codex stderr 只保留有界尾部并记录截断诊断。
+
+该记录不代表 R8 验收完成：Codex 当前明确运行在无 AstrBot Core 工具能力的受限模式，不接入
+插件 FunctionTool、联网搜索或其他 Core 工具。Native 普通交互仍使用专用 Native runner 与富输出
+桥，尚未迁入同一生产 coordinator。Codex 普通交互、Cron、连续 thread、跨 bot/workspace 隔离、
+取消后的迟到结果、配置变更、进程崩溃恢复及文本/语音/effect/历史/DeliveryReceipt 均须由真实
+运行验收；目前的单元测试不能替代这些检查。
 
 ## 10. 最小验证与交付
 
