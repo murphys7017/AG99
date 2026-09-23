@@ -223,7 +223,8 @@ Canonical owner: boundary-specific contract validators. Change risk: Medium. Val
 ### Evidence
 
 - `astrbot/core/provider/entites.py` is a 407-byte misspelled re-export of `entities.py`; no in-repository textual references were found.
-- `astrbot/core/platform/message_session.py` retains `MessageSesion = MessageSession` backward compatibility.
+- `astrbot/core/platform/message_session.py` retains `MessageSesion = MessageSession` backward compatibility; Core-owned imports now use the canonical `MessageSession` name.
+- `Context.registered_web_apis` is now instance-owned, and registrations made inside an explicit plugin owner scope are removed during owner teardown. Ownerless legacy routes remain compatible but are not automatically attributable.
 - `AstrMessageEvent` documents legacy output hook and extra-key compatibility (`astrbot/core/platform/astr_message_event.py:76-80`, `:372-429`, `:514+`).
 - `openai_source.py:~107` and `anthropic_source.py:~67` each retain a compatibility path for callers without compiled bindings, both annotated for deletion after migration.
 - Persona prompt collection still parses legacy free-form prompt text (`astrbot/core/prompt/persona_segments.py:142+`; `collectors/persona_collector.py:147-157`).
