@@ -1,4 +1,5 @@
 import copy
+from collections.abc import Mapping
 from sys import maxsize
 
 import astrbot.api.message_components as Comp
@@ -6,6 +7,7 @@ from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.core import logger
+from astrbot.core.interaction.turn_state import get_interaction_turn_runtime_config
 from astrbot.core.utils.session_waiter import (
     FILTERS,
     USER_SESSIONS,
@@ -30,6 +32,13 @@ class Main(star.Star):
         except BaseException as e:
             logger.error(f"聊天增强 err: {e}")
 
+    def _get_runtime_config(self, event: AstrMessageEvent) -> Mapping[str, object]:
+        """Use an admitted turn snapshot before the legacy live configuration."""
+        admitted_config = get_interaction_turn_runtime_config(event)
+        if isinstance(admitted_config, Mapping):
+            return admitted_config
+        return self.context.get_config(umo=event.unified_msg_origin)
+
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize)
     async def handle_session_control_agent(self, event: AstrMessageEvent) -> None:
         """会话控制代理"""
@@ -44,7 +53,7 @@ class Main(star.Star):
         """处理只有一个 @ 或仅有唤醒前缀的消息，并等待用户下一条内容。"""
         try:
             messages = event.get_messages()
-            cfg = self.context.get_config(umo=event.unified_msg_origin)
+            cfg = self._get_runtime_config(event)
             p_settings = cfg["platform_settings"]
             wake_prefix = cfg.get("wake_prefix", [])
             if len(messages) != 1:

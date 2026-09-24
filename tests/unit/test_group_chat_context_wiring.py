@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from astrbot.api.message_components import Image, Json, Plain, Reply
+from astrbot.api.message_components import At, Image, Json, Plain, Reply
 from astrbot.api.platform import MessageType
 from astrbot.builtin_stars.astrbot.group_chat_context import (
     GROUP_CONTEXT_RAW_IDX_EXTRA,
@@ -111,6 +111,33 @@ def test_group_context_prefers_the_admitted_configuration_snapshot():
     assert group_context.group_context_enabled(event) is True
     assert group_context.cfg(event)["image_caption"] is True
     context.get_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_mention_uses_the_admitted_configuration_snapshot():
+    live_config = {
+        "platform_settings": {
+            "empty_mention_waiting": True,
+            "empty_mention_waiting_need_reply": False,
+        },
+        "wake_prefix": [],
+    }
+    admitted_config = {
+        "platform_settings": {"empty_mention_waiting": False},
+        "wake_prefix": [],
+    }
+    main = Main.__new__(Main)
+    main.context = MagicMock()
+    main.context.get_config.return_value = live_config
+    event = make_event()
+    event.message_obj.message = [At(qq="bot", name="bot")]
+    event.get_messages.return_value = event.message_obj.message
+    set_interaction_turn_runtime_config(event, admitted_config)
+
+    assert [result async for result in main.handle_empty_mention(event)] == []
+    context = main.context
+    context.get_config.assert_not_called()
+    event.stop_event.assert_not_called()
 
 
 @pytest.mark.asyncio
