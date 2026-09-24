@@ -191,9 +191,7 @@ class MainAgentBuildConfig:
     """The strategy to handle context length limit reached."""
     llm_compress_instruction: str = ""
     """The instruction for compression in llm_compress strategy."""
-    llm_compress_keep_recent: int = 6
-    """Deprecated number of recent messages/turns to keep during llm_compress."""
-    llm_compress_keep_recent_ratio: float | None = None
+    llm_compress_keep_recent_ratio: float = 0.15
     """Ratio of current context tokens to keep exact during llm_compress."""
     llm_compress_provider_id: str = ""
     """The provider ID for the LLM used in context compression."""
@@ -291,9 +289,6 @@ class MainAgentBuildConfig:
             ),
             llm_compress_instruction=str(
                 settings.get("llm_compress_instruction", self.llm_compress_instruction)
-            ),
-            llm_compress_keep_recent=settings.get(
-                "llm_compress_keep_recent", self.llm_compress_keep_recent
             ),
             llm_compress_keep_recent_ratio=settings.get(
                 "llm_compress_keep_recent_ratio", self.llm_compress_keep_recent_ratio
@@ -824,7 +819,6 @@ async def _build_native_main_agent(
         agent_hooks=AgentRequestLifecycleHooks(request_lifecycle),
         streaming=config.streaming_response,
         llm_compress_instruction=config.llm_compress_instruction,
-        llm_compress_keep_recent=config.llm_compress_keep_recent,
         llm_compress_keep_recent_ratio=config.llm_compress_keep_recent_ratio,
         llm_compress_provider=_get_compress_provider(config, plugin_context),
         truncate_turns=config.dequeue_context_length,

@@ -175,7 +175,6 @@ class LLMSummaryCompressor:
         provider: "Provider",
         keep_recent_ratio: float = 0.15,
         *,
-        keep_recent: int | None = None,
         instruction_text: str | None = None,
         compression_threshold: float = 0.82,
         token_counter: TokenCounter | None = None,
@@ -186,16 +185,11 @@ class LLMSummaryCompressor:
             provider: The LLM provider instance.
             keep_recent_ratio: Ratio of current context tokens to keep as recent
                 exact context. Clamped to 0-0.3.
-            keep_recent: Deprecated message-count hint kept for config/API
-                compatibility. If supplied, it is mapped to a conservative ratio.
             instruction_text: Custom instruction for summary generation.
             compression_threshold: The compression trigger threshold (default: 0.82).
         """
         self.provider = provider
-        if keep_recent is not None:
-            keep_recent_ratio = self._legacy_keep_recent_to_ratio(keep_recent)
         self.keep_recent_ratio = min(max(float(keep_recent_ratio), 0.0), 0.3)
-        self.keep_recent = keep_recent if keep_recent is not None else 0
         self.compression_threshold = compression_threshold
         self.token_counter = token_counter or EstimateTokenCounter()
 
@@ -208,15 +202,6 @@ class LLMSummaryCompressor:
             "4. If there was an initial user goal, state it first and describe the current progress/status.\n"
             "5. Write the summary in the user's language.\n"
         )
-
-    @staticmethod
-    def _legacy_keep_recent_to_ratio(keep_recent: int) -> float:
-        if keep_recent <= 0:
-            return 0.15
-        # Old config was a message-count hint. Map common values like 4-6 to
-        # the upstream ratio default while allowing larger values to preserve a
-        # little more exact context.
-        return min(max(keep_recent / 40, 0.05), 0.3)
 
     def should_compress(
         self, messages: list[Message], current_tokens: int, max_tokens: int

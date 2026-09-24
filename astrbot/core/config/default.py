@@ -141,7 +141,6 @@ DEFAULT_CONFIG = {
             "4. If there was an initial user goal, state it first and describe the current progress/status.\n"
             "5. Write the summary in the user's language.\n"
         ),
-        "llm_compress_keep_recent": 6,
         "llm_compress_keep_recent_ratio": 0.15,
         "llm_compress_provider_id": "",
         "max_context_length": -1,
@@ -3804,15 +3803,6 @@ CONFIG_METADATA_3 = {
                         "description": "上下文压缩提示词",
                         "type": "text",
                         "hint": "如果为空则使用默认提示词。",
-                        "condition": {
-                            "provider_settings.context_limit_reached_strategy": "llm_compress",
-                            "agent_runner.mode": "local",
-                        },
-                    },
-                    "provider_settings.llm_compress_keep_recent": {
-                        "description": "压缩时保留最近对话轮数（兼容旧配置）",
-                        "type": "int",
-                        "hint": "旧配置项。新压缩器会优先使用“保留最近上下文比例”。",
                         "condition": {
                             "provider_settings.context_limit_reached_strategy": "llm_compress",
                             "agent_runner.mode": "local",

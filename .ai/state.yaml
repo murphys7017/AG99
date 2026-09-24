@@ -1155,3 +1155,28 @@ execution_configuration_ownership_convergence:
     normal chat and delegated work select their separate owners, then inspect
     the next configuration inventory domain rather than reintroducing Runner
     fallback fields.
+
+context_compression_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Remove the deprecated provider_settings.llm_compress_keep_recent turn-count
+    control and retain llm_compress_keep_recent_ratio as the sole LLM context
+    compression retention policy.
+  changes: >-
+    Removed the retired field from defaults, metadata, Dashboard translations,
+    MainAgent and ToolLoop configuration projections, ContextConfig, and the
+    LLM compressor compatibility branch. Loading an old Profile now removes the
+    retired persisted field instead of retaining an ignored value.
+  validation: >-
+    Context-manager and configuration tests passed (100). Scoped Ruff,
+    compilation, i18n JSON parsing, and git diff checks passed. A broader
+    MainAgent run retained two pre-existing Windows file:/// video-path
+    expectation failures unrelated to context compression; they were not
+    altered. No service restart or live compression acceptance was performed.
+  followup: >-
+    Verify one real llm_compress conversation after manual restart, then
+    continue the field inventory with image-caption role ownership rather than
+    merging the separate ordinary-input and group-context policies.

@@ -882,7 +882,7 @@ Recently absorbed by rewrite:
   - `95d80578`/`df6eef052`/`d2f555151`: upstream group-chat LTM was absorbed as local `GroupChatContext`. It keeps one in-memory group-record buffer, ignores wake commands when recording, supports active-reply gating, and now exposes only the structured prompt-extension surface. It does not replace or write to `astrbot/core/memory/*`.
   - `1daa0e336`: upstream context compression improvements were absorbed into the runner-level context manager. LLM compression now splits by logical rounds, keeps recent exact context by token ratio, always preserves the active user round, appends a continuation-oriented summary instruction, and sanitizes the compression payload by the compression provider's modalities.
   - Local policy intentionally preserved: `modalities=[]` remains text-only in this fork. The upstream empty-list-as-unconfigured behavior was not imported.
-  - Compatibility note: old `llm_compress_keep_recent` remains accepted; new config `llm_compress_keep_recent_ratio` is the preferred control.
+  - Compatibility note: old `llm_compress_keep_recent` was initially accepted; local configuration cleanup removed it on 2026-09-24, leaving `llm_compress_keep_recent_ratio` as the sole control.
   - `465a685b`: FIRST_NOTICE files include the EULA hint, and `FIRST_NOTICE.ru-RU.md` is present.
 - 2026-06-07 v4.25.3/v4.25.4 small stability and compatibility batches:
   - `7e22a07e0`: `/name` and UMO alias support were rewritten locally with a dedicated `umo_aliases` DB model, backup coverage, dashboard API exposure, and local UI display integration that preserves raw UMO values for operations/copy behavior.

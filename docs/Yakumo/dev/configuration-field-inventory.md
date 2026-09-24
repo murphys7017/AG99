@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | `provider_settings.streaming_response` | Core 普通路径和 Provider Runner 的规范字段 | 保留为唯一流式配置 |
 | `provider_settings.stream` | 后台任务唤醒路径的旧读取名；不在默认配置和配置元数据中 | 已改为读取 `streaming_response`，不得重新加入 schema |
+| `provider_settings.llm_compress_keep_recent` | 已废弃的“按轮数保留上下文”兼容控制；与 token 比例控制表达同一策略 | 已删除默认值、schema、Dashboard 与运行时透传；加载旧配置时直接删除，只保留 `llm_compress_keep_recent_ratio`。 |
 | `provider_settings.agent_runner_type` 与 `*_agent_runner_provider_id` | 已移除的混合字段；过去同时表达普通聊天 Runner 与 Core Body | 启动时一次性迁移后删除。普通聊天 Runner 使用 `agent_runner.mode/provider_id`；委派 Core 使用 `core_execution.executor_id/codex_cli.provider_id`。 |
 | `provider_settings.default_image_caption_provider_id` | 普通输入图片转述的按需降级 Provider | 与群聊长期上下文图片转述不是同一开关，暂不删除 |
 | `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
@@ -44,7 +45,7 @@
 
 1. 从 `DEFAULT_CONFIG`、配置元数据、Dashboard、迁移代码、文档和 Python 动态读取
    生成完整字段矩阵。
-2. 已完成 `agent_runner` 与 `core_execution` 的物理拆分；下一批处理图片转述角色和唤醒前缀，再决定其余物理
+2. 已完成 `agent_runner` 与 `core_execution` 的物理拆分，以及旧的上下文压缩轮数控制删除；下一批处理图片转述角色和唤醒前缀，再决定其余物理
    JSON 重排。
 3. 对明确废弃且无运行时消费者的字段，删除默认值、schema、Dashboard 展示和文档；
    删除前保留一次启动配置未知字段检查，避免静默吞掉仍在使用的字段。

@@ -76,7 +76,7 @@ class TestContextManager:
         mock_provider = MockProvider()
         config = ContextConfig(
             llm_compress_provider=mock_provider,  # type: ignore
-            llm_compress_keep_recent=5,
+            llm_compress_keep_recent_ratio=0.15,
             llm_compress_instruction="Summarize the conversation",
         )
         manager = ContextManager(config)
@@ -102,7 +102,10 @@ class TestContextManager:
         provider.text_chat = AsyncMock(
             return_value=LLMResponse(role="assistant", completion_text="  ")
         )
-        compressor = LLMSummaryCompressor(provider=provider, keep_recent=2)  # type: ignore[arg-type]
+        compressor = LLMSummaryCompressor(
+            provider=provider,
+            keep_recent_ratio=0.15,
+        )  # type: ignore[arg-type]
         messages = self.create_messages(6)
 
         with patch("astrbot.core.agent.context.compressor.logger") as mock_logger:
@@ -613,7 +616,6 @@ class TestContextManager:
             max_context_tokens=500,
             enforce_max_turns=5,
             truncate_turns=2,
-            llm_compress_keep_recent=3,
             llm_compress_keep_recent_ratio=0.15,
         )
         manager = ContextManager(config)
@@ -622,7 +624,6 @@ class TestContextManager:
         assert manager.config.max_context_tokens == 500
         assert manager.config.enforce_max_turns == 5
         assert manager.config.truncate_turns == 2
-        assert manager.config.llm_compress_keep_recent == 3
         assert manager.config.llm_compress_keep_recent_ratio == 0.15
 
     # ==================== Run Compression Tests ====================
@@ -687,7 +688,7 @@ class TestContextManager:
         mock_provider = MockProvider()
         config = ContextConfig(
             llm_compress_provider=mock_provider,  # type: ignore
-            llm_compress_keep_recent=3,
+            llm_compress_keep_recent_ratio=0.15,
             llm_compress_instruction="请总结对话内容",
             max_context_tokens=100,
         )

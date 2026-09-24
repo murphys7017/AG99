@@ -169,6 +169,37 @@ class TestAstrBotConfigLoad:
         assert "agent_runner_type" not in config["provider_settings"]
         assert "dify_agent_runner_provider_id" not in config["provider_settings"]
 
+    def test_load_removes_retired_context_compression_turn_count(
+        self, temp_config_path, minimal_default_config
+    ):
+        """Only the token-ratio compression control remains persisted."""
+        default_config = {
+            **minimal_default_config,
+            "provider_settings": {
+                **minimal_default_config["provider_settings"],
+                "llm_compress_keep_recent_ratio": 0.15,
+            },
+        }
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "llm_compress_keep_recent": None,
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(config_path=temp_config_path, default_config=default_config)
+
+        assert config["provider_settings"]["llm_compress_keep_recent_ratio"] == 0.15
+        assert "llm_compress_keep_recent" not in config["provider_settings"]
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "llm_compress_keep_recent" not in persisted["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

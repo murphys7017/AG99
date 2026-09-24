@@ -37,6 +37,18 @@ def _strip_memory_analyzer_model_fields(config: dict) -> bool:
     return changed
 
 
+def _strip_retired_context_compression_fields(config: dict) -> bool:
+    """Remove retired compression settings with no remaining runtime owner."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+    if "llm_compress_keep_recent" not in provider_settings:
+        return False
+    provider_settings.pop("llm_compress_keep_recent")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -185,6 +197,10 @@ class AstrBotConfig(dict):
                 logger.info("已移除 memory 分析器的独立模型名配置")
                 stripped_memory_analyzer_models = True
 
+        stripped_retired_context_compression_fields = (
+            _strip_retired_context_compression_fields(conf)
+        )
+
         migrated_execution_config = _migrate_execution_configuration(conf)
 
         # 检查配置完整性，并插入
@@ -202,7 +218,12 @@ class AstrBotConfig(dict):
             self._reset_generated_dashboard_password(conf)
             has_new = True
         self.update(conf)
-        if has_new or stripped_memory_analyzer_models or migrated_execution_config:
+        if (
+            has_new
+            or stripped_memory_analyzer_models
+            or stripped_retired_context_compression_fields
+            or migrated_execution_config
+        ):
             self.save_config()
 
         self.update(conf)
