@@ -100,7 +100,6 @@ The default AstrBot configuration is as follows:
         "image_caption_cache_size": 256,
         "active_reply": {
             "enable": False,
-            "method": "possibility_reply",
             "possibility_reply": 0.1,
             "whitelist": [],
         },
@@ -449,8 +448,7 @@ Number of caption cache entries. Default is `256`; cache keys include the image 
 #### `provider_ltm_settings.active_reply`
 
 - `enable`: Whether to enable group active-reply candidates. Default is `false` and requires Interaction Middleware.
-- `method`: Method for active replies. Option is `possibility_reply`.
-- `possibility_reply`: Candidate sampling probability. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
+- `possibility_reply`: Candidate sampling probability. Default is `0.1`.
 - `whitelist`: Candidate ID whitelist. Only listed IDs can form candidates. Empty means no whitelist filter. You can use `/sid` to get a platform session ID.
 
 Candidates never call an LLM directly. They enter the Personal Response Plan with

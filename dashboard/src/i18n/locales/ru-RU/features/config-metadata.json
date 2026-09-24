@@ -1035,9 +1035,6 @@
                     "enable": {
                         "description": "Активный ответ"
                     },
-                    "method": {
-                        "description": "Метод активного ответа"
-                    },
                     "possibility_reply": {
                         "description": "Вероятность ответа",
                         "hint": "Значение от 0.0 до 1.0"

@@ -64,8 +64,6 @@ def select_legacy_active_reply_candidate(
     active_reply = settings.get("active_reply", {})
     if not isinstance(active_reply, Mapping) or not active_reply.get("enable", False):
         return False
-    if active_reply.get("method", "possibility_reply") != "possibility_reply":
-        return False
 
     whitelist = _normalize_whitelist(active_reply.get("whitelist", []))
     if whitelist:

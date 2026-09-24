@@ -100,7 +100,6 @@ AstrBot 默认配置如下：
         "image_caption_cache_size": 256,
         "active_reply": {
             "enable": False,
-            "method": "possibility_reply",
             "possibility_reply": 0.1,
             "whitelist": [],
         },
@@ -448,8 +447,7 @@ Personal、人格层和 Core，不会把群成员消息当作系统指令。
 #### `provider_ltm_settings.active_reply`
 
 - `enable`: 是否启用群聊主动回复候选。默认为 `false`，且需要启用 Interaction Middleware。
-- `method`: 主动回复的方法。可选值为 `possibility_reply`。
-- `possibility_reply`: 候选抽样概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
+- `possibility_reply`: 候选抽样概率。默认为 `0.1`。
 - `whitelist`: 候选白名单。仅在此列表中的 ID 才会形成候选。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
 
 候选不会直接调用独立分类模型。它们会由一次 Personal 结构化回复计划判断 `reply`、`delegate` 或 `silent`；允许静默的群聊候选只有在确实无需参与时才返回 `silent`。

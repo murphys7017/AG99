@@ -1036,9 +1036,6 @@
           "enable": {
             "description": "Active Reply"
           },
-          "method": {
-            "description": "Active Reply Method"
-          },
           "possibility_reply": {
             "description": "Reply Probability",
             "hint": "Value between 0.0-1.0"

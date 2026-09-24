@@ -49,6 +49,19 @@ def _strip_retired_context_compression_fields(config: dict) -> bool:
     return True
 
 
+def _strip_retired_group_active_reply_fields(config: dict) -> bool:
+    """Remove the former single-choice active-reply selector."""
+
+    settings = config.get("provider_ltm_settings")
+    if not isinstance(settings, dict):
+        return False
+    active_reply = settings.get("active_reply")
+    if not isinstance(active_reply, dict) or "method" not in active_reply:
+        return False
+    active_reply.pop("method")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -200,6 +213,9 @@ class AstrBotConfig(dict):
         stripped_retired_context_compression_fields = (
             _strip_retired_context_compression_fields(conf)
         )
+        stripped_retired_group_active_reply_fields = (
+            _strip_retired_group_active_reply_fields(conf)
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -222,6 +238,7 @@ class AstrBotConfig(dict):
             has_new
             or stripped_memory_analyzer_models
             or stripped_retired_context_compression_fields
+            or stripped_retired_group_active_reply_fields
             or migrated_execution_config
         ):
             self.save_config()

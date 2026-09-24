@@ -200,6 +200,46 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "llm_compress_keep_recent" not in persisted["provider_settings"]
 
+    def test_load_removes_retired_group_active_reply_method(
+        self, temp_config_path, minimal_default_config
+    ):
+        """The single-choice active-reply selector is never persisted."""
+        default_config = {
+            **minimal_default_config,
+            "provider_ltm_settings": {
+                "active_reply": {
+                    "enable": False,
+                    "possibility_reply": 0.1,
+                    "whitelist": [],
+                },
+            },
+        }
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {"enable": True},
+            "provider_ltm_settings": {
+                "active_reply": {
+                    "enable": True,
+                    "method": "possibility_reply",
+                    "possibility_reply": 0.2,
+                },
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(config_path=temp_config_path, default_config=default_config)
+
+        active_reply = config["provider_ltm_settings"]["active_reply"]
+        assert active_reply["enable"] is True
+        assert active_reply["possibility_reply"] == 0.2
+        assert "method" not in active_reply
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "method" not in persisted["provider_ltm_settings"]["active_reply"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

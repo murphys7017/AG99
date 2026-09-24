@@ -1181,6 +1181,31 @@ context_compression_configuration_cleanup:
     continue the field inventory with image-caption role ownership rather than
     merging the separate ordinary-input and group-context policies.
 
+group_active_reply_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Remove the redundant provider_ltm_settings.active_reply.method selector,
+    whose only accepted value was possibility_reply.
+  changes: >-
+    Removed the selector from defaults, schema, Dashboard metadata, runtime
+    selection, and bilingual configuration documentation. Loading an old
+    Profile removes the retired persisted field, leaving enable,
+    possibility_reply, and whitelist as the complete active-reply policy.
+  validation: >-
+    Focused config tests (57) and group-reply candidate tests (4) passed;
+    scoped Ruff, compilation, and Dashboard i18n JSON parsing passed. The
+    four local development Profiles were loaded and persisted without the
+    retired key. One unrelated GroupContextStage mock test remains stale
+    because its collector double does not accept the current event keyword.
+    No service restart is performed by this refactor.
+  followup: >-
+    Confirm active-reply sampling on a real group after the next manual restart,
+    then continue the configuration inventory without merging the separate
+    ordinary input-caption and group-context caption policy domains.
+
 legacy_group_context_implementation_cleanup:
   date: '2026-09-24'
   class: maintenance

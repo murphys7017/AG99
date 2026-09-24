@@ -288,7 +288,6 @@ DEFAULT_CONFIG = {
         "image_caption_cache_size": 256,
         "active_reply": {
             "enable": False,
-            "method": "possibility_reply",
             "possibility_reply": 0.1,
             "whitelist": [],
         },
@@ -3162,10 +3161,6 @@ CONFIG_METADATA_2 = {
                                 "type": "list",
                                 "items": {"type": "string"},
                             },
-                            "method": {
-                                "type": "string",
-                                "options": ["possibility_reply"],
-                            },
                             "possibility_reply": {
                                 "type": "float",
                             },
@@ -4447,14 +4442,6 @@ CONFIG_METADATA_3 = {
                         "description": "群聊主动回复候选",
                         "type": "bool",
                         "hint": "仅抽样形成 Personal 候选。是否回复、委派或静默由同一次 Personal 结构化表达决定；该设置不直接调用模型。",
-                    },
-                    "provider_ltm_settings.active_reply.method": {
-                        "description": "主动回复方法",
-                        "type": "string",
-                        "options": ["possibility_reply"],
-                        "condition": {
-                            "provider_ltm_settings.active_reply.enable": True,
-                        },
                     },
                     "provider_ltm_settings.active_reply.possibility_reply": {
                         "description": "候选抽样概率",

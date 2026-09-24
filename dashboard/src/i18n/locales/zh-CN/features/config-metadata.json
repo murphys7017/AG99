@@ -1036,9 +1036,6 @@
           "enable": {
             "description": "主动回复"
           },
-          "method": {
-            "description": "主动回复方法"
-          },
           "possibility_reply": {
             "description": "回复概率",
             "hint": "0.0-1.0 之间的数值"

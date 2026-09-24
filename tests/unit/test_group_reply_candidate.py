@@ -41,7 +41,6 @@ def active_reply_config():
         "provider_ltm_settings": {
             "active_reply": {
                 "enable": True,
-                "method": "possibility_reply",
                 "possibility_reply": 1.0,
                 "whitelist": ["123"],
             }
