@@ -33,3 +33,19 @@ def test_prompt_config_uses_detached_admitted_settings():
     assert build_interaction_prompt_build_config(
         context, event,
     ).provider_settings["web_search"] is True
+
+
+def test_prompt_config_uses_provider_wake_prefix_suffix():
+    event = SimpleNamespace(
+        unified_msg_origin="test:FriendMessage:user",
+        get_extra=lambda key, default=None: default,
+    )
+    config = {
+        "wake_prefix": ["/", "!"],
+        "provider_settings": {"wake_prefix": "/chat"},
+    }
+    context = SimpleNamespace(get_config=lambda **kwargs: config)
+
+    build_config = build_interaction_prompt_build_config(context, event)
+
+    assert build_config.provider_wake_prefix == "chat"

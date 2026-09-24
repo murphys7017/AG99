@@ -1355,3 +1355,26 @@ web_search_link_configuration_cleanup:
     plus three local Profiles were normalized successfully. The focused pytest
     collection did not finish within the local command window, so it is not
     counted as a passing test. No service restart was performed.
+
+provider_wake_prefix_derivation:
+  date: '2026-09-24'
+  class: bugfix
+  risk: medium
+  status: validated_pending_live_acceptance
+  scope: >-
+    Make the Prompt build path use the same provider wake-prefix derivation as
+    Pipeline execution, without changing the three distinct persisted wake
+    policy fields.
+  evidence: >-
+    Pipeline execution removed a configured bot wake prefix from
+    provider_settings.wake_prefix, while Interaction Prompt construction used
+    the first top-level wake prefix and ignored provider_settings.wake_prefix.
+    A value such as /chat could therefore be presented differently to the
+    prompt and the executor.
+  changes: >-
+    The shared resolve_provider_wake_prefix helper now owns the pure derivation;
+    AgentRequestSubStage and Interaction prompt construction both use it.
+  validation: >-
+    The focused Interaction Prompt support tests passed (2), including a
+    multi-prefix /chat regression. Scoped Ruff, compilation, and diff checks
+    passed. No restart or live command-prefix acceptance was performed.

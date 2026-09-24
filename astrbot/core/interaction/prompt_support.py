@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from astrbot.core.config.wake_prefix import resolve_provider_wake_prefix
 from astrbot.core.provider.modalities import (
     log_context_sanitize_stats,
     sanitize_contexts_by_modalities,
@@ -30,15 +31,7 @@ def build_interaction_prompt_build_config(
     file_extract = provider_settings.get("file_extract", {})
     if not isinstance(file_extract, Mapping):
         file_extract = {}
-    provider_wake_prefix = ""
-    wake_prefix = cfg.get("wake_prefix", "")
-    if isinstance(wake_prefix, str):
-        provider_wake_prefix = wake_prefix
-    elif isinstance(wake_prefix, list):
-        provider_wake_prefix = next(
-            (item for item in wake_prefix if isinstance(item, str) and item),
-            "",
-        )
+    provider_wake_prefix = resolve_provider_wake_prefix(cfg)
     interaction_settings = cfg.get("interaction_middleware", {})
     try:
         contributor_timeout = float(
