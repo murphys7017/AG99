@@ -216,6 +216,9 @@ ConfigRouteTable.resolve(umo)
 - [已完成] SubAgent Dashboard 按显式 `conf_id` 读取、保存并刷新对应 Profile 的
   handoff；Provider 选择仍只引用全局 Provider 资源，页面不再把非默认 Profile 的
   子代理策略写回 `default`。
+- [已完成] 官方群聊上下文控制面（环境消息捕获、Prompt 注入、外部 Agent 请求装饰和
+  发送后游标推进）与空 @/单独唤醒词处理优先消费已准入的回合快照；只有不经过
+  Interaction 准入的旧直连入口才回退实时 Profile，避免重载在同一事件内混用两套策略。
 
 ### C6：验收边界
 
