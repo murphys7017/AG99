@@ -1335,3 +1335,23 @@ persona_pool_configuration_cleanup:
     normalized successfully. The focused pytest file has the same collection
     timeout recorded for the provider_pool cleanup; no service restart was
     performed.
+
+web_search_link_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: validated_with_pytest_collection_gap
+  scope: >-
+    Remove provider_settings.web_search_link, a display-citation toggle that
+    no Prompt or result-rendering consumer read.
+  non_goals: >-
+    Keep WebChat citation prompting and citation rendering. They are governed
+    by actual search-tool availability and platform behavior, not this field.
+  validation: >-
+    Direct AstrBotConfig load-and-persist smoke confirmed web_search remains
+    enabled while the retired key is removed in memory and on disk. All three
+    Dashboard metadata JSON files parsed successfully; scoped Ruff,
+    compilation, reference scan, and diff checks passed. The default config
+    plus three local Profiles were normalized successfully. The focused pytest
+    collection did not finish within the local command window, so it is not
+    counted as a passing test. No service restart was performed.

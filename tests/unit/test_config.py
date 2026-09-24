@@ -388,6 +388,33 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "persona_pool" not in persisted["provider_settings"]
 
+    def test_load_removes_retired_web_search_link(
+        self, temp_config_path, minimal_default_config
+    ):
+        """The unused citation-display toggle must not remain persisted."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "web_search": True,
+                "web_search_link": True,
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        assert config["provider_settings"]["web_search"] is True
+        assert "web_search_link" not in config["provider_settings"]
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "web_search_link" not in persisted["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

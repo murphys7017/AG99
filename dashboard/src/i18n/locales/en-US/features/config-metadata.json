@@ -136,9 +136,6 @@
         "websearch_baidu_app_builder_key": {
           "description": "Baidu Qianfan Smart Cloud APP Builder API Key",
           "hint": "Reference: [https://console.bce.baidu.com/iam/#/iam/apikey/list](https://console.bce.baidu.com/iam/#/iam/apikey/list)"
-        },
-        "web_search_link": {
-          "description": "Display Source Citations"
         }
       }
     },

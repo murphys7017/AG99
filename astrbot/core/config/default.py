@@ -122,7 +122,6 @@ DEFAULT_CONFIG = {
         "websearch_baidu_app_builder_key": "",
         "websearch_firecrawl_key": [],
         "websearch_exa_key": [],
-        "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
         "group_name_display": False,
@@ -2979,9 +2978,6 @@ CONFIG_METADATA_2 = {
                     "web_search": {
                         "type": "bool",
                     },
-                    "web_search_link": {
-                        "type": "bool",
-                    },
                     "display_reasoning_text": {
                         "type": "bool",
                     },
@@ -3530,13 +3526,6 @@ CONFIG_METADATA_3 = {
                         "hint": "参考：https://console.bce.baidu.com/iam/#/iam/apikey/list",
                         "condition": {
                             "provider_settings.websearch_provider": "baidu_ai_search",
-                            "provider_settings.web_search": True,
-                        },
-                    },
-                    "provider_settings.web_search_link": {
-                        "description": "显示来源引用",
-                        "type": "bool",
-                        "condition": {
                             "provider_settings.web_search": True,
                         },
                     },

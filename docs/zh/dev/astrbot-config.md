@@ -61,7 +61,6 @@ AstrBot 默认配置如下：
         "websearch_tavily_key": [],
         "websearch_bocha_key": [],
         "websearch_brave_key": [],
-        "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
         "group_name_display": False,
@@ -303,10 +302,6 @@ BoCha 搜索引擎的 API Key 列表。使用 `bocha` 作为网页搜索提供�
 #### `provider_settings.websearch_brave_key`
 
 Brave 搜索引擎的 API Key 列表。使用 `brave` 作为网页搜索提供商时需要填写。
-
-#### `provider_settings.web_search_link`
-
-是否在回复中提示模型附上搜索结果的链接。默认为 `false`。
 
 #### `provider_settings.display_reasoning_text`
 

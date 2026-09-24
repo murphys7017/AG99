@@ -116,6 +116,16 @@ def _strip_retired_persona_pool(config: dict) -> bool:
     return True
 
 
+def _strip_retired_web_search_link(config: dict) -> bool:
+    """Remove the unused web-search citation display toggle."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict) or "web_search_link" not in provider_settings:
+        return False
+    provider_settings.pop("web_search_link")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -279,6 +289,7 @@ class AstrBotConfig(dict):
         stripped_retired_persona_config = _strip_retired_persona_config(conf)
         stripped_retired_provider_pool = _strip_retired_provider_pool(conf)
         stripped_retired_persona_pool = _strip_retired_persona_pool(conf)
+        stripped_retired_web_search_link = _strip_retired_web_search_link(conf)
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -307,6 +318,7 @@ class AstrBotConfig(dict):
             or stripped_retired_persona_config
             or stripped_retired_provider_pool
             or stripped_retired_persona_pool
+            or stripped_retired_web_search_link
             or migrated_execution_config
         ):
             self.save_config()

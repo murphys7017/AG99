@@ -61,7 +61,6 @@ The default AstrBot configuration is as follows:
         "websearch_tavily_key": [],
         "websearch_bocha_key": [],
         "websearch_brave_key": [],
-        "web_search_link": False,
         "display_reasoning_text": False,
         "identifier": False,
         "group_name_display": False,
@@ -303,10 +302,6 @@ API Key list for the BoCha search engine. Required when using `bocha` as the web
 #### `provider_settings.websearch_brave_key`
 
 API Key list for the Brave search engine. Required when using `brave` as the web search provider.
-
-#### `provider_settings.web_search_link`
-
-Whether to prompt the model to include links to search results in the reply. Default is `false`.
 
 #### `provider_settings.display_reasoning_text`
 

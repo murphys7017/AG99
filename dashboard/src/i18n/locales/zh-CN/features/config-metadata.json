@@ -136,9 +136,6 @@
         "websearch_baidu_app_builder_key": {
           "description": "百度千帆智能云 APP Builder API Key",
           "hint": "参考:[https://console.bce.baidu.com/iam/#/iam/apikey/list](https://console.bce.baidu.com/iam/#/iam/apikey/list)"
-        },
-        "web_search_link": {
-          "description": "显示来源引用"
         }
       }
     },

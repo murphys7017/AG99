@@ -134,9 +134,6 @@
                 "websearch_baidu_app_builder_key": {
                     "description": "API-ключ Baidu Qianfan APP Builder",
                     "hint": "Ссылка: [https://console.bce.baidu.com/iam/#/iam/apikey/list](https://console.bce.baidu.com/iam/#/iam/apikey/list)"
-                },
-                "web_search_link": {
-                    "description": "Показывать ссылки на источники"
                 }
             }
         },
