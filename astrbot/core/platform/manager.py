@@ -45,25 +45,42 @@ class PlatformManager:
         self._platform_tasks: dict[str, PlatformTasks] = {}
 
         self.astrbot_config = config
-        self.resource_registry = resource_registry
         self.config_manager = config_manager
-        self._binding_owner_ids = {
-            binding.binding_id: binding.owner_config_ids
-            for binding in resource_registry.adapters.bindings
-        } if resource_registry is not None else {}
-        if resource_registry is None:
-            self.platforms_config = config["platform"]
-        else:
-            self.platforms_config = [
-                materialize_config_value(binding.settings)
-                for binding in resource_registry.adapters.bindings
-                if binding.binding_id != BUILTIN_WEBCHAT_ADAPTER_BINDING_ID
-            ]
+        self.resource_registry: RuntimeResourceRegistry | None = None
+        self._binding_owner_ids: dict[str, tuple[str, ...]] = {}
+        self.platforms_config: list[dict] = []
+        self._apply_resource_registry(resource_registry)
         self.settings = config["platform_settings"]
         """NOTE: 这里是 default 的配置文件，以保证最大的兼容性；
         这个配置中的 unique_session 需要特殊处理，
         约定整个项目中对 unique_session 的引用都从 default 的配置中获取"""
         self.event_queue = event_queue
+
+    def _apply_resource_registry(
+        self, resource_registry: RuntimeResourceRegistry | None
+    ) -> None:
+        self.resource_registry = resource_registry
+        if resource_registry is None:
+            self._binding_owner_ids = {}
+            self.platforms_config = self.astrbot_config["platform"]
+            return
+
+        self._binding_owner_ids = {
+            binding.binding_id: binding.owner_config_ids
+            for binding in resource_registry.adapters.bindings
+        }
+        self.platforms_config = [
+            materialize_config_value(binding.settings)
+            for binding in resource_registry.adapters.bindings
+            if binding.binding_id != BUILTIN_WEBCHAT_ADAPTER_BINDING_ID
+        ]
+
+    def refresh_resource_registry(self) -> None:
+        """Refresh Adapter resource views without changing running instances."""
+        if self.config_manager is None:
+            self._apply_resource_registry(self.resource_registry)
+            return
+        self._apply_resource_registry(self.config_manager.get_resource_registry())
 
     def _persist_platform_config(
         self,

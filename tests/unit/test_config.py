@@ -1775,3 +1775,62 @@ class TestConfigRouteGlobalProviderResources:
         )
         provider_manager.refresh_resource_registry.assert_called_once()
         provider_manager.reload.assert_not_awaited()
+
+
+class TestConfigRouteGlobalAdapterResources:
+    @pytest.mark.asyncio
+    async def test_platform_create_refreshes_global_view_before_loading(self):
+        route = object.__new__(ConfigRoute)
+        profile_config = {"platform": [{"id": "profile-local", "type": "legacy"}]}
+        global_resource_config = {"platform": []}
+        operations: list[str] = []
+
+        def refresh_resource_registry() -> None:
+            operations.append("refresh")
+
+        async def load_platform(platform_config: dict) -> None:
+            assert operations == ["refresh"]
+            assert platform_config["id"] == "global-platform"
+            operations.append("load")
+
+        route.config = profile_config
+        route.acm = SimpleNamespace(default_conf=global_resource_config)
+        route.core_lifecycle = SimpleNamespace(
+            platform_manager=SimpleNamespace(
+                refresh_resource_registry=Mock(side_effect=refresh_resource_registry),
+                load_platform=AsyncMock(side_effect=load_platform),
+            )
+        )
+
+        with (
+            patch(
+                "astrbot.dashboard.routes.config.request",
+                new=AwaitableJsonRequest(
+                    {
+                        "id": "global-platform",
+                        "type": "aiocqhttp",
+                        "enable": False,
+                    }
+                ),
+            ),
+            patch("astrbot.dashboard.routes.config.save_config") as save_config,
+        ):
+            response = await route.post_new_platform()
+
+        assert response["status"] == "ok"
+        assert global_resource_config["platform"] == [
+            {
+                "id": "global-platform",
+                "type": "aiocqhttp",
+                "enable": False,
+            }
+        ]
+        assert profile_config["platform"] == [
+            {"id": "profile-local", "type": "legacy"}
+        ]
+        assert operations == ["refresh", "load"]
+        save_config.assert_called_once_with(
+            global_resource_config,
+            global_resource_config,
+            is_core=True,
+        )

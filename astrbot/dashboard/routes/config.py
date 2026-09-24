@@ -1040,7 +1040,7 @@ class ConfigRoute(Route):
     async def get_platform_list(self):
         """获取所有平台的列表"""
         platform_list = []
-        for platform in self.config["platform"]:
+        for platform in self.global_resource_config["platform"]:
             platform_list.append(platform)
         return Response().ok({"platforms": platform_list}).__dict__
 
@@ -1284,13 +1284,15 @@ class ConfigRoute(Route):
 
     async def post_new_platform(self):
         new_platform_config = await request.json
+        resource_config = self.global_resource_config
 
         # 如果是支持统一 webhook 模式的平台，生成 webhook_uuid
         ensure_platform_webhook_config(new_platform_config)
 
-        self.config["platform"].append(new_platform_config)
+        resource_config["platform"].append(new_platform_config)
         try:
-            save_config(self.config, self.config, is_core=True)
+            save_config(resource_config, resource_config, is_core=True)
+            self.core_lifecycle.platform_manager.refresh_resource_registry()
             await self.core_lifecycle.platform_manager.load_platform(
                 new_platform_config,
             )
@@ -1322,15 +1324,17 @@ class ConfigRoute(Route):
         # 如果是支持统一 webhook 模式的平台，且启用了统一 webhook 模式，确保有 webhook_uuid
         ensure_platform_webhook_config(new_config)
 
-        for i, platform in enumerate(self.config["platform"]):
+        resource_config = self.global_resource_config
+        for i, platform in enumerate(resource_config["platform"]):
             if platform["id"] == origin_platform_id:
-                self.config["platform"][i] = new_config
+                resource_config["platform"][i] = new_config
                 break
         else:
             return Response().error("未找到对应平台").__dict__
 
         try:
-            save_config(self.config, self.config, is_core=True)
+            save_config(resource_config, resource_config, is_core=True)
+            self.core_lifecycle.platform_manager.refresh_resource_registry()
             await self.core_lifecycle.platform_manager.reload(new_config)
         except Exception as e:
             return Response().error(str(e)).__dict__
@@ -1354,14 +1358,16 @@ class ConfigRoute(Route):
     async def post_delete_platform(self):
         platform_id = await request.json
         platform_id = platform_id.get("id")
-        for i, platform in enumerate(self.config["platform"]):
+        resource_config = self.global_resource_config
+        for i, platform in enumerate(resource_config["platform"]):
             if platform["id"] == platform_id:
-                del self.config["platform"][i]
+                del resource_config["platform"][i]
                 break
         else:
             return Response().error("未找到对应平台").__dict__
         try:
-            save_config(self.config, self.config, is_core=True)
+            save_config(resource_config, resource_config, is_core=True)
+            self.core_lifecycle.platform_manager.refresh_resource_registry()
             await self.core_lifecycle.platform_manager.terminate_platform(platform_id)
         except Exception as e:
             return Response().error(str(e)).__dict__

@@ -41,6 +41,27 @@ provider_resource_crud_convergence:
     without attached Provider definitions. Confirm the Provider page and the
     next Profile-scoped turn see the same global resource inventory.
 
+adapter_resource_crud_convergence:
+  date: '2026-09-24'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Make Dashboard Adapter CRUD write the global resource owner and refresh
+    PlatformManager's resource view before it changes platform instances.
+  non_goals: >-
+    Alter UMO routing, BotProfile adapter admission, adapter protocols, or
+    restart AstrBot.
+  validation: >-
+    Focused ConfigRoute memory/resource tests passed 5 cases, including a
+    platform create that writes only the global owner and refreshes its
+    PlatformManager view before loading. Scoped Ruff, compileall, and git
+    diff checks passed.
+  followup: >-
+    After manual restart, create or edit one disabled test adapter, then
+    remove it. Confirm the platform page, resource registry, and reload
+    cleanup use the same adapter list without affecting an active QQ adapter.
+
 turn_snapshot_runtime_selection_convergence:
   date: '2026-09-24'
   class: bugfix
