@@ -165,6 +165,9 @@ ConfigRouteTable.resolve(umo)
 - [已完成] 只有没有专门 UMO 路由时，`default` 才是合法默认 Profile。
 - [已完成] EventBus、Cron/主动任务和 Personal 非平台入口使用显式选择结果；
   后台工具完成后的合成任务继承原始回合快照，避免等待期间重新路由。
+- [已完成] UMO 路由写入会将已注册 Adapter 显式绑定到目标 Profile；删除 Adapter
+  会移除所有 Profile 的对应 binding，避免路由与 Profile admission 产生相互矛盾的
+  配置状态。
 
 ### C3：在回合入口冻结配置
 

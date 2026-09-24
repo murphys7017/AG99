@@ -36,6 +36,14 @@ class AwaitableJsonRequest:
         return self._payload
 
 
+class PersistedConfig(dict):
+    """Minimal config double for route tests that exercise persistence."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.save_config = Mock()
+
+
 @pytest.fixture
 def temp_config_path(tmp_path):
     """Create a temporary config path."""
@@ -1834,3 +1842,98 @@ class TestConfigRouteGlobalAdapterResources:
             global_resource_config,
             is_core=True,
         )
+
+
+class TestConfigRouteAdapterAdmission:
+    @pytest.mark.asyncio
+    async def test_route_write_binds_registered_adapter_to_profile(self):
+        route = object.__new__(ConfigRoute)
+        profile = PersistedConfig({"adapter_binding_ids": []})
+        route.acm = SimpleNamespace(
+            default_conf={"platform": [{"id": "adapter-a", "type": "aiocqhttp"}]},
+            confs={"profile-a": profile},
+        )
+        route.ucr = SimpleNamespace(
+            validate_route=Mock(),
+            update_route=AsyncMock(),
+        )
+
+        with patch(
+            "astrbot.dashboard.routes.config.request",
+            new=AwaitableJsonRequest(
+                {"umo": "adapter-a:*:*", "conf_id": "profile-a"}
+            ),
+        ):
+            response = await route.update_ucr()
+
+        assert response["status"] == "ok"
+        assert profile["adapter_binding_ids"] == ["adapter-a"]
+        profile.save_config.assert_called_once()
+        route.ucr.validate_route.assert_called_once_with("adapter-a:*:*")
+        route.ucr.update_route.assert_awaited_once_with("adapter-a:*:*", "profile-a")
+
+    @pytest.mark.asyncio
+    async def test_bulk_route_write_validates_all_profiles_before_binding(self):
+        route = object.__new__(ConfigRoute)
+        profile = PersistedConfig({"adapter_binding_ids": []})
+        route.acm = SimpleNamespace(
+            default_conf={"platform": [{"id": "adapter-a", "type": "aiocqhttp"}]},
+            confs={"profile-a": profile},
+        )
+        route.ucr = SimpleNamespace(
+            validate_routing_data=Mock(),
+            update_routing_data=AsyncMock(),
+        )
+
+        routing = {
+            "adapter-a:*:*": "profile-a",
+            "adapter-a:GroupMessage:*": "missing-profile",
+        }
+        with patch(
+            "astrbot.dashboard.routes.config.request",
+            new=AwaitableJsonRequest({"routing": routing}),
+        ):
+            response = await route.update_ucr_all()
+
+        assert response["status"] == "error"
+        assert profile["adapter_binding_ids"] == []
+        profile.save_config.assert_not_called()
+        route.ucr.update_routing_data.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_adapter_delete_removes_profile_admission(self):
+        route = object.__new__(ConfigRoute)
+        profile = PersistedConfig({"adapter_binding_ids": ["adapter-a", "adapter-b"]})
+        global_resource_config = {
+            "platform": [{"id": "adapter-a", "type": "aiocqhttp"}]
+        }
+        platform_manager = SimpleNamespace(
+            refresh_resource_registry=Mock(),
+            terminate_platform=AsyncMock(),
+        )
+        route.acm = SimpleNamespace(
+            default_conf=global_resource_config,
+            confs={"profile-a": profile},
+        )
+        route.core_lifecycle = SimpleNamespace(platform_manager=platform_manager)
+
+        with (
+            patch(
+                "astrbot.dashboard.routes.config.request",
+                new=AwaitableJsonRequest({"id": "adapter-a"}),
+            ),
+            patch("astrbot.dashboard.routes.config.save_config") as save_config,
+        ):
+            response = await route.post_delete_platform()
+
+        assert response["status"] == "ok"
+        assert global_resource_config["platform"] == []
+        assert profile["adapter_binding_ids"] == ["adapter-b"]
+        profile.save_config.assert_called_once()
+        save_config.assert_called_once_with(
+            global_resource_config,
+            global_resource_config,
+            is_core=True,
+        )
+        platform_manager.refresh_resource_registry.assert_called_once()
+        platform_manager.terminate_platform.assert_awaited_once_with("adapter-a")

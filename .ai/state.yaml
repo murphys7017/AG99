@@ -62,6 +62,29 @@ adapter_resource_crud_convergence:
     remove it. Confirm the platform page, resource registry, and reload
     cleanup use the same adapter list without affecting an active QQ adapter.
 
+route_adapter_admission_convergence:
+  date: '2026-09-24'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Keep UMO route targets and Profile Adapter admission coherent by binding
+    registered adapters during route writes and removing bindings on adapter
+    deletion.
+  non_goals: >-
+    Redesign UMO route specificity, change Personal/Core behavior, or restart
+    AstrBot.
+  validation: >-
+    Focused ConfigRoute memory/resource tests passed 8 cases. They cover
+    adapter-view refresh before platform loading, single and bulk route writes,
+    prevalidation that prevents partial Profile binding, and Adapter deletion
+    cleanup. Scoped Ruff, compileall, and git diff checks passed.
+  followup: >-
+    After manual restart, route a disabled test Adapter to a non-default
+    Profile, verify the first admitted turn resolves successfully, then delete
+    the Adapter and confirm its Profile binding is removed without touching
+    the active QQ Adapter.
+
 turn_snapshot_runtime_selection_convergence:
   date: '2026-09-24'
   class: bugfix

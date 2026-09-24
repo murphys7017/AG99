@@ -127,11 +127,7 @@ class UmopConfigRouter:
             ValueError: 如果 new_routing 中的 key 格式不正确
 
         """
-        for part in new_routing:
-            if self._split_umo(part) is None:
-                raise ValueError(
-                    "umop keys must be strings in the format [platform_id]:[message_type]:[session_id], with optional wildcards * or empty for all",
-                )
+        self.validate_routing_data(new_routing)
 
         self.umop_to_conf_id = new_routing
         await self.sp.global_put("umop_config_routing", self.umop_to_conf_id)
@@ -147,13 +143,22 @@ class UmopConfigRouter:
             ValueError: 如果 umo 格式不正确
 
         """
+        self.validate_route(umo)
+
+        self.umop_to_conf_id[umo] = conf_id
+        await self.sp.global_put("umop_config_routing", self.umop_to_conf_id)
+
+    def validate_routing_data(self, routing: dict[str, str]) -> None:
+        """Validate a complete route table without changing persisted state."""
+        for umo in routing:
+            self.validate_route(umo)
+
+    def validate_route(self, umo: str) -> None:
+        """Validate one UMO route key without changing persisted state."""
         if self._split_umo(umo) is None:
             raise ValueError(
                 "umop must be a string in the format [platform_id]:[message_type]:[session_id], with optional wildcards * or empty for all",
             )
-
-        self.umop_to_conf_id[umo] = conf_id
-        await self.sp.global_put("umop_config_routing", self.umop_to_conf_id)
 
     async def delete_route(self, umo: str) -> None:
         """删除一条路由

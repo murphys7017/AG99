@@ -413,6 +413,87 @@ class ConfigRoute(Route):
         """Return the single persisted owner for Provider and Adapter resources."""
         return self.acm.default_conf
 
+    def _bind_registered_adapter_to_profile(
+        self,
+        *,
+        config_id: str,
+        adapter_id: str,
+    ) -> None:
+        """Grant a routed Profile access to one registered Adapter binding."""
+        if adapter_id in {"", "*", "webchat"}:
+            return
+        registered_ids = {
+            str(entry.get("id", "")).strip()
+            for entry in self.global_resource_config.get("platform", [])
+            if isinstance(entry, dict)
+        }
+        if adapter_id not in registered_ids:
+            return
+
+        profile = self.acm.confs.get(config_id)
+        if profile is None:
+            raise ValueError(f"配置文件 {config_id} 不存在")
+
+        configured_ids = profile.get("adapter_binding_ids")
+        if isinstance(configured_ids, list):
+            binding_ids = [
+                item.strip()
+                for item in configured_ids
+                if isinstance(item, str) and item.strip()
+            ]
+        else:
+            binding_ids = [
+                str(entry.get("id")).strip()
+                for entry in profile.get("platform", [])
+                if isinstance(entry, dict) and str(entry.get("id", "")).strip()
+            ]
+
+        if adapter_id in binding_ids:
+            return
+        profile["adapter_binding_ids"] = [*binding_ids, adapter_id]
+        profile.save_config()
+
+    def _bind_registered_route_adapters(
+        self, routing: dict[str, str]
+    ) -> None:
+        """Persist Profile Adapter admission for all explicit route targets."""
+        normalized_routes: list[tuple[str, str, str]] = []
+        for umo, config_id in routing.items():
+            if not isinstance(config_id, str) or not config_id.strip():
+                raise ValueError(f"路由 {umo!r} 缺少配置文件 ID")
+            normalized_config_id = config_id.strip()
+            if normalized_config_id not in self.acm.confs:
+                raise ValueError(f"配置文件 {normalized_config_id} 不存在")
+            normalized_routes.append(
+                (
+                    umo,
+                    normalized_config_id,
+                    umo.split(":", 1)[0].strip(),
+                )
+            )
+
+        for _, config_id, adapter_id in normalized_routes:
+            self._bind_registered_adapter_to_profile(
+                config_id=config_id,
+                adapter_id=adapter_id,
+            )
+
+    def _remove_adapter_binding_from_profiles(self, adapter_id: str) -> None:
+        """Remove a deleted Adapter from every Profile's explicit admission list."""
+        for profile in self.acm.confs.values():
+            configured_ids = profile.get("adapter_binding_ids")
+            if not isinstance(configured_ids, list):
+                continue
+            binding_ids = [
+                item.strip()
+                for item in configured_ids
+                if isinstance(item, str) and item.strip() and item.strip() != adapter_id
+            ]
+            if binding_ids == configured_ids:
+                continue
+            profile["adapter_binding_ids"] = binding_ids
+            profile.save_config()
+
     async def delete_provider_source(self):
         """删除 provider_source，并更新关联的 providers"""
         post_data = await request.json
@@ -578,6 +659,8 @@ class ConfigRoute(Route):
             return Response().error("缺少或错误的路由表数据").__dict__
 
         try:
+            self.ucr.validate_routing_data(new_routing)
+            self._bind_registered_route_adapters(new_routing)
             await self.ucr.update_routing_data(new_routing)
             return Response().ok(message="更新成功").__dict__
         except Exception as e:
@@ -597,6 +680,8 @@ class ConfigRoute(Route):
             return Response().error("缺少 UMO 或配置文件 ID").__dict__
 
         try:
+            self.ucr.validate_route(umo)
+            self._bind_registered_route_adapters({umo: conf_id})
             await self.ucr.update_route(umo, conf_id)
             return Response().ok(message="更新成功").__dict__
         except Exception as e:
@@ -1367,6 +1452,7 @@ class ConfigRoute(Route):
             return Response().error("未找到对应平台").__dict__
         try:
             save_config(resource_config, resource_config, is_core=True)
+            self._remove_adapter_binding_from_profiles(platform_id)
             self.core_lifecycle.platform_manager.refresh_resource_registry()
             await self.core_lifecycle.platform_manager.terminate_platform(platform_id)
         except Exception as e:
