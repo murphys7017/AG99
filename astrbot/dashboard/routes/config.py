@@ -8,7 +8,7 @@ from typing import Any
 
 from quart import request
 
-from astrbot.core import astrbot_config, file_token_service, logger
+from astrbot.core import file_token_service, logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.config.default import (
     CONFIG_METADATA_2,
@@ -408,6 +408,11 @@ class ConfigRoute(Route):
         }
         self.register_routes()
 
+    @property
+    def global_resource_config(self) -> AstrBotConfig:
+        """Return the single persisted owner for Provider and Adapter resources."""
+        return self.acm.default_conf
+
     async def delete_provider_source(self):
         """删除 provider_source，并更新关联的 providers"""
         post_data = await request.json
@@ -418,7 +423,8 @@ class ConfigRoute(Route):
         if not provider_source_id:
             return Response().error("缺少 provider_source_id").__dict__
 
-        provider_sources = self.config.get("provider_sources", [])
+        resource_config = self.global_resource_config
+        provider_sources = resource_config.get("provider_sources", [])
         target_idx = next(
             (
                 i
@@ -435,7 +441,7 @@ class ConfigRoute(Route):
         del provider_sources[target_idx]
 
         # 写回配置
-        self.config["provider_sources"] = provider_sources
+        resource_config["provider_sources"] = provider_sources
 
         # 删除引用了该 provider_source 的 providers
         await self.core_lifecycle.provider_manager.delete_provider(
@@ -443,7 +449,8 @@ class ConfigRoute(Route):
         )
 
         try:
-            save_config(self.config, self.config, is_core=True)
+            save_config(resource_config, resource_config, is_core=True)
+            self.core_lifecycle.provider_manager.refresh_resource_registry()
         except Exception as e:
             logger.error(traceback.format_exc())
             return Response().error(str(e)).__dict__
@@ -468,7 +475,8 @@ class ConfigRoute(Route):
         if not new_source_config.get("id"):
             new_source_config["id"] = original_id
 
-        provider_sources = self.config.get("provider_sources", [])
+        resource_config = self.global_resource_config
+        provider_sources = resource_config.get("provider_sources", [])
 
         for ps in provider_sources:
             if ps.get("id") == new_source_config["id"] and ps.get("id") != original_id:
@@ -495,16 +503,16 @@ class ConfigRoute(Route):
 
         # 更新引用了该 provider_source 的 providers
         affected_providers = []
-        for provider in self.config.get("provider", []):
+        for provider in resource_config.get("provider", []):
             if provider.get("provider_source_id") == old_id:
                 provider["provider_source_id"] = new_source_config["id"]
                 affected_providers.append(provider)
 
         # 写回配置
-        self.config["provider_sources"] = provider_sources
+        resource_config["provider_sources"] = provider_sources
 
         try:
-            save_config(self.config, self.config, is_core=True)
+            save_config(resource_config, resource_config, is_core=True)
         except Exception as e:
             logger.error(traceback.format_exc())
             return Response().error(str(e)).__dict__
@@ -512,11 +520,10 @@ class ConfigRoute(Route):
         # 重载受影响的 providers，使新的 source 配置生效
         reload_errors = []
         prov_mgr = self.core_lifecycle.provider_manager
-        # 先同步 provider manager 持有的配置视图，再重载关联 provider。
-        # 否则当 source id 或 source 内容发生变化时，reload 仍会按旧配置合并，
-        # 导致 provider_source 合并失败，进而缺失 type 等关键字段。
-        prov_mgr.providers_config = self.config.get("provider", [])
-        prov_mgr.provider_sources_config = self.config.get("provider_sources", [])
+        # Rebuild the immutable global-resource projection before reloading
+        # affected instances. This also handles source-only changes with no
+        # provider definition to reload.
+        prov_mgr.refresh_resource_registry()
         for provider in affected_providers:
             try:
                 await prov_mgr.reload(provider)
@@ -550,8 +557,8 @@ class ConfigRoute(Route):
         }
         data = {
             "config_schema": config_schema,
-            "providers": astrbot_config["provider"],
-            "provider_sources": astrbot_config["provider_sources"],
+            "providers": self.global_resource_config["provider"],
+            "provider_sources": self.global_resource_config["provider_sources"],
         }
         return Response().ok(data=data).__dict__
 
@@ -949,7 +956,7 @@ class ConfigRoute(Route):
             from astrbot.core.provider.register import provider_cls_map
 
             # 从配置中查找对应的 provider_source
-            provider_sources = self.config.get("provider_sources", [])
+            provider_sources = self.global_resource_config.get("provider_sources", [])
             provider_source = None
             for ps in provider_sources:
                 if ps.get("id") == provider_source_id:

@@ -5,7 +5,7 @@ import traceback
 from collections.abc import Callable, Mapping
 from typing import Protocol, runtime_checkable
 
-from astrbot.core import astrbot_config, logger, sp
+from astrbot.core import logger, sp
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 from astrbot.core.config.domains import materialize_config_value
 from astrbot.core.db import BaseDatabase
@@ -88,6 +88,10 @@ class ProviderManager:
         self.resource_registry = self.acm.get_resource_registry()
         self.providers_config = self._materialize_provider_definitions()
         self.provider_sources_config = self._materialize_provider_sources()
+
+    def refresh_resource_registry(self) -> None:
+        """Synchronize resource-backed API views after a global resource write."""
+        self._refresh_resource_registry()
 
     def _materialize_provider_definitions(self) -> list[dict]:
         return [
@@ -942,6 +946,7 @@ class ProviderManager:
                     prov for prov in config["provider"] if prov.get("id") != tpid
                 ]
             config.save_config()
+            self._refresh_resource_registry()
             logger.info(f"Provider {target_prov_ids} 已从配置中删除。")
 
     async def update_provider(self, origin_provider_id: str, new_config: dict) -> None:
@@ -991,10 +996,9 @@ class ProviderManager:
             # add to config
             config["provider"].append(new_config)
             config.save_config()
+            self._refresh_resource_registry()
             # load instance
             await self.load_provider(new_config)
-            # sync in-memory config for API queries (e.g., embedding provider list)
-            self.providers_config = astrbot_config["provider"]
 
     async def terminate(self) -> None:
         if self._mcp_init_task and not self._mcp_init_task.done():

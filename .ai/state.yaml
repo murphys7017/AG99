@@ -19,6 +19,28 @@ subagent_dashboard_profile_scope:
     page, save distinct handoff lists, and verify each Profile's Core turn
     exposes only its own handoff tools.
 
+provider_resource_crud_convergence:
+  date: '2026-09-24'
+  class: bugfix
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Make Dashboard Provider/source CRUD explicitly operate on the global
+    resource owner and refresh ProviderManager's resource projection after
+    every resource mutation.
+  non_goals: >-
+    Change BotProfile provider-selection policy, Adapter CRUD, Provider
+    protocol implementations, or restart AstrBot.
+  validation: >-
+    Focused ConfigRoute memory/resource tests passed 4 cases, including a
+    source-only update that uses the global owner, leaves a Profile-local
+    resource list untouched, and refreshes the ProviderManager view. Scoped
+    Ruff, compileall, and git diff checks passed.
+  followup: >-
+    After manual restart, add, edit, and remove a Provider source with and
+    without attached Provider definitions. Confirm the Provider page and the
+    next Profile-scoped turn see the same global resource inventory.
+
 turn_snapshot_runtime_selection_convergence:
   date: '2026-09-24'
   class: bugfix

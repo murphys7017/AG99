@@ -3,7 +3,7 @@
 import json
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -1717,3 +1717,61 @@ class TestConfigRouteMemoryReload:
         assert response["status"] == "ok"
         reset_memory_config.assert_not_called()
         shutdown_memory_service.assert_not_awaited()
+
+
+class TestConfigRouteGlobalProviderResources:
+    @pytest.mark.asyncio
+    async def test_source_update_uses_global_resource_owner_and_refreshes_view(self):
+        route = object.__new__(ConfigRoute)
+        profile_config = {
+            "provider_sources": [{"id": "profile-local", "type": "legacy"}],
+            "provider": [],
+        }
+        global_resource_config = {
+            "provider_sources": [{"id": "global-source", "type": "openai"}],
+            "provider": [],
+        }
+        provider_manager = SimpleNamespace(
+            refresh_resource_registry=Mock(),
+            reload=AsyncMock(),
+        )
+        route.config = profile_config
+        route.acm = SimpleNamespace(default_conf=global_resource_config)
+        route.core_lifecycle = SimpleNamespace(provider_manager=provider_manager)
+
+        with (
+            patch(
+                "astrbot.dashboard.routes.config.request",
+                new=AwaitableJsonRequest(
+                    {
+                        "original_id": "global-source",
+                        "config": {
+                            "id": "global-source",
+                            "type": "openai",
+                            "api_base": "https://example.test/v1",
+                        },
+                    }
+                ),
+            ),
+            patch("astrbot.dashboard.routes.config.save_config") as save_config,
+        ):
+            response = await route.update_provider_source()
+
+        assert response["status"] == "ok"
+        assert global_resource_config["provider_sources"] == [
+            {
+                "id": "global-source",
+                "type": "openai",
+                "api_base": "https://example.test/v1",
+            }
+        ]
+        assert profile_config["provider_sources"] == [
+            {"id": "profile-local", "type": "legacy"}
+        ]
+        save_config.assert_called_once_with(
+            global_resource_config,
+            global_resource_config,
+            is_core=True,
+        )
+        provider_manager.refresh_resource_registry.assert_called_once()
+        provider_manager.reload.assert_not_awaited()

@@ -146,8 +146,11 @@ ConfigRouteTable.resolve(umo)
   明确的 Provider 引用字段。
 - [已完成] 旧 Profile 内嵌的 Adapter 定义迁移为 `adapter_binding_ids` 准入列表；
   实例定义只保留在 `default` 全局资源 owner。
-- [待完成] ProviderManager 与 Dashboard 的资源 CRUD 明确暴露全局 owner，移除
-  仍假定“当前 Profile 同时拥有资源和策略”的内部实现细节。
+- [已完成] Provider/source Dashboard CRUD 和 ProviderManager 明确只写入 `default`
+  全局资源 owner；每次资源写入后重建只读资源投影，删除或 source-only 更新不会让
+  Dashboard/API 缓存继续暴露旧资源。
+- [待完成] Adapter Dashboard CRUD 明确暴露全局 owner，移除仍假定“当前 Profile
+  同时拥有资源和策略”的内部实现细节。
 
 当前验证限制：静态检查、受控 Profile 资源迁移模拟和编译已通过；直接独立导入 ProviderManager 会触发仓库现有的
 `PersonaManager -> astrbot.api -> KnowledgeBaseManager -> ProviderManager` 循环依赖，
