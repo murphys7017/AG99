@@ -37,6 +37,89 @@ def _strip_memory_analyzer_model_fields(config: dict) -> bool:
     return changed
 
 
+def _migrate_execution_configuration(config: dict) -> bool:
+    """Move retired mixed runner fields into their two explicit owners.
+
+    This migration is intentionally destructive: the repository is still in
+    development and must not leave a second persisted source of truth behind.
+    """
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+
+    legacy_mode = provider_settings.pop("agent_runner_type", None)
+    legacy_provider_ids = {
+        "dify": provider_settings.pop("dify_agent_runner_provider_id", None),
+        "coze": provider_settings.pop("coze_agent_runner_provider_id", None),
+        "dashscope": provider_settings.pop("dashscope_agent_runner_provider_id", None),
+        "deerflow": provider_settings.pop("deerflow_agent_runner_provider_id", None),
+        "codex_cli": provider_settings.pop(
+            "codex_cli_agent_runner_provider_id", None
+        ),
+    }
+    changed = legacy_mode is not None or any(
+        value is not None for value in legacy_provider_ids.values()
+    )
+
+    agent_runner = config.get("agent_runner")
+    if not isinstance(agent_runner, dict):
+        agent_runner = {}
+        config["agent_runner"] = agent_runner
+        changed = True
+    core_execution = config.get("core_execution")
+    if not isinstance(core_execution, dict):
+        core_execution = {}
+        config["core_execution"] = core_execution
+        changed = True
+
+    normalized_legacy_mode = (
+        legacy_mode.strip().lower() if isinstance(legacy_mode, str) else ""
+    )
+    if "mode" not in agent_runner:
+        agent_runner["mode"] = (
+            normalized_legacy_mode
+            if normalized_legacy_mode in {"local", "dify", "coze", "dashscope", "deerflow"}
+            else "local"
+        )
+        changed = True
+    if "provider_id" not in agent_runner:
+        runner_mode = str(agent_runner.get("mode") or "").strip().lower()
+        provider_id = legacy_provider_ids.get(runner_mode, "")
+        agent_runner["provider_id"] = provider_id if isinstance(provider_id, str) else ""
+        changed = True
+
+    if "executor_id" not in core_execution:
+        core_execution["executor_id"] = (
+            "codex_cli" if normalized_legacy_mode == "codex_cli" else "native"
+        )
+        changed = True
+    codex_cli = core_execution.get("codex_cli")
+    if not isinstance(codex_cli, dict):
+        codex_cli = {}
+        core_execution["codex_cli"] = codex_cli
+        changed = True
+    if "provider_id" not in codex_cli:
+        provider_id = legacy_provider_ids["codex_cli"]
+        codex_cli["provider_id"] = provider_id if isinstance(provider_id, str) else ""
+        changed = True
+
+    # Codex connection/workspace settings belong to the selected Provider
+    # resource, not to the Profile reference.
+    for field in (
+        "executable",
+        "workspace_root",
+        "workspace",
+        "request_timeout",
+        "max_message_bytes",
+    ):
+        if field in codex_cli:
+            codex_cli.pop(field)
+            changed = True
+
+    return changed
+
+
 class RateLimitStrategy(enum.Enum):
     STALL = "stall"
     DISCARD = "discard"
@@ -102,6 +185,8 @@ class AstrBotConfig(dict):
                 logger.info("已移除 memory 分析器的独立模型名配置")
                 stripped_memory_analyzer_models = True
 
+        migrated_execution_config = _migrate_execution_configuration(conf)
+
         # 检查配置完整性，并插入
         has_new = self.check_config_integrity(default_config, conf, schema=schema)
         reset_dashboard_password = self._consume_reset_dashboard_password_flag()
@@ -117,7 +202,7 @@ class AstrBotConfig(dict):
             self._reset_generated_dashboard_password(conf)
             has_new = True
         self.update(conf)
-        if has_new or stripped_memory_analyzer_models:
+        if has_new or stripped_memory_analyzer_models or migrated_execution_config:
             self.save_config()
 
         self.update(conf)

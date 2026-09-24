@@ -709,7 +709,6 @@ async def test_background_wakeup_passes_provider_settings_to_main_agent(
     provider_settings = {
         "fallback_chat_models": ["fallback-provider"],
         "request_max_retries": 3,
-        "agent_runner_type": "local",
         "streaming_response": True,
     }
     captured: dict = {}
@@ -724,7 +723,11 @@ async def test_background_wakeup_passes_provider_settings_to_main_agent(
     )
 
     context = SimpleNamespace(
-        get_config=lambda **_kwargs: {"provider_settings": provider_settings},
+        get_config=lambda **_kwargs: {
+            "provider_settings": provider_settings,
+            "agent_runner": {"mode": "local", "provider_id": ""},
+            "core_execution": {"executor_id": "native", "codex_cli": {}},
+        },
         conversation_manager=SimpleNamespace(),
     )
     run_context = ContextWrapper(

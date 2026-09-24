@@ -47,7 +47,7 @@ class _ProviderManager:
     def __init__(self, config=None):
         self.config = config
 
-    def get_agent_runner_config(self, provider_id, runner_type):
+    def get_execution_adapter_config(self, provider_id, runner_type):
         assert runner_type == "codex_cli"
         if self.config is None:
             raise ValueError("Agent runner provider not found")
@@ -57,7 +57,7 @@ class _ProviderManager:
 
 def test_resolve_core_executor_selection_uses_frozen_bot_settings():
     native = resolve_core_executor_selection(
-        {"provider_settings": {"agent_runner_type": "local"}},
+        {"core_execution": {"executor_id": "native", "codex_cli": {}}},
         provider_manager=_ProviderManager(),
         execution_source="interaction",
     )
@@ -66,9 +66,9 @@ def test_resolve_core_executor_selection_uses_frozen_bot_settings():
 
     codex = resolve_core_executor_selection(
         {
-            "provider_settings": {
-                "agent_runner_type": "codex_cli",
-                "codex_cli_agent_runner_provider_id": "codex-main",
+            "core_execution": {
+                "executor_id": "codex_cli",
+                "codex_cli": {"provider_id": "codex-main"},
             }
         },
         provider_manager=_ProviderManager({"id": "codex-main", "enable": True}),
@@ -78,9 +78,12 @@ def test_resolve_core_executor_selection_uses_frozen_bot_settings():
     assert codex.instance_id == "codex-main"
 
 
-def test_resolve_core_executor_selection_keeps_existing_third_party_proactive_behavior():
+def test_core_executor_selection_is_independent_from_agent_runner():
     selected = resolve_core_executor_selection(
-        {"provider_settings": {"agent_runner_type": "dify"}},
+        {
+            "agent_runner": {"mode": "dify", "provider_id": "dify-main"},
+            "core_execution": {"executor_id": "native", "codex_cli": {}},
+        },
         provider_manager=_ProviderManager(),
         execution_source="proactive",
     )

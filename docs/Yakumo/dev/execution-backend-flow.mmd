@@ -141,7 +141,7 @@ flowchart LR
     subgraph AGENT["五、Core Agent 执行"]
         direction TB
         AGENT_ENTRY["AgentRequestSubStage<br/>检查会话 AI 开关"]
-        RUNNER_TYPE{"agent_runner_type"}
+        RUNNER_TYPE{"agent_runner.mode"}
 
         LOCAL0["InternalAgentSubStage<br/>typing / OnWaitingLLMRequest<br/>注册 active runner 供 Runtime follow-up"]
         BUILD["build_main_agent"]

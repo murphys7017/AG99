@@ -158,12 +158,6 @@ DEFAULT_CONFIG = {
             "max_forward_fetch": 32,
             "warn_on_action_failure": False,
         },
-        "agent_runner_type": "local",
-        "codex_cli_agent_runner_provider_id": "",
-        "dify_agent_runner_provider_id": "",
-        "coze_agent_runner_provider_id": "",
-        "dashscope_agent_runner_provider_id": "",
-        "deerflow_agent_runner_provider_id": "",
         "unsupported_streaming_strategy": "realtime_segmenting",
         "reachability_check": False,
         "max_agent_step": 30,
@@ -202,6 +196,16 @@ DEFAULT_CONFIG = {
         "image_compress_options": {
             "max_size": 1280,
             "quality": 95,
+        },
+    },
+    "agent_runner": {
+        "mode": "local",
+        "provider_id": "",
+    },
+    "core_execution": {
+        "executor_id": "native",
+        "codex_cli": {
+            "provider_id": "",
         },
     },
     # SubAgent orchestrator mode:
@@ -3024,24 +3028,6 @@ CONFIG_METADATA_2 = {
                     "unsupported_streaming_strategy": {
                         "type": "string",
                     },
-                    "agent_runner_type": {
-                        "type": "string",
-                    },
-                    "dify_agent_runner_provider_id": {
-                        "type": "string",
-                    },
-                    "coze_agent_runner_provider_id": {
-                        "type": "string",
-                    },
-                    "dashscope_agent_runner_provider_id": {
-                        "type": "string",
-                    },
-                    "deerflow_agent_runner_provider_id": {
-                        "type": "string",
-                    },
-                    "codex_cli_agent_runner_provider_id": {
-                        "type": "string",
-                    },
                     "max_agent_step": {
                         "type": "int",
                     },
@@ -3070,6 +3056,33 @@ CONFIG_METADATA_2 = {
                         "items": {
                             "add_cron_tools": {
                                 "type": "bool",
+                            },
+                        },
+                    },
+                },
+            },
+            "agent_runner": {
+                "type": "object",
+                "items": {
+                    "mode": {
+                        "type": "string",
+                    },
+                    "provider_id": {
+                        "type": "string",
+                    },
+                },
+            },
+            "core_execution": {
+                "type": "object",
+                "items": {
+                    "executor_id": {
+                        "type": "string",
+                    },
+                    "codex_cli": {
+                        "type": "object",
+                        "items": {
+                            "provider_id": {
+                                "type": "string",
                             },
                         },
                     },
@@ -3267,8 +3280,8 @@ CONFIG_METADATA_3 = {
         "name": "AI 配置",
         "metadata": {
             "agent_runner": {
-                "description": "Agent 执行方式",
-                "hint": "选择 AI 对话的执行器，默认为 AstrBot 内置 Agent 执行器，可使用 AstrBot 内的知识库、人格、工具调用功能。如果不打算接入 Dify、Coze、DeerFlow 等第三方 Agent 执行器，不需要修改此节。",
+                "description": "普通对话 Agent Runner",
+                "hint": "仅决定传统 Pipeline 普通对话是否整体交给第三方 Agent Runner。它不选择 Personal/Core 已委派任务的内部执行体。",
                 "type": "object",
                 "items": {
                     "provider_settings.enable": {
@@ -3276,13 +3289,12 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "AI 对话总开关",
                     },
-                    "provider_settings.agent_runner_type": {
-                        "description": "执行器",
+                    "agent_runner.mode": {
+                        "description": "运行模式",
                         "type": "string",
-                        "options": ["local", "codex_cli", "dify", "coze", "dashscope", "deerflow"],
+                        "options": ["local", "dify", "coze", "dashscope", "deerflow"],
                         "labels": [
                             "内置 Agent",
-                            "Codex CLI",
                             "Dify",
                             "Coze",
                             "阿里云百炼应用",
@@ -3292,48 +3304,44 @@ CONFIG_METADATA_3 = {
                             "provider_settings.enable": True,
                         },
                     },
-                    "provider_settings.codex_cli_agent_runner_provider_id": {
-                        "description": "Codex CLI Agent 执行器提供商 ID",
+                    "agent_runner.provider_id": {
+                        "description": "第三方 Agent Runner 提供商 ID",
                         "type": "string",
-                        "_special": "select_agent_runner_provider:codex_cli",
+                        "_special": "select_agent_runner_provider",
+                        "provider_subtype_selector": "agent_runner.mode",
                         "condition": {
-                            "provider_settings.agent_runner_type": "codex_cli",
+                            "agent_runner.mode": [
+                                "dify",
+                                "coze",
+                                "dashscope",
+                                "deerflow",
+                            ],
                             "provider_settings.enable": True,
                         },
                     },
-                    "provider_settings.coze_agent_runner_provider_id": {
-                        "description": "Coze Agent 执行器提供商 ID",
+                },
+            },
+            "core_execution": {
+                "description": "Core 内部执行体",
+                "hint": "仅决定 Personal 委派后的 Core 执行体。它不替代普通对话的 Agent Runner。",
+                "type": "object",
+                "items": {
+                    "core_execution.executor_id": {
+                        "description": "执行体",
                         "type": "string",
-                        "_special": "select_agent_runner_provider:coze",
+                        "options": ["native", "codex_cli"],
+                        "labels": ["AstrBot 内置 Core", "Codex CLI"],
                         "condition": {
-                            "provider_settings.agent_runner_type": "coze",
                             "provider_settings.enable": True,
                         },
                     },
-                    "provider_settings.dify_agent_runner_provider_id": {
-                        "description": "Dify Agent 执行器提供商 ID",
+                    "core_execution.codex_cli.provider_id": {
+                        "description": "Codex CLI 执行体提供商 ID",
                         "type": "string",
-                        "_special": "select_agent_runner_provider:dify",
+                        "_special": "select_agent_runner_provider",
+                        "provider_subtype_selector": "core_execution.executor_id",
                         "condition": {
-                            "provider_settings.agent_runner_type": "dify",
-                            "provider_settings.enable": True,
-                        },
-                    },
-                    "provider_settings.dashscope_agent_runner_provider_id": {
-                        "description": "阿里云百炼应用 Agent 执行器提供商 ID",
-                        "type": "string",
-                        "_special": "select_agent_runner_provider:dashscope",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "dashscope",
-                            "provider_settings.enable": True,
-                        },
-                    },
-                    "provider_settings.deerflow_agent_runner_provider_id": {
-                        "description": "DeerFlow Agent 执行器提供商 ID",
-                        "type": "string",
-                        "_special": "select_agent_runner_provider:deerflow",
-                        "condition": {
-                            "provider_settings.agent_runner_type": "deerflow",
+                            "core_execution.executor_id": "codex_cli",
                             "provider_settings.enable": True,
                         },
                     },
@@ -3419,7 +3427,7 @@ CONFIG_METADATA_3 = {
                     },
                 },
                 "condition": {
-                    "provider_settings.agent_runner_type": "local",
+                    "agent_runner.mode": "local",
                     "provider_settings.enable": True,
                 },
             },
@@ -3452,7 +3460,7 @@ CONFIG_METADATA_3 = {
                     },
                 },
                 "condition": {
-                    "provider_settings.agent_runner_type": "local",
+                    "agent_runner.mode": "local",
                     "provider_settings.enable": True,
                 },
             },
@@ -3548,7 +3556,7 @@ CONFIG_METADATA_3 = {
                     },
                 },
                 "condition": {
-                    "provider_settings.agent_runner_type": "local",
+                    "agent_runner.mode": "local",
                     "provider_settings.enable": True,
                 },
             },
@@ -3711,7 +3719,7 @@ CONFIG_METADATA_3 = {
                     },
                 },
                 "condition": {
-                    "provider_settings.agent_runner_type": "local",
+                    "agent_runner.mode": "local",
                     "provider_settings.enable": True,
                 },
             },
@@ -3741,7 +3749,7 @@ CONFIG_METADATA_3 = {
             #         },
             #     },
             #     "condition": {
-            #         "provider_settings.agent_runner_type": "local",
+            #         "agent_runner.mode": "local",
             #         "provider_settings.enable": True,
             #     },
             # },
@@ -3757,7 +3765,7 @@ CONFIG_METADATA_3 = {
                     },
                 },
                 "condition": {
-                    "provider_settings.agent_runner_type": "local",
+                    "agent_runner.mode": "local",
                     "provider_settings.enable": True,
                 },
             },
@@ -3771,7 +3779,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "超出这个数量时丢弃最旧的部分，一轮聊天记为 1 条；-1 表示不设置用户上限，但 Core 仍使用 64 轮安全上限",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.dequeue_context_length": {
@@ -3779,7 +3787,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "超出最多携带对话轮数时, 一次丢弃的聊天轮数",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.context_limit_reached_strategy": {
@@ -3788,7 +3796,7 @@ CONFIG_METADATA_3 = {
                         "options": ["truncate_by_turns", "llm_compress"],
                         "labels": ["按对话轮数截断", "由 LLM 压缩上下文"],
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                         "hint": "",
                     },
@@ -3798,7 +3806,7 @@ CONFIG_METADATA_3 = {
                         "hint": "如果为空则使用默认提示词。",
                         "condition": {
                             "provider_settings.context_limit_reached_strategy": "llm_compress",
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.llm_compress_keep_recent": {
@@ -3807,7 +3815,7 @@ CONFIG_METADATA_3 = {
                         "hint": "旧配置项。新压缩器会优先使用“保留最近上下文比例”。",
                         "condition": {
                             "provider_settings.context_limit_reached_strategy": "llm_compress",
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.llm_compress_keep_recent_ratio": {
@@ -3816,7 +3824,7 @@ CONFIG_METADATA_3 = {
                         "hint": "按当前上下文 token 比例保留最近完整对话轮，范围 0 到 0.3，默认 0.15。",
                         "condition": {
                             "provider_settings.context_limit_reached_strategy": "llm_compress",
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.llm_compress_provider_id": {
@@ -3826,7 +3834,7 @@ CONFIG_METADATA_3 = {
                         "hint": "留空时将降级为“按对话轮数截断”的策略。",
                         "condition": {
                             "provider_settings.context_limit_reached_strategy": "llm_compress",
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.fallback_max_context_tokens": {
@@ -3834,12 +3842,12 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "当 max_context_tokens 为 0 且模型不在内置元数据中时，使用此值作为上下文窗口大小。默认 128000。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                 },
                 "condition": {
-                    "provider_settings.agent_runner_type": "local",
+                    "agent_runner.mode": "local",
                     "provider_settings.enable": True,
                 },
             },
@@ -3851,7 +3859,7 @@ CONFIG_METADATA_3 = {
                         "description": "显示思考内容",
                         "type": "bool",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.streaming_response": {
@@ -3897,14 +3905,14 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "启用后，会在系统提示词中附带当前时间信息。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.show_tool_use_status": {
                         "description": "输出函数调用状态",
                         "type": "bool",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.show_tool_call_result": {
@@ -3912,7 +3920,7 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "仅在输出函数调用状态启用时生效，展示结果前 70 个字符。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                             "provider_settings.show_tool_use_status": True,
                         },
                     },
@@ -3921,7 +3929,7 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "开启后，非流式模式下多步工具调用过程中产生的中间文本将缓冲，待 Agent 完成后合并为一条回复发送。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                             "provider_settings.streaming_response": False,
                         },
                     },
@@ -3930,21 +3938,21 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "开启后，在每次请求 LLM 前会按当前模型提供商中所选择的模型能力删除对话中不支持的图片/工具调用结构（会改变模型看到的历史）",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.max_agent_step": {
                         "description": "工具调用轮数上限",
                         "type": "int",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.tool_call_timeout": {
                         "description": "工具调用超时时间（秒）",
                         "type": "int",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.tool_schema_mode": {
@@ -3954,7 +3962,7 @@ CONFIG_METADATA_3 = {
                         "labels": ["Skills-like（两阶段）", "Full（完整参数）"],
                         "hint": "skills-like 先下发工具名称与描述，再下发参数；full 一次性下发完整参数。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                     },
                     "provider_settings.wake_prefix": {
@@ -4007,7 +4015,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "引用/转发消息回退解析图片时的最大注入数量，超出会截断。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                         "collapsed": True,
                     },
@@ -4016,7 +4024,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "解析 Reply 组件链时允许的最大递归深度。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                         "collapsed": True,
                     },
@@ -4025,7 +4033,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "解析合并转发节点时允许的最大递归深度。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                         "collapsed": True,
                     },
@@ -4034,7 +4042,7 @@ CONFIG_METADATA_3 = {
                         "type": "int",
                         "hint": "递归拉取 get_forward_msg 的最大次数。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                         "collapsed": True,
                     },
@@ -4043,7 +4051,7 @@ CONFIG_METADATA_3 = {
                         "type": "bool",
                         "hint": "开启后，get_msg/get_forward_msg 全部尝试失败时输出 warning 日志。",
                         "condition": {
-                            "provider_settings.agent_runner_type": "local",
+                            "agent_runner.mode": "local",
                         },
                         "collapsed": True,
                     },

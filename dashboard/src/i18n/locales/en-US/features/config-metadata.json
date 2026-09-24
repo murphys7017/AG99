@@ -2,38 +2,36 @@
   "ai_group": {
     "name": "AI",
     "agent_runner": {
-      "description": "Agent Runner",
-      "hint": "Select the runner for AI conversations. Defaults to AstrBot's built-in Agent runner, which supports knowledge base, persona, and tool calling features. You don't need to modify this section unless you plan to integrate third-party Agent runners like Dify, Coze, or DeerFlow.",
+      "description": "Ordinary Chat Agent Runner",
+      "hint": "Only chooses whether legacy Pipeline chat is fully handled by an external Agent Runner. It does not select the Core Body for Personal/Core delegation.",
       "provider_settings": {
         "enable": {
           "description": "Enable",
           "hint": "Master switch for AI conversations"
+        }
+      },
+      "agent_runner": {
+        "mode": {
+          "description": "Mode",
+          "labels": ["Built-in Agent", "Dify", "Coze", "Alibaba Cloud Bailian Application", "DeerFlow"]
         },
-        "agent_runner_type": {
-          "description": "Runner",
-          "labels": [
-            "Built-in Agent",
-            "Codex CLI",
-            "Dify",
-            "Coze",
-            "Alibaba Cloud Bailian Application",
-            "DeerFlow"
-          ]
+        "provider_id": {
+          "description": "External Agent Runner Provider ID"
+        }
+      }
+    },
+    "core_execution": {
+      "description": "Core Body",
+      "hint": "Only chooses the Core Body after Personal delegates work. It does not replace the ordinary chat Agent Runner.",
+      "core_execution": {
+        "executor_id": {
+          "description": "Executor",
+          "labels": ["AstrBot Native Core", "Codex CLI"]
         },
-        "coze_agent_runner_provider_id": {
-          "description": "Coze Agent Runner Provider ID"
-        },
-        "codex_cli_agent_runner_provider_id": {
-          "description": "Codex CLI Agent Runner Provider ID"
-        },
-        "dify_agent_runner_provider_id": {
-          "description": "Dify Agent Runner Provider ID"
-        },
-        "dashscope_agent_runner_provider_id": {
-          "description": "Alibaba Cloud Bailian Application Agent Runner Provider ID"
-        },
-        "deerflow_agent_runner_provider_id": {
-          "description": "DeerFlow Agent Runner Provider ID"
+        "codex_cli": {
+          "provider_id": {
+            "description": "Codex CLI Core Provider ID"
+          }
         }
       }
     },

@@ -26,7 +26,7 @@
         :model-value="modelValue"
         @update:model-value="emitUpdate"
         :provider-type="'agent_runner'"
-        :provider-subtype="getSpecialSubtype(itemMeta?._special)"
+        :provider-subtype="getAgentRunnerProviderSubtype()"
       />
     </template>
     <template v-else-if="itemMeta?._special === 'provider_pool'">
@@ -272,6 +272,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  configData: {
+    type: Object,
+    default: () => ({})
+  },
   pluginName: {
     type: String,
     default: ''
@@ -372,6 +376,21 @@ function getSpecialName(value) {
 
 function getSpecialSubtype(value) {
   return parseSpecialValue(value).subtype
+}
+
+function getValueBySelector(obj, selector) {
+  return selector.split('.').reduce((current, key) => {
+    return current && typeof current === 'object' ? current[key] : undefined
+  }, obj)
+}
+
+function getAgentRunnerProviderSubtype() {
+  const selector = props.itemMeta?.provider_subtype_selector
+  if (typeof selector === 'string' && selector) {
+    const value = getValueBySelector(props.configData, selector)
+    return typeof value === 'string' ? value : ''
+  }
+  return getSpecialSubtype(props.itemMeta?._special)
 }
 </script>
 

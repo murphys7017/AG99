@@ -104,7 +104,6 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
     )
     provider_settings.update(
         {
-            "agent_runner_type": "local",
             "computer_use_runtime": "none",
             "proactive_capability": {"add_cron_tools": False},
         }
@@ -115,6 +114,8 @@ async def test_proactive_agent_turn_applies_validated_max_agent_step(
             get_config=lambda **kwargs: {
                 "plugin_set": [],
                 "provider_settings": provider_settings,
+                "agent_runner": {"mode": "local", "provider_id": ""},
+                "core_execution": {"executor_id": "native", "codex_cli": {}},
             }
         ),
         session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
@@ -204,7 +205,12 @@ async def test_proactive_result_does_not_replace_visible_history(tmp_path, monke
     try:
         await run_proactive_agent_turn(
             context=SimpleNamespace(
-                get_config=lambda **kwargs: {"plugin_set": [], "provider_settings": {"agent_runner_type": "local"}},
+                get_config=lambda **kwargs: {
+                    "plugin_set": [],
+                    "provider_settings": {},
+                    "agent_runner": {"mode": "local", "provider_id": ""},
+                    "core_execution": {"executor_id": "native", "codex_cli": {}},
+                },
                 conversation_manager=conversation_manager,
                 core_execution_ledger=CoreExecutionLedger(db),
             ),
@@ -289,7 +295,12 @@ async def test_proactive_request_hook_mutation_reaches_execution(monkeypatch):
     monkeypatch.setattr("astrbot.core.astr_agent_run_util.NativeExecutionLoop", Loop)
     result = await run_proactive_agent_turn(
         context=SimpleNamespace(
-            get_config=lambda **kwargs: {"plugin_set": [], "provider_settings": {"agent_runner_type": "local"}}
+            get_config=lambda **kwargs: {
+                "plugin_set": [],
+                "provider_settings": {},
+                "agent_runner": {"mode": "local", "provider_id": ""},
+                "core_execution": {"executor_id": "native", "codex_cli": {}},
+            }
         ),
         session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
         message="run",
@@ -319,9 +330,11 @@ async def test_external_proactive_failure_settles_bound_execution_identity(
     snapshot = SimpleNamespace(cid=cid, history="[]")
     runtime_config = {
         "plugin_set": [],
-        "provider_settings": {
-            "agent_runner_type": "codex_cli",
-            "codex_cli_agent_runner_provider_id": "codex-main",
+        "provider_settings": {},
+        "agent_runner": {"mode": "local", "provider_id": ""},
+        "core_execution": {
+            "executor_id": "codex_cli",
+            "codex_cli": {"provider_id": "codex-main"},
         },
     }
     config_info = {"id": "bot-config"}
@@ -335,13 +348,13 @@ async def test_external_proactive_failure_settles_bound_execution_identity(
     context = SimpleNamespace(
         get_config=lambda **kwargs: runtime_config,
         astrbot_config_mgr=ConfigManager(),
-        conversation_manager=conversation_manager,
-        core_execution_ledger=CoreExecutionLedger(db),
-        provider_manager=SimpleNamespace(
-            get_agent_runner_config=lambda provider_id, runner_type: {
-                "id": provider_id,
-                "type": runner_type,
-                "provider_type": "agent_runner",
+            conversation_manager=conversation_manager,
+            core_execution_ledger=CoreExecutionLedger(db),
+            provider_manager=SimpleNamespace(
+                get_execution_adapter_config=lambda provider_id, runner_type: {
+                    "id": provider_id,
+                    "type": runner_type,
+                    "provider_type": "agent_runner",
                 "enable": True,
             }
         ),
@@ -444,7 +457,9 @@ async def test_proactive_request_hook_stop_discards_deferred_reset(monkeypatch):
             context=SimpleNamespace(
                 get_config=lambda **kwargs: {
                     "plugin_set": [],
-                    "provider_settings": {"agent_runner_type": "local"},
+                    "provider_settings": {},
+                    "agent_runner": {"mode": "local", "provider_id": ""},
+                    "core_execution": {"executor_id": "native", "codex_cli": {}},
                 }
             ),
             session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
@@ -484,7 +499,9 @@ async def test_proactive_total_deadline_covers_conversation_resolution(monkeypat
             context=SimpleNamespace(
                 get_config=lambda **kwargs: {
                     "plugin_set": [],
-                    "provider_settings": {"agent_runner_type": "local"},
+                    "provider_settings": {},
+                    "agent_runner": {"mode": "local", "provider_id": ""},
+                    "core_execution": {"executor_id": "native", "codex_cli": {}},
                 }
             ),
             session=MessageSession("test", MessageType.FRIEND_MESSAGE, "user"),
@@ -519,7 +536,9 @@ async def test_proactive_inner_timeout_is_not_reclassified_as_total_deadline(
             context=SimpleNamespace(
                 get_config=lambda **kwargs: {
                     "plugin_set": [],
-                    "provider_settings": {"agent_runner_type": "local"},
+                    "provider_settings": {},
+                    "agent_runner": {"mode": "local", "provider_id": ""},
+                    "core_execution": {"executor_id": "native", "codex_cli": {}},
                     "interaction_middleware": {"turn_timeout": 30},
                 }
             ),

@@ -587,41 +587,45 @@ class ProviderManager:
             return copy.deepcopy(provider_config)
         return None
 
-    def get_agent_runner_config(self, provider_id: str, runner_type: str) -> dict:
-        """Return one enabled Agent Runner configuration without instantiating it."""
+    def get_execution_adapter_config(self, provider_id: str, adapter_type: str) -> dict:
+        """Return an enabled external execution adapter without instantiating it."""
 
         normalized_id = str(provider_id or "").strip()
-        normalized_type = str(runner_type or "").strip().lower()
+        normalized_type = str(adapter_type or "").strip().lower()
         if not normalized_id:
-            raise ValueError(f"{normalized_type}_agent_runner_provider_id is required")
+            raise ValueError(
+                f"an enabled {normalized_type} execution adapter provider_id is required"
+            )
         config = self.get_provider_config_by_id(normalized_id, merged=True)
         if config is None:
-            raise ValueError(f"Agent runner provider not found: {normalized_id}")
+            raise ValueError(f"Execution adapter provider not found: {normalized_id}")
         if config.get("provider_type") != "agent_runner":
-            raise ValueError(f"Provider is not an Agent Runner: {normalized_id}")
+            raise ValueError(f"Provider is not an execution adapter: {normalized_id}")
         actual_type = str(config.get("type") or config.get("provider") or "").strip().lower()
         if actual_type != normalized_type:
             raise ValueError(
-                f"Agent runner provider {normalized_id} is not {normalized_type}"
+                f"Execution adapter provider {normalized_id} is not {normalized_type}"
             )
         if config.get("enable") is not True:
-            raise ValueError(f"Agent runner provider is disabled: {normalized_id}")
+            raise ValueError(f"Execution adapter provider is disabled: {normalized_id}")
         return config
 
     def _assert_codex_cli_not_referenced(self, provider_id: str) -> None:
         references: list[str] = []
         for config_id, config in self.acm.confs.items():
-            settings = config.get("provider_settings", {})
-            if not isinstance(settings, Mapping):
+            core_execution = config.get("core_execution", {})
+            if not isinstance(core_execution, Mapping):
                 continue
+            codex_cli = core_execution.get("codex_cli", {})
             if (
-                settings.get("agent_runner_type") == "codex_cli"
-                and settings.get("codex_cli_agent_runner_provider_id") == provider_id
+                core_execution.get("executor_id") == "codex_cli"
+                and isinstance(codex_cli, Mapping)
+                and codex_cli.get("provider_id") == provider_id
             ):
                 references.append(config_id)
         if references:
             raise ValueError(
-                "Codex CLI Agent runner is referenced by bot configuration(s): "
+                "Codex CLI Core executor is referenced by bot configuration(s): "
                 + ", ".join(sorted(references))
             )
 

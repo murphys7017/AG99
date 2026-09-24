@@ -2,34 +2,36 @@
     "ai_group": {
         "name": "AI",
         "agent_runner": {
-            "description": "Запуск агентов (Agent Runner)",
-            "hint": "Выберите среду для работы AI-диалогов. По умолчанию используется встроенный агент AstrBot, поддерживающий базу знаний, персонализацию и вызов технических инструментов. Не изменяйте этот раздел, если не планируете использовать сторонние платформы, такие как Dify, Coze или DeerFlow.",
+            "description": "Agent Runner для обычных диалогов",
+            "hint": "Определяет только передачу обычного Pipeline-диалога внешнему Agent Runner. Не выбирает Core Body для делегирования Personal/Core.",
             "provider_settings": {
                 "enable": {
                     "description": "Включить",
                     "hint": "Главный переключатель для AI-диалогов"
+                }
+            },
+            "agent_runner": {
+                "mode": {
+                    "description": "Режим",
+                    "labels": ["Встроенный агент", "Dify", "Coze", "Alibaba Cloud Bailian", "DeerFlow"]
                 },
-                "agent_runner_type": {
-                    "description": "Запуск (Runner)",
-                    "labels": [
-                        "Встроенный агент",
-                        "Dify",
-                        "Coze",
-                        "Приложение Alibaba Cloud Bailian",
-                        "DeerFlow"
-                    ]
+                "provider_id": {
+                    "description": "ID внешнего провайдера Agent Runner"
+                }
+            }
+        },
+        "core_execution": {
+            "description": "Core Body",
+            "hint": "Определяет только Core Body после делегирования Personal. Не заменяет Agent Runner обычного диалога.",
+            "core_execution": {
+                "executor_id": {
+                    "description": "Исполнитель",
+                    "labels": ["Встроенный Core AstrBot", "Codex CLI"]
                 },
-                "coze_agent_runner_provider_id": {
-                    "description": "ID провайдера Coze Agent Runner"
-                },
-                "dify_agent_runner_provider_id": {
-                    "description": "ID провайдера Dify Agent Runner"
-                },
-                "dashscope_agent_runner_provider_id": {
-                    "description": "ID провайдера Alibaba Cloud Bailian"
-                },
-                "deerflow_agent_runner_provider_id": {
-                    "description": "ID провайдера DeerFlow Agent Runner"
+                "codex_cli": {
+                    "provider_id": {
+                        "description": "ID провайдера Core Codex CLI"
+                    }
                 }
             }
         },

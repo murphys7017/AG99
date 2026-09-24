@@ -1,10 +1,7 @@
 import traceback
 
 from astrbot.core import astrbot_config, logger
-from astrbot.core.agent.runners.deerflow.constants import (
-    DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY,
-    DEERFLOW_PROVIDER_TYPE,
-)
+from astrbot.core.agent.runners.deerflow.constants import DEERFLOW_PROVIDER_TYPE
 from astrbot.core.astrbot_config_mgr import AstrBotConfig, AstrBotConfigManager
 from astrbot.core.db.migration.migra_45_to_46 import migrate_45_to_46
 from astrbot.core.db.migration.migra_token_usage import migrate_token_usage
@@ -20,22 +17,12 @@ def _migra_agent_runner_configs(conf: AstrBotConfig, ids_map: dict) -> None:
         if default_prov_id in ids_map:
             conf["provider_settings"]["default_provider_id"] = ""
             p = ids_map[default_prov_id]
-            if p["type"] == "dify":
-                conf["provider_settings"]["dify_agent_runner_provider_id"] = p["id"]
-                conf["provider_settings"]["agent_runner_type"] = "dify"
-            elif p["type"] == "coze":
-                conf["provider_settings"]["coze_agent_runner_provider_id"] = p["id"]
-                conf["provider_settings"]["agent_runner_type"] = "coze"
-            elif p["type"] == "dashscope":
-                conf["provider_settings"]["dashscope_agent_runner_provider_id"] = p[
-                    "id"
-                ]
-                conf["provider_settings"]["agent_runner_type"] = "dashscope"
-            elif p["type"] == DEERFLOW_PROVIDER_TYPE:
-                conf["provider_settings"][DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY] = p[
-                    "id"
-                ]
-                conf["provider_settings"]["agent_runner_type"] = DEERFLOW_PROVIDER_TYPE
+            runner_type = str(p.get("type") or "").lower()
+            if runner_type in {"dify", "coze", "dashscope", DEERFLOW_PROVIDER_TYPE}:
+                conf["agent_runner"] = {
+                    "mode": runner_type,
+                    "provider_id": p["id"],
+                }
             conf.save_config()
     except Exception as e:
         logger.error(f"Migration for third party agent runner configs failed: {e!s}")

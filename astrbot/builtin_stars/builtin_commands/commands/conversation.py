@@ -5,11 +5,11 @@ from astrbot.api import sp, star
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.core import logger
 from astrbot.core.agent.runners.deerflow.constants import (
-    DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY,
     DEERFLOW_PROVIDER_TYPE,
     DEERFLOW_THREAD_ID_KEY,
 )
 from astrbot.core.agent.runners.deerflow.deerflow_api_client import DeerFlowAPIClient
+from astrbot.core.config.execution import resolve_agent_runner_configuration
 from astrbot.core.db.po import ProviderStat
 from astrbot.core.utils.active_event_registry import active_event_registry
 
@@ -39,10 +39,7 @@ async def _cleanup_deerflow_thread_if_present(
             return
 
         cfg = context.get_config(umo=umo)
-        provider_id = cfg["provider_settings"].get(
-            DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY,
-            "",
-        )
+        provider_id = resolve_agent_runner_configuration(cfg).provider_id
         if not provider_id:
             return
 
@@ -148,7 +145,7 @@ class ConversationCommands:
             )
             return
 
-        agent_runner_type = cfg["provider_settings"]["agent_runner_type"]
+        agent_runner_type = resolve_agent_runner_configuration(cfg).mode
         if agent_runner_type in THIRD_PARTY_AGENT_RUNNER_KEY:
             active_event_registry.stop_all(umo, exclude=message)
             await _clear_third_party_agent_runner_state(
@@ -197,7 +194,7 @@ class ConversationCommands:
     async def stop(self, message: AstrMessageEvent) -> None:
         """停止当前会话正在运行的 Agent"""
         cfg = self.context.get_config(umo=message.unified_msg_origin)
-        agent_runner_type = cfg["provider_settings"]["agent_runner_type"]
+        agent_runner_type = resolve_agent_runner_configuration(cfg).mode
         umo = message.unified_msg_origin
 
         if agent_runner_type in THIRD_PARTY_AGENT_RUNNER_KEY:
@@ -223,7 +220,7 @@ class ConversationCommands:
     async def new_conv(self, message: AstrMessageEvent) -> None:
         """创建新对话"""
         cfg = self.context.get_config(umo=message.unified_msg_origin)
-        agent_runner_type = cfg["provider_settings"]["agent_runner_type"]
+        agent_runner_type = resolve_agent_runner_configuration(cfg).mode
         if agent_runner_type in THIRD_PARTY_AGENT_RUNNER_KEY:
             active_event_registry.stop_all(message.unified_msg_origin, exclude=message)
             await _clear_third_party_agent_runner_state(

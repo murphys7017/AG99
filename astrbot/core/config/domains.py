@@ -160,6 +160,8 @@ class BotProfileConfig:
     @classmethod
     def from_config(cls, config_id: str, config: dict[str, Any]) -> BotProfileConfig:
         provider_settings = config.get("provider_settings", {})
+        agent_runner = config.get("agent_runner", {})
+        core_execution = config.get("core_execution", {})
         interaction = config.get("interaction_middleware", {})
         tts_settings = config.get("provider_tts_settings", {})
         stt_settings = config.get("provider_stt_settings", {})
@@ -241,12 +243,8 @@ class BotProfileConfig:
             ),
             executor_policy=_freeze_mapping(
                 {
-                    "runner_type": provider_settings.get("agent_runner_type", "local"),
-                    "runner_provider_ids": {
-                        key.removesuffix("_agent_runner_provider_id"): value
-                        for key, value in provider_settings.items()
-                        if key.endswith("_agent_runner_provider_id")
-                    },
+                    "agent_runner": agent_runner,
+                    "core_execution": core_execution,
                 }
             ),
             adapter_binding_ids=tuple(
@@ -442,6 +440,7 @@ class ConfigurationDomains:
             for key, value in self.profile.model_policy.items()
             if key.endswith("_provider_id") and isinstance(value, str) and value
         }
+        provider_refs.update(_execution_provider_references(self.profile.executor_policy))
         provider_ids = (
             resources.providers.provider_ids
             if resources is not None
@@ -470,11 +469,36 @@ class ConfigurationDomains:
             for key, value in self.profile.model_policy.items()
             if key.endswith("_provider_id") and isinstance(value, str) and value
         }
+        provider_references.update(
+            _execution_provider_references(self.profile.executor_policy)
+        )
         return RuntimeSelection(
             profile_id=self.profile.config_id,
             adapter_binding_id=adapter_binding_id,
             provider_references=_freeze_mapping(provider_references),
         )
+
+
+def _execution_provider_references(
+    executor_policy: Mapping[str, Any],
+) -> dict[str, str]:
+    """Expose Profile execution provider references to registry validation."""
+
+    references: dict[str, str] = {}
+    agent_runner = executor_policy.get("agent_runner", {})
+    if isinstance(agent_runner, Mapping):
+        mode = str(agent_runner.get("mode") or "").strip().lower()
+        provider_id = agent_runner.get("provider_id")
+        if mode != "local" and isinstance(provider_id, str) and provider_id:
+            references["agent_runner"] = provider_id
+    core_execution = executor_policy.get("core_execution", {})
+    if isinstance(core_execution, Mapping) and core_execution.get("executor_id") == "codex_cli":
+        codex_cli = core_execution.get("codex_cli", {})
+        if isinstance(codex_cli, Mapping):
+            provider_id = codex_cli.get("provider_id")
+            if isinstance(provider_id, str) and provider_id:
+                references["core_execution"] = provider_id
+    return references
 
 
 __all__ = [

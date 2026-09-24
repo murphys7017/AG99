@@ -217,7 +217,7 @@ async function getAgentRunnerType(confId: string): Promise<string> {
         const res = await axios.get('/api/config/abconf', {
             params: { id: confId }
         });
-        const type = res.data.data?.config?.provider_settings?.agent_runner_type || 'local';
+        const type = res.data.data?.config?.agent_runner?.mode || 'local';
         configCache.value[confId] = type;
         return type;
     } catch (error) {

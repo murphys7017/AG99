@@ -8,10 +8,7 @@ from astrbot.core.agent.runners.coze.coze_agent_runner import CozeAgentRunner
 from astrbot.core.agent.runners.dashscope.dashscope_agent_runner import (
     DashscopeAgentRunner,
 )
-from astrbot.core.agent.runners.deerflow.constants import (
-    DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY,
-    DEERFLOW_PROVIDER_TYPE,
-)
+from astrbot.core.agent.runners.deerflow.constants import DEERFLOW_PROVIDER_TYPE
 from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
     DeerFlowAgentRunner,
 )
@@ -20,6 +17,7 @@ from astrbot.core.agent_lifecycle import (
     AgentRequestLifecycle,
     AgentRequestLifecycleHooks,
 )
+from astrbot.core.config.execution import resolve_agent_runner_configuration
 from astrbot.core.execution import bind_effective_core_request
 from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
@@ -56,12 +54,6 @@ from astrbot.core.utils.metrics import Metric
 from .....astr_agent_context import AgentContextWrapper, AstrAgentContext
 from ....context import PipelineContext, call_event_hook
 
-AGENT_RUNNER_TYPE_KEY = {
-    "dify": "dify_agent_runner_provider_id",
-    "coze": "coze_agent_runner_provider_id",
-    "dashscope": "dashscope_agent_runner_provider_id",
-    DEERFLOW_PROVIDER_TYPE: DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY,
-}
 THIRD_PARTY_RUNNER_ERROR_EXTRA_KEY = "_third_party_runner_error"
 STREAM_CONSUMPTION_CLOSE_TIMEOUT_SEC = 30
 RUNNER_NO_RESULT_FALLBACK_MESSAGE = "Agent Runner did not return any result."
@@ -320,12 +312,14 @@ class ThirdPartyAgentSubStage(Stage):
         provider_settings = runtime_config.get("provider_settings", {})
         if not isinstance(provider_settings, Mapping):
             provider_settings = {}
-        runner_type = str(provider_settings.get("agent_runner_type", "")).lower()
-        provider_id_key = AGENT_RUNNER_TYPE_KEY.get(runner_type, "")
-        provider_id = str(provider_settings.get(provider_id_key, "")).strip()
+        runner_selection = resolve_agent_runner_configuration(runtime_config)
+        if not runner_selection.is_external:
+            raise RuntimeError("ThirdPartyAgentSubStage requires an external Agent Runner")
+        runner_type = runner_selection.mode
+        provider_id = runner_selection.provider_id
         provider_manager = self.ctx.plugin_manager.context.provider_manager
         try:
-            provider_config = provider_manager.get_agent_runner_config(
+            provider_config = provider_manager.get_execution_adapter_config(
                 provider_id,
                 runner_type,
             )

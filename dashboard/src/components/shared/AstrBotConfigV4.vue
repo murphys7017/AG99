@@ -134,7 +134,7 @@ function shouldShowItem(itemMeta, itemKey) {
   if (itemMeta?.condition) {
     for (const [conditionKey, expectedValue] of Object.entries(itemMeta.condition)) {
       const actualValue = getValueBySelector(props.iterable, conditionKey)
-      if (actualValue !== expectedValue) {
+      if (!matchesCondition(actualValue, expectedValue)) {
         return false
       }
     }
@@ -152,6 +152,12 @@ function shouldShowItem(itemMeta, itemKey) {
   ].join(' ').toLowerCase()
 
   return searchableText.includes(keyword)
+}
+
+function matchesCondition(actualValue, expectedValue) {
+  return Array.isArray(expectedValue)
+    ? expectedValue.includes(actualValue)
+    : actualValue === expectedValue
 }
 
 function getVisibleItemEntries(collapsed = false) {
@@ -192,7 +198,7 @@ function shouldShowSection() {
   }
   for (const [conditionKey, expectedValue] of Object.entries(sectionMeta.condition)) {
     const actualValue = getValueBySelector(props.iterable, conditionKey)
-    if (actualValue !== expectedValue) {
+    if (!matchesCondition(actualValue, expectedValue)) {
       return false
     }
   }
@@ -284,6 +290,7 @@ function getSpecialSubtype(value) {
               v-else
               v-model="createSelectorModel(itemKey).value"
               :item-meta="itemMeta || null"
+              :config-data="iterable"
               :show-fullscreen-btn="!!itemMeta?.editor_mode"
               @open-fullscreen="openEditorDialog(itemKey, iterable, itemMeta?.editor_theme, itemMeta?.editor_language)"
             />
@@ -364,6 +371,7 @@ function getSpecialSubtype(value) {
                     v-else
                     v-model="createSelectorModel(itemKey).value"
                     :item-meta="itemMeta || null"
+                    :config-data="iterable"
                     :show-fullscreen-btn="!!itemMeta?.editor_mode"
                     @open-fullscreen="openEditorDialog(itemKey, iterable, itemMeta?.editor_theme, itemMeta?.editor_language)"
                   />

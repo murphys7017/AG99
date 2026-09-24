@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator, Mapping
 
 from astrbot.core import logger
+from astrbot.core.config.execution import resolve_agent_runner_configuration
 from astrbot.core.interaction.turn_state import get_interaction_turn_runtime_config
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.session_llm_manager import SessionServiceManager
@@ -57,10 +58,10 @@ class AgentRequestSubStage(Stage):
             )
             return
 
-        runner_type = str(provider_settings.get("agent_runner_type", "local")).lower()
+        runner_type = resolve_agent_runner_configuration(runtime_config).mode
         agent_sub_stage = (
             self.internal_agent_sub_stage
-            if runner_type in {"local", "codex_cli"}
+            if runner_type == "local"
             else self.third_party_agent_sub_stage
         )
         provider_wake_prefix = self._resolve_provider_wake_prefix(runtime_config)

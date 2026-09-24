@@ -108,6 +108,67 @@ class TestAstrBotConfigLoad:
         assert config.platform_settings["unique_session"] is True
         assert config.provider_settings["enable"] is False
 
+    def test_load_migrates_legacy_codex_runner_to_core_execution(
+        self, temp_config_path, minimal_default_config
+    ):
+        """A retired Codex Runner selection becomes a Core Body selection."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "agent_runner_type": "codex_cli",
+                "codex_cli_agent_runner_provider_id": "codex-main",
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        assert config["agent_runner"] == {"mode": "local", "provider_id": ""}
+        assert config["core_execution"] == {
+            "executor_id": "codex_cli",
+            "codex_cli": {"provider_id": "codex-main"},
+        }
+        assert "agent_runner_type" not in config["provider_settings"]
+        assert "codex_cli_agent_runner_provider_id" not in config["provider_settings"]
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "agent_runner_type" not in persisted["provider_settings"]
+        assert "codex_cli_agent_runner_provider_id" not in persisted["provider_settings"]
+
+    def test_load_migrates_legacy_external_runner_without_changing_core(
+        self, temp_config_path, minimal_default_config
+    ):
+        """A retired third-party Runner stays a Pipeline concern."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "agent_runner_type": "dify",
+                "dify_agent_runner_provider_id": "dify-main",
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        assert config["agent_runner"] == {"mode": "dify", "provider_id": "dify-main"}
+        assert config["core_execution"] == {
+            "executor_id": "native",
+            "codex_cli": {"provider_id": ""},
+        }
+        assert "agent_runner_type" not in config["provider_settings"]
+        assert "dify_agent_runner_provider_id" not in config["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

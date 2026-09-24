@@ -2,38 +2,36 @@
   "ai_group": {
     "name": "AI 配置",
     "agent_runner": {
-      "description": "Agent 执行方式",
-      "hint": "选择 AI 对话的执行器,默认为 AstrBot 内置 Agent 执行器,可使用 AstrBot 内的知识库、人格、工具调用功能。如果不打算接入 Dify、Coze、DeerFlow 等第三方 Agent 执行器,不需要修改此节。",
+      "description": "普通对话 Agent Runner",
+      "hint": "仅决定传统 Pipeline 普通对话是否整体交给第三方 Agent Runner。它不选择 Personal/Core 已委派任务的内部执行体。",
       "provider_settings": {
         "enable": {
           "description": "启用",
           "hint": "AI 对话总开关"
+        }
+      },
+      "agent_runner": {
+        "mode": {
+          "description": "运行模式",
+          "labels": ["内置 Agent", "Dify", "Coze", "阿里云百炼应用", "DeerFlow"]
         },
-        "agent_runner_type": {
-          "description": "执行器",
-          "labels": [
-            "内置 Agent",
-            "Codex CLI",
-            "Dify",
-            "Coze",
-            "阿里云百炼应用",
-            "DeerFlow"
-          ]
+        "provider_id": {
+          "description": "第三方 Agent Runner 提供商 ID"
+        }
+      }
+    },
+    "core_execution": {
+      "description": "Core 内部执行体",
+      "hint": "仅决定 Personal 委派后的 Core 执行体。它不替代普通对话的 Agent Runner。",
+      "core_execution": {
+        "executor_id": {
+          "description": "执行体",
+          "labels": ["AstrBot 内置 Core", "Codex CLI"]
         },
-        "coze_agent_runner_provider_id": {
-          "description": "Coze Agent 执行器提供商 ID"
-        },
-        "codex_cli_agent_runner_provider_id": {
-          "description": "Codex CLI Agent 执行器提供商 ID"
-        },
-        "dify_agent_runner_provider_id": {
-          "description": "Dify Agent 执行器提供商 ID"
-        },
-        "dashscope_agent_runner_provider_id": {
-          "description": "阿里云百炼应用 Agent 执行器提供商 ID"
-        },
-        "deerflow_agent_runner_provider_id": {
-          "description": "DeerFlow Agent 执行器提供商 ID"
+        "codex_cli": {
+          "provider_id": {
+            "description": "Codex CLI 执行体提供商 ID"
+          }
         }
       }
     },

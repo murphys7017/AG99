@@ -1126,3 +1126,32 @@ configuration_boundary_audit:
     not proven missing definitions. Provider and Platform runtime consumers now
     deep-materialize registry values at their mutable boundary. Manual restart
     remains required to validate real provider initialization.
+
+execution_configuration_ownership_convergence:
+  date: '2026-09-24'
+  class: refactor
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Separate the Profile's ordinary Pipeline Agent Runner selection from the
+    Personal-delegated Core Body selection. Retire mixed provider_settings
+    runner fields in favor of agent_runner.mode/provider_id and
+    core_execution.executor_id/codex_cli.provider_id.
+  changes: >-
+    All production selection, third-party conversation cleanup, execution-adapter provider
+    reference protection, runtime profile projection, migration, Dashboard
+    metadata, and configuration UI consumers now use their owning domain.
+    Existing persisted legacy selections migrate once and remove their retired
+    fields, preventing a second source of truth.
+  validation: >-
+    Focused configuration, executor, conversation, proactive, and Core tool
+    tests passed (92). Scoped Ruff, i18n JSON parsing, Dashboard typecheck,
+    Dashboard production build, and git diff --check passed. The build retained
+    the existing MDI subset warnings for mdi-platform and mdi-subset. No service
+    restart or live multi-profile acceptance was performed.
+  followup: >-
+    Manually verify one Profile using an external Agent Runner with Native
+    Core and one Profile using local Agent Runner with Codex CLI Core. Confirm
+    normal chat and delegated work select their separate owners, then inspect
+    the next configuration inventory domain rather than reintroducing Runner
+    fallback fields.

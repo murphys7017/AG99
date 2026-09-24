@@ -88,7 +88,7 @@ ConfigRouteTable.resolve(umo)
 ```
 
 `TurnConfigSnapshot` 至少包含 `profile_id`、`adapter_binding_id`、Provider 角色引用、
-`agent_runner_type`、`interaction_config`、`plugin_set`、当前回合 deadline、输出及能力
+`agent_runner`、`core_execution`、`interaction_config`、`plugin_set`、当前回合 deadline、输出及能力
 解析所需的配置投影。
 
 下游模块只能接收自身需要的只读视图，不能反复传递或重新路由完整配置字典。
@@ -214,6 +214,14 @@ ConfigRouteTable.resolve(umo)
 - 并发回合不读取彼此配置。
 - Cron、主动任务、普通消息保持同一配置身份。
 - 配置重载不改变已准入回合快照。
+
+### C7：执行器配置语义拆分（完成）
+
+- [已完成] `agent_runner.mode/provider_id` 只决定传统 Pipeline 普通聊天是否整体交给 Dify、Coze、DashScope 或 DeerFlow。
+- [已完成] `core_execution.executor_id` 只决定 Personal/Core 委派后的内部执行体；当前支持 `native` 与 `codex_cli`。
+- [已完成] `core_execution.codex_cli.provider_id` 只保存对全局 Codex CLI Provider 资源的引用；可执行文件、工作区、超时等实例设置继续归 Provider 资源所有。
+- [已完成] Core 选择、主动/定时任务、第三方 Runner、会话命令、Provider 删除保护、Dashboard 和 Profile 引用校验不再读取 `provider_settings.*agent_runner*`。
+- [已完成] 旧混合字段只在配置加载期做一次语义迁移并立即删除；开发期不保留双写或运行时 fallback。
 
 ## 6.1 旧配置资源迁移规则
 

@@ -10,6 +10,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.core.config.execution import resolve_core_execution_configuration
+
 from .contracts import ExecutorRun
 
 ExecutorFactory = Callable[..., ExecutorRun]
@@ -63,21 +65,18 @@ def resolve_core_executor_selection(
         raise ValueError(
             f"{execution_source} requires a mapping runtime configuration snapshot"
         )
-    settings = config_snapshot.get("provider_settings")
-    if not isinstance(settings, Mapping):
-        raise ValueError("provider_settings must be an object")
-    runner_type = str(settings.get("agent_runner_type") or "").strip().lower()
-    if runner_type == "local":
+    selection = resolve_core_execution_configuration(config_snapshot)
+    if selection.executor_id == "native":
         return SelectedCoreExecutor("native", None, {})
-    if runner_type in {"dify", "coze", "dashscope", "deerflow"}:
-        # These runners own ordinary chat only; proactive Core keeps its Native Body.
-        return SelectedCoreExecutor("native", None, {})
-    if runner_type != "codex_cli":
-        raise ValueError(f"{execution_source} does not use a Core executor: {runner_type}")
     if provider_manager is None:
         raise RuntimeError("Codex CLI Core execution requires a provider manager")
-    instance_id = str(settings.get("codex_cli_agent_runner_provider_id") or "").strip()
-    config = provider_manager.get_agent_runner_config(instance_id, "codex_cli")
+    if selection.executor_id != "codex_cli" or selection.provider_id is None:
+        raise ValueError(
+            f"{execution_source} does not use a supported Core executor: "
+            f"{selection.executor_id}"
+        )
+    instance_id = selection.provider_id
+    config = provider_manager.get_execution_adapter_config(instance_id, "codex_cli")
     resolve_executor_factory("codex_cli")
     return SelectedCoreExecutor("codex_cli", instance_id, config)
 
