@@ -998,6 +998,92 @@ async def test_subagent_config_accepts_default_persona(
 
 
 @pytest.mark.asyncio
+async def test_subagent_config_is_scoped_to_selected_profile(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    default_subagent_config = copy.deepcopy(
+        core_lifecycle_td.astrbot_config_mgr.confs["default"].get(
+            "subagent_orchestrator", {}
+        )
+    )
+    profile_id = None
+    try:
+        create_response = await test_client.post(
+            "/api/config/abconf/new",
+            json={"name": f"subagent-profile-{uuid.uuid4().hex[:8]}"},
+            headers=authenticated_header,
+        )
+        create_data = await create_response.get_json()
+        assert create_response.status_code == 200
+        assert create_data["status"] == "ok"
+        profile_id = create_data["data"]["conf_id"]
+
+        payload = {
+            "conf_id": profile_id,
+            "main_enable": True,
+            "remove_main_duplicate_tools": False,
+            "agents": [
+                {
+                    "name": "profile_planner",
+                    "persona_id": "default",
+                    "public_description": "profile scoped planner",
+                    "enabled": True,
+                }
+            ],
+        }
+        save_response = await test_client.post(
+            "/api/subagent/config",
+            json=payload,
+            headers=authenticated_header,
+        )
+        save_data = await save_response.get_json()
+        assert save_response.status_code == 200
+        assert save_data["status"] == "ok"
+
+        assert (
+            core_lifecycle_td.astrbot_config_mgr.confs[profile_id][
+                "subagent_orchestrator"
+            ]["agents"][0]["name"]
+            == "profile_planner"
+        )
+        assert "conf_id" not in core_lifecycle_td.astrbot_config_mgr.confs[profile_id][
+            "subagent_orchestrator"
+        ]
+        assert (
+            core_lifecycle_td.astrbot_config_mgr.confs["default"].get(
+                "subagent_orchestrator", {}
+            )
+            == default_subagent_config
+        )
+        assert [
+            handoff.name
+            for handoff in core_lifecycle_td.subagent_orchestrator.handoffs_for(
+                profile_id
+            )
+        ] == ["transfer_to_profile_planner"]
+
+        get_response = await test_client.get(
+            f"/api/subagent/config?conf_id={profile_id}",
+            headers=authenticated_header,
+        )
+        get_data = await get_response.get_json()
+        assert get_response.status_code == 200
+        assert get_data["status"] == "ok"
+        assert get_data["data"]["conf_id"] == profile_id
+        assert get_data["data"]["agents"][0]["name"] == "profile_planner"
+    finally:
+        if profile_id is not None:
+            await test_client.post(
+                "/api/config/abconf/delete",
+                json={"id": profile_id},
+                headers=authenticated_header,
+            )
+
+
+@pytest.mark.asyncio
 async def test_create_persona_preserves_empty_tool_and_skill_lists(
     app: Quart,
     authenticated_header: dict,

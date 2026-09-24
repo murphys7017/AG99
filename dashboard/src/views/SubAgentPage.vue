@@ -13,6 +13,19 @@
         </div>
 
         <div class="dashboard-header-actions">
+          <v-select
+            :model-value="selectedConfigId"
+            :items="configOptions"
+            item-title="name"
+            item-value="id"
+            :label="tm('profile.label')"
+            :loading="profilesLoading"
+            hide-details
+            density="compact"
+            variant="outlined"
+            class="profile-select"
+            @update:model-value="switchConfig"
+          />
           <v-btn variant="text" color="primary" prepend-icon="mdi-refresh" :loading="loading" @click="reload">
             {{ tm('actions.refresh') }}
           </v-btn>
@@ -241,6 +254,7 @@ const confirmDialog = useConfirmDialog()
 
 const loading = ref(false)
 const saving = ref(false)
+const profilesLoading = ref(false)
 const isDark = computed(() => theme.global.current.value.dark)
 
 const snackbar = ref({
@@ -251,6 +265,8 @@ const snackbar = ref({
 const expandedAgents = ref<Record<string, boolean>>({})
 const initialSnapshot = ref('')
 const hasLoaded = ref(false)
+const selectedConfigId = ref('default')
+const configOptions = ref<Array<{ id: string; name: string }>>([])
 
 function toast(message: string, color: 'success' | 'error' | 'warning' = 'success') {
   snackbar.value = { show: true, message, color }
@@ -302,7 +318,9 @@ function serializeConfig(config: SubAgentConfig): string {
 async function loadConfig() {
   loading.value = true
   try {
-    const res = await axios.get('/api/subagent/config')
+    const res = await axios.get('/api/subagent/config', {
+      params: { conf_id: selectedConfigId.value }
+    })
     if (res.data.status === 'ok') {
       cfg.value = normalizeConfig(res.data.data)
       expandedAgents.value = Object.fromEntries(cfg.value.agents.map((agent) => [agent.__key, false]))
@@ -316,6 +334,54 @@ async function loadConfig() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadConfigOptions() {
+  profilesLoading.value = true
+  try {
+    const res = await axios.get('/api/config/abconfs')
+    const profiles = res.data?.data?.info_list
+    if (!Array.isArray(profiles)) {
+      throw new Error('invalid configuration profile response')
+    }
+
+    configOptions.value = profiles
+      .filter((profile: any) => typeof profile?.id === 'string' && profile.id)
+      .map((profile: any) => ({
+        id: profile.id,
+        name: profile.name || profile.id
+      }))
+
+    if (!configOptions.value.some((profile) => profile.id === selectedConfigId.value)) {
+      selectedConfigId.value = configOptions.value.find((profile) => profile.id === 'default')?.id
+        || configOptions.value[0]?.id
+        || 'default'
+    }
+  } catch (e: any) {
+    toast(e?.response?.data?.message || tm('messages.loadProfilesFailed'), 'error')
+  } finally {
+    profilesLoading.value = false
+  }
+}
+
+async function switchConfig(configId: unknown) {
+  const nextConfigId = typeof configId === 'string' ? configId : ''
+  if (!nextConfigId || nextConfigId === selectedConfigId.value) {
+    return
+  }
+
+  if (hasUnsavedChanges.value) {
+    const confirmed = await askForConfirmation(
+      tm('messages.unsavedChangesSwitchConfirm'),
+      confirmDialog
+    )
+    if (!confirmed) {
+      return
+    }
+  }
+
+  selectedConfigId.value = nextConfigId
+  await loadConfig()
 }
 
 function addAgent() {
@@ -379,6 +445,7 @@ async function save() {
   saving.value = true
   try {
     const payload = {
+      conf_id: selectedConfigId.value,
       main_enable: cfg.value.main_enable,
       remove_main_duplicate_tools: cfg.value.remove_main_duplicate_tools,
       agents: cfg.value.agents.map((agent) => ({
@@ -438,9 +505,10 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
   event.returnValue = ''
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('beforeunload', handleBeforeUnload)
-  reload()
+  await loadConfigOptions()
+  await reload()
 })
 
 onBeforeUnmount(() => {
@@ -457,6 +525,10 @@ onBeforeRouteLeave(async () => {
 
 .subagent-page {
   padding-bottom: 40px;
+}
+
+.profile-select {
+  min-width: 180px;
 }
 
 .unsaved-banner {

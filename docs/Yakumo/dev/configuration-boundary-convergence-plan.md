@@ -206,6 +206,9 @@ ConfigRouteTable.resolve(umo)
   Output Controller 都优先读取快照。没有完整 typed selection 的旧直连入口仍可读取
   集中的兼容投影；外部执行器没有任一显式身份时继续明确失败。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
+- [已完成] SubAgent Dashboard 按显式 `conf_id` 读取、保存并刷新对应 Profile 的
+  handoff；Provider 选择仍只引用全局 Provider 资源，页面不再把非默认 Profile 的
+  子代理策略写回 `default`。
 
 ### C6：验收边界
 

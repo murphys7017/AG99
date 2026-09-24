@@ -7,6 +7,9 @@
     "beta": "Experimental",
     "subtitle": "The main LLM can use its own tools directly and delegate tasks to SubAgents via handoff."
   },
+  "profile": {
+    "label": "Configuration Profile"
+  },
   "actions": {
     "refresh": "Refresh",
     "save": "Save",
@@ -38,7 +41,7 @@
   "section": {
     "title": "SubAgents",
     "subtitle": "Configure delegate agents, personas, and descriptions for the main LLM",
-    "globalSettings": "Global Settings",
+    "globalSettings": "Current Profile Settings",
     "agentSetup": "Agent Setup"
   },
   "cards": {
@@ -57,7 +60,7 @@
     "nameLabel": "Agent name (used for transfer_to_{name})",
     "nameHint": "Use lowercase letters + underscores; must be globally unique.",
     "providerLabel": "Chat Provider (optional)",
-    "providerHint": "Leave empty to follow the global default provider.",
+    "providerHint": "Leave empty to follow the current Profile's chat provider.",
     "personaLabel": "Choose Persona",
     "personaHint": "The SubAgent inherits the selected Persona's system settings and tools.",
     "descriptionLabel": "Description for the main LLM (used to decide handoff)",
@@ -65,10 +68,12 @@
   },
   "messages": {
     "loadConfigFailed": "Failed to load config",
+    "loadProfilesFailed": "Failed to load configuration profiles",
     "loadPersonaFailed": "Failed to load persona list",
     "unsavedChangesNotice": "You have unsaved changes on this page. Save before leaving.",
     "unsavedChangesLeaveConfirm": "You have unsaved changes. Leaving will discard them. Continue?",
     "unsavedChangesReloadConfirm": "You have unsaved changes. Reloading will discard them. Continue?",
+    "unsavedChangesSwitchConfirm": "You have unsaved changes. Switching configuration profiles will discard them. Continue?",
     "nameMissing": "A SubAgent is missing a name",
     "nameInvalid": "Invalid SubAgent name: only lowercase letters/numbers/underscores, starting with a letter",
     "nameDuplicate": "Duplicate SubAgent name: {name}",

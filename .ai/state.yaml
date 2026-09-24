@@ -1,3 +1,24 @@
+subagent_dashboard_profile_scope:
+  date: '2026-09-24'
+  class: bugfix
+  risk: medium
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Align the SubAgent Dashboard API and page with Profile-scoped runtime
+    handoffs by selecting an explicit BotProfile for reads, writes, and reload.
+  non_goals: >-
+    Change Provider resource ownership, redesign subagent execution, restart
+    AstrBot, or modify QQ runtime behavior.
+  validation: >-
+    Dashboard API tests passed for default and non-default Profile writes,
+    including handoff reload and default-Profile isolation. Scoped Ruff,
+    Dashboard i18n JSON parsing, and the production Dashboard build passed;
+    the existing MDI subset warnings for mdi-platform and mdi-subset remain.
+  followup: >-
+    After Dashboard assets are deployed, select two Profiles in the SubAgent
+    page, save distinct handoff lists, and verify each Profile's Core turn
+    exposes only its own handoff tools.
+
 turn_snapshot_runtime_selection_convergence:
   date: '2026-09-24'
   class: bugfix

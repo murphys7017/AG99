@@ -7,6 +7,9 @@
     "beta": "实验性",
     "subtitle": "主代理可直接使用自身工具，也可将部分任务委派给各个子代理，完成更复杂的任务，避免主代理上下文过长。"
   },
+  "profile": {
+    "label": "配置 Profile"
+  },
   "actions": {
     "refresh": "刷新",
     "save": "保存",
@@ -38,7 +41,7 @@
   "section": {
     "title": "子代理配置",
     "subtitle": "为主代理配置可委派的子代理、人格与描述信息",
-    "globalSettings": "全局设置",
+    "globalSettings": "当前 Profile 设置",
     "agentSetup": "Agent 设置"
   },
   "cards": {
@@ -57,7 +60,7 @@
     "nameLabel": "Agent 名称（用于 transfer_to_{name}）",
     "nameHint": "建议使用英文小写+下划线，且全局唯一",
     "providerLabel": "Chat Provider（可选）",
-    "providerHint": "留空表示跟随全局默认 provider。",
+    "providerHint": "留空表示跟随当前 Profile 的 Chat Provider。",
     "personaLabel": "选择人格设定",
     "personaHint": "子代理 将直接继承所选 Persona 的系统设定与工具。在人格设定页管理和新建人格。",
     "personaPreview": "人格预览",
@@ -66,10 +69,12 @@
   },
   "messages": {
     "loadConfigFailed": "获取配置失败",
+    "loadProfilesFailed": "获取配置 Profile 列表失败",
     "loadPersonaFailed": "获取 Persona 列表失败",
     "unsavedChangesNotice": "当前页面有未保存修改，请在离开前保存。",
     "unsavedChangesLeaveConfirm": "当前页面有未保存修改，离开后将丢失这些更改。是否继续离开？",
     "unsavedChangesReloadConfirm": "当前页面有未保存修改，刷新配置会丢失这些更改。是否继续刷新？",
+    "unsavedChangesSwitchConfirm": "当前页面有未保存修改，切换配置 Profile 会丢失这些更改。是否继续切换？",
     "nameMissing": "存在未填写名称的子代理",
     "nameInvalid": "子代理名称不合法：仅允许英文小写字母/数字/下划线，且需以字母开头",
     "nameDuplicate": "子代理名称重复：{name}",
