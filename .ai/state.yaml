@@ -1057,17 +1057,19 @@ configuration_boundary_audit:
     No runtime consumer migration, output contract changes, public plugin API deletion,
     or service restart. The new config domain projection is intentionally inert.
   followup: >-
-    A read-only cross-profile resource registry now exists. ProviderManager and
-    PlatformManager initialization read it; AdapterBinding carries write-back
-    ownership. Explicit UMO configuration selection now rejects stale routes.
+    The default configuration is now the persisted global resource owner.
+    Startup migrates legacy Profile-local Provider resources into it, deduping
+    equal definitions and namespacing conflicting IDs while rewriting explicit
+    Profile provider references; Profile platform lists become binding-ID
+    admission lists. ProviderManager and PlatformManager initialization read
+    the global registry. Explicit UMO configuration selection now rejects stale routes.
     EventBus now freezes explicit configuration selection into the existing
     InteractionTurnState before Pipeline scheduling. Cron/proactive turns,
     background result turns, Personal heartbeat, proactive output, and runtime
     observations now use one explicit selection; background results inherit
-    their originating turn snapshot. The next resource-owner batch must
-    normalize duplicated Provider definitions across the persisted Profile
-    files: current local configs contain conflicting definitions with the same
-    resource IDs, and the global registry correctly rejects them at startup.
+    their originating turn snapshot. The next batch must make Dashboard and
+    ProviderManager resource CRUD explicitly target the global owner rather
+    than retaining implicit default-config assumptions.
   validation_gap: >-
     Static lint and compilation pass. Direct standalone import of ProviderManager
     is blocked by the repository's existing PersonaManager -> astrbot.api ->

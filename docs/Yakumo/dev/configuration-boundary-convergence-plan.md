@@ -130,7 +130,7 @@ ConfigRouteTable.resolve(umo)
 - [待完成] 合并重复的 TTS 语义，补齐图片描述、压缩、联网和 Provider Pool 等角色策略。
 - [待完成] 为 Provider、Profile、Adapter 引用增加结构和唯一性校验。
 
-### C1：建立全局资源注册表（骨架已完成）
+### C1：建立全局资源注册表（完成，CRUD 收口待后续）
 
 - [已完成] 从所有已加载配置中建立统一的 `ModelProviderRegistry` 投影。
 - [已完成] Provider ID 重复且内容冲突时明确失败；相同定义可合并。
@@ -138,10 +138,15 @@ ConfigRouteTable.resolve(umo)
 - [已完成] `AstrBotConfigManager.get_resource_registry()` 提供显式资源入口。
 - [已完成] ProviderManager 的初始化/reload 资源读取切换到该注册表。
 - [已完成] PlatformManager 的实例化路径切换到该注册表，并向全部 AdapterBinding owner 写回自动生成字段。
-- [待完成] ProviderManager 的 CRUD 写入归属切换到明确的资源 owner。
-- [待完成] 将资源注册表从“配置投影”提升为正式启动期资源 owner。
+- [已完成] 启动期将旧 Profile 内嵌的 Provider source/provider 定义提升到
+  `default` 全局资源 owner；相同定义去重，冲突 ID 按 Profile 命名空间化并只改写
+  明确的 Provider 引用字段。
+- [已完成] 旧 Profile 内嵌的 Adapter 定义迁移为 `adapter_binding_ids` 准入列表；
+  实例定义只保留在 `default` 全局资源 owner。
+- [待完成] ProviderManager 与 Dashboard 的资源 CRUD 明确暴露全局 owner，移除
+  仍假定“当前 Profile 同时拥有资源和策略”的内部实现细节。
 
-当前验证限制：静态检查和编译已通过；直接独立导入 ProviderManager 会触发仓库现有的
+当前验证限制：静态检查、受控 Profile 资源迁移模拟和编译已通过；直接独立导入 ProviderManager 会触发仓库现有的
 `PersonaManager -> astrbot.api -> KnowledgeBaseManager -> ProviderManager` 循环依赖，
 因此本批未进行独立 ProviderManager smoke import，也未重启服务。
 
@@ -181,17 +186,13 @@ ConfigRouteTable.resolve(umo)
 - Cron、主动任务、普通消息保持同一配置身份。
 - 配置重载不改变已准入回合快照。
 
-## 6.1 当前配置数据迁移阻塞
+## 6.1 旧配置资源迁移规则
 
-现有开发配置仍在多个 Profile 文件中复制同名 Provider 资源，且部分字段不同。
-例如 2026 年 9 月 24 日的本地配置审计发现同一 `ollama` source 的
+2026 年 9 月 24 日的本地配置审计发现同一 `ollama` source 的
 `ollama_disable_thinking` 在不同文件中不一致，另有 TTS、Embedding 与 MiniMax
-资源定义差异。全局资源注册表按设计会拒绝这些冲突，不能通过静默选择某个
-Profile 的副本掩盖。
-
-因此下一次 Provider resource-owner 批次必须先确定唯一的持久化 owner，并将
-现有 Profile 内的 Provider 定义迁出或规范化。该迁移完成前，完整生命周期启动
-可能被这些历史复制配置阻断；这不是 C3 的路由/快照逻辑问题。
+资源定义差异。启动期迁移现在将这些冲突的 Profile-local 资源命名空间化，
+并将 Profile 仅保留为对该新全局资源的显式引用；不会静默选择任意一个副本。
+迁移完成后 Profile 不再拥有资源定义，后续资源 CRUD 也必须遵循这个 owner。
 
 ## 7. 非目标
 

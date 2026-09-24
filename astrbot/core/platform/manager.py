@@ -70,7 +70,7 @@ class PlatformManager:
         *,
         binding_id: str | None = None,
     ) -> None:
-        """Persist a mutated adapter binding to every profile that owns it."""
+        """Persist a mutated adapter binding to its global resource owner."""
         if self.config_manager is None:
             self.astrbot_config.save_config()
             return

@@ -50,17 +50,33 @@ class ModelProviderRegistry:
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> ModelProviderRegistry:
-        sources = config.get("provider_sources", [])
-        definitions = config.get("provider", [])
+        source_entries = config.get("provider_sources", [])
+        provider_entries = config.get("provider", [])
+        sources: dict[str, Mapping[str, Any]] = {}
+        definitions: dict[str, Mapping[str, Any]] = {}
+        anonymous_sources: set[str] = set()
+        for entry in source_entries:
+            if not isinstance(entry, dict):
+                continue
+            source = _freeze_mapping(entry)
+            source_id = str(source.get("id", "")).strip()
+            if not source_id:
+                source_id = repr(source)
+                if source_id in anonymous_sources:
+                    continue
+                anonymous_sources.add(source_id)
+            _merge_resource_entry(sources, source_id, source, "provider source", "")
+        for entry in provider_entries:
+            if not isinstance(entry, dict):
+                continue
+            definition = _freeze_mapping(entry)
+            provider_id = str(definition.get("id", "")).strip()
+            if not provider_id:
+                raise ValueError("provider definition has no id")
+            _merge_resource_entry(definitions, provider_id, definition, "provider", "")
         return cls(
-            sources=tuple(
-                _freeze_mapping(item) for item in sources if isinstance(item, dict)
-            ),
-            definitions=tuple(
-                _freeze_mapping(item)
-                for item in definitions
-                if isinstance(item, dict)
-            ),
+            sources=tuple(sources.values()),
+            definitions=tuple(definitions.values()),
         )
 
     @classmethod
@@ -130,6 +146,19 @@ class BotProfileConfig:
         tts_settings = config.get("provider_tts_settings", {})
         stt_settings = config.get("provider_stt_settings", {})
         platform_entries = config.get("platform", [])
+        configured_binding_ids = config.get("adapter_binding_ids")
+        if isinstance(configured_binding_ids, list):
+            adapter_binding_ids = [
+                item.strip()
+                for item in configured_binding_ids
+                if isinstance(item, str) and item.strip()
+            ]
+        else:
+            adapter_binding_ids = [
+                str(item.get("id"))
+                for item in platform_entries
+                if isinstance(item, dict) and item.get("id")
+            ]
 
         # These are profile policies, not provider definitions.  Keep their
         # canonical role names independent from the legacy storage keys.
@@ -205,11 +234,7 @@ class BotProfileConfig:
             adapter_binding_ids=tuple(
                 dict.fromkeys(
                     [
-                        *(
-                            str(item.get("id"))
-                            for item in platform_entries
-                            if isinstance(item, dict) and item.get("id")
-                        ),
+                        *adapter_binding_ids,
                         BUILTIN_WEBCHAT_ADAPTER_BINDING_ID,
                     ]
                 )
@@ -288,6 +313,15 @@ class AdapterRegistry:
             )
         return cls(bindings=tuple(bindings.values()))
 
+    @classmethod
+    def from_config(
+        cls,
+        config_id: str,
+        config: Mapping[str, Any],
+    ) -> AdapterRegistry:
+        """Build process-wide bindings from their explicit resource owner."""
+        return cls.from_configs({config_id: config})
+
     @property
     def binding_ids(self) -> frozenset[str]:
         return frozenset(item.binding_id for item in self.bindings)
@@ -331,9 +365,12 @@ class RuntimeResourceRegistry:
     def from_configs(
         cls, configs: Mapping[str, Mapping[str, Any]]
     ) -> RuntimeResourceRegistry:
+        global_owner = configs.get("default")
+        if global_owner is None:
+            raise ValueError("global resource owner configuration is unavailable")
         return cls(
-            providers=ModelProviderRegistry.from_configs(configs),
-            adapters=AdapterRegistry.from_configs(configs),
+            providers=ModelProviderRegistry.from_config(dict(global_owner)),
+            adapters=AdapterRegistry.from_config("default", global_owner),
         )
 
 

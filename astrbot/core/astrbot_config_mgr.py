@@ -1,5 +1,7 @@
 import os
+import re
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TypedDict, TypeVar
 
@@ -66,6 +68,213 @@ class AstrBotConfigManager:
         self.confs["default"] = default_config
         self.abconf_data = None
         self._load_all_configs()
+        self._migrate_profile_resources_to_global_owner()
+
+    @staticmethod
+    def _build_migrated_resource_id(
+        *,
+        config_id: str,
+        kind: str,
+        resource_id: str,
+        occupied: set[str],
+    ) -> str:
+        slug = re.sub(r"[^A-Za-z0-9_]+", "_", resource_id).strip("_")
+        base = f"profile_{config_id[:8]}_{kind}_{slug or 'resource'}"
+        candidate = base
+        suffix = 2
+        while candidate in occupied:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
+
+    @staticmethod
+    def _rewrite_profile_provider_references(
+        value,
+        replacements: dict[str, str],
+    ):
+        """Rewrite only declared provider-reference fields in Profile policy."""
+        if isinstance(value, dict):
+            rewritten = {}
+            for key, item in value.items():
+                if key.endswith("_provider_id") and isinstance(item, str):
+                    rewritten[key] = replacements.get(item, item)
+                elif key in {"fallback_chat_models", "provider_pool"} and isinstance(
+                    item, list
+                ):
+                    rewritten[key] = [
+                        replacements.get(entry, entry)
+                        if isinstance(entry, str)
+                        else entry
+                        for entry in item
+                    ]
+                else:
+                    rewritten[key] = (
+                        AstrBotConfigManager._rewrite_profile_provider_references(
+                            item, replacements
+                        )
+                    )
+            return rewritten
+        if isinstance(value, list):
+            return [
+                AstrBotConfigManager._rewrite_profile_provider_references(
+                    item, replacements
+                )
+                for item in value
+            ]
+        return value
+
+    def _migrate_profile_resources_to_global_owner(self) -> None:
+        """Promote legacy resource copies to the global owner.
+
+        Profiles historically embed process-global resources. Exact copies are
+        deduplicated. A conflicting ID is namespaced for that Profile before
+        every exact provider-ID reference in the Profile is rewritten. The
+        migrated Profile then owns policy references and adapter binding IDs only.
+        """
+        global_config = self.default_conf
+        global_sources = deepcopy(global_config.get("provider_sources", []))
+        global_providers = deepcopy(global_config.get("provider", []))
+        if not isinstance(global_sources, list) or not isinstance(global_providers, list):
+            raise ValueError("global resource owner has invalid provider resources")
+
+        source_by_id = {
+            str(item.get("id", "")).strip(): item
+            for item in global_sources
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        }
+        provider_by_id = {
+            str(item.get("id", "")).strip(): item
+            for item in global_providers
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        }
+        changed_profiles: list[AstrBotConfig] = []
+        promoted_sources = 0
+        promoted_providers = 0
+        renamed_resources = 0
+
+        for config_id, profile in self.confs.items():
+            if config_id == "default":
+                continue
+            local_sources = profile.get("provider_sources", [])
+            local_providers = profile.get("provider", [])
+            local_platforms = profile.get("platform", [])
+            if not isinstance(local_sources, list) or not isinstance(local_providers, list):
+                raise ValueError(f"profile {config_id!r} has invalid provider resources")
+            if not isinstance(local_platforms, list):
+                raise ValueError(f"profile {config_id!r} has invalid adapter bindings")
+            if not local_sources and not local_providers and not local_platforms:
+                continue
+
+            source_replacements: dict[str, str] = {}
+            for entry in local_sources:
+                if not isinstance(entry, dict):
+                    continue
+                source = deepcopy(entry)
+                source_id = str(source.get("id", "")).strip()
+                if not source_id:
+                    global_sources.append(source)
+                    promoted_sources += 1
+                    continue
+                current = source_by_id.get(source_id)
+                if current is None:
+                    source_by_id[source_id] = source
+                    global_sources.append(source)
+                    promoted_sources += 1
+                    continue
+                if current == source:
+                    continue
+                replacement = self._build_migrated_resource_id(
+                    config_id=config_id,
+                    kind="source",
+                    resource_id=source_id,
+                    occupied=set(source_by_id),
+                )
+                source["id"] = replacement
+                source_by_id[replacement] = source
+                global_sources.append(source)
+                source_replacements[source_id] = replacement
+                promoted_sources += 1
+                renamed_resources += 1
+
+            provider_replacements: dict[str, str] = {}
+            for entry in local_providers:
+                if not isinstance(entry, dict):
+                    continue
+                provider = deepcopy(entry)
+                source_id = str(provider.get("provider_source_id", "")).strip()
+                if source_id in source_replacements:
+                    provider["provider_source_id"] = source_replacements[source_id]
+                provider_id = str(provider.get("id", "")).strip()
+                if not provider_id:
+                    raise ValueError(
+                        f"provider definition in profile {config_id!r} has no id"
+                    )
+                current = provider_by_id.get(provider_id)
+                if current is None:
+                    provider_by_id[provider_id] = provider
+                    global_providers.append(provider)
+                    promoted_providers += 1
+                    continue
+                if current == provider:
+                    continue
+                replacement = self._build_migrated_resource_id(
+                    config_id=config_id,
+                    kind="provider",
+                    resource_id=provider_id,
+                    occupied=set(provider_by_id),
+                )
+                provider["id"] = replacement
+                provider_by_id[replacement] = provider
+                global_providers.append(provider)
+                provider_replacements[provider_id] = replacement
+                promoted_providers += 1
+                renamed_resources += 1
+
+            migrated_profile = self._rewrite_profile_provider_references(
+                dict(profile), provider_replacements
+            )
+            migrated_profile["provider_sources"] = []
+            migrated_profile["provider"] = []
+            migrated_profile["adapter_binding_ids"] = list(
+                dict.fromkeys(
+                    [
+                        *(
+                            str(entry.get("id")).strip()
+                            for entry in local_platforms
+                            if isinstance(entry, dict)
+                            and str(entry.get("id", "")).strip()
+                        ),
+                        *(
+                            entry.strip()
+                            for entry in migrated_profile.get(
+                                "adapter_binding_ids", []
+                            )
+                            if isinstance(entry, str) and entry.strip()
+                        ),
+                    ]
+                )
+            )
+            migrated_profile["platform"] = []
+            profile.clear()
+            profile.update(migrated_profile)
+            changed_profiles.append(profile)
+
+        if not changed_profiles:
+            return
+
+        global_config["provider_sources"] = global_sources
+        global_config["provider"] = global_providers
+        global_config.save_config()
+        for profile in changed_profiles:
+            profile.save_config()
+        logger.info(
+            "Migrated Profile provider resources to global owner: profiles=%s "
+            "sources=%s providers=%s renamed=%s",
+            len(changed_profiles),
+            promoted_sources,
+            promoted_providers,
+            renamed_resources,
+        )
 
     def _get_abconf_data(self) -> dict:
         """获取所有的 abconf 数据"""
