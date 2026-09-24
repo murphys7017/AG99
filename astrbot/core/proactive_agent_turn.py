@@ -19,6 +19,7 @@ from astrbot.core.core_request_preparation import (
 from astrbot.core.db.po import CoreExecutionRecord
 from astrbot.core.deadline import TurnDeadlineBudget, TurnDeadlineExceeded
 from astrbot.core.interaction.config import load_interaction_agent_config
+from astrbot.core.interaction.turn_state import get_interaction_turn_state
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.plugin_admission import (
     build_plugin_admission_snapshot,
@@ -286,6 +287,7 @@ async def run_proactive_agent_turn(
             body=native_executor,
             run=executor_run,
             deadline=deadline,
+            cleanup_scope=get_interaction_turn_state(event).execution_scope,
             submission_metadata={
                 "source": "cron" if extras.get("cron_job") else "background",
                 "executor_id": executor_id,

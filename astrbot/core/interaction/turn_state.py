@@ -187,11 +187,18 @@ class InteractionTurnFailure:
     created_at: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True, slots=True)
+class TurnCleanupResult:
+    pending_tasks: tuple[asyncio.Task[Any], ...]
+
+
 @dataclass(slots=True)
 class TurnExecutionScope:
     """Own every asynchronous task whose lifetime belongs to one turn."""
 
     tasks: dict[str, set[asyncio.Task[Any]]] = field(default_factory=dict)
+    detached_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    resource_cleanup_unknown: bool = False
     closed: bool = False
 
     def create_task(
@@ -234,22 +241,34 @@ class TurnExecutionScope:
         for detached_task in detached_tasks:
             role_tasks.discard(detached_task)
             if not detached_task.done():
+                self.detached_tasks.add(detached_task)
+                detached_task.add_done_callback(self.detached_tasks.discard)
                 detached_task.cancel()
         if not role_tasks:
             self.tasks.pop(role, None)
         return any(not detached_task.done() for detached_task in detached_tasks)
 
-    async def close(self) -> None:
-        if self.closed:
-            return
+    async def close(self, *, timeout_seconds: float = 1.0) -> TurnCleanupResult:
         self.closed = True
-        tasks = [task for role_tasks in self.tasks.values() for task in role_tasks]
+        tasks = {task for role_tasks in self.tasks.values() for task in role_tasks}
+        tasks.update(self.detached_tasks)
+        current = asyncio.current_task()
+        tasks.discard(current)
         for task in tasks:
             if not task.done():
                 task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self.tasks.clear()
+        pending = {task for task in tasks if not task.done()}
+        if pending:
+            _, pending = await asyncio.wait(pending, timeout=max(0.0, timeout_seconds))
+        return TurnCleanupResult(pending_tasks=tuple(pending))
+
+    def unfinished_tasks(self) -> tuple[asyncio.Task[Any], ...]:
+        current = asyncio.current_task()
+        return tuple(
+            task
+            for task in ({task for group in self.tasks.values() for task in group} | self.detached_tasks)
+            if task is not current and not task.done()
+        )
 
     def _task_done(self, role: str, task: asyncio.Task[Any]) -> None:
         role_tasks = self.tasks.get(role)
@@ -258,8 +277,11 @@ class TurnExecutionScope:
             if not role_tasks:
                 self.tasks.pop(role, None)
         if task.cancelled():
+            if role == "executor_cleanup":
+                self.resource_cleanup_unknown = True
             return
-        task.exception()
+        if task.exception() is not None and role == "executor_cleanup":
+            self.resource_cleanup_unknown = True
 
 
 @dataclass(slots=True)
@@ -268,6 +290,7 @@ class InteractionTurnState:
     pipeline_event_prepared: bool = False
     pipeline_route_handled: bool = False
     emitting_immediate_reply: bool = False
+    output_closed_reason: str | None = None
     deadline: TurnDeadlineBudget | None = None
     interaction_config: InteractionAgentConfig | None = None
     runtime_config_snapshot: Mapping[str, Any] | None = None
@@ -1147,6 +1170,8 @@ def mark_interaction_turn_completed(
         InteractionTurnStatus.COMPLETED if completed else InteractionTurnStatus.ACTIVE
     )
     state.completion_state.terminal_at = time.time() if completed else None
+    if completed:
+        state.output_closed_reason = state.output_closed_reason or "turn_completed"
 
 
 def mark_interaction_turn_failed(event) -> None:
@@ -1161,6 +1186,12 @@ def mark_interaction_turn_cancelled(event) -> None:
     state.completion_state.completed = False
     state.completion_state.status = InteractionTurnStatus.CANCELLED
     state.completion_state.terminal_at = time.time()
+    state.output_closed_reason = state.output_closed_reason or "turn_cancelled"
+
+
+def close_interaction_turn_output(event, *, reason: str) -> None:
+    state = ensure_interaction_turn_state(event)
+    state.output_closed_reason = state.output_closed_reason or reason
 
 
 def transition_interaction_lifecycle(

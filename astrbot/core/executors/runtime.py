@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from typing import TYPE_CHECKING
 
 from astrbot import logger
@@ -21,6 +22,7 @@ from .contracts import ExecutionFinalUpdate, ExecutionResult, ExecutionUpdate
 
 if TYPE_CHECKING:
     from astrbot.core.execution import CoreExecutorBody
+    from astrbot.core.interaction.turn_state import TurnExecutionScope
 
     from .contracts import ExecutorRun
 
@@ -36,6 +38,7 @@ async def drive_executor_run(
     deadline: TurnDeadlineBudget | None = None,
     submission_metadata: dict | None = None,
     output_sink: OutputSink | None = None,
+    cleanup_scope: TurnExecutionScope | None = None,
 ) -> ExecutionResult:
     """Drive one Body and settle its Core lifecycle exactly once.
 
@@ -57,22 +60,28 @@ async def drive_executor_run(
 
         async def consume() -> ExecutionResult:
             nonlocal final_result
-            async for update in run.stream():
-                if head is not None and getattr(head, "terminal_event", None) is not None:
-                    raise asyncio.CancelledError(
-                        "executor emitted an update after Core termination"
-                    )
-                if isinstance(update, ExecutionFinalUpdate):
+            async with aclosing(run.stream()) as updates:
+                async for update in updates:
+                    if (
+                        head is not None
+                        and getattr(head, "terminal_event", None) is not None
+                    ):
+                        raise asyncio.CancelledError(
+                            "executor emitted an update after Core termination"
+                        )
+                    if isinstance(update, ExecutionFinalUpdate):
+                        if final_result is not None:
+                            raise RuntimeError("executor emitted multiple final updates")
+                        final_result = update.result
+                        continue
                     if final_result is not None:
-                        raise RuntimeError("executor emitted multiple final updates")
-                    final_result = update.result
-                    continue
-                if final_result is not None:
-                    raise RuntimeError("executor emitted an update after its final result")
-                if output_sink is not None:
-                    sink_result = output_sink(update)
-                    if sink_result is not None:
-                        await sink_result
+                        raise RuntimeError(
+                            "executor emitted an update after its final result"
+                        )
+                    if output_sink is not None:
+                        sink_result = output_sink(update)
+                        if sink_result is not None:
+                            await sink_result
             if final_result is None:
                 raise RuntimeError("executor ended without a final result")
             return final_result
@@ -140,23 +149,47 @@ async def drive_executor_run(
             )
         raise
     finally:
+        async def close_run() -> None:
+            try:
+                await run.aclose()
+            except BaseException:
+                invalidate = getattr(run, "invalidate", None)
+                if callable(invalidate):
+                    invalidate()
+                logger.warning(
+                    "Executor run cleanup failed: executor_id=%s",
+                    body.executor_id,
+                    exc_info=True,
+                )
+                raise
+            else:
+                if head is not None and activated:
+                    head.release_executor(executor_id=body.executor_id)
+
+        cleanup = (
+            cleanup_scope.create_task(
+                close_run(),
+                role="executor_cleanup",
+                name=f"executor-cleanup:{body.executor_id}",
+            )
+            if cleanup_scope is not None
+            else asyncio.create_task(
+                close_run(), name=f"executor-cleanup:{body.executor_id}"
+            )
+        )
         try:
-            await run.aclose()
+            _, pending = await asyncio.wait({cleanup}, timeout=1.0)
         except asyncio.CancelledError:
+            cleanup.cancel()
+            raise
+        if pending:
+            invalidate = getattr(run, "invalidate", None)
+            if callable(invalidate):
+                invalidate()
             logger.warning(
-                "Executor run cleanup was cancelled: executor_id=%s",
+                "Executor cleanup still pending; binding retained: executor_id=%s",
                 body.executor_id,
-                exc_info=True,
             )
-        except Exception:
-            logger.warning(
-                "Executor run cleanup failed: executor_id=%s",
-                body.executor_id,
-                exc_info=True,
-            )
-        finally:
-            if head is not None and activated:
-                head.release_executor(executor_id=body.executor_id)
 
 
 def _request_run_stop(run: ExecutorRun) -> None:

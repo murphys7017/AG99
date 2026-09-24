@@ -2047,6 +2047,33 @@ class Context:
             "runtime_sensor",
             lambda r: f"{r.plugin_id}.{r.source_id}",
         )
+        for task in self._register_tasks:
+            owner = self._registered_task_owners.get(id(task))
+            entries.append(
+                {
+                    "kind": "global_task",
+                    "plugin_id": None,
+                    "item_name": "registered task",
+                    "registration_id": f"task:{id(task)}",
+                    "owner_module_path": owner.module_path if owner else None,
+                    "owner_plugin_name": owner.plugin_name if owner else None,
+                    "lifecycle_management": "owner_managed" if owner else "unowned",
+                }
+            )
+        for route, _handler, methods, _description in self.registered_web_apis:
+            key = (route, tuple(methods))
+            owner = self._registered_web_api_owners.get(key)
+            entries.append(
+                {
+                    "kind": "web_api",
+                    "plugin_id": None,
+                    "item_name": route,
+                    "registration_id": ["web_api", route, list(methods)],
+                    "owner_module_path": owner.module_path if owner else None,
+                    "owner_plugin_name": owner.plugin_name if owner else None,
+                    "lifecycle_management": "owner_managed" if owner else "unowned",
+                }
+            )
         return entries
 
     def register_web_api(

@@ -1522,18 +1522,23 @@ async def test_plugin_persona_output_keeps_non_text_components():
 @pytest.mark.asyncio
 async def test_t2i_keeps_components_after_the_leading_text(monkeypatch):
     controller = object.__new__(InteractionOutputController)
-    controller.t2i_word_threshold = 1
-    controller.t2i_use_network = False
-    controller.t2i_active_template = "base"
+    controller.platform_settings = {}
+    controller._get_runtime_config = lambda _event: {
+        "t2i_word_threshold": 1,
+        "t2i_strategy": "local",
+    }
     controller._register_interaction_t2i_file_if_needed = AsyncMock(return_value=None)
     monkeypatch.setattr(
         "astrbot.core.interaction.output_controller.html_renderer.render_t2i",
         AsyncMock(return_value="https://example.invalid/rendered.png"),
     )
     attachment = Image("attachment.png")
-    message = MessageChain([Plain("long text"), attachment]).use_t2i(True)
+    message = MessageChain([Plain("long text " * 8), attachment]).use_t2i(True)
 
-    rendered, metadata = await controller._apply_interaction_t2i(object(), message)
+    event = object()
+    rendered, metadata = await controller._apply_interaction_t2i(
+        event, message, options=controller._resolve_outbound_options(event)
+    )
 
     assert metadata["delivered_as"] == "image"
     assert [type(component) for component in rendered.chain] == [Image, Image]

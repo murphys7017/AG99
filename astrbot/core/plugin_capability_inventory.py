@@ -51,6 +51,7 @@ READ_ONLY_FIELDS: tuple[str, ...] = (
     "migration_state",
     "permission_state",
     "applicability_state",
+    "lifecycle_management",
 )
 
 #: Default consumer per capability kind. ``None`` means "decided elsewhere"
@@ -96,7 +97,6 @@ _MIGRATION_STATES: dict[CapabilityKind, str] = {
     CapabilityKind.DIRECT_OUTPUT: "legacy_compatibility",
     CapabilityKind.EVENT_INJECTION: "needs_review",
     CapabilityKind.POSTPROCESSOR: "needs_review",
-    CapabilityKind.GLOBAL_TASK: "leak_on_unload",
     CapabilityKind.WEB_API: "no_lifecycle_gate",
     CapabilityKind.PROVIDER: "no_lifecycle_gate",
     CapabilityKind.PLATFORM_ADAPTER: "no_lifecycle_gate",
@@ -168,6 +168,7 @@ def describe_capability(
         "target_reason": _capability_target_reason(kind),
         "target_editable": kind in {CapabilityKind.LLM_HOOK, CapabilityKind.TOOL},
         "migration_state": _MIGRATION_STATES.get(kind, "current"),
+        "lifecycle_management": "not_evaluated",
         "scope": "interaction" if is_interaction else "process",
         "owner_source": decision is not None and getattr(decision, "reason", "") or "",
     }
@@ -222,6 +223,9 @@ def build_capability_inventory(
                 snapshot=snapshot,
             )
             entry["owner_source"] = row.get("owner_source") or ""
+            entry["item_name"] = row.get("item_name") or entry["item_name"]
+            entry["registration_id"] = row.get("registration_id")
+            entry["lifecycle_management"] = row.get("lifecycle_management", "not_evaluated")
             key = (
                 row.get("owner_plugin_name")
                 or row.get("owner_module_path")

@@ -112,6 +112,7 @@
           <tr>
             <th>{{ tm('runtimeTargetEditor.capabilityInventory.kind') }}</th>
             <th>{{ tm('runtimeTargetEditor.capabilityInventory.migration') }}</th>
+            <th>{{ tm('runtimeTargetEditor.capabilityInventory.lifecycle') }}</th>
             <th>{{ tm('runtimeTargetEditor.capabilityInventory.owner') }}</th>
           </tr>
         </thead>
@@ -120,8 +121,14 @@
             v-for="cap in processCapabilities"
             :key="capabilityKey(cap)"
           >
-            <td>{{ cap.kind }}</td>
+            <td>
+              <div>{{ cap.kind }}</div>
+              <div v-if="cap.item_name" class="text-caption text-medium-emphasis">
+                {{ cap.item_name }}
+              </div>
+            </td>
             <td>{{ cap.migration_state }}</td>
+            <td>{{ lifecycleLabel(cap) }}</td>
             <td class="text-caption">{{ cap.owner_module_path }}</td>
           </tr>
         </tbody>
@@ -175,6 +182,7 @@ const processCapabilities = computed(() =>
 )
 
 function capabilityKey(cap) {
+  if (cap.registration_id) return JSON.stringify(cap.registration_id)
   // Handler / Hook / Tool rows have no plugin_id, so identity must include the
   // owner module and the item name; otherwise several rows of one kind collide.
   return [
@@ -205,6 +213,11 @@ function hardnessLabel(cap) {
   return cap.hard_or_soft === 'hard'
     ? tm('runtimeTargetEditor.capabilityInventory.hard')
     : tm('runtimeTargetEditor.capabilityInventory.soft')
+}
+
+function lifecycleLabel(cap) {
+  const status = cap.lifecycle_management || 'not_evaluated'
+  return tm(`runtimeTargetEditor.capabilityInventory.lifecycleStates.${status}`)
 }
 
 function permissionLabel(cap) {

@@ -1,6 +1,6 @@
 # Execution Backend 真实验收矩阵
 
-更新时间：2026-09-21
+更新时间：2026-09-23
 
 本矩阵用于 D6。它不是自动化测试替代品，而是启动 AstrBot、OLV 或 Live 后按日志和
 外部表现逐项核对的统一记录格式。每项都要同时记录 `turn_id`、`execution_id`、
@@ -23,7 +23,8 @@
 | 场景 | 操作 | 必须观察到 | 禁止出现 |
 | --- | --- | --- | --- |
 | 普通委派成功 | 发送一个必定进入 Core 并调用工具的任务 | Personal 快速表达一次；Core 依次出现 `submitted/working/progress/completed`；最终文本、音频和 effect 各自只交付一次 | Core 直接调用平台发送；Personal/Core 重复最终回复；同一 `message_id` 多次完成 |
-| 执行中追问 | Core 工作期间发送补充信息 | `provide_input` 带原 `execution_id + turn_id`，由当前 Body 接收；任务继续或明确进入 `input_required` 策略 | 新建第二个 execution；追问污染下一轮 Prompt；绕过 Head 直接写 Runner mailbox |
+| 普通新消息替换 | Core 工作期间发送普通新消息 | Personal 取消旧 Core、终止旧平台可见轮次后启动新轮；旧输出封闭，清理未决时新轮明确拒绝 | 旧任务迟到输出；旧终止通知影响新轮；未知平台终止结果被当成成功 |
+| 明确补充输入 | 经专门的补充输入控制入口发送信息 | `provide_input` 带原 `execution_id + turn_id`，由当前 Body 接收或明确拒绝 | 把普通新消息擅自解释为补充输入；绕过 Head 直接写 Runner mailbox |
 | 用户取消 | 执行中取消 | 只有一个 `cancel` 命令和一个 `cancelled` terminal event；Body 收到一次 stop | 取消后又出现 completed；重复取消再次发送可见消息 |
 | deadline | 让任务自然超时 | 记录 `CoreCommandOrigin.CORE_HEAD`；Core 为 `cancelled` 或明确失败；Personal 可以单独完成自己的 turn | deadline 被记成用户主动取消；迟到结果覆盖终态 |
 
@@ -53,6 +54,8 @@
 - `plugin.delayed_delivery`：检查迟到 artifact 的 `parent_turn_id`、`delayed_turn_id` 和 disposition。
 
 ## 5. 通过门槛
+
+运行时边界收敛仅有源码改动和聚焦离线验证，以下真实平台场景均未在本批验收：双配置并发、连续三条打断、取消不及时的插件、普通成功和定时提醒。不得将源码实施记录当作平台通过结论。
 
 - OLV、Cron、Live 各至少完成一次成功和一次失败或取消。
 - 每个场景都能从 `turn_id -> execution_id -> executor_id -> message_id` 还原链路。

@@ -1016,3 +1016,29 @@ runtime:
         - proactive text output and same-session tool progress use Personal Runtime and Output Controller
         - assistant-only history projects into Prompt and Memory without a synthetic user message
         - Provider output-contract tool adapters no longer import Prompt
+runtime_boundary_convergence:
+  date: '2026-09-23'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Per-turn output materialization and delivery settings, bounded interruption
+    and turn cleanup, external executor session reuse protection, plugin
+    lifecycle inventory, and corrected interaction acceptance documentation.
+  assumptions: >-
+    A normal new message replaces the active Core execution; only an explicit
+    supplemental-input flow uses provide_input. A platform abort whose success
+    cannot be confirmed blocks the affected target until runtime reinitialization.
+    Uncooperative third-party coroutines and already dispatched sends cannot be
+    forcibly rolled back.
+  validation: >-
+    Focused executor, inventory and plugin runtime tests passed; Dashboard
+    production build passed. Two pre-existing autonomous-expression expectation
+    tests and four prompt tool-inventory assertions fail; the failing prompt
+    inventory logic was not changed to mask the failures. No platform
+    acceptance or service restart.
+  followup: >-
+    Run dual-config output, three consecutive interruptions, slow plugin cancel,
+    normal success and scheduled reminder on the real adapter before treating
+    this change as fully accepted. Verify recovery from an unknown platform
+    abort requires a deliberate runtime restart.

@@ -75,6 +75,7 @@ from .turn_state import (
     InteractionFinalOutputStatus,
     InteractionLifecycleStage,
     InteractionTurnStatus,
+    close_interaction_turn_output,
     mark_interaction_turn_cancelled,
     mark_interaction_turn_failed,
     record_interaction_turn_failure,
@@ -429,6 +430,7 @@ class TurnAdmission:
     consumed_as_follow_up: bool
     lease: PersonalTurnLease | None = None
     skipped_busy: bool = False
+    cleanup_pending: bool = False
 
 
 class PlatformEventSubmission:
@@ -547,7 +549,24 @@ class PersonalTurnLease:
                 )
         finally:
             try:
-                await self.reservation.turn.state.execution_scope.close()
+                close_interaction_turn_output(
+                    self.reservation.turn.event, reason="turn_cleanup"
+                )
+                scope = self.reservation.turn.state.execution_scope
+                try:
+                    await scope.close()
+                finally:
+                    pending = scope.unfinished_tasks()
+                    self.runtime.track_cleanup_tasks(pending)
+                    if pending:
+                        logger.warning(
+                            "Personal Runtime turn cleanup pending: turn_id=%s session_id=%s tasks=%s",
+                            self.reservation.turn.turn_id,
+                            self.runtime.key.audience_key,
+                            [task.get_name() for task in pending],
+                        )
+                    if scope.resource_cleanup_unknown:
+                        self.runtime._resource_cleanup_unknown = True
             finally:
                 deadline = self.reservation.turn.state.deadline
                 try:
@@ -588,9 +607,10 @@ class PersonalTurnLease:
                         self.reservation.turn,
                         feedback=feedback,
                     )
-                    self.runtime.active_turn_id = None
-                    self.runtime._active_turn_context = None
-                    self.runtime._active_turn_task = None
+                    if self.runtime._active_turn_context is self.reservation.turn:
+                        self.runtime.active_turn_id = None
+                        self.runtime._active_turn_context = None
+                        self.runtime._active_turn_task = None
                     self.runtime.touch()
                     self.reservation.transition(PendingTurnState.SETTLED)
                     await self.runtime.turn_lock.release()
@@ -613,6 +633,10 @@ class PersonalSessionRuntime:
         self.active_turn_id: str | None = None
         self._active_turn_context: PersonalTurnContext | None = None
         self._active_turn_task: asyncio.Task[Any] | None = None
+        self._pending_cleanup_tasks: set[asyncio.Task[Any]] = set()
+        self._resource_cleanup_unknown = False
+        self._abort_task: asyncio.Task[Any] | None = None
+        self._platform_abort_unknown = False
         self.bound_turn_count = 0
         self.follow_ups = _FollowUpCoordinator()
         self.state = PersonalState()
@@ -654,6 +678,27 @@ class PersonalSessionRuntime:
         self.created_at = now
         self.last_access_at = now
         self.idle_since: float | None = now
+
+    @property
+    def cleanup_blocked(self) -> bool:
+        return bool(
+            self._pending_cleanup_tasks
+            or self._abort_task
+            or self._platform_abort_unknown
+            or self._resource_cleanup_unknown
+        )
+
+    def track_cleanup_tasks(self, tasks: tuple[asyncio.Task[Any], ...]) -> None:
+        for task in tasks:
+            self._pending_cleanup_tasks.add(task)
+            def settled(done: asyncio.Task[Any]) -> None:
+                self._pending_cleanup_tasks.discard(done)
+                if not done.cancelled() and done.exception() is None:
+                    return
+                if done.get_name().startswith("executor-cleanup:"):
+                    self._resource_cleanup_unknown = True
+
+            task.add_done_callback(settled)
 
     def touch(self, *, now: float | None = None) -> None:
         self.last_access_at = time.time() if now is None else now
@@ -1243,10 +1288,13 @@ class PersonalSessionRuntime:
         task = self.observation_evaluation_task
         if task is not None and not task.done():
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            _, pending = await asyncio.wait({task}, timeout=1.0)
+            if pending:
+                self.track_cleanup_tasks((task,))
+                logger.warning(
+                    "Personal Runtime observation did not stop during shutdown: audience=%s",
+                    self.key.audience_key,
+                )
         self.observation_evaluation_task = None
         self._observation_batch_due_at = None
         self._observation_reschedule_requested = False
@@ -1312,13 +1360,16 @@ class PersonalSessionRuntime:
     ) -> TurnAdmission:
         turn = reservation.turn
         event = turn.event
+        if self.cleanup_blocked or manager.has_blocked_output_target(self.key):
+            reservation.transition(PendingTurnState.SETTLED)
+            return TurnAdmission(turn=turn, consumed_as_follow_up=False, cleanup_pending=True)
         delayed_admission = bool(
             event.get_extra("_personal_runtime_delayed_admission", False)
         )
         interrupted_core = (
             wait_if_busy
             and not isinstance(event, RuntimeObservationEvent)
-            and await self._interrupt_active_core_turn_for_new_input()
+            and await self._interrupt_active_core_turn_for_new_input(turn.state.deadline)
         )
         # A message that supersedes Core starts a fresh turn. Do not feed it
         # into the old executor's supplemental-input channel first.
@@ -1376,6 +1427,13 @@ class PersonalSessionRuntime:
                             skipped_busy=True,
                         )
 
+                if self.cleanup_blocked or manager.has_blocked_output_target(self.key):
+                    await finalize_capture(consumed_marked=False)
+                    reservation.transition(PendingTurnState.SETTLED)
+                    await self.turn_lock.release()
+                    lock_acquired = False
+                    return TurnAdmission(turn=turn, consumed_as_follow_up=False, cleanup_pending=True)
+
             reservation.transition(PendingTurnState.ACTIVE)
             if turn.state.deadline is None:
                 turn.state.deadline = TurnDeadlineBudget.start(
@@ -1426,7 +1484,9 @@ class PersonalSessionRuntime:
             await finalize_capture(consumed_marked=False)
             raise
 
-    async def _interrupt_active_core_turn_for_new_input(self) -> bool:
+    async def _interrupt_active_core_turn_for_new_input(
+        self, deadline: TurnDeadlineBudget | None
+    ) -> bool:
         """Stop an active Core turn before a new platform message queues.
 
         Personal remains the session's single admission owner, but a new user
@@ -1443,6 +1503,10 @@ class PersonalSessionRuntime:
         if head is None or head.terminal_event is not None:
             return False
         executor_id = head.executor_id or "native"
+        active_task = self._active_turn_task
+        if deadline is None:
+            raise RuntimeError("Platform input must have a deadline before Core interruption")
+        remaining = deadline.timeout_seconds("platform_abort")
         try:
             # Block late output before notifying a protocol adapter. The adapter
             # may await its client-side interrupt/turn-finished acknowledgement.
@@ -1452,23 +1516,9 @@ class PersonalSessionRuntime:
                 metadata={"reason": "superseded_by_new_user_input"},
                 origin=CoreCommandOrigin.PERSONAL,
             )
-            try:
-                await active_event.abort_visible_turn(
-                    reason="superseded_by_new_user_input"
-                )
-            except Exception:
-                # Core cancellation remains authoritative. A protocol-side
-                # cleanup failure must not reclassify this new input as a
-                # follow-up for the cancelled executor.
-                logger.exception(
-                    "Personal Runtime failed to abort previous visible turn: "
-                    "session_id=%s old_turn_id=%s",
-                    self.key.audience_key,
-                    active_turn.turn_id,
-                )
+            self._platform_abort_unknown = True
             active_event.stop_event()
             mark_interaction_turn_cancelled(active_event)
-            active_task = self._active_turn_task
             current_task = asyncio.current_task()
             if (
                 active_task is not None
@@ -1476,6 +1526,40 @@ class PersonalSessionRuntime:
                 and not active_task.done()
             ):
                 active_task.cancel()
+            abort_task = asyncio.create_task(
+                active_event.abort_visible_turn(reason="superseded_by_new_user_input")
+            )
+            self._abort_task = abort_task
+
+            def settle_abort(done: asyncio.Task[Any]) -> None:
+                if self._abort_task is done:
+                    self._abort_task = None
+                try:
+                    done.result()
+                except BaseException:
+                    logger.warning(
+                        "Personal Runtime platform abort not confirmed: session_id=%s old_turn_id=%s",
+                        self.key.audience_key,
+                        active_turn.turn_id,
+                        exc_info=True,
+                    )
+                else:
+                    self._platform_abort_unknown = False
+
+            abort_task.add_done_callback(settle_abort)
+            try:
+                _, pending = await asyncio.wait({abort_task}, timeout=min(2.0, remaining))
+                if pending:
+                    abort_task.cancel()
+                elif abort_task.cancelled() or abort_task.exception() is not None:
+                    logger.warning(
+                        "Personal Runtime platform abort failed: session_id=%s old_turn_id=%s",
+                        self.key.audience_key,
+                        active_turn.turn_id,
+                    )
+            except asyncio.CancelledError:
+                abort_task.cancel()
+                raise
             logger.info(
                 "Personal Runtime interrupted active Core turn for new input: "
                 "session_id=%s old_turn_id=%s executor_id=%s",
@@ -1512,6 +1596,8 @@ class PersonalSessionRuntime:
 
     def is_idle(self) -> bool:
         return (
+            not self.cleanup_blocked
+            and
             not self.has_active_conversational_work()
             and self.observation_inbox.pending_count == 0
             and not self._persistent_state_dirty
@@ -1531,6 +1617,14 @@ class PersonalSessionRuntime:
 
 
 class PersonalRuntimeManager:
+    def has_blocked_output_target(self, key: PersonalRuntimeKey) -> bool:
+        return any(
+            runtime.cleanup_blocked
+            and runtime.key.audience_key == key.audience_key
+            and runtime.key.privacy_scope == key.privacy_scope
+            for runtime in self._sessions.values()
+        )
+
     def __init__(
         self,
         *,
@@ -1918,6 +2012,8 @@ class PersonalRuntimeManager:
                     },
                 )
                 raise
+            if admission.cleanup_pending:
+                raise RuntimeError("Personal Runtime output target is awaiting prior turn cleanup")
             if admission.consumed_as_follow_up or admission.lease is None:
                 raise RuntimeError(
                     "Runtime observation admission did not acquire a lease"

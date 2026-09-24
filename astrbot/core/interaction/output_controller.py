@@ -5,6 +5,7 @@ import random
 import time
 import traceback
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -161,6 +162,21 @@ class StreamObservationDecision:
     reason: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class OutboundMaterializationOptions:
+    reply_prefix: str
+    show_reasoning: bool
+    tts_enabled: bool
+    tts_trigger_probability: float
+    tts_dual_output: bool
+    tts_use_file_service: bool
+    callback_api_base: str
+    t2i_enabled: bool
+    t2i_word_threshold: int
+    t2i_use_network: bool
+    t2i_active_template: str
+
+
 class InteractionOutputController:
     def __init__(
         self,
@@ -185,34 +201,58 @@ class InteractionOutputController:
     ) -> None:
         self.plugin_context = plugin_context
         self.interaction_config = interaction_config or InteractionAgentConfig()
-        self.platform_settings = platform_settings or {}
+        self.platform_settings = deepcopy(platform_settings or {})
         self._persist_callback = persist_callback
         self.visible_reply_renderer = visible_reply_renderer
         self.lifecycle_callback = lifecycle_callback
         self.pre_output_processor = pre_output_processor or PreOutputProcessor()
         self.delivery_coordinator = delivery_coordinator or TurnDeliveryCoordinator()
-        self._refresh_outbound_materialization_config()
 
-    def _refresh_outbound_materialization_config(
-        self,
-        event: AstrMessageEvent | None = None,
-    ) -> None:
-        self.reply_prefix = str(self.platform_settings.get("reply_prefix", "") or "")
-        self.t2i_word_threshold = self._coerce_t2i_word_threshold(
-            self._get_config_value("t2i_word_threshold", 150, event=event),
+    def _resolve_delivery_platform_settings(self, event: AstrMessageEvent) -> dict:
+        config = self._get_runtime_config(event)
+        configured = (
+            config.get("platform_settings") if isinstance(config, Mapping) else None
         )
-        self.t2i_strategy = str(
-            self._get_config_value("t2i_strategy", "remote", event=event) or ""
+        if isinstance(configured, Mapping):
+            return deepcopy(dict(configured))
+        return deepcopy(self.platform_settings)
+
+    def _resolve_outbound_options(
+        self, event: AstrMessageEvent
+    ) -> OutboundMaterializationOptions:
+        config = self._get_runtime_config(event)
+        config = config if isinstance(config, Mapping) else {}
+        provider = config.get("provider_settings", {})
+        provider = provider if isinstance(provider, Mapping) else {}
+        tts = config.get("provider_tts_settings", {})
+        tts = tts if isinstance(tts, Mapping) else {}
+        settings = config.get("platform_settings", {})
+        settings = settings if isinstance(settings, Mapping) else {}
+        strategy = str(config.get("t2i_strategy", "remote") or "")
+        return OutboundMaterializationOptions(
+            reply_prefix=str(
+                settings.get(
+                    "reply_prefix", self.platform_settings.get("reply_prefix", "")
+                )
+                or ""
+            ),
+            show_reasoning=bool(provider.get("display_reasoning_text", False)),
+            tts_enabled=bool(tts.get("enable")),
+            tts_trigger_probability=self._coerce_probability(
+                tts.get("trigger_probability", 1.0)
+            ),
+            tts_dual_output=bool(tts.get("dual_output")),
+            tts_use_file_service=bool(tts.get("use_file_service")),
+            callback_api_base=str(config.get("callback_api_base", "")),
+            t2i_enabled=bool(config.get("t2i", False)),
+            t2i_word_threshold=self._coerce_t2i_word_threshold(
+                config.get("t2i_word_threshold", 150)
+            ),
+            t2i_use_network=strategy == "remote",
+            t2i_active_template=str(
+                config.get("t2i_active_template", "base") or "base"
+            ),
         )
-        self.t2i_use_network = self.t2i_strategy == "remote"
-        self.t2i_active_template = str(
-            self._get_config_value("t2i_active_template", "base", event=event) or "base"
-        )
-        self.tts_trigger_probability = self._coerce_probability(
-            self._get_tts_settings(event).get("trigger_probability", 1.0),
-        )
-        provider_cfg = self._get_provider_settings(event)
-        self.show_reasoning = bool(provider_cfg.get("display_reasoning_text", False))
 
     @staticmethod
     def _coerce_t2i_word_threshold(value: Any) -> int:
@@ -2272,23 +2312,27 @@ class InteractionOutputController:
         result_is_model_result: bool = False,
         message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
-        self._refresh_outbound_materialization_config(event)
+        options = self._resolve_outbound_options(event)
         materialization: dict[str, Any] = {
             "message_kind": message_kind,
             "semantic_text": message.get_plain_text(),
             "delivered_as": "text",
             "tts_status": "not_attempted",
         }
-        materialized = self._apply_interaction_reply_prefix(event, message)
+        materialized = self._apply_interaction_reply_prefix(
+            event, message, options=options
+        )
         materialized, reasoning_metadata = self._apply_interaction_reasoning_display(
             event,
             materialized,
+            options=options,
         )
         materialization.update(reasoning_metadata)
         try:
             materialized, tts_metadata = await self._apply_interaction_tts(
                 event,
                 materialized,
+                options=options,
                 result_is_model_result=result_is_model_result,
                 message_id=message_id,
             )
@@ -2316,6 +2360,7 @@ class InteractionOutputController:
             materialized, t2i_metadata = await self._apply_interaction_t2i(
                 event,
                 materialized,
+                options=options,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
@@ -2337,18 +2382,21 @@ class InteractionOutputController:
         *,
         message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
-        self._refresh_outbound_materialization_config(event)
+        options = self._resolve_outbound_options(event)
         materialization: dict[str, Any] = {
             "message_kind": "immediate_reply",
             "semantic_text": message.get_plain_text(),
             "delivered_as": "text",
             "tts_status": "not_attempted",
         }
-        materialized = self._apply_interaction_reply_prefix(event, message)
+        materialized = self._apply_interaction_reply_prefix(
+            event, message, options=options
+        )
         try:
             materialized, tts_metadata = await self._apply_interaction_tts(
                 event,
                 materialized,
+                options=options,
                 result_is_model_result=True,
                 message_id=message_id,
             )
@@ -2376,14 +2424,16 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
         message: MessageChain,
+        *,
+        options: OutboundMaterializationOptions,
     ) -> MessageChain:
         del event
-        if not self.reply_prefix:
+        if not options.reply_prefix:
             return message
         chain = list(message.chain)
         for index, comp in enumerate(chain):
             if isinstance(comp, Plain):
-                chain[index] = Plain(self.reply_prefix + comp.text)
+                chain[index] = Plain(options.reply_prefix + comp.text)
                 return message.derive(chain)
         return message
 
@@ -2391,9 +2441,11 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
         message: MessageChain,
+        *,
+        options: OutboundMaterializationOptions,
     ) -> tuple[MessageChain, dict[str, Any]]:
         reasoning_content = str(event.get_extra("_llm_reasoning_content") or "")
-        if not self.show_reasoning or not reasoning_content.strip():
+        if not options.show_reasoning or not reasoning_content.strip():
             return message, {}
         chain = list(message.chain)
         if event.get_platform_name() == "lark":
@@ -2417,15 +2469,15 @@ class InteractionOutputController:
         event: AstrMessageEvent,
         message: MessageChain,
         *,
+        options: OutboundMaterializationOptions,
         result_is_model_result: bool,
         message_id: str | None = None,
     ) -> tuple[MessageChain, dict[str, Any]]:
-        tts_settings = self._get_tts_settings(event)
         should_try_tts = (
-            bool(tts_settings.get("enable"))
+            options.tts_enabled
             and result_is_model_result
             and await SessionServiceManager.should_process_tts_request(event)
-            and random.random() <= self.tts_trigger_probability
+            and random.random() <= options.tts_trigger_probability
         )
         if not should_try_tts:
             return message, {}
@@ -2446,10 +2498,8 @@ class InteractionOutputController:
                     event,
                     comp.text,
                     stage="interaction.outbound_tts",
-                    use_file_service=bool(tts_settings.get("use_file_service")),
-                    callback_api_base=str(
-                        self._get_config_value("callback_api_base", "", event=event)
-                    ),
+                    use_file_service=options.tts_use_file_service,
+                    callback_api_base=options.callback_api_base,
                     require_file_registration_config=True,
                     turn_id=str(event.get_extra("_turn_id", "") or ""),
                     message_id=current_message_id,
@@ -2476,7 +2526,7 @@ class InteractionOutputController:
                         "message_id": result.state.message_id,
                     }
                 )
-                if bool(tts_settings.get("dual_output")):
+                if options.tts_dual_output:
                     new_chain.append(
                         Plain(
                             comp.text,
@@ -2527,11 +2577,11 @@ class InteractionOutputController:
         self,
         event: AstrMessageEvent,
         message: MessageChain,
+        *,
+        options: OutboundMaterializationOptions,
     ) -> tuple[MessageChain, dict[str, Any]]:
         use_t2i = (
-            message.use_t2i_
-            if message.use_t2i_ is not None
-            else bool(self._get_config_value("t2i", False, event=event))
+            message.use_t2i_ if message.use_t2i_ is not None else options.t2i_enabled
         )
         if not use_t2i:
             return message, {}
@@ -2542,15 +2592,15 @@ class InteractionOutputController:
             else:
                 break
         plain_str = "".join(parts)
-        if not plain_str or len(plain_str) <= self.t2i_word_threshold:
+        if not plain_str or len(plain_str) <= options.t2i_word_threshold:
             return message, {}
         render_start = time.time()
         try:
             url = await html_renderer.render_t2i(
                 plain_str,
                 return_url=True,
-                use_network=self.t2i_use_network,
-                template_name=self.t2i_active_template,
+                use_network=options.t2i_use_network,
+                template_name=options.t2i_active_template,
             )
         except BaseException as exc:
             self._record_outbound_materialization_failure(event, "t2i", str(exc))
@@ -2676,6 +2726,9 @@ class InteractionOutputController:
           and deliver the chain to the platform adapter.  It is unaware of
           turn state, utterances, or memory semantics.
         """
+        if (state := get_interaction_turn_state(event)) is not None and state.output_closed_reason:
+            raise RuntimeError(f"Interaction output closed: {state.output_closed_reason}")
+        delivery_platform_settings = self._resolve_delivery_platform_settings(event)
         raw_platform_extras = platform_extras or {}
         delivery_identity = raw_platform_extras.get(
             PLUGIN_OUTPUT_DELIVERY_IDENTITY_EXTRA_KEY
@@ -2706,6 +2759,9 @@ class InteractionOutputController:
             chain: MessageChain,
             delivery_extras: Mapping[str, Any] | None = None,
         ) -> None:
+            state = get_interaction_turn_state(event)
+            if state is not None and state.output_closed_reason:
+                raise RuntimeError(f"Interaction output closed: {state.output_closed_reason}")
             output_extras = {
                 **base_extras,
                 **self.build_platform_output_extras(
@@ -2757,7 +2813,7 @@ class InteractionOutputController:
                 event,
                 message,
                 send_message=_send,
-                platform_settings=self.platform_settings,
+                platform_settings=delivery_platform_settings,
                 result_is_model_result=result_is_model_result,
                 allow_segmented_reply=allow_segmented_reply,
                 preserve_record_delivery_groups=(
@@ -2810,6 +2866,9 @@ class InteractionOutputController:
                 f"Interaction output was only partially delivered: {message_kind}"
             )
         try:
+            state = get_interaction_turn_state(event)
+            if state is not None and state.output_closed_reason:
+                raise RuntimeError(f"Interaction output closed: {state.output_closed_reason}")
             await event.complete_visible_message(
                 message_id=normalized_segment_id,
             )

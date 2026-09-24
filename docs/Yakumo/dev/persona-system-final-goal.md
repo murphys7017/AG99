@@ -154,6 +154,10 @@ Heartbeat 只是 retained Observation batch 的调度检查：空 Inbox 和旧 C
 
 ## 下一步
 
+当前普通新消息在 Core 执行期间由 Personal 发起替换并封闭旧轮输出；
+明确补充输入仍走专用 `provide_input` 控制入口。Expression 的前置路由与
+Core-final 表达时序不因本次运行时收尾调整而改变。真实平台连续打断尚待验收。
+
 1. 持续审计 Personal Session Runtime 的 turn、mailbox、follow-up 和任务 owner，避免重新引入
    私有队列或隐式唤醒路径。
 2. 将剩余可写状态收口到唯一 TurnState，extra 只保留官方兼容或只读诊断投影。

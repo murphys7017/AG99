@@ -52,11 +52,19 @@ class CodexSessionManager:
         self._turn_lock = asyncio.Lock()
         self._start_lock = asyncio.Lock()
         self._closed = False
+        self._unusable = False
         self._reader_failure: CodexSessionError | None = None
         self._stderr_tail = bytearray()
         self._stderr_truncated = False
         self.thread_id: str | None = None
         self._active_turn_id: str | None = None
+
+    @property
+    def unusable(self) -> bool:
+        return self._unusable
+
+    def invalidate(self) -> None:
+        self._unusable = True
 
     async def start(self) -> None:
         async with self._start_lock:
@@ -122,6 +130,10 @@ class CodexSessionManager:
     async def iter_turn(self, prompt: str) -> AsyncIterator[dict[str, Any]]:
         """Start one turn and yield notifications until its terminal event."""
 
+        if self._unusable:
+            raise CodexSessionError(
+                "Codex session requires cleanup after an incomplete interrupt"
+            )
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Codex turn prompt must be a non-empty string")
         if self.thread_id is None:
@@ -164,11 +176,11 @@ class CodexSessionManager:
         await self._request("turn/interrupt", params)
 
     async def aclose(self) -> None:
-        if self._closed:
+        if self._closed and not self._unusable:
             return
         self._closed = True
+        self.invalidate()
         process = self._process
-        self._process = None
         for future in self._pending.values():
             if not future.done():
                 future.set_exception(CodexSessionError("Codex session closed"))
@@ -182,15 +194,25 @@ class CodexSessionManager:
             task.cancel()
         if process is not None:
             if process.returncode is None:
-                process.terminate()
                 with contextlib.suppress(ProcessLookupError):
-                    await asyncio.wait_for(process.wait(), timeout=2)
+                    process.terminate()
+                waiter = asyncio.create_task(process.wait())
+                _, pending = await asyncio.wait({waiter}, timeout=2)
                 if process.returncode is None:
-                    process.kill()
-            with contextlib.suppress(Exception):
-                await process.wait()
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+            else:
+                waiter = asyncio.create_task(process.wait())
+            _, pending = await asyncio.wait({waiter}, timeout=2)
+            if pending:
+                self.invalidate()
+                raise CodexSessionError("Codex app-server did not exit after kill")
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            _, pending = await asyncio.wait(tasks, timeout=1.0)
+            if pending:
+                self.invalidate()
+                raise CodexSessionError("Codex app-server reader tasks did not stop")
+        self._process = None
         self._reader_task = None
         self._stderr_task = None
         if self._stderr_truncated:

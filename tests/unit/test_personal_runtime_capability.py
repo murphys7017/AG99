@@ -2468,6 +2468,41 @@ async def test_process_stage_direct_reply_starts_runtime_cooldown():
 
 
 @pytest.mark.asyncio
+async def test_process_stage_skips_personal_runtime_when_interaction_disabled():
+    metadata = _metadata(support_personal_runtime=True)
+    context = _context_for_runtime(_RecordingPlatform(metadata))
+    event = _DirectEvent(metadata)
+    event.set_extra("activated_handlers", [])
+    runtime_config = {
+        "provider_settings": {"enable": False},
+        "interaction_middleware": {"enabled": False},
+    }
+    manager = SimpleNamespace(submit_platform_event=AsyncMock())
+
+    class NeverAgent:
+        async def process(self, _event):
+            if False:
+                yield
+
+    process = ProcessStage()
+    process.ctx = SimpleNamespace(
+        astrbot_config=runtime_config,
+        astrbot_config_id="disabled-interaction",
+        interaction_middleware=None,
+    )
+    process.config = runtime_config
+    process.plugin_manager = SimpleNamespace(context=context)
+    process.personal_runtime_manager = manager
+    process.agent_sub_stage = NeverAgent()
+    process.star_request_sub_stage = SimpleNamespace()
+
+    async for _ in process.process(event):
+        pass
+
+    manager.submit_platform_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_process_stage_can_close_from_another_task():
     metadata = _metadata(support_personal_runtime=True)
     context = _context_for_runtime(_RecordingPlatform(metadata))

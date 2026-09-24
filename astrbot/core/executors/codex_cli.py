@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -58,21 +57,34 @@ class CodexExecutorRun:
         del ticket
         return False
 
+    def invalidate(self) -> None:
+        invalidate = getattr(self._session, "invalidate", None)
+        if callable(invalidate):
+            invalidate()
+
     async def aclose(self) -> None:
         self._closed = True
         task = self._turn_task
-        if task is not None and not task.done():
+        if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            _, pending = await asyncio.wait({task}, timeout=1.0)
+            if pending:
+                self.invalidate()
         interrupt_task = self._interrupt_task
-        if interrupt_task is not None and not interrupt_task.done():
+        if interrupt_task is not None:
             try:
-                await asyncio.wait_for(asyncio.shield(interrupt_task), timeout=2)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+                if not interrupt_task.done():
+                    _, pending = await asyncio.wait({interrupt_task}, timeout=2)
+                    if pending:
+                        raise asyncio.TimeoutError
+                await interrupt_task
+            except asyncio.CancelledError:
                 interrupt_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await interrupt_task
+                self.invalidate()
+                raise
+            except Exception:
+                interrupt_task.cancel()
+                self.invalidate()
 
     async def stream(self) -> AsyncIterator[ExecutionUpdate]:
         if self._closed:

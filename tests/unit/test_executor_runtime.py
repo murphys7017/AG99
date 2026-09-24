@@ -10,6 +10,7 @@ from astrbot.core.executors.contracts import (
     ExecutionResult,
 )
 from astrbot.core.executors.runtime import drive_executor_run
+from astrbot.core.interaction.turn_state import TurnExecutionScope
 
 
 class _Run:
@@ -164,4 +165,37 @@ async def test_cleanup_failure_does_not_replace_primary_execution_failure():
             run=run,
         )
 
-    assert [call[0] for call in head.calls] == ["activate", "fail", "release"]
+    assert [call[0] for call in head.calls] == ["activate", "fail"]
+
+
+@pytest.mark.asyncio
+async def test_unresponsive_cleanup_retains_binding_and_turn_ownership():
+    run = _Run(
+        [ExecutionFinalUpdate(result=ExecutionResult(output=ExecutionOutputMaterial(text="done")))]
+    )
+    head = _Head()
+    scope = TurnExecutionScope()
+    release_close = asyncio.Event()
+    invalidated = []
+
+    async def slow_close():
+        await release_close.wait()
+
+    run.aclose = slow_close
+    run.invalidate = lambda: invalidated.append(True)
+    try:
+        await asyncio.wait_for(
+            drive_executor_run(
+                head=head,
+                body=SimpleNamespace(executor_id="scripted"),
+                run=run,
+                cleanup_scope=scope,
+            ),
+            timeout=2,
+        )
+        assert invalidated == [True]
+        assert [call[0] for call in head.calls] == ["activate", "complete"]
+        assert scope.tasks["executor_cleanup"]
+    finally:
+        release_close.set()
+        await scope.close(timeout_seconds=1.0)

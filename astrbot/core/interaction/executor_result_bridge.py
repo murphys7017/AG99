@@ -17,6 +17,7 @@ from astrbot.core.executors.runtime import drive_executor_run
 from astrbot.core.message.message_event_result import MessageChain
 
 from .output_controller import InteractionOutputController
+from .turn_state import get_interaction_turn_state
 
 
 @dataclass(slots=True)
@@ -110,6 +111,11 @@ async def drive_executor_to_personal_output(
         deadline=deadline,
         submission_metadata=submission_metadata,
         output_sink=bridge.accept,
+        cleanup_scope=(
+            state.execution_scope
+            if (state := get_interaction_turn_state(event)) is not None
+            else None
+        ),
     )
 
 

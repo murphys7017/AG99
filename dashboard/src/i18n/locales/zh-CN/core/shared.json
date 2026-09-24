@@ -51,6 +51,12 @@
       "permission": "准入状态",
       "hardness": "契约",
       "migration": "迁移状态",
+      "lifecycle": "生命周期治理",
+      "lifecycleStates": {
+        "owner_managed": "按归属回收",
+        "unowned": "无归属，无法自动回收",
+        "not_evaluated": "未评估"
+      },
       "scopeInteraction": "对话能力",
       "scopeProcess": "进程级能力",
       "scopeProcessHint": "进程级能力不参与单轮对话准入，由插件启停与卸载生命周期管理。",

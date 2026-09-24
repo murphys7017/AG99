@@ -663,8 +663,18 @@ async def _run_prompt_extension_collectors(
     if not collectors:
         return []
 
+    from astrbot.core.interaction.turn_state import get_interaction_turn_state
+
+    turn_state = get_interaction_turn_state(event)
     tasks = [
-        asyncio.ensure_future(collect_one(collector)) for collector in collectors
+        turn_state.execution_scope.create_task(
+            collect_one(collector),
+            role="prompt_extension",
+            name=f"prompt-extension:{collector.__class__.__name__}",
+        )
+        if turn_state is not None
+        else asyncio.create_task(collect_one(collector))
+        for collector in collectors
     ]
     gathered = await _await_prompt_extension_collectors(
         event=event,
@@ -744,7 +754,12 @@ async def _await_prompt_extension_collectors(
         cancel_all()
         unfinished = [task for task in tasks if not task.done()]
         if unfinished:
-            await asyncio.gather(*unfinished, return_exceptions=True)
+            _, pending = await asyncio.wait(unfinished, timeout=1.0)
+            if pending:
+                logger.warning(
+                    "Prompt extension collectors did not stop after cancellation: count=%d",
+                    len(pending),
+                )
 
     deadline = get_interaction_turn_deadline(event)
     if deadline is None:
@@ -773,7 +788,7 @@ async def _await_prompt_extension_collectors(
             if pending:
                 for task in pending:
                     task.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
+                await drain()
                 logger.warning(
                     "Prompt extension collection hit the group budget: "
                     "collectors=%d timed_out=%d budget=%.2fs",

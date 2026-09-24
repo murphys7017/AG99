@@ -801,11 +801,17 @@ class ProcessStage(Stage):
             is_group_candidate and self._is_expirable_group_candidate(event)
         )
         self._prepare_interaction_output(event)
+        interaction_config = (
+            get_interaction_turn_config(event)
+            or load_interaction_agent_config(self.config)
+        )
         manager: PersonalRuntimeManager | None = getattr(
             self,
             "personal_runtime_manager",
             None,
         )
+        if not interaction_config.enabled:
+            manager = None
         async with AsyncExitStack() as stack:
             submission = (
                 await stack.enter_async_context(
@@ -842,6 +848,14 @@ class ProcessStage(Stage):
                         "Personal Runtime consumed message as active-runner follow-up: session_id=%s",
                         event.unified_msg_origin,
                     )
+                    return
+                if admission.cleanup_pending:
+                    logger.warning(
+                        "Personal Runtime rejected turn while prior cleanup is pending: turn_id=%s session_id=%s",
+                        admission.turn.turn_id,
+                        event.session_id,
+                    )
+                    event.stop_event()
                     return
                 if admission.skipped_busy:
                     event.set_extra(

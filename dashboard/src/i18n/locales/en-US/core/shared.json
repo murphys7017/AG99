@@ -51,6 +51,12 @@
       "permission": "Admission",
       "hardness": "Contract",
       "migration": "Migration",
+      "lifecycle": "Lifecycle",
+      "lifecycleStates": {
+        "owner_managed": "Owner-managed",
+        "unowned": "Unowned",
+        "not_evaluated": "Not evaluated"
+      },
       "scopeInteraction": "Interaction capabilities",
       "scopeProcess": "Process-level capabilities",
       "scopeProcessHint": "Process-level capabilities do not participate in per-turn admission; they are governed by plugin enable/disable and unload lifecycle.",

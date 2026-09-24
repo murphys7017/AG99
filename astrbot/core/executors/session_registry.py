@@ -51,9 +51,16 @@ class ExternalExecutorSessionRegistry:
                 if self._closed:
                     raise RuntimeError("external executor session registry is closed")
                 existing = self._sessions.get(key)
-                if existing is not None and existing.fingerprint == fingerprint:
+                if existing is not None and existing.manager.unusable:
+                    raise RuntimeError(
+                        "external executor session requires cleanup before reuse"
+                    )
+                if (
+                    existing is not None
+                    and existing.fingerprint == fingerprint
+                ):
                     return existing.manager
-                stale = self._sessions.pop(key, None)
+                stale = existing
                 creator_task = asyncio.current_task()
                 if creator_task is not None:
                     self._creating_tasks.add(creator_task)
@@ -61,7 +68,14 @@ class ExternalExecutorSessionRegistry:
             manager: CodexSessionManager | None = None
             try:
                 if stale is not None:
-                    await stale.manager.aclose()
+                    try:
+                        await stale.manager.aclose()
+                    except BaseException:
+                        stale.manager.invalidate()
+                        raise
+                    async with self._lock:
+                        if self._sessions.get(key) is stale:
+                            self._sessions.pop(key, None)
                 manager = CodexSessionManager(
                     executable=_resolve_executable(executor_config),
                     cwd=key.workspace,
@@ -103,9 +117,12 @@ class ExternalExecutorSessionRegistry:
             return
         async with key_lock:
             async with self._lock:
-                entry = self._sessions.pop(key, None)
+                entry = self._sessions.get(key)
             if entry is not None:
                 await entry.manager.aclose()
+                async with self._lock:
+                    if self._sessions.get(key) is entry:
+                        self._sessions.pop(key, None)
 
     async def aclose(self) -> None:
         async with self._lock:
@@ -122,7 +139,13 @@ class ExternalExecutorSessionRegistry:
         if sessions:
             await asyncio.gather(*(manager.aclose() for manager in sessions), return_exceptions=True)
         if creating:
-            await asyncio.gather(*creating, return_exceptions=True)
+            for task in creating:
+                task.cancel()
+            _, pending = await asyncio.wait(creating, timeout=1.0)
+            if pending:
+                raise RuntimeError(
+                    f"external executor session creation did not stop: {len(pending)} task(s)"
+                )
 
     def __len__(self) -> int:
         return len(self._sessions)
