@@ -1139,7 +1139,6 @@ async def test_collect_context_pack_collects_file_extracts(tmp_path):
             config=ama.MainAgentBuildConfig(
                 tool_call_timeout=60,
                 file_extract_enabled=True,
-                file_extract_prov="moonshotai",
                 file_extract_msh_api_key="secret-key",
             ),
             collectors=[InputCollector()],

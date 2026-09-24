@@ -112,7 +112,6 @@ class InternalAgentSubStage(Stage):
 
         file_extract_conf: dict = settings.get("file_extract", {})
         self.file_extract_enabled: bool = file_extract_conf.get("enable", False)
-        self.file_extract_prov: str = file_extract_conf.get("provider", "moonshotai")
         self.file_extract_msh_api_key: str = file_extract_conf.get(
             "moonshotai_api_key", ""
         )
@@ -158,7 +157,6 @@ class InternalAgentSubStage(Stage):
             sanitize_context_by_modalities=self.sanitize_context_by_modalities,
             kb_agentic_mode=self.kb_agentic_mode,
             file_extract_enabled=self.file_extract_enabled,
-            file_extract_prov=self.file_extract_prov,
             file_extract_msh_api_key=self.file_extract_msh_api_key,
             context_limit_reached_strategy=self.context_limit_reached_strategy,
             llm_compress_instruction=self.llm_compress_instruction,

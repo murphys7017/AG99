@@ -165,7 +165,6 @@ DEFAULT_CONFIG = {
         "llm_safety_mode": True,
         "file_extract": {
             "enable": False,
-            "provider": "moonshotai",
             "moonshotai_api_key": "",
         },
         "proactive_capability": {
@@ -3040,9 +3039,6 @@ CONFIG_METADATA_2 = {
                             "enable": {
                                 "type": "bool",
                             },
-                            "provider": {
-                                "type": "string",
-                            },
                             "moonshotai_api_key": {
                                 "type": "string",
                             },
@@ -3716,36 +3712,6 @@ CONFIG_METADATA_3 = {
                     "provider_settings.enable": True,
                 },
             },
-            # "file_extract": {
-            #     "description": "文档解析能力 [beta]",
-            #     "type": "object",
-            #     "items": {
-            #         "provider_settings.file_extract.enable": {
-            #             "description": "启用文档解析能力",
-            #             "type": "bool",
-            #         },
-            #         "provider_settings.file_extract.provider": {
-            #             "description": "文档解析提供商",
-            #             "type": "string",
-            #             "options": ["moonshotai"],
-            #             "condition": {
-            #                 "provider_settings.file_extract.enable": True,
-            #             },
-            #         },
-            #         "provider_settings.file_extract.moonshotai_api_key": {
-            #             "description": "Moonshot AI API Key",
-            #             "type": "string",
-            #             "condition": {
-            #                 "provider_settings.file_extract.provider": "moonshotai",
-            #                 "provider_settings.file_extract.enable": True,
-            #             },
-            #         },
-            #     },
-            #     "condition": {
-            #         "agent_runner.mode": "local",
-            #         "provider_settings.enable": True,
-            #     },
-            # },
             "proactive_capability": {
                 "description": "主动型 Agent",
                 "hint": "https://docs.astrbot.app/use/proactive-agent.html",

@@ -47,6 +47,8 @@ from ..runtime_cache import (
     set_cached_image_caption,
 )
 
+_FILE_EXTRACT_PROVIDER = "moonshotai"
+
 if TYPE_CHECKING:
     from astrbot.core.astr_main_agent import MainAgentBuildConfig
     from astrbot.core.utils.quoted_message.settings import QuotedMessageParserSettings
@@ -1000,12 +1002,6 @@ class InputCollector(ContextCollectorInterface):
     ) -> list[dict[str, Any]]:
         if not config.file_extract_enabled:
             return []
-        if config.file_extract_prov != "moonshotai":
-            logger.warning(
-                "Skip file extract collection because provider `%s` is unsupported",
-                config.file_extract_prov,
-            )
-            return []
         if not config.file_extract_msh_api_key:
             logger.warning(
                 "Skip file extract collection because Moonshot API key is missing"
@@ -1023,7 +1019,7 @@ class InputCollector(ContextCollectorInterface):
                 source=source,
                 reply_id=reply_id,
                 annotation=annotation,
-                provider=config.file_extract_prov,
+                provider=_FILE_EXTRACT_PROVIDER,
                 api_key=config.file_extract_msh_api_key,
             )
             for file_component, source, reply_id, annotation in file_components

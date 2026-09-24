@@ -74,6 +74,19 @@ def _strip_retired_safety_mode_strategy(config: dict) -> bool:
     return True
 
 
+def _strip_retired_file_extract_provider(config: dict) -> bool:
+    """Remove the former file-extraction provider selector."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+    file_extract = provider_settings.get("file_extract")
+    if not isinstance(file_extract, dict) or "provider" not in file_extract:
+        return False
+    file_extract.pop("provider")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -231,6 +244,9 @@ class AstrBotConfig(dict):
         stripped_retired_safety_mode_strategy = _strip_retired_safety_mode_strategy(
             conf
         )
+        stripped_retired_file_extract_provider = _strip_retired_file_extract_provider(
+            conf
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -255,6 +271,7 @@ class AstrBotConfig(dict):
             or stripped_retired_context_compression_fields
             or stripped_retired_group_active_reply_fields
             or stripped_retired_safety_mode_strategy
+            or stripped_retired_file_extract_provider
             or migrated_execution_config
         ):
             self.save_config()

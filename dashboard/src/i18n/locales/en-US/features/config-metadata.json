@@ -149,9 +149,6 @@
           "enable": {
             "description": "Enable File Extract"
           },
-          "provider": {
-            "description": "File Extract Provider"
-          },
           "moonshotai_api_key": {
             "description": "Moonshot AI API Key"
           }

@@ -273,7 +273,6 @@ class InteractionPromptBuildConfig:
     timezone: str | None = None
     provider_wake_prefix: str = ""
     file_extract_enabled: bool = False
-    file_extract_prov: str = "moonshotai"
     file_extract_msh_api_key: str = ""
     max_quoted_fallback_images: int = 20
     prompt_pipeline_strict_mode: bool = True

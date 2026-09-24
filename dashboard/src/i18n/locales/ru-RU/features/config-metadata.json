@@ -147,9 +147,6 @@
                     "enable": {
                         "description": "Включить извлечение из файлов"
                     },
-                    "provider": {
-                        "description": "Провайдер извлечения"
-                    },
                     "moonshotai_api_key": {
                         "description": "API-ключ Moonshot AI"
                     }

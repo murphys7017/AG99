@@ -272,6 +272,44 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "safety_mode_strategy" not in persisted["provider_settings"]
 
+    def test_load_removes_retired_file_extract_provider(
+        self, temp_config_path, minimal_default_config
+    ):
+        """File extraction has one supported implementation, not a selector."""
+        default_config = {
+            **minimal_default_config,
+            "provider_settings": {
+                **minimal_default_config["provider_settings"],
+                "file_extract": {
+                    "enable": False,
+                    "moonshotai_api_key": "",
+                },
+            },
+        }
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "file_extract": {
+                    "enable": True,
+                    "provider": "moonshotai",
+                    "moonshotai_api_key": "secret-key",
+                },
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(config_path=temp_config_path, default_config=default_config)
+
+        file_extract = config["provider_settings"]["file_extract"]
+        assert file_extract == {"enable": True, "moonshotai_api_key": "secret-key"}
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "provider" not in persisted["provider_settings"]["file_extract"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

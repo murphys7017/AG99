@@ -183,8 +183,6 @@ class MainAgentBuildConfig:
     This will inject the knowledge base query tool into the main agent's toolset to allow dynamic querying."""
     file_extract_enabled: bool = False
     """Whether to enable file content extraction for uploaded files."""
-    file_extract_prov: str = "moonshotai"
-    """The file extraction provider."""
     file_extract_msh_api_key: str = ""
     """The API key for Moonshot AI file extraction provider."""
     context_limit_reached_strategy: str = "truncate_by_turns"
@@ -276,7 +274,6 @@ class MainAgentBuildConfig:
             file_extract_enabled=bool(
                 file_extract.get("enable", self.file_extract_enabled)
             ),
-            file_extract_prov=str(file_extract.get("provider", self.file_extract_prov)),
             file_extract_msh_api_key=str(
                 file_extract.get("moonshotai_api_key", self.file_extract_msh_api_key)
             ),

@@ -26,6 +26,7 @@
 | `provider_settings.agent_runner_type` 与 `*_agent_runner_provider_id` | 已移除的混合字段；过去同时表达普通聊天 Runner 与 Core Body | 启动时一次性迁移后删除。普通聊天 Runner 使用 `agent_runner.mode/provider_id`；委派 Core 使用 `core_execution.executor_id/codex_cli.provider_id`。 |
 | `provider_ltm_settings.active_reply.method` | 只有 `possibility_reply` 一个允许值的冗余选择器 | 已删除默认值、schema、Dashboard 与运行时判断；加载旧 Profile 时直接删除，只保留启用开关、候选抽样概率和白名单。 |
 | `provider_settings.safety_mode_strategy` | 只有 `system_prompt` 一个允许值的冗余选择器 | 已删除默认值、Dashboard 与运行时分支；安全模式仍由 `llm_safety_mode` 单一开关控制，加载旧 Profile 时直接删除。 |
+| `provider_settings.file_extract.provider` | 当前仅有 Moonshot 文件解析实现；写入其他值只会被运行时拒绝 | 已删除 provider selector；文件解析由启用开关和 Moonshot API Key 明确控制，加载旧 Profile 时直接删除。 |
 | `provider_settings.default_image_caption_provider_id` | 普通输入图片转述的按需降级 Provider | 与群聊长期上下文图片转述不是同一开关，暂不删除 |
 | `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
 | `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |

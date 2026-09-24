@@ -149,9 +149,6 @@
           "enable": {
             "description": "启用文档解析能力"
           },
-          "provider": {
-            "description": "文档解析提供商"
-          },
           "moonshotai_api_key": {
             "description": "Moonshot AI API Key"
           }

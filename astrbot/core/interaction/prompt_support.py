@@ -61,7 +61,6 @@ def build_interaction_prompt_build_config(
         timezone=cfg.get("timezone"),
         provider_wake_prefix=provider_wake_prefix,
         file_extract_enabled=bool(file_extract.get("enable", False)),
-        file_extract_prov=str(file_extract.get("provider", "moonshotai")),
         file_extract_msh_api_key=str(file_extract.get("moonshotai_api_key", "")),
         max_quoted_fallback_images=int(
             provider_settings.get("max_quoted_fallback_images", 20) or 20

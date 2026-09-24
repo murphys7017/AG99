@@ -17,7 +17,7 @@ def test_prompt_config_uses_detached_admitted_settings():
         "timezone": "Asia/Shanghai",
         "provider_settings": {
             "web_search": True,
-            "file_extract": {"enable": True, "provider": "test-provider"},
+            "file_extract": {"enable": True},
         },
     }
     context = SimpleNamespace(get_config=lambda **kwargs: live)
@@ -28,7 +28,6 @@ def test_prompt_config_uses_detached_admitted_settings():
     live["provider_settings"]["web_search"] = False
     admitted = build_interaction_prompt_build_config(context, event)
     assert admitted.file_extract_enabled is True
-    assert admitted.file_extract_prov == "test-provider"
     assert admitted.provider_settings["web_search"] is True
     admitted.provider_settings["web_search"] = False
     assert build_interaction_prompt_build_config(

@@ -100,7 +100,6 @@ def sample_config():
         tool_call_timeout=60,
         streaming_response=True,
         file_extract_enabled=True,
-        file_extract_prov="moonshotai",
         file_extract_msh_api_key="test-api-key",
     )
 

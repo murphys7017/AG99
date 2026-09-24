@@ -1230,6 +1230,32 @@ safety_mode_configuration_cleanup:
     Confirm a real normal Core conversation retains the safety system prompt
     after the next manual restart, then continue the configuration inventory.
 
+file_extract_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: implemented_pending_validation
+  scope: >-
+    Remove provider_settings.file_extract.provider because only the Moonshot
+    file-extraction implementation exists.
+  changes: >-
+    The file-extraction enable switch and Moonshot API key remain. Prompt and
+    Core build configurations no longer carry a provider selector that could
+    be set to an unsupported value; records continue to identify their actual
+    Moonshot source. Loading an old Profile removes the retired nested key.
+  validation: >-
+    Focused config, file-extract input, interaction prompt-support, and
+    execution-capability tests (65) passed. Scoped Ruff, compilation, and
+    Dashboard i18n JSON parsing passed. The four local development Profiles
+    were loaded and persisted without the retired nested key. The full
+    MainAgent suite retains its two pre-existing Windows file:/// video-path
+    assertion failures before and after this change. No service restart is
+    performed.
+  followup: >-
+    Confirm a real file attachment extracts correctly after the next manual
+    restart before introducing a second provider through an explicit typed
+    provider-role design.
+
 legacy_group_context_implementation_cleanup:
   date: '2026-09-24'
   class: maintenance
