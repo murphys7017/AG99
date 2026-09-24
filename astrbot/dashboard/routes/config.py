@@ -637,6 +637,7 @@ class ConfigRoute(Route):
         try:
             conf_id = self.acm.create_conf(name=name, config=config)
             await self.core_lifecycle.reload_pipeline_scheduler(conf_id)
+            await self.core_lifecycle.reload_subagent_orchestrator_profile(conf_id)
             return Response().ok(message="创建成功", data={"conf_id": conf_id}).__dict__
         except ValueError as e:
             return Response().error(str(e)).__dict__
@@ -677,6 +678,7 @@ class ConfigRoute(Route):
             success = self.acm.delete_conf(conf_id)
             if success:
                 self.core_lifecycle.pipeline_scheduler_mapping.pop(conf_id, None)
+                await self.core_lifecycle.reload_subagent_orchestrator_profile(conf_id)
                 return Response().ok(message="删除成功").__dict__
             return Response().error("删除失败").__dict__
         except ValueError as e:
@@ -1061,6 +1063,7 @@ class ConfigRoute(Route):
                     reset_memory_config(updated_config, cache_key=conf_id)
                     await shutdown_memory_service(updated_config, cache_key=conf_id)
             await self.core_lifecycle.reload_pipeline_scheduler(conf_id)
+            await self.core_lifecycle.reload_subagent_orchestrator_profile(conf_id)
 
             # Non-blocking Bay connectivity check
             warning = await _validate_neo_connectivity(config)

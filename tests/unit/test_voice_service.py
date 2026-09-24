@@ -2,6 +2,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from astrbot.core.interaction.turn_state import (
+    set_interaction_turn_configuration_selection,
+)
 from astrbot.core.message.components import Record
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
@@ -77,6 +80,26 @@ def test_resolve_voice_provider_reports_missing_provider(voice_event):
 
     assert exc_info.value.reason == "provider_unavailable"
     assert exc_info.value.stage == "unit.tts"
+
+
+def test_resolve_voice_provider_uses_admitted_turn_configuration(voice_event):
+    provider = FakeTTSProvider()
+    plugin_context = MagicMock()
+    plugin_context.get_using_tts_provider.return_value = provider
+    runtime_config = {"provider_tts_settings": {"enable": True}}
+    set_interaction_turn_configuration_selection(
+        voice_event,
+        config_id="profile-a",
+        runtime_config=runtime_config,
+        adapter_binding_id="adapter-a",
+        provider_references={},
+    )
+
+    assert resolve_tts_provider(plugin_context, voice_event, stage="unit.tts") is provider
+    plugin_context.get_using_tts_provider.assert_called_once_with(
+        voice_event.unified_msg_origin,
+        runtime_config=runtime_config,
+    )
 
 
 @pytest.mark.asyncio

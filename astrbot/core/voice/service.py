@@ -135,6 +135,22 @@ def _provider_id(provider: Any) -> str:
     return provider.__class__.__name__
 
 
+def _get_turn_scoped_provider(get_provider: Any, event: AstrMessageEvent) -> Any:
+    """Use the admitted turn snapshot when voice work belongs to a turn."""
+    if not callable(get_provider):
+        return None
+
+    from astrbot.core.interaction.turn_state import get_interaction_turn_runtime_config
+
+    runtime_config = get_interaction_turn_runtime_config(event)
+    if runtime_config is None:
+        return get_provider(event.unified_msg_origin)
+    return get_provider(
+        event.unified_msg_origin,
+        runtime_config=runtime_config,
+    )
+
+
 def resolve_stt_provider(
     plugin_context: Any,
     event: AstrMessageEvent,
@@ -148,9 +164,7 @@ def resolve_stt_provider(
             stage=stage,
         )
     get_provider = getattr(plugin_context, "get_using_stt_provider", None)
-    provider = (
-        get_provider(event.unified_msg_origin) if callable(get_provider) else None
-    )
+    provider = _get_turn_scoped_provider(get_provider, event)
     if provider is None:
         raise VoiceServiceError(
             "provider_unavailable",
@@ -173,9 +187,7 @@ def resolve_tts_provider(
             stage=stage,
         )
     get_provider = getattr(plugin_context, "get_using_tts_provider", None)
-    provider = (
-        get_provider(event.unified_msg_origin) if callable(get_provider) else None
-    )
+    provider = _get_turn_scoped_provider(get_provider, event)
     if provider is None:
         raise VoiceServiceError(
             "provider_unavailable",

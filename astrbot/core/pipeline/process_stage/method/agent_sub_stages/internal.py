@@ -530,7 +530,8 @@ class InternalAgentSubStage(Stage):
                     # 获取 TTS Provider
                     tts_provider = (
                         self.ctx.plugin_manager.context.get_using_tts_provider(
-                            event.unified_msg_origin
+                            event.unified_msg_origin,
+                            runtime_config=get_interaction_turn_runtime_config(event),
                         )
                     )
 

@@ -1620,6 +1620,7 @@ class TestConfigRouteMemoryReload:
         )
         route.core_lifecycle = SimpleNamespace(
             reload_pipeline_scheduler=AsyncMock(),
+            reload_subagent_orchestrator_profile=AsyncMock(),
         )
         new_config = {
             "memory": {
@@ -1684,6 +1685,7 @@ class TestConfigRouteMemoryReload:
         )
         route.core_lifecycle = SimpleNamespace(
             reload_pipeline_scheduler=AsyncMock(),
+            reload_subagent_orchestrator_profile=AsyncMock(),
         )
         route._save_astrbot_configs = AsyncMock()
 

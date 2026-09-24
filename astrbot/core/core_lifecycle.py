@@ -131,7 +131,7 @@ class AstrBotCoreLifecycle:
             logger.debug("HTTP proxy cleared, no_proxy set to localhost")
 
     async def _init_or_reload_subagent_orchestrator(self) -> None:
-        """Create (if needed) and reload the subagent orchestrator from config.
+        """Create (if needed) and reload Profile-scoped subagent handoffs.
 
         This keeps lifecycle wiring in one place while allowing the orchestrator
         to manage enable/disable and tool registration details.
@@ -142,11 +142,34 @@ class AstrBotCoreLifecycle:
                     self.provider_manager.llm_tools,
                     self.persona_mgr,
                 )
-            await self.subagent_orchestrator.reload_from_config(
-                self.astrbot_config.get("subagent_orchestrator", {}),
-            )
+            configs = getattr(getattr(self, "astrbot_config_mgr", None), "confs", None)
+            if isinstance(configs, dict) and configs:
+                await self.subagent_orchestrator.reload_from_configs(
+                    {
+                        config_id: config.get("subagent_orchestrator", {})
+                        for config_id, config in configs.items()
+                    }
+                )
+            else:
+                await self.subagent_orchestrator.reload_from_config(
+                    self.astrbot_config.get("subagent_orchestrator", {}),
+                )
         except Exception as e:
             logger.error(f"Subagent orchestrator init failed: {e}", exc_info=True)
+
+    async def reload_subagent_orchestrator_profile(self, config_id: str) -> None:
+        """Refresh dynamic handoff tools after one Profile configuration changes."""
+        if self.subagent_orchestrator is None:
+            await self._init_or_reload_subagent_orchestrator()
+            return
+        config = self.astrbot_config_mgr.confs.get(config_id)
+        if config is None:
+            self.subagent_orchestrator.remove_config(config_id)
+            return
+        await self.subagent_orchestrator.reload_from_config(
+            config.get("subagent_orchestrator", {}),
+            config_id=config_id,
+        )
 
     def _warn_about_unset_default_chat_provider(self) -> None:
         if self._default_chat_provider_warning_emitted:

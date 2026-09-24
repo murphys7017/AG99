@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from astrbot import logger
+from astrbot.core.interaction.turn_state import get_interaction_turn_runtime_config
 from astrbot.core.star.context import Context
 
 
@@ -30,7 +31,9 @@ def _extract_configured_wake_prefixes(
     plugin_context: Context,
     event,
 ) -> list[str]:
-    cfg = plugin_context.get_config(umo=event.unified_msg_origin)
+    cfg = get_interaction_turn_runtime_config(event)
+    if cfg is None:
+        cfg = plugin_context.get_config(umo=event.unified_msg_origin)
     if not isinstance(cfg, dict):
         return []
     wake_prefix = cfg.get("wake_prefix", [])

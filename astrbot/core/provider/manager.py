@@ -243,6 +243,25 @@ class ProviderManager:
             Provider: 正在使用的提供商实例。
 
         """
+        return self.get_using_provider_for_runtime_config(
+            provider_type,
+            self.acm.get_conf(umo),
+            umo=umo,
+        )
+
+    def get_using_provider_for_runtime_config(
+        self,
+        provider_type: ProviderType,
+        runtime_config: Mapping[str, object],
+        *,
+        umo=None,
+    ) -> Providers | None:
+        """Resolve a provider from one admitted configuration snapshot.
+
+        Session-scoped ``/provider`` selections retain their existing priority.
+        When no usable session selection exists, the supplied configuration is
+        authoritative instead of re-resolving a potentially changed UMO route.
+        """
         provider = None
         provider_id = None
         if umo:
@@ -255,16 +274,23 @@ class ProviderManager:
             if provider_id:
                 provider = self.inst_map.get(provider_id)
         if not provider:
-            # default setting
-            config = self.acm.get_conf(umo)
+            provider_settings = runtime_config.get("provider_settings", {})
+            stt_settings = runtime_config.get("provider_stt_settings", {})
+            tts_settings = runtime_config.get("provider_tts_settings", {})
+            if not isinstance(provider_settings, Mapping):
+                provider_settings = {}
+            if not isinstance(stt_settings, Mapping):
+                stt_settings = {}
+            if not isinstance(tts_settings, Mapping):
+                tts_settings = {}
             if provider_type == ProviderType.CHAT_COMPLETION:
-                provider_id = config["provider_settings"].get("default_provider_id")
+                provider_id = provider_settings.get("default_provider_id")
                 provider = self.inst_map.get(provider_id)
                 if not provider:
                     provider = self.provider_insts[0] if self.provider_insts else None
             elif provider_type == ProviderType.SPEECH_TO_TEXT:
-                provider_id = config["provider_stt_settings"].get("provider_id")
-                if not config["provider_stt_settings"].get("enable"):
+                provider_id = stt_settings.get("provider_id")
+                if not stt_settings.get("enable"):
                     return None
                 if not provider_id:
                     return None
@@ -274,8 +300,8 @@ class ProviderManager:
                         self.stt_provider_insts[0] if self.stt_provider_insts else None
                     )
             elif provider_type == ProviderType.TEXT_TO_SPEECH:
-                provider_id = config["provider_tts_settings"].get("provider_id")
-                if not config["provider_tts_settings"].get("enable"):
+                provider_id = tts_settings.get("provider_id")
+                if not tts_settings.get("enable"):
                     return None
                 if not provider_id:
                     return None

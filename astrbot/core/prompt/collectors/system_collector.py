@@ -344,6 +344,10 @@ class SystemCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None,
     ) -> bool:
+        from astrbot.core.interaction.turn_state import (
+            resolve_interaction_turn_runtime_configuration,
+        )
+
         if self.capabilities is not None:
             return not self.capabilities.is_empty()
 
@@ -367,15 +371,14 @@ class SystemCollector(ContextCollectorInterface):
         if getattr(platform_meta, "support_proactive_message", None) is True:
             return True
 
-        orchestrator_config = plugin_context.get_config().get(
-            "subagent_orchestrator", {}
-        )
+        orchestrator_config = config.subagent_orchestrator
         orchestrator = getattr(plugin_context, "subagent_orchestrator", None)
+        _, runtime_config_id = resolve_interaction_turn_runtime_configuration(event)
         if (
             isinstance(orchestrator_config, dict)
             and orchestrator_config.get("main_enable", False)
             and orchestrator is not None
-            and bool(getattr(orchestrator, "handoffs", []))
+            and bool(orchestrator.handoffs_for(runtime_config_id))
         ):
             return True
 

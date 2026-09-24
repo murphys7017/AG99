@@ -34,8 +34,11 @@ class SubagentCollector(ContextCollectorInterface):
         config: MainAgentBuildConfig,
         provider_request: ProviderRequest | None = None,
     ) -> list[ContextSlot]:
-        del config, provider_request
-        from astrbot.core.interaction.turn_state import get_interaction_turn_state
+        del provider_request
+        from astrbot.core.interaction.turn_state import (
+            get_interaction_turn_state,
+            resolve_interaction_turn_runtime_configuration,
+        )
 
         try:
             task_spec = getattr(
@@ -45,7 +48,7 @@ class SubagentCollector(ContextCollectorInterface):
                 task_spec.requires_direct_web_research()
             ):
                 return []
-            orchestrator_config = self._resolve_orchestrator_config(plugin_context)
+            orchestrator_config = config.subagent_orchestrator
             if not orchestrator_config.get("main_enable", False):
                 return []
 
@@ -55,9 +58,10 @@ class SubagentCollector(ContextCollectorInterface):
 
             slots: list[ContextSlot] = []
 
+            _, config_id = resolve_interaction_turn_runtime_configuration(event)
             handoff_tools_slot = self._build_handoff_tools_slot(
                 orchestrator_config,
-                getattr(orchestrator, "handoffs", []),
+                orchestrator.handoffs_for(config_id),
             )
             if handoff_tools_slot is not None:
                 slots.append(handoff_tools_slot)
@@ -74,12 +78,6 @@ class SubagentCollector(ContextCollectorInterface):
                 exc_info=True,
             )
             return []
-
-    def _resolve_orchestrator_config(self, plugin_context: Context) -> dict:
-        raw_config = plugin_context.get_config().get("subagent_orchestrator", {})
-        if isinstance(raw_config, dict):
-            return raw_config
-        return {}
 
     def _build_handoff_tools_slot(
         self,

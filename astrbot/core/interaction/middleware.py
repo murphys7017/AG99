@@ -1634,9 +1634,16 @@ class InteractionMiddleware:
         provider_id = str(selected_provider).strip() if selected_provider else ""
         if not provider_id and self.plugin_context is not None:
             try:
-                provider = self.plugin_context.get_using_provider(
-                    umo=event.unified_msg_origin
-                )
+                runtime_config = get_interaction_turn_runtime_config(event)
+                if runtime_config is None:
+                    provider = self.plugin_context.get_using_provider(
+                        umo=event.unified_msg_origin
+                    )
+                else:
+                    provider = self.plugin_context.get_using_provider(
+                        umo=event.unified_msg_origin,
+                        runtime_config=runtime_config,
+                    )
             except ValueError:
                 provider = None
             provider_id = str(

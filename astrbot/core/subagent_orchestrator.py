@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from astrbot import logger
@@ -24,15 +25,51 @@ class SubAgentOrchestrator:
     ) -> None:
         self._tool_mgr = tool_mgr
         self._persona_mgr = persona_mgr
-        self.handoffs: list[HandoffTool] = []
+        self._handoffs_by_config_id: dict[str, list[HandoffTool]] = {}
 
-    async def reload_from_config(self, cfg: dict[str, Any]) -> None:
+    @property
+    def handoffs(self) -> list[HandoffTool]:
+        """Compatibility view for callers that intentionally use default config."""
+        return self.handoffs_for("default")
+
+    def handoffs_for(self, config_id: str | None) -> list[HandoffTool]:
+        """Return the handoff tools materialized for one configuration Profile."""
+        normalized_config_id = str(config_id or "default").strip() or "default"
+        return list(self._handoffs_by_config_id.get(normalized_config_id, ()))
+
+    async def reload_from_config(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        config_id: str = "default",
+    ) -> None:
+        """Reload one Profile without changing other Profile handoff tools."""
+        normalized_config_id = str(config_id or "default").strip() or "default"
+        self._handoffs_by_config_id[normalized_config_id] = self._build_handoffs(cfg)
+
+    async def reload_from_configs(
+        self,
+        configs: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        """Atomically replace Profile handoffs after all configurations are parsed."""
+        self._handoffs_by_config_id = {
+            str(config_id or "default").strip() or "default": self._build_handoffs(cfg)
+            for config_id, cfg in configs.items()
+        }
+
+    def remove_config(self, config_id: str) -> None:
+        """Drop handoff tools when their configuration Profile is deleted."""
+        normalized_config_id = str(config_id or "").strip()
+        if normalized_config_id:
+            self._handoffs_by_config_id.pop(normalized_config_id, None)
+
+    def _build_handoffs(self, cfg: Mapping[str, Any]) -> list[HandoffTool]:
         from astrbot.core.astr_agent_context import AstrAgentContext
 
         agents = cfg.get("agents", [])
         if not isinstance(agents, list):
             logger.warning("subagent_orchestrator.agents must be a list")
-            return
+            return []
 
         handoffs: list[HandoffTool] = []
         for item in agents:
@@ -101,4 +138,4 @@ class SubAgentOrchestrator:
         for handoff in handoffs:
             logger.info(f"Registered subagent handoff tool: {handoff.name}")
 
-        self.handoffs = handoffs
+        return handoffs

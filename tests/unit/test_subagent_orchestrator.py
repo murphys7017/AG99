@@ -108,3 +108,23 @@ async def test_reload_from_config_tool_normalization(raw_tools, expected_tools):
 
     handoff = orchestrator.handoffs[0]
     assert handoff.agent.tools == expected_tools
+
+
+@pytest.mark.asyncio
+async def test_profile_handoffs_do_not_leak_between_configurations():
+    orchestrator = SubAgentOrchestrator(
+        tool_mgr=MagicMock(),
+        persona_mgr=MagicMock(),
+    )
+
+    await orchestrator.reload_from_configs(
+        {
+            "profile-a": _build_cfg({"name": "profile_a_agent"}),
+            "profile-b": {"agents": []},
+        }
+    )
+
+    assert [tool.agent.name for tool in orchestrator.handoffs_for("profile-a")] == [
+        "profile_a_agent"
+    ]
+    assert orchestrator.handoffs_for("profile-b") == []

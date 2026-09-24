@@ -1,3 +1,29 @@
+turn_snapshot_runtime_selection_convergence:
+  date: '2026-09-24'
+  class: bugfix
+  risk: high
+  status: implemented_pending_live_acceptance
+  scope: >-
+    Make the admitted Interaction Profile snapshot authoritative for Core chat
+    provider fallback, STT/TTS fallback, protocol wake-prefix lookup, and
+    Profile-scoped subagent handoffs; deny runtime Sensor observations whose
+    target route no longer resolves instead of silently falling back to default.
+  non_goals: >-
+    Change session-level /provider preference semantics, reload providers during
+    a turn, redesign the SubAgent Dashboard page, restart AstrBot, or alter
+    executor/output contracts.
+  validation: >-
+    Focused configuration, turn-admission, prompt-support, voice, and
+    subagent suites passed 93 tests. Scoped Ruff, compileall, git diff check,
+    and Dashboard production build passed; the existing MDI subset warnings
+    for mdi-platform and mdi-subset remain. A direct runtime-selection smoke
+    confirmed supplied Profile provider fallback beats default configuration.
+  followup: >-
+    After manual restart, bind two adapters to distinct Profiles with different
+    chat/TTS settings and subagent lists. Confirm an admitted turn keeps its
+    original Profile through delayed Core/TTS work, no handoff tool leaks to
+    the other Profile, and an observation routed to a deleted Profile is denied.
+
 interaction_failure_and_sqlite_lock_repair:
   date: '2026-09-24'
   class: bugfix

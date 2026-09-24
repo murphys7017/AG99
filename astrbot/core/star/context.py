@@ -614,7 +614,12 @@ class Context:
         """获取所有用于 Embedding 任务的 Provider。"""
         return self.provider_manager.embedding_provider_insts
 
-    def get_using_provider(self, umo: str | None = None) -> Provider | None:
+    def get_using_provider(
+        self,
+        umo: str | None = None,
+        *,
+        runtime_config: Mapping[str, Any] | None = None,
+    ) -> Provider | None:
         """获取当前使用的用于文本生成任务的 LLM Provider(Chat_Completion 类型)。
 
         Args:
@@ -627,10 +632,17 @@ class Context:
         Raises:
             ValueError: 该会话来源配置的的对话模型（提供商）的类型不正确。
         """
-        prov = self.provider_manager.get_using_provider(
-            provider_type=ProviderType.CHAT_COMPLETION,
-            umo=umo,
-        )
+        if runtime_config is None:
+            prov = self.provider_manager.get_using_provider(
+                provider_type=ProviderType.CHAT_COMPLETION,
+                umo=umo,
+            )
+        else:
+            prov = self.provider_manager.get_using_provider_for_runtime_config(
+                ProviderType.CHAT_COMPLETION,
+                runtime_config,
+                umo=umo,
+            )
         if prov is None:
             return None
         if not isinstance(prov, Provider):
@@ -639,7 +651,12 @@ class Context:
             )
         return prov
 
-    def get_using_tts_provider(self, umo: str | None = None) -> TTSProvider | None:
+    def get_using_tts_provider(
+        self,
+        umo: str | None = None,
+        *,
+        runtime_config: Mapping[str, Any] | None = None,
+    ) -> TTSProvider | None:
         """获取当前使用的用于 TTS 任务的 Provider。
 
         Args:
@@ -651,15 +668,27 @@ class Context:
         Raises:
             ValueError: 返回的提供者不是 TTSProvider 类型。
         """
-        prov = self.provider_manager.get_using_provider(
-            provider_type=ProviderType.TEXT_TO_SPEECH,
-            umo=umo,
-        )
+        if runtime_config is None:
+            prov = self.provider_manager.get_using_provider(
+                provider_type=ProviderType.TEXT_TO_SPEECH,
+                umo=umo,
+            )
+        else:
+            prov = self.provider_manager.get_using_provider_for_runtime_config(
+                ProviderType.TEXT_TO_SPEECH,
+                runtime_config,
+                umo=umo,
+            )
         if prov and not isinstance(prov, TTSProvider):
             raise ValueError("返回的 Provider 不是 TTSProvider 类型")
         return prov
 
-    def get_using_stt_provider(self, umo: str | None = None) -> STTProvider | None:
+    def get_using_stt_provider(
+        self,
+        umo: str | None = None,
+        *,
+        runtime_config: Mapping[str, Any] | None = None,
+    ) -> STTProvider | None:
         """获取当前使用的用于 STT 任务的 Provider。
 
         Args:
@@ -671,10 +700,17 @@ class Context:
         Raises:
             ValueError: 返回的提供者不是 STTProvider 类型。
         """
-        prov = self.provider_manager.get_using_provider(
-            provider_type=ProviderType.SPEECH_TO_TEXT,
-            umo=umo,
-        )
+        if runtime_config is None:
+            prov = self.provider_manager.get_using_provider(
+                provider_type=ProviderType.SPEECH_TO_TEXT,
+                umo=umo,
+            )
+        else:
+            prov = self.provider_manager.get_using_provider_for_runtime_config(
+                ProviderType.SPEECH_TO_TEXT,
+                runtime_config,
+                umo=umo,
+            )
         if prov and not isinstance(prov, STTProvider):
             raise ValueError("返回的 Provider 不是 STTProvider 类型")
         return prov
@@ -1063,7 +1099,20 @@ class Context:
     ) -> bool:
         """Resolve the same permission policy against the Sensor's target session."""
         session_id = str(target_session)
-        runtime_config = self.get_config(umo=session_id)
+        try:
+            selection = self.astrbot_config_mgr.resolve_configuration_selection(
+                target_session
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Runtime Observation sensor denied because its session route is invalid: "
+                "session=%s owner=%s error=%s",
+                session_id,
+                registration.owner_module_path,
+                exc,
+            )
+            return False
+        runtime_config = selection.runtime_config
         allowed_plugins = resolve_event_plugins_name(runtime_config)
         snapshot = await build_session_plugin_admission_snapshot(
             session_id=session_id,

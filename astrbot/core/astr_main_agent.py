@@ -394,7 +394,13 @@ def _select_provider(
             return None
         return provider
     try:
-        return plugin_context.get_using_provider(umo=event.unified_msg_origin)
+        runtime_config = get_interaction_turn_runtime_config(event)
+        if runtime_config is None:
+            return plugin_context.get_using_provider(umo=event.unified_msg_origin)
+        return plugin_context.get_using_provider(
+            umo=event.unified_msg_origin,
+            runtime_config=runtime_config,
+        )
     except ValueError as exc:
         logger.error("Error occurred while selecting provider: %s", exc)
         _set_llm_error_message(event, f"LLM 请求失败：{exc}")
@@ -940,11 +946,13 @@ async def _prepare_persona_and_subagents(
         if req.func_tool is None:
             req.func_tool = ToolSet()
 
-        for tool in so.handoffs:
+        _, runtime_config_id = resolve_interaction_turn_runtime_configuration(event)
+        handoffs = so.handoffs_for(runtime_config_id)
+        for tool in handoffs:
             req.func_tool.add_tool(tool)
 
         if remove_dup:
-            handoff_names = {tool.name for tool in so.handoffs}
+            handoff_names = {tool.name for tool in handoffs}
             excluded_tool_names.update(assigned_tools - handoff_names)
 
     return (

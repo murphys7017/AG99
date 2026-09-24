@@ -3385,6 +3385,27 @@ CONFIG_METADATA_3 = {
                     "provider_settings.enable": True,
                 },
             },
+            "file_extract": {
+                "description": "文档解析能力",
+                "hint": "使用 Moonshot AI 解析上传文件内容。",
+                "type": "object",
+                "items": {
+                    "provider_settings.file_extract.enable": {
+                        "description": "启用文档解析能力",
+                        "type": "bool",
+                    },
+                    "provider_settings.file_extract.moonshotai_api_key": {
+                        "description": "Moonshot AI API Key",
+                        "type": "string",
+                        "condition": {
+                            "provider_settings.file_extract.enable": True,
+                        },
+                    },
+                },
+                "condition": {
+                    "provider_settings.enable": True,
+                },
+            },
             "persona": {
                 "description": "人格",
                 "hint": "",
