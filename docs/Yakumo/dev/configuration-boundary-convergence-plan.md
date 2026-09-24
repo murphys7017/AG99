@@ -189,6 +189,8 @@ ConfigRouteTable.resolve(umo)
 - [已完成] RespondStage 的流式降级策略和物理消息投递设置从冻结快照读取。
 - [已完成] ResultDecorateStage 在普通输出回合按冻结快照构造只读装饰策略；
   回复前缀、TTS、分段、转图、转发及 @/引用回复不再由 Pipeline 初始化 Profile 固定。
+- [已完成] ProcessStage 的 Core 启用判定、互动编排、Personal admission 与延迟插件交付
+  使用冻结 Profile 的配置及身份，不再经由默认 Pipeline 配置或 compatibility extra 重取。
 - Prompt、Core、Output、Memory、插件准入只读取快照或窄视图。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
 

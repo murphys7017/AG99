@@ -48,6 +48,10 @@ from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import StarHandlerMetadata, star_handlers_registry
 
 from ..context import PipelineContext
+from ..runtime_config import (
+    get_pipeline_turn_config_id,
+    get_pipeline_turn_runtime_config,
+)
 from ..stage import Stage, register_stage
 from .method.agent_request import AgentRequestSubStage
 from .method.star_request import StarRequestSubStage
@@ -63,7 +67,6 @@ TURN_DEADLINE_FALLBACK_TEXT = "模型服务暂时不可用，请稍后再试。"
 class ProcessStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
-        self.config = ctx.astrbot_config
         self.plugin_manager = ctx.plugin_manager
         self.personal_runtime_manager = ctx.personal_runtime_manager
 
@@ -194,14 +197,14 @@ class ProcessStage(Stage):
         *,
         is_group_candidate: bool,
     ) -> bool:
-        if not self.ctx.astrbot_config["provider_settings"].get("enable", True):
+        runtime_config = get_pipeline_turn_runtime_config(
+            event,
+            self.ctx.astrbot_config,
+        )
+        if not runtime_config.get("provider_settings", {}).get("enable", True):
             return False
         interaction_config = get_interaction_turn_config(event)
         if interaction_config is None:
-            runtime_config = event.get_extra(
-                "_astrbot_config",
-                self.ctx.astrbot_config,
-            )
             interaction_config = load_interaction_agent_config(runtime_config)
         if (
             not interaction_config.enabled
@@ -253,8 +256,8 @@ class ProcessStage(Stage):
         """Emit one comparable path-selection record for each admitted turn."""
         interaction_config = get_interaction_turn_config(event)
         if interaction_config is None:
-            runtime_config = event.get_extra(
-                "_astrbot_config",
+            runtime_config = get_pipeline_turn_runtime_config(
+                event,
                 self.ctx.astrbot_config,
             )
             interaction_config = load_interaction_agent_config(runtime_config)
@@ -306,7 +309,10 @@ class ProcessStage(Stage):
             turn_id=str(event.get_extra("_turn_id", "") or ""),
         )
         middleware.prepare_parallel_turn_control(event)
-        runtime_config = event.get_extra("_astrbot_config", self.ctx.astrbot_config)
+        runtime_config = get_pipeline_turn_runtime_config(
+            event,
+            self.ctx.astrbot_config,
+        )
         t1_settled = asyncio.Event()
         branch_result: PluginBranchResult | None = None
         plugin_launch = None
@@ -316,7 +322,10 @@ class ProcessStage(Stage):
             branch_event, branch_result, branch_sink = create_plugin_branch_event(event)
             delayed_context = DelayedPluginDeliveryContext.capture(
                 parent_event=event,
-                config_id=self.ctx.astrbot_config_id,
+                config_id=get_pipeline_turn_config_id(
+                    event,
+                    self.ctx.astrbot_config_id,
+                ),
                 runtime_config=runtime_config,
                 plugin_context=self.plugin_manager.context,
                 personal_runtime_manager=manager,
@@ -618,7 +627,11 @@ class ProcessStage(Stage):
             group_candidate_admitted = True
 
         # 调用 LLM 相关请求
-        if not self.ctx.astrbot_config["provider_settings"].get(
+        runtime_config = get_pipeline_turn_runtime_config(
+            event,
+            self.ctx.astrbot_config,
+        )
+        if not runtime_config.get("provider_settings", {}).get(
             "enable",
             True,
         ):
@@ -803,7 +816,9 @@ class ProcessStage(Stage):
         self._prepare_interaction_output(event)
         interaction_config = (
             get_interaction_turn_config(event)
-            or load_interaction_agent_config(self.config)
+            or load_interaction_agent_config(
+                get_pipeline_turn_runtime_config(event, self.ctx.astrbot_config)
+            )
         )
         manager: PersonalRuntimeManager | None = getattr(
             self,
@@ -817,9 +832,15 @@ class ProcessStage(Stage):
                 await stack.enter_async_context(
                     manager.submit_platform_event(
                         event,
-                        self.ctx.astrbot_config_id,
+                        get_pipeline_turn_config_id(
+                            event,
+                            self.ctx.astrbot_config_id,
+                        ),
                         self.plugin_manager.context,
-                        self.config,
+                        get_pipeline_turn_runtime_config(
+                            event,
+                            self.ctx.astrbot_config,
+                        ),
                     )
                 )
                 if manager is not None

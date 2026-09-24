@@ -1093,6 +1093,7 @@ configuration_boundary_audit:
     admitted snapshot, including STT gates, platform pre-ack, and selector
     construction. RespondStage now reads streaming and delivery settings from
     the snapshot, and ResultDecorate materializes a per-turn immutable policy
-    for ordinary output behavior. Next: migrate remaining Process/Prompt/Memory
-    consumers in separate bounded batches rather than bulk-replacing lower-level
-    get_conf calls.
+    for ordinary output behavior. ProcessStage's main coordination paths now
+    use the admitted config and identity as well. Next: migrate Prompt and
+    Memory consumers in separate bounded batches rather than bulk-replacing
+    lower-level get_conf calls.
